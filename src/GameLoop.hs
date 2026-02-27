@@ -5,6 +5,7 @@ import Game
 import Parser
 import System.IO
 import Control.Monad (unless)
+import qualified Data.Map as Map
 
 -- | Main game loop function
 
@@ -21,7 +22,7 @@ gameLoop state
     | gameOver state = return ()
     | otherwise      = do
         putStr "> "
-hFlush stdout
+        hFlush stdout
         input <- getLine
         let command = parseCommand input
         let (newState, message) = executeCommand command state

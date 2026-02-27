@@ -3,7 +3,7 @@ module Parser where
 
 import Game
 import Data.Char (toLower)
-import Data.List (isPrefixOf, find)
+import Data.List (isPrefixOf, find, intercalate)
 import Data.Maybe (fromMaybe)
 
 -- | Parsed command structure
