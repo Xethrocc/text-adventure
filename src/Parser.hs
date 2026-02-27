@@ -4,38 +4,51 @@ module Parser where
 import Types
 import Game
 import Data.Char (toLower)
-import Data.List (isPrefixOf, find, intercalate)
-import Data.Maybe (fromMaybe)
+import Data.List (find, intercalate)
 import qualified Data.Map.Strict as Map
 
 -- | Parsed command structure
-
-data Command = Go Direction
-              | Look
-              | LookAt String
-              | Take String
-              | Drop String
-              | Inventory
-              | Use String
-              | UseOn String String
-              | Talk String
-              | Attack String
-              | Quit
-              | Help
-              | Unknown String
+data Command 
+    = Go Direction
+    | Look
+    | Inventory
+    | Interact Verb String
+    | InteractWith Verb String String
+    | Help
+    | Quit
+    | Unknown String
     deriving (Show, Eq)
 
--- | Parse user input into a command
+-- | Map common strings to Verbs
+parseVerb :: String -> Maybe Verb
+parseVerb v = case v of
+    "take"    -> Just VTake
+    "pick"    -> Just VTake
+    "grab"    -> Just VTake
+    "get"     -> Just VTake
+    "drop"    -> Just VDrop
+    "put"     -> Just VDrop
+    "examine" -> Just VLookAt
+    "inspect" -> Just VLookAt
+    "look"    -> Just VLookAt
+    "read"    -> Just VLookAt
+    "use"     -> Just VUse
+    "talk"    -> Just VTalk
+    "speak"   -> Just VTalk
+    "chat"    -> Just VTalk
+    "attack"  -> Just VAttack
+    "hit"     -> Just VAttack
+    "kill"    -> Just VAttack
+    _         -> Nothing
 
+-- | Parse user input into a command
 parseCommand :: String -> Command
 parseCommand input = case words (map toLower input) of
     []                     -> Unknown ""
     ["go", dir]            -> parseDirection dir
     ["go", "to", dir]      -> parseDirection dir
     ["move", dir]          -> parseDirection dir
-    ["move", "to", dir]    -> parseDirection dir
     ["walk", dir]          -> parseDirection dir
-    ["walk", "to", dir]    -> parseDirection dir
     ["north"]              -> Go North
     ["south"]              -> Go South
     ["east"]               -> Go East
@@ -43,33 +56,26 @@ parseCommand input = case words (map toLower input) of
     ["up"]                 -> Go Up
     ["down"]               -> Go Down
     ["look"]               -> Look
-    ["look", "at", target] -> LookAt target
-    ["examine", target]     -> LookAt target
-    ["inspect", target]     -> LookAt target
-    ["take", target]        -> Take target
-    ["pick", "up", target]  -> Take target
-    ["grab", target]        -> Take target
-    ["get", target]         -> Take target
-    ["drop", target]        -> Drop target
-    ["put", "down", target] -> Drop target
     ["inventory"]           -> Inventory
     ["inv"]                 -> Inventory
     ["i"]                   -> Inventory
-    ["use", item, "on", entity]   -> UseOn item entity
-    ["use", item, "with", entity] -> UseOn item entity
-    ["use", target]         -> Use target
-    ["talk", "to", target]  -> Talk target
-    ["speak", "with", target] -> Talk target
-    ["chat", "with", target] -> Talk target
-    ["attack", target]      -> Attack target
-    ["hit", target]         -> Attack target
-    ["kill", target]        -> Attack target
     ["help"]               -> Help
     ["quit"]               -> Quit
     ["exit"]               -> Quit
     ["q"]                  -> Quit
-    _                      -> Unknown input
-    
+    -- Complex parsing
+    ["look", "at", target] -> Interact VLookAt target
+    ["pick", "up", target] -> Interact VTake target
+    ["put", "down", target] -> Interact VDrop target
+    ["talk", "to", target]  -> Interact VTalk target
+    ["speak", "with", target] -> Interact VTalk target
+    ["use", item, "on", entity]   -> InteractWith VUseOn item entity
+    ["use", item, "with", entity] -> InteractWith VUseOn item entity
+    -- Generic verb-noun parsing
+    [v, target] -> case parseVerb v of
+        Just verb -> Interact verb target
+        Nothing   -> Unknown input
+    _ -> Unknown input
     where
         parseDirection dir = case dir of
             "north" -> Go North
@@ -80,11 +86,23 @@ parseCommand input = case words (map toLower input) of
             "down"  -> Go Down
             _       -> Unknown dir
 
--- | Execute a command and return updated game state and message
-
 type CommandResult = (GameState, String)
 
+-- | Process the actual action outcome from a verb map
+applyOutcome :: ActionOutcome -> ItemID -> GameState -> CommandResult
+applyOutcome (MessageOnly msg) _ state = (state, msg)
+applyOutcome (ChangeItemState newState msg) targetId state = 
+    let state' = state { itemStates = Map.adjust (\s -> s { itemStatus = newState }) targetId (itemStates state) }
+    in (state', msg)
+applyOutcome (ChangeNPCState newState msg) targetId state = 
+    let state' = state { npcStates = Map.adjust (\s -> s { npcStatus = newState }) targetId (npcStates state) }
+    in (state', msg)
+applyOutcome (TransitionRoom newRoom msg) _ state = 
+    (moveToRoom newRoom state, msg)
+
+-- | Execute a command and return updated game state and message
 executeCommand :: Command -> GameState -> CommandResult
+
 executeCommand (Go dir) state
     | canMove dir state = case getExitInDirection dir state of
         Just (Open roomName) -> (moveToRoom roomName state, "You move " ++ show dir ++ ".")
@@ -96,111 +114,84 @@ executeCommand (Go dir) state
     | otherwise = (state, "You can't go that way.")
 
 executeCommand Look state = case getCurrentRoom state of
-    Just room -> (state, roomDescription room ++ lookAtItems (roomItems room) ++ lookAtNPCs (roomNPCs room))
+    Just room -> 
+        let itemsInRoom = getItemsInLocation (currentRoom state) state
+            npcsInRoom = getNPCsInRoom (currentRoom state) state
+            itemDesc = if null itemsInRoom then "\nYou see nothing of interest." else "\nYou see: " ++ intercalate ", " (map itemName itemsInRoom) ++ "."
+            npcDesc = if null npcsInRoom then "" else "\nAlso here: " ++ intercalate ", " (map npcName npcsInRoom) ++ "."
+        in (state, roomDescription room ++ itemDesc ++ npcDesc)
     Nothing   -> (state, "You're in a void. There's nothing here.")
-    where
-        lookAtItems items = if null items
-            then "\nYou see nothing of interest."
-            else "\nYou see: " ++ intercalate ", " (map itemName items) ++ "."
-        lookAtNPCs npcs = if null npcs
-            then ""
-            else "\nAlso here: " ++ intercalate ", " (map npcName npcs) ++ "."
 
-executeCommand (LookAt target) state = case getCurrentRoom state of
-    Just room -> case findMatchingItem target (roomItems room) of
-        Just item -> (state, itemDescription item)
-        Nothing   -> case findMatchingItem target (inventory state) of
-            Just item -> (state, itemDescription item)
-            Nothing   -> case findMatchingNPC target (roomNPCs room) of
-                Just npc -> (state, npcDescription npc)
-                Nothing -> (state, "You don't see that here.")
-    Nothing -> (state, "There's nothing to look at.")
-    where
-        findMatchingItem target items = find ((target `elem`) . itemKeywords) items
-        findMatchingNPC target npcs = find ((target `elem`) . npcKeywords) npcs
+executeCommand Inventory state = 
+    let invItems = getItemsInLocation "inventory" state
+    in if null invItems 
+       then (state, "You're not carrying anything.")
+       else (state, "Inventory: " ++ intercalate ", " (map itemName invItems))
 
-executeCommand (Take target) state = case getCurrentRoom state of
-    Just room -> case findMatchingItem target (roomItems room) of
-        Just item -> if itemPickable item
-            then (pickupItem item (removeItemFromRoom (itemName item) state),
-                 "You take the " ++ itemName item ++ ".")
-            else (state, "You can't take the " ++ itemName item ++ ".")
-        Nothing   -> (state, "You don't see that here.")
-    Nothing -> (state, "There's nothing to take.")
-    where
-        findMatchingItem target items = find ((target `elem`) . itemKeywords) items
+executeCommand (Interact verb targetStr) state = 
+    let 
+        -- Find potential targets in room or inventory
+        roomItems = getItemsInLocation (currentRoom state) state
+        invItems = getItemsInLocation "inventory" state
+        allReachableItems = roomItems ++ invItems
+        roomNPCs = getNPCsInRoom (currentRoom state) state
+        
+        targetItem = find (\i -> targetStr `elem` itemKeywords i) allReachableItems
+        targetNPC = find (\n -> targetStr `elem` npcKeywords n) roomNPCs
+    in case (targetItem, targetNPC) of
+        (Just item, _) -> 
+            -- Found an item target, look up its state and check verb map
+            let iId = itemId item
+                currentStatus = maybe "unknown" itemStatus (Map.lookup iId (itemStates state))
+            in case Map.lookup (verb, currentStatus) (itemVerbMap item) of
+                Just outcome -> applyOutcome outcome iId state
+                Nothing -> 
+                    -- Fallback hardcoded logic for basic verbs if missing from map (for backwards compatibility/ease)
+                    if verb == VTake && itemLocation (itemStates state Map.! iId) /= "inventory"
+                    then (pickupItem iId state, "You take the " ++ itemName item ++ ".")
+                    else if verb == VDrop && hasItem iId state
+                    then (dropItem iId state, "You drop the " ++ itemName item ++ ".")
+                    else (state, "You can't do that to the " ++ itemName item ++ " right now.")
+        
+        (Nothing, Just npc) -> 
+            -- Found an NPC target
+            let nId = npcId npc
+                currentStatus = maybe "unknown" npcStatus (Map.lookup nId (npcStates state))
+            in case Map.lookup (verb, currentStatus) (npcVerbMap npc) of
+                Just outcome -> applyOutcome outcome nId state
+                Nothing -> 
+                    -- Fallback logic for talk/attack
+                    if verb == VTalk 
+                    then case Map.lookup currentStatus (npcDialogue npc) of
+                            Just speech -> (state, npcName npc ++ " says: \"" ++ speech ++ "\"")
+                            Nothing -> (state, npcName npc ++ " has nothing to say.")
+                    else if verb == VAttack 
+                    then case npcHealth (npcStates state Map.! nId) of
+                            Nothing -> (state, "You can't attack the " ++ npcName npc ++ ".")
+                            Just hp -> 
+                                let 
+                                    p = player state
+                                    playerDmg = max 1 (playerAttack p - npcAttackBase npc) -- Simplified
+                                    newHp = hp - playerDmg
+                                in if newHp <= 0 
+                                   then (killNPC nId state, "You attack the " ++ targetStr ++ " and kill it!")
+                                   else 
+                                        let npcDmg = max 0 (npcAttackBase npc - playerDefense p)
+                                            state' = updateNPCState nId ((npcStates state Map.! nId) { npcHealth = Just newHp }) state
+                                            state'' = updatePlayerHealth (\h -> h - npcDmg) state'
+                                        in if isPlayerDead state''
+                                           then (state'' { gameOver = True }, "You die!")
+                                           else (state'', "You hit for " ++ show playerDmg ++ ", it hits you for " ++ show npcDmg)
+                    else (state, "You can't do that to " ++ npcName npc ++ ".")
+        
+        (Nothing, Nothing) -> (state, "You don't see '" ++ targetStr ++ "' here.")
 
-executeCommand (Drop target) state = case findMatchingItem target (inventory state) of
-    Just item -> (addItemToRoom item (dropItem item state),
-                 "You drop the " ++ itemName item ++ ".")
-    Nothing   -> (state, "You don't have that item.")
-    where
-        findMatchingItem target items = find ((target `elem`) . itemKeywords) items
 
-executeCommand Inventory state = (state, "Inventory: " ++ inventoryList (inventory state))
-    where
-        inventoryList [] = "You're not carrying anything."
-        inventoryList items = intercalate ", " (map itemName items)
+executeCommand (InteractWith verb itemStr entityStr) state = 
+    -- Left mostly as a stub since UseOn was specialized before; ideally handled via verb map too
+    (state, "Complex interactions not fully mapped yet.")
 
-executeCommand (UseOn itemTarget entityTarget) state = case getCurrentRoom state of
-    Just room -> case findMatchingItem itemTarget (inventory state) of
-        Just item -> 
-            case Map.lookup (itemName item, entityTarget) (entityInteractions state) of
-                Just (newStateVal, msg) -> 
-                    let state' = setEntityState entityTarget newStateVal state
-                    in (state', msg)
-                Nothing -> (state, "You can't use the " ++ itemName item ++ " on the " ++ entityTarget ++ " like that.")
-        Nothing -> (state, "You don't have that item.")
-    Nothing -> (state, "There is nothing here.")
-    where
-        findMatchingItem target items = find ((target `elem`) . itemKeywords) items
-
-executeCommand (Use target) state = case getCurrentRoom state of
-    Just room -> case findMatchingItem target (inventory state) of
-        Just item -> (state, "You need to specify what to use the " ++ itemName item ++ " on (e.g., 'use key on door').")
-        Nothing   -> (state, "You don't have that item.")
-    Nothing -> (state, "There's nothing to use.")
-    where
-        findMatchingItem target items = find ((target `elem`) . itemKeywords) items
-
-executeCommand (Talk target) state = case getCurrentRoom state of
-    Just room -> case findMatchingNPC target (roomNPCs room) of
-        Just npc -> (state, npcName npc ++ " says: \"" ++ npcDialogue npc ++ "\"")
-        Nothing -> (state, "You see no one by that name here.")
-    Nothing   -> (state, "There's no one to talk to.")
-    where
-        findMatchingNPC target npcs = find ((target `elem`) . npcKeywords) npcs
-
-executeCommand (Attack target) state = case getCurrentRoom state of
-    Just room -> case findMatchingNPC target (roomNPCs room) of
-        Just npc -> case npcHealth npc of
-            Nothing -> (state, "You can't attack the " ++ npcName npc ++ ".")
-            Just hp -> 
-                let 
-                    p = player state
-                    playerDmg = max 1 (playerAttack p - npcDefense npc)
-                    newNpcHp = hp - playerDmg
-                in if newNpcHp <= 0 
-                   then 
-                       let state' = removeNPCFromRoom (currentRoom state) (npcName npc) state
-                       in (state', "You attack the " ++ npcName npc ++ " for " ++ show playerDmg ++ " damage! The " ++ npcName npc ++ " dies!")
-                   else
-                       let 
-                           npcDmg = max 0 (npcAttack npc - playerDefense p)
-                           state' = updateNPCInRoom (currentRoom state) (npc { npcHealth = Just newNpcHp }) state
-                           state'' = updatePlayerHealth (\h -> h - npcDmg) state'
-                       in if isPlayerDead state''
-                          then (state'' { gameOver = True }, "You attack the " ++ npcName npc ++ " for " ++ show playerDmg ++ " damage. The " ++ npcName npc ++ " counterattacks for " ++ show npcDmg ++ " damage! You have died.")
-                          else (state'', "You attack the " ++ npcName npc ++ " for " ++ show playerDmg ++ " damage. The " ++ npcName npc ++ " counterattacks for " ++ show npcDmg ++ " damage! You have " ++ show (playerHealth (player state'')) ++ " HP left.")
-        Nothing -> (state, "You see no one by that name here.")
-    Nothing -> (state, "There's nothing to attack.")
-    where
-        findMatchingNPC target npcs = find ((target `elem`) . npcKeywords) npcs
-
-executeCommand Help state = (state, "Available commands: go [direction], look, look at [item/npc], take [item], drop [item], inventory, use [item] on [entity], talk to [npc], help, quit")
-
+executeCommand Help state = (state, "Available commands: go [direction], look, look at [item/npc], take [item], drop [item], inventory, talk to [npc], attack [npc], help, quit")
 executeCommand Quit state = (state { gameOver = True }, "Goodbye!")
-
 executeCommand (Unknown cmd) state = (state, "I don't understand '" ++ cmd ++ "'. Type 'help' for available commands.")
-
 executeCommand _ state = (state, "Command not implemented yet.")

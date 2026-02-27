@@ -13,6 +13,10 @@ emptyGameState = GameState
     , player             = Player 100 100 10 5
     , currentRoom        = "start"
     , inventory          = []
+    , itemStates         = Map.empty
+    , itemDefs           = Map.empty
+    , npcStates          = Map.empty
+    , npcDefs            = Map.empty
     , entityStates       = Map.empty
     , entityInteractions = Map.empty
     , gameOver           = False
@@ -22,36 +26,33 @@ emptyGameState = GameState
 getCurrentRoom :: GameState -> Maybe Room
 getCurrentRoom state = Map.lookup (currentRoom state) (rooms state)
 
+-- | Get all items currently in a specific location (e.g., room ID or "inventory")
+getItemsInLocation :: RoomID -> GameState -> [ItemDef]
+getItemsInLocation loc state = 
+    let itemIds = Map.keys $ Map.filter (\s -> itemLocation s == loc) (itemStates state)
+    in [def | iId <- itemIds, Just def <- [Map.lookup iId (itemDefs state)]]
+
 -- | Check if player has an item in inventory
-hasItem :: String -> GameState -> Bool
-hasItem target state = any ((target `elem`) . itemKeywords) (inventory state)
+hasItem :: ItemID -> GameState -> Bool
+hasItem iId state = iId `elem` inventory state
 
 -- | Move player to a different room
-moveToRoom :: String -> GameState -> GameState
+moveToRoom :: RoomID -> GameState -> GameState
 moveToRoom roomName state = state { currentRoom = roomName }
 
 -- | Add item to player's inventory
-pickupItem :: Item -> GameState -> GameState
-pickupItem item state = state { inventory = item : inventory state }
+pickupItem :: ItemID -> GameState -> GameState
+pickupItem iId state = state 
+    { inventory = iId : inventory state 
+    , itemStates = Map.adjust (\s -> s { itemLocation = "inventory" }) iId (itemStates state)
+    }
 
--- | Remove item from player's inventory
-dropItem :: Item -> GameState -> GameState
-dropItem item state = state { inventory = filter (/= item) (inventory state) }
-
--- | Remove item from current room
-removeItemFromRoom :: String -> GameState -> GameState
-removeItemFromRoom itemName state = state
-    { rooms = Map.adjust removeItem (currentRoom state) (rooms state) }
-    where
-        removeItem room = room { roomItems = filter (not . matchItem itemName) (roomItems room) }
-        matchItem name item = name `elem` itemKeywords item
-
--- | Add item to current room
-addItemToRoom :: Item -> GameState -> GameState
-addItemToRoom item state = state
-    { rooms = Map.adjust addItem (currentRoom state) (rooms state) }
-    where
-        addItem room = room { roomItems = item : roomItems room }
+-- | Remove item from player's inventory to current room
+dropItem :: ItemID -> GameState -> GameState
+dropItem iId state = state 
+    { inventory = filter (/= iId) (inventory state) 
+    , itemStates = Map.adjust (\s -> s { itemLocation = currentRoom state }) iId (itemStates state)
+    }
 
 -- | Check if a direction is valid from current room
 canMove :: Direction -> GameState -> Bool
@@ -84,20 +85,18 @@ updatePlayerHealth f state =
 isPlayerDead :: GameState -> Bool
 isPlayerDead state = playerHealth (player state) <= 0
 
--- | Update NPC in room
-updateNPCInRoom :: String -> NPC -> GameState -> GameState
-updateNPCInRoom roomName newNpc state = state
-    { rooms = Map.adjust updateRoom roomName (rooms state) }
-    where
-        updateRoom room = room { roomNPCs = replaceNPC (roomNPCs room) }
-        replaceNPC [] = []
-        replaceNPC (n:ns)
-            | npcName n == npcName newNpc = newNpc : ns
-            | otherwise = n : replaceNPC ns
+-- | Get all NPCs in a specific room
+getNPCsInRoom :: RoomID -> GameState -> [NPCDef]
+getNPCsInRoom rId state = 
+    let npcIds = Map.keys $ Map.filter (\s -> npcLocation s == rId) (npcStates state)
+    in [def | nId <- npcIds, Just def <- [Map.lookup nId (npcDefs state)]]
 
--- | Remove NPC from room
-removeNPCFromRoom :: String -> String -> GameState -> GameState
-removeNPCFromRoom roomName targetNpcName state = state
-    { rooms = Map.adjust updateRoom roomName (rooms state) }
-    where
-        updateRoom room = room { roomNPCs = filter (\n -> npcName n /= targetNpcName) (roomNPCs room) }
+-- | Update NPC state (health, status, etc)
+updateNPCState :: String -> NPCState -> GameState -> GameState
+updateNPCState targetNpcId newNpcState state = state
+    { npcStates = Map.insert targetNpcId newNpcState (npcStates state) }
+
+-- | Move NPC to void (dead)
+killNPC :: String -> GameState -> GameState
+killNPC targetNpcId state = state
+    { npcStates = Map.adjust (\s -> s { npcLocation = "void", npcStatus = "dead" }) targetNpcId (npcStates state) }
