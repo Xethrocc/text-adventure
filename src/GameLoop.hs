@@ -2,11 +2,13 @@
 module GameLoop where
 
 import Types
-import Game
 import Parser
 import System.IO
-import Control.Monad (unless)
+import Control.Exception (try, SomeException)
 import qualified Data.Map as Map
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Encode.Pretty as Aeson
+import qualified Data.ByteString.Lazy as BL
 
 -- | Main game loop function
 
@@ -26,9 +28,32 @@ gameLoop state
         hFlush stdout
         input <- getLine
         let command = parseCommand input
-        let (newState, message) = executeCommand command state
-        putStrLn message
-        gameLoop newState
+        case command of
+            Save name -> do
+                let filepath = name ++ ".json"
+                BL.writeFile filepath (Aeson.encodePretty state)
+                putStrLn $ "Game saved to " ++ filepath ++ "."
+                gameLoop state
+            Load name -> do
+                let filepath = name ++ ".json"
+                result <- try (BL.readFile filepath) :: IO (Either SomeException BL.ByteString)
+                case result of
+                    Left _ -> do
+                        putStrLn $ "Error: Could not read file '" ++ filepath ++ "'."
+                        gameLoop state
+                    Right contents -> case Aeson.decode contents of
+                        Just loadedState -> do
+                            putStrLn $ "Game loaded from " ++ filepath ++ "."
+                            let (s', msg) = executeCommand Look loadedState
+                            putStrLn msg
+                            gameLoop s'
+                        Nothing -> do
+                            putStrLn "Error: Save file is corrupted or incompatible."
+                            gameLoop state
+            _ -> do
+                let (newState, message) = executeCommand command state
+                putStrLn message
+                gameLoop newState
 
 -- | Initialize a sample game with rooms and items
 initSampleGame :: GameState

@@ -14,6 +14,8 @@ data Command
     | Inventory
     | Interact Verb String
     | InteractWith Verb String String
+    | Save String
+    | Load String
     | Help
     | Quit
     | Unknown String
@@ -63,6 +65,11 @@ parseCommand input = case words (map toLower input) of
     ["quit"]               -> Quit
     ["exit"]               -> Quit
     ["q"]                  -> Quit
+    -- Save/Load
+    ["save"]               -> Save "savegame"
+    ["save", name]         -> Save name
+    ["load"]               -> Load "savegame"
+    ["load", name]         -> Load name
     -- Complex parsing
     ["look", "at", target] -> Interact VLookAt target
     ["pick", "up", target] -> Interact VTake target
