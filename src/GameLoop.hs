@@ -1,6 +1,7 @@
 -- | Main game loop and user interaction for the text adventure engine
 module GameLoop where
 
+import Types
 import Game
 import Parser
 import System.IO
@@ -36,16 +37,18 @@ initSampleGame = GameState
     { rooms = Map.fromList
         [ ("start", Room
             { roomName = "Starting Room"
-            , roomDescription = "You are in a small stone chamber with torches on the walls. There are exits to the north and east."
+            , roomDescription = "You are in a small stone chamber with torches on the walls. There are exits to the north and east. The east door looks sturdy and has a keyhole."
             , roomItems = [Item "torch" "A burning torch that provides light." ["torch", "burning torch"]]
-            , roomConnections = Map.fromList [(North, "hallway"), (East, "treasure")]
+            , roomNPCs = [NPC "old man" "A withered old man in robes." "It's dangerous to go alone! Take... well, I don't have anything actually." ["man", "old man"]]
+            , roomConnections = Map.fromList [(North, Open "hallway"), (East, Locked "treasure" "treasure_door")]
             , roomVisited = True
             })
         , ("hallway", Room
             { roomName = "Dark Hallway"
             , roomDescription = "A long, dark hallway stretches before you. The air is damp and cold. There's an exit to the south."
-            , roomItems = []
-            , roomConnections = Map.fromList [(South, "start")]
+            , roomItems = [Item "key" "A small brass key." ["key", "brass key"]]
+            , roomNPCs = []
+            , roomConnections = Map.fromList [(South, Open "start")]
             , roomVisited = False
             })
         , ("treasure", Room
@@ -53,12 +56,18 @@ initSampleGame = GameState
             , roomDescription = "You've entered a magnificent treasure room! Gold coins and jewels are scattered everywhere. There's an exit to the west."
             , roomItems = [Item "gold" "A pile of shiny gold coins." ["gold", "coins", "gold coins"],
                           Item "jewel" "A sparkling ruby that catches the light." ["jewel", "ruby", "sparkling ruby"]]
-            , roomConnections = Map.fromList [(West, "start")]
+            , roomNPCs = []
+            , roomConnections = Map.fromList [(West, Open "start")]
             , roomVisited = False
             })
         ]
     , currentRoom = "start"
     , inventory = []
+    , entityStates = Map.singleton "treasure_door" "locked"
+    , entityInteractions = Map.fromList 
+        [ (("key", "door"), ("unlocked", "You insert the brass key into the door. It clicks open!"))
+        , (("key", "treasure_door"), ("unlocked", "You insert the brass key into the door. It clicks open!"))
+        ]
     , gameOver = False
     }
 

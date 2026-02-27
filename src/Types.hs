@@ -1,45 +1,52 @@
--- Core data types for the text adventure engine
+-- | Core data types for the text adventure engine
 module Types where
 
-import Data.Map (Map)
-import qualified Data.Map as Map
+import qualified Data.Map.Strict as Map
 
--- Direction types for navigation
+-- | Direction enumeration for movement
 data Direction = North | South | East | West | Up | Down
-    deriving (Eq, Ord, Show, Read)
+    deriving (Show, Eq, Ord, Enum, Bounded)
 
--- Item representation
+-- | Exit connection between rooms
+data Exit
+    = Open String             -- ^ Destination room name
+    | Locked String String    -- ^ Destination room name, Entity name
+    deriving (Show, Eq)
+
+-- | Game item with name, description, and recognizable keywords
 data Item = Item
     { itemName        :: String
     , itemDescription :: String
-    , itemPortable    :: Bool
-    , itemUsable      :: Bool
-    }
-    deriving (Show, Eq)
+    , itemKeywords    :: [String]
+    } deriving (Show, Eq)
 
--- Room representation
+-- | Non-player character with dialogue and behavior
+data NPC = NPC
+    { npcName        :: String
+    , npcDescription :: String
+    , npcDialogue    :: String
+    , npcKeywords    :: [String]
+    } deriving (Show, Eq)
+
+-- | Room with connections, items, NPCs, and description
 data Room = Room
     { roomName        :: String
     , roomDescription :: String
     , roomItems       :: [Item]
-    , roomExits       :: Map Direction String  -- Direction -> Destination room name
+    , roomNPCs        :: [NPC]
+    , roomConnections :: Map.Map Direction Exit
     , roomVisited     :: Bool
-    }
-    deriving (Show, Eq)
+    } deriving (Show, Eq)
 
--- Player state
-data Player = Player
-    { playerName   :: String
-    , playerHealth :: Int
-    , playerInventory :: [Item]
-    , playerLocation :: String  -- Current room name
-    }
-    deriving (Show, Eq)
+-- | Player inventory
+type Inventory = [Item]
 
--- Game state
+-- | Game state containing all rooms, current location, inventory, and entity states
 data GameState = GameState
-    { rooms      :: Map String Room
-    , player     :: Player
-    , gameOver   :: Bool
-    }
-    deriving (Show, Eq)
+    { rooms              :: Map.Map String Room
+    , currentRoom        :: String
+    , inventory          :: Inventory
+    , entityStates       :: Map.Map String String  -- ^ EntityName -> State (e.g., "door" -> "locked")
+    , entityInteractions :: Map.Map (String, String) (String, String) -- ^ (Item, Entity) -> (NewState, Message)
+    , gameOver           :: Bool
+    } deriving (Show, Eq)
