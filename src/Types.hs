@@ -13,11 +13,13 @@ data Exit
     | Locked String String    -- ^ Destination room name, Entity name
     deriving (Show, Eq)
 
--- | Game item with name, description, and recognizable keywords
+-- | Game item with name, description, recognizable keywords, valid actions, and pickability
 data Item = Item
     { itemName        :: String
     , itemDescription :: String
     , itemKeywords    :: [String]
+    , itemActions     :: [String]
+    , itemPickable    :: Bool
     } deriving (Show, Eq)
 
 -- | Non-player character with dialogue and behavior

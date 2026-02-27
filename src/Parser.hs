@@ -117,9 +117,11 @@ executeCommand (LookAt target) state = case getCurrentRoom state of
 
 executeCommand (Take target) state = case getCurrentRoom state of
     Just room -> case findMatchingItem target (roomItems room) of
-        Just item -> (pickupItem item (removeItemFromRoom (itemName item) state),
-                     "You take the " ++ itemName item ++ ".")
-        Nothing   -> (state, "You can't take that.")
+        Just item -> if itemPickable item
+            then (pickupItem item (removeItemFromRoom (itemName item) state),
+                 "You take the " ++ itemName item ++ ".")
+            else (state, "You can't take the " ++ itemName item ++ ".")
+        Nothing   -> (state, "You don't see that here.")
     Nothing -> (state, "There's nothing to take.")
     where
         findMatchingItem target items = find ((target `elem`) . itemKeywords) items
