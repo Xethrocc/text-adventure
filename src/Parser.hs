@@ -19,6 +19,7 @@ data Command = Go Direction
               | Use String
               | UseOn String String
               | Talk String
+              | Attack String
               | Quit
               | Help
               | Unknown String
@@ -60,6 +61,9 @@ parseCommand input = case words (map toLower input) of
     ["talk", "to", target]  -> Talk target
     ["speak", "with", target] -> Talk target
     ["chat", "with", target] -> Talk target
+    ["attack", target]      -> Attack target
+    ["hit", target]         -> Attack target
+    ["kill", target]        -> Attack target
     ["help"]               -> Help
     ["quit"]               -> Quit
     ["exit"]               -> Quit
@@ -164,6 +168,32 @@ executeCommand (Talk target) state = case getCurrentRoom state of
         Just npc -> (state, npcName npc ++ " says: \"" ++ npcDialogue npc ++ "\"")
         Nothing -> (state, "You see no one by that name here.")
     Nothing   -> (state, "There's no one to talk to.")
+    where
+        findMatchingNPC target npcs = find ((target `elem`) . npcKeywords) npcs
+
+executeCommand (Attack target) state = case getCurrentRoom state of
+    Just room -> case findMatchingNPC target (roomNPCs room) of
+        Just npc -> case npcHealth npc of
+            Nothing -> (state, "You can't attack the " ++ npcName npc ++ ".")
+            Just hp -> 
+                let 
+                    p = player state
+                    playerDmg = max 1 (playerAttack p - npcDefense npc)
+                    newNpcHp = hp - playerDmg
+                in if newNpcHp <= 0 
+                   then 
+                       let state' = removeNPCFromRoom (currentRoom state) (npcName npc) state
+                       in (state', "You attack the " ++ npcName npc ++ " for " ++ show playerDmg ++ " damage! The " ++ npcName npc ++ " dies!")
+                   else
+                       let 
+                           npcDmg = max 0 (npcAttack npc - playerDefense p)
+                           state' = updateNPCInRoom (currentRoom state) (npc { npcHealth = Just newNpcHp }) state
+                           state'' = updatePlayerHealth (\h -> h - npcDmg) state'
+                       in if isPlayerDead state''
+                          then (state'' { gameOver = True }, "You attack the " ++ npcName npc ++ " for " ++ show playerDmg ++ " damage. The " ++ npcName npc ++ " counterattacks for " ++ show npcDmg ++ " damage! You have died.")
+                          else (state'', "You attack the " ++ npcName npc ++ " for " ++ show playerDmg ++ " damage. The " ++ npcName npc ++ " counterattacks for " ++ show npcDmg ++ " damage! You have " ++ show (playerHealth (player state'')) ++ " HP left.")
+        Nothing -> (state, "You see no one by that name here.")
+    Nothing -> (state, "There's nothing to attack.")
     where
         findMatchingNPC target npcs = find ((target `elem`) . npcKeywords) npcs
 

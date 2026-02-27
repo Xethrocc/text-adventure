@@ -10,6 +10,7 @@ import Data.List (intercalate)
 emptyGameState :: GameState
 emptyGameState = GameState
     { rooms              = Map.empty
+    , player             = Player 100 100 10 5
     , currentRoom        = "start"
     , inventory          = []
     , entityStates       = Map.empty
@@ -71,3 +72,32 @@ getEntityState entity state = Map.lookup entity (entityStates state)
 -- | Set entity state
 setEntityState :: String -> String -> GameState -> GameState
 setEntityState entity val state = state { entityStates = Map.insert entity val (entityStates state) }
+
+-- | Update player health
+updatePlayerHealth :: (Int -> Int) -> GameState -> GameState
+updatePlayerHealth f state = 
+    let p = player state
+        newHealth = max 0 (min (playerMaxHealth p) (f (playerHealth p)))
+    in state { player = p { playerHealth = newHealth } }
+
+-- | Check if player is dead
+isPlayerDead :: GameState -> Bool
+isPlayerDead state = playerHealth (player state) <= 0
+
+-- | Update NPC in room
+updateNPCInRoom :: String -> NPC -> GameState -> GameState
+updateNPCInRoom roomName newNpc state = state
+    { rooms = Map.adjust updateRoom roomName (rooms state) }
+    where
+        updateRoom room = room { roomNPCs = replaceNPC (roomNPCs room) }
+        replaceNPC [] = []
+        replaceNPC (n:ns)
+            | npcName n == npcName newNpc = newNpc : ns
+            | otherwise = n : replaceNPC ns
+
+-- | Remove NPC from room
+removeNPCFromRoom :: String -> String -> GameState -> GameState
+removeNPCFromRoom roomName targetNpcName state = state
+    { rooms = Map.adjust updateRoom roomName (rooms state) }
+    where
+        updateRoom room = room { roomNPCs = filter (\n -> npcName n /= targetNpcName) (roomNPCs room) }

@@ -22,12 +22,23 @@ data Item = Item
     , itemPickable    :: Bool
     } deriving (Show, Eq)
 
--- | Non-player character with dialogue and behavior
+-- | Player with combat statistics
+data Player = Player
+    { playerHealth    :: Int
+    , playerMaxHealth :: Int
+    , playerAttack    :: Int
+    , playerDefense   :: Int
+    } deriving (Show, Eq)
+
+-- | Non-player character with dialogue and behavior, and optional combat stats
 data NPC = NPC
     { npcName        :: String
     , npcDescription :: String
     , npcDialogue    :: String
     , npcKeywords    :: [String]
+    , npcHealth      :: Maybe Int -- ^ Nothing if invulnerable/non-combatant
+    , npcAttack      :: Int
+    , npcDefense     :: Int
     } deriving (Show, Eq)
 
 -- | Room with connections, items, NPCs, and description
@@ -46,6 +57,7 @@ type Inventory = [Item]
 -- | Game state containing all rooms, current location, inventory, and entity states
 data GameState = GameState
     { rooms              :: Map.Map String Room
+    , player             :: Player
     , currentRoom        :: String
     , inventory          :: Inventory
     , entityStates       :: Map.Map String String  -- ^ EntityName -> State (e.g., "door" -> "locked")

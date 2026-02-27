@@ -39,7 +39,7 @@ initSampleGame = GameState
             { roomName = "Starting Room"
             , roomDescription = "You are in a small stone chamber with torches on the walls. There are exits to the north and east. The east door looks sturdy and has a keyhole."
             , roomItems = [Item "torch" "A burning torch that provides light." ["torch", "burning torch"] ["take", "examine", "drop"] True]
-            , roomNPCs = [NPC "old man" "A withered old man in robes." "It's dangerous to go alone! Take... well, I don't have anything actually." ["man", "old man"]]
+            , roomNPCs = [NPC "old man" "A withered old man in robes." "It's dangerous to go alone! Take... well, I don't have anything actually." ["man", "old man"] Nothing 0 0]
             , roomConnections = Map.fromList [(North, Open "hallway"), (East, Locked "treasure" "treasure_door")]
             , roomVisited = True
             })
@@ -47,7 +47,7 @@ initSampleGame = GameState
             { roomName = "Dark Hallway"
             , roomDescription = "A long, dark hallway stretches before you. The air is damp and cold. There's an exit to the south."
             , roomItems = [Item "key" "A small brass key." ["key", "brass key"] ["take", "examine", "use", "drop"] True]
-            , roomNPCs = []
+            , roomNPCs = [NPC "goblin" "A nasty little green goblin." "Grrr!! I will eat you!" ["goblin", "monster"] (Just 30) 8 2]
             , roomConnections = Map.fromList [(South, Open "start")]
             , roomVisited = False
             })
@@ -61,6 +61,7 @@ initSampleGame = GameState
             , roomVisited = False
             })
         ]
+    , player = Player 100 100 10 5
     , currentRoom = "start"
     , inventory = []
     , entityStates = Map.singleton "treasure_door" "locked"
