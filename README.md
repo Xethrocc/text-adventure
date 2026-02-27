@@ -81,10 +81,11 @@ The parser supports multiple synonyms:
 ### Core Data Types
 
 - **GameState**: Complete game state including rooms, player, entity states, and inventory
-- **Room**: Individual locations with descriptions, items, NPCs, and exits
+- **Room**: Individual locations with descriptions and connections (no longer holds dynamic items/NPCs directly)
 - **Player**: The player's current health and combat stats
-- **NPC**: Characters that can be talked to or fought
-- **Item**: Objects that can be picked up, used, and specify allowed interactions
+- **NPCDef** / **NPCState**: Static definitions and dynamic states for characters
+- **ItemDef** / **ItemState**: Static definitions and dynamic states for items (supports dynamic verbs and actions)
+- **Verb** / **ActionOutcome**: Dynamic actions and their results
 - **Command**: Parsed player actions
 
 ### Main Modules
@@ -105,26 +106,22 @@ To create custom adventures, modify the `initSampleGame` function in `GameLoop.h
 initMyGame :: GameState
 initMyGame = GameState
     { rooms = Map.fromList
-        [ ("start", Room
-            { roomName = "Starting Room"
-            , roomDescription = "Your starting location description"
-            , roomItems = [Item "item_name" "Item description." ["keyword1", "keyword2"] ["take", "examine", "drop"] True]
-            , roomNPCs = [NPC "goblin" "A small green goblin." "Grrr!" ["goblin", "monster"] (Just 20) 5 1]
-            , roomConnections = Map.fromList [(North, Open "room2")]
-            , roomVisited = True
-            })
-        , ("room2", Room
-            { roomName = "Second Room"
-            , roomDescription = "Another room description"
-            , roomItems = []
-            , roomNPCs = []
-            , roomConnections = Map.fromList [(South, Open "start")]
-            , roomVisited = False
-            })
+        [ ("start", Room "start" "Starting Room" "Your starting location description"
+            (Map.fromList [(North, Open "room2")]) True)
+        , ("room2", Room "room2" "Second Room" "Another room description"
+            (Map.fromList [(South, Open "start")]) False)
         ]
     , player = Player 100 100 10 5
     , currentRoom = "start"
     , inventory = []
+    , itemStates = Map.fromList 
+        [ ("item_1", ItemState "start" "intact") ]
+    , itemDefs = Map.fromList
+        [ ("item_1", ItemDef "item_1" "item_name" "Item description." ["keyword1", "keyword2"] Map.empty) ]
+    , npcStates = Map.fromList
+        [ ("goblin_1", NPCState "start" "alive" (Just 20)) ]
+    , npcDefs = Map.fromList
+        [ ("goblin_1", NPCDef "goblin_1" "goblin" "A small green goblin." (Map.singleton "alive" "Grrr!") ["goblin", "monster"] (Just 20) 5 1 Map.empty) ]
     , entityStates = Map.empty
     , entityInteractions = Map.empty
     , gameOver = False
@@ -133,20 +130,23 @@ initMyGame = GameState
 
 ### Adding Custom Commands
 
-To add new commands, modify the `parseCommand` function in `Parser.hs`:
+Thanks to the dynamic verb system, adding custom commands is often as simple as updating `Types.hs` and `Parser.hs`:
+
+1. Add your new verb to the `Verb` enum in `Types.hs`:
 
 ```haskell
-parseCommand :: String -> Command
-parseCommand input = case words (map toLower input) of
-    ["custom", arg] -> CustomCommand arg
-    _               -> Unknown input
+data Verb = VGo | VLook | VTake | VDrop | VUse | VAttack | VCustom -- Added VCustom
 ```
 
-Then implement the command in `executeCommand`:
+1. Map a word to your verb in `parseVerb` in `Parser.hs`:
 
 ```haskell
-executeCommand (CustomCommand arg) state = (state, "Custom command executed with " ++ arg ++ "!")
+parseVerb :: String -> Maybe Verb
+parseVerb "custom" = Just VCustom
+-- ...
 ```
+
+Then you can assign this verb to an `ItemDef` or `NPCDef` via their `itemVerbMap` or `npcVerbMap` to trigger specific actions (like transitioning rooms or changing states) without writing custom `executeCommand` logic for every interaction!
 
 ## Development
 
