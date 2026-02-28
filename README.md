@@ -5,7 +5,10 @@ A simple text-based adventure game engine written in Haskell.
 ## Features
 
 - **Flexible Game Engine**: Create rooms, items, NPCs, and player interactions
+- **Data-Driven Architecture**: Static definitions (ItemDef/NPCDef) separated from dynamic state (ItemState/NPCState)
+- **Dynamic Verb System**: Verbs as an ADT with synonym parsing and per-item/NPC verb maps
 - **Command Parser**: Natural language command processing with synonyms
+- **Save & Load**: Persist and restore game progress to/from pretty-printed JSON files
 - **Extensible Architecture**: Easy to add new commands and game logic
 - **Sample Adventure**: Complete working example included
 - **Haskell Best Practices**: Clean, modular code with proper type safety
@@ -62,6 +65,8 @@ Once running, use these commands:
 - `use <item>` - Use items from inventory
 - `talk to <npc>` - Interact with characters
 - `attack <npc>` - Attack an enemy in the room
+- `save [name]` - Save game progress (default: `savegame.json`)
+- `load [name]` - Load a saved game (default: `savegame.json`)
 - `help` - Show available commands
 - `quit` - Exit the game
 
@@ -74,6 +79,8 @@ The parser supports multiple synonyms:
 - Combat: `attack`, `hit`, `kill`
 - Looking: `look`, `examine`, `inspect`
 - Inventory: `inventory`, `inv`, `i`
+- Saving: `save`, `save <name>`
+- Loading: `load`, `load <name>`
 - Quitting: `quit`, `exit`, `q`
 
 ## Architecture
@@ -178,6 +185,10 @@ cabal-fmt --inplace *.hs src/*.hs
 
 - `base` (standard Haskell library)
 - `containers` (for Map data structure)
+- `aeson` (JSON serialization/deserialization)
+- `aeson-pretty` (pretty-printed JSON output)
+- `bytestring` (efficient byte-level I/O)
+- `text` (Unicode text handling)
 
 ## Contributing
 
