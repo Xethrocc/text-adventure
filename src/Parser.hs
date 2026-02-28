@@ -6,6 +6,7 @@ import Game
 import Data.Char (toLower)
 import Data.List (find, intercalate)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 
 -- | Parsed command structure
 data Command 
@@ -99,13 +100,38 @@ type CommandResult = (GameState, String)
 applyOutcome :: ActionOutcome -> ItemID -> GameState -> CommandResult
 applyOutcome (MessageOnly msg) _ state = (state, msg)
 applyOutcome (ChangeItemState newState msg) targetId state = 
-    let state' = state { itemStates = Map.adjust (\s -> s { itemStatus = newState }) targetId (itemStates state) }
+    let state' = state { save = (save state) { itemStates = Map.adjust (\s -> s { itemStatus = newState }) targetId (itemStates (save state)) } }
     in (state', msg)
 applyOutcome (ChangeNPCState newState msg) targetId state = 
-    let state' = state { npcStates = Map.adjust (\s -> s { npcStatus = newState }) targetId (npcStates state) }
+    let state' = state { save = (save state) { npcStates = Map.adjust (\s -> s { npcStatus = newState }) targetId (npcStates (save state)) } }
     in (state', msg)
 applyOutcome (TransitionRoom newRoom msg) _ state = 
     (moveToRoom newRoom state, msg)
+applyOutcome (HealPlayer amount msg) _ state = 
+    (updatePlayerHealth (+ amount) state, msg)
+applyOutcome (DamagePlayer amount msg) _ state = 
+    let state' = updatePlayerHealth (subtract amount) state
+    in (if isPlayerDead state' then state' { save = (save state') { gameOver = True } } else state', msg)
+applyOutcome (UpdateNPCHealth nId delta msg) _ state = 
+    let currentNPC = Map.lookup nId (npcStates (save state))
+    in case currentNPC of
+        Just n -> 
+            let oldHealth = fromMaybe 0 (npcHealth n)
+                newHealth = oldHealth + delta
+                state' = updateNPCState nId (n { npcHealth = Just newHealth }) state
+            in (if newHealth <= 0 then killNPC nId state' else state', msg)
+        Nothing -> (state, msg)
+applyOutcome (ModifyItemProp iId prop delta msg) _ state =
+    (modifyItemProp iId prop delta state, msg)
+applyOutcome (ModifyNPCProp nId prop delta msg) _ state =
+    (modifyNPCProp nId prop delta state, msg)
+applyOutcome (SetEntityState entity newState msg) _ state =
+    (setEntityState entity newState state, msg)
+applyOutcome (MultipleOutcomes outcomes) targetId state =
+    foldl (\(st, msgs) outcome -> 
+        let (st', msg) = applyOutcome outcome targetId st
+        in (st', if null msgs then msg else msgs ++ "\n" ++ msg)
+    ) (state, "") outcomes
 
 -- | Execute a command and return updated game state and message
 executeCommand :: Command -> GameState -> CommandResult
@@ -122,8 +148,8 @@ executeCommand (Go dir) state
 
 executeCommand Look state = case getCurrentRoom state of
     Just room -> 
-        let itemsInRoom = getItemsInLocation (currentRoom state) state
-            npcsInRoom = getNPCsInRoom (currentRoom state) state
+        let itemsInRoom = getItemsInLocation (currentRoom (save state)) state
+            npcsInRoom = getNPCsInRoom (currentRoom (save state)) state
             itemDesc = if null itemsInRoom then "\nYou see nothing of interest." else "\nYou see: " ++ intercalate ", " (map itemName itemsInRoom) ++ "."
             npcDesc = if null npcsInRoom then "" else "\nAlso here: " ++ intercalate ", " (map npcName npcsInRoom) ++ "."
         in (state, roomDescription room ++ itemDesc ++ npcDesc)
@@ -138,10 +164,10 @@ executeCommand Inventory state =
 executeCommand (Interact verb targetStr) state = 
     let 
         -- Find potential targets in room or inventory
-        roomItems = getItemsInLocation (currentRoom state) state
+        roomItems = getItemsInLocation (currentRoom (save state)) state
         invItems = getItemsInLocation "inventory" state
         allReachableItems = roomItems ++ invItems
-        roomNPCs = getNPCsInRoom (currentRoom state) state
+        roomNPCs = getNPCsInRoom (currentRoom (save state)) state
         
         targetItem = find (\i -> targetStr `elem` itemKeywords i) allReachableItems
         targetNPC = find (\n -> targetStr `elem` npcKeywords n) roomNPCs
@@ -149,12 +175,12 @@ executeCommand (Interact verb targetStr) state =
         (Just item, _) -> 
             -- Found an item target, look up its state and check verb map
             let iId = itemId item
-                currentStatus = maybe "unknown" itemStatus (Map.lookup iId (itemStates state))
+                currentStatus = maybe "unknown" itemStatus (Map.lookup iId (itemStates (save state)))
             in case Map.lookup (verb, currentStatus) (itemVerbMap item) of
                 Just outcome -> applyOutcome outcome iId state
                 Nothing -> 
                     -- Fallback hardcoded logic for basic verbs if missing from map (for backwards compatibility/ease)
-                    if verb == VTake && itemLocation (itemStates state Map.! iId) /= "inventory"
+                    if verb == VTake && itemLocation (itemStates (save state) Map.! iId) /= "inventory"
                     then (pickupItem iId state, "You take the " ++ itemName item ++ ".")
                     else if verb == VDrop && hasItem iId state
                     then (dropItem iId state, "You drop the " ++ itemName item ++ ".")
@@ -163,7 +189,7 @@ executeCommand (Interact verb targetStr) state =
         (Nothing, Just npc) -> 
             -- Found an NPC target
             let nId = npcId npc
-                currentStatus = maybe "unknown" npcStatus (Map.lookup nId (npcStates state))
+                currentStatus = maybe "unknown" npcStatus (Map.lookup nId (npcStates (save state)))
             in case Map.lookup (verb, currentStatus) (npcVerbMap npc) of
                 Just outcome -> applyOutcome outcome nId state
                 Nothing -> 
@@ -173,21 +199,21 @@ executeCommand (Interact verb targetStr) state =
                             Just speech -> (state, npcName npc ++ " says: \"" ++ speech ++ "\"")
                             Nothing -> (state, npcName npc ++ " has nothing to say.")
                     else if verb == VAttack 
-                    then case npcHealth (npcStates state Map.! nId) of
+                    then case npcHealth (npcStates (save state) Map.! nId) of
                             Nothing -> (state, "You can't attack the " ++ npcName npc ++ ".")
                             Just hp -> 
                                 let 
-                                    p = player state
+                                    p = player (save state)
                                     playerDmg = max 1 (playerAttack p - npcAttackBase npc) -- Simplified
                                     newHp = hp - playerDmg
                                 in if newHp <= 0 
                                    then (killNPC nId state, "You attack the " ++ targetStr ++ " and kill it!")
                                    else 
                                         let npcDmg = max 0 (npcAttackBase npc - playerDefense p)
-                                            state' = updateNPCState nId ((npcStates state Map.! nId) { npcHealth = Just newHp }) state
+                                            state' = updateNPCState nId ((npcStates (save state) Map.! nId) { npcHealth = Just newHp }) state
                                             state'' = updatePlayerHealth (\h -> h - npcDmg) state'
                                         in if isPlayerDead state''
-                                           then (state'' { gameOver = True }, "You die!")
+                                           then (state'' { save = (save state'') { gameOver = True } }, "You die!")
                                            else (state'', "You hit for " ++ show playerDmg ++ ", it hits you for " ++ show npcDmg)
                     else (state, "You can't do that to " ++ npcName npc ++ ".")
         
@@ -195,10 +221,13 @@ executeCommand (Interact verb targetStr) state =
 
 
 executeCommand (InteractWith verb itemStr entityStr) state = 
-    -- Left mostly as a stub since UseOn was specialized before; ideally handled via verb map too
-    (state, "Complex interactions not fully mapped yet.")
+    case Map.lookup (itemStr, entityStr) (entityInteractions (world state)) of
+        Just (newState, msg) -> 
+            let state' = setEntityState entityStr newState state 
+            in (state', msg)
+        Nothing -> (state, "Nothing happens.")
 
 executeCommand Help state = (state, "Available commands: go [direction], look, look at [item/npc], take [item], drop [item], inventory, talk to [npc], attack [npc], help, quit")
-executeCommand Quit state = (state { gameOver = True }, "Goodbye!")
+executeCommand Quit state = (state { save = (save state) { gameOver = True } }, "Goodbye!")
 executeCommand (Unknown cmd) state = (state, "I don't understand '" ++ cmd ++ "'. Type 'help' for available commands.")
 executeCommand _ state = (state, "Command not implemented yet.")

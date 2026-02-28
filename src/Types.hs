@@ -40,6 +40,13 @@ data ActionOutcome
     | ChangeItemState String String -- ^ New State, Message
     | ChangeNPCState String String  -- ^ New State, Message
     | TransitionRoom String String  -- ^ New RoomID, Message
+    | HealPlayer Int String         -- ^ Health to add, Message
+    | DamagePlayer Int String       -- ^ Damage to deal, Message
+    | UpdateNPCHealth String Int String -- ^ NPC ID, health delta (+/-), Message
+    | ModifyItemProp String String Int String -- ^ Item ID, Prop Name, delta (+/-), Message
+    | ModifyNPCProp String String Int String  -- ^ NPC ID, Prop Name, delta (+/-), Message
+    | SetEntityState String String String -- ^ Entity, New State, Message
+    | MultipleOutcomes [ActionOutcome]
     deriving (Show, Eq, Generic)
 
 instance ToJSON ActionOutcome
@@ -97,6 +104,7 @@ instance FromJSON ItemDef where
 data ItemState = ItemState
     { itemLocation :: RoomID  -- ^ The room ID, or "inventory", or "consumed"
     , itemStatus   :: String  -- ^ e.g., "intact", "burned", "open"
+    , itemProps    :: Map.Map String Int -- ^ Generic integer properties (e.g. "uses_left" -> 3) 
     } deriving (Show, Eq, Generic)
 
 instance ToJSON ItemState
@@ -145,6 +153,7 @@ data NPCState = NPCState
     { npcLocation :: RoomID
     , npcStatus   :: String    -- ^ e.g., "alive", "dead", "sleeping"
     , npcHealth   :: Maybe Int -- ^ Current health
+    , npcProps    :: Map.Map String Int -- ^ Generic properties
     } deriving (Show, Eq, Generic)
 
 instance ToJSON NPCState
@@ -194,46 +203,45 @@ tupleMapFromJSON v = do
         Right pairs -> pure $ Map.fromList pairs
         Left err    -> fail err
 
--- | Game state containing all rooms, current location, inventory, and entity states
-data GameState = GameState
+-- | Static world definition containing blueprint/map data
+data GameWorld = GameWorld
     { rooms              :: Map.Map RoomID Room
-    , player             :: Player
+    , itemDefs           :: Map.Map ItemID ItemDef
+    , npcDefs            :: Map.Map String NPCDef
+    , entityInteractions :: Map.Map (String, String) (String, String) -- ^ (Item, Entity) -> (NewState, Message)
+    } deriving (Show, Eq)
+
+instance ToJSON GameWorld where
+    toJSON gw = object
+        [ "rooms"              .= rooms gw
+        , "itemDefs"           .= itemDefs gw
+        , "npcDefs"            .= npcDefs gw
+        , "entityInteractions" .= tupleMapToJSON (entityInteractions gw)
+        ]
+
+instance FromJSON GameWorld where
+    parseJSON = withObject "GameWorld" $ \o -> GameWorld
+        <$> o .: "rooms"
+        <*> o .: "itemDefs"
+        <*> o .: "npcDefs"
+        <*> (o .: "entityInteractions" >>= tupleMapFromJSON)
+
+-- | Dynamic state of an active playthrough
+data SaveState = SaveState
+    { player             :: Player
     , currentRoom        :: RoomID
     , inventory          :: Inventory
     , itemStates         :: Map.Map ItemID ItemState
-    , itemDefs           :: Map.Map ItemID ItemDef
     , npcStates          :: Map.Map String NPCState
-    , npcDefs            :: Map.Map String NPCDef
     , entityStates       :: Map.Map String String  -- ^ EntityName -> State (e.g., "door" -> "locked")
-    , entityInteractions :: Map.Map (String, String) (String, String) -- ^ (Item, Entity) -> (NewState, Message)
     , gameOver           :: Bool
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON SaveState
+instance FromJSON SaveState
+
+-- | Combined game state holding both world and save
+data GameState = GameState
+    { world :: GameWorld
+    , save  :: SaveState
     } deriving (Show, Eq)
-
-instance ToJSON GameState where
-    toJSON gs = object
-        [ "rooms"              .= rooms gs
-        , "player"             .= player gs
-        , "currentRoom"        .= currentRoom gs
-        , "inventory"          .= inventory gs
-        , "itemStates"         .= itemStates gs
-        , "itemDefs"           .= itemDefs gs
-        , "npcStates"          .= npcStates gs
-        , "npcDefs"            .= npcDefs gs
-        , "entityStates"       .= entityStates gs
-        , "entityInteractions" .= tupleMapToJSON (entityInteractions gs)
-        , "gameOver"           .= gameOver gs
-        ]
-
-instance FromJSON GameState where
-    parseJSON = withObject "GameState" $ \o -> GameState
-        <$> o .: "rooms"
-        <*> o .: "player"
-        <*> o .: "currentRoom"
-        <*> o .: "inventory"
-        <*> o .: "itemStates"
-        <*> o .: "itemDefs"
-        <*> o .: "npcStates"
-        <*> o .: "npcDefs"
-        <*> o .: "entityStates"
-        <*> (o .: "entityInteractions" >>= tupleMapFromJSON)
-        <*> o .: "gameOver"

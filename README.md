@@ -5,10 +5,11 @@ A simple text-based adventure game engine written in Haskell.
 ## Features
 
 - **Flexible Game Engine**: Create rooms, items, NPCs, and player interactions
-- **Data-Driven Architecture**: Static definitions (ItemDef/NPCDef) separated from dynamic state (ItemState/NPCState)
-- **Dynamic Verb System**: Verbs as an ADT with synonym parsing and per-item/NPC verb maps
-- **Command Parser**: Natural language command processing with synonyms
-- **Save & Load**: Persist and restore game progress to/from pretty-printed JSON files
+- **Architectural Separation**: Strict separation between `GameWorld` (static map/item metadata) and `SaveState` (dynamic variables, player inventory) enabling pure JSON/YAML world creation.
+- **Data-Driven Interactions**: Complex sequences involving `HealPlayer`, `ModifyItemProp`, etc., are processed entirely generically without modifying Haskell codebase.
+- **Dynamic Verb System**: Verbs as an ADT with synonym parsing and per-item/NPC verb maps.
+- **Command Parser**: Natural language command processing with synonyms.
+- **Save & Load**: Fast JSON saves that only persist the active `SaveState` without duplicating static `GameWorld` data.
 - **Extensible Architecture**: Easy to add new commands and game logic
 - **Sample Adventure**: Complete working example included
 - **Haskell Best Practices**: Clean, modular code with proper type safety
@@ -87,13 +88,13 @@ The parser supports multiple synonyms:
 
 ### Core Data Types
 
-- **GameState**: Complete game state including rooms, player, entity states, and inventory
-- **Room**: Individual locations with descriptions and connections (no longer holds dynamic items/NPCs directly)
-- **Player**: The player's current health and combat stats
-- **NPCDef** / **NPCState**: Static definitions and dynamic states for characters
-- **ItemDef** / **ItemState**: Static definitions and dynamic states for items (supports dynamic verbs and actions)
-- **Verb** / **ActionOutcome**: Dynamic actions and their results
-- **Command**: Parsed player actions
+- **GameWorld**: The static blueprint of the game. Holds immutable definitions like `Room`, `ItemDef`, `NPCDef`, and `entityInteractions`.
+- **SaveState**: The active, dynamic data that changes as you play. Holds the `Player` stats, `inventory`, `currentRoom`, and the mutable properties inside `ItemState`/`NPCState`.
+- **GameState**: A unified wrapper holding both the active `GameWorld` and the current `SaveState`.
+- **ItemDef** / **ItemState**: Static definitions and dynamic states for items. Now enhanced with dynamic generic `itemProps` (like `uses_left = 3`) that can be interacted with exclusively through JSON without hardcoded logic.
+- **NPCDef** / **NPCState**: Static definitions and dynamic states for characters, also enhanced with dynamic numeric properties `npcProps`.
+- **Verb** / **ActionOutcome**: Dynamic actions and their results. Supports complex operations like `HealPlayer Int`, `ModifyItemProp String String Int`, and `MultipleOutcomes`.
+- **Command**: Parsed player actions.
 
 ### Main Modules
 
