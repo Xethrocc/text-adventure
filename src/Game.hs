@@ -3,8 +3,6 @@ module Game where
 
 import Types
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
-import Data.List (intercalate)
 
 -- | Default empty game state
 emptyGameState :: GameState
@@ -38,29 +36,43 @@ getItemsInLocation loc state =
 
 -- | Check if player has an item in inventory
 hasItem :: ItemID -> GameState -> Bool
-hasItem iId state = iId `elem` inventory (save state)
+hasItem iId state = case Map.lookup iId (itemStates (save state)) of
+    Just itemState -> itemLocation itemState == "inventory"
+    Nothing        -> False
+
+syncInventory :: SaveState -> SaveState
+syncInventory saveState =
+    saveState
+        { inventory =
+            Map.keys
+                (Map.filter (\itemState -> itemLocation itemState == "inventory") (itemStates saveState))
+        }
 
 -- | Move player to a different room
 moveToRoom :: RoomID -> GameState -> GameState
-moveToRoom roomName state = state { save = (save state) { currentRoom = roomName } }
+moveToRoom destinationRoom state = state { save = (save state) { currentRoom = destinationRoom } }
 
 -- | Add item to player's inventory
 pickupItem :: ItemID -> GameState -> GameState
-pickupItem iId state = state 
-    { save = (save state) 
-        { inventory = iId : inventory (save state) 
-        , itemStates = Map.adjust (\s -> s { itemLocation = "inventory" }) iId (itemStates (save state))
-        }
-    }
+pickupItem iId state =
+    let saveState = save state
+        updatedSave =
+            saveState
+                { itemStates =
+                    Map.adjust (\s -> s { itemLocation = "inventory" }) iId (itemStates saveState)
+                }
+    in state { save = syncInventory updatedSave }
 
 -- | Remove item from player's inventory to current room
 dropItem :: ItemID -> GameState -> GameState
-dropItem iId state = state 
-    { save = (save state)
-        { inventory = filter (/= iId) (inventory (save state)) 
-        , itemStates = Map.adjust (\s -> s { itemLocation = currentRoom (save state) }) iId (itemStates (save state))
-        }
-    }
+dropItem iId state =
+    let saveState = save state
+        updatedSave =
+            saveState
+                { itemStates =
+                    Map.adjust (\s -> s { itemLocation = currentRoom saveState }) iId (itemStates saveState)
+                }
+    in state { save = syncInventory updatedSave }
 
 -- | Check if a direction is valid from current room
 canMove :: Direction -> GameState -> Bool

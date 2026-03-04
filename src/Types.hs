@@ -71,7 +71,7 @@ verbStateMapFromJSON v = do
                 Right ((verb, st), _) -> Right ((verb, st), val)
                 Left err              -> Left err
               ) (Map.toList m) of
-        Right pairs -> pure $ Map.fromList pairs
+        Right parsedPairs -> pure $ Map.fromList parsedPairs
         Left err    -> fail err
 
 -- | Static item definition (loaded from JSON)
@@ -200,7 +200,7 @@ tupleMapFromJSON v = do
                 (Left err, _)            -> Left err
                 _                        -> Left $ "Bad value for key: " ++ k
               ) (Map.toList m) of
-        Right pairs -> pure $ Map.fromList pairs
+        Right parsedPairs -> pure $ Map.fromList parsedPairs
         Left err    -> fail err
 
 -- | Static world definition containing blueprint/map data

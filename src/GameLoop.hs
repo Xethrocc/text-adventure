@@ -2,13 +2,95 @@
 module GameLoop where
 
 import Types
-import Parser
-import System.IO
+import Game
+import Parser hiding (reachableExitEntities)
 import Control.Exception (try, SomeException)
+import Data.Char (toLower)
+import Data.List (isPrefixOf, nub)
 import qualified Data.Map as Map
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encode.Pretty as Aeson
 import qualified Data.ByteString.Lazy as BL
+import System.Console.Haskeline
+
+commandWords :: [String]
+commandWords =
+    [ "go", "move", "walk", "look", "examine", "inspect", "read", "take", "pick", "drop", "put"
+    , "inventory", "inv", "i", "use", "talk", "speak", "attack", "hit", "kill"
+    , "save", "load", "help", "quit", "exit", "q"
+    ]
+
+directionWords :: [String]
+directionWords = ["north", "south", "east", "west", "up", "down"]
+
+completionItems :: [String] -> String -> [Completion]
+completionItems options prefix =
+    let loweredPrefix = map toLower prefix
+    in map simpleCompletion (filter (\opt -> loweredPrefix `isPrefixOf` map toLower opt) (nub options))
+
+itemCompletionTerms :: [ItemDef] -> [String]
+itemCompletionTerms items = nub (concatMap (\i -> itemName i : itemKeywords i) items)
+
+npcCompletionTerms :: [NPCDef] -> [String]
+npcCompletionTerms npcs = nub (concatMap (\n -> npcName n : npcKeywords n) npcs)
+
+roomTargets :: GameState -> [String]
+roomTargets state =
+    let currentRoomId = currentRoom (save state)
+        roomItems = getItemsInLocation currentRoomId state
+        roomNpcs = getNPCsInRoom currentRoomId state
+    in nub (itemCompletionTerms roomItems ++ npcCompletionTerms roomNpcs)
+
+inventoryTargets :: GameState -> [String]
+inventoryTargets state = itemCompletionTerms (getItemsInLocation "inventory" state)
+
+reachableExitEntities :: GameState -> [String]
+reachableExitEntities state = case getCurrentRoom state of
+    Just room -> [entity | Locked _ entity <- Map.elems (roomConnections room)]
+    Nothing   -> []
+
+entityTargets :: GameState -> [String]
+entityTargets state =
+    let exits = reachableExitEntities state
+        doorAliases = if null exits then [] else ["door", "locked door"]
+    in nub (roomTargets state ++ exits ++ doorAliases)
+
+contextualSuggestions :: GameState -> [String] -> [String]
+contextualSuggestions state prevWords = case prevWords of
+    [] -> commandWords ++ directionWords
+    ("go" : _) -> directionWords
+    ("move" : _) -> directionWords
+    ("walk" : _) -> directionWords
+    ("look" : "at" : _) -> roomTargets state
+    ("talk" : "to" : _) -> npcCompletionTerms (getNPCsInRoom (currentRoom (save state)) state)
+    ("speak" : "with" : _) -> npcCompletionTerms (getNPCsInRoom (currentRoom (save state)) state)
+    ("pick" : "up" : _) -> roomTargets state
+    ("put" : "down" : _) -> inventoryTargets state
+    ("use" : _)
+        | "on" `elem` prevWords || "with" `elem` prevWords -> entityTargets state
+        | otherwise -> inventoryTargets state
+    (verb : _)
+        | verb `elem` ["take", "drop", "attack", "hit", "kill", "examine", "inspect", "read"] ->
+            roomTargets state ++ inventoryTargets state
+        | otherwise -> commandWords ++ directionWords ++ roomTargets state ++ entityTargets state ++ inventoryTargets state
+
+commandCompletion :: GameState -> CompletionFunc IO
+commandCompletion state (left, _) = do
+    let loweredLeft = map toLower left
+        tokens = words loweredLeft
+        (prevWords, currentWord)
+            | not (null loweredLeft) && last loweredLeft /= ' ' && not (null tokens) =
+                (init tokens, last tokens)
+            | otherwise = (tokens, "")
+        suggestions = contextualSuggestions state prevWords
+    pure (currentWord, completionItems suggestions currentWord)
+
+haskelineSettings :: GameState -> Settings IO
+haskelineSettings state =
+    (defaultSettings :: Settings IO)
+        { autoAddHistory = True
+        , complete = commandCompletion state
+        }
 
 -- | Main game loop function
 
@@ -24,37 +106,41 @@ gameLoop :: GameState -> IO ()
 gameLoop state
     | gameOver (save state) = return ()
     | otherwise      = do
-        putStr "> "
-        hFlush stdout
-        input <- getLine
-        let command = parseCommand input
-        case command of
-            Save name -> do
-                let filepath = name ++ ".json"
-                BL.writeFile filepath (Aeson.encodePretty (save state))
-                putStrLn $ "Game saved to " ++ filepath ++ "."
-                gameLoop state
-            Load name -> do
-                let filepath = name ++ ".json"
-                result <- try (BL.readFile filepath) :: IO (Either SomeException BL.ByteString)
-                case result of
-                    Left _ -> do
-                        putStrLn $ "Error: Could not read file '" ++ filepath ++ "'."
-                        gameLoop state
-                    Right contents -> case Aeson.decode contents of
-                        Just loadedSave -> do
-                            putStrLn $ "Game loaded from " ++ filepath ++ "."
-                            let loadedState = state { save = loadedSave }
-                            let (s', msg) = executeCommand Look loadedState
-                            putStrLn msg
-                            gameLoop s'
-                        Nothing -> do
-                            putStrLn "Error: Save file is corrupted or incompatible."
-                            gameLoop state
-            _ -> do
-                let (newState, message) = executeCommand command state
+        inputResult <- runInputT (haskelineSettings state) (getInputLine "> ")
+        case inputResult of
+            Nothing -> do
+                let (newState, message) = executeCommand Quit state
                 putStrLn message
                 gameLoop newState
+            Just input -> do
+                let command = parseCommand input
+                case command of
+                    Save name -> do
+                        let filepath = name ++ ".json"
+                        BL.writeFile filepath (Aeson.encodePretty (save state))
+                        putStrLn $ "Game saved to " ++ filepath ++ "."
+                        gameLoop state
+                    Load name -> do
+                        let filepath = name ++ ".json"
+                        result <- try (BL.readFile filepath) :: IO (Either SomeException BL.ByteString)
+                        case result of
+                            Left _ -> do
+                                putStrLn $ "Error: Could not read file '" ++ filepath ++ "'."
+                                gameLoop state
+                            Right contents -> case Aeson.decode contents of
+                                Just loadedSave -> do
+                                    putStrLn $ "Game loaded from " ++ filepath ++ "."
+                                    let loadedState = state { save = syncInventory loadedSave }
+                                    let (s', msg) = executeCommand Look loadedState
+                                    putStrLn msg
+                                    gameLoop s'
+                                Nothing -> do
+                                    putStrLn "Error: Save file is corrupted or incompatible."
+                                    gameLoop state
+                    _ -> do
+                        let (newState, message) = executeCommand command state
+                        putStrLn message
+                        gameLoop newState
 
 -- | Initialize a sample game with rooms and items
 initSampleGame :: GameState

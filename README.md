@@ -70,6 +70,7 @@ Once running, use these commands:
 - `load [name]` - Load a saved game (default: `savegame.json`)
 - `help` - Show available commands
 - `quit` - Exit the game
+- Press `Tab` while typing to auto-complete commands, directions, and reachable targets
 
 ### Game Commands
 
@@ -83,6 +84,8 @@ The parser supports multiple synonyms:
 - Saving: `save`, `save <name>`
 - Loading: `load`, `load <name>`
 - Quitting: `quit`, `exit`, `q`
+
+Multi-word targets are supported (for example: `look at old man`, `take healing potion`, `use brass key on treasure door`).
 
 ## Architecture
 
