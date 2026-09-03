@@ -1,6 +1,6 @@
 cabal-version:       3.0
 name:                text-adventure
-version:             0.1.0.0
+version:             0.2.0.0
 synopsis:            A simple text-based adventure game engine written in Haskell
 description:         A simple text-based adventure game engine written in Haskell. This package provides a flexible framework for creating interactive text adventures with rooms, items, NPCs, and player commands.
 homepage:            https://github.com/Xethrocc/text-adventure
@@ -14,31 +14,38 @@ extra-source-files:
     README.md
     CHANGELOG.md
 
-executable text-adventure
-  main-is:             Main.hs
-  other-modules:       Game, GameLoop, Parser, Types
+library
+  exposed-modules:     Types, Game, GameLoop, Parser
   hs-source-dirs:      src
   build-depends:       base >=4.12 && <5,
-                       containers >=0.6 && <0.7,
+                       containers >=0.6 && <0.8,
                        aeson >=2.0 && <3,
                        aeson-pretty >=0.8 && <1,
                        bytestring >=0.10 && <1,
                        text >=1.2 && <3,
-                       haskeline >=0.8 && <1
+                       haskeline >=0.8 && <1,
+                       time >=1.9 && <2,
+                       directory >=1.3 && <2
+  default-language:    Haskell2010
+  ghc-options:         -Wall
+
+executable text-adventure
+  main-is:             Main.hs
+  hs-source-dirs:      app
+  build-depends:       base >=4.12 && <5,
+                       text-adventure
   default-language:    Haskell2010
   ghc-options:         -Wall
 
 test-suite text-adventure-tests
   type:                exitcode-stdio-1.0
   main-is:             Tests.hs
-  other-modules:       Game, GameLoop, Parser, Types
-  hs-source-dirs:      src, test
+  hs-source-dirs:      test
   build-depends:       base >=4.12 && <5,
-                       containers >=0.6 && <0.7,
+                       text-adventure,
                        aeson >=2.0 && <3,
-                       aeson-pretty >=0.8 && <1,
                        bytestring >=0.10 && <1,
-                       text >=1.2 && <3,
+                       containers >=0.6 && <0.8,
                        haskeline >=0.8 && <1
   default-language:    Haskell2010
   ghc-options:         -Wall

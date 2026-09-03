@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ghc: ['9.6', '9.8']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Haskell
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: ${{ matrix.ghc }}
+
+      - name: Cache cabal packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cabal/packages
+            ~/.cabal/store
+            dist-newstyle
+          key: ${{ runner.os }}-ghc-${{ matrix.ghc }}-${{ hashFiles('text-adventure.cabal') }}
+          restore-keys: |
+            ${{ runner.os }}-ghc-${{ matrix.ghc }}-
+
+      - name: Update cabal index
+        run: cabal update
+
+      - name: Build
+        run: cabal build --enable-tests
+
+      - name: Run tests
+        run: cabal test --enable-coverage --test-show-details=streaming
+
+      - name: Upload coverage report
+        if: matrix.ghc == '9.8'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hpc-coverage
+          path: dist-newstyle/**/hpc/

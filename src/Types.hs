@@ -8,6 +8,7 @@ import qualified Data.Map.Strict as Map
 import GHC.Generics (Generic)
 import Data.Aeson
 import Data.Aeson.Types (Parser)
+import Data.Bits (xor, shiftR)
 
 -- | Direction enumeration for movement
 data Direction = North | South | East | West | Up | Down
@@ -34,19 +35,36 @@ data Verb = VGo | VLook | VLookAt | VTake | VDrop | VInventory | VUse | VUseOn |
 instance ToJSON Verb
 instance FromJSON Verb
 
+-- | Reason the game ended
+data GameOverReason = Victory | Death | Custom String
+    deriving (Show, Eq, Generic)
+
+instance ToJSON GameOverReason
+instance FromJSON GameOverReason
+
 -- | Action Outcome representing the result of an interaction
 data ActionOutcome 
     = MessageOnly String
-    | ChangeItemState String String -- ^ New State, Message
-    | ChangeNPCState String String  -- ^ New State, Message
-    | TransitionRoom String String  -- ^ New RoomID, Message
-    | HealPlayer Int String         -- ^ Health to add, Message
-    | DamagePlayer Int String       -- ^ Damage to deal, Message
-    | UpdateNPCHealth String Int String -- ^ NPC ID, health delta (+/-), Message
+    | ChangeItemState String String       -- ^ New State, Message
+    | ChangeNPCState String String        -- ^ New State, Message
+    | TransitionRoom String String        -- ^ New RoomID, Message
+    | HealPlayer Int String               -- ^ Health to add, Message
+    | DamagePlayer Int String             -- ^ Damage to deal, Message
+    | UpdateNPCHealth String Int String   -- ^ NPC ID, health delta (+/-), Message
     | ModifyItemProp String String Int String -- ^ Item ID, Prop Name, delta (+/-), Message
     | ModifyNPCProp String String Int String  -- ^ NPC ID, Prop Name, delta (+/-), Message
     | SetEntityState String String String -- ^ Entity, New State, Message
     | MultipleOutcomes [ActionOutcome]
+    -- New outcome constructors
+    | GiveItem ItemID String              -- ^ Add item to player inventory, Message
+    | MoveItem ItemID RoomID String       -- ^ Move item to a room (loot drops), Message
+    | ConsumeItem ItemID String           -- ^ Remove item from play entirely (location → "consumed"), Message
+    | MoveNPC String RoomID String        -- ^ Move NPC to a different room, Message
+    | SetRoomVisited RoomID Bool String   -- ^ Mark room visited/unvisited, Message
+    | SetFlag String String String        -- ^ Flag name, value, Message
+    | CheckFlag String String ActionOutcome ActionOutcome -- ^ Flag, expected value, then-branch, else-branch
+    | RandomChoice [ActionOutcome]        -- ^ Pick one outcome deterministically via game-state hash
+    | GameEnd GameOverReason String       -- ^ End the game with a reason, Message
     deriving (Show, Eq, Generic)
 
 instance ToJSON ActionOutcome
@@ -234,14 +252,94 @@ data SaveState = SaveState
     , itemStates         :: Map.Map ItemID ItemState
     , npcStates          :: Map.Map String NPCState
     , entityStates       :: Map.Map String String  -- ^ EntityName -> State (e.g., "door" -> "locked")
+    , flags              :: Map.Map String String   -- ^ General-purpose flags for data-driven conditionals
+    , turnCount          :: Int                     -- ^ Number of commands executed (drives deterministic RNG)
     , gameOver           :: Bool
+    , gameOverReason     :: Maybe GameOverReason    -- ^ Why the game ended (Nothing while playing)
     } deriving (Show, Eq, Generic)
 
-instance ToJSON SaveState
-instance FromJSON SaveState
+-- Custom JSON instances for backward compatibility with old saves
+instance ToJSON SaveState where
+    toJSON ss = object
+        [ "player"         .= player ss
+        , "currentRoom"    .= currentRoom ss
+        , "inventory"      .= inventory ss
+        , "itemStates"     .= itemStates ss
+        , "npcStates"      .= npcStates ss
+        , "entityStates"   .= entityStates ss
+        , "flags"          .= flags ss
+        , "turnCount"      .= turnCount ss
+        , "gameOver"       .= gameOver ss
+        , "gameOverReason" .= gameOverReason ss
+        ]
+
+instance FromJSON SaveState where
+    parseJSON = withObject "SaveState" $ \o -> SaveState
+        <$> o .:  "player"
+        <*> o .:  "currentRoom"
+        <*> o .:  "inventory"
+        <*> o .:  "itemStates"
+        <*> o .:  "npcStates"
+        <*> o .:  "entityStates"
+        <*> o .:? "flags"          .!= Map.empty
+        <*> o .:? "turnCount"      .!= 0
+        <*> o .:  "gameOver"
+        <*> o .:? "gameOverReason" .!= Nothing
+
+-- | Save file wrapper with metadata for save slots
+data SaveFile = SaveFile
+    { saveVersion    :: Int          -- ^ Schema version for migration
+    , saveTimestamp  :: String       -- ^ ISO 8601 timestamp
+    , worldChecksum  :: String       -- ^ Hash of serialized GameWorld for compatibility check
+    , saveName       :: String       -- ^ User-chosen slot name
+    , saveData       :: SaveState    -- ^ The actual save data
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON SaveFile
+instance FromJSON SaveFile
 
 -- | Combined game state holding both world and save
 data GameState = GameState
     { world :: GameWorld
     , save  :: SaveState
     } deriving (Show, Eq)
+
+-- ---------------------------------------------------------------------------
+-- Deterministic pseudo-random number generation from game state
+-- ---------------------------------------------------------------------------
+-- Instead of threading a StdGen, we derive "randomness" from a hash of
+-- observable game-state variables.  The turnCount provides the primary
+-- varying input; room, inventory size, and player HP add extra entropy
+-- so identical turn numbers across different playthroughs diverge.
+--
+-- A Murmur3-style finalizer mixes the bits.  The salt parameter lets
+-- multiple RandomChoice outcomes in the same turn produce different values.
+
+-- | Mix an integer through a Murmur3-style finalizer for good bit distribution
+mixHash :: Int -> Int
+mixHash x0 =
+    let x1 = (x0 `xor` (x0 `shiftR` 16)) * 0x45d9f3b
+        x2 = (x1 `xor` (x1 `shiftR` 16)) * 0x45d9f3b
+    in x2 `xor` (x2 `shiftR` 16)
+
+-- | Derive a deterministic pseudo-random non-negative Int from the current game state.
+--   The salt parameter differentiates multiple random draws within the same turn.
+gameRandom :: GameState -> Int -> Int
+gameRandom state salt =
+    let tc      = turnCount (save state)
+        roomVal = foldl (\acc c -> acc * 31 + fromEnum c) 0 (currentRoom (save state))
+        invCnt  = length (inventory (save state))
+        hp      = playerHealth (player (save state))
+        -- Combine inputs with large coprime multipliers to spread bits
+        combined = tc      * 2654435761   -- golden ratio constant
+                 + roomVal * 1442695040888963407
+                 + invCnt  * 31
+                 + hp      * 17
+                 + salt
+    in abs (mixHash combined)
+
+-- | Pick an index from [0 .. n-1] using the game-state-derived RNG
+gameRandomIndex :: GameState -> Int -> Int -> Int
+gameRandomIndex state salt n
+    | n <= 0    = 0
+    | otherwise = gameRandom state salt `mod` n

@@ -20,7 +20,10 @@ emptyGameState = GameState
         , itemStates         = Map.empty
         , npcStates          = Map.empty
         , entityStates       = Map.empty
+        , flags              = Map.empty
+        , turnCount          = 0
         , gameOver           = False
+        , gameOverReason     = Nothing
         }
     }
 
@@ -136,3 +139,77 @@ modifyNPCProp nId prop delta state = state
         let currentVal = Map.findWithDefault 0 prop (npcProps s)
         in s { npcProps = Map.insert prop (currentVal + delta) (npcProps s) }
         ) nId (npcStates (save state)) } }
+
+-- | Give item directly to player inventory (e.g., NPC reward, loot)
+giveItem :: ItemID -> GameState -> GameState
+giveItem iId state =
+    let saveState = save state
+        updatedSave = saveState
+            { itemStates = Map.adjust (\s -> s { itemLocation = "inventory" }) iId (itemStates saveState) }
+    in state { save = syncInventory updatedSave }
+
+-- | Move an item to a specific room (e.g., loot drop)
+moveItemToRoom :: ItemID -> RoomID -> GameState -> GameState
+moveItemToRoom iId targetRoom state =
+    let saveState = save state
+        updatedSave = saveState
+            { itemStates = Map.adjust (\s -> s { itemLocation = targetRoom }) iId (itemStates saveState) }
+    in state { save = syncInventory updatedSave }
+
+-- | Consume an item, removing it from play entirely
+consumeItem :: ItemID -> GameState -> GameState
+consumeItem iId state =
+    let saveState = save state
+        updatedSave = saveState
+            { itemStates = Map.adjust (\s -> s { itemLocation = "consumed" }) iId (itemStates saveState) }
+    in state { save = syncInventory updatedSave }
+
+-- | Move an NPC to a different room
+moveNPCToRoom :: String -> RoomID -> GameState -> GameState
+moveNPCToRoom nId targetRoom state = state
+    { save = (save state) { npcStates = Map.adjust (\s -> s { npcLocation = targetRoom }) nId (npcStates (save state)) } }
+
+-- | Set a room's visited flag
+setRoomVisitedFlag :: RoomID -> Bool -> GameState -> GameState
+setRoomVisitedFlag rId visited state = state
+    { world = (world state) { rooms = Map.adjust (\r -> r { roomVisited = visited }) rId (rooms (world state)) } }
+
+-- | Set a general-purpose flag
+setFlag :: String -> String -> GameState -> GameState
+setFlag flagName flagValue state = state
+    { save = (save state) { flags = Map.insert flagName flagValue (flags (save state)) } }
+
+-- | Get a general-purpose flag
+getFlag :: String -> GameState -> Maybe String
+getFlag flagName state = Map.lookup flagName (flags (save state))
+
+-- | End the game with a reason
+endGame :: GameOverReason -> GameState -> GameState
+endGame reason state = state
+    { save = (save state) { gameOver = True, gameOverReason = Just reason } }
+
+-- | Increment the turn counter (called once per command)
+incrementTurnCount :: GameState -> GameState
+incrementTurnCount state = state
+    { save = (save state) { turnCount = turnCount (save state) + 1 } }
+
+-- | Clamp NPC health to its max health from the definition
+clampNPCHealth :: String -> GameState -> GameState
+clampNPCHealth nId state = case Map.lookup nId (npcDefs (world state)) of
+    Just nDef -> case npcMaxHealth nDef of
+        Just maxHp -> state
+            { save = (save state)
+                { npcStates = Map.adjust (\s -> s { npcHealth = fmap (min maxHp) (npcHealth s) }) nId (npcStates (save state)) } }
+        Nothing -> state
+    Nothing -> state
+
+-- | Check if a target string matches any living NPC in the room (for weapon routing)
+isLivingNPCInRoom :: String -> GameState -> Bool
+isLivingNPCInRoom target state =
+    let currentRoomId = currentRoom (save state)
+        roomNPCs = getNPCsInRoom currentRoomId state
+        matchTarget npc = any (\kw -> map (\c -> if c >= 'A' && c <= 'Z' then toEnum (fromEnum c + 32) else c) target == map (\c -> if c >= 'A' && c <= 'Z' then toEnum (fromEnum c + 32) else c) kw) (npcId npc : npcName npc : npcKeywords npc)
+        npcIsAlive npc = case Map.lookup (npcId npc) (npcStates (save state)) of
+            Just ns -> npcStatus ns /= "dead"
+            Nothing -> False
+    in any (\npc -> matchTarget npc && npcIsAlive npc) roomNPCs
