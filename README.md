@@ -21,7 +21,7 @@ A simple text-based adventure game engine written in Haskell.
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/zeroclaw/text-adventure.git
+   git clone https://github.com/Xethrocc/text-adventure.git
    cd text-adventure
    ```
 
