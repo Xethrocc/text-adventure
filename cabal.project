@@ -1,0 +1,18 @@
+-- Multi-package project: the engine plus the authoring toolchain.
+--
+--   text-adventure/            engine + CLI (runtime)
+--   worldbuilder/              authoring schema, validator and compiler
+--
+-- The worldbuilder turns YAML/JSON authored content into the GameWorld +
+-- SaveState JSON files that the engine loads via --world / --save.
+-- It depends on the engine so it can reuse the ActionOutcome ADT.
+
+packages:
+    .
+    worldbuilder
+
+-- Pin the compiler so both packages agree on the same package database.
+-- with-compiler: ghc-9.6.7
+
+-- Keep build artefacts inside the repo, ignored via .gitignore.
+-- builddir: dist-newstyle

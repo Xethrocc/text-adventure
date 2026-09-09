@@ -1,0 +1,26 @@
+{
+  "player": {
+    "playerHealth": 100,
+    "playerMaxHealth": 100,
+    "playerAttack": 8,
+    "playerDefense": 4
+  },
+  "currentRoom": "docking_bay",
+  "inventory": [],
+  "itemStates": {
+    "fusion_torch": { "itemLocation": "docking_bay", "itemStatus": "intact", "itemProps": {}, "itemDiscovered": false },
+    "plasma_cutter": { "itemLocation": "docking_bay", "itemStatus": "intact", "itemProps": {}, "itemDiscovered": false },
+    "void_suit": { "itemLocation": "docking_bay", "itemStatus": "intact", "itemProps": {}, "itemDiscovered": false },
+    "crew_badge": { "itemLocation": "corridor_a", "itemStatus": "intact", "itemProps": {}, "itemDiscovered": false }
+  },
+  "npcStates": {
+    "deckhand": { "npcLocation": "docking_bay", "npcStatus": "alive", "npcHealth": null, "npcProps": {}, "npcDialogueNode": null }
+  },
+  "entityStates": {},
+  "flags": {},
+  "turnCount": 0,
+  "gameOver": false,
+  "gameOverReason": null,
+  "visitedRooms": [],
+  "equipment": {}
+}

@@ -1,9 +1,64 @@
 # Changelog
 
+## [0.3.0.0] — Unreleased
+
+Phase 0 (Fundament) + Phase 1 (Authoring-Essentials).
+
+### Added
+- **Equipment system**: `EquipSlot` (Head/Body/Hands/Feet/Weapon/Offhand/Accessory),
+  `EquipEffect` (AttackBonus/DefenseBonus/MaxHealthBonus), `SaveState.equipment`.
+  Effective stats are computed on the fly via `effectiveAttack`,
+  `effectiveDefense`, `effectiveMaxHealth`.
+- **New commands**: `equip`/`wear`/`wield`, `unequip`/`remove`, `unequip all`,
+  `stats`, `search` and `search <target>`.
+- **New `ActionOutcome`s**: `EquipItem`, `UnequipItem`.
+- **Room hooks**: `roomOnEnter`, `roomOnLook`, `roomOnExit`, `roomSearchOutcome`.
+- **Room tags & lighting**: `roomTags`, `roomLightFlag`. A room tagged `dark`
+  hides its contents unless the player carries a `lightsource` item or the
+  room's `lightFlag` is set to `"true"`.
+- **Alternative room descriptions**: `roomAltDescriptions` (flag → description).
+- **Hidden items**: `itemHidden` / `itemDiscoverText` / `itemDiscovered`,
+  revealed by `search`.
+- **Dialogue trees**: `DialogueNode`, `DialogueChoice`, `DialogueTree` and
+  `NPCDef.npcDialogueTrees`. `npcDialogue` remains as a fallback.
+- **Item-on-item interactions**: `GameWorld.itemInteractions` (crafting).
+- **World loading**: `World.loadGameWorld`, `loadSaveState`, `loadGame` plus
+  CLI flags `--world FILE` / `--save FILE` / `--help`.
+- **ID type aliases**: `NPCID`, `EntityID`, `VehicleID`, `QuestID`, `SkillID`,
+  `FlagID`, `FactionID`.
+- New module `Sample` holding the bundled demo adventure.
+- New package `worldbuilder` (placeholder) wired up via `cabal.project`.
+
+### Changed
+- **`roomVisited` moved from `Room` to `SaveState.visitedRooms`** (breaking).
+  `Room` is static world data and must not be mutated at runtime.
+- `ItemDef` gained `itemTags`, `itemEquipSlot`, `itemEquipEffects`,
+  `itemHidden`, `itemDiscoverText`.
+- `ItemState` gained `itemDiscovered`.
+- `NPCDef` gained `npcDialogueTrees`; `NPCState` gained `npcDialogueNode`.
+- `Room` lost `roomVisited`; gained `roomTags`, `roomAltDescriptions`,
+  `roomLightFlag`, `roomOnEnter`, `roomOnLook`, `roomOnExit`, `roomSearchOutcome`.
+- `SaveState` gained `visitedRooms` and `equipment`.
+- `applyOutcome` now threads an RNG salt and a recursion depth
+  (`maxOutcomeDepth = 20`) to prevent runaway recursion from malformed content.
+- `GameLoop.hs` split: save/load moved to `SaveLoad.hs`.
+- `initSampleGame` moved out of `GameLoop` into `Sample`.
+- Save schema version bumped `1 → 2`.
+
+### Fixed
+- **`RandomChoice` salt bug**: every random draw within the same turn used
+  `salt = 0`, so consecutive `RandomChoice`s always produced the same result.
+  The salt is now threaded through `MultipleOutcomes` and incremented.
+- `use <item> on <target>` no longer swallows the "can't reach" message when an
+  item-on-item interaction is undefined.
+- `search` with no target parsed to `Unknown`; it is now its own `SearchCmd`.
+- Combat uses `effectiveAttack` / `effectiveDefense` (equipment-aware).
+
 ## [0.2.0.0] — Unreleased
 
 ### Added
-- Richer `ActionOutcome` constructors: `GiveItem`, `MoveItem`, `ConsumeItem`, `MoveNPC`, `SetRoomVisited`, `SetFlag`, `CheckFlag`, `RandomChoice`, `GameEnd`
+- Richer `ActionOutcome` constructors: `GiveItem`, `MoveItem`, `ConsumeItem`,
+  `MoveNPC`, `SetRoomVisited`, `SetFlag`, `CheckFlag`, `RandomChoice`, `GameEnd`
 - General-purpose flag system in `SaveState` for data-driven conditionals
 - Deterministic hash-based pseudo-random outcomes (no external RNG dependency)
 - `GameOverReason` (Victory / Death / Custom) with death→load/restart flow
@@ -16,7 +71,8 @@
 - GitHub Actions CI workflow with coverage reporting
 
 ### Fixed
-- Combat now correctly uses `npcDefenseBase` for damage reduction (was using `npcAttackBase`)
+- Combat now correctly uses `npcDefenseBase` for damage reduction (was using
+  `npcAttackBase`)
 - NPC health clamped to `npcMaxHealth` when healed
 - `use <weapon> on <npc>` now routes to attack instead of "Nothing happens"
 

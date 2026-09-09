@@ -1,0 +1,33 @@
+cabal-version:      3.0
+name:               worldbuilder
+version:            0.1.0.0
+synopsis:           Authoring toolchain for the text-adventure engine
+description:        Turns authored YAML/JSON content (characters, locations,
+                    quests, vehicles, lore) into the GameWorld and SaveState
+                    JSON files that the text-adventure engine loads.
+homepage:           https://github.com/Xethrocc/text-adventure
+license:            MIT
+license-file:       LICENSE
+author:             Xethrocc
+maintainer:         Xethrocc
+copyright:          2026 Xethrocc
+category:           Game
+build-type:         Simple
+
+-- Placeholder library. The real schema, parser, validator and compiler land
+-- here in Phase 5; this stanza exists so the cabal.project resolves now.
+library
+  exposed-modules:     Worldbuilder.Placeholder
+  hs-source-dirs:      src
+  build-depends:       base >=4.12 && <5,
+                       text-adventure
+  default-language:    Haskell2010
+  ghc-options:         -Wall
+
+executable worldbuilder
+  main-is:             Main.hs
+  hs-source-dirs:      app
+  build-depends:       base >=4.12 && <5,
+                       worldbuilder
+  default-language:    Haskell2010
+  ghc-options:         -Wall

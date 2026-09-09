@@ -1,0 +1,107 @@
+{
+  "rooms": {
+    "docking_bay": {
+      "roomId": "docking_bay",
+      "roomName": "Docking Bay 7",
+      "roomDescription": "Cold vapour drifts across the deck plates. Your shuttle sits in its cradle.",
+      "roomConnections": [["North", { "tag": "Open", "contents": "corridor_a" }]],
+      "roomTags": [],
+      "roomAltDescriptions": {},
+      "roomLightFlag": null,
+      "roomOnEnter": null,
+      "roomOnLook": null,
+      "roomOnExit": null,
+      "roomSearchOutcome": null
+    },
+    "corridor_a": {
+      "roomId": "corridor_a",
+      "roomName": "Corridor A",
+      "roomDescription": "A narrow service corridor. Warning strips flicker along the floor.",
+      "roomConnections": [["South", { "tag": "Open", "contents": "docking_bay" }]],
+      "roomTags": ["dark"],
+      "roomAltDescriptions": {
+        "lights_on": "Floodlights hum overhead. The corridor is stark and clean."
+      },
+      "roomLightFlag": "lights_on",
+      "roomOnEnter": null,
+      "roomOnLook": null,
+      "roomOnExit": null,
+      "roomSearchOutcome": {
+        "tag": "MultipleOutcomes",
+        "contents": [
+          { "tag": "SetFlag", "contents": ["lights_on", "true", "You slap the emergency panel. Light floods the corridor."] },
+          { "tag": "MessageOnly", "contents": "A maintenance hatch, freshly welded shut." }
+        ]
+      }
+    }
+  },
+  "itemDefs": {
+    "fusion_torch": {
+      "itemId": "fusion_torch",
+      "itemName": "fusion torch",
+      "itemDescription": "A hand-held fusion torch. It burns very, very hot.",
+      "itemKeywords": ["torch", "fusion torch"],
+      "itemTags": ["lightsource", "tool"],
+      "itemEquipSlot": null,
+      "itemEquipEffects": [],
+      "itemHidden": false,
+      "itemDiscoverText": null,
+      "itemVerbMap": {}
+    },
+    "plasma_cutter": {
+      "itemId": "plasma_cutter",
+      "itemName": "plasma cutter",
+      "itemDescription": "Military grade. The grip is worn smooth.",
+      "itemKeywords": ["cutter", "plasma cutter", "weapon"],
+      "itemTags": ["weapon"],
+      "itemEquipSlot": "Weapon",
+      "itemEquipEffects": [{ "tag": "AttackBonus", "contents": 12 }],
+      "itemHidden": false,
+      "itemDiscoverText": null,
+      "itemVerbMap": {}
+    },
+    "void_suit": {
+      "itemId": "void_suit",
+      "itemName": "void suit",
+      "itemDescription": "A pressure suit patched in three places.",
+      "itemKeywords": ["suit", "void suit", "armor"],
+      "itemTags": ["armor"],
+      "itemEquipSlot": "Body",
+      "itemEquipEffects": [
+        { "tag": "DefenseBonus", "contents": 6 },
+        { "tag": "MaxHealthBonus", "contents": 15 }
+      ],
+      "itemHidden": false,
+      "itemDiscoverText": null,
+      "itemVerbMap": {}
+    },
+    "crew_badge": {
+      "itemId": "crew_badge",
+      "itemName": "crew badge",
+      "itemDescription": "A cracked ID badge. The photo is someone else's.",
+      "itemKeywords": ["badge", "crew badge", "id"],
+      "itemTags": [],
+      "itemEquipSlot": null,
+      "itemEquipEffects": [],
+      "itemHidden": true,
+      "itemDiscoverText": "Behind a loose panel you find a crew badge.",
+      "itemVerbMap": {}
+    }
+  },
+  "npcDefs": {
+    "deckhand": {
+      "npcId": "deckhand",
+      "npcName": "deckhand",
+      "npcDescription": "A tired-looking deckhand in grease-stained coveralls.",
+      "npcDialogue": { "alive": "Bay's cleared for departure. Mind the warning strips." },
+      "npcDialogueTrees": {},
+      "npcKeywords": ["deckhand", "hand"],
+      "npcMaxHealth": null,
+      "npcAttackBase": 0,
+      "npcDefenseBase": 0,
+      "npcVerbMap": {}
+    }
+  },
+  "entityInteractions": {},
+  "itemInteractions": {}
+}
