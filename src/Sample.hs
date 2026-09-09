@@ -16,7 +16,7 @@ initSampleGame = GameState
                 "start"
                 "Starting Room"
                 "You are in a small stone chamber with torches on the walls. There are exits to the north and east. The east door looks sturdy and has a keyhole."
-                (Map.fromList [(North, Open "hallway"), (East, Locked "treasure" "treasure_door")])
+                (Map.fromList [(North, Open "hallway"), (East, Locked "treasure" "treasure_door"), (South, Open "meadow")])
                 Set.empty
                 Map.empty
                 Nothing
@@ -39,6 +39,25 @@ initSampleGame = GameState
                 "You've entered a magnificent treasure room! Gold coins and jewels are scattered everywhere. There's an exit to the west."
                 (Map.fromList [(West, Open "start")])
                 Set.empty
+                Map.empty
+                Nothing
+                Nothing Nothing Nothing Nothing)
+            -- Vehicle demo (Phase 3): a horse-drawn carriage
+            , ("meadow", Room
+                "meadow"
+                "Sunny Meadow"
+                "A wide meadow stretches to the horizon. Wildflowers sway in the breeze. Your carriage is parked here."
+                (Map.fromList [(North, Open "start")])
+                Set.empty
+                Map.empty
+                Nothing
+                Nothing Nothing Nothing Nothing)
+            , ("carriage_cabin", Room
+                "carriage_cabin"
+                "Carriage Cabin"
+                "You sit inside a comfortably worn carriage. A small window lets you watch the road. The reins are within reach."
+                Map.empty
+                (Set.fromList ["vehicle"])
                 Map.empty
                 Nothing
                 Nothing Nothing Nothing Nothing)
@@ -78,6 +97,11 @@ initSampleGame = GameState
             , ("note_old", ItemDef "note_old" "old note" "A folded scrap of parchment, brittle with age."
                 ["note", "old note"] Set.empty Nothing []
                 True (Just "Wedged behind a loose brick you find an old note.") Map.empty)
+            -- Vehicle demo (Phase 3)
+            , ("carriage", ItemDef "carriage" "carriage" "A sturdy horse-drawn carriage with polished wood panels."
+                ["carriage", "wagon", "coach"] (Set.fromList ["vehicle"]) Nothing [] False Nothing Map.empty)
+            , ("hay", ItemDef "hay" "bale of hay" "A fragrant bale of hay — prime horse fuel."
+                ["hay", "bale", "bale of hay"] Set.empty Nothing [] False Nothing Map.empty)
             ]
         , npcDefs = Map.fromList
             [ ("oldman", NPCDef "oldman" "old man" "A withered old man in robes."
@@ -113,6 +137,23 @@ initSampleGame = GameState
                 [ QuestStage "do_thing" "Do the thing." Nothing ]
                 Nothing)
             ]
+        , vehicleDefs = Map.fromList
+            [ ("carriage", VehicleDef
+                "carriage"
+                "carriage"
+                "A sturdy horse-drawn carriage. The reins hang from the driver's bench."
+                PlayerControlled
+                ["carriage_cabin"]
+                "carriage_cabin"
+                (Just "carriage_cabin")        -- cockpit = the cabin itself (single-room vehicle)
+                (Map.fromList
+                    [ ("meadow", VehicleStop "meadow" "the sunny meadow" Nothing)
+                    , ("start",  VehicleStop "start"  "the stone chamber's entrance" Nothing)
+                    ])
+                ["carriage", "wagon", "coach"]
+                (Just ("hay", 10))
+                Map.empty)
+            ]
         }
     , save = SaveState
         { player = Player 100 100 10 5 (Map.singleton "lockpick" 2)
@@ -128,6 +169,8 @@ initSampleGame = GameState
             , ("leather_armor", ItemState "start" "intact" Map.empty False)
             , ("ring_vigor", ItemState "start" "intact" Map.empty False)
             , ("note_old", ItemState "hallway" "intact" Map.empty False)
+            , ("carriage", ItemState "meadow" "intact" Map.empty False)
+            , ("hay", ItemState "meadow" "intact" Map.empty False)
             ]
         , npcStates = Map.fromList
             [ ("oldman", NPCState "start" "alive" Nothing Map.empty Nothing)
@@ -143,5 +186,8 @@ initSampleGame = GameState
         , conditions = Map.empty
         , activeQuests = Map.empty
         , completedQuests = Set.empty
+        , vehicleStates = Map.singleton "carriage"
+            (VehicleState "meadow" (Just 10) Set.empty Map.empty)
+        , currentVehicle = Nothing
         }
     }

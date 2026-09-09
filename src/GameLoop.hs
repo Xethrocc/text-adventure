@@ -27,6 +27,7 @@ commandWords =
     [ "go", "move", "walk", "look", "examine", "inspect", "read", "take", "pick", "drop", "put"
     , "search", "inventory", "inv", "i", "use", "talk", "speak", "attack", "hit", "kill"
     , "equip", "wear", "wield", "unequip", "remove", "stats"
+    , "enter", "board", "disembark", "drive", "wait", "refuel", "repair"
     , "save", "load", "saves", "restart", "help", "quit", "exit", "q"
     ]
 
@@ -140,29 +141,31 @@ gameLoop state
             Just input -> do
                 let command = parseCommand input
                     stateWithTurn = incrementTurnCount state
-                    -- Tick conditions once per command
+                    -- Tick conditions once per command (player + vehicle-wide)
                     (stateAfterTick, tickMsgs) = tickConditions stateWithTurn
+                    (stateAfterVehicleTick, vehicleTickMsg) = vehicleConditionTick stateAfterTick
+                    allTickMsgs = tickMsgs ++ (if null vehicleTickMsg then [] else [vehicleTickMsg])
                 case command of
                     Save name -> do
-                        saveGame stateAfterTick name
-                        gameLoop stateAfterTick
+                        saveGame stateAfterVehicleTick name
+                        gameLoop stateAfterVehicleTick
                     Load name -> do
-                        result <- loadGame stateAfterTick name
+                        result <- loadGame stateAfterVehicleTick name
                         case result of
                             Just loadedState -> do
                                 let (s', msg) = executeCommand Look loadedState
                                 putStrLn msg
                                 gameLoop s'
-                            Nothing -> gameLoop stateAfterTick
+                            Nothing -> gameLoop stateAfterVehicleTick
                     ListSaves -> do
-                        listSaves (world stateAfterTick)
-                        gameLoop stateAfterTick
+                        listSaves (world stateAfterVehicleTick)
+                        gameLoop stateAfterVehicleTick
                     Restart -> do
                         putStrLn "Starting a new game...\n"
                         runGame initSampleGame
                     _ -> do
-                        let (newState, message) = executeCommand command stateAfterTick
-                            tickOutput = if null tickMsgs then "" else unlines tickMsgs
+                        let (newState, message) = executeCommand command stateAfterVehicleTick
+                            tickOutput = if null allTickMsgs then "" else unlines allTickMsgs
                         putStrLn (if null tickOutput then message else tickOutput ++ message)
                         gameLoop newState
 

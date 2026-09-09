@@ -581,6 +581,98 @@ testQuestRewardFires = do
     isPrefixT6 p s = take (length p) s == p
     tailsT6 s = s : case s of { [] -> []; (_:xs) -> tailsT6 xs }
 
+-- ===== Vehicle tests (Phase 3) =====
+
+testEnterVehicleWrongRoom :: IO Bool
+testEnterVehicleWrongRoom = do
+    -- Player starts in "start", carriage is at "meadow"
+    let (_, msg) = executeCommand (EnterVehicleCmd "carriage") initSampleGame
+    expectEqual "The carriage is not here." msg
+
+testEnterVehicle :: IO Bool
+testEnterVehicle = do
+    let inMeadow = moveToRoom "meadow" initSampleGame
+        (st, msg) = executeCommand (EnterVehicleCmd "carriage") inMeadow
+    r1 <- expectEqual "You board the carriage." msg
+    r2 <- expectEqual (Just "carriage") (currentVehicle (save st))
+    r3 <- expectEqual "carriage_cabin" (currentRoom (save st))
+    pure (r1 && r2 && r3)
+
+testExitVehicle :: IO Bool
+testExitVehicle = do
+    let inMeadow = moveToRoom "meadow" initSampleGame
+        aboard = fst (executeCommand (EnterVehicleCmd "carriage") inMeadow)
+        (st, msg) = executeCommand ExitVehicleCmd aboard
+    r1 <- expectEqual "You disembark from the carriage." msg
+    r2 <- expectEqual Nothing (currentVehicle (save st))
+    r3 <- expectEqual "meadow" (currentRoom (save st))
+    pure (r1 && r2 && r3)
+
+testDriveOutsideCockpitFails :: IO Bool
+testDriveOutsideCockpitFails = do
+    -- Driving requires being in the cockpit; the cockpit is the cabin itself,
+    -- so driving while disembarked (not in a vehicle) fails.
+    let (_, msg) = executeCommand (DriveToCmd "start") initSampleGame
+    expectEqual "You are not in a vehicle." msg
+
+testDriveToStop :: IO Bool
+testDriveToStop = do
+    let inMeadow = moveToRoom "meadow" initSampleGame
+        aboard = fst (executeCommand (EnterVehicleCmd "carriage") inMeadow)
+        (st, msg) = executeCommand (DriveToCmd "start") aboard
+    r1 <- expectEqual "You drive to the stone chamber's entrance." msg
+    r2 <- expectEqual "start" (currentRoom (save st))
+    r3 <- expectEqual "start" (vsCurrentStop (getVehicleState "carriage" st))
+    pure (r1 && r2 && r3)
+
+testDriveToCurrentStop :: IO Bool
+testDriveToCurrentStop = do
+    let inMeadow = moveToRoom "meadow" initSampleGame
+        aboard = fst (executeCommand (EnterVehicleCmd "carriage") inMeadow)
+        (_, msg) = executeCommand (DriveToCmd "meadow") aboard
+    expectTrue "cannot drive to the stop we are already at"
+        ("can't drive there" `isInfixOfV` msg)
+  where isInfixOfV n h = any (n `isPrefixV`) (tailsV h)
+        isPrefixV p s = take (length p) s == p
+        tailsV s = s : case s of { [] -> []; (_:xs) -> tailsV xs }
+
+testRefuelViaItem :: IO Bool
+testRefuelViaItem = do
+    let withHay = pickupItem "hay" initSampleGame
+        (st, msg) = executeCommand (parseCommand "use hay on carriage") withHay
+    r1 <- expectTrue "fuel message shown" (elemV "fuelled" msg)
+    r2 <- expectEqual (Just 10) (vsFuel (getVehicleState "carriage" st))
+    pure (r1 && r2)
+  where
+    elemV n h = any (n `isPrefixV`) (tailsV h)
+    isPrefixV p s = take (length p) s == p
+    tailsV s = s : case s of { [] -> []; (_:xs) -> tailsV xs }
+
+testVehicleConditionTick :: IO Bool
+testVehicleConditionTick = do
+    -- Simulate a hull breach-like condition: set it directly, then tick
+    let aboard = fst (executeCommand (EnterVehicleCmd "carriage")
+                        (moveToRoom "meadow" initSampleGame))
+        breach = setVehicleState "carriage"
+                    ((getVehicleState "carriage" aboard)
+                        { vsActiveConditions = Set.singleton "test_leak" }) aboard
+        breachDef = breach { world = (world breach)
+            { vehicleDefs = Map.adjust (\v -> v { vehicleConditionEffects =
+                Map.singleton "test_leak" (DamagePlayer 5 "Cold air rushes in!") })
+                "carriage" (vehicleDefs (world breach)) } }
+        (st, msg) = vehicleConditionTick breachDef
+    r1 <- expectTrue "damage applied" (playerHealth (player (save st)) == 95)
+    r2 <- expectContains "Cold air rushes in!" [msg]
+    pure (r1 && r2)
+
+testVehicleStateRoundTrip :: IO Bool
+testVehicleStateRoundTrip = do
+    let vs = VehicleState "meadow" (Just 7) (Set.singleton "derailed")
+                (Map.singleton "cabin" "The cabin lists to one side.")
+        encoded = Aeson.encode vs
+        decoded = Aeson.decode encoded :: Maybe VehicleState
+    expectEqual (Just vs) decoded
+
 main :: IO ()
 main = do
     results <- sequence
@@ -663,5 +755,15 @@ main = do
         , runTest "quest prereqs gate StartQuest" testQuestPrereqs
         , runTest "journal command shows active quest" testJournalShowsQuest
         , runTest "completeQuest fires reward" testQuestRewardFires
+        -- Vehicles (Phase 3)
+        , runTest "enter vehicle fails when not at stop" testEnterVehicleWrongRoom
+        , runTest "enter vehicle boards and moves inside" testEnterVehicle
+        , runTest "exit vehicle returns to stop" testExitVehicle
+        , runTest "drive fails when not in a vehicle" testDriveOutsideCockpitFails
+        , runTest "drive to stop moves vehicle and player" testDriveToStop
+        , runTest "drive to current stop is rejected" testDriveToCurrentStop
+        , runTest "refuel via item-on-vehicle" testRefuelViaItem
+        , runTest "vehicle condition fires vehicle-wide tick" testVehicleConditionTick
+        , runTest "VehicleState JSON round-trip" testVehicleStateRoundTrip
         ]
     when (not (and results)) exitFailure

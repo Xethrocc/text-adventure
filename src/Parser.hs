@@ -9,7 +9,7 @@ import Control.Applicative ((<|>))
 import Data.Char (toLower)
 import Data.List (find, intercalate, nub)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe)
+import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Set as Set
 
 -- | Parsed command structure
@@ -28,6 +28,12 @@ data Command
     | StatsCmd
     | SearchCmd (Maybe String)   -- ^ `search` or `search <target>`
     | JournalCmd                 -- ^ show active/completed quests
+    | EnterVehicleCmd String     -- ^ enter a vehicle
+    | ExitVehicleCmd             -- ^ exit the current vehicle
+    | DriveToCmd String          -- ^ drive the current vehicle to a station
+    | WaitCmd                    -- ^ advance an AutomaticRoute vehicle
+    | RefuelCmd String           -- ^ refuel a vehicle (fuel item used via interactions)
+    | RepairCmd String           -- ^ repair a vehicle condition
     | Save String
     | Load String
     | ListSaves
@@ -146,6 +152,16 @@ parseSimpleCommand tokens input = case tokens of
     ["stats"]              -> StatsCmd
     ["journal"]            -> JournalCmd
     ["quests"]             -> JournalCmd
+    -- Vehicles (Phase 3)
+    "enter" : targetParts | not (null targetParts) -> EnterVehicleCmd (unwords (safeStripStopWords targetParts))
+    "board" : targetParts | not (null targetParts) -> EnterVehicleCmd (unwords (safeStripStopWords targetParts))
+    ["disembark"]          -> ExitVehicleCmd
+    "drive" : ("to" : targetParts) | not (null targetParts) ->
+        DriveToCmd (unwords (safeStripStopWords targetParts))
+    ["drive"]              -> DriveToCmd ""
+    ["wait"]               -> WaitCmd
+    "refuel" : targetParts -> RefuelCmd (unwords targetParts)
+    "repair" : targetParts | not (null targetParts) -> RepairCmd (unwords (safeStripStopWords targetParts))
     ["search"]             -> SearchCmd Nothing
     "search" : targetParts | not (null targetParts) ->
         let t = unwords (safeStripStopWords targetParts)
@@ -430,7 +446,14 @@ executeCommand Look state = case getCurrentRoom state of
         | isDark room state ->
             (state, "It's pitch black. You can't see anything.")
         | otherwise ->
-            let desc = resolveDescription room state
+            let vIdOverride = case currentVehicle (save state) of
+                    Just vId -> Map.lookup (currentRoom (save state))
+                                (vsRoomOverrides (getVehicleState vId state))
+                    Nothing  -> Nothing
+                baseRoom = getCurrentRoom state
+                desc = case (vIdOverride, baseRoom) of
+                    (Just override, Just _) -> override
+                    _ -> maybe "" (\r -> resolveDescription r state) baseRoom
                 itemsInRoom = getItemsInLocation (currentRoom (save state)) state
                 npcsInRoom = getNPCsInRoom (currentRoom (save state)) state
                 itemDesc = if null itemsInRoom
@@ -440,7 +463,9 @@ executeCommand Look state = case getCurrentRoom state of
                           then ""
                           else "\nAlso here: " ++ intercalate ", " (map npcName npcsInRoom) ++ "."
                 (state', hookMsg) = runRoomHook roomOnLook (currentRoom (save state)) state
-                full = intercalate "\n" (filter (not . null) [desc, itemDesc, npcDesc, hookMsg])
+                vehicleMsg = vehicleLookAddon state'
+                full = intercalate "\n" (filter (not . null)
+                        [desc, itemDesc, npcDesc, hookMsg, fromMaybe "" vehicleMsg])
             in (state', full)
 
 executeCommand Inventory state =
@@ -580,6 +605,7 @@ executeCommand (InteractWith VUseOn itemStr entityStr) state =
         entityTarget = normalizeText entityStr
         inventoryItems = getItemsInLocation "inventory" state
         maybeItem = find (matchesItemTarget itemTarget) inventoryItems
+        maybeVehicle = findVehicle entityStr state
     in case maybeItem of
         Nothing -> (state, "You need to be carrying '" ++ itemStr ++ "' to use it.")
         Just item ->
@@ -600,13 +626,34 @@ executeCommand (InteractWith VUseOn itemStr entityStr) state =
                         | otherwise ->
                             case tryItemOnItem (itemId item) entityTarget state of
                                 Just result -> result
-                                Nothing -> (state, "Nothing happens.")
+                                Nothing -> tryRefuelByItem item state
             else
                 if isLivingNPCInRoom entityTarget state
                 then executeCommand (Interact VAttack entityTarget) state
                 else case tryItemOnItem (itemId item) entityTarget state of
                         Just result -> result
-                        Nothing -> (state, "You can't reach '" ++ entityStr ++ "' from here.")
+                        Nothing ->
+                            case maybeVehicle of
+                                Just _ -> tryRefuelByItem item state
+                                Nothing -> (state, "You can't reach '" ++ entityStr ++ "' from here.")
+  where
+    -- Vehicle refuelling: `use <fuel item> on <vehicle>` adds the item's
+    -- "fuel" prop value (default 1) to the vehicle's tank, consuming the item.
+    tryRefuelByItem item st =
+        let st1 = if hasItem (itemId item) st then st else dropItem (itemId item) st
+        in case findVehicleTarget st of
+            Just vId ->
+                let amount = fromMaybe 1 (Map.lookup "fuel" . itemProps =<< Map.lookup (itemId item) (itemStates (save st)))
+                in case refuelVehicle vId amount st1 of
+                    Nothing -> (st1, "The " ++ entityStr ++ " doesn't need fuel.")
+                    Just (st2, msg) ->
+                        (consumeItem (itemId item) st2, "You use the " ++ itemName item ++ ". " ++ msg)
+            Nothing -> (st1, "Nothing happens.")
+    findVehicleTarget st = case currentVehicle (save st) of
+        Just vId | isJust (lookupVehicle vId st) -> Just vId
+        _ -> case findVehicle entityStr st of
+            Just v -> Just (vehicleId v)
+            Nothing -> Nothing
 
 executeCommand (InteractWith _ _ _) state = (state, "Nothing happens.")
 
@@ -618,6 +665,81 @@ executeCommand Quit state = (endGame (Custom "quit") state, "Goodbye!")
 executeCommand (Unknown cmd) state = (state, "I don't understand '" ++ cmd ++ "'. Type 'help' for available commands.")
 executeCommand (Save _) state = (state, "")
 executeCommand (Load _) state = (state, "")
+
+-- ---------------------------------------------------------------------
+-- Vehicles (Phase 3)
+-- ---------------------------------------------------------------------
+
+executeCommand (EnterVehicleCmd targetStr) state =
+    case findVehicle targetStr state of
+        Nothing -> (state, "You don't see '" ++ targetStr ++ "' here to enter.")
+        Just v -> case enterVehicle (vehicleId v) state of
+            Left err -> (state, err)
+            Right (st', msg) -> (st', msg)
+
+executeCommand ExitVehicleCmd state =
+    case exitVehicle state of
+        Left err -> (state, err)
+        Right (st', msg) -> (st', msg)
+
+executeCommand (DriveToCmd targetStr) state =
+    case currentVehicle (save state) of
+        Nothing -> (state, "You are not in a vehicle.")
+        Just vId -> case driveVehicle vId targetStr state of
+            Left err -> (state, err)
+            Right (st', msg) -> (st', msg)
+
+executeCommand WaitCmd state =
+    case advanceVehicleRoute state of
+        Left err -> (state, err)
+        Right (st', msg) -> (st', msg)
+
+-- | Refuel: `refuel` or `refuel <vehicle>`. Actual fuelling happens via
+--   `use <fuel item> on <vehicle>`; plain `refuel` reports the status.
+executeCommand (RefuelCmd targetStr) state =
+    let v = if null targetStr
+            then currentVehicle (save state) >>= \vId -> lookupVehicle vId state
+            else findVehicle targetStr state
+    in case v of
+        Nothing -> (state, "There is no vehicle to refuel.")
+        Just veh ->
+            let vId = vehicleId veh
+                vState = getVehicleState vId state
+                fuelStatus = case (vehicleFuelProp veh, vsFuel vState) of
+                    (Nothing, _) -> "The " ++ vehicleName veh ++ " doesn't need fuel."
+                    (Just (fname, maxF), Just f) ->
+                        vehicleName veh ++ " fuel (" ++ fname ++ "): " ++ show f ++ "/" ++ show maxF
+                    (Just (fname, maxF), Nothing) ->
+                        vehicleName veh ++ " fuel (" ++ fname ++ "): 0/" ++ show maxF
+            in (state, fuelStatus)
+
+-- | Repair: `repair <condition>` clears a matching vehicle condition on the
+--   current vehicle.
+executeCommand (RepairCmd targetStr) state =
+    case currentVehicle (save state) of
+        Nothing -> (state, "You are not in a vehicle.")
+        Just vId ->
+            let vState = getVehicleState vId state
+                target = normalizeText targetStr
+                v = lookupVehicle vId state
+                matches = [ c | c <- Set.toList (vsActiveConditions vState)
+                          , target `elem` [map toLower c, "the " ++ map toLower c] ]
+                vName = maybe vId vehicleName v
+            in if null matches
+               then (state, "There is nothing broken about the " ++ vName
+                            ++ " that matches '" ++ targetStr ++ "'."
+                            ++ (if Set.null (vsActiveConditions vState)
+                                then "" else " Problems: " ++ intercalate ", " (Set.toList (vsActiveConditions vState)) ++ "."))
+               else let c = head matches
+                        st' = clearVehicleCondition vId c state
+                    in (st', "You repair the " ++ vName ++ " (" ++ c ++ ").")
+
+-- | Resolve a vehicle by name/keyword among all vehicles in the world
+findVehicle :: String -> GameState -> Maybe VehicleDef
+findVehicle targetStr state =
+    let target = normalizeText targetStr
+        aliases v = nub (map normalizeText (vehicleId v : vehicleName v : vehicleKeywords v))
+    in find (\v -> target `elem` aliases v) (Map.elems (vehicleDefs (world state)))
 
 -- ---------------------------------------------------------------------------
 -- Helpers used by executeCommand
@@ -783,6 +905,14 @@ helpText = intercalate "\n"
     , "  unequip / remove <item>    - Unequip an item"
     , "  unequip all                - Remove all equipment"
     , "  stats                      - Show health, attack, defense and equipment"
+    , ""
+    , "Vehicles:"
+    , "  enter / board <vehicle>    - Board a vehicle at your stop"
+    , "  exit / disembark           - Leave the current vehicle"
+    , "  drive to <station>         - Steer (PlayerControlled, from the cockpit)"
+    , "  wait                       - Advance to the next stop (AutomaticRoute)"
+    , "  refuel [vehicle]           - Show fuel status"
+    , "  repair <problem>           - Fix a vehicle condition"
     , ""
     , "Multi-item:"
     , "  take <item> and <item>     - Take multiple items"

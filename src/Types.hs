@@ -410,6 +410,92 @@ instance ToJSON Quest
 instance FromJSON Quest
 
 -- ---------------------------------------------------------------------------
+-- Vehicles (Phase 3)
+-- ---------------------------------------------------------------------------
+
+-- | How a vehicle moves between its stops
+data VehicleType
+    = PlayerControlled   -- ^ The player steers it (from the cockpit, `drive to`)
+    | AutomaticRoute     -- ^ Follows its route (`wait` advances to next stop)
+    | PaidVehicle        -- ^ AutomaticRoute, but each stop costs an item
+    deriving (Show, Eq, Generic)
+
+instance ToJSON VehicleType
+instance FromJSON VehicleType
+
+-- | One stop on a vehicle's route: the outside room it docks at
+data VehicleStop = VehicleStop
+    { stopExternalRoom :: RoomID                     -- ^ Outside room at this stop
+    , stopLabel        :: String                     -- ^ e.g. "Köln Hbf, Gleis 3"
+    , stopCost         :: Maybe (ItemID, String)     -- ^ (item consumed per stop, error msg) for PaidVehicle
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON VehicleStop
+instance FromJSON VehicleStop
+
+-- | Static vehicle definition. The vehicle's interior rooms live in the
+--   world's global `rooms` map (so hooks, tags and lighting work there too);
+--   `vehicleRooms` lists which room ids belong to this vehicle.
+data VehicleDef = VehicleDef
+    { vehicleId               :: VehicleID
+    , vehicleName             :: String
+    , vehicleDescription      :: String
+    , vehicleType             :: VehicleType
+    , vehicleRooms            :: [RoomID]                       -- ^ interior room ids
+    , vehicleEntryRoom        :: RoomID                         -- ^ where `enter` puts the player
+    , vehicleCockpitRoom      :: Maybe RoomID                   -- ^ required for `drive` (PlayerControlled)
+    , vehicleStops            :: Map.Map RoomID VehicleStop     -- ^ outside room -> stop
+    , vehicleKeywords         :: [String]
+    , vehicleFuelProp         :: Maybe (String, Int)            -- ^ (fuel name, max units)
+    , vehicleConditionEffects :: Map.Map String ActionOutcome   -- ^ condition -> outcome fired vehicle-wide
+    } deriving (Show, Eq)
+
+instance ToJSON VehicleDef where
+    toJSON v = object
+        [ "vehicleId"               .= vehicleId v
+        , "vehicleName"             .= vehicleName v
+        , "vehicleDescription"      .= vehicleDescription v
+        , "vehicleType"             .= vehicleType v
+        , "vehicleRooms"            .= vehicleRooms v
+        , "vehicleEntryRoom"        .= vehicleEntryRoom v
+        , "vehicleCockpitRoom"      .= vehicleCockpitRoom v
+        , "vehicleStops"            .= vehicleStops v
+        , "vehicleKeywords"         .= vehicleKeywords v
+        , "vehicleFuelProp"         .= vehicleFuelProp v
+        , "vehicleConditionEffects" .= vehicleConditionEffects v
+        ]
+
+instance FromJSON VehicleDef where
+    parseJSON = withObject "VehicleDef" $ \o -> VehicleDef
+        <$> o .:  "vehicleId"
+        <*> o .:  "vehicleName"
+        <*> o .:  "vehicleDescription"
+        <*> o .:  "vehicleType"
+        <*> o .:? "vehicleRooms"            .!= []
+        <*> o .:  "vehicleEntryRoom"
+        <*> o .:? "vehicleCockpitRoom"      .!= Nothing
+        <*> o .:? "vehicleStops"            .!= Map.empty
+        <*> o .:? "vehicleKeywords"         .!= []
+        <*> o .:? "vehicleFuelProp"         .!= Nothing
+        <*> o .:? "vehicleConditionEffects" .!= Map.empty
+
+-- | Dynamic vehicle state
+data VehicleState = VehicleState
+    { vsCurrentStop      :: RoomID                    -- ^ outside room the vehicle is currently at
+    , vsFuel             :: Maybe Int                 -- ^ remaining fuel units (if fuelled)
+    , vsActiveConditions :: Set.Set String            -- ^ e.g. "hull_breach", "derailed"
+    , vsRoomOverrides    :: Map.Map RoomID String     -- ^ condition-flavoured room descriptions
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON VehicleState
+instance FromJSON VehicleState where
+    parseJSON = withObject "VehicleState" $ \o -> VehicleState
+        <$> o .:  "vsCurrentStop"
+        <*> o .:? "vsFuel"             .!= Nothing
+        <*> o .:? "vsActiveConditions" .!= Set.empty
+        <*> o .:? "vsRoomOverrides"    .!= Map.empty
+
+-- ---------------------------------------------------------------------------
 -- Rooms
 -- ---------------------------------------------------------------------------
 
@@ -473,6 +559,7 @@ data GameWorld = GameWorld
     , entityInteractions :: Map.Map (String, String) (String, String)
     , itemInteractions   :: Map.Map (String, String) ActionOutcome  -- ^ (Item, Item) -> outcome
     , questDefs          :: Map.Map QuestID Quest                    -- ^ Static quest definitions
+    , vehicleDefs        :: Map.Map VehicleID VehicleDef             -- ^ Static vehicle definitions (Phase 3)
     } deriving (Show, Eq)
 
 instance ToJSON GameWorld where
@@ -483,6 +570,7 @@ instance ToJSON GameWorld where
         , "entityInteractions" .= tupleMapToJSON (entityInteractions gw)
         , "itemInteractions"   .= Map.mapKeys (\(a, b) -> a ++ "|" ++ b) (itemInteractions gw)
         , "questDefs"          .= questDefs gw
+        , "vehicleDefs"        .= vehicleDefs gw
         ]
 
 instance FromJSON GameWorld where
@@ -493,6 +581,7 @@ instance FromJSON GameWorld where
         <*> (o .: "entityInteractions" >>= tupleMapFromJSON)
         <*> (o .:? "itemInteractions" .!= Map.empty >>= parseItemInteractions)
         <*> o .:? "questDefs" .!= Map.empty
+        <*> o .:? "vehicleDefs" .!= Map.empty
 
 parseItemInteractions :: Map.Map String ActionOutcome -> Parser (Map.Map (String, String) ActionOutcome)
 parseItemInteractions m =
@@ -521,6 +610,8 @@ data SaveState = SaveState
     , conditions         :: Map.Map String Condition          -- ^ Active status effects
     , activeQuests       :: Map.Map QuestID Int               -- ^ Quest -> current stage index (0-based)
     , completedQuests    :: Set.Set QuestID
+    , vehicleStates      :: Map.Map VehicleID VehicleState    -- ^ Dynamic vehicle state (Phase 3)
+    , currentVehicle     :: Maybe VehicleID                   -- ^ Vehicle the player is inside (Phase 3)
     } deriving (Show, Eq)
 
 instance ToJSON SaveState where
@@ -540,6 +631,8 @@ instance ToJSON SaveState where
         , "conditions"      .= conditions ss
         , "activeQuests"    .= activeQuests ss
         , "completedQuests" .= completedQuests ss
+        , "vehicleStates"   .= vehicleStates ss
+        , "currentVehicle"  .= currentVehicle ss
         ]
 
 instance FromJSON SaveState where
@@ -559,6 +652,8 @@ instance FromJSON SaveState where
         <*> o .:? "conditions"      .!= Map.empty
         <*> o .:? "activeQuests"    .!= Map.empty
         <*> o .:? "completedQuests" .!= Set.empty
+        <*> o .:? "vehicleStates"   .!= Map.empty
+        <*> o .:? "currentVehicle"  .!= Nothing
 
 -- | Save file wrapper with metadata for save slots
 data SaveFile = SaveFile

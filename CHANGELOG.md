@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.5.0.0] — Unreleased
+
+Phase 3 (Vehicles): First-Class-Fahrzeuge mit eigenen Innenräumen, Routen
+und vehicle-weiten Conditions.
+
+### Added
+- **Vehicle-System**: `VehicleDef`/`VehicleState`, drei Typen
+  (`PlayerControlled`, `AutomaticRoute`, `PaidVehicle`). Innenräume sind
+  reguläre Rooms im World-Map (Hooks/Tags/Lighting funktionieren dort);
+  `vehicleRooms` listet sie. Stops verbinden Außenräume mit Labels und
+  optionalen Kosten (`stopCost` für PaidVehicles).
+- **SaveState**: `vehicleStates`, `currentVehicle` (beide mit Defaults,
+  alte Saves bleiben ladbar). **GameWorld**: `vehicleDefs`.
+- **Commands**: `enter`/`board <vehicle>`, `exit`/`disembark`,
+  `drive to <station>` (nur vom Cockpit, PlayerControlled),
+  `wait` (AutomaticRoute: nächste Station), `refuel [vehicle]` (Status),
+  `repair <condition>` (cleart Vehicle-Condition).
+- **Tanken**: `use <fuel-item> on <vehicle>` — das Item-Prop `fuel` (default 1)
+  wird gutgeschrieben, Item wird verbraucht; Cap via `vehicleFuelProp`.
+- **Vehicle-weite Conditions**: `vsActiveConditions` feuern ihre
+  `vehicleConditionEffects`-Outcomes einmal pro Zug (game loop), solange man
+  an Bord ist. `vsRoomOverrides` ersetzen Raum-Beschreibungen in `look`;
+  `look` zeigt zusätzlich Fuel/Conditions-Status.
+- Sample-Adventure: Pferdekutsche (PlayerControlled) mit Cabin, Cockpit,
+  zwei Stationen (`start`, `meadow`) und Heu als Treibstoff.
+- 9 neue Tests (Enter/Exit/Drive/Refuel/Condition-Tick/JSON-Roundtrip).
+
 ## [0.4.0.0] — Unreleased
 
 Phase 2 (Spiel-Systeme): Skills, Conditions, Quests.
