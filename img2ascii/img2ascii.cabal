@@ -1,0 +1,33 @@
+cabal-version:      3.0
+name:               img2ascii
+version:            0.1.0.0
+synopsis:           Convert images to ASCII art
+description:        Reads JPEG, PNG, BMP, GIF, TIFF, TGA and HDR images and renders
+                    them as ASCII art in the terminal. Supports adjustable
+                    output width and character sets.
+homepage:           https://github.com/Xethrocc/text-adventure
+license:            MIT
+license-file:       LICENSE
+author:             Xethrocc
+maintainer:         Xethrocc
+copyright:          2026 Xethrocc
+category:           Game
+build-type:         Simple
+
+library
+  exposed-modules:     ImgToAscii
+  hs-source-dirs:      src
+  build-depends:       base >=4.12 && <5,
+                       JuicyPixels >=3.3 && <4,
+                       vector >=0.12 && <1
+  default-language:    Haskell2010
+  ghc-options:         -Wall
+
+executable img2ascii
+  main-is:             Main.hs
+  hs-source-dirs:      app
+  build-depends:       base >=4.12 && <5,
+                       img2ascii,
+                       JuicyPixels >=3.3 && <4
+  default-language:    Haskell2010
+  ghc-options:         -Wall

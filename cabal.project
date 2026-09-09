@@ -2,6 +2,7 @@
 --
 --   text-adventure/            engine + CLI (runtime)
 --   worldbuilder/              authoring schema, validator and compiler
+--   img2ascii/                 image -> ASCII art converter (terminal tool)
 --
 -- The worldbuilder turns YAML/JSON authored content into the GameWorld +
 -- SaveState JSON files that the engine loads via --world / --save.
@@ -10,6 +11,7 @@
 packages:
     .
     worldbuilder
+    img2ascii
 
 -- Pin the compiler so both packages agree on the same package database.
 -- with-compiler: ghc-9.6.7
