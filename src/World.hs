@@ -51,7 +51,7 @@ loadGame worldPath maybeSavePath = do
 --   Rooms exist but nothing is placed; use an initial-save file for that.
 defaultSaveState :: GameWorld -> SaveState
 defaultSaveState gw = SaveState
-    { player         = Player 100 100 10 5
+    { player         = Player 100 100 10 5 Map.empty
     , currentRoom    = startRoomId gw
     , inventory      = []
     , itemStates     = Map.empty
@@ -63,6 +63,9 @@ defaultSaveState gw = SaveState
     , gameOverReason = Nothing
     , visitedRooms   = Set.empty
     , equipment      = Map.empty
+    , conditions     = Map.empty
+    , activeQuests   = Map.empty
+    , completedQuests = Set.empty
     }
 
 -- | Preferred starting room: "start" if it exists, else the first room by key order

@@ -140,27 +140,30 @@ gameLoop state
             Just input -> do
                 let command = parseCommand input
                     stateWithTurn = incrementTurnCount state
+                    -- Tick conditions once per command
+                    (stateAfterTick, tickMsgs) = tickConditions stateWithTurn
                 case command of
                     Save name -> do
-                        saveGame stateWithTurn name
-                        gameLoop stateWithTurn
+                        saveGame stateAfterTick name
+                        gameLoop stateAfterTick
                     Load name -> do
-                        result <- loadGame stateWithTurn name
+                        result <- loadGame stateAfterTick name
                         case result of
                             Just loadedState -> do
                                 let (s', msg) = executeCommand Look loadedState
                                 putStrLn msg
                                 gameLoop s'
-                            Nothing -> gameLoop stateWithTurn
+                            Nothing -> gameLoop stateAfterTick
                     ListSaves -> do
-                        listSaves (world stateWithTurn)
-                        gameLoop stateWithTurn
+                        listSaves (world stateAfterTick)
+                        gameLoop stateAfterTick
                     Restart -> do
                         putStrLn "Starting a new game...\n"
                         runGame initSampleGame
                     _ -> do
-                        let (newState, message) = executeCommand command stateWithTurn
-                        putStrLn message
+                        let (newState, message) = executeCommand command stateAfterTick
+                            tickOutput = if null tickMsgs then "" else unlines tickMsgs
+                        putStrLn (if null tickOutput then message else tickOutput ++ message)
                         gameLoop newState
 
 -- ---------------------------------------------------------------------------

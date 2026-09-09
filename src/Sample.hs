@@ -7,7 +7,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Types
 
--- | Initialize a sample game with rooms, items, NPCs and equipment
+-- | Initialize a sample game with rooms, items, NPCs, equipment and a quest
 initSampleGame :: GameState
 initSampleGame = GameState
     { world = GameWorld
@@ -48,7 +48,11 @@ initSampleGame = GameState
                 ["torch", "burning torch"] (Set.fromList ["lightsource"])
                 Nothing [] False Nothing Map.empty)
             , ("key", ItemDef "key" "key" "A small brass key."
-                ["key", "brass key"] Set.empty Nothing [] False Nothing Map.empty)
+                ["key", "brass key"] Set.empty Nothing [] False Nothing
+                (Map.singleton (VTake, "intact")
+                    (MultipleOutcomes
+                        [ StartQuest "find_treasure" "Journal updated: The Lost Treasure."
+                        , SetFlag "quest_started" "true" "" ])))
             , ("gold", ItemDef "gold" "gold" "A pile of shiny gold coins."
                 ["gold", "coins", "gold coins"] Set.empty Nothing [] False Nothing Map.empty)
             , ("jewel", ItemDef "jewel" "jewel" "A sparkling ruby that catches the light."
@@ -90,9 +94,28 @@ initSampleGame = GameState
             , (("key", "treasure_door"), ("unlocked", "You insert the brass key into the door. It clicks open!"))
             ]
         , itemInteractions = Map.empty
+        , questDefs = Map.fromList
+            [ ("find_treasure", Quest
+                "find_treasure"
+                "The Lost Treasure"
+                "Find the treasure rumoured to rest beyond the locked door."
+                Map.empty   -- no prereqs
+                [ QuestStage "explore"  "Explore the dark hallway."       (Just "Try searching when you have light.")
+                , QuestStage "find_key" "Find the brass key."              Nothing
+                , QuestStage "open_up"  "Unlock the treasure room door."   Nothing
+                ]
+                (Just (MessageOnly "The treasure is yours! Well, what's left of it after the goblin.")))
+            , ("gated_quest", Quest
+                "gated_quest"
+                "A Favor for the Old Man"
+                "The old man asked for help — once you've actually talked to him."
+                (Map.singleton "met_oldman" "true")
+                [ QuestStage "do_thing" "Do the thing." Nothing ]
+                Nothing)
+            ]
         }
     , save = SaveState
-        { player = Player 100 100 10 5
+        { player = Player 100 100 10 5 (Map.singleton "lockpick" 2)
         , currentRoom = "start"
         , inventory = []
         , itemStates = Map.fromList
@@ -117,5 +140,8 @@ initSampleGame = GameState
         , gameOverReason = Nothing
         , visitedRooms = Set.empty
         , equipment = Map.empty
+        , conditions = Map.empty
+        , activeQuests = Map.empty
+        , completedQuests = Set.empty
         }
     }

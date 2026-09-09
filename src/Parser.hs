@@ -27,6 +27,7 @@ data Command
     | UnequipAllCmd
     | StatsCmd
     | SearchCmd (Maybe String)   -- ^ `search` or `search <target>`
+    | JournalCmd                 -- ^ show active/completed quests
     | Save String
     | Load String
     | ListSaves
@@ -143,6 +144,8 @@ parseSimpleCommand tokens input = case tokens of
     ["inv"]                -> Inventory
     ["i"]                  -> Inventory
     ["stats"]              -> StatsCmd
+    ["journal"]            -> JournalCmd
+    ["quests"]             -> JournalCmd
     ["search"]             -> SearchCmd Nothing
     "search" : targetParts | not (null targetParts) ->
         let t = unwords (safeStripStopWords targetParts)
@@ -344,6 +347,43 @@ applyOutcomeWith depth salt outcome targetId state
         then (unequipItem iId state, msg, salt)
         else (state, "You don't have that equipped.", salt)
 
+    -- Skills (Phase 2): skill + d(salt-derived) vs DC
+    CheckSkill skillId dc passOutcome failOutcome ->
+        let skillVal = getSkill skillId state
+            roll = 1 + (gameRandom state salt `mod` 6)   -- d6
+            total = skillVal + roll
+        in if total >= dc
+           then let (st', m, s') = applyOutcomeWith (depth + 1) (salt + 1) passOutcome targetId state
+                in (st', "[" ++ skillId ++ " " ++ show skillVal ++ "+" ++ show roll ++ " vs " ++ show dc ++ "] " ++ m, s')
+           else let (st', m, s') = applyOutcomeWith (depth + 1) (salt + 1) failOutcome targetId state
+                in (st', "[" ++ skillId ++ " " ++ show skillVal ++ "+" ++ show roll ++ " vs " ++ show dc ++ "] " ++ m, s')
+
+    ModifySkill skillId delta msg -> (modifySkill skillId delta state, msg, salt)
+
+    -- Conditions (Phase 2)
+    ApplyCondition name turns tick end -> (applyCondition name turns tick end state, "", salt)
+    ClearCondition name msg -> (clearCondition name state, msg, salt)
+    HasCondition name thenOutcome elseOutcome ->
+        if hasCondition name state
+        then applyOutcomeWith (depth + 1) salt thenOutcome targetId state
+        else applyOutcomeWith (depth + 1) salt elseOutcome targetId state
+
+    -- Quests (Phase 2)
+    StartQuest qId msg ->
+        if canStartQuest qId state
+        then (startQuest qId state, msg, salt)
+        else (state, "You cannot start that quest right now.", salt)
+    AdvanceQuest qId msg ->
+        if Map.member qId (activeQuests (save state))
+        then (advanceQuest qId state, msg, salt)
+        else (state, "That quest is not active.", salt)
+    CompleteQuest qId msg ->
+        if Map.member qId (activeQuests (save state))
+        then let (st', rewardMsg) = completeQuestWithMsg qId state
+                 fullMsg = intercalate "\n" (filter (not . null) [msg, rewardMsg])
+             in (st', fullMsg, salt)
+        else (state, "That quest is not active.", salt)
+
 -- | Public wrapper: apply a single outcome starting at depth 0 / salt 0
 applyOutcome :: ActionOutcome -> ItemID -> GameState -> CommandResult
 applyOutcome outcome targetId state =
@@ -411,13 +451,25 @@ executeCommand Inventory state =
 
 executeCommand StatsCmd state =
     let p = player (save state)
+        condList = Map.elems (conditions (save state))
+        skillList = Map.toList (playerSkills p)
+        skillDesc = if null skillList
+                    then ""
+                    else "Skills: " ++ intercalate ", " [n ++ " " ++ show v | (n, v) <- skillList] ++ "\n"
+        condDesc = if null condList
+                   then ""
+                   else "Conditions: " ++ intercalate ", "
+                        [ condName c ++ " (" ++ show (condRemaining c) ++ " turns)"
+                        | c <- condList ] ++ "\n"
         msg = unlines
             [ "Health:  " ++ show (playerHealth p) ++ " / " ++ show (effectiveMaxHealth state)
             , "Attack:  " ++ show (effectiveAttack state) ++ " (base " ++ show (playerAttack p) ++ ")"
             , "Defense: " ++ show (effectiveDefense state) ++ " (base " ++ show (playerDefense p) ++ ")"
-            , equipmentSummary state
+            , skillDesc ++ condDesc ++ equipmentSummary state
             ]
     in (state, msg)
+
+executeCommand JournalCmd state = (state, journalText state)
 
 executeCommand (EquipCmd targetStr) state =
     case findMatchingItem targetStr state of

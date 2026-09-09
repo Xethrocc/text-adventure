@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.4.0.0] — Unreleased
+
+Phase 2 (Spiel-Systeme): Skills, Conditions, Quests.
+
+### Added
+- **Skill system**: `Player.playerSkills` and `CheckSkill` (skill + d6 vs DC,
+  salt-threaded RNG so rolls differ), `ModifySkill`. Stats shows skills.
+- **Conditions (status effects)**: `Condition` (name, remaining turns, tick and
+  end outcomes), `SaveState.conditions`, outcomes `ApplyCondition`,
+  `ClearCondition`, `HasCondition`. Ticked once per command in the game loop;
+  tick messages are printed before the command's own output.
+- **Quests**: `Quest`/`QuestStage` definitions in `GameWorld.questDefs`,
+  `SaveState.activeQuests`/`completedQuests`, outcomes `StartQuest` (gated by
+  `questPrereqs`), `AdvanceQuest`, `CompleteQuest` (fires the quest reward).
+  `journal`/`quests` command shows active and completed quests.
+- Sample adventure now includes a 3-stage quest (`find_treasure`, started by
+  taking the key) and a prereq-gated quest (`gated_quest`) plus a lockpick skill.
+
+### Fixed
+- `CompleteQuest` swallowed the quest reward message; the reward outcome's
+  message is now shown after the completion message.
+
 ## [0.3.0.0] — Unreleased
 
 Phase 0 (Fundament) + Phase 1 (Authoring-Essentials).

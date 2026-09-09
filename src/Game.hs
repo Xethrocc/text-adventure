@@ -1,7 +1,9 @@
+{-# LANGUAGE LambdaCase #-}
 -- | Core game state and manipulation for the text adventure engine
 module Game where
 
 import Types
+import Data.List (intercalate)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
@@ -13,6 +15,7 @@ emptyGameWorld = GameWorld
     , npcDefs            = Map.empty
     , entityInteractions = Map.empty
     , itemInteractions   = Map.empty
+    , questDefs          = Map.empty
     }
 
 -- | Default empty game state
@@ -20,7 +23,7 @@ emptyGameState :: GameState
 emptyGameState = GameState
     { world = emptyGameWorld
     , save = SaveState
-        { player             = Player 100 100 10 5
+        { player             = Player 100 100 10 5 Map.empty
         , currentRoom        = "start"
         , inventory          = []
         , itemStates         = Map.empty
@@ -32,6 +35,9 @@ emptyGameState = GameState
         , gameOverReason     = Nothing
         , visitedRooms       = Set.empty
         , equipment          = Map.empty
+        , conditions         = Map.empty
+        , activeQuests       = Map.empty
+        , completedQuests    = Set.empty
         }
     }
 
@@ -381,3 +387,159 @@ isLivingNPCInRoom target state =
     in any (\npc -> matchTarget npc && npcIsAlive npc) roomNPCs
   where
     lower = map (\c -> if c >= 'A' && c <= 'Z' then toEnum (fromEnum c + 32) else c)
+
+-- ---------------------------------------------------------------------------
+-- Skills (Phase 2)
+-- ---------------------------------------------------------------------------
+
+-- | Look up a skill value (0 if the player does not have it)
+getSkill :: SkillID -> GameState -> Int
+getSkill skillId state = Map.findWithDefault 0 skillId (playerSkills (player (save state)))
+
+-- | Modify a skill by a delta (creating it at 0 + delta if unknown)
+modifySkill :: SkillID -> Int -> GameState -> GameState
+modifySkill skillId delta state = state
+    { save = (save state)
+        { player = (player (save state))
+            { playerSkills =
+                Map.alter (\case
+                    Just v -> Just (v + delta)
+                    Nothing -> Just delta)
+                skillId (playerSkills (player (save state))) } } }
+
+-- ---------------------------------------------------------------------------
+-- Conditions (Phase 2)
+-- ---------------------------------------------------------------------------
+
+-- | Apply (or refresh) a timed status effect
+applyCondition :: String -> Int -> Maybe ActionOutcome -> Maybe ActionOutcome -> GameState -> GameState
+applyCondition name turns tick end state = state
+    { save = (save state)
+        { conditions = Map.insert name (Condition name turns tick end) (conditions (save state)) } }
+
+-- | Remove a status effect
+clearCondition :: String -> GameState -> GameState
+clearCondition name state = state
+    { save = (save state) { conditions = Map.delete name (conditions (save state)) } }
+
+-- | Is a status effect active?
+hasCondition :: String -> GameState -> Bool
+hasCondition name state = Map.member name (conditions (save state))
+
+-- | Advance one turn: tick all conditions, fire tick outcomes, remove expired
+--   ones and fire their end outcomes.
+--   Returns the new state plus all messages produced.
+tickConditions :: GameState -> (GameState, [String])
+tickConditions state = foldl step (state, []) (Map.toList (conditions (save state)))
+  where
+    step (st, msgs) (name, cond) =
+        let remaining = condRemaining cond - 1
+        in if remaining <= 0
+           then let (stEnd, mEnd) = maybe (st, "") (\o -> applyOutcomePure o st) (condEndOutcome cond)
+                    st' = clearCondition name stEnd
+                in (st', if null mEnd then msgs else msgs ++ [mEnd])
+           else let st1 = st { save = (save st) { conditions = Map.adjust (\c -> c { condRemaining = remaining }) name (conditions (save st)) } }
+                    (st2, mTick) = maybe (st1, "") (\o -> applyOutcomePure o st1) (condTickOutcome cond)
+                in (st2, if null mTick then msgs else msgs ++ [mTick])
+    -- local wrapper to avoid a module cycle with Parser
+    applyOutcomePure = applyOutcomeFallback
+
+-- | Outcome application for conditions. Lives in Game to avoid a Parser
+--   dependency; supports the subset of outcomes that make sense for ticks.
+applyOutcomeFallback :: ActionOutcome -> GameState -> (GameState, String)
+applyOutcomeFallback outcome state = case outcome of
+    MessageOnly msg          -> (state, msg)
+    HealPlayer amount msg    -> (updatePlayerHealth (+ amount) state, msg)
+    DamagePlayer amount msg  ->
+        let st' = updatePlayerHealth (subtract amount) state
+        in (if isPlayerDead st' then endGame Death st' else st', msg)
+    SetFlag n v msg          -> (setFlag n v state, msg)
+    MultipleOutcomes os ->
+        let (st', msgs) = foldl (\(s, ms) o ->
+                let (s2, m2) = applyOutcomeFallback o s
+                in (s2, if null m2 then ms else ms ++ [m2]))
+                (state, []) os
+        in (st', intercalate "\n" msgs)
+    _ -> (state, "")  -- unsupported in tick context, silently ignored
+
+-- ---------------------------------------------------------------------------
+-- Quests (Phase 2)
+-- ---------------------------------------------------------------------------
+
+-- | Look up a quest definition
+lookupQuest :: QuestID -> GameState -> Maybe Quest
+lookupQuest qId state = Map.lookup qId (questDefs (world state))
+
+-- | Is the quest active, and if so at which stage index (0-based)?
+questStage :: QuestID -> GameState -> Maybe Int
+questStage qId state = Map.lookup qId (activeQuests (save state))
+
+-- | Is the quest completed?
+questCompleted :: QuestID -> GameState -> Bool
+questCompleted qId state = Set.member qId (completedQuests (save state))
+
+-- | Can the quest be started? (exists, not active, not completed, prereqs met)
+canStartQuest :: QuestID -> GameState -> Bool
+canStartQuest qId state = case lookupQuest qId state of
+    Nothing -> False
+    Just q ->
+        not (questCompleted qId state)
+            && not (Map.member qId (activeQuests (save state)))
+            && all (\(f, v) -> getFlag f state == Just v) (Map.toList (questPrereqs q))
+
+-- | Start a quest at stage 0
+startQuest :: QuestID -> GameState -> GameState
+startQuest qId state = state
+    { save = (save state) { activeQuests = Map.insert qId 0 (activeQuests (save state)) } }
+
+-- | Advance a quest to the next stage, or complete it if already at the last
+advanceQuest :: QuestID -> GameState -> GameState
+advanceQuest qId state =
+    case Map.lookup qId (activeQuests (save state)) of
+        Nothing -> state
+        Just idx -> case lookupQuest qId state of
+            Nothing -> state
+            Just q
+                | idx + 1 >= length (questStages q) -> completeQuest qId state
+                | otherwise -> state
+                    { save = (save state) { activeQuests = Map.insert qId (idx + 1) (activeQuests (save state)) } }
+
+-- | Mark a quest completed and fire its reward.
+--   Returns the new state plus the reward message ("" if none).
+completeQuestWithMsg :: QuestID -> GameState -> (GameState, String)
+completeQuestWithMsg qId state =
+    let withoutActive = state
+            { save = (save state)
+                { activeQuests = Map.delete qId (activeQuests (save state))
+                , completedQuests = Set.insert qId (completedQuests (save state)) } }
+    in case lookupQuest qId state >>= questReward of
+        Nothing -> (withoutActive, "")
+        Just outcome -> applyOutcomeFallback outcome withoutActive
+
+-- | Mark a quest completed (ignoring the reward message)
+completeQuest :: QuestID -> GameState -> GameState
+completeQuest qId state = fst (completeQuestWithMsg qId state)
+
+-- | Journal text: active quests with their current stage, then completed ones
+journalText :: GameState -> String
+journalText state =
+    let active = Map.toList (activeQuests (save state))
+        completed = Set.toList (completedQuests (save state))
+        activeLines =
+            [ "- " ++ questName q ++ ": " ++ stageText q idx
+            | (qId, idx) <- active
+            , Just q <- [lookupQuest qId state] ]
+        completedLines =
+            [ "- " ++ questName q ++ " (completed)"
+            | qId <- completed
+            , Just q <- [lookupQuest qId state] ]
+    in case (activeLines, completedLines) of
+        ([], []) -> "Your journal is empty."
+        _ -> unlines ("=== Journal ===" : []) ++
+             (if null activeLines then "" else unlines ("Active:" : activeLines)) ++
+             (if null completedLines then "" else unlines ("Completed:" : completedLines))
+  where
+    stageText q idx =
+        case drop idx (questStages q) of
+            (s:_) -> qsText s ++ maybe "" (\h -> " (Hint: " ++ h ++ ")") (qsHint s)
+            []    -> "?"

@@ -388,7 +388,7 @@ testCombatDamageUsesDefense = do
 
 testPlayerDeathSetsGameOver :: IO Bool
 testPlayerDeathSetsGameOver = do
-    let weakPlayer = initSampleGame { save = (save initSampleGame) { currentRoom = "hallway", player = Player 1 100 10 0 } }
+    let weakPlayer = initSampleGame { save = (save initSampleGame) { currentRoom = "hallway", player = Player 1 100 10 0 Map.empty } }
         (newState, _) = executeCommand (Interact VAttack "goblin") weakPlayer
     r1 <- expectTrue "game over on death" (gameOver (save newState))
     r2 <- expectEqual (Just Death) (gameOverReason (save newState))
@@ -439,6 +439,147 @@ testSaveStateBackwardCompat = do
         Nothing -> do
             putStrLn "  Failed to decode old-format SaveState"
             pure False
+
+-- ===== Skills (Phase 2) =====
+
+testGetSkillUnknown :: IO Bool
+testGetSkillUnknown = expectEqual 0 (getSkill "nonexistent" initSampleGame)
+
+testModifySkill :: IO Bool
+testModifySkill = do
+    let s1 = modifySkill "stealth" 3 initSampleGame
+        s2 = modifySkill "stealth" 2 s1
+    r1 <- expectEqual 3 (getSkill "stealth" s1)
+    r2 <- expectEqual 5 (getSkill "stealth" s2)
+    r3 <- expectEqual 2 (getSkill "lockpick" initSampleGame)  -- sample has lockpick 2
+    pure (r1 && r2 && r3)
+
+testCheckSkillOutcome :: IO Bool
+testCheckSkillOutcome = do
+    -- lockpick is 2 in the sample; DC 3 with a d6 roll always passes (2+1 >= 3)
+    let outcome = CheckSkill "lockpick" 3
+                    (MessageOnly "PICKED") (MessageOnly "FAILED")
+        (_, msg) = applyOutcome outcome "" initSampleGame
+    expectTrue "low DC passes with skill 2" ("PICKED" `isInfixT` msg)
+  where
+    isInfixT needle hay = any (needle `isPrefixT`) (dropTailT hay)
+    isPrefixT p s = take (length p) s == p
+    dropTailT s = s : case s of { [] -> []; (_:xs) -> dropTailT xs }
+
+-- ===== Conditions (Phase 2) =====
+
+testConditionTickExpire :: IO Bool
+testConditionTickExpire = do
+    let poisoned = applyCondition "poisoned" 2
+                        (Just (MessageOnly "It stings."))
+                        (Just (MessageOnly "You feel better.")) initSampleGame
+        (after1, _) = tickConditions poisoned
+        (after2, msgs2) = tickConditions after1
+    r1 <- expectTrue "active after 1 tick" (hasCondition "poisoned" after1)
+    r2 <- expectTrue "expired after 2 ticks" (not (hasCondition "poisoned" after2))
+    let endMsgs = [m | m <- msgs2, "You feel better." `isPrefixT2` m]
+    r3 <- expectTrue "end message produced" (not (null endMsgs))
+    pure (r1 && r2 && r3)
+  where
+    isPrefixT2 p s = take (length p) s == p
+
+testConditionTickDamage :: IO Bool
+testConditionTickDamage = do
+    let hurt = applyCondition "bleeding" 3
+                    (Just (DamagePlayer 10 "You lose blood."))
+                    Nothing initSampleGame
+        (after1, _) = tickConditions hurt
+        (after2, _) = tickConditions after1
+        hp1 = playerHealth (player (save after1))
+        hp2 = playerHealth (player (save after2))
+    r1 <- expectEqual 90 hp1
+    r2 <- expectEqual 80 hp2
+    pure (r1 && r2)
+
+testClearCondition :: IO Bool
+testClearCondition = do
+    let applied = applyCondition "blessed" 5 Nothing Nothing initSampleGame
+        cleared = clearCondition "blessed" applied
+    r1 <- expectTrue "active before clear" (hasCondition "blessed" applied)
+    r2 <- expectTrue "gone after clear" (not (hasCondition "blessed" cleared))
+    pure (r1 && r2)
+
+testHasConditionBranch :: IO Bool
+testHasConditionBranch = do
+    let applied = applyCondition "invisible" 5 Nothing Nothing initSampleGame
+        outcome = HasCondition "invisible"
+                    (MessageOnly "SEEN-NO") (MessageOnly "SEEN-YES")
+        (_, msgApplied) = applyOutcome outcome "" applied
+        (_, msgClean)   = applyOutcome outcome "" initSampleGame
+    r1 <- expectTrue "then-branch when active" ("SEEN-NO" `elem` lines msgApplied || "SEEN-NO" `isPrefixT3` msgApplied)
+    r2 <- expectTrue "else-branch when absent" ("SEEN-YES" `elem` lines msgClean || "SEEN-YES" `isPrefixT3` msgClean)
+    pure (r1 && r2)
+  where
+    isPrefixT3 p s = take (length p) s == p
+
+testStatsShowsConditions :: IO Bool
+testStatsShowsConditions = do
+    let applied = applyCondition "poisoned" 4 Nothing Nothing initSampleGame
+        (_, msg) = executeCommand StatsCmd applied
+    expectTrue "stats mentions poisoned" ("poisoned" `isInfixT4` msg)
+  where
+    isInfixT4 needle hay = any (needle `isPrefixT4`) (tailsT hay)
+    isPrefixT4 p s = take (length p) s == p
+    tailsT s = s : case s of { [] -> []; (_:xs) -> tailsT xs }
+
+-- ===== Quests (Phase 2) =====
+
+testQuestLifecycle :: IO Bool
+testQuestLifecycle = do
+    let started = startQuest "find_treasure" initSampleGame
+        advanced = advanceQuest "find_treasure" started
+        advanced2 = advanceQuest "find_treasure" advanced
+        completed = advanceQuest "find_treasure" advanced2  -- 3 stages, third advance completes
+    r1 <- expectEqual (Just 0) (questStage "find_treasure" started)
+    r2 <- expectEqual (Just 1) (questStage "find_treasure" advanced)
+    r3 <- expectEqual (Just 2) (questStage "find_treasure" advanced2)
+    r4 <- expectTrue "completed after final advance" (questCompleted "find_treasure" completed)
+    r5 <- expectTrue "no longer active" (not (Map.member "find_treasure" (activeQuests (save completed))))
+    pure (r1 && r2 && r3 && r4 && r5)
+
+testQuestPrereqs :: IO Bool
+testQuestPrereqs = do
+    -- StartQuest without the flag set must fail
+    let outcome = StartQuest "gated_quest" "started!"
+        (_, msg1) = applyOutcome outcome "" initSampleGame
+    r1 <- expectEqual "You cannot start that quest right now." msg1
+    -- With the flag set it must work
+    let unlocked = setFlag "met_oldman" "true" initSampleGame
+        (st2, msg2) = applyOutcome outcome "" unlocked
+    r2 <- expectEqual "started!" msg2
+    r3 <- expectEqual (Just 0) (questStage "gated_quest" st2)
+    pure (r1 && r2 && r3)
+
+testJournalShowsQuest :: IO Bool
+testJournalShowsQuest = do
+    let started = startQuest "find_treasure" initSampleGame
+        (_, msg) = executeCommand JournalCmd started
+    r1 <- expectTrue "journal mentions quest name" ("The Lost Treasure" `isInfixT5` msg)
+    r2 <- expectTrue "journal shows current stage" ("Explore the dark hallway." `isInfixT5` msg)
+    pure (r1 && r2)
+  where
+    isInfixT5 needle hay = any (needle `isPrefixT5`) (tailsT5 hay)
+    isPrefixT5 p s = take (length p) s == p
+    tailsT5 s = s : case s of { [] -> []; (_:xs) -> tailsT5 xs }
+
+testQuestRewardFires :: IO Bool
+testQuestRewardFires = do
+    -- Start, advance twice, then CompleteQuest directly
+    let started = startQuest "find_treasure" initSampleGame
+        (completed, msg) = applyOutcome (CompleteQuest "find_treasure" "done!") "" started
+    r1 <- expectTrue "quest completed" (questCompleted "find_treasure" completed)
+    r2 <- expectTrue "reward message present" ("treasure is yours" `isInfixT6` msg)
+    r3 <- expectTrue "done! message present" ("done!" `isInfixT6` msg)
+    pure (r1 && r2 && r3)
+  where
+    isInfixT6 needle hay = any (needle `isPrefixT6`) (tailsT6 hay)
+    isPrefixT6 p s = take (length p) s == p
+    tailsT6 s = s : case s of { [] -> []; (_:xs) -> tailsT6 xs }
 
 main :: IO ()
 main = do
@@ -507,5 +648,20 @@ main = do
         -- JSON round-trip tests
         , runTest "SaveState JSON round-trip" testSaveStateRoundTrip
         , runTest "SaveState backward compat (old format)" testSaveStateBackwardCompat
+        -- Skills (Phase 2)
+        , runTest "getSkill returns 0 for unknown skill" testGetSkillUnknown
+        , runTest "modifySkill adds and stacks" testModifySkill
+        , runTest "CheckSkill outcome resolves a branch" testCheckSkillOutcome
+        -- Conditions (Phase 2)
+        , runTest "condition ticks and expires with end outcome" testConditionTickExpire
+        , runTest "condition tick damages player each turn" testConditionTickDamage
+        , runTest "ClearCondition removes effect" testClearCondition
+        , runTest "HasCondition branches" testHasConditionBranch
+        , runTest "stats shows conditions" testStatsShowsConditions
+        -- Quests (Phase 2)
+        , runTest "quest lifecycle: start, advance, complete" testQuestLifecycle
+        , runTest "quest prereqs gate StartQuest" testQuestPrereqs
+        , runTest "journal command shows active quest" testJournalShowsQuest
+        , runTest "completeQuest fires reward" testQuestRewardFires
         ]
     when (not (and results)) exitFailure

@@ -129,6 +129,17 @@ data ActionOutcome
     -- Equipment (Phase 0)
     | EquipItem ItemID String             -- ^ Equip an item the player carries, Message
     | UnequipItem ItemID String           -- ^ Unequip an item, Message
+    -- Skills (Phase 2)
+    | CheckSkill SkillID Int ActionOutcome ActionOutcome -- ^ Skill, DC, Pass-branch, Fail-branch
+    | ModifySkill SkillID Int String      -- ^ Skill, delta (+/-), Message
+    -- Conditions (Phase 2)
+    | ApplyCondition String Int (Maybe ActionOutcome) (Maybe ActionOutcome) -- ^ Name, turns, tick, end
+    | ClearCondition String String        -- ^ Condition name, Message
+    | HasCondition String ActionOutcome ActionOutcome -- ^ Condition name, then-branch, else-branch
+    -- Quests (Phase 2)
+    | StartQuest QuestID String           -- ^ Quest, Message
+    | AdvanceQuest QuestID String         -- ^ Quest, Message (moves to next stage)
+    | CompleteQuest QuestID String        -- ^ Quest, Message (fires questReward)
     deriving (Show, Eq, Generic)
 
 instance ToJSON ActionOutcome
@@ -335,17 +346,68 @@ instance FromJSON NPCState where
 -- Player
 -- ---------------------------------------------------------------------------
 
--- | Player with combat statistics.
---   The fields are *base* values; equipment bonuses are applied on lookup.
+-- | Player with combat statistics and skills.
+--   The health/attack/defense fields are *base* values; equipment bonuses are
+--   applied on lookup. Skills are plain named values (lockpick, stealth, ...).
 data Player = Player
     { playerHealth    :: Int
     , playerMaxHealth :: Int
     , playerAttack    :: Int
     , playerDefense   :: Int
+    , playerSkills    :: Map.Map SkillID Int
     } deriving (Show, Eq, Generic)
 
 instance ToJSON Player
-instance FromJSON Player
+instance FromJSON Player where
+    parseJSON = withObject "Player" $ \o -> Player
+        <$> o .:  "playerHealth"
+        <*> o .:  "playerMaxHealth"
+        <*> o .:  "playerAttack"
+        <*> o .:  "playerDefense"
+        <*> o .:? "playerSkills" .!= Map.empty
+
+-- ---------------------------------------------------------------------------
+-- Conditions (status effects)
+-- ---------------------------------------------------------------------------
+
+-- | A timed status effect on the player.
+--   Ticks once per turn; when the remaining turns reach 0 the effect ends.
+data Condition = Condition
+    { condName        :: String
+    , condRemaining   :: Int                -- ^ Turns until it expires
+    , condTickOutcome :: Maybe ActionOutcome -- ^ Fired every turn while active
+    , condEndOutcome  :: Maybe ActionOutcome -- ^ Fired once when it expires
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON Condition
+instance FromJSON Condition
+
+-- ---------------------------------------------------------------------------
+-- Quests
+-- ---------------------------------------------------------------------------
+
+-- | One stage of a quest. Stages advance in order.
+data QuestStage = QuestStage
+    { qsId   :: String
+    , qsText :: String                          -- ^ Shown in the journal
+    , qsHint :: Maybe String                    -- ^ Optional nudge for the player
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON QuestStage
+instance FromJSON QuestStage
+
+-- | A quest: an ordered list of stages plus a completion reward.
+data Quest = Quest
+    { questId          :: QuestID
+    , questName        :: String
+    , questDescription :: String
+    , questPrereqs     :: Map.Map FlagID String -- ^ Flags that must match before StartQuest works
+    , questStages      :: [QuestStage]
+    , questReward      :: Maybe ActionOutcome
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON Quest
+instance FromJSON Quest
 
 -- ---------------------------------------------------------------------------
 -- Rooms
@@ -410,6 +472,7 @@ data GameWorld = GameWorld
     , npcDefs            :: Map.Map NPCID NPCDef
     , entityInteractions :: Map.Map (String, String) (String, String)
     , itemInteractions   :: Map.Map (String, String) ActionOutcome  -- ^ (Item, Item) -> outcome
+    , questDefs          :: Map.Map QuestID Quest                    -- ^ Static quest definitions
     } deriving (Show, Eq)
 
 instance ToJSON GameWorld where
@@ -419,6 +482,7 @@ instance ToJSON GameWorld where
         , "npcDefs"            .= npcDefs gw
         , "entityInteractions" .= tupleMapToJSON (entityInteractions gw)
         , "itemInteractions"   .= Map.mapKeys (\(a, b) -> a ++ "|" ++ b) (itemInteractions gw)
+        , "questDefs"          .= questDefs gw
         ]
 
 instance FromJSON GameWorld where
@@ -428,6 +492,7 @@ instance FromJSON GameWorld where
         <*> o .:  "npcDefs"
         <*> (o .: "entityInteractions" >>= tupleMapFromJSON)
         <*> (o .:? "itemInteractions" .!= Map.empty >>= parseItemInteractions)
+        <*> o .:? "questDefs" .!= Map.empty
 
 parseItemInteractions :: Map.Map String ActionOutcome -> Parser (Map.Map (String, String) ActionOutcome)
 parseItemInteractions m =
@@ -453,22 +518,28 @@ data SaveState = SaveState
     , gameOverReason     :: Maybe GameOverReason
     , visitedRooms       :: Set.Set RoomID
     , equipment          :: Map.Map EquipSlot ItemID
+    , conditions         :: Map.Map String Condition          -- ^ Active status effects
+    , activeQuests       :: Map.Map QuestID Int               -- ^ Quest -> current stage index (0-based)
+    , completedQuests    :: Set.Set QuestID
     } deriving (Show, Eq)
 
 instance ToJSON SaveState where
     toJSON ss = object
-        [ "player"         .= player ss
-        , "currentRoom"    .= currentRoom ss
-        , "inventory"      .= inventory ss
-        , "itemStates"     .= itemStates ss
-        , "npcStates"      .= npcStates ss
-        , "entityStates"   .= entityStates ss
-        , "flags"          .= flags ss
-        , "turnCount"      .= turnCount ss
-        , "gameOver"       .= gameOver ss
-        , "gameOverReason" .= gameOverReason ss
-        , "visitedRooms"   .= visitedRooms ss
-        , "equipment"      .= equipment ss
+        [ "player"          .= player ss
+        , "currentRoom"     .= currentRoom ss
+        , "inventory"       .= inventory ss
+        , "itemStates"      .= itemStates ss
+        , "npcStates"       .= npcStates ss
+        , "entityStates"    .= entityStates ss
+        , "flags"           .= flags ss
+        , "turnCount"       .= turnCount ss
+        , "gameOver"        .= gameOver ss
+        , "gameOverReason"  .= gameOverReason ss
+        , "visitedRooms"    .= visitedRooms ss
+        , "equipment"       .= equipment ss
+        , "conditions"      .= conditions ss
+        , "activeQuests"    .= activeQuests ss
+        , "completedQuests" .= completedQuests ss
         ]
 
 instance FromJSON SaveState where
@@ -479,12 +550,15 @@ instance FromJSON SaveState where
         <*> o .:  "itemStates"
         <*> o .:  "npcStates"
         <*> o .:  "entityStates"
-        <*> o .:? "flags"          .!= Map.empty
-        <*> o .:? "turnCount"      .!= 0
+        <*> o .:? "flags"           .!= Map.empty
+        <*> o .:? "turnCount"       .!= 0
         <*> o .:  "gameOver"
-        <*> o .:? "gameOverReason" .!= Nothing
-        <*> o .:? "visitedRooms"   .!= Set.empty
-        <*> o .:? "equipment"      .!= Map.empty
+        <*> o .:? "gameOverReason"  .!= Nothing
+        <*> o .:? "visitedRooms"    .!= Set.empty
+        <*> o .:? "equipment"       .!= Map.empty
+        <*> o .:? "conditions"      .!= Map.empty
+        <*> o .:? "activeQuests"    .!= Map.empty
+        <*> o .:? "completedQuests" .!= Set.empty
 
 -- | Save file wrapper with metadata for save slots
 data SaveFile = SaveFile
