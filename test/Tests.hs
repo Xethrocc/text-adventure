@@ -6,7 +6,7 @@ import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Game
-import GameLoop (commandCompletion)
+import GameLoop (commandCompletion, LoopState (..), initLoopState, applyLoopCommand)
 import Parser (Command (..), executeCommand, parseCommand, applyOutcome)
 import Sample (initSampleGame)
 import System.Console.Haskeline (Completion (..))
@@ -673,6 +673,72 @@ testVehicleStateRoundTrip = do
         decoded = Aeson.decode encoded :: Maybe VehicleState
     expectEqual (Just vs) decoded
 
+-- ===== Undo tests (Phase 4.3) =====
+
+testUndoRestoresPreviousState :: IO Bool
+testUndoRestoresPreviousState = do
+    let loop0 = initLoopState initSampleGame
+        (loop1, _) = applyLoopCommand (Go South) loop0
+        (loop2, msg) = applyLoopCommand Undo loop1
+    r1 <- expectEqual initSampleGame (lsCurrent loop2)
+    r2 <- expectEqual "Undone." msg
+    pure (r1 && r2)
+
+testQuitDoesNotCreateUndoHistory :: IO Bool
+testQuitDoesNotCreateUndoHistory = do
+    let (loop1, _) = applyLoopCommand Quit (initLoopState initSampleGame)
+    expectEqual [] (lsHistory loop1)
+
+testHelpDoesNotAffectUndoHistory :: IO Bool
+testHelpDoesNotAffectUndoHistory = do
+    let (loop1, _) = applyLoopCommand Help (initLoopState initSampleGame)
+    r1 <- expectEqual [] (lsHistory loop1)
+    r2 <- expectEqual 0 (turnCount (save (lsCurrent loop1)))
+    pure (r1 && r2)
+
+testUndoEmptyHistory :: IO Bool
+testUndoEmptyHistory = do
+    let loop0 = initLoopState initSampleGame
+        (loop1, msg) = applyLoopCommand Undo loop0
+    r1 <- expectEqual loop0 loop1
+    r2 <- expectEqual "Nothing to undo." msg
+    pure (r1 && r2)
+
+testMultipleUndo :: IO Bool
+testMultipleUndo = do
+    let loop0 = initLoopState initSampleGame
+        (loop1, _) = applyLoopCommand (Go South) loop0
+        (loop2, _) = applyLoopCommand (EnterVehicleCmd "carriage") loop1
+        (loop3, _) = applyLoopCommand Undo loop2
+        (loop4, _) = applyLoopCommand Undo loop3
+    r1 <- expectEqual (lsCurrent loop1) (lsCurrent loop3)
+    r2 <- expectEqual initSampleGame (lsCurrent loop4)
+    pure (r1 && r2)
+
+testUndoHistoryCappedAt50 :: IO Bool
+testUndoHistoryCappedAt50 = do
+    let step loop = fst (applyLoopCommand Look loop)
+        loop51 = iterate step (initLoopState initSampleGame) !! 51
+    expectEqual 50 (length (lsHistory loop51))
+
+testSaveDoesNotAffectUndoHistory :: IO Bool
+testSaveDoesNotAffectUndoHistory = do
+    let (loop1, _) = applyLoopCommand (Save "slot") (initLoopState initSampleGame)
+    r1 <- expectEqual [] (lsHistory loop1)
+    r2 <- expectEqual 0 (turnCount (save (lsCurrent loop1)))
+    pure (r1 && r2)
+
+testUndoRestoresAfterDeath :: IO Bool
+testUndoRestoresAfterDeath = do
+    let fragile = initSampleGame { save = (save initSampleGame)
+            { player = (player (save initSampleGame)) { playerHealth = 1 } } }
+        (deadLoop, _) = applyLoopCommand (Interact VAttack "goblin")
+            (initLoopState (moveToRoom "hallway" fragile))
+        (restoredLoop, _) = applyLoopCommand Undo deadLoop
+    r1 <- expectTrue "attack killed player" (gameOver (save (lsCurrent deadLoop)))
+    r2 <- expectTrue "undo clears game over" (not (gameOver (save (lsCurrent restoredLoop))))
+    pure (r1 && r2)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -765,5 +831,14 @@ main = do
         , runTest "refuel via item-on-vehicle" testRefuelViaItem
         , runTest "vehicle condition fires vehicle-wide tick" testVehicleConditionTick
         , runTest "VehicleState JSON round-trip" testVehicleStateRoundTrip
+        -- Undo (Phase 4.3)
+        , runTest "undo restores previous state" testUndoRestoresPreviousState
+        , runTest "quit does not create undo history" testQuitDoesNotCreateUndoHistory
+        , runTest "help does not affect undo history" testHelpDoesNotAffectUndoHistory
+        , runTest "undo with empty history is a no-op" testUndoEmptyHistory
+        , runTest "multiple undo walks back multiple states" testMultipleUndo
+        , runTest "undo history is capped at 50" testUndoHistoryCappedAt50
+        , runTest "save does not affect undo history" testSaveDoesNotAffectUndoHistory
+        , runTest "undo restores after death" testUndoRestoresAfterDeath
         ]
     when (not (and results)) exitFailure

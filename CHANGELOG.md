@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.6.0.0] — Unreleased
+
+Phase 4.3 (Engine-Qualität): Undo.
+
+### Added
+- **Undo-System**: `LoopState` hält den aktuellen `GameState` und bis zu 50
+  vorherige Zustände (neuester zuerst). `undo` stellt den kompletten Zustand
+  inklusive Room, Inventory, Conditions, Quests, Vehicles und Turn-Counter
+  wieder her.
+- `undo` verbraucht selbst keinen Zug; bei leerer Historie erscheint
+  `Nothing to undo.`.
+- Save/Load/ListSaves/Restart/Help/Quit erzeugen keine Undo-Einträge; ein
+  erfolgreicher Load startet bewusst eine neue History.
+- Nach einem tödlichen Zug bietet der Death-Screen `[U]ndo` an, sodass der
+  letzte Zustand direkt wiederhergestellt werden kann.
+- Help-Text und Tab-Completion enthalten `undo`.
+- 7 neue Undo-Tests: Restore, leere History, mehrfaches Undo, 50er-Limit,
+  Meta-Commands und Wiederherstellung nach Tod.
+
 ## [0.5.0.0] — Unreleased
 
 Phase 3 (Vehicles): First-Class-Fahrzeuge mit eigenen Innenräumen, Routen

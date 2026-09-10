@@ -28,6 +28,7 @@ data Command
     | StatsCmd
     | SearchCmd (Maybe String)   -- ^ `search` or `search <target>`
     | JournalCmd                 -- ^ show active/completed quests
+    | Undo                       -- ^ restore the previous game state
     | EnterVehicleCmd String     -- ^ enter a vehicle
     | ExitVehicleCmd             -- ^ exit the current vehicle
     | DriveToCmd String          -- ^ drive the current vehicle to a station
@@ -152,6 +153,7 @@ parseSimpleCommand tokens input = case tokens of
     ["stats"]              -> StatsCmd
     ["journal"]            -> JournalCmd
     ["quests"]             -> JournalCmd
+    ["undo"]               -> Undo
     -- Vehicles (Phase 3)
     "enter" : targetParts | not (null targetParts) -> EnterVehicleCmd (unwords (safeStripStopWords targetParts))
     "board" : targetParts | not (null targetParts) -> EnterVehicleCmd (unwords (safeStripStopWords targetParts))
@@ -495,6 +497,7 @@ executeCommand StatsCmd state =
     in (state, msg)
 
 executeCommand JournalCmd state = (state, journalText state)
+executeCommand Undo state = (state, "Nothing to undo.")
 
 executeCommand (EquipCmd targetStr) state =
     case findMatchingItem targetStr state of
@@ -919,6 +922,7 @@ helpText = intercalate "\n"
     , ""
     , "System:"
     , "  inventory / inv / i        - Check what you're carrying"
+    , "  undo                       - Restore the previous game state (up to 50)"
     , "  save [name]                - Save game (default: savegame)"
     , "  load [name]                - Load a saved game"
     , "  saves                      - List all saved games"

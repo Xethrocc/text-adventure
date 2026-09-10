@@ -2,6 +2,9 @@
 module GameLoop
   ( runGame
   , gameLoop
+  , LoopState (..)
+  , initLoopState
+  , applyLoopCommand
   , commandCompletion
   , initSampleGame
   ) where
@@ -28,7 +31,7 @@ commandWords =
     , "search", "inventory", "inv", "i", "use", "talk", "speak", "attack", "hit", "kill"
     , "equip", "wear", "wield", "unequip", "remove", "stats"
     , "enter", "board", "disembark", "drive", "wait", "refuel", "repair"
-    , "save", "load", "saves", "restart", "help", "quit", "exit", "q"
+    , "undo", "save", "load", "saves", "restart", "help", "quit", "exit", "q"
     ]
 
 directionWords :: [String]
@@ -120,62 +123,102 @@ haskelineSettings state =
 -- Game loop
 -- ---------------------------------------------------------------------------
 
+-- | Runtime state for undo. History is newest-first and capped at 50 states.
+data LoopState = LoopState
+    { lsCurrent :: GameState
+    , lsHistory :: [GameState]
+    } deriving (Show, Eq)
+
+initLoopState :: GameState -> LoopState
+initLoopState state = LoopState state []
+
+maxUndoHistory :: Int
+maxUndoHistory = 50
+
+-- | Pure command transition used by both the interactive loop and tests.
+--   Undo itself does not consume a turn. Other commands run the normal turn
+--   ticks and save the exact pre-command state for restoration.
+applyLoopCommand :: Command -> LoopState -> (LoopState, String)
+applyLoopCommand Undo loopState = case lsHistory loopState of
+    [] -> (loopState, "Nothing to undo.")
+    previous : rest -> (LoopState previous rest, "Undone.")
+applyLoopCommand Quit loopState =
+    let (newState, message) = executeCommand Quit (lsCurrent loopState)
+    in (loopState { lsCurrent = newState }, message)
+applyLoopCommand Help loopState = (loopState, helpText)
+applyLoopCommand (Save _) loopState = (loopState, "")
+applyLoopCommand (Load _) loopState = (loopState, "")
+applyLoopCommand ListSaves loopState = (loopState, "")
+applyLoopCommand Restart loopState = (loopState, "")
+applyLoopCommand command loopState =
+    let oldState = lsCurrent loopState
+        stateWithTurn = incrementTurnCount oldState
+        (stateAfterTick, tickMsgs) = tickConditions stateWithTurn
+        (stateAfterVehicleTick, vehicleTickMsg) = vehicleConditionTick stateAfterTick
+        (newState, message) = executeCommand command stateAfterVehicleTick
+        allTickMsgs = tickMsgs ++ (if null vehicleTickMsg then [] else [vehicleTickMsg])
+        fullMessage = if null allTickMsgs then message else unlines allTickMsgs ++ message
+        history' = take maxUndoHistory (oldState : lsHistory loopState)
+    in (LoopState newState history', fullMessage)
+
 -- | Main game loop function
 runGame :: GameState -> IO ()
 runGame state = do
     let (newState, message) = executeCommand Look state
     putStrLn message
-    gameLoop newState
+    loopGame (initLoopState newState)
 
--- | Interactive game loop
+-- | Backward-compatible entry point for callers that have a plain GameState.
 gameLoop :: GameState -> IO ()
-gameLoop state
-    | gameOver (save state) = handleGameOver state
-    | otherwise      = do
+gameLoop = loopGame . initLoopState
+
+-- | Interactive game loop with an in-memory undo history.
+loopGame :: LoopState -> IO ()
+loopGame loopState
+    | gameOver (save state) = handleGameOver loopState
+    | otherwise = do
         inputResult <- runInputT (haskelineSettings state) (getInputLine "> ")
         case inputResult of
             Nothing -> do
                 let (newState, message) = executeCommand Quit state
                 putStrLn message
-                gameLoop newState
-            Just input -> do
-                let command = parseCommand input
-                    stateWithTurn = incrementTurnCount state
-                    -- Tick conditions once per command (player + vehicle-wide)
-                    (stateAfterTick, tickMsgs) = tickConditions stateWithTurn
-                    (stateAfterVehicleTick, vehicleTickMsg) = vehicleConditionTick stateAfterTick
-                    allTickMsgs = tickMsgs ++ (if null vehicleTickMsg then [] else [vehicleTickMsg])
-                case command of
+                loopGame loopState { lsCurrent = newState }
+            Just input ->
+                case parseCommand input of
                     Save name -> do
-                        saveGame stateAfterVehicleTick name
-                        gameLoop stateAfterVehicleTick
+                        saveGame state name
+                        loopGame loopState
                     Load name -> do
-                        result <- loadGame stateAfterVehicleTick name
+                        result <- loadGame state name
                         case result of
                             Just loadedState -> do
-                                let (s', msg) = executeCommand Look loadedState
+                                let (loadedState', msg) = executeCommand Look loadedState
                                 putStrLn msg
-                                gameLoop s'
-                            Nothing -> gameLoop stateAfterVehicleTick
+                                loopGame (initLoopState loadedState')
+                            Nothing -> loopGame loopState
                     ListSaves -> do
-                        listSaves (world stateAfterVehicleTick)
-                        gameLoop stateAfterVehicleTick
+                        listSaves (world state)
+                        loopGame loopState
                     Restart -> do
                         putStrLn "Starting a new game...\n"
                         runGame initSampleGame
-                    _ -> do
-                        let (newState, message) = executeCommand command stateAfterVehicleTick
-                            tickOutput = if null allTickMsgs then "" else unlines allTickMsgs
-                        putStrLn (if null tickOutput then message else tickOutput ++ message)
-                        gameLoop newState
+                    Help -> do
+                        putStrLn helpText
+                        loopGame loopState
+                    command -> do
+                        let (loopState', message) = applyLoopCommand command loopState
+                        putStrLn message
+                        loopGame loopState'
+  where
+    state = lsCurrent loopState
 
 -- ---------------------------------------------------------------------------
 -- Game over screens
 -- ---------------------------------------------------------------------------
 
 -- | Handle game-over screen based on reason
-handleGameOver :: GameState -> IO ()
-handleGameOver state = do
+handleGameOver :: LoopState -> IO ()
+handleGameOver loopState = do
     case gameOverReason (save state) of
         Just Death -> do
             putStrLn ""
@@ -183,8 +226,8 @@ handleGameOver state = do
             putStrLn "  YOU HAVE DIED"
             putStrLn "========================================="
             putStrLn ""
-            putStrLn "  [L]oad last save  |  [R]estart  |  [Q]uit"
-            deathLoop state
+            putStrLn "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
+            deathLoop loopState
         Just Victory -> do
             putStrLn ""
             putStrLn "========================================="
@@ -200,12 +243,23 @@ handleGameOver state = do
             putStrLn "  [R]estart  |  [Q]uit"
             victoryLoop
         Nothing -> return ()  -- Quit without reason
+  where
+    state = lsCurrent loopState
 
 -- | Death screen input loop
-deathLoop :: GameState -> IO ()
-deathLoop state = do
+deathLoop :: LoopState -> IO ()
+deathLoop loopState = do
     inputResult <- runInputT defaultSettings (getInputLine "> ")
     case map toLower . fromMaybe "q" <$> pure inputResult of
+        Just "u" ->
+            case lsHistory loopState of
+                [] -> do
+                    putStrLn "Nothing to undo."
+                    deathLoop loopState
+                _ -> do
+                    let (restored, msg) = applyLoopCommand Undo loopState
+                    putStrLn msg
+                    loopGame restored
         Just "l" -> do
             putStrLn "Enter save name to load (or press Enter for 'savegame'):"
             nameResult <- runInputT defaultSettings (getInputLine "> ")
@@ -217,15 +271,17 @@ deathLoop state = do
                 Just loadedState -> do
                     let (s', msg) = executeCommand Look loadedState
                     putStrLn msg
-                    gameLoop s'
-                Nothing -> deathLoop state
+                    loopGame (initLoopState s')
+                Nothing -> deathLoop loopState
         Just "r" -> do
             putStrLn "Starting a new game...\n"
             runGame initSampleGame
         Just "q" -> putStrLn "Thanks for playing!"
         _ -> do
-            putStrLn "  [L]oad last save  |  [R]estart  |  [Q]uit"
-            deathLoop state
+            putStrLn "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
+            deathLoop loopState
+  where
+    state = lsCurrent loopState
 
 -- | Victory/custom game-over input loop
 victoryLoop :: IO ()
