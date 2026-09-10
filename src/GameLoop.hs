@@ -32,10 +32,11 @@ commandWords =
     , "equip", "wear", "wield", "unequip", "remove", "stats"
     , "enter", "board", "disembark", "drive", "wait", "refuel", "repair"
     , "undo", "save", "load", "saves", "restart", "help", "quit", "exit", "q"
+    , "activate", "swim", "crawl", "dig"
     ]
 
 directionWords :: [String]
-directionWords = ["north", "south", "east", "west", "up", "down"]
+directionWords = ["north", "south", "east", "west", "up", "down", "southeast", "se"]
 
 completionItems :: [String] -> String -> [Completion]
 completionItems options prefix =

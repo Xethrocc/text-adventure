@@ -23,6 +23,28 @@ Phase 4.6 (Core Polish): Dialogue-Tree-Interaktivität, CLI-Validierung und Room
   - `Room.roomAscii :: Maybe String`: Optionales Banner-Feld (z. B. aus `img2ascii`), das bei `look` über dem Raumnamen angezeigt wird.
 - 8 neue Tests für Dialoge, ASCII-Art und Dialogue-Validierung (jetzt 95 Tests, alle grün).
 
+## [0.9.0.0] — Unreleased
+
+Phase 5 (Worldbuilder + Ports): Worldbuilder YAML/JSON-Compiler und TheFog-Portierung.
+
+### Added
+- **Worldbuilder-Package (`worldbuilder/`)**:
+  - `Worldbuilder.Types`: Authoring-Schema (Adventure, ARoom, AItem, ANPC, AQuest, AVehicle, ADialogueTree, AActionOutcome) mit FromJSON-Instanzen für JSON und YAML.
+  - `Worldbuilder.Compile`: Schema → engine GameWorld + SaveState (Räume, Exits, Items, NPCs/Dialoge, Quests, Vehicles, Interaktionen, Outcomes).
+  - `Worldbuilder.CLI`: CLI-Befehle `validate`, `compile`, `check` mit JSON/YAML-Unterstützung.
+  - `Worldbuilder.ParseFile`: Auto-Erkennung von .json/.yaml/.yml, YAML-Parsing via HsYAML-aeson.
+- **Engine-Erweiterungen für TheFog-Kompatibilität**:
+  - `Southeast` in `Direction` (für Geheimgänge, Kanonensprünge, Schrein-Eingänge).
+  - `activate` als Synonym für `VUse` (Schrein-Aktivierung per `activate <target>`).
+  - `swim`, `crawl`, `dig`, `game`, `se` als Aliase für `Go Southeast`.
+- **Beispiel: TheFog-Portierung** (`examples/thefog.yaml`):
+  - 55 Räume mit komplettem Wegenez (Home, Garden, Forest, Graveyard, Mountain, Canyon, Castle, 4 Schrein-Locations).
+  - 10 Items (Paper, Map, Apple, Shield, Crystal, Sword, 4 Schreine) mit Platzierungen aus dem Original.
+  - 2 NPCs: Wolf (Kampf, 30 HP) und Princess.
+  - 5 Quests (4 Schrein-Aktivierungen + Wolf besiegen).
+  - 4 Schrein-Interaktionen: `use crystal on <shrine>` aktiviert den Schrein und schaltet die Quest weiter.
+  - Wird via `worldbuilder compile examples/thefog.yaml` in spielbare Engine-Dateien übersetzt.
+
 ## [0.8.0.0] — Unreleased
 
 Phase 4.5 (Engine-Qualität): World-Validierung.

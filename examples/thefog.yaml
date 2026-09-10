@@ -1,0 +1,1002 @@
+{
+  "name": "The Fog",
+  "start_room": "loc_0",
+  "rooms": [
+    {
+      "id": "loc_0",
+      "name": "Home",
+      "desc": "You are at Home, there is a Forge, a Table with a Candle on top. At North is the Entrance, to the South there's flap that leads to your basement.",
+      "exits": {
+        "north": {
+          "to": "loc_1"
+        },
+        "south": {
+          "to": "loc_4"
+        }
+      }
+    },
+    {
+      "id": "loc_1",
+      "name": "Garden",
+      "desc": "Your are in your garden, some flowers and an apple Tree are here. At the Northern site is a Way to a street, to the South is your House",
+      "exits": {
+        "south": {
+          "to": "loc_0"
+        },
+        "north": {
+          "to": "loc_2"
+        }
+      }
+    },
+    {
+      "id": "loc_2",
+      "name": "Path",
+      "desc": "You are on an old street, You can go to North, East, West. To the South is Your garden. There is a post with a few signs.",
+      "exits": {
+        "south": {
+          "to": "loc_1"
+        },
+        "north": {
+          "to": "loc_3"
+        },
+        "east": {
+          "to": "loc_31"
+        },
+        "west": {
+          "to": "loc_39"
+        }
+      }
+    },
+    {
+      "id": "loc_3",
+      "name": "Path",
+      "desc": "Your are on a Street. You can go to North or South. In the North you can see many treetops",
+      "exits": {
+        "north": {
+          "to": "loc_6"
+        },
+        "south": {
+          "to": "loc_2"
+        }
+      }
+    },
+    {
+      "id": "loc_4",
+      "name": "Basement",
+      "desc": "You are in your Basement, there are shelves of potatoes, apples, pickles. There's a chest in the corner.",
+      "exits": {
+        "north": {
+          "to": "loc_0"
+        }
+      }
+    },
+    {
+      "id": "loc_5",
+      "name": "Errorfield",
+      "desc": "You are in an Error"
+    },
+    {
+      "id": "loc_6",
+      "name": "Path",
+      "desc": "You are on a road, you can go north, east, south and west. In the north you can see a path in the giant forest. In the east is a small hut.",
+      "exits": {
+        "north": {
+          "to": "loc_12"
+        },
+        "east": {
+          "to": "loc_7"
+        },
+        "west": {
+          "to": "loc_8"
+        },
+        "south": {
+          "to": "loc_3"
+        }
+      }
+    },
+    {
+      "id": "loc_7",
+      "name": "Barn",
+      "desc": "You are standing in front of a small abandoned barn, no one is here. You can go back to West",
+      "exits": {
+        "west": {
+          "to": "loc_6"
+        }
+      }
+    },
+    {
+      "id": "loc_8",
+      "name": "Graveyard",
+      "desc": "You are at the entrance of the cemetery, you can go north, east and west.",
+      "exits": {
+        "north": {
+          "to": "loc_11"
+        },
+        "west": {
+          "to": "loc_9"
+        },
+        "east": {
+          "to": "loc_6"
+        }
+      }
+    },
+    {
+      "id": "loc_9",
+      "name": "Graveyard",
+      "desc": "You are standing in the middle of the cemetery, surrounded by dilapidated tombs. You can go north and east.",
+      "exits": {
+        "north": {
+          "to": "loc_10"
+        },
+        "east": {
+          "to": "loc_8"
+        }
+      }
+    },
+    {
+      "id": "loc_10",
+      "name": "Graveyard",
+      "desc": "You are standing in front of a ruined mausoleum. The entrance is open.",
+      "exits": {
+        "south": {
+          "to": "loc_9"
+        },
+        "west": {
+          "to": "loc_11"
+        },
+        "southeast": {
+          "to": "loc_29"
+        }
+      }
+    },
+    {
+      "id": "loc_11",
+      "name": "Graveyard",
+      "desc": "You're still in the cemetery. It goes to the west and south.",
+      "exits": {
+        "west": {
+          "to": "loc_10"
+        },
+        "south": {
+          "to": "loc_8"
+        }
+      }
+    },
+    {
+      "id": "loc_12",
+      "name": "Forest",
+      "desc": "You are in the woods. You still see the light between the treetops. You can head north deeper into the forest or south onto the road.",
+      "exits": {
+        "north": {
+          "to": "loc_13"
+        },
+        "south": {
+          "to": "loc_6"
+        }
+      }
+    },
+    {
+      "id": "loc_13",
+      "name": "Forest",
+      "desc": "You are in the middle of the forest, it is dark and you hear strange noises.",
+      "exits": {
+        "south": {
+          "to": "loc_12"
+        },
+        "east": {
+          "to": "loc_14"
+        },
+        "west": {
+          "to": "loc_15"
+        }
+      }
+    },
+    {
+      "id": "loc_14",
+      "name": "Forest",
+      "desc": "It is dark, wet and cold. And that owl above you is staring at you. You can go north and west.",
+      "exits": {
+        "west": {
+          "to": "loc_13"
+        },
+        "north": {
+          "to": "loc_18"
+        }
+      }
+    },
+    {
+      "id": "loc_15",
+      "name": "Forest",
+      "desc": "It is dark, wet and cold. And that owl above you is staring at you. You can go north and east.",
+      "exits": {
+        "east": {
+          "to": "loc_13"
+        },
+        "north": {
+          "to": "loc_16"
+        }
+      }
+    },
+    {
+      "id": "loc_16",
+      "name": "Forest",
+      "desc": "Forest, only forest and hardly any light. It goes to the north and south.",
+      "exits": {
+        "north": {
+          "to": "loc_21"
+        },
+        "south": {
+          "to": "loc_15"
+        }
+      }
+    },
+    {
+      "id": "loc_17",
+      "name": "Clearing",
+      "desc": "You are standing in the middle of a clearing. The forest surrounds you from all sides.",
+      "exits": {
+        "north": {
+          "to": "loc_20"
+        },
+        "southeast": {
+          "to": "loc_28"
+        }
+      }
+    },
+    {
+      "id": "loc_18",
+      "name": "Forest",
+      "desc": "Forest, only forest and hardly any light. It goes to the north and south.",
+      "exits": {
+        "north": {
+          "to": "loc_19"
+        },
+        "south": {
+          "to": "loc_14"
+        }
+      }
+    },
+    {
+      "id": "loc_19",
+      "name": "Forest",
+      "desc": "Forest. It goes to the east, south and west.",
+      "exits": {
+        "west": {
+          "to": "loc_20"
+        },
+        "south": {
+          "to": "loc_18"
+        },
+        "east": {
+          "to": "loc_24"
+        }
+      }
+    },
+    {
+      "id": "loc_20",
+      "name": "Forest",
+      "desc": "Forest. It goes to the north, east, south and west.",
+      "exits": {
+        "north": {
+          "to": "loc_23"
+        },
+        "east": {
+          "to": "loc_19"
+        },
+        "south": {
+          "to": "loc_17"
+        },
+        "west": {
+          "to": "loc_21"
+        }
+      }
+    },
+    {
+      "id": "loc_21",
+      "name": "Forest",
+      "desc": "If you want to know, you are in the forest. It goes east, south and west.",
+      "exits": {
+        "east": {
+          "to": "loc_20"
+        },
+        "west": {
+          "to": "loc_22"
+        },
+        "south": {
+          "to": "loc_16"
+        }
+      }
+    },
+    {
+      "id": "loc_22",
+      "name": "Forest Dead End",
+      "desc": "Forest, wild animals and you are in the middle of a dead end. You can only go east.",
+      "exits": {
+        "east": {
+          "to": "loc_21"
+        }
+      }
+    },
+    {
+      "id": "loc_23",
+      "name": "Glade",
+      "desc": "A clearing, but also a dead end. It goes only south again into the forest.",
+      "exits": {
+        "south": {
+          "to": "loc_20"
+        }
+      }
+    },
+    {
+      "id": "loc_24",
+      "name": "Forest",
+      "desc": "Forest, forest and forest. You can go north and west.",
+      "exits": {
+        "north": {
+          "to": "loc_25"
+        },
+        "west": {
+          "to": "loc_19"
+        }
+      }
+    },
+    {
+      "id": "loc_25",
+      "name": "Forest",
+      "desc": "You're still in the woods. It goes to the north and south.",
+      "exits": {
+        "north": {
+          "to": "loc_26"
+        },
+        "south": {
+          "to": "loc_24"
+        }
+      }
+    },
+    {
+      "id": "loc_26",
+      "name": "Forest",
+      "desc": "You're still in the woods. It goes north and south. In the south it looks like there's some sunlight.",
+      "exits": {
+        "north": {
+          "to": "loc_27"
+        },
+        "south": {
+          "to": "loc_25"
+        }
+      }
+    },
+    {
+      "id": "loc_27",
+      "name": "Glade",
+      "desc": "A clearing with sunlight. In the middle stands a huge old tree. Head south to the forest.",
+      "exits": {
+        "south": {
+          "to": "loc_26"
+        }
+      }
+    },
+    {
+      "id": "loc_28",
+      "name": "Earth Shrine",
+      "desc": "In the middle of the forest stands a large shining shrine. You do not hear animals or other things.",
+      "exits": {
+        "south": {
+          "to": "loc_17"
+        }
+      }
+    },
+    {
+      "id": "loc_29",
+      "name": "Secret Grave Entrance",
+      "desc": "You are in a grave. Around you are tombs and cobwebs.",
+      "exits": {
+        "east": {
+          "to": "loc_10"
+        },
+        "west": {
+          "to": "loc_30"
+        }
+      }
+    },
+    {
+      "id": "loc_30",
+      "name": "Dark Room",
+      "desc": "You are even deeper in the grave. It's wet, cold and dark.",
+      "exits": {
+        "east": {
+          "to": "loc_29"
+        }
+      }
+    },
+    {
+      "id": "loc_31",
+      "name": "Path",
+      "desc": "You are on a simple street. It goes east and west. Far to the east you can see a castle.",
+      "exits": {
+        "west": {
+          "to": "loc_2"
+        },
+        "east": {
+          "to": "loc_32"
+        }
+      }
+    },
+    {
+      "id": "loc_32",
+      "name": "Path",
+      "desc": "You are on a street. It goes east and south. In the east there is a drawbridge to a huge castle.",
+      "exits": {
+        "west": {
+          "to": "loc_31"
+        },
+        "east": {
+          "to": "loc_34"
+        },
+        "south": {
+          "to": "loc_33"
+        }
+      }
+    },
+    {
+      "id": "loc_33",
+      "name": "River",
+      "desc": "You are standing in front of a big river with a Waterfall. Behind the River is a cave, maybe you can swim to it.",
+      "exits": {
+        "north": {
+          "to": "loc_32"
+        },
+        "southeast": {
+          "to": "loc_38"
+        }
+      }
+    },
+    {
+      "id": "loc_34",
+      "name": "Bridge",
+      "desc": "You are standing on a huge drawbridge. In front of you is a huge stone castle.",
+      "exits": {
+        "west": {
+          "to": "loc_32"
+        },
+        "east": {
+          "to": "loc_35"
+        }
+      }
+    },
+    {
+      "id": "loc_35",
+      "name": "Courtyard",
+      "desc": "You are standing in the middle of the castle courtyard.",
+      "exits": {
+        "west": {
+          "to": "loc_34"
+        },
+        "east": {
+          "to": "loc_36"
+        }
+      }
+    },
+    {
+      "id": "loc_36",
+      "name": "Entrance Hall",
+      "desc": "You are in the entrance hall. To the east is the throne room but guards block the way.",
+      "exits": {
+        "west": {
+          "to": "loc_35"
+        },
+        "east": {
+          "to": "loc_37"
+        }
+      }
+    },
+    {
+      "id": "loc_37",
+      "name": "Throne Room",
+      "desc": "You are standing in the throne room. A huge throne made of swords.",
+      "exits": {
+        "west": {
+          "to": "loc_36"
+        }
+      }
+    },
+    {
+      "id": "loc_38",
+      "name": "Water Shrine",
+      "desc": "You're in a dark cave. The only source of light is a peculiarly bluish shrine. Maybe you can activate it.",
+      "exits": {
+        "north": {
+          "to": "loc_33"
+        }
+      }
+    },
+    {
+      "id": "loc_39",
+      "name": "Path",
+      "desc": "You are on a street. It goes east and north.",
+      "exits": {
+        "east": {
+          "to": "loc_2"
+        },
+        "west": {
+          "to": "loc_40"
+        }
+      }
+    },
+    {
+      "id": "loc_40",
+      "name": "Path",
+      "desc": "You are back on a road, going east, south and west.",
+      "exits": {
+        "east": {
+          "to": "loc_39"
+        },
+        "west": {
+          "to": "loc_41"
+        },
+        "south": {
+          "to": "loc_46"
+        }
+      }
+    },
+    {
+      "id": "loc_41",
+      "name": "Path",
+      "desc": "You are on a path. In the west you see endless steps leading up a mountain.",
+      "exits": {
+        "east": {
+          "to": "loc_40"
+        },
+        "west": {
+          "to": "loc_42"
+        }
+      }
+    },
+    {
+      "id": "loc_42",
+      "name": "Stairs",
+      "desc": "You are halfway up the mountain. Countless steps ahead and behind.",
+      "exits": {
+        "east": {
+          "to": "loc_41"
+        },
+        "west": {
+          "to": "loc_43"
+        }
+      }
+    },
+    {
+      "id": "loc_43",
+      "name": "Stairs",
+      "desc": "You are almost up on the mountain. To the west is the summit.",
+      "exits": {
+        "east": {
+          "to": "loc_42"
+        },
+        "west": {
+          "to": "loc_44"
+        }
+      }
+    },
+    {
+      "id": "loc_44",
+      "name": "Top Of The Mountain",
+      "desc": "On the top of the mountain. A large lava lake extends before you. A small entrance, maybe you can crawl into it.",
+      "exits": {
+        "east": {
+          "to": "loc_43"
+        },
+        "southeast": {
+          "to": "loc_45"
+        }
+      }
+    },
+    {
+      "id": "loc_45",
+      "name": "Fire Shrine",
+      "desc": "You are standing in a lava-lit room. A large stone pillar with glowing flames.",
+      "exits": {
+        "south": {
+          "to": "loc_44"
+        }
+      }
+    },
+    {
+      "id": "loc_46",
+      "name": "Path",
+      "desc": "You're back on the road. It goes north, east, south and west.",
+      "exits": {
+        "north": {
+          "to": "loc_40"
+        },
+        "east": {
+          "to": "loc_47"
+        },
+        "west": {
+          "to": "loc_48"
+        },
+        "south": {
+          "to": "loc_49"
+        }
+      }
+    },
+    {
+      "id": "loc_47",
+      "name": "Dead End",
+      "desc": "You are at a dead end. A weathered stone tablet before you.",
+      "exits": {
+        "west": {
+          "to": "loc_46"
+        }
+      }
+    },
+    {
+      "id": "loc_48",
+      "name": "Dead End",
+      "desc": "You are at a dead end. A weathered stone tablet before you.",
+      "exits": {
+        "east": {
+          "to": "loc_46"
+        }
+      }
+    },
+    {
+      "id": "loc_49",
+      "name": "Canyon",
+      "desc": "You are standing right in front of the Giant Canyon. Floating stones hover above the canyon.",
+      "exits": {
+        "north": {
+          "to": "loc_46"
+        },
+        "southeast": {
+          "to": "loc_50"
+        }
+      }
+    },
+    {
+      "id": "loc_50",
+      "name": "Flying Stones",
+      "desc": "You are standing on a floating stone. More stones ahead to the south.",
+      "exits": {
+        "north": {
+          "to": "loc_49"
+        },
+        "southeast": {
+          "to": "loc_51"
+        }
+      }
+    },
+    {
+      "id": "loc_51",
+      "name": "Flying Stones",
+      "desc": "You are standing on a floating stone. A floating island in the south.",
+      "exits": {
+        "north": {
+          "to": "loc_50"
+        },
+        "south": {
+          "to": "loc_52"
+        }
+      }
+    },
+    {
+      "id": "loc_52",
+      "name": "Air Shrine",
+      "desc": "You are standing on a small floating island. A marble shrine before you.",
+      "exits": {
+        "north": {
+          "to": "loc_51"
+        }
+      }
+    },
+    {
+      "id": "loc_53",
+      "name": "Start Menu",
+      "desc": "Welcome to The Fog! Enter 'game' to start.",
+      "ascii": "   _________   \n  /   THE   \\\n |    FOG    |\n  \\_________/"
+    },
+    {
+      "id": "loc_54",
+      "name": "Wolf Fight",
+      "desc": "You are in a fight!"
+    }
+  ],
+  "items": [
+    {
+      "id": "paper",
+      "name": "paper",
+      "desc": "A note with a prophecy for this Land.",
+      "keys": [
+        "paper",
+        "note",
+        "prophecy"
+      ],
+      "location": "loc_0"
+    },
+    {
+      "id": "map",
+      "name": "map",
+      "desc": "It's a simple map, you can read it.",
+      "keys": [
+        "map"
+      ],
+      "location": "loc_0"
+    },
+    {
+      "id": "apple",
+      "name": "apple",
+      "desc": "An Apple from your Appletree.",
+      "keys": [
+        "apple"
+      ],
+      "location": "loc_1",
+      "slot": "head",
+      "effects": [
+        "maxhp+5"
+      ],
+      "props": {
+        "uses": 1
+      }
+    },
+    {
+      "id": "shield",
+      "name": "shield",
+      "desc": "It's a shield.",
+      "keys": [
+        "shield"
+      ],
+      "location": "loc_4",
+      "slot": "offhand",
+      "effects": [
+        "defense+4"
+      ]
+    },
+    {
+      "id": "crystal",
+      "name": "crystal",
+      "desc": "It's a slightly glowing Crystal.",
+      "keys": [
+        "crystal"
+      ],
+      "location": "loc_4"
+    },
+    {
+      "id": "sword",
+      "name": "sword",
+      "desc": "The Sword Of A Thousand Truths.",
+      "keys": [
+        "sword"
+      ],
+      "location": "loc_30",
+      "slot": "weapon",
+      "effects": [
+        "attack+9"
+      ]
+    },
+    {
+      "id": "water_shrine",
+      "name": "water shrine",
+      "desc": "Looks like a stone fountain.",
+      "keys": [
+        "water shrine",
+        "shrine"
+      ],
+      "location": "loc_38",
+      "verb_map": {
+        "activate,alive": [
+          {
+            "set_flag": "water_shrine_active",
+            "val": "true"
+          },
+          {
+            "msg": "The water shrine glows with power!"
+          },
+          {
+            "advance_quest": "activate_water"
+          }
+        ]
+      }
+    },
+    {
+      "id": "fire_shrine",
+      "name": "fire shrine",
+      "desc": "Looks like a burning pillar.",
+      "keys": [
+        "fire shrine",
+        "shrine"
+      ],
+      "location": "loc_45",
+      "verb_map": {
+        "activate,alive": [
+          {
+            "set_flag": "fire_shrine_active",
+            "val": "true"
+          },
+          {
+            "msg": "The fire shrine glows with power!"
+          },
+          {
+            "advance_quest": "activate_fire"
+          }
+        ]
+      }
+    },
+    {
+      "id": "air_shrine",
+      "name": "air shrine",
+      "desc": "A big Shrine made of marble.",
+      "keys": [
+        "air shrine",
+        "shrine"
+      ],
+      "location": "loc_52",
+      "verb_map": {
+        "activate,alive": [
+          {
+            "set_flag": "air_shrine_active",
+            "val": "true"
+          },
+          {
+            "msg": "The air shrine glows with power!"
+          },
+          {
+            "advance_quest": "activate_air"
+          }
+        ]
+      }
+    },
+    {
+      "id": "earth_shrine",
+      "name": "earth shrine",
+      "desc": "Looks like a simple shrine made of wood.",
+      "keys": [
+        "earth shrine",
+        "shrine"
+      ],
+      "location": "loc_28",
+      "verb_map": {
+        "activate,alive": [
+          {
+            "set_flag": "earth_shrine_active",
+            "val": "true"
+          },
+          {
+            "msg": "The earth shrine glows with power!"
+          },
+          {
+            "advance_quest": "activate_earth"
+          }
+        ]
+      }
+    }
+  ],
+  "npcs": [
+    {
+      "id": "wolf",
+      "name": "wolf",
+      "desc": "A dark Wolf, maybe you can attack him.",
+      "keys": [
+        "wolf"
+      ],
+      "location": "loc_3",
+      "max_hp": 30,
+      "attack": 8,
+      "defense": 2
+    },
+    {
+      "id": "princess",
+      "name": "princess",
+      "desc": "Looks like she fell in the river. Try to save her.",
+      "keys": [
+        "princess"
+      ],
+      "location": "loc_33"
+    }
+  ],
+  "quests": [
+    {
+      "id": "activate_water",
+      "name": "Water Shrine",
+      "desc": "Activate the Water Shrine using the crystal.",
+      "stages": [
+        {
+          "id": "find_crystal",
+          "desc": "Find the crystal in the basement."
+        },
+        {
+          "id": "activate",
+          "desc": "Swim to the Water Shrine and activate it."
+        }
+      ],
+      "reward": [
+        {
+          "msg": "The Water Shrine glows with blue power!"
+        }
+      ]
+    },
+    {
+      "id": "activate_fire",
+      "name": "Fire Shrine",
+      "desc": "Activate the Fire Shrine using the crystal.",
+      "stages": [
+        {
+          "id": "climb",
+          "desc": "Climb the mountain stairs."
+        },
+        {
+          "id": "activate",
+          "desc": "Crawl into the mountain and activate the Fire Shrine."
+        }
+      ],
+      "reward": [
+        {
+          "msg": "The Fire Shrine roars with flames!"
+        }
+      ]
+    },
+    {
+      "id": "activate_air",
+      "name": "Air Shrine",
+      "desc": "Activate the Air Shrine using the crystal.",
+      "stages": [
+        {
+          "id": "cross_canyon",
+          "desc": "Cross the canyon on floating stones."
+        },
+        {
+          "id": "activate",
+          "desc": "Activate the Air Shrine."
+        }
+      ],
+      "reward": [
+        {
+          "msg": "The Air Shrine hums with wind!"
+        }
+      ]
+    },
+    {
+      "id": "activate_earth",
+      "name": "Earth Shrine",
+      "desc": "Activate the Earth Shrine hidden in the forest.",
+      "stages": [
+        {
+          "id": "explore",
+          "desc": "Find the Earth Shrine in the forest clearing."
+        },
+        {
+          "id": "activate",
+          "desc": "Activate the Earth Shrine."
+        }
+      ],
+      "reward": [
+        {
+          "msg": "The Earth Shrine rumbles with power!"
+        }
+      ]
+    },
+    {
+      "id": "defeat_wolf",
+      "name": "Defeat the Wolf",
+      "desc": "Defeat the dark wolf on the path.",
+      "stages": [
+        {
+          "id": "prepare",
+          "desc": "Find weapons and prepare."
+        },
+        {
+          "id": "attack",
+          "desc": "Attack and defeat the wolf."
+        }
+      ],
+      "reward": [
+        {
+          "msg": "The path is clear. You feel stronger."
+        }
+      ]
+    }
+  ],
+  "interactions": {
+    "entity": [],
+    "item": []
+  }
+}

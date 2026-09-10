@@ -17,9 +17,11 @@ library
   exposed-modules:     Worldbuilder.Types
                        Worldbuilder.Compile
                        Worldbuilder.CLI
+                       Worldbuilder.ParseFile
   hs-source-dirs:      src
   build-depends:       base >=4.12 && <5,
                        text-adventure,
+                       HsYAML-aeson >=0.2 && <1,
                        aeson >=2.0 && <3,
                        bytestring >=0.10 && <1,
                        containers >=0.6 && <0.8,

@@ -3,9 +3,10 @@ module Worldbuilder.CLI (runCLI) where
 
 import Worldbuilder.Types (Adventure)
 import Worldbuilder.Compile (CompileResult(..), compileAdventure)
+import Worldbuilder.ParseFile (parseAdventureFile)
 
--- JSON parsing
-import Data.Aeson (decode, encode)
+-- JSON encoding (output only)
+import Data.Aeson (encode)
 import qualified Data.ByteString.Lazy as BL
 
 -- Engine
@@ -37,13 +38,9 @@ usage = unlines
     , "  worldbuilder validate <adventure.json>      Check for consistency errors"
     , "  worldbuilder compile <adventure.json> -o <dir>  Emit world.json + save.json"
     , "  worldbuilder check <adventure.json>         Print content statistics"
+    , ""
+    , "Supports .json, .yaml and .yml files."
     ]
-
--- | Helper: parse a JSON file
-parseFile :: FilePath -> IO (Maybe Adventure)
-parseFile path = do
-    bytes <- BL.readFile path
-    pure (decode bytes)
 
 -- ---------------------------------------------------------------------------
 -- Validate
@@ -51,10 +48,10 @@ parseFile path = do
 
 validate :: FilePath -> IO ()
 validate path = do
-    mbAdv <- parseFile path
+    mbAdv <- parseAdventureFile path
     case mbAdv of
         Nothing -> do
-            putStrLn $ "Failed to parse JSON or file not found: " ++ path
+            putStrLn $ "Failed to parse adventure file: " ++ path
             exitFailure
         Just adv -> do
             case compileAdventure adv of
@@ -85,10 +82,10 @@ compile path rest = do
             "-o" : d : _ -> d
             "--output" : d : _ -> d
             _            -> "."
-    mbAdv <- parseFile path
+    mbAdv <- parseAdventureFile path
     case mbAdv of
         Nothing -> do
-            putStrLn $ "Failed to parse JSON or file not found: " ++ path
+            putStrLn $ "Failed to parse adventure file: " ++ path
             exitFailure
         Just adv -> case compileAdventure adv of
             Left errs -> do
@@ -117,10 +114,10 @@ compile path rest = do
 
 checkStats :: FilePath -> IO ()
 checkStats path = do
-    mbAdv <- parseFile path
+    mbAdv <- parseAdventureFile path
     case mbAdv of
         Nothing -> do
-            putStrLn $ "Failed to parse JSON or file not found: " ++ path
+            putStrLn $ "Failed to parse adventure file: " ++ path
             exitFailure
         Just adv -> case compileAdventure adv of
             Left errs -> do

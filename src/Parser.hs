@@ -59,6 +59,7 @@ parseVerb v = case v of
     "look"    -> Just VLookAt
     "read"    -> Just VLookAt
     "use"     -> Just VUse
+    "activate" -> Just VUse
     "talk"    -> Just VTalk
     "speak"   -> Just VTalk
     "chat"    -> Just VTalk
@@ -147,6 +148,12 @@ parseSimpleCommand tokens input = case tokens of
     ["west"]               -> Go West
     ["up"]                 -> Go Up
     ["down"]               -> Go Down
+    ["southeast"]          -> Go Southeast
+    ["se"]                 -> Go Southeast
+    ["swim"]               -> Go Southeast
+    ["crawl"]              -> Go Southeast
+    ["dig"]                -> Go Southeast
+    ["game"]               -> Go Southeast
     ["look"]               -> Look
     ["inventory"]          -> Inventory
     ["inv"]                -> Inventory
@@ -220,8 +227,10 @@ parseDirection dir input = case dir of
     "east"  -> Go East
     "west"  -> Go West
     "up"    -> Go Up
-    "down"  -> Go Down
-    _       -> Unknown input
+    "down"    -> Go Down
+    "southeast" -> Go Southeast
+    "se"      -> Go Southeast
+    _         -> Unknown input
 
 parseUse :: [String] -> String -> Command
 parseUse [] input = Unknown input

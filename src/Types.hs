@@ -31,7 +31,7 @@ type FactionID = String
 -- ---------------------------------------------------------------------------
 
 -- | Direction enumeration for movement
-data Direction = North | South | East | West | Up | Down
+data Direction = North | South | East | West | Up | Down | Southeast
     deriving (Show, Eq, Ord, Enum, Bounded, Generic)
 
 instance ToJSON Direction
