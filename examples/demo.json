@@ -1,0 +1,19 @@
+{
+    "name": "Demo Adventure",
+    "start_room": "start",
+    "rooms": [
+        {"id": "start", "name": "Starting Room", "desc": "A small stone chamber.", "exits": {"north": {"to": "hallway"}, "south": {"to": "garden"}}, "ascii": " /\\_/\\\n( o.o )\n > ^ <"},
+        {"id": "hallway", "name": "Dark Hallway", "desc": "A long, dark hallway.", "exits": {"south": {"to": "start"}}, "tags": ["dark"], "search": [{"set_flag": "torch_lit", "val": "true"}]},
+        {"id": "garden", "name": "Garden", "desc": "A beautiful garden.", "exits": {"north": {"to": "start"}}, "on_enter": [{"msg": "Birds chirp."}]}
+    ],
+    "items": [
+        {"id": "torch", "name": "torch", "desc": "A torch.", "keys": ["torch"], "tags": ["lightsource"], "location": "start"},
+        {"id": "key", "name": "brass key", "desc": "A brass key.", "keys": ["key"], "location": "hallway", "on_take": [{"start_quest": "find_treasure"}]}
+    ],
+    "npcs": [
+        {"id": "gardener", "name": "gardener", "desc": "A gardener.", "keys": ["gardener"], "location": "garden", "dialogue": {"alive": {"entry": "greeting", "nodes": {"greeting": {"text": "Welcome!", "choices": [{"text": "Nice garden!", "next": "flowers"}, {"text": "Bye.", "next": null}]}, "flowers": {"text": "I grow roses.", "choices": [{"text": "Farewell.", "next": null}]}}}}}
+    ],
+    "quests": [
+        {"id": "find_treasure", "name": "Find the Treasure", "desc": "Find the treasure!", "stages": [{"id": "explore", "desc": "Explore the hallway."}, {"id": "find_key", "desc": "Find the key."}], "reward": [{"msg": "Quest complete!"}]}
+    ]
+}

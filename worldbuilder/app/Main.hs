@@ -1,10 +1,7 @@
--- | Placeholder entry point for the worldbuilder CLI (see Worldbuilder.Placeholder)
+-- | Entry point for the worldbuilder CLI tool
 module Main where
 
-import Worldbuilder.Placeholder (placeholderNote)
-import System.Environment (getArgs)
+import Worldbuilder.CLI (runCLI)
 
 main :: IO ()
-main = do
-    _ <- getArgs
-    putStr placeholderNote
+main = runCLI
