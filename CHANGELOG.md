@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.8.0.0] — Unreleased
+
+Phase 4.5 (Engine-Qualität): World-Validierung.
+
+### Added
+- **Neues Modul `Validate`**: `ValidationError`-ADT (MissingRoom, MissingItem,
+  MissingNPC, MissingQuest, MissingVehicle, DanglingExit, UnreachableRoom,
+  DuplicateID, MissingSetFlag) und `validateWorld :: GameWorld -> [ValidationError]`.
+- Prüfungen:
+  - Exit-Ziele existieren
+  - Alle Räume sind (abseits von Vehicle-Räumen) via BFS über offene + verschlossene
+    Exits erreichbar
+  - Items/NPCs/Quests/Vehicles aus ActionOutcome-Bäumen sind in den Definitionen
+    vorhanden (typ-spezifische Collector-Funktionen vermeiden False Positives)
+  - Doppelte IDs zwischen Kategorien (Vehicle-Item-Paarungen erlaubt)
+  - Flags aus CheckFlag, die nie per SetFlag gesetzt werden
+- Cabal: `Validate` in `exposed-modules` aufgenommen.
+- 4 neue Tests (Sample-Welt ist gültig, hängender Exit, Duplikat, unerreichbarer Raum).
+
 ## [0.7.0.0] — Unreleased
 
 Phase 4.4 (Engine-Qualität): Narrative Inserts.

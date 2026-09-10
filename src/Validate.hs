@@ -1,0 +1,264 @@
+-- | World validation before starting the game.
+--   Checks consistency of IDs, exits, references and reachability.
+module Validate (ValidationError(..), validateWorld) where
+
+import Types
+import Data.List (nub)
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
+
+-- ---------------------------------------------------------------------------
+-- Validation error types
+-- ---------------------------------------------------------------------------
+
+data ValidationError
+    = MissingRoom      RoomID                       -- ^ Referenced room does not exist
+    | MissingItem      ItemID                       -- ^ Referenced item def is missing
+    | MissingNPC       NPCID                        -- ^ Referenced NPC def is missing
+    | MissingQuest     QuestID                      -- ^ Referenced quest is missing
+    | MissingVehicle   VehicleID                    -- ^ Referenced vehicle is missing
+    | DanglingExit     RoomID Direction RoomID      -- ^ Exit points to a non-existent room
+    | UnreachableRoom  RoomID                       -- ^ Room cannot be reached from start
+    | DuplicateID      String String String         -- ^ (id, type1, type2)
+    | MissingSetFlag   FlagID String                -- ^ Flag referenced in CheckFlag but never set
+    deriving (Show, Eq)
+
+-- ---------------------------------------------------------------------------
+-- Main validation entry point
+-- ---------------------------------------------------------------------------
+
+-- | Validate a complete GameWorld, returning a list of errors (empty = valid).
+validateWorld :: GameWorld -> [ValidationError]
+validateWorld gw =
+    concat
+        [ checkDanglingExits gw
+        , checkUnreachableRooms gw
+        , checkDuplicateIDs gw
+        , checkMissingItemsInDefs gw
+        , checkMissingNPCsInDefs gw
+        , checkMissingQuestsInDefs gw
+        , checkMissingVehiclesInDefs gw
+        , checkFlags gw
+        ]
+
+-- ---------------------------------------------------------------------------
+-- Room existence
+-- ---------------------------------------------------------------------------
+
+-- | Every exit destination must be a key in the rooms map
+checkDanglingExits :: GameWorld -> [ValidationError]
+checkDanglingExits gw =
+    [ DanglingExit rId dir target
+    | (rId, room) <- Map.toList (rooms gw)
+    , (dir, exit) <- Map.toList (roomConnections room)
+    , let target = exitRoomID exit
+    , target `notElem` Map.keys (rooms gw)
+    ]
+
+exitRoomID :: Exit -> RoomID
+exitRoomID (Open r) = r
+exitRoomID (Locked r _) = r
+
+-- ---------------------------------------------------------------------------
+-- Reachability
+-- ---------------------------------------------------------------------------
+
+-- | Find all rooms reachable from "start" via Open exits, then flag the rest.
+checkUnreachableRooms :: GameWorld -> [ValidationError]
+checkUnreachableRooms gw =
+    let start = if Map.member "start" (rooms gw) then "start"
+                else if Map.null (rooms gw) then ""
+                else fst (Map.findMin (rooms gw))
+        reachable = reachableRooms start gw
+        allRooms = [ rId | rId <- Map.keys (rooms gw)
+                         , let room = rooms gw Map.! rId
+                         , not ("vehicle" `Set.member` roomTags room) ]
+    in [UnreachableRoom rId | rId <- allRooms, rId `notElem` reachable]
+
+-- | BFS from a starting room, following both open and locked exits.
+reachableRooms :: RoomID -> GameWorld -> [RoomID]
+reachableRooms start gw = go Set.empty [start]
+  where
+    allRoomIds = Set.fromList (Map.keys (rooms gw))
+    go visited [] = Set.toList visited
+    go visited (r:rest)
+        | Set.member r visited = go visited rest
+        | otherwise =
+            let exits = case Map.lookup r (rooms gw) of
+                    Just room ->
+                        [ target
+                        | exit <- Map.elems (roomConnections room)
+                        , let target = exitRoomID exit
+                        , Set.member target allRoomIds
+                        ]
+                    Nothing -> []
+                newQueue = rest ++ [e | e <- exits, not (Set.member e visited)]
+            in go (Set.insert r visited) newQueue
+
+-- ---------------------------------------------------------------------------
+-- Duplicate IDs
+-- ---------------------------------------------------------------------------
+
+-- | Check that no ID is used across two different categories
+checkDuplicateIDs :: GameWorld -> [ValidationError]
+checkDuplicateIDs gw =
+    let idSets =
+            [ ("room",      Map.keys (rooms gw))
+            , ("item",      Map.keys (itemDefs gw))
+            , ("npc",       Map.keys (npcDefs gw))
+            , ("quest",     Map.keys (questDefs gw))
+            -- Vehicles intentionally share IDs with items (e.g. "carriage")
+            , ("vehicle",   Map.keys (vehicleDefs gw))
+            ]
+        pairs = [(i, t1, t2) | (t1, ids1) <- idSets, (t2, ids2) <- idSets, t1 < t2, i <- ids1, i `elem` ids2]
+        -- Allow vehicle-item pairings by convention
+        allowedPair (_, "vehicle", "item") = True
+        allowedPair (_, "item", "vehicle") = True
+        allowedPair _ = False
+    in [DuplicateID i t1 t2 | (i, t1, t2) <- nub pairs, not (allowedPair (i, t1, t2))]
+
+-- ---------------------------------------------------------------------------
+-- Missing items/NPCs/Quests/Vehicles referenced in definitions
+-- ---------------------------------------------------------------------------
+
+checkMissingItemsInDefs :: GameWorld -> [ValidationError]
+checkMissingItemsInDefs gw =
+    let itemRefs = Set.fromList (Map.keys (itemDefs gw))
+        allRefs =
+            -- itemVerbMap outcome trees
+            concatMap (idsFromOutcomeItem . snd)
+                (concatMap (Map.toList . itemVerbMap) (Map.elems (itemDefs gw)))
+            -- itemInteractions keys
+            ++ [i1 | (i1, _) <- Map.keys (itemInteractions gw)]
+            ++ [i2 | (_, i2) <- Map.keys (itemInteractions gw)]
+    in [MissingItem iId | iId <- nub allRefs, not (Set.member iId itemRefs)]
+
+checkMissingNPCsInDefs :: GameWorld -> [ValidationError]
+checkMissingNPCsInDefs gw =
+    let npcRefs = Set.fromList (Map.keys (npcDefs gw))
+        allRefs = concatMap (idsFromOutcomeNPC . snd)
+            -- npcVerbMap outcomes
+            (concatMap (Map.toList . npcVerbMap) (Map.elems (npcDefs gw)))
+            -- room hooks
+            ++ concatMap (\r -> concatMap idsFromOutcomeNPC
+                (catMaybes [roomOnEnter r, roomOnLook r, roomOnExit r, roomSearchOutcome r]))
+                (Map.elems (rooms gw))
+    in [MissingNPC nId | nId <- nub allRefs, not (Set.member nId npcRefs)]
+
+checkMissingQuestsInDefs :: GameWorld -> [ValidationError]
+checkMissingQuestsInDefs gw =
+    let questRefs = Set.fromList (Map.keys (questDefs gw))
+        allRefs =
+            -- outcomes from quest rewards
+            concatMap (maybe [] idsFromOutcomeQuest . questReward)
+                (Map.elems (questDefs gw))
+            -- outcomes from room hooks
+            ++ concatMap (\r -> concatMap idsFromOutcomeQuest
+                (catMaybes [roomOnEnter r, roomOnLook r, roomOnExit r, roomSearchOutcome r]))
+                (Map.elems (rooms gw))
+            -- outcomes from item verb maps
+            ++ concatMap (idsFromOutcomeQuest . snd)
+                (concatMap (Map.toList . itemVerbMap) (Map.elems (itemDefs gw)))
+    in [MissingQuest qId | qId <- nub allRefs, not (Set.member qId questRefs)]
+
+checkMissingVehiclesInDefs :: GameWorld -> [ValidationError]
+checkMissingVehiclesInDefs gw =
+    let vehicleRefs = Set.fromList (Map.keys (vehicleDefs gw))
+        allRefs = []
+    in [MissingVehicle vId | vId <- nub allRefs, not (Set.member vId vehicleRefs)]
+
+-- ---------------------------------------------------------------------------
+-- Flag consistency
+-- ---------------------------------------------------------------------------
+
+-- | Find flags that are checked (CheckFlag) but never set (SetFlag or flag
+--   interaction) anywhere in the world definitions.
+checkFlags :: GameWorld -> [ValidationError]
+checkFlags gw =
+    let (setFlags, checkFlags) = foldl scanFlags (Set.empty, Set.empty)
+            (allOutcomes gw)
+        missing = Set.toList (Set.difference checkFlags setFlags)
+    in [MissingSetFlag flg "checked but never set in any outcome" | flg <- missing]
+
+scanFlags :: (Set.Set FlagID, Set.Set FlagID) -> ActionOutcome
+          -> (Set.Set FlagID, Set.Set FlagID)
+scanFlags (setAcc, checkAcc) outcome = case outcome of
+    SetFlag n _ _                 -> (Set.insert n setAcc, checkAcc)
+    CheckFlag n _ thenB elseB     ->
+        let (s1, c1) = scanFlags (setAcc, Set.insert n checkAcc) thenB
+        in scanFlags (s1, c1) elseB
+    MultipleOutcomes os           -> foldl scanFlags (setAcc, checkAcc) os
+    Narrative _ followUp          -> scanFlags (setAcc, checkAcc) followUp
+    RandomChoice os               -> foldl scanFlags (setAcc, checkAcc) os
+    CheckSkill _ _ pass fail      -> scanFlags (scanFlags (setAcc, checkAcc) pass) fail
+    HasCondition _ t e            -> scanFlags (scanFlags (setAcc, checkAcc) t) e
+    StartQuest _ _                -> (setAcc, checkAcc)
+    AdvanceQuest _ _              -> (setAcc, checkAcc)
+    CompleteQuest _ _             -> (setAcc, checkAcc)
+    _                             -> (setAcc, checkAcc)
+
+-- ---------------------------------------------------------------------------
+-- Collect all ActionOutcomes defined in a GameWorld
+-- ---------------------------------------------------------------------------
+
+allOutcomes :: GameWorld -> [ActionOutcome]
+allOutcomes gw = concat
+    [ concatMap (\r -> catMaybes [roomOnEnter r, roomOnLook r, roomOnExit r, roomSearchOutcome r])
+        (Map.elems (rooms gw))
+    , concatMap (\(_, o) -> [o]) (concatMap (Map.toList . itemVerbMap) (Map.elems (itemDefs gw)))
+    , Map.elems (itemInteractions gw)
+    , concatMap (\(_, o) -> [o]) (concatMap (Map.toList . npcVerbMap) (Map.elems (npcDefs gw)))
+    , catMaybes (map questReward (Map.elems (questDefs gw)))
+    , concatMap (\(_, o) -> [o])
+        (concatMap (Map.toList . vehicleConditionEffects) (Map.elems (vehicleDefs gw)))
+    ]
+
+catMaybes :: [Maybe a] -> [a]
+catMaybes xs = [x | Just x <- xs]
+
+-- ---------------------------------------------------------------------------
+-- Type-specific ID collectors from Outcome trees
+-- ---------------------------------------------------------------------------
+
+idsFromOutcomeItem :: ActionOutcome -> [String]
+idsFromOutcomeItem outcome = case outcome of
+    GiveItem iId _               -> [iId]
+    ConsumeItem iId _            -> [iId]
+    MoveItem iId _ _             -> [iId]
+    EquipItem iId _              -> [iId]
+    UnequipItem iId _            -> [iId]
+    ModifyItemProp iId _ _ _     -> [iId]
+    MultipleOutcomes os          -> concatMap idsFromOutcomeItem os
+    RandomChoice os              -> concatMap idsFromOutcomeItem os
+    CheckFlag _ _ t e            -> idsFromOutcomeItem t ++ idsFromOutcomeItem e
+    CheckSkill _ _ p f           -> idsFromOutcomeItem p ++ idsFromOutcomeItem f
+    HasCondition _ t e           -> idsFromOutcomeItem t ++ idsFromOutcomeItem e
+    Narrative _ followUp         -> idsFromOutcomeItem followUp
+    _                            -> []
+
+idsFromOutcomeNPC :: ActionOutcome -> [String]
+idsFromOutcomeNPC outcome = case outcome of
+    MoveNPC nId _ _              -> [nId]
+    ChangeNPCState nId _         -> [nId]
+    UpdateNPCHealth nId _ _      -> [nId]
+    ModifyNPCProp nId _ _ _      -> [nId]
+    MultipleOutcomes os          -> concatMap idsFromOutcomeNPC os
+    RandomChoice os              -> concatMap idsFromOutcomeNPC os
+    CheckFlag _ _ t e            -> idsFromOutcomeNPC t ++ idsFromOutcomeNPC e
+    CheckSkill _ _ p f           -> idsFromOutcomeNPC p ++ idsFromOutcomeNPC f
+    HasCondition _ t e           -> idsFromOutcomeNPC t ++ idsFromOutcomeNPC e
+    Narrative _ followUp         -> idsFromOutcomeNPC followUp
+    _                            -> []
+
+idsFromOutcomeQuest :: ActionOutcome -> [String]
+idsFromOutcomeQuest outcome = case outcome of
+    StartQuest qId _             -> [qId]
+    AdvanceQuest qId _           -> [qId]
+    CompleteQuest qId _          -> [qId]
+    MultipleOutcomes os          -> concatMap idsFromOutcomeQuest os
+    RandomChoice os              -> concatMap idsFromOutcomeQuest os
+    CheckFlag _ _ t e            -> idsFromOutcomeQuest t ++ idsFromOutcomeQuest e
+    CheckSkill _ _ p f           -> idsFromOutcomeQuest p ++ idsFromOutcomeQuest f
+    HasCondition _ t e           -> idsFromOutcomeQuest t ++ idsFromOutcomeQuest e
+    Narrative _ followUp         -> idsFromOutcomeQuest followUp
+    _                            -> []

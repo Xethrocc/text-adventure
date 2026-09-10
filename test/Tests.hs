@@ -9,6 +9,7 @@ import Data.Maybe (isJust)
 import Game
 import GameLoop (commandCompletion, LoopState (..), initLoopState, applyLoopCommand)
 import Parser (Command (..), executeCommand, parseCommand, applyOutcome)
+import Validate (ValidationError (..), validateWorld)
 import Sample (initSampleGame)
 import System.Console.Haskeline (Completion (..))
 import System.Exit (exitFailure)
@@ -760,6 +761,46 @@ testNarrativeStateRoundTrip = do
         decoded = Aeson.decode encoded :: Maybe ActionOutcome
     expectEqual (Just (Narrative ["A", "B"] (MessageOnly "end"))) decoded
 
+-- ===== Validation tests (Phase 4.5) =====
+
+testSampleWorldIsValid :: IO Bool
+testSampleWorldIsValid = do
+    let errors = validateWorld (world initSampleGame)
+    if null errors
+        then pure True
+        else do
+            putStrLn "  Unexpected validation errors in sample world:"
+            mapM_ (putStrLn . ("    " ++) . show) errors
+            pure False
+
+testDanglingExitDetected :: IO Bool
+testDanglingExitDetected = do
+    let roomA = Room "roomA" "Room A" "desc." (Map.singleton North (Open "roomZ")) Set.empty Map.empty Nothing
+            Nothing Nothing Nothing Nothing
+        gw = (world initSampleGame) { rooms = Map.singleton "roomA" roomA }
+        errors = validateWorld gw
+    expectTrue "dangling exit detected" (DanglingExit "roomA" North "roomZ" `elem` errors)
+
+testDuplicateIDsBetweenItemsAndRooms :: IO Bool
+testDuplicateIDsBetweenItemsAndRooms = do
+    let gw = (world initSampleGame)
+                { rooms = Map.insert "key" (Room "key" "Duplicate" "desc." Map.empty Set.empty Map.empty Nothing
+                    Nothing Nothing Nothing Nothing) (rooms (world initSampleGame)) }
+        errors = validateWorld gw
+    expectTrue "duplicate key found" (any isDup errors)
+  where
+    isDup (DuplicateID _ _ _) = True
+    isDup _ = False
+
+testUnreachableRoomDetected :: IO Bool
+testUnreachableRoomDetected = do
+    let roomIsolated = Room "isolated" "Isolated" "Alone." Map.empty Set.empty Map.empty Nothing
+            Nothing Nothing Nothing Nothing
+        gw = (world initSampleGame)
+                { rooms = Map.insert "isolated" roomIsolated (rooms (world initSampleGame)) }
+        errors = validateWorld gw
+    expectTrue "unreachable room detected" (UnreachableRoom "isolated" `elem` errors)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -865,5 +906,10 @@ main = do
         , runTest "narrative returns lines" testNarrativeReturnsLines
         , runTest "narrative stores pending (no side effects)" testNarrativeStoresPending
         , runTest "Narrative JSON round-trip" testNarrativeStateRoundTrip
+        -- Validation (Phase 4.5)
+        , runTest "sample world is valid" testSampleWorldIsValid
+        , runTest "dangling exit is detected" testDanglingExitDetected
+        , runTest "duplicate IDs across categories" testDuplicateIDsBetweenItemsAndRooms
+        , runTest "unreachable room is detected" testUnreachableRoomDetected
         ]
     when (not (and results)) exitFailure
