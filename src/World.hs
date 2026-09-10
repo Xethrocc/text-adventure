@@ -68,6 +68,7 @@ defaultSaveState gw = SaveState
     , completedQuests = Set.empty
     , vehicleStates   = Map.empty
     , currentVehicle  = Nothing
+    , activeDialogue  = Nothing
     }
 
 -- | Preferred starting room: "start" if it exists, else the first room by key order

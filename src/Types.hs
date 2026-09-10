@@ -255,12 +255,23 @@ instance FromJSON ItemState where
 
 -- | A single selectable reply inside a dialogue node
 data DialogueChoice = DialogueChoice
-    { dcText    :: String          -- ^ What the player says (shown as option)
-    , dcOutcome :: ActionOutcome   -- ^ Usually ChangeNPCState to move to the next node
+    { dcText     :: String          -- ^ What the player says (shown as option)
+    , dcNextNode :: Maybe String    -- ^ Next node in current tree (Nothing = exit dialogue)
+    , dcOutcome  :: ActionOutcome   -- ^ Outcome applied when chosen
     } deriving (Show, Eq, Generic)
 
-instance ToJSON DialogueChoice
-instance FromJSON DialogueChoice
+instance ToJSON DialogueChoice where
+    toJSON c = object
+        [ "dcText"     .= dcText c
+        , "dcNextNode" .= dcNextNode c
+        , "dcOutcome"  .= dcOutcome c
+        ]
+
+instance FromJSON DialogueChoice where
+    parseJSON = withObject "DialogueChoice" $ \o -> DialogueChoice
+        <$> o .:  "dcText"
+        <*> o .:? "dcNextNode" .!= Nothing
+        <*> o .:? "dcOutcome"  .!= MessageOnly ""
 
 -- | One node (= one NPC utterance plus replies)
 data DialogueNode = DialogueNode
@@ -515,6 +526,7 @@ data Room = Room
     , roomOnLook          :: Maybe ActionOutcome
     , roomOnExit          :: Maybe ActionOutcome
     , roomSearchOutcome   :: Maybe ActionOutcome
+    , roomAscii           :: Maybe String              -- ^ Optional ASCII art banner (Phase 4.6)
     } deriving (Show, Eq, Generic)
 
 instance ToJSON Room where
@@ -530,6 +542,7 @@ instance ToJSON Room where
         , "roomOnLook"          .= roomOnLook r
         , "roomOnExit"          .= roomOnExit r
         , "roomSearchOutcome"   .= roomSearchOutcome r
+        , "roomAscii"           .= roomAscii r
         ]
 
 instance FromJSON Room where
@@ -545,6 +558,7 @@ instance FromJSON Room where
         <*> o .:? "roomOnLook"          .!= Nothing
         <*> o .:? "roomOnExit"          .!= Nothing
         <*> o .:? "roomSearchOutcome"   .!= Nothing
+        <*> o .:? "roomAscii"           .!= Nothing
 
 -- | Player inventory
 type Inventory = [ItemID]
@@ -614,6 +628,7 @@ data SaveState = SaveState
     , completedQuests    :: Set.Set QuestID
     , vehicleStates      :: Map.Map VehicleID VehicleState    -- ^ Dynamic vehicle state (Phase 3)
     , currentVehicle     :: Maybe VehicleID                   -- ^ Vehicle the player is inside (Phase 3)
+    , activeDialogue     :: Maybe NPCID                       -- ^ Currently engaged dialogue NPC (Phase 4.6)
     } deriving (Show, Eq)
 
 instance ToJSON SaveState where
@@ -635,6 +650,7 @@ instance ToJSON SaveState where
         , "completedQuests" .= completedQuests ss
         , "vehicleStates"   .= vehicleStates ss
         , "currentVehicle"  .= currentVehicle ss
+        , "activeDialogue"  .= activeDialogue ss
         ]
 
 instance FromJSON SaveState where
@@ -656,6 +672,7 @@ instance FromJSON SaveState where
         <*> o .:? "completedQuests" .!= Set.empty
         <*> o .:? "vehicleStates"   .!= Map.empty
         <*> o .:? "currentVehicle"  .!= Nothing
+        <*> o .:? "activeDialogue"  .!= Nothing
 
 -- | Save file wrapper with metadata for save slots
 data SaveFile = SaveFile

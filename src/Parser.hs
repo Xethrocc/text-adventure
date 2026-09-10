@@ -6,7 +6,7 @@ module Parser where
 import Types
 import Game
 import Control.Applicative ((<|>))
-import Data.Char (toLower)
+import Data.Char (toLower, isDigit)
 import Data.List (find, intercalate, nub)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isJust)
@@ -19,6 +19,7 @@ data Command
     | Inventory
     | Interact Verb String
     | InteractWith Verb String String
+    | ChooseCmd Int              -- ^ select a dialogue option (Phase 4.6)
     | TakeAll
     | DropAll
     | CompoundCommand [Command]
@@ -154,6 +155,12 @@ parseSimpleCommand tokens input = case tokens of
     ["journal"]            -> JournalCmd
     ["quests"]             -> JournalCmd
     ["undo"]               -> Undo
+    -- Dialogue choice (Phase 4.6)
+    ["choose", nStr] | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
+    ["pick", nStr]   | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
+    ["option", nStr] | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
+    ["select", nStr] | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
+    [nStr]           | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
     -- Vehicles (Phase 3)
     "enter" : targetParts | not (null targetParts) -> EnterVehicleCmd (unwords (safeStripStopWords targetParts))
     "board" : targetParts | not (null targetParts) -> EnterVehicleCmd (unwords (safeStripStopWords targetParts))
@@ -430,10 +437,10 @@ executeCommand :: Command -> GameState -> CommandResult
 
 executeCommand (Go dir) state
     | canMove dir state = case getExitInDirection dir state of
-        Just (Open destinationRoom) -> goTo destinationRoom state
+        Just (Open destinationRoom) -> goTo destinationRoom (clearActiveDialogue state)
         Just (Locked destinationRoom entityTarget)
             | getEntityState entityTarget state == Just "unlocked" ->
-                goTo destinationRoom state
+                goTo destinationRoom (clearActiveDialogue state)
             | otherwise -> (state, "The door is locked.")
         Nothing -> (state, "There's nothing in that direction.")
     | otherwise = (state, "You can't go that way.")
@@ -470,7 +477,10 @@ executeCommand Look state = case getCurrentRoom state of
                           else "\nAlso here: " ++ intercalate ", " (map npcName npcsInRoom) ++ "."
                 (state', hookMsg) = runRoomHook roomOnLook (currentRoom (save state)) state
                 vehicleMsg = vehicleLookAddon state'
-                full = intercalate "\n" (filter (not . null)
+                asciiArt = case roomAscii room of
+                    Just art | not (null art) -> [art]
+                    _                         -> []
+                full = intercalate "\n" (asciiArt ++ filter (not . null)
                         [desc, itemDesc, npcDesc, hookMsg, fromMaybe "" vehicleMsg])
             in (state', full)
 
@@ -502,6 +512,45 @@ executeCommand StatsCmd state =
 
 executeCommand JournalCmd state = (state, journalText state)
 executeCommand Undo state = (state, "Nothing to undo.")
+
+executeCommand (ChooseCmd idx) state =
+    case activeDialogue (save state) of
+        Nothing -> (state, "You are not in a conversation right now.")
+        Just nId -> case Map.lookup nId (npcDefs (world state)) of
+            Nothing -> (clearActiveDialogue state, "The person you were talking to is gone.")
+            Just npc ->
+                let st = Map.lookup nId (npcStates (save state))
+                    status = maybe "alive" npcStatus st
+                in case Map.lookup status (npcDialogueTrees npc) of
+                    Nothing -> (clearActiveDialogue state, npcName npc ++ " has nothing more to say.")
+                    Just tree ->
+                        let nodeId = fromMaybe (dtEntry tree) (st >>= npcDialogueNode)
+                        in case Map.lookup nodeId (dtNodes tree) of
+                            Nothing -> (clearActiveDialogue state, npcName npc ++ " has nothing more to say.")
+                            Just node ->
+                                let choices = dnChoices node
+                                in if idx < 1 || idx > length choices
+                                   then (state, "Invalid choice. Please select a number from 1 to " ++ show (length choices) ++ ".")
+                                   else
+                                       let choice = choices !! (idx - 1)
+                                           outcome = dcOutcome choice
+                                           (stateAfterOutcome, outcomeMsg) = applyOutcome outcome nId state
+                                       in case dcNextNode choice of
+                                           Nothing ->
+                                               -- Dialogue ends
+                                               let stateFinal = clearActiveDialogue (setDialogueNode nId Nothing stateAfterOutcome)
+                                                   msg = if null outcomeMsg
+                                                         then "Dialogue ended."
+                                                         else outcomeMsg
+                                               in (stateFinal, msg)
+                                           Just nextNodeId ->
+                                               let stateWithNext = setDialogueNode nId (Just nextNodeId) stateAfterOutcome
+                                                   st' = Map.lookup nId (npcStates (save stateWithNext))
+                                                   (stateFinal, nextDialogue) = renderDialogue npc tree st' stateWithNext
+                                                   fullMsg = if null outcomeMsg
+                                                             then nextDialogue
+                                                             else outcomeMsg ++ "\n\n" ++ nextDialogue
+                                               in (stateFinal, fullMsg)
 
 executeCommand (EquipCmd targetStr) state =
     case findMatchingItem targetStr state of
@@ -829,12 +878,12 @@ tryItemOnItem usedId targetStr state =
 -- | Dialogue: use the tree if present, otherwise fall back to the legacy single line
 talkTo :: NPCDef -> Maybe NPCState -> GameState -> CommandResult
 talkTo npc maybeNpcState state =
-    let status = maybe "unknown" npcStatus maybeNpcState
+    let status = maybe "alive" npcStatus maybeNpcState
     in case Map.lookup status (npcDialogueTrees npc) of
         Just tree -> renderDialogue npc tree maybeNpcState state
         Nothing -> case Map.lookup status (npcDialogue npc) of
-            Just speech -> (state, npcName npc ++ " says: \"" ++ speech ++ "\"")
-            Nothing -> (state, npcName npc ++ " has nothing to say.")
+            Just speech -> (clearActiveDialogue state, npcName npc ++ " says: \"" ++ speech ++ "\"")
+            Nothing -> (clearActiveDialogue state, npcName npc ++ " has nothing to say.")
 
 -- | Render the current node of a dialogue tree and list its choices
 renderDialogue :: NPCDef -> DialogueTree -> Maybe NPCState -> GameState -> CommandResult
@@ -842,7 +891,7 @@ renderDialogue npc tree maybeNpcState state =
     let nodeId = fromMaybe (dtEntry tree) (maybeNpcState >>= npcDialogueNode)
         maybeNode = Map.lookup nodeId (dtNodes tree)
     in case maybeNode of
-        Nothing -> (state, npcName npc ++ " has nothing to say.")
+        Nothing -> (clearActiveDialogue state, npcName npc ++ " has nothing to say.")
         Just node ->
             let header = npcName npc ++ ": \"" ++ dnText node ++ "\""
                 choices = dnChoices node
@@ -852,7 +901,10 @@ renderDialogue npc tree maybeNpcState state =
                             [ "  [" ++ show i ++ "] " ++ dcText c
                             | (i, c) <- zip [1 :: Int ..] choices ]
                 -- store the node so a follow-up `choose N` can resolve it
-                state' = setDialogueNode (npcId npc) (Just nodeId) state
+                stateWithNode = setDialogueNode (npcId npc) (Just nodeId) state
+                state' = if null choices
+                         then clearActiveDialogue stateWithNode
+                         else setActiveDialogue (Just (npcId npc)) stateWithNode
             in (state', body)
 
 -- ---------------------------------------------------------------------------
@@ -866,7 +918,6 @@ executeAttack npc maybeNpcState targetStr state =
         Nothing -> (state, "You can't attack the " ++ npcName npc ++ ".")
         Just hp ->
             let nId = npcId npc
-                p = player (save state)
                 playerDmg = max 1 (effectiveAttack state - npcDefenseBase npc)
                 newHp = hp - playerDmg
             in if newHp <= 0
@@ -905,6 +956,7 @@ helpText = intercalate "\n"
     , "  use <item>                 - Use an item from inventory"
     , "  use <item> on <target>     - Use an item on something"
     , "  talk to / speak with <npc> - Talk to a character"
+    , "  choose <n> / <n>           - Select a dialogue option"
     , "  attack / hit <npc>         - Attack an enemy"
     , ""
     , "Equipment:"

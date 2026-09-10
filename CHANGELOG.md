@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.8.1.0] — Unreleased
+
+Phase 4.6 (Core Polish): Dialogue-Tree-Interaktivität, CLI-Validierung und Room-ASCII-Art.
+
+### Added
+- **Interaktives Dialogue-Tree-System**:
+  - `ChooseCmd Int` im Command-Parser: unterstützt `choose <n>`, `pick <n>`, `option <n>`, `select <n>` und bare Zahlen (`1`, `2`, ...).
+  - `SaveState.activeDialogue :: Maybe NPCID`: Trackt den aktiven Gesprächspartner zur Laufzeit (rückwärtskompatibel, default `Nothing`).
+  - `DialogueChoice`: Neues Feld `dcNextNode :: Maybe String` für nahtlose Navigation im Dialogbaum (`Nothing` beendet das Gespräch).
+  - Automatisches Rendern des nächsten Dialogknotens nach Ausführen des Choice-Outcomes.
+  - `setDialogueNode` erzeugt initialen State, falls der NPC noch nicht in `npcStates` existiert.
+  - Verlassen des Dialogs bei Bewegung oder Verlassen des Gesprächs.
+  - Help-Text und Tab-Completion (`choose`, `option`) aktualisiert.
+  - Sample-Adventure: `oldman` hat jetzt einen vollwertigen verzweigten Dialogbaum mit Quest-Hint und Flag-Setzung.
+- **World-Validierung in CLI (`app/Main.hs`)**:
+  - `validateWorld` wird bei `--world` vor dem Spielstart ausgeführt und listet gefundene Konsistenzfehler als Warnung auf.
+- **Dialogue-Tree-Validierung in `Validate.hs`**:
+  - Neue Fehler: `MissingDialogueNode` (fehlender Einstiegsknoten) und `DanglingDialogueChoice` (ungültiger Folgeknoten).
+  - `allOutcomes` erfasst jetzt auch alle ActionOutcomes aus Dialogue-Choices.
+- **ASCII-Art Unterstützung in Räumen**:
+  - `Room.roomAscii :: Maybe String`: Optionales Banner-Feld (z. B. aus `img2ascii`), das bei `look` über dem Raumnamen angezeigt wird.
+- 8 neue Tests für Dialoge, ASCII-Art und Dialogue-Validierung (jetzt 95 Tests, alle grün).
+
 ## [0.8.0.0] — Unreleased
 
 Phase 4.5 (Engine-Qualität): World-Validierung.

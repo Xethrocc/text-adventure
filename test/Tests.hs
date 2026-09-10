@@ -1,6 +1,7 @@
 module Main where
 
 import Control.Monad (when)
+import Data.List (isInfixOf)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
@@ -776,7 +777,7 @@ testSampleWorldIsValid = do
 testDanglingExitDetected :: IO Bool
 testDanglingExitDetected = do
     let roomA = Room "roomA" "Room A" "desc." (Map.singleton North (Open "roomZ")) Set.empty Map.empty Nothing
-            Nothing Nothing Nothing Nothing
+            Nothing Nothing Nothing Nothing Nothing
         gw = (world initSampleGame) { rooms = Map.singleton "roomA" roomA }
         errors = validateWorld gw
     expectTrue "dangling exit detected" (DanglingExit "roomA" North "roomZ" `elem` errors)
@@ -785,7 +786,7 @@ testDuplicateIDsBetweenItemsAndRooms :: IO Bool
 testDuplicateIDsBetweenItemsAndRooms = do
     let gw = (world initSampleGame)
                 { rooms = Map.insert "key" (Room "key" "Duplicate" "desc." Map.empty Set.empty Map.empty Nothing
-                    Nothing Nothing Nothing Nothing) (rooms (world initSampleGame)) }
+                    Nothing Nothing Nothing Nothing Nothing) (rooms (world initSampleGame)) }
         errors = validateWorld gw
     expectTrue "duplicate key found" (any isDup errors)
   where
@@ -795,11 +796,90 @@ testDuplicateIDsBetweenItemsAndRooms = do
 testUnreachableRoomDetected :: IO Bool
 testUnreachableRoomDetected = do
     let roomIsolated = Room "isolated" "Isolated" "Alone." Map.empty Set.empty Map.empty Nothing
-            Nothing Nothing Nothing Nothing
+            Nothing Nothing Nothing Nothing Nothing
         gw = (world initSampleGame)
                 { rooms = Map.insert "isolated" roomIsolated (rooms (world initSampleGame)) }
         errors = validateWorld gw
     expectTrue "unreachable room detected" (UnreachableRoom "isolated" `elem` errors)
+
+-- ===== Dialogue tests (Phase 4.6) =====
+
+testDialogueTreeStartAndRender :: IO Bool
+testDialogueTreeStartAndRender = do
+    let (st, msg) = executeCommand (Interact VTalk "old man") initSampleGame
+    r1 <- expectTrue "renders header" ("Greetings, traveler!" `isInfixOf` msg)
+    r2 <- expectTrue "renders option 1" ("[1] Who are you?" `isInfixOf` msg)
+    r3 <- expectTrue "active dialogue set" (activeDialogue (save st) == Just "oldman")
+    pure (r1 && r2 && r3)
+
+testDialogueChoiceNavigation :: IO Bool
+testDialogueChoiceNavigation = do
+    let (st1, _) = executeCommand (Interact VTalk "old man") initSampleGame
+    let (_, msg2) = executeCommand (ChooseCmd 1) st1  -- "Who are you?"
+    r1 <- expectTrue "renders follow-up" ("old hermit" `isInfixOf` msg2)
+    r2 <- expectTrue "renders next options" ("[1] What do you know about the treasure?" `isInfixOf` msg2)
+    pure (r1 && r2)
+
+testDialogueBareNumberChoice :: IO Bool
+testDialogueBareNumberChoice = do
+    let (st1, _) = executeCommand (Interact VTalk "old man") initSampleGame
+    let cmd = parseCommand "1"
+    let (_, msg2) = executeCommand cmd st1
+    r1 <- expectTrue "parses bare number" (cmd == ChooseCmd 1)
+    r2 <- expectTrue "navigates node" ("old hermit" `isInfixOf` msg2)
+    pure (r1 && r2)
+
+testDialogueInvalidChoice :: IO Bool
+testDialogueInvalidChoice = do
+    let (st1, _) = executeCommand (Interact VTalk "old man") initSampleGame
+    let (st2, msg2) = executeCommand (ChooseCmd 99) st1
+    r1 <- expectTrue "reports invalid choice" ("Invalid choice" `isInfixOf` msg2)
+    r2 <- expectTrue "keeps dialogue active" (activeDialogue (save st2) == Just "oldman")
+    pure (r1 && r2)
+
+testDialogueEndClearsActive :: IO Bool
+testDialogueEndClearsActive = do
+    let (st1, _) = executeCommand (Interact VTalk "old man") initSampleGame
+    let (st2, msg2) = executeCommand (ChooseCmd 3) st1  -- "Farewell." (dcNextNode = Nothing)
+    r1 <- expectTrue "shows goodbye" ("Stay safe" `isInfixOf` msg2)
+    r2 <- expectTrue "dialogue cleared" (activeDialogue (save st2) == Nothing)
+    pure (r1 && r2)
+
+-- ===== Room ASCII art test (Phase 4.6) =====
+
+testRoomAsciiArtDisplay :: IO Bool
+testRoomAsciiArtDisplay = do
+    let banner = "=== [CASTLE GATE] ==="
+    let roomWithAscii = (rooms (world initSampleGame) Map.! "start") { roomAscii = Just banner }
+    let game = initSampleGame { world = (world initSampleGame) { rooms = Map.insert "start" roomWithAscii (rooms (world initSampleGame)) } }
+    let (_, msg) = executeCommand Look game
+    expectTrue "ascii banner displayed in look" (banner `isInfixOf` msg)
+
+-- ===== Dialogue validation tests (Phase 4.6) =====
+
+testMissingDialogueNodeDetected :: IO Bool
+testMissingDialogueNodeDetected = do
+    let brokenTree = DialogueTree "nonexistent_entry" Map.empty
+    let brokenNpc = (npcDefs (world initSampleGame) Map.! "oldman")
+            { npcDialogueTrees = Map.singleton "alive" brokenTree }
+    let gw = (world initSampleGame)
+            { npcDefs = Map.insert "oldman" brokenNpc (npcDefs (world initSampleGame)) }
+    let errors = validateWorld gw
+    expectTrue "missing dialogue entry node detected"
+        (MissingDialogueNode "oldman" "alive" "nonexistent_entry" `elem` errors)
+
+testDanglingDialogueChoiceDetected :: IO Bool
+testDanglingDialogueChoiceDetected = do
+    let brokenNode = DialogueNode "greeting" "Hello"
+            [ DialogueChoice "Next" (Just "missing_target") (MessageOnly "") ]
+    let brokenTree = DialogueTree "greeting" (Map.singleton "greeting" brokenNode)
+    let brokenNpc = (npcDefs (world initSampleGame) Map.! "oldman")
+            { npcDialogueTrees = Map.singleton "alive" brokenTree }
+    let gw = (world initSampleGame)
+            { npcDefs = Map.insert "oldman" brokenNpc (npcDefs (world initSampleGame)) }
+    let errors = validateWorld gw
+    expectTrue "dangling dialogue choice detected"
+        (DanglingDialogueChoice "oldman" "alive" "greeting" "missing_target" `elem` errors)
 
 main :: IO ()
 main = do
@@ -911,5 +991,14 @@ main = do
         , runTest "dangling exit is detected" testDanglingExitDetected
         , runTest "duplicate IDs across categories" testDuplicateIDsBetweenItemsAndRooms
         , runTest "unreachable room is detected" testUnreachableRoomDetected
+        -- Dialogue & Polish (Phase 4.6)
+        , runTest "dialogue tree start and render" testDialogueTreeStartAndRender
+        , runTest "dialogue choice navigation" testDialogueChoiceNavigation
+        , runTest "dialogue bare number choice" testDialogueBareNumberChoice
+        , runTest "dialogue invalid choice" testDialogueInvalidChoice
+        , runTest "dialogue end clears active" testDialogueEndClearsActive
+        , runTest "room ASCII art display" testRoomAsciiArtDisplay
+        , runTest "missing dialogue node detected" testMissingDialogueNodeDetected
+        , runTest "dangling dialogue choice detected" testDanglingDialogueChoiceDetected
         ]
     when (not (and results)) exitFailure

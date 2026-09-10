@@ -20,7 +20,7 @@ initSampleGame = GameState
                 Set.empty
                 Map.empty
                 Nothing
-                Nothing Nothing Nothing Nothing)
+                Nothing Nothing Nothing Nothing Nothing)
             , ("hallway", Room
                 "hallway"
                 "Dark Hallway"
@@ -32,7 +32,8 @@ initSampleGame = GameState
                 Nothing Nothing Nothing
                 (Just (MultipleOutcomes
                     [ SetFlag "torch_lit" "true" "You find a wall sconce and light it."
-                    , MessageOnly "Faded runes cover the eastern wall." ])))
+                    , MessageOnly "Faded runes cover the eastern wall." ]))
+                Nothing)
             , ("treasure", Room
                 "treasure"
                 "Treasure Room"
@@ -41,7 +42,7 @@ initSampleGame = GameState
                 Set.empty
                 Map.empty
                 Nothing
-                Nothing Nothing Nothing Nothing)
+                Nothing Nothing Nothing Nothing Nothing)
             -- Vehicle demo (Phase 3): a horse-drawn carriage
             , ("meadow", Room
                 "meadow"
@@ -56,7 +57,7 @@ initSampleGame = GameState
                      "Somewhere in the distance, birds sing.",
                      "The carriage horse stamps its foot impatiently."]
                     (MessageOnly "You feel at peace here.")))
-                Nothing Nothing Nothing)
+                Nothing Nothing Nothing Nothing)
             , ("carriage_cabin", Room
                 "carriage_cabin"
                 "Carriage Cabin"
@@ -65,7 +66,7 @@ initSampleGame = GameState
                 (Set.fromList ["vehicle"])
                 Map.empty
                 Nothing
-                Nothing Nothing Nothing Nothing)
+                Nothing Nothing Nothing Nothing Nothing)
             ]
         , itemDefs = Map.fromList
             [ ("torch", ItemDef "torch" "torch" "A burning torch that provides light."
@@ -111,7 +112,20 @@ initSampleGame = GameState
         , npcDefs = Map.fromList
             [ ("oldman", NPCDef "oldman" "old man" "A withered old man in robes."
                 (Map.singleton "alive" "It's dangerous to go alone! Take... well, I don't have anything actually.")
-                Map.empty
+                (Map.singleton "alive" (DialogueTree "greeting" (Map.fromList
+                    [ ("greeting", DialogueNode "greeting" "Greetings, traveler! What brings you into this dark place?"
+                        [ DialogueChoice "Who are you?" (Just "who") (MessageOnly "")
+                        , DialogueChoice "Tell me about the treasure." (Just "rumor") (MessageOnly "")
+                        , DialogueChoice "Farewell." Nothing (MessageOnly "Stay safe, friend.")
+                        ])
+                    , ("who", DialogueNode "who" "I am just an old hermit who watches over these ruins."
+                        [ DialogueChoice "What do you know about the treasure?" (Just "rumor") (MessageOnly "")
+                        , DialogueChoice "Goodbye." Nothing (MessageOnly "May the light guide your steps.")
+                        ])
+                    , ("rumor", DialogueNode "rumor" "The treasure room lies beyond the eastern door, but it is locked with a brass key lost in the hallway."
+                        [ DialogueChoice "Thank you for the advice!" Nothing (SetFlag "met_oldman" "true" "The old man smiles knowingly.")
+                        ])
+                    ])))
                 ["man", "old man"] Nothing 0 0 Map.empty)
             , ("goblin", NPCDef "goblin" "goblin" "A nasty little green goblin."
                 (Map.singleton "alive" "Grrr!! I will eat you!")
@@ -194,6 +208,7 @@ initSampleGame = GameState
         , vehicleStates = Map.singleton "carriage"
             (VehicleState "meadow" (Just 10) Set.empty Map.empty)
         , currentVehicle = Nothing
+        , activeDialogue = Nothing
         }
     , pendingNarrative = Nothing
     }

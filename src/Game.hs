@@ -43,6 +43,7 @@ emptyGameState = GameState
         , completedQuests    = Set.empty
         , vehicleStates      = Map.empty
         , currentVehicle     = Nothing
+        , activeDialogue     = Nothing
         }
     , pendingNarrative = Nothing
     }
@@ -335,8 +336,28 @@ moveNPCToRoom nId targetRoom state = state
 
 -- | Set the current dialogue node for an NPC
 setDialogueNode :: String -> Maybe String -> GameState -> GameState
-setDialogueNode nId node state = state
-    { save = (save state) { npcStates = Map.adjust (\s -> s { npcDialogueNode = node }) nId (npcStates (save state)) } }
+setDialogueNode nId node state =
+    let curRoom = currentRoom (save state)
+        mDef = Map.lookup nId (npcDefs (world state))
+        defaultSt = NPCState
+            { npcLocation = curRoom
+            , npcStatus = "alive"
+            , npcHealth = mDef >>= npcMaxHealth
+            , npcProps = Map.empty
+            , npcDialogueNode = node
+            }
+        adjustSt s = s { npcDialogueNode = node }
+    in state
+        { save = (save state)
+            { npcStates = Map.insertWith (\_ old -> adjustSt old) nId defaultSt (npcStates (save state)) } }
+
+-- | Set the active dialogue partner
+setActiveDialogue :: Maybe NPCID -> GameState -> GameState
+setActiveDialogue mNpc state = state { save = (save state) { activeDialogue = mNpc } }
+
+-- | Clear the active dialogue partner
+clearActiveDialogue :: GameState -> GameState
+clearActiveDialogue = setActiveDialogue Nothing
 
 -- | Clamp NPC health to its max health from the definition
 clampNPCHealth :: String -> GameState -> GameState

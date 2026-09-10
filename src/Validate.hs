@@ -21,6 +21,8 @@ data ValidationError
     | UnreachableRoom  RoomID                       -- ^ Room cannot be reached from start
     | DuplicateID      String String String         -- ^ (id, type1, type2)
     | MissingSetFlag   FlagID String                -- ^ Flag referenced in CheckFlag but never set
+    | MissingDialogueNode NPCID String String      -- ^ (npc, status, entryNode) entry node missing
+    | DanglingDialogueChoice NPCID String String String -- ^ (npc, status, sourceNode, targetNode)
     deriving (Show, Eq)
 
 -- ---------------------------------------------------------------------------
@@ -34,6 +36,7 @@ validateWorld gw =
         [ checkDanglingExits gw
         , checkUnreachableRooms gw
         , checkDuplicateIDs gw
+        , checkDialogueTrees gw
         , checkMissingItemsInDefs gw
         , checkMissingNPCsInDefs gw
         , checkMissingQuestsInDefs gw
@@ -118,6 +121,33 @@ checkDuplicateIDs gw =
     in [DuplicateID i t1 t2 | (i, t1, t2) <- nub pairs, not (allowedPair (i, t1, t2))]
 
 -- ---------------------------------------------------------------------------
+-- Dialogue trees
+-- ---------------------------------------------------------------------------
+
+-- | Validate dialogue tree structure: valid entry points and non-dangling next-node links
+checkDialogueTrees :: GameWorld -> [ValidationError]
+checkDialogueTrees gw =
+    [ err
+    | npc <- Map.elems (npcDefs gw)
+    , (status, tree) <- Map.toList (npcDialogueTrees npc)
+    , let nId = npcId npc
+    , let nodeKeys = Map.keysSet (dtNodes tree)
+    , err <- checkTree nId status tree nodeKeys
+    ]
+  where
+    checkTree nId status tree nodeKeys =
+        let entryErr = [ MissingDialogueNode nId status (dtEntry tree)
+                       | not (Set.member (dtEntry tree) nodeKeys) ]
+            danglingChoiceErrs =
+                [ DanglingDialogueChoice nId status nodeId target
+                | (nodeId, node) <- Map.toList (dtNodes tree)
+                , choice <- dnChoices node
+                , Just target <- [dcNextNode choice]
+                , not (Set.member target nodeKeys)
+                ]
+        in entryErr ++ danglingChoiceErrs
+
+-- ---------------------------------------------------------------------------
 -- Missing items/NPCs/Quests/Vehicles referenced in definitions
 -- ---------------------------------------------------------------------------
 
@@ -125,10 +155,7 @@ checkMissingItemsInDefs :: GameWorld -> [ValidationError]
 checkMissingItemsInDefs gw =
     let itemRefs = Set.fromList (Map.keys (itemDefs gw))
         allRefs =
-            -- itemVerbMap outcome trees
-            concatMap (idsFromOutcomeItem . snd)
-                (concatMap (Map.toList . itemVerbMap) (Map.elems (itemDefs gw)))
-            -- itemInteractions keys
+            concatMap idsFromOutcomeItem (allOutcomes gw)
             ++ [i1 | (i1, _) <- Map.keys (itemInteractions gw)]
             ++ [i2 | (_, i2) <- Map.keys (itemInteractions gw)]
     in [MissingItem iId | iId <- nub allRefs, not (Set.member iId itemRefs)]
@@ -136,29 +163,13 @@ checkMissingItemsInDefs gw =
 checkMissingNPCsInDefs :: GameWorld -> [ValidationError]
 checkMissingNPCsInDefs gw =
     let npcRefs = Set.fromList (Map.keys (npcDefs gw))
-        allRefs = concatMap (idsFromOutcomeNPC . snd)
-            -- npcVerbMap outcomes
-            (concatMap (Map.toList . npcVerbMap) (Map.elems (npcDefs gw)))
-            -- room hooks
-            ++ concatMap (\r -> concatMap idsFromOutcomeNPC
-                (catMaybes [roomOnEnter r, roomOnLook r, roomOnExit r, roomSearchOutcome r]))
-                (Map.elems (rooms gw))
+        allRefs = concatMap idsFromOutcomeNPC (allOutcomes gw)
     in [MissingNPC nId | nId <- nub allRefs, not (Set.member nId npcRefs)]
 
 checkMissingQuestsInDefs :: GameWorld -> [ValidationError]
 checkMissingQuestsInDefs gw =
     let questRefs = Set.fromList (Map.keys (questDefs gw))
-        allRefs =
-            -- outcomes from quest rewards
-            concatMap (maybe [] idsFromOutcomeQuest . questReward)
-                (Map.elems (questDefs gw))
-            -- outcomes from room hooks
-            ++ concatMap (\r -> concatMap idsFromOutcomeQuest
-                (catMaybes [roomOnEnter r, roomOnLook r, roomOnExit r, roomSearchOutcome r]))
-                (Map.elems (rooms gw))
-            -- outcomes from item verb maps
-            ++ concatMap (idsFromOutcomeQuest . snd)
-                (concatMap (Map.toList . itemVerbMap) (Map.elems (itemDefs gw)))
+        allRefs = concatMap idsFromOutcomeQuest (allOutcomes gw)
     in [MissingQuest qId | qId <- nub allRefs, not (Set.member qId questRefs)]
 
 checkMissingVehiclesInDefs :: GameWorld -> [ValidationError]
@@ -211,6 +222,12 @@ allOutcomes gw = concat
     , catMaybes (map questReward (Map.elems (questDefs gw)))
     , concatMap (\(_, o) -> [o])
         (concatMap (Map.toList . vehicleConditionEffects) (Map.elems (vehicleDefs gw)))
+    , [ dcOutcome choice
+      | npc <- Map.elems (npcDefs gw)
+      , tree <- Map.elems (npcDialogueTrees npc)
+      , node <- Map.elems (dtNodes tree)
+      , choice <- dnChoices node
+      ]
     ]
 
 catMaybes :: [Maybe a] -> [a]

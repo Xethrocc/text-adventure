@@ -28,7 +28,7 @@ import System.Console.Haskeline
 commandWords :: [String]
 commandWords =
     [ "go", "move", "walk", "look", "examine", "inspect", "read", "take", "pick", "drop", "put"
-    , "search", "inventory", "inv", "i", "use", "talk", "speak", "attack", "hit", "kill"
+    , "search", "inventory", "inv", "i", "use", "talk", "speak", "choose", "option", "attack", "hit", "kill"
     , "equip", "wear", "wield", "unequip", "remove", "stats"
     , "enter", "board", "disembark", "drive", "wait", "refuel", "repair"
     , "undo", "save", "load", "saves", "restart", "help", "quit", "exit", "q"

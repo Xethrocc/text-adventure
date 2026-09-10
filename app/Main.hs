@@ -4,6 +4,8 @@ module Main where
 import GameLoop (runGame)
 import Sample (initSampleGame)
 import World (loadGame)
+import Types (world)
+import Validate (validateWorld)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 
@@ -45,6 +47,13 @@ main = do
                     putStrLn ("Failed to load adventure: " ++ err)
                     exitFailure
                 Right state -> do
+                    let valErrors = validateWorld (world state)
+                    if not (null valErrors)
+                    then do
+                        putStrLn "Warning: World validation reported issues:"
+                        mapM_ (\err -> putStrLn ("  - " ++ show err)) valErrors
+                        putStrLn "----------------------------"
+                    else return ()
                     putStrLn "=== Text Adventure Game ==="
                     putStrLn ("Loaded world: " ++ worldPath)
                     putStrLn "Type 'help' for available commands."
