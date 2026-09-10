@@ -5,6 +5,7 @@ import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import Data.Maybe (isJust)
 import Game
 import GameLoop (commandCompletion, LoopState (..), initLoopState, applyLoopCommand)
 import Parser (Command (..), executeCommand, parseCommand, applyOutcome)
@@ -739,6 +740,26 @@ testUndoRestoresAfterDeath = do
     r2 <- expectTrue "undo clears game over" (not (gameOver (save (lsCurrent restoredLoop))))
     pure (r1 && r2)
 
+-- ===== Narrative tests (Phase 4.4) =====
+
+testNarrativeReturnsLines :: IO Bool
+testNarrativeReturnsLines = do
+    let (_, msg) = applyOutcome (Narrative ["Line 1", "Line 2"] (MessageOnly "done")) "" initSampleGame
+    expectEqual "Line 1\nLine 2" msg
+
+testNarrativeStoresPending :: IO Bool
+testNarrativeStoresPending = do
+    let (st, _) = applyOutcome (Narrative ["Hello!"] (HealPlayer 10 "You feel better.")) "" initSampleGame
+    r1 <- expectTrue "pendingNarrative is set" (isJust (pendingNarrative st))
+    r2 <- expectEqual 100 (playerHealth (player (save st)))
+    pure (r1 && r2)
+
+testNarrativeStateRoundTrip :: IO Bool
+testNarrativeStateRoundTrip = do
+    let encoded = Aeson.encode (Narrative ["A", "B"] (MessageOnly "end"))
+        decoded = Aeson.decode encoded :: Maybe ActionOutcome
+    expectEqual (Just (Narrative ["A", "B"] (MessageOnly "end"))) decoded
+
 main :: IO ()
 main = do
     results <- sequence
@@ -840,5 +861,9 @@ main = do
         , runTest "undo history is capped at 50" testUndoHistoryCappedAt50
         , runTest "save does not affect undo history" testSaveDoesNotAffectUndoHistory
         , runTest "undo restores after death" testUndoRestoresAfterDeath
+        -- Narratives (Phase 4.4)
+        , runTest "narrative returns lines" testNarrativeReturnsLines
+        , runTest "narrative stores pending (no side effects)" testNarrativeStoresPending
+        , runTest "Narrative JSON round-trip" testNarrativeStateRoundTrip
         ]
     when (not (and results)) exitFailure

@@ -207,8 +207,24 @@ loopGame loopState
                         loopGame loopState
                     command -> do
                         let (loopState', message) = applyLoopCommand command loopState
-                        putStrLn message
-                        loopGame loopState'
+                        case pendingNarrative (lsCurrent loopState') of
+                            Nothing -> do
+                                putStrLn message
+                                loopGame loopState'
+                            Just (lines, followUp) -> do
+                                case lines of
+                                    [] -> return ()
+                                    [single] -> putStrLn single
+                                    _ -> do
+                                        mapM_ (\l -> putStrLn l >> putStr "  [Press Enter to continue]" >> getLine >> return ())
+                                            (init lines)
+                                        putStrLn (last lines)
+                                let (finalState, followMsg) = applyOutcome followUp "" (lsCurrent loopState')
+                                    clearedState = finalState { pendingNarrative = Nothing }
+                                if null followMsg
+                                    then loopGame (loopState' { lsCurrent = clearedState })
+                                    else do putStrLn followMsg
+                                            loopGame (loopState' { lsCurrent = clearedState })
   where
     state = lsCurrent loopState
 

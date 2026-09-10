@@ -140,6 +140,8 @@ data ActionOutcome
     | StartQuest QuestID String           -- ^ Quest, Message
     | AdvanceQuest QuestID String         -- ^ Quest, Message (moves to next stage)
     | CompleteQuest QuestID String        -- ^ Quest, Message (fires questReward)
+    -- Narratives (Phase 4.4)
+    | Narrative [String] ActionOutcome    -- ^ Lines to show, then follow-up outcome
     deriving (Show, Eq, Generic)
 
 instance ToJSON ActionOutcome
@@ -671,6 +673,7 @@ instance FromJSON SaveFile
 data GameState = GameState
     { world :: GameWorld
     , save  :: SaveState
+    , pendingNarrative :: Maybe ([String], ActionOutcome)  -- ^ Narrative lines + follow-up (Phase 4.4)
     } deriving (Show, Eq)
 
 -- ---------------------------------------------------------------------------

@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.0.0] — Unreleased
+
+Phase 4.4 (Engine-Qualität): Narrative Inserts.
+
+### Added
+- **Narrative Outcome**: `Narrative [String] ActionOutcome` — eine Liste von
+  Zeilen, die nacheinander mit `[Press Enter to continue]` angezeigt werden,
+  gefolgt von einem Folge-Outcome. Der reine Pfad gibt alle Zeilen auf einmal
+  zurück und speichert das Follow-Up in `pendingNarrative` (kein Seiteneffekt
+  bis zur interaktiven Anzeige).
+- `GameState.pendingNarrative :: Maybe ([String], ActionOutcome)` — nicht
+  serialisiert, nur zur Laufzeit. Die GameLoop rendert es zeilenweise mit
+  `getLine`-Pause, wendet dann das Follow-Up an.
+- Sample-Adventure: Das `meadow` führt jetzt eine kleine Narrative beim
+  Betreten aus.
+- 3 neue Tests (Lines-Rückgabe, Pending-Flag, JSON-Roundtrip).
+
 ## [0.6.0.0] — Unreleased
 
 Phase 4.3 (Engine-Qualität): Undo.

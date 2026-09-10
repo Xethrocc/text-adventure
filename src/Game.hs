@@ -44,6 +44,7 @@ emptyGameState = GameState
         , vehicleStates      = Map.empty
         , currentVehicle     = Nothing
         }
+    , pendingNarrative = Nothing
     }
 
 -- ---------------------------------------------------------------------------

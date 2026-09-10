@@ -402,6 +402,10 @@ applyOutcomeWith depth salt outcome targetId state
              in (st', fullMsg, salt)
         else (state, "That quest is not active.", salt)
 
+    -- Narratives (Phase 4.4): store lines + follow-up for interactive rendering
+    Narrative lines followUp ->
+        (state { pendingNarrative = Just (lines, followUp) }, intercalate "\n" lines, salt)
+
 -- | Public wrapper: apply a single outcome starting at depth 0 / salt 0
 applyOutcome :: ActionOutcome -> ItemID -> GameState -> CommandResult
 applyOutcome outcome targetId state =

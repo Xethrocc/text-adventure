@@ -51,7 +51,12 @@ initSampleGame = GameState
                 Set.empty
                 Map.empty
                 Nothing
-                Nothing Nothing Nothing Nothing)
+                (Just (Narrative
+                    ["A gentle breeze rustles the grass.",
+                     "Somewhere in the distance, birds sing.",
+                     "The carriage horse stamps its foot impatiently."]
+                    (MessageOnly "You feel at peace here.")))
+                Nothing Nothing Nothing)
             , ("carriage_cabin", Room
                 "carriage_cabin"
                 "Carriage Cabin"
@@ -190,4 +195,5 @@ initSampleGame = GameState
             (VehicleState "meadow" (Just 10) Set.empty Map.empty)
         , currentVehicle = Nothing
         }
+    , pendingNarrative = Nothing
     }
