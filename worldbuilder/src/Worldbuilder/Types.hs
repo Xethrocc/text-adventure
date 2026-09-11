@@ -384,14 +384,42 @@ instance FromJSON AVariable where
 -- ---------------------------------------------------------------------------
 
 data AInteractions = AInteractions
-    { aiEntity  :: Map.Map (String, String) String              -- (item, target) -> new state
-    , aiItem    :: Map.Map (String, String) [AActionOutcome]    -- (item, item) -> outcomes
+    { aiEntity  :: [AEntityInteraction]
+    , aiItem    :: [AItemInteraction]
     } deriving (Show, Eq, Generic)
 
+-- | `use <item> on <target>` -> sets the target entity's state.
+data AEntityInteraction = AEntityInteraction
+    { aeiItem   :: String
+    , aeiTarget :: String
+    , aeiState  :: String            -- ^ new state of the target (e.g. "unlocked")
+    , aeiMsg    :: Maybe String
+    } deriving (Show, Eq, Generic)
+
+-- | Item-on-item interaction (crafting): `use <item1> on <item2>`.
+data AItemInteraction = AItemInteraction
+    { aiiItem1   :: String
+    , aiiItem2   :: String
+    , aiiEffects :: [AActionOutcome]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AEntityInteraction where
+    parseJSON = withObject "AEntityInteraction" (\o -> AEntityInteraction
+        <$> o .:  "item"
+        <*> o .:  "target"
+        <*> o .:  "state"
+        <*> o .:? "msg")
+
+instance FromJSON AItemInteraction where
+    parseJSON = withObject "AItemInteraction" (\o -> AItemInteraction
+        <$> o .:  "item1"
+        <*> o .:  "item2"
+        <*> o .:? "effects" .!= [])
+
 instance FromJSON AInteractions where
-    parseJSON = withObject "AInteractions" $ \o -> AInteractions
-        <$> o .:? "entity" .!= Map.empty
-        <*> o .:? "item"   .!= Map.empty
+    parseJSON = withObject "AInteractions" (\o -> AInteractions
+        <$> o .:? "entity" .!= []
+        <*> o .:? "item"   .!= [])
 
 -- ---------------------------------------------------------------------------
 -- Action outcomes (YAML-friendly — each has exactly one key)

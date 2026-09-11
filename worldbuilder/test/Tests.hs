@@ -736,6 +736,34 @@ testInvalidContainerDetected = do
     expectTrue "InvalidContainer detected"
         (InvalidContainer "crystal" "missing_chest" `elem` validateGameState minWorld badSave)
 
+-- | Phase 6: item-on-item (crafting) interaction compiles.
+testItemInteractionCompiles :: IO Bool
+testItemInteractionCompiles = do
+    let ix = AInteractions
+            { aiEntity = []
+            , aiItem = [ AItemInteraction "herb" "mortar" [AOMessage "paste made"] ] }
+        adv = (minAdventure (minRoom "loc_0")) { advInteractions = Just ix }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> expectTrue "item-on-item interaction present"
+            (Map.member ("herb", "mortar") (E.itemInteractions (crWorld cr)))
+
+-- | Phase 6: entity interaction (use item on target) compiles to unlock state.
+testEntityInteractionCompiles :: IO Bool
+testEntityInteractionCompiles = do
+    let ix = AInteractions
+            { aiEntity = [ AEntityInteraction "key" "door" "unlocked" (Just "It opens.") ]
+            , aiItem = [] }
+        adv = (minAdventure (minRoom "loc_0")) { advInteractions = Just ix }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> expectEqual (Just ("unlocked", "It opens."))
+            (Map.lookup ("key", "door") (E.entityInteractions (crWorld cr)))
+
 -- ---------------------------------------------------------------------------
 -- Main
 -- ---------------------------------------------------------------------------
@@ -780,6 +808,8 @@ tests =
     , ("in_container places item inside container", testInContainerCompiles)
     , ("if/then/else outcome compiles to Conditional", testConditionalOutcomeCompiles)
     , ("in_container at missing item is detected", testInvalidContainerDetected)
+    , ("item-on-item (crafting) interaction compiles", testItemInteractionCompiles)
+    , ("entity interaction (use on target) compiles", testEntityInteractionCompiles)
     ]
 
 main :: IO ()

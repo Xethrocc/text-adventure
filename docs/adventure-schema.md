@@ -222,14 +222,18 @@ rules:
 
 Events: `enter room`, `leave room`, `look room`, `search room`, `take item`, `drop item`, `use item`, `state entity`, `command verb`, `custom name`, `turn`.
 
-## Interactions (Item-auf-Entity)
+## Interactions (Item-auf-Entity / Crafting)
 
 ```yaml
 interactions:
+  # use <item> on <target> -> setzt den Ziel-Status (z. B. Truhe/Exits entriegeln)
   entity:
-    "key,door": unlocked
+    - {item: key, target: door, state: unlocked, msg: "The key turns."}
+  # Item-auf-Item (Crafting): use <item1> on <item2>
   item:
-    "torch,oil":               # item-on-item
-      - set_flag: torch_lit
-      - msg: The torch flares up.
+    - item1: herb
+      item2: mortar
+      effects:
+        - {msg: "You grind the herb into a paste."}
+        - {set_flag: paste_made, val: "true"}
 ```

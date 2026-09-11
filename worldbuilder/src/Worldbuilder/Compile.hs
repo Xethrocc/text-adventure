@@ -559,8 +559,12 @@ compileInteractions :: Maybe AInteractions -> (Map.Map (String, String) (String,
 compileInteractions Nothing = (Map.empty, Map.empty)
 compileInteractions (Just ix) = (entityMap, itemMap)
   where
-    entityMap = Map.map (\s -> (s, "")) (aiEntity ix)
-    itemMap = Map.map (compileOutcomes) (aiItem ix)
+    entityMap = Map.fromList
+        [ ((aeiItem e, aeiTarget e), (aeiState e, fromMaybe "" (aeiMsg e)))
+        | e <- aiEntity ix ]
+    itemMap = Map.fromList
+        [ ((aiiItem1 i, aiiItem2 i), compileOutcomes (aiiEffects i))
+        | i <- aiItem ix ]
 
 -- ---------------------------------------------------------------------------
 -- Verb maps (strict — unknown verb = compile error, custom verbs resolved)
