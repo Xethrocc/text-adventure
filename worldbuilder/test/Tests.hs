@@ -497,6 +497,9 @@ findExample fname = firstExisting
     , "examples/fixtures" </> fname
     , "../examples/fixtures" </> fname
     , "../../examples/fixtures" </> fname
+    , "examples/genres" </> fname
+    , "../examples/genres" </> fname
+    , "../../examples/genres" </> fname
     ]
   where
     firstExisting [] = pure Nothing
@@ -764,6 +767,39 @@ testEntityInteractionCompiles = do
         Right cr -> expectEqual (Just ("unlocked", "It opens."))
             (Map.lookup ("key", "door") (E.entityInteractions (crWorld cr)))
 
+-- | Phase 6: every genre fixture compiles and validates without issues.
+testGenreFixturesCompile :: IO Bool
+testGenreFixturesCompile = do
+    let fixtures =
+            [ "pure-if.yaml", "fantasy.yaml", "cyberpunk.yaml"
+            , "space-opera.yaml", "detective.yaml", "horror.yaml" ]
+    results <- mapM checkOne fixtures
+    pure (and results)
+  where
+    checkOne fname = do
+        mbPath <- findExample fname
+        case mbPath of
+            Nothing -> do
+                putStrLn $ "  genre fixture not found: " ++ fname
+                pure False
+            Just path -> do
+                mbAdv <- parseAdventureFile path
+                case mbAdv of
+                    Nothing -> do
+                        putStrLn $ "  failed to parse " ++ fname
+                        pure False
+                    Just adv -> case compileAdventure adv of
+                        Left errs -> do
+                            putStrLn $ "  " ++ fname ++ " compile errors: " ++ issuesText errs
+                            pure False
+                        Right cr -> do
+                            let errs = validateWorld (crWorld cr) ++ validateGameState (crWorld cr) (crSave cr)
+                            if null errs
+                                then pure True
+                                else do
+                                    putStrLn $ "  " ++ fname ++ " validation: " ++ show errs
+                                    pure False
+
 -- ---------------------------------------------------------------------------
 -- Main
 -- ---------------------------------------------------------------------------
@@ -810,6 +846,7 @@ tests =
     , ("in_container at missing item is detected", testInvalidContainerDetected)
     , ("item-on-item (crafting) interaction compiles", testItemInteractionCompiles)
     , ("entity interaction (use on target) compiles", testEntityInteractionCompiles)
+    , ("all 6 genre fixtures compile + validate clean", testGenreFixturesCompile)
     ]
 
 main :: IO ()
