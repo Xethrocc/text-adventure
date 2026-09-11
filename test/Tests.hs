@@ -7,6 +7,8 @@ import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Maybe (isJust)
+import System.Timeout (timeout)
+import Control.Exception (evaluate)
 import Game
 import GameLoop (commandCompletion, LoopState (..), initLoopState, applyLoopCommand)
 import Parser (Command (..), executeCommand, parseCommand, parseCommandWith)
@@ -1271,6 +1273,108 @@ testTakeNonPortableFails = do
     r2 <- expectTrue "not carried" (not (hasItem "statue" st'))
     pure (r1 && r2)
 
+-- ===== Phase 6b: engine invariants =====
+
+-- Helper: an equippable item placed in the player's inventory.
+invItem :: String -> ItemDef
+invItem iid = ItemDef iid iid (plainText "x") [iid] Set.empty
+    (Just Weapon) [] False Nothing True Nothing Map.empty
+
+-- | Equipped items are always also carried.
+testEquippedImpliesCarried :: IO Bool
+testEquippedImpliesCarried = do
+    let sample = initSampleGame
+        w = (world sample) { itemDefs = Map.insert "blade" (invItem "blade") (itemDefs (world sample)) }
+        st = sample { world = w
+                    , save = (save sample)
+                        { itemStates = Map.insert "blade"
+                            (ItemState (CarriedBy "player") "intact" Map.empty True)
+                            (itemStates (save sample)) } }
+        (st', _) = executeCommand (EquipCmd "blade") st
+    r1 <- expectEqual (Just "blade") (Map.lookup Weapon (equipment (save st')))
+    r2 <- expectEqual (Just (CarriedBy "player"))
+            (itemLocation <$> Map.lookup "blade" (itemStates (save st')))
+    pure (r1 && r2)
+
+-- | A consumed item is Removed and appears in no room.
+testRemovedItemNotInAnyRoom :: IO Bool
+testRemovedItemNotInAnyRoom = do
+    let sample = initSampleGame
+        w = (world sample) { itemDefs = Map.insert "ash" (invItem "ash") (itemDefs (world sample)) }
+        st = sample { world = w
+                    , save = (save sample)
+                        { itemStates = Map.insert "ash"
+                            (ItemState (CarriedBy "player") "intact" Map.empty True)
+                            (itemStates (save sample)) } }
+        st' = consumeItem "ash" st
+        inRooms = or [ "ash" `elem` map itemId (getItemsInLocation (InRoom r) st')
+                     | r <- Map.keys (rooms (world st')) ]
+    r1 <- expectEqual (Just Removed) (itemLocation <$> Map.lookup "ash" (itemStates (save st')))
+    r2 <- expectTrue "removed item in no room" (not inRooms)
+    pure (r1 && r2)
+
+-- | Every item has exactly one location and container refs resolve.
+testEveryItemHasOneLocation :: IO Bool
+testEveryItemHasOneLocation = do
+    let sample = initSampleGame
+        itemKeys = Map.keys (itemStates (save sample))
+        locs = [ itemLocation is | is <- Map.elems (itemStates (save sample)) ]
+        -- container refs must point at an existing item
+        containerRefs = [ c | InContainer c <- locs ]
+        missing = [ c | c <- containerRefs, not (c `elem` itemKeys) ]
+    r1 <- expectTrue "one entry per item" (length itemKeys == Map.size (itemStates (save sample)))
+    r2 <- expectTrue "container refs resolve" (null missing)
+    pure (r1 && r2)
+
+-- | SaveState JSON round-trip preserves RNG, variables, quests, trigger state.
+testSaveStateRoundTripInvariant :: IO Bool
+testSaveStateRoundTripInvariant = do
+    let sample = initSampleGame
+        st = sample { save = (save sample)
+                { rngState = 123456789
+                , variables = Map.fromList [("mana", VVInt 7)]
+                , activeQuests = Map.fromList [("q", 2)]
+                , triggerStates = Map.fromList [("t", TriggerState True 3)]
+                } }
+        encoded = Aeson.encode (save st)
+        decoded = Aeson.decode encoded :: Maybe SaveState
+    case decoded of
+        Nothing -> do putStrLn "  decode failed"; pure False
+        Just ss -> do
+            r1 <- expectEqual 123456789 (rngState ss)
+            r2 <- expectEqual (Just (VVInt 7)) (Map.lookup "mana" (variables ss))
+            r3 <- expectEqual (Just 2) (Map.lookup "q" (activeQuests ss))
+            r4 <- expectEqual (Just (TriggerState True 3)) (Map.lookup "t" (triggerStates ss))
+            pure (r1 && r2 && r3 && r4)
+
+-- | A trigger that re-kills the same NPC on its own state-change event must
+--   terminate (no unbounded event recursion).
+testTriggerRecursionBounded :: IO Bool
+testTriggerRecursionBounded = do
+    let sample = initSampleGame
+        loopEff = ModifyValue (VRProperty "wolf" "hp") (-100)
+        w = (world sample)
+            { triggerDefs = [ TriggerDef "cascade" (OnStateChange "wolf") Nothing [loopEff] False 0 ] }
+        st = sample { world = w
+                    , save = (save sample)
+                        { npcStates = Map.insert "wolf"
+                            (NPCState (InRoom "start") "alive" (Just 5) Map.empty Nothing)
+                            (npcStates (save sample)) } }
+    result <- timeout 3000000 (evaluate (killNPC "wolf" st))
+    case result of
+        Nothing -> do putStrLn "  recursion did not terminate"; pure False
+        Just st' -> expectEqual (Just "dead")
+            (npcStatus <$> Map.lookup "wolf" (npcStates (save st')))
+
+-- | Every item verb-map key resolves to a core verb or a declared custom verb.
+testItemVerbKeysResolve :: IO Bool
+testItemVerbKeysResolve = do
+    let gw = world initSampleGame
+        declared = Map.keys (verbDefs gw)
+        keys = [ (itemId i, v) | i <- Map.elems (itemDefs gw), (v, _) <- Map.keys (itemVerbMap i) ]
+        bad = [ (iid, n) | (iid, VCustom n) <- keys, n `notElem` declared ]
+    expectTrue "all custom item verbs are declared" (null bad)
+
 testDialogueInvalidChoice :: IO Bool
 testDialogueInvalidChoice = do
     let (st1, _) = executeCommand (Interact VTalk "old man") initSampleGame
@@ -1484,6 +1588,12 @@ main = do
         , runTest "OnUse trigger fires for multi-word item alias" testOnUseTriggerMultiWordAlias
         , runTest "take with on_take picks up and fires effects" testTakeWithOnTakePicksUp
         , runTest "take of non-portable item shows take_failure" testTakeNonPortableFails
+        , runTest "invariant: equipped implies carried" testEquippedImpliesCarried
+        , runTest "invariant: removed item in no room" testRemovedItemNotInAnyRoom
+        , runTest "invariant: every item has one location" testEveryItemHasOneLocation
+        , runTest "invariant: save/load keeps RNG/vars/quests/triggers" testSaveStateRoundTripInvariant
+        , runTest "invariant: trigger recursion is bounded" testTriggerRecursionBounded
+        , runTest "invariant: item verb keys resolve" testItemVerbKeysResolve
         , runTest "dialogue bare number choice" testDialogueBareNumberChoice
         , runTest "dialogue invalid choice" testDialogueInvalidChoice
         , runTest "dialogue end clears active" testDialogueEndClearsActive

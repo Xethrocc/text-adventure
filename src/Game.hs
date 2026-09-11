@@ -320,14 +320,19 @@ updateNPCState targetNpcId newNpcState state = state
 
 -- | Move NPC to void (dead) and fire state-change triggers.
 --   Also unlocks any exit locked by this entity (entityStates -> "unlocked").
+--   Killing an already-dead NPC is a no-op, which bounds event recursion:
+--   a trigger that re-kills the same NPC cannot loop.
 killNPC :: String -> GameState -> GameState
 killNPC targetNpcId state =
-    let state' = state
-            { save = (save state)
-                { npcStates = Map.adjust (\s -> s { npcLocation = Removed, npcStatus = "dead" }) targetNpcId (npcStates (save state))
-                , entityStates = Map.insert targetNpcId "unlocked" (entityStates (save state))
-                } }
-    in fst (fireTriggers (OnStateChange targetNpcId) state')
+    case npcStatus <$> Map.lookup targetNpcId (npcStates (save state)) of
+        Just "dead" -> state
+        _ ->
+            let state' = state
+                    { save = (save state)
+                        { npcStates = Map.adjust (\s -> s { npcLocation = Removed, npcStatus = "dead" }) targetNpcId (npcStates (save state))
+                        , entityStates = Map.insert targetNpcId "unlocked" (entityStates (save state))
+                        } }
+            in fst (fireTriggers (OnStateChange targetNpcId) state')
 
 -- | Modify an NPC's property
 modifyNPCProp :: String -> String -> Int -> GameState -> GameState
