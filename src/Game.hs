@@ -510,6 +510,10 @@ evalPredicate (Location eId rId) st =
         Nothing  -> case Map.lookup eId (itemStates (save st)) of
             Just is -> itemLocation is == InRoom rId
             Nothing -> False
+evalPredicate (CompareVar name op n) st =
+    case Map.lookup name (variables (save st)) of
+        Just (VVInt v) -> fromMaybe False (compareValues op v n)
+        _              -> False
 evalPredicate (Compare lhs op rhs) st =
     let lval = resolveValueRef lhs st
         rval = resolveValueRef rhs st

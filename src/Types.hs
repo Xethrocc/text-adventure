@@ -13,6 +13,7 @@ import Data.Aeson
 import Data.Aeson.Types (Parser, toJSONKeyText, FromJSONKeyFunction (..))
 import Control.Applicative ((<|>))
 import Data.Bits (xor, shiftR)
+import Data.Char (toLower)
 
 -- ---------------------------------------------------------------------------
 -- ID aliases
@@ -191,6 +192,7 @@ data Predicate
     | HasFlag FlagID                         -- ^ flag == "true"
     | RoomHasTag RoomID String               -- ^ room has a given tag
     | Location String String   -- ^ entity ID, room ID (is entity in this room?)
+    | CompareVar String Comparator Int  -- ^ variable vs integer literal (mana >= 5)
     deriving (Show, Eq, Generic)
 
 -- | Serialize to the same compact object shape that FromJSON accepts
@@ -207,6 +209,34 @@ instance ToJSON Predicate where
         HasFlag f          -> object [ "has_flag" .= f ]
         RoomHasTag r t     -> object [ "room"     .= r, "has_tag" .= t ]
         Location e r       -> object [ "at"       .= e, "room" .= r ]
+        CompareVar n op v  -> object [ "compare_var" .= object
+                                        [ "name" .= n, "op" .= comparatorName op, "value" .= v ] ]
+
+-- | Stable string form of a comparator, used in YAML/JSON predicates.
+comparatorName :: Comparator -> String
+comparatorName CEq  = "eq"
+comparatorName CNeq = "ne"
+comparatorName CLt  = "lt"
+comparatorName CLte = "lte"
+comparatorName CGt  = "gt"
+comparatorName CGte = "gte"
+
+-- | Parse a comparator from its string form.
+parseComparatorName :: String -> Maybe Comparator
+parseComparatorName s = case map toLower s of
+    "eq"  -> Just CEq
+    "="   -> Just CEq
+    "ne"  -> Just CNeq
+    "!="  -> Just CNeq
+    "lt"  -> Just CLt
+    "<"   -> Just CLt
+    "lte" -> Just CLte
+    "<="  -> Just CLte
+    "gt"  -> Just CGt
+    ">"   -> Just CGt
+    "gte" -> Just CGte
+    ">="  -> Just CGte
+    _     -> Nothing
 
 instance FromJSON Predicate where
     parseJSON = withObject "Predicate" $ \o ->
@@ -220,6 +250,13 @@ instance FromJSON Predicate where
         <|> (RoomHasTag     <$> o .: "room"  <*> o .: "has_tag")
         <|> (Location       <$> o .: "at"    <*> o .: "room")
         <|> (Compare <$> o .: "lhs" <*> o .: "op" <*> o .: "rhs")
+        <|> (do cv  <- o .: "compare_var"
+                n   <- cv .: "name"
+                opS <- cv .: "op"
+                v   <- cv .: "value"
+                case parseComparatorName opS of
+                    Just cmp -> pure (CompareVar n cmp v)
+                    Nothing  -> fail ("Unknown comparator '" ++ opS ++ "' in compare_var"))
         <|> fail "Unknown predicate"
 
 -- | Action Outcome representing the result of an interaction

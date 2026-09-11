@@ -641,6 +641,8 @@ compileAActionOutcome ao = case ao of
     AOGameEnd r m -> E.GameEnd (parseGameOverReason r) (fromMaybe "" m)
     AOConditional p ts es ->
         E.Conditional p (compileOutcomes ts) (compileOutcomes es)
+    AOSetVar name v -> E.SetValue (E.VRVariable name) (E.EVInt v)
+    AOAddVar name d -> E.ModifyValue (E.VRVariable name) d
     AONarrative ls -> E.Sequence (map E.SendMessage ls ++ [E.Noop])
 
 -- | Parse a game-end reason string ("victory", "death", or a custom label).

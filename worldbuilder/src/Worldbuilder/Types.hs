@@ -441,6 +441,8 @@ data AActionOutcome
     | AOMoveNPC String String          -- ^ npc id, target room (move_npc + to)
     | AOGameEnd String (Maybe String)  -- ^ reason (victory/death/custom), optional msg
     | AOConditional E.Predicate [AActionOutcome] [AActionOutcome]  -- ^ if/then/else
+    | AOSetVar String Int              -- ^ set a declared numeric variable
+    | AOAddVar String Int              -- ^ add a delta to a declared numeric variable
     | AONarrative [String]
     deriving (Show, Eq, Generic)
 
@@ -452,6 +454,8 @@ instance FromJSON AActionOutcome where
             -- "game_end" and a "msg" for the end screen.
             (AOGameEnd <$> o .: "game_end" <*> o .:? "msg")
         <|> (AOConditional <$> o .: "if" <*> o .:? "then" .!= [] <*> o .:? "else" .!= [])
+        <|> (AOSetVar <$> o .: "set_var" <*> o .: "value")
+        <|> (AOAddVar <$> o .: "add_var" <*> o .: "delta")
         <|> (AOMessage <$> o .: "msg")
         <|> (AOHealPlayer <$> o .: "heal")
         <|> (AODamagePlayer <$> o .: "damage")
