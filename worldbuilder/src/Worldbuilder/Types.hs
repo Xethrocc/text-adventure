@@ -280,14 +280,16 @@ instance FromJSON ADialogueNode where
 data ADialogueChoice = ADialogueChoice
     { adcText     :: String
     , adcNext     :: Maybe String
+    , adcVisible  :: Maybe E.Predicate   -- ^ `visible_when` gate (optional)
     , adcOutcomes :: [AActionOutcome]
     } deriving (Show, Eq, Generic)
 
 instance FromJSON ADialogueChoice where
-    parseJSON (String s) = pure (ADialogueChoice (T.unpack s) Nothing [])
+    parseJSON (String s) = pure (ADialogueChoice (T.unpack s) Nothing Nothing [])
     parseJSON v = withObject "ADialogueChoice" (\o -> ADialogueChoice
         <$> o .:  "text"
         <*> o .:? "next"
+        <*> o .:? "visible_when"
         <*> o .:? "outcomes" .!= []) v
 
 -- ---------------------------------------------------------------------------

@@ -1180,6 +1180,25 @@ testDialogueBareNumberChoice = do
     r2 <- expectTrue "navigates node" ("old hermit" `isInfixOf` msg2)
     pure (r1 && r2)
 
+-- | Phase 6: a dialogue choice gated by visible_when is hidden until the
+--   predicate holds, and `choose` numbering follows the visible list.
+testDialogueChoiceVisibleWhen :: IO Bool
+testDialogueChoiceVisibleWhen = do
+    let gate c = c { dcVisible = Just (HasFlag "knows_secret") }
+        gateNode n = n { dnChoices = zipWith (\i c -> if i == 1 then gate c else c) [0 :: Int ..] (dnChoices n) }
+        gateTree (DialogueTree e ns) = DialogueTree e (Map.map gateNode ns)
+        world' = (world initSampleGame)
+            { npcDefs = Map.map (\d -> d { npcDialogueTrees = Map.map gateTree (npcDialogueTrees d) })
+                                (npcDefs (world initSampleGame)) }
+        st0 = initSampleGame { world = world' }
+    let (_, msg) = executeCommand (Interact VTalk "old man") st0
+    r1 <- expectTrue "gated choice hidden" (not ("Tell me about the treasure" `isInfixOf` msg))
+    r2 <- expectTrue "ungated choice shown" ("[1] Who are you?" `isInfixOf` msg)
+    let st1 = st0 { save = (save st0) { flags = Map.insert "knows_secret" "true" (flags (save st0)) } }
+        (_, msg2) = executeCommand (Interact VTalk "old man") st1
+    r3 <- expectTrue "gated choice visible once flag set" ("Tell me about the treasure" `isInfixOf` msg2)
+    pure (r1 && r2 && r3)
+
 testDialogueInvalidChoice :: IO Bool
 testDialogueInvalidChoice = do
     let (st1, _) = executeCommand (Interact VTalk "old man") initSampleGame
@@ -1222,7 +1241,7 @@ testMissingDialogueNodeDetected = do
 testDanglingDialogueChoiceDetected :: IO Bool
 testDanglingDialogueChoiceDetected = do
     let brokenNode = DialogueNode "greeting" "Hello"
-            [ DialogueChoice "Next" (Just "missing_target") (SendMessage "") ]
+            [ DialogueChoice "Next" (Just "missing_target") Nothing (SendMessage "") ]
     let brokenTree = DialogueTree "greeting" (Map.singleton "greeting" brokenNode)
     let brokenNpc = (npcDefs (world initSampleGame) Map.! "oldman")
             { npcDialogueTrees = Map.singleton "alive" brokenTree }
@@ -1389,6 +1408,7 @@ main = do
         -- Dialogue & Polish (Phase 4.6)
         , runTest "dialogue tree start and render" testDialogueTreeStartAndRender
         , runTest "dialogue choice navigation" testDialogueChoiceNavigation
+        , runTest "dialogue choice visible_when gating" testDialogueChoiceVisibleWhen
         , runTest "dialogue bare number choice" testDialogueBareNumberChoice
         , runTest "dialogue invalid choice" testDialogueInvalidChoice
         , runTest "dialogue end clears active" testDialogueEndClearsActive

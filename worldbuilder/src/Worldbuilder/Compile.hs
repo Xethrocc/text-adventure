@@ -462,6 +462,7 @@ compileDialogueChoice :: ADialogueChoice -> E.DialogueChoice
 compileDialogueChoice c = E.DialogueChoice
     { E.dcText = adcText c
     , E.dcNextNode = adcNext c
+    , E.dcVisible = adcVisible c
     , E.dcOutcome = compileOutcomes (adcOutcomes c)
     }
 

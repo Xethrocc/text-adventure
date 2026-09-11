@@ -429,6 +429,7 @@ instance FromJSON ItemState where
 data DialogueChoice = DialogueChoice
     { dcText     :: String          -- ^ What the player says (shown as option)
     , dcNextNode :: Maybe String    -- ^ Next node in current tree (Nothing = exit dialogue)
+    , dcVisible  :: Maybe Predicate -- ^ Optional gate: choice only shown if predicate holds
     , dcOutcome  :: Effect   -- ^ Outcome applied when chosen
     } deriving (Show, Eq, Generic)
 
@@ -436,6 +437,7 @@ instance ToJSON DialogueChoice where
     toJSON c = object
         [ "dcText"     .= dcText c
         , "dcNextNode" .= dcNextNode c
+        , "dcVisible"  .= dcVisible c
         , "dcOutcome"  .= dcOutcome c
         ]
 
@@ -443,6 +445,7 @@ instance FromJSON DialogueChoice where
     parseJSON = withObject "DialogueChoice" $ \o -> DialogueChoice
         <$> o .:  "dcText"
         <*> o .:? "dcNextNode" .!= Nothing
+        <*> o .:? "dcVisible"  .!= Nothing
         <*> o .:? "dcOutcome"  .!= SendMessage ""
 
 -- | One node (= one NPC utterance plus replies)

@@ -110,16 +110,16 @@ initSampleGame = GameState
                 (Map.singleton "alive" "It's dangerous to go alone! Take... well, I don't have anything actually.")
                 (Map.singleton "alive" (DialogueTree "greeting" (Map.fromList
                     [ ("greeting", DialogueNode "greeting" "Greetings, traveler! What brings you into this dark place?"
-                        [ DialogueChoice "Who are you?" (Just "who") (Sequence [])
-                        , DialogueChoice "Tell me about the treasure." (Just "rumor") (Sequence [])
-                        , DialogueChoice "Farewell." Nothing (SendMessage "Stay safe, friend.")
+                        [ DialogueChoice "Who are you?" (Just "who") Nothing (Sequence [])
+                        , DialogueChoice "Tell me about the treasure." (Just "rumor") Nothing (Sequence [])
+                        , DialogueChoice "Farewell." Nothing Nothing (SendMessage "Stay safe, friend.")
                         ])
                     , ("who", DialogueNode "who" "I am just an old hermit who watches over these ruins."
-                        [ DialogueChoice "What do you know about the treasure?" (Just "rumor") (Sequence [])
-                        , DialogueChoice "Goodbye." Nothing (SendMessage "May the light guide your steps.")
+                        [ DialogueChoice "What do you know about the treasure?" (Just "rumor") Nothing (Sequence [])
+                        , DialogueChoice "Goodbye." Nothing Nothing (SendMessage "May the light guide your steps.")
                         ])
                     , ("rumor", DialogueNode "rumor" "The treasure room lies beyond the eastern door, but it is locked with a brass key lost in the hallway."
-                        [ DialogueChoice "Thank you for the advice!" Nothing (SetValue (VRFlag "met_oldman") (EVString "true"))
+                        [ DialogueChoice "Thank you for the advice!" Nothing Nothing (SetValue (VRFlag "met_oldman") (EVString "true"))
                         ])
                     ])))
                 ["man", "old man"] Nothing 0 0 Map.empty)

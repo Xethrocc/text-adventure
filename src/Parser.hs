@@ -391,7 +391,7 @@ executeCommand (ChooseCmd idx) state =
                         in case Map.lookup nodeId (dtNodes tree) of
                             Nothing -> (clearActiveDialogue state, npcName npc ++ " has nothing more to say.")
                             Just node ->
-                                let choices = dnChoices node
+                                let choices = visibleChoices state node
                                 in if idx < 1 || idx > length choices
                                    then (state, "Invalid choice. Please select a number from 1 to " ++ show (length choices) ++ ".")
                                    else
@@ -736,6 +736,13 @@ talkTo npc maybeNpcState state =
             Just speech -> (clearActiveDialogue state, npcName npc ++ " says: \"" ++ speech ++ "\"")
             Nothing -> (clearActiveDialogue state, npcName npc ++ " has nothing to say.")
 
+-- | Choices of a node that pass their optional `visible_when` predicate.
+--   Used by both rendering and `choose N` so numbering stays consistent.
+visibleChoices :: GameState -> DialogueNode -> [DialogueChoice]
+visibleChoices state node =
+    [ c | c <- dnChoices node
+        , maybe True (\p -> evalPredicate p state) (dcVisible c) ]
+
 -- | Render the current node of a dialogue tree and list its choices
 renderDialogue :: NPCDef -> DialogueTree -> Maybe NPCState -> GameState -> CommandResult
 renderDialogue npc tree maybeNpcState state =
@@ -745,7 +752,7 @@ renderDialogue npc tree maybeNpcState state =
         Nothing -> (clearActiveDialogue state, npcName npc ++ " has nothing to say.")
         Just node ->
             let header = npcName npc ++ ": \"" ++ dnText node ++ "\""
-                choices = dnChoices node
+                choices = visibleChoices state node
                 body = if null choices
                        then header
                        else header ++ "\n\n" ++ unlines
