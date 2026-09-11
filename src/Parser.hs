@@ -11,6 +11,7 @@ import Data.List (find, intercalate, nub)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Set as Set
+import Verbs (verbAliasMap, resolveVerb)
 
 -- | Parsed command structure
 data Command
@@ -45,44 +46,15 @@ data Command
     | Unknown String
     deriving (Show, Eq)
 
--- | Map common strings to core Verbs
+-- | Parse an input verb word against the unified registry (core + custom).
+--   Backwards-compatible alias for Verbs.resolveVerb with no custom defs.
 parseVerb :: String -> Maybe Verb
-parseVerb v = case v of
-    "take"    -> Just VTake
-    "pick"    -> Just VTake
-    "grab"    -> Just VTake
-    "get"     -> Just VTake
-    "drop"    -> Just VDrop
-    "put"     -> Just VDrop
-    "examine" -> Just VLookAt
-    "inspect" -> Just VLookAt
-    "look"    -> Just VLookAt
-    "read"    -> Just VLookAt
-    "use"     -> Just VUse
-    "activate" -> Just VUse
-    "talk"    -> Just VTalk
-    "speak"   -> Just VTalk
-    "chat"    -> Just VTalk
-    "attack"  -> Just VAttack
-    "hit"     -> Just VAttack
-    "kill"    -> Just VAttack
-    "search"  -> Just VSearch
-    _         -> Nothing
-
--- | Build the lookup tables (alias → canonical) from the world's verb registry.
-verbAliasMap :: Map.Map String VerbDef -> Map.Map String String
-verbAliasMap defs =
-    Map.unions
-        [ Map.singleton (map toLower (vdName def)) (vdName def)
-          `Map.union` Map.fromList [ (map toLower a, vdName def) | a <- vdAliases def ]
-        | def <- Map.elems defs ]
+parseVerb = resolveVerb Map.empty
 
 -- | Resolve an input verb word against the registry: core verbs first, then
---   adventure-declared custom verbs.
+--   adventure-declared custom verbs.  Delegates to Verbs.resolveVerb.
 parseVerbWith :: Map.Map String VerbDef -> String -> Maybe Verb
-parseVerbWith defs v = case parseVerb v of
-    Just verb -> Just verb
-    Nothing   -> VCustom <$> Map.lookup (map toLower v) (verbAliasMap defs)
+parseVerbWith = resolveVerb
 
 -- | Stop words to strip from target phrases
 stopWords :: [String]

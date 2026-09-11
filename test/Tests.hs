@@ -9,7 +9,8 @@ import qualified Data.Set as Set
 import Data.Maybe (isJust)
 import Game
 import GameLoop (commandCompletion, LoopState (..), initLoopState, applyLoopCommand)
-import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, verbAliasMap)
+import Parser (Command (..), executeCommand, parseCommand, parseCommandWith)
+import Verbs (verbAliasMap)
 import Game (applyOutcome, getVariable, setVariable, evalPredicate)
 import Validate (ValidationError (..), validateWorld)
 import Sample (initSampleGame)

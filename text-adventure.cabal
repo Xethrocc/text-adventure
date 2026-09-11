@@ -13,9 +13,10 @@ category:            Game
 extra-source-files:
     README.md
     CHANGELOG.md
+    docs/adventure-schema.md
 
 library
-  exposed-modules:     Types, Game, GameLoop, Parser, SaveLoad, World, Sample, Validate
+  exposed-modules:     Types, Verbs, Game, GameLoop, Parser, SaveLoad, World, Sample, Validate
   hs-source-dirs:      src
   build-depends:       base >=4.12 && <5,
                        containers >=0.6 && <0.8,

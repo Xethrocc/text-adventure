@@ -16,6 +16,7 @@ import Data.Either (partitionEithers)
 import Text.Read (readMaybe)
 import qualified Data.Aeson as Aeson
 import qualified Data.Text as T
+import qualified Verbs
 
 -- | Result of compilation
 data CompileResult = CompileResult
@@ -564,10 +565,7 @@ compileInteractions (Just ix) = (entityMap, itemMap)
 
 -- | Build alias→canonical lookup table from the verb registry.
 verbAliasLookup :: Map.Map String E.VerbDef -> Map.Map String String
-verbAliasLookup defs = Map.unions
-    [ Map.singleton (map toLower (E.vdName def)) (E.vdName def)
-      `Map.union` Map.fromList [(map toLower a, E.vdName def) | a <- E.vdAliases def]
-    | def <- Map.elems defs ]
+verbAliasLookup = Verbs.verbAliasMap
 
 -- | Compile a verb map with structured diagnostics.  The path prefix points at
 --   the owning field (e.g. "items.crystal.verb_map").  The registry resolves
@@ -598,26 +596,11 @@ compileVerbMapSafe registry pathPrefix vm =
        else Left (verbErrs ++ collErrs)
 
 -- | Parse verb strings: core first, then custom verb registry.
+--   Replaces the previous hardcoded list with Verbs.resolveVerb.
 parseVerbStrict :: Map.Map String E.VerbDef -> String -> Either String E.Verb
-parseVerbStrict registry s = case s of
-    "take"     -> Right E.VTake
-    "drop"     -> Right E.VDrop
-    "look"     -> Right E.VLookAt
-    "examine"  -> Right E.VLookAt
-    "inspect"  -> Right E.VLookAt
-    "read"     -> Right E.VLookAt
-    "use"      -> Right E.VUse
-    "activate" -> Right E.VUse
-    "talk"     -> Right E.VTalk
-    "speak"    -> Right E.VTalk
-    "chat"     -> Right E.VTalk
-    "attack"   -> Right E.VAttack
-    "hit"      -> Right E.VAttack
-    "kill"     -> Right E.VAttack
-    "search"   -> Right E.VSearch
-    _          -> case Map.lookup (map toLower s) (verbAliasLookup registry) of
-        Just canonical -> Right (E.VCustom canonical)
-        Nothing -> Left $ "Unknown verb '" ++ s ++ "' (expected a core verb or a declared adventure verb)"
+parseVerbStrict registry s = case Verbs.resolveVerb registry s of
+    Just verb -> Right verb
+    Nothing -> Left $ "Unknown verb '" ++ s ++ "' (expected a core verb or a declared adventure verb)"
 
 -- ---------------------------------------------------------------------------
 -- Action outcome compilation
