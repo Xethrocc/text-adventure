@@ -11,7 +11,8 @@ import Types as E
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Char (toLower)
-import Data.Maybe (mapMaybe)
+import Data.Maybe (mapMaybe, fromMaybe)
+import Data.Either (partitionEithers)
 import Text.Read (readMaybe)
 import qualified Data.Aeson as Aeson
 import qualified Data.Text as T
@@ -63,8 +64,13 @@ compileAdventure adv =
         
         (varErrs, varDefs, varInitials) = compileVariables (advVariables adv)
         (trigErrs, triggerDefs) = compileTriggers (advTriggers adv)
+        (initVarErrs, initialVars) =
+            compileInitialVariables varDefs varInitials (advInitialVariables adv)
+        (initStateErrs, initialFlags, initialQuests) =
+            compileInitialState (advActiveQuests adv) (advInitialFlags adv) questDefs
 
-        allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs ++ varErrs ++ trigErrs
+        allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
+                    ++ varErrs ++ trigErrs ++ initVarErrs ++ initStateErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -83,26 +89,26 @@ compileAdventure adv =
                         , E.triggerDefs = triggerDefs
                         }
                 startSave = E.SaveState
-                        { E.player = E.Player 100 100 10 5 Map.empty
+                        { E.player = compilePlayer (advPlayer adv)
                         , E.currentRoom = startRoomId
                         , E.inventory = []
                         , E.itemStates = itemStates
                         , E.npcStates = npcStates
                         , E.entityStates = initialEntityStates allRooms
-                        , E.flags = Map.empty
+                        , E.flags = initialFlags
                         , E.turnCount = 0
                         , E.gameOver = False
                         , E.gameOverReason = Nothing
                         , E.visitedRooms = Set.empty
                         , E.equipment = Map.empty
                         , E.conditions = Map.empty
-                        , E.activeQuests = Map.empty
+                        , E.activeQuests = initialQuests
                         , E.completedQuests = Set.empty
                         , E.vehicleStates = vehicleStates
                         , E.currentVehicle = Nothing
                         , E.activeDialogue = Nothing
                         , E.rngState = E.initialRngState
-                        , E.variables = varInitials
+                        , E.variables = initialVars
                         , E.containers = Map.empty
                         , E.triggerStates = Map.empty
                         }
@@ -696,3 +702,60 @@ compileAtOn s =
         ["custom", n]                -> Right (E.OnCustomEvent n)
         ["command", v]               -> Right (E.OnCommand v)
         _                            -> Left ("Unsupported trigger event '" ++ s ++ "'")
+
+-- ---------------------------------------------------------------------------
+-- Player & initial state (Phase 4d)
+-- ---------------------------------------------------------------------------
+
+-- | Compile optional player stats block; defaults 100/100/10/5/no skills.
+compilePlayer :: Maybe AAdventurePlayer -> E.Player
+compilePlayer Nothing = E.Player 100 100 10 5 Map.empty
+compilePlayer (Just ap) = E.Player
+    { E.playerHealth    = fromMaybe 100 (apMaxHealth ap)
+    , E.playerMaxHealth = fromMaybe 100 (apMaxHealth ap)
+    , E.playerAttack    = fromMaybe 10 (apAttack ap)
+    , E.playerDefense   = fromMaybe 5 (apDefense ap)
+    , E.playerSkills    = apSkills ap
+    }
+
+-- | Overlay initial_variables YAML over the declared var initial values.
+--   Validates type consistency against declared varDefs.
+compileInitialVariables :: Map.Map String E.VarDef -> Map.Map String E.VariableValue
+                         -> Map.Map String Aeson.Value
+                         -> ([CompileIssue], Map.Map String E.VariableValue)
+compileInitialVariables varDefs base overrides =
+    let (errs, over) = partitionEithers
+            [ toVar name v | (name, v) <- Map.toList overrides ]
+    in (errs, Map.union (Map.fromList over) base)
+  where
+    toVar name v =
+        let shapeVal = case v of
+                Aeson.Number n -> Right (E.VVInt (truncate n :: Int))
+                Aeson.String s  -> Right (E.VVText (T.unpack s))
+                Aeson.Bool b    -> Right (E.VVBool b)
+                _               -> Left "must be a number, string, or boolean"
+        in case shapeVal of
+            Left err -> Left (ciError ("initial_variables." ++ name) "BadInitialVariable" err)
+            Right val -> case Map.lookup name varDefs of
+                Nothing -> Right (name, val)
+                Just vd -> if compatible (E.vdVarType vd) val
+                           then Right (name, val)
+                           else Left (ciError ("initial_variables." ++ name) "VariableTypeMismatch"
+                                        ("expected " ++ show (E.vdVarType vd)))
+
+    compatible :: E.VariableType -> E.VariableValue -> Bool
+    compatible E.VTBool      E.VVBool{}   = True
+    compatible (E.VTInt _ _) E.VVInt{}    = True
+    compatible E.VTText      E.VVText{}   = True
+    compatible (E.VTEnum xs) (E.VVText s) = s `elem` xs
+    compatible _             _            = False
+
+-- | Compile initial flags and active quests from YAML.
+--   Unknown quest IDs are compile errors.
+compileInitialState :: [String] -> Map.Map String String -> Map.Map String E.Quest
+                    -> ([CompileIssue], Map.Map String String, Map.Map String Int)
+compileInitialState questIds flagMap questDefs =
+    let missing = [ q | q <- questIds, not (Map.member q questDefs) ]
+        errs = [ ciError ("active_quests." ++ q) "UnknownQuest" "active quest is not defined in questDefs"
+               | q <- missing ]
+    in (errs, flagMap, Map.fromList [(q, 0) | q <- questIds, Map.member q questDefs])

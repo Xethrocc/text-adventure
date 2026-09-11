@@ -22,7 +22,7 @@ import Validate (validateWorld, validateGameState, ValidationError (..))
 minWorld :: E.GameWorld
 minWorld = E.GameWorld
     { rooms = Map.fromList
-        [ ("room_0", E.Room "room_0" "Room 0" "test" Map.empty Set.empty Map.empty Nothing Nothing Nothing Nothing Nothing Nothing)
+        [ ("room_0", E.Room "room_0" "Room 0" (E.CondText "test" []) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing Nothing)
         ]
     , itemDefs = Map.empty
     , npcDefs = Map.empty
@@ -134,6 +134,10 @@ minAdventure room = Adventure
     , advVerbs = []
     , advVariables = []
     , advTriggers = []
+    , advPlayer = Nothing
+    , advInitialVariables = Map.empty
+    , advInitialFlags = Map.empty
+    , advActiveQuests = []
     }
 
 -- ---------------------------------------------------------------------------
@@ -202,7 +206,7 @@ minItem :: String -> AItem
 minItem iid = AItem
     { aiId = iid
     , aiName = iid
-    , aiDesc = "test item"
+    , aiTexts = ACondText "test item" []
     , aiKeywords = []
     , aiTags = []
     , aiLocation = "loc_0"
@@ -657,6 +661,36 @@ testTriggerFixtureCompiles = do
                         r4 <- expectEqual (E.OnUse "crystal") (E.trEvent bridge)
                         pure (r1 && r2 && r3 && r4)
 
+-- | Mini-Fixture: player-config with player stats, initial_variables, flags, active_quests (Phase 4d)
+testPlayerConfigFixtureCompiles :: IO Bool
+testPlayerConfigFixtureCompiles = do
+    mbPath <- findExample "player-config.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  player-config.yaml not found"
+            pure False
+        Just path -> do
+            mbAdv <- parseAdventureFile path
+            case mbAdv of
+                Nothing -> do
+                    putStrLn "  failed to parse player-config.yaml"
+                    pure False
+                Just adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  compile errors: " ++ show errs
+                        pure False
+                    Right cr -> do
+                        let save = crSave cr
+                            p = E.player save
+                        r1 <- expectEqual 50 (E.playerMaxHealth p)
+                        r2 <- expectEqual 8 (E.playerAttack p)
+                        r3 <- expectEqual 3 (E.playerDefense p)
+                        r4 <- expectEqual (Just 5) (Map.lookup "lockpick" (E.playerSkills p))
+                        r5 <- expectEqual (Just (E.VVInt 30)) (Map.lookup "mana" (E.variables save))
+                        r6 <- expectEqual (Just "true") (Map.lookup "started" (E.flags save))
+                        r7 <- expectEqual (Just 0) (Map.lookup "find_treasure" (E.activeQuests save))
+                        pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
 -- ---------------------------------------------------------------------------
 -- Main
 -- ---------------------------------------------------------------------------
@@ -696,6 +730,8 @@ tests =
     , ("space-oxygen fixture compiles with variables", testSpaceOxygenFixtureCompiles)
     -- Phase 3f: trigger fixture
     , ("trigger-test fixture compiles with rules", testTriggerFixtureCompiles)
+    -- Phase 4d: player config fixture
+    , ("player-config fixture compiles with stats/flags/quests", testPlayerConfigFixtureCompiles)
     ]
 
 main :: IO ()

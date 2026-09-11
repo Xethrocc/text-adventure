@@ -1,0 +1,40 @@
+name: Player Config Test
+start_room: start
+
+player:
+  max_hp: 50
+  attack: 8
+  defense: 3
+  skills:
+    lockpick: 5
+
+variables:
+  - name: mana
+    type: int
+    initial: 10
+    min: 0
+    max: 100
+
+initial_variables:
+  mana: 30
+  custom_undeclared: hello
+
+initial_flags:
+  started: "true"
+  torch_lit: "false"
+
+rooms:
+  - id: start
+    name: Start
+    description: A test room.
+
+quests:
+  - id: find_treasure
+    name: Find the Treasure
+    description: A quest.
+    stages:
+      - id: s1
+        text: Stage one
+
+active_quests:
+  - find_treasure

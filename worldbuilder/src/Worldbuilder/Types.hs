@@ -29,6 +29,10 @@ data Adventure = Adventure
     , advVerbs       :: [AVerb]
     , advVariables   :: [AVariable]
     , advTriggers    :: [ATrigger]
+    , advPlayer      :: Maybe AAdventurePlayer   -- ^ Player stats override (Phase 4d)
+    , advInitialVariables :: Map.Map String Value -- ^ initial_variables overrides (Phase 4d)
+    , advInitialFlags     :: Map.Map String String       -- ^ initial_flags (Phase 4d)
+    , advActiveQuests     :: [String]                    -- ^ active_quests (Phase 4d)
     } deriving (Show, Eq, Generic)
 
 instance FromJSON Adventure where
@@ -44,6 +48,26 @@ instance FromJSON Adventure where
         <*> o .:? "verbs"           .!= []
         <*> o .:? "variables"       .!= []
         <*> o .:? "rules"           .!= []
+        <*> o .:? "player"
+        <*> o .:? "initial_variables" .!= Map.empty
+        <*> o .:? "initial_flags"     .!= Map.empty
+        <*> o .:? "active_quests"     .!= []
+
+-- | Optional player stats block in YAML (Phase 4d).
+--   `player: { max_hp: 50, attack: 8, defense: 3, skills: { lockpick: 5 } }`
+data AAdventurePlayer = AAdventurePlayer
+    { apMaxHealth :: Maybe Int
+    , apAttack    :: Maybe Int
+    , apDefense   :: Maybe Int
+    , apSkills    :: Map.Map String Int
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AAdventurePlayer where
+    parseJSON = withObject "AAdventurePlayer" $ \o -> AAdventurePlayer
+        <$> o .:? "max_hp"
+        <*> o .:? "attack"
+        <*> o .:? "defense"
+        <*> o .:? "skills" .!= Map.empty
 
 -- | A declared adventure verb: canonical name + input aliases (Phase 3a).
 data AVerb = AVerb
