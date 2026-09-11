@@ -378,7 +378,9 @@ compileItemStates items =
 
 compileItemStateSafe :: AItem -> Either [CompileIssue] (String, E.ItemState)
 compileItemStateSafe i = Right (aiId i, E.ItemState
-    { E.itemLocation = E.InRoom (aiLocation i)
+    { E.itemLocation = case aiInContainer i of
+        Just cid -> E.InContainer cid
+        Nothing  -> E.InRoom (aiLocation i)
     , E.itemStatus = aiState i
     , E.itemProps = aiProps i
     , E.itemDiscovered = not (aiHidden i)
@@ -632,6 +634,8 @@ compileAActionOutcome ao = case ao of
     AORoomTransition r -> E.SetValue (E.VRProperty "player" "room") (E.EVString r)
     AOMoveNPC n r -> E.MoveEntity n (E.InRoom r)
     AOGameEnd r m -> E.GameEnd (parseGameOverReason r) (fromMaybe "" m)
+    AOConditional p ts es ->
+        E.Conditional p (compileOutcomes ts) (compileOutcomes es)
     AONarrative ls -> E.Sequence (map E.SendMessage ls ++ [E.Noop])
 
 -- | Parse a game-end reason string ("victory", "death", or a custom label).

@@ -756,11 +756,28 @@
     {
       "id": "crystal",
       "name": "crystal",
-      "desc": "It's a slightly glowing Crystal.",
+      "desc": "It's a slightly glowing Crystal, warm to the touch.",
       "keys": [
         "crystal"
       ],
-      "location": "loc_4"
+      "location": "loc_4",
+      "in_container": "chest"
+    },
+    {
+      "id": "chest",
+      "name": "chest",
+      "desc": "An old wooden chest with a rusty clasp. It looks like it holds something.",
+      "keys": [
+        "chest"
+      ],
+      "location": "loc_4",
+      "portable": false,
+      "verb_map": {
+        "search,intact": [
+          { "give": "crystal" },
+          { "msg": "You pry open the chest and find a glowing crystal inside!" }
+        ]
+      }
     },
     {
       "id": "sword",
@@ -789,14 +806,15 @@
       "verb_map": {
         "activate,alive": [
           {
-            "set_flag": "water_shrine_active",
-            "val": "true"
-          },
-          {
-            "msg": "The water shrine glows with power!"
-          },
-          {
-            "advance_quest": "activate_water"
+            "if": { "has_item": "crystal" },
+            "then": [
+              { "set_flag": "water_shrine_active", "val": "true" },
+              { "msg": "The crystal resonates! The water shrine glows with power!" },
+              { "advance_quest": "activate_water" }
+            ],
+            "else": [
+              { "msg": "The water shrine is dormant. You need the crystal to awaken it." }
+            ]
           }
         ]
       }
@@ -815,14 +833,15 @@
       "verb_map": {
         "activate,alive": [
           {
-            "set_flag": "fire_shrine_active",
-            "val": "true"
-          },
-          {
-            "msg": "The fire shrine glows with power!"
-          },
-          {
-            "advance_quest": "activate_fire"
+            "if": { "has_item": "crystal" },
+            "then": [
+              { "set_flag": "fire_shrine_active", "val": "true" },
+              { "msg": "The crystal resonates! The fire shrine glows with power!" },
+              { "advance_quest": "activate_fire" }
+            ],
+            "else": [
+              { "msg": "The fire shrine is dormant. You need the crystal to awaken it." }
+            ]
           }
         ]
       }
@@ -841,14 +860,15 @@
       "verb_map": {
         "activate,alive": [
           {
-            "set_flag": "air_shrine_active",
-            "val": "true"
-          },
-          {
-            "msg": "The air shrine glows with power!"
-          },
-          {
-            "advance_quest": "activate_air"
+            "if": { "has_item": "crystal" },
+            "then": [
+              { "set_flag": "air_shrine_active", "val": "true" },
+              { "msg": "The crystal resonates! The air shrine glows with power!" },
+              { "advance_quest": "activate_air" }
+            ],
+            "else": [
+              { "msg": "The air shrine is dormant. You need the crystal to awaken it." }
+            ]
           }
         ]
       }
@@ -867,14 +887,15 @@
       "verb_map": {
         "activate,alive": [
           {
-            "set_flag": "earth_shrine_active",
-            "val": "true"
-          },
-          {
-            "msg": "The earth shrine glows with power!"
-          },
-          {
-            "advance_quest": "activate_earth"
+            "if": { "has_item": "crystal" },
+            "then": [
+              { "set_flag": "earth_shrine_active", "val": "true" },
+              { "msg": "The crystal resonates! The earth shrine glows with power!" },
+              { "advance_quest": "activate_earth" }
+            ],
+            "else": [
+              { "msg": "The earth shrine is dormant. You need the crystal to awaken it." }
+            ]
           }
         ]
       }

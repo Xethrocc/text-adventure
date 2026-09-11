@@ -220,6 +220,7 @@ minItem iid = AItem
     , aiVerbMap = Map.empty
     , aiPortable = Nothing
     , aiTakeFailure = Nothing
+    , aiInContainer = Nothing
     }
 
 advWithItem :: AItem -> Adventure
@@ -693,10 +694,51 @@ testPlayerConfigFixtureCompiles = do
                         r7 <- expectEqual (Just 0) (Map.lookup "find_treasure" (E.activeQuests save))
                         pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
 
+-- | Phase 5h: item with in_container starts inside that container.
+testInContainerCompiles :: IO Bool
+testInContainerCompiles = do
+    let chest = minItem "chest"
+        crystal = (minItem "crystal") { aiInContainer = Just "chest" }
+        adv = (minAdventure (minRoom "loc_0")) { advItems = [chest, crystal] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let st = E.itemStates (crSave cr)
+            expectEqual (Just (E.InContainer "chest"))
+                        (E.itemLocation <$> Map.lookup "crystal" st)
+
+-- | Phase 5h: if/then/else outcome compiles to a Conditional effect.
+testConditionalOutcomeCompiles :: IO Bool
+testConditionalOutcomeCompiles = do
+    let cond = AOConditional (E.PlayerHas "crystal") [AOMessage "yes"] [AOMessage "no"]
+        vm = Map.fromList [("activate,intact", [cond])]
+        item = (minItem "shrine") { aiVerbMap = vm }
+    case compileAdventure (advWithItem item) of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let def = Map.findWithDefault (error "missing") "shrine" (E.itemDefs (crWorld cr))
+            case Map.lookup (E.VUse, "intact") (E.itemVerbMap def) of
+                Just (E.Conditional (E.PlayerHas "crystal") _ _) -> pure True
+                other -> do
+                    putStrLn $ "  unexpected effect: " ++ show other
+                    pure False
+
+-- | Phase 5h: in_container pointing at a missing item is detected.
+testInvalidContainerDetected :: IO Bool
+testInvalidContainerDetected = do
+    let badSave = minSave
+            { itemStates = Map.singleton "crystal"
+                (E.ItemState (E.InContainer "missing_chest") "intact" Map.empty False) }
+    expectTrue "InvalidContainer detected"
+        (InvalidContainer "crystal" "missing_chest" `elem` validateGameState minWorld badSave)
+
 -- ---------------------------------------------------------------------------
 -- Main
 -- ---------------------------------------------------------------------------
-
 tests :: [(String, IO Bool)]
 tests =
     [ ("all 10 directions compile to engine Direction", testAllDirectionsCompile)
@@ -734,6 +776,10 @@ tests =
     , ("trigger-test fixture compiles with rules", testTriggerFixtureCompiles)
     -- Phase 4d: player config fixture
     , ("player-config fixture compiles with stats/flags/quests", testPlayerConfigFixtureCompiles)
+    -- Phase 5h: containers + conditional outcomes
+    , ("in_container places item inside container", testInContainerCompiles)
+    , ("if/then/else outcome compiles to Conditional", testConditionalOutcomeCompiles)
+    , ("in_container at missing item is detected", testInvalidContainerDetected)
     ]
 
 main :: IO ()

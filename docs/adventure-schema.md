@@ -86,8 +86,17 @@ description:
 | `{ advance_quest: id }` | QuestOp AdvanceQuest |
 | `{ complete_quest: id }` | QuestOp CompleteQuest |
 | `{ equip: item_id }` | MoveEntity to EquippedBy "player" "weapon" |
-| `{ move: room_id }` | SetValue (VRProperty "player" "room") |
+| `{ move: room_id }` | SetValue (VRProperty "player" "room") — bewegt den Spieler |
+| `{ move_npc: npc_id, to: room_id }` | MoveEntity — bewegt einen NPC |
+| `{ game_end: victory }` / `{ game_end: death, msg: "…" }` | GameEnd |
+| `{ if: <predicate>, then: […], else: […] }` | Conditional — Prädikat-gesteuerter Zweig |
 | `{ msg: "Text", then: [...], else: [...] }` | Sequence [SendMessage, Conditional...] |
+
+Item-Felder für Container:
+
+| Feld | Typ | Beschreibung |
+|---|---|---|
+| `in_container` | String | ID des Container-Items; das Item startet darin (`InContainer`). Mit `search <container>` herausnehmbar. |
 
 ---
 

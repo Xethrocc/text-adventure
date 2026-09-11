@@ -31,6 +31,7 @@ data ValidationError
     | EmptyQuestStages    QuestID                   -- ^ Quest has zero stages
     | UnknownQuestPrereq  QuestID FlagID            -- ^ Quest prereq flag is never set anywhere
     | MissingEntity      String String              -- ^ (entityId, typeContext) VRProperty ref not in itemDefs or npcDefs
+    | InvalidContainer   ItemID ItemID             -- ^ (itemId, missing container item id)
     deriving (Show, Eq)
 
 -- ---------------------------------------------------------------------------
@@ -304,6 +305,7 @@ validateGameState :: GameWorld -> SaveState -> [ValidationError]
 validateGameState gw st = concat
     [ checkStartRoom
     , checkItemLocs
+    , checkContainerRefs
     , checkNPCLocs
     , checkVehicleRefs
     , checkQuestStageCounts
@@ -311,6 +313,7 @@ validateGameState gw st = concat
     ]
   where
     roomKeys = Map.keys (rooms gw)
+    itemKeys = Map.keys (itemDefs gw)
 
     checkStartRoom =
         [ InvalidStartRoom (currentRoom st)
@@ -322,6 +325,13 @@ validateGameState gw st = concat
         , let loc = itemLocation is
         , (roomId) <- case loc of { InRoom r -> [r]; _ -> [] }
         , roomId `notElem` roomKeys ]
+
+    -- Items that start inside a container must reference an existing item id.
+    checkContainerRefs =
+        [ InvalidContainer iId cid
+        | (iId, is) <- Map.toList (itemStates st)
+        , cid <- case itemLocation is of { InContainer c -> [c]; _ -> [] }
+        , cid `notElem` itemKeys ]
 
     checkNPCLocs =
         [ InvalidNPCLocation nId roomId

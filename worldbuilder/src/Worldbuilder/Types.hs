@@ -200,6 +200,7 @@ data AItem = AItem
     , aiVerbMap    :: Map.Map String [AActionOutcome]  -- "verb,state" -> outcomes
     , aiPortable   :: Maybe Bool       -- default Nothing → True (backwards compat)
     , aiTakeFailure :: Maybe String
+    , aiInContainer :: Maybe String    -- ^ container item id; when set, item starts inside it
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AItem where
@@ -220,6 +221,7 @@ instance FromJSON AItem where
         <*> o .:? "verb_map"  .!= Map.empty
         <*> o .:? "portable"
         <*> o .:? "take_failure"
+        <*> o .:? "in_container"
 
 -- ---------------------------------------------------------------------------
 -- NPCs
@@ -408,6 +410,7 @@ data AActionOutcome
     | AORoomTransition String
     | AOMoveNPC String String          -- ^ npc id, target room (move_npc + to)
     | AOGameEnd String (Maybe String)  -- ^ reason (victory/death/custom), optional msg
+    | AOConditional E.Predicate [AActionOutcome] [AActionOutcome]  -- ^ if/then/else
     | AONarrative [String]
     deriving (Show, Eq, Generic)
 
@@ -418,6 +421,7 @@ instance FromJSON AActionOutcome where
             -- NOTE: game_end must be tried before msg: an object may carry both
             -- "game_end" and a "msg" for the end screen.
             (AOGameEnd <$> o .: "game_end" <*> o .:? "msg")
+        <|> (AOConditional <$> o .: "if" <*> o .:? "then" .!= [] <*> o .:? "else" .!= [])
         <|> (AOMessage <$> o .: "msg")
         <|> (AOHealPlayer <$> o .: "heal")
         <|> (AODamagePlayer <$> o .: "damage")
