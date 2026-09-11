@@ -631,7 +631,15 @@ compileAActionOutcome ao = case ao of
     AOEquipItem i -> E.MoveEntity i (E.EquippedBy "player" "weapon")
     AORoomTransition r -> E.SetValue (E.VRProperty "player" "room") (E.EVString r)
     AOMoveNPC n r -> E.MoveEntity n (E.InRoom r)
+    AOGameEnd r m -> E.GameEnd (parseGameOverReason r) (fromMaybe "" m)
     AONarrative ls -> E.Sequence (map E.SendMessage ls ++ [E.Noop])
+
+-- | Parse a game-end reason string ("victory", "death", or a custom label).
+parseGameOverReason :: String -> E.GameOverReason
+parseGameOverReason r = case map toLower r of
+    "victory" -> E.Victory
+    "death"   -> E.Death
+    other     -> E.Custom other
 
 -- ---------------------------------------------------------------------------
 -- Conditional text (Phase 3g)

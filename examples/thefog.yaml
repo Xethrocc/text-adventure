@@ -1034,26 +1034,31 @@
     {
       "id": "start_activate_water",
       "on": "enter loc_38",
+      "once": true,
       "effects": [{ "start_quest": "activate_water" }]
     },
     {
       "id": "start_activate_fire",
       "on": "enter loc_45",
+      "once": true,
       "effects": [{ "start_quest": "activate_fire" }]
     },
     {
       "id": "start_activate_air",
       "on": "enter loc_52",
+      "once": true,
       "effects": [{ "start_quest": "activate_air" }]
     },
     {
       "id": "start_activate_earth",
       "on": "enter loc_28",
+      "once": true,
       "effects": [{ "start_quest": "activate_earth" }]
     },
     {
       "id": "start_defeat_wolf",
       "on": "enter loc_3",
+      "once": true,
       "effects": [{ "start_quest": "defeat_wolf" }]
     },
     {
@@ -1067,6 +1072,7 @@
     {
       "id": "start_rescue_princess",
       "on": "enter loc_33",
+      "once": true,
       "effects": [{ "start_quest": "rescue_princess" }]
     },
     {
@@ -1078,7 +1084,10 @@
         { "has_flag": "air_shrine_active" },
         { "has_flag": "earth_shrine_active" }
       ]},
-      "effects": [{ "msg": "You have proven your worth. The throne is yours!" }]
+      "effects": [
+        { "msg": "You have proven your worth. The throne is yours!" },
+        { "game_end": "victory", "msg": "VICTORY — The Fog lifts, and you are crowned ruler of the land." }
+      ]
     }
   ],
   "interactions": {

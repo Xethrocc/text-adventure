@@ -407,6 +407,7 @@ data AActionOutcome
     | AOEquipItem String
     | AORoomTransition String
     | AOMoveNPC String String          -- ^ npc id, target room (move_npc + to)
+    | AOGameEnd String (Maybe String)  -- ^ reason (victory/death/custom), optional msg
     | AONarrative [String]
     deriving (Show, Eq, Generic)
 
@@ -414,7 +415,10 @@ data AActionOutcome
 instance FromJSON AActionOutcome where
     parseJSON (String s) = pure (AOMessage (T.unpack s))
     parseJSON v = withObject "AActionOutcome" (\o ->
-            (AOMessage <$> o .: "msg")
+            -- NOTE: game_end must be tried before msg: an object may carry both
+            -- "game_end" and a "msg" for the end screen.
+            (AOGameEnd <$> o .: "game_end" <*> o .:? "msg")
+        <|> (AOMessage <$> o .: "msg")
         <|> (AOHealPlayer <$> o .: "heal")
         <|> (AODamagePlayer <$> o .: "damage")
         <|> (AOGiveItem <$> o .: "give")
