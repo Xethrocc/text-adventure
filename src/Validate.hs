@@ -1,6 +1,6 @@
 -- | World validation before starting the game.
 --   Checks consistency of IDs, exits, references and reachability.
-module Validate (ValidationError(..), validateWorld) where
+module Validate (ValidationError(..), validateWorld, validateGameState, setFlagsInWorld) where
 
 import Types
 import Data.List (nub)
@@ -23,6 +23,14 @@ data ValidationError
     | MissingSetFlag   FlagID String                -- ^ Flag referenced in CheckFlag but never set
     | MissingDialogueNode NPCID String String      -- ^ (npc, status, entryNode) entry node missing
     | DanglingDialogueChoice NPCID String String String -- ^ (npc, status, sourceNode, targetNode)
+    -- Phase 2a: SaveState / reference validation
+    | InvalidStartRoom    RoomID                    -- ^ start_room / currentRoom does not exist
+    | InvalidItemLocation ItemID String             -- ^ (itemId, roomId or sentinel) room missing
+    | InvalidNPCLocation  NPCID String              -- ^ (npcId, roomId) room missing
+    | InvalidVehicleRoom  VehicleID String RoomID   -- ^ (vId, "entry"/"cockpit"/"stop:<label>", missingRoom)
+    | EmptyQuestStages    QuestID                   -- ^ Quest has zero stages
+    | UnknownQuestPrereq  QuestID FlagID            -- ^ Quest prereq flag is never set anywhere
+    | MissingEntity      String String              -- ^ (entityId, typeContext) VRProperty ref not in itemDefs or npcDefs
     deriving (Show, Eq)
 
 -- ---------------------------------------------------------------------------
@@ -39,6 +47,7 @@ validateWorld gw =
         , checkDialogueTrees gw
         , checkMissingItemsInDefs gw
         , checkMissingNPCsInDefs gw
+        , checkMissingEntitiesInDefs gw
         , checkMissingQuestsInDefs gw
         , checkMissingVehiclesInDefs gw
         , checkFlags gw
@@ -163,8 +172,19 @@ checkMissingItemsInDefs gw =
 checkMissingNPCsInDefs :: GameWorld -> [ValidationError]
 checkMissingNPCsInDefs gw =
     let npcRefs = Set.fromList (Map.keys (npcDefs gw))
+        itemRefs = Set.fromList (Map.keys (itemDefs gw))
+        -- MoveEntity is ambiguous (items AND NPCs); VRProperty is ambiguous
+        -- (item states vs. NPC states). Only flag refs that are clearly NPC
+        -- references: those already known to be NPCs are checked elsewhere;
+        -- anything else is treated as an entity check (see checkMissingEntities).
         allRefs = concatMap idsFromOutcomeNPC (allOutcomes gw)
-    in [MissingNPC nId | nId <- nub allRefs, not (Set.member nId npcRefs)]
+    in [MissingNPC nId | nId <- nub allRefs, not (Set.member nId npcRefs), not (Set.member nId itemRefs)]
+
+checkMissingEntitiesInDefs :: GameWorld -> [ValidationError]
+checkMissingEntitiesInDefs gw =
+    let entityRefs = Set.fromList (Map.keys (itemDefs gw) ++ Map.keys (npcDefs gw))
+        allRefs = concatMap idsFromOutcomeEntity (allOutcomes gw)
+    in [MissingEntity eId "property" | eId <- nub allRefs, not (Set.member eId entityRefs)]
 
 checkMissingQuestsInDefs :: GameWorld -> [ValidationError]
 checkMissingQuestsInDefs gw =
@@ -191,28 +211,20 @@ checkFlags gw =
         missing = Set.toList (Set.difference checkFlags setFlags)
     in [MissingSetFlag flg "checked but never set in any outcome" | flg <- missing]
 
-scanFlags :: (Set.Set FlagID, Set.Set FlagID) -> ActionOutcome
+scanFlags :: (Set.Set FlagID, Set.Set FlagID) -> Effect
           -> (Set.Set FlagID, Set.Set FlagID)
 scanFlags (setAcc, checkAcc) outcome = case outcome of
-    SetFlag n _ _                 -> (Set.insert n setAcc, checkAcc)
-    CheckFlag n _ thenB elseB     ->
-        let (s1, c1) = scanFlags (setAcc, Set.insert n checkAcc) thenB
-        in scanFlags (s1, c1) elseB
-    MultipleOutcomes os           -> foldl scanFlags (setAcc, checkAcc) os
-    Narrative _ followUp          -> scanFlags (setAcc, checkAcc) followUp
-    RandomChoice os               -> foldl scanFlags (setAcc, checkAcc) os
-    CheckSkill _ _ pass fail      -> scanFlags (scanFlags (setAcc, checkAcc) pass) fail
-    HasCondition _ t e            -> scanFlags (scanFlags (setAcc, checkAcc) t) e
-    StartQuest _ _                -> (setAcc, checkAcc)
-    AdvanceQuest _ _              -> (setAcc, checkAcc)
-    CompleteQuest _ _             -> (setAcc, checkAcc)
+    SetValue (VRFlag n) _         -> (Set.insert n setAcc, checkAcc)
+    Sequence os                   -> foldl scanFlags (setAcc, checkAcc) os
+    RandomChoice os               -> foldl scanFlags (setAcc, checkAcc) (map snd os)
+    Conditional _ t e             -> scanFlags (scanFlags (setAcc, checkAcc) t) e
     _                             -> (setAcc, checkAcc)
 
 -- ---------------------------------------------------------------------------
 -- Collect all ActionOutcomes defined in a GameWorld
 -- ---------------------------------------------------------------------------
 
-allOutcomes :: GameWorld -> [ActionOutcome]
+allOutcomes :: GameWorld -> [Effect]
 allOutcomes gw = concat
     [ concatMap (\r -> catMaybes [roomOnEnter r, roomOnLook r, roomOnExit r, roomSearchOutcome r])
         (Map.elems (rooms gw))
@@ -237,45 +249,130 @@ catMaybes xs = [x | Just x <- xs]
 -- Type-specific ID collectors from Outcome trees
 -- ---------------------------------------------------------------------------
 
-idsFromOutcomeItem :: ActionOutcome -> [String]
+idsFromOutcomeItem :: Effect -> [String]
 idsFromOutcomeItem outcome = case outcome of
-    GiveItem iId _               -> [iId]
-    ConsumeItem iId _            -> [iId]
-    MoveItem iId _ _             -> [iId]
-    EquipItem iId _              -> [iId]
-    UnequipItem iId _            -> [iId]
-    ModifyItemProp iId _ _ _     -> [iId]
-    MultipleOutcomes os          -> concatMap idsFromOutcomeItem os
-    RandomChoice os              -> concatMap idsFromOutcomeItem os
-    CheckFlag _ _ t e            -> idsFromOutcomeItem t ++ idsFromOutcomeItem e
-    CheckSkill _ _ p f           -> idsFromOutcomeItem p ++ idsFromOutcomeItem f
-    HasCondition _ t e           -> idsFromOutcomeItem t ++ idsFromOutcomeItem e
-    Narrative _ followUp         -> idsFromOutcomeItem followUp
+    MoveEntity iId _             -> [iId]
+    SetValue (VRItemProp iId _) _ -> [iId]
+    ModifyValue (VRItemProp iId _) _ -> [iId]
+    Sequence os                  -> concatMap idsFromOutcomeItem os
+    RandomChoice os              -> concatMap (idsFromOutcomeItem . snd) os
+    Conditional _ t e            -> idsFromOutcomeItem t ++ idsFromOutcomeItem e
     _                            -> []
 
-idsFromOutcomeNPC :: ActionOutcome -> [String]
+idsFromOutcomeNPC :: Effect -> [String]
 idsFromOutcomeNPC outcome = case outcome of
-    MoveNPC nId _ _              -> [nId]
-    ChangeNPCState nId _         -> [nId]
-    UpdateNPCHealth nId _ _      -> [nId]
-    ModifyNPCProp nId _ _ _      -> [nId]
-    MultipleOutcomes os          -> concatMap idsFromOutcomeNPC os
-    RandomChoice os              -> concatMap idsFromOutcomeNPC os
-    CheckFlag _ _ t e            -> idsFromOutcomeNPC t ++ idsFromOutcomeNPC e
-    CheckSkill _ _ p f           -> idsFromOutcomeNPC p ++ idsFromOutcomeNPC f
-    HasCondition _ t e           -> idsFromOutcomeNPC t ++ idsFromOutcomeNPC e
-    Narrative _ followUp         -> idsFromOutcomeNPC followUp
+    MoveEntity nId _             -> [nId]
+    Sequence os                  -> concatMap idsFromOutcomeNPC os
+    RandomChoice os              -> concatMap (idsFromOutcomeNPC . snd) os
+    Conditional _ t e            -> idsFromOutcomeNPC t ++ idsFromOutcomeNPC e
     _                            -> []
 
-idsFromOutcomeQuest :: ActionOutcome -> [String]
+-- | Collect entity IDs referenced via VRProperty (item state / NPC state /
+--   generic property writes). These are checked against itemDefs ∪ npcDefs.
+idsFromOutcomeEntity :: Effect -> [String]
+idsFromOutcomeEntity outcome = case outcome of
+    SetValue (VRProperty eId _) _   -> [eId]
+    ModifyValue (VRProperty eId _) _ -> [eId]
+    Sequence os                     -> concatMap idsFromOutcomeEntity os
+    RandomChoice os                 -> concatMap (idsFromOutcomeEntity . snd) os
+    Conditional _ t e               -> idsFromOutcomeEntity t ++ idsFromOutcomeEntity e
+    Narrative _ followUp            -> idsFromOutcomeEntity followUp
+    _                               -> []
+
+idsFromOutcomeQuest :: Effect -> [String]
 idsFromOutcomeQuest outcome = case outcome of
-    StartQuest qId _             -> [qId]
-    AdvanceQuest qId _           -> [qId]
-    CompleteQuest qId _          -> [qId]
-    MultipleOutcomes os          -> concatMap idsFromOutcomeQuest os
-    RandomChoice os              -> concatMap idsFromOutcomeQuest os
-    CheckFlag _ _ t e            -> idsFromOutcomeQuest t ++ idsFromOutcomeQuest e
-    CheckSkill _ _ p f           -> idsFromOutcomeQuest p ++ idsFromOutcomeQuest f
-    HasCondition _ t e           -> idsFromOutcomeQuest t ++ idsFromOutcomeQuest e
-    Narrative _ followUp         -> idsFromOutcomeQuest followUp
+    QuestOp StartQuest qId       -> [qId]
+    QuestOp AdvanceQuest qId     -> [qId]
+    QuestOp CompleteQuest qId    -> [qId]
+    Sequence os                  -> concatMap idsFromOutcomeQuest os
+    RandomChoice os              -> concatMap (idsFromOutcomeQuest . snd) os
+    Conditional _ t e            -> idsFromOutcomeQuest t ++ idsFromOutcomeQuest e
     _                            -> []
+
+-- ---------------------------------------------------------------------------
+-- Phase 2a: SaveState / reference validation
+-- ---------------------------------------------------------------------------
+
+-- | Validate a GameWorld + SaveState pair: all room/id references must exist.
+validateGameState :: GameWorld -> SaveState -> [ValidationError]
+validateGameState gw st = concat
+    [ checkStartRoom
+    , checkItemLocs
+    , checkNPCLocs
+    , checkVehicleRefs
+    , checkQuestStageCounts
+    , checkQuestPrereqFlags
+    ]
+  where
+    roomKeys = Map.keys (rooms gw)
+
+    checkStartRoom =
+        [ InvalidStartRoom (currentRoom st)
+        | currentRoom st `notElem` roomKeys ]
+
+    checkItemLocs =
+        [ InvalidItemLocation iId roomId
+        | (iId, is) <- Map.toList (itemStates st)
+        , let loc = itemLocation is
+        , (roomId) <- case loc of { InRoom r -> [r]; _ -> [] }
+        , roomId `notElem` roomKeys ]
+
+    checkNPCLocs =
+        [ InvalidNPCLocation nId roomId
+        | (nId, ns) <- Map.toList (npcStates st)
+        , let loc = npcLocation ns
+        , (roomId) <- case loc of { InRoom r -> [r]; _ -> [] }
+        , roomId `notElem` roomKeys ]
+
+    checkVehicleRefs =
+        concat [ checkVehicle vId (vehicleDefs gw Map.! vId)
+               | vId <- Map.keys (vehicleDefs gw) ]
+      where
+        checkVehicle vId v =
+            let entryBad = vehicleEntryRoom v `notElem` roomKeys
+                badStops = [ (label, stopExternalRoom stop)
+                           | (label, stop) <- Map.toList (vehicleStops v)
+                           , stopExternalRoom stop `notElem` roomKeys ]
+                cockpitErrs = case vehicleCockpitRoom v of
+                    Just r | r `notElem` roomKeys -> [InvalidVehicleRoom vId "cockpit" r]
+                    _ -> []
+            in concat
+                [ [InvalidVehicleRoom vId "entry" (vehicleEntryRoom v) | entryBad]
+                , cockpitErrs
+                , [InvalidVehicleRoom vId ("stop:" ++ label) rId | (label, rId) <- badStops]
+                ]
+
+    checkQuestStageCounts =
+        [ EmptyQuestStages qId
+        | (qId, q) <- Map.toList (questDefs gw)
+        , null (questStages q) ]
+
+    checkQuestPrereqFlags =
+        let knownSetFlags = setFlagsInWorld gw
+        in [ UnknownQuestPrereq qId flag
+           | (qId, q) <- Map.toList (questDefs gw)
+           , (flag, _) <- Map.toList (questPrereqs q)
+           , flag `Set.notMember` knownSetFlags ]
+
+-- | Collect all flag IDs that are ever set in the world (SetFlag outcomes,
+--   room alt-description keys, light-flag references).
+setFlagsInWorld :: GameWorld -> Set.Set FlagID
+setFlagsInWorld gw =
+    let setFromOutcomes = foldl scanSetFlags Set.empty (allOutcomes gw)
+        setFromAltDesc  = Set.fromList
+            [ f | r <- Map.elems (rooms gw)
+                , f <- Map.keys (roomAltDescriptions r)
+                , not (null f) ]
+        setFromLight    = Set.fromList
+            [ f | r <- Map.elems (rooms gw)
+                , Just f <- [roomLightFlag r]
+                , not (null f) ]
+    in setFromOutcomes `Set.union` setFromAltDesc `Set.union` setFromLight
+
+scanSetFlags :: Set.Set FlagID -> Effect -> Set.Set FlagID
+scanSetFlags acc outcome = case outcome of
+    SetValue (VRFlag n) _         -> Set.insert n acc
+    Sequence os                   -> foldl scanSetFlags acc os
+    RandomChoice os               -> foldl scanSetFlags acc (map snd os)
+    Conditional _ t e             -> scanSetFlags (scanSetFlags acc t) e
+    _                             -> acc

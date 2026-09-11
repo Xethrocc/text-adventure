@@ -17,8 +17,8 @@ import Sample (initSampleGame)
 import Data.Char (toLower)
 import Data.List (isPrefixOf, nub)
 import Data.Maybe (fromMaybe)
+import qualified Data.Map.Strict as Map
 
-import qualified Data.Map as Map
 import System.Console.Haskeline
 
 -- ---------------------------------------------------------------------------
@@ -36,7 +36,9 @@ commandWords =
     ]
 
 directionWords :: [String]
-directionWords = ["north", "south", "east", "west", "up", "down", "southeast", "se"]
+directionWords = ["north", "south", "east", "west", "up", "down"
+    , "northeast", "northwest", "southeast", "southwest"
+    , "ne", "nw", "se", "sw"]
 
 completionItems :: [String] -> String -> [Completion]
 completionItems options prefix =
@@ -52,12 +54,12 @@ npcCompletionTerms npcs = nub (concatMap (\n -> npcName n : npcKeywords n) npcs)
 roomTargets :: GameState -> [String]
 roomTargets state =
     let currentRoomId = currentRoom (save state)
-        roomItems = getItemsInLocation currentRoomId state
+        roomItems = getItemsInLocation (InRoom currentRoomId) state
         roomNpcs = getNPCsInRoom currentRoomId state
     in nub (itemCompletionTerms roomItems ++ npcCompletionTerms roomNpcs)
 
 inventoryTargets :: GameState -> [String]
-inventoryTargets state = itemCompletionTerms (getItemsInLocation "inventory" state)
+inventoryTargets state = itemCompletionTerms (getItemsInLocation (CarriedBy "player") state)
 
 reachableExitEntities :: GameState -> [String]
 reachableExitEntities state = case getCurrentRoom state of
@@ -70,9 +72,15 @@ entityTargets state =
         doorAliases = if null exits then [] else ["door", "locked door"]
     in nub (roomTargets state ++ exits ++ doorAliases)
 
+-- | Words for adventure-declared custom verbs (canonical names + aliases)
+customVerbWords :: GameState -> [String]
+customVerbWords state =
+    concatMap (\def -> vdName def : vdAliases def)
+        (Map.elems (verbDefs (world state)))
+
 contextualSuggestions :: GameState -> [String] -> [String]
 contextualSuggestions state prevWords = case prevWords of
-    [] -> commandWords ++ directionWords
+    [] -> commandWords ++ customVerbWords state ++ directionWords
     ("go" : _) -> directionWords
     ("move" : _) -> directionWords
     ("walk" : _) -> directionWords
@@ -92,7 +100,8 @@ contextualSuggestions state prevWords = case prevWords of
     (verb : _)
         | verb `elem` ["take", "drop", "attack", "hit", "kill", "examine", "inspect", "read"] ->
             roomTargets state ++ inventoryTargets state
-        | otherwise -> commandWords ++ directionWords ++ roomTargets state ++ entityTargets state ++ inventoryTargets state
+        | otherwise -> commandWords ++ customVerbWords state ++ directionWords
+                       ++ roomTargets state ++ entityTargets state ++ inventoryTargets state
 
 -- | ItemDefs currently worn/wielded
 getEquippedItems :: GameState -> [ItemDef]
@@ -128,13 +137,33 @@ haskelineSettings state =
 data LoopState = LoopState
     { lsCurrent :: GameState
     , lsHistory :: [GameState]
+    , lsInitial :: GameState   -- ^ pristine initial state, used by Restart
     } deriving (Show, Eq)
 
 initLoopState :: GameState -> LoopState
-initLoopState state = LoopState state []
+initLoopState state = LoopState state [] state
 
 maxUndoHistory :: Int
 maxUndoHistory = 50
+
+-- | Whether a command advances the game clock.  Pure informational commands
+--   (look, inventory, stats, journal, help, …) and failed/unknown input cost
+--   no turn and therefore do not tick conditions or pollute undo history.
+consumesTurn :: Command -> Bool
+consumesTurn cmd = case cmd of
+    Look           -> False
+    Inventory      -> False
+    StatsCmd       -> False
+    JournalCmd     -> False
+    Help           -> False
+    Quit           -> False
+    Undo           -> False
+    Save _         -> False
+    Load _         -> False
+    ListSaves      -> False
+    Restart        -> False
+    Unknown _      -> False
+    _              -> True
 
 -- | Pure command transition used by both the interactive loop and tests.
 --   Undo itself does not consume a turn. Other commands run the normal turn
@@ -142,25 +171,105 @@ maxUndoHistory = 50
 applyLoopCommand :: Command -> LoopState -> (LoopState, String)
 applyLoopCommand Undo loopState = case lsHistory loopState of
     [] -> (loopState, "Nothing to undo.")
-    previous : rest -> (LoopState previous rest, "Undone.")
+    previous : rest -> (LoopState previous rest (lsInitial loopState), "Undone.")
 applyLoopCommand Quit loopState =
     let (newState, message) = executeCommand Quit (lsCurrent loopState)
     in (loopState { lsCurrent = newState }, message)
+applyLoopCommand Restart loopState =
+    let (newState, message) = executeCommand Look (lsInitial loopState)
+    in (initLoopState newState, message)
 applyLoopCommand Help loopState = (loopState, helpText)
 applyLoopCommand (Save _) loopState = (loopState, "")
 applyLoopCommand (Load _) loopState = (loopState, "")
 applyLoopCommand ListSaves loopState = (loopState, "")
-applyLoopCommand Restart loopState = (loopState, "")
-applyLoopCommand command loopState =
-    let oldState = lsCurrent loopState
-        stateWithTurn = incrementTurnCount oldState
-        (stateAfterTick, tickMsgs) = tickConditions stateWithTurn
-        (stateAfterVehicleTick, vehicleTickMsg) = vehicleConditionTick stateAfterTick
-        (newState, message) = executeCommand command stateAfterVehicleTick
-        allTickMsgs = tickMsgs ++ (if null vehicleTickMsg then [] else [vehicleTickMsg])
-        fullMessage = if null allTickMsgs then message else unlines allTickMsgs ++ message
-        history' = take maxUndoHistory (oldState : lsHistory loopState)
-    in (LoopState newState history', fullMessage)
+applyLoopCommand command loopState
+    | not (consumesTurn command) =
+        let (newState, message) = executeCommand command (lsCurrent loopState)
+            (stateAfterTriggers, triggerMsg) = fireCommandTriggers command (lsCurrent loopState) newState
+            combined = combineMessages message triggerMsg
+        in (loopState { lsCurrent = stateAfterTriggers }, combined)
+    | otherwise =
+        let oldState = lsCurrent loopState
+            stateWithTurn = incrementTurnCount oldState
+            (stateAfterTick, tickMsgs) = tickConditions stateWithTurn
+            (stateAfterVehicleTick, vehicleTickMsg) = vehicleConditionTick stateAfterTick
+            (newState, message) = executeCommand command stateAfterVehicleTick
+            (stateAfterTriggers, triggerMsg) = fireCommandTriggers command stateAfterVehicleTick newState
+            allTickMsgs = tickMsgs ++ (if null vehicleTickMsg then [] else [vehicleTickMsg])
+            fullMessage = if null allTickMsgs then message else unlines allTickMsgs ++ message
+            combined = combineMessages fullMessage triggerMsg
+            history' = take maxUndoHistory (oldState : lsHistory loopState)
+        in (LoopState stateAfterTriggers history' (lsInitial loopState), combined)
+
+-- | Combine two result messages (command result + trigger messages).
+combineMessages :: String -> String -> String
+combineMessages base extra
+    | null extra = base
+    | null base  = extra
+    | otherwise  = base ++ "\n" ++ extra
+
+-- | Determine which trigger events apply to a completed command, using the
+--   state before and after the command to detect room changes.
+fireCommandTriggers :: Command -> GameState -> GameState -> (GameState, String)
+fireCommandTriggers cmd before after =
+    let events = commandEvents cmd before after
+        (st, msgs) = foldl (\(s, acc) ev -> let (s', m) = fireTriggers ev s
+                                            in (s', combineMessages acc m))
+                           (after, "") events
+    in (st, msgs)
+
+-- | Compute the list of events raised by a command.
+commandEvents :: Command -> GameState -> GameState -> [EventType]
+commandEvents cmd before after = concat
+    [ roomEvents
+    , takeDropUseEvents
+    , lookSearchEvents
+    , [OnCommand (commandVerbName cmd)]
+    , [OnTurn | consumesTurn cmd]
+    ]
+  where
+    roomEvents =
+        let oldRoom = currentRoom (save before)
+            newRoom = currentRoom (save after)
+        in if oldRoom /= newRoom
+           then [OnLeave oldRoom, OnEnter newRoom]
+           else []
+    takeDropUseEvents = case cmd of
+        Interact VTake t -> [OnTake t | Just _ <- [findItemIdByAlias t after]]
+        Interact VDrop t -> [OnDrop t | Just _ <- [findItemIdByAlias t after]]
+        Interact VUse t  -> [OnUse t | Just _ <- [findItemIdByAlias t after]]
+        _ -> []
+    lookSearchEvents = case cmd of
+        Look            -> [OnLook (currentRoom (save after)) | currentRoom (save after) `elem` Map.keys (rooms (world after))]
+        SearchCmd _     -> [OnSearch (currentRoom (save after)) | currentRoom (save after) `elem` Map.keys (rooms (world after))]
+        _               -> []
+
+-- | Best-effort lookup of an item ID by alias (returns the alias as fallback, since
+--   triggers are matched by ID; the exact ID lookup makes favorite-item triggers work).
+findItemIdByAlias :: String -> GameState -> Maybe String
+findItemIdByAlias alias state =
+    let allItems = Map.elems (itemDefs (world state))
+    in case [itemId i | i <- allItems, normalizeText alias `elem` itemAliases i] of
+        (iId:_) -> Just iId
+        []      -> Just alias
+
+-- | Extract a canonical verb name for OnCommand triggers.
+commandVerbName :: Command -> String
+commandVerbName cmd = case cmd of
+    Go _          -> "go"
+    Look          -> "look"
+    Inventory     -> "inventory"
+    StatsCmd      -> "stats"
+    JournalCmd    -> "journal"
+    SearchCmd _   -> "search"
+    TakeAll       -> "take"
+    DropAll       -> "drop"
+    EquipCmd _    -> "equip"
+    UnequipCmd _  -> "unequip"
+    UnequipAllCmd -> "unequip"
+    Interact v _  -> map toLower (drop 1 (show v))  -- "VTake" -> "take"
+    InteractWith VUseOn _ _ -> "use"
+    _             -> "unknown"
 
 -- | Main game loop function
 runGame :: GameState -> IO ()
@@ -185,7 +294,7 @@ loopGame loopState
                 putStrLn message
                 loopGame loopState { lsCurrent = newState }
             Just input ->
-                case parseCommand input of
+                case parseCommandWith (verbDefs (world state)) input of
                     Save name -> do
                         saveGame state name
                         loopGame loopState
@@ -202,7 +311,9 @@ loopGame loopState
                         loopGame loopState
                     Restart -> do
                         putStrLn "Starting a new game...\n"
-                        runGame initSampleGame
+                        let (restarted, msg) = applyLoopCommand Restart loopState
+                        putStrLn msg
+                        loopGame restarted
                     Help -> do
                         putStrLn helpText
                         loopGame loopState
@@ -252,13 +363,13 @@ handleGameOver loopState = do
             putStrLn "========================================="
             putStrLn ""
             putStrLn "  [R]estart  |  [Q]uit"
-            victoryLoop
+            victoryLoop loopState
         Just (Custom msg) -> do
             putStrLn ""
             putStrLn $ "Game Over: " ++ msg
             putStrLn ""
             putStrLn "  [R]estart  |  [Q]uit"
-            victoryLoop
+            victoryLoop loopState
         Nothing -> return ()  -- Quit without reason
   where
     state = lsCurrent loopState
@@ -292,7 +403,9 @@ deathLoop loopState = do
                 Nothing -> deathLoop loopState
         Just "r" -> do
             putStrLn "Starting a new game...\n"
-            runGame initSampleGame
+            let (restarted, msg) = applyLoopCommand Restart loopState
+            putStrLn msg
+            loopGame restarted
         Just "q" -> putStrLn "Thanks for playing!"
         _ -> do
             putStrLn "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
@@ -301,14 +414,16 @@ deathLoop loopState = do
     state = lsCurrent loopState
 
 -- | Victory/custom game-over input loop
-victoryLoop :: IO ()
-victoryLoop = do
+victoryLoop :: LoopState -> IO ()
+victoryLoop loopState = do
     inputResult <- runInputT defaultSettings (getInputLine "> ")
     case map toLower . fromMaybe "q" <$> pure inputResult of
         Just "r" -> do
             putStrLn "Starting a new game...\n"
-            runGame initSampleGame
+            let (restarted, msg) = applyLoopCommand Restart loopState
+            putStrLn msg
+            loopGame restarted
         Just "q" -> putStrLn "Thanks for playing!"
         _ -> do
             putStrLn "  [R]estart  |  [Q]uit"
-            victoryLoop
+            victoryLoop loopState

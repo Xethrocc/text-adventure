@@ -30,9 +30,9 @@ initSampleGame = GameState
                 (Map.singleton "torch_lit" "The torches along the wall sputter to life, pushing the darkness back.")
                 (Just "torch_lit")
                 Nothing Nothing Nothing
-                (Just (MultipleOutcomes
-                    [ SetFlag "torch_lit" "true" "You find a wall sconce and light it."
-                    , MessageOnly "Faded runes cover the eastern wall." ]))
+                (Just (Sequence
+                    [ SetValue (VRFlag "torch_lit") (EVString "true")
+                    , SendMessage "Faded runes cover the eastern wall." ]))
                 Nothing)
             , ("treasure", Room
                 "treasure"
@@ -52,11 +52,11 @@ initSampleGame = GameState
                 Set.empty
                 Map.empty
                 Nothing
-                (Just (Narrative
-                    ["A gentle breeze rustles the grass.",
+                (Just (Sequence
+                    (map SendMessage ["A gentle breeze rustles the grass.",
                      "Somewhere in the distance, birds sing.",
                      "The carriage horse stamps its foot impatiently."]
-                    (MessageOnly "You feel at peace here.")))
+                     ++ [SendMessage "You feel at peace here."])))
                 Nothing Nothing Nothing Nothing)
             , ("carriage_cabin", Room
                 "carriage_cabin"
@@ -71,59 +71,59 @@ initSampleGame = GameState
         , itemDefs = Map.fromList
             [ ("torch", ItemDef "torch" "torch" "A burning torch that provides light."
                 ["torch", "burning torch"] (Set.fromList ["lightsource"])
-                Nothing [] False Nothing Map.empty)
+                Nothing [] False Nothing True Nothing Map.empty)
             , ("key", ItemDef "key" "key" "A small brass key."
-                ["key", "brass key"] Set.empty Nothing [] False Nothing
+                ["key", "brass key"] Set.empty Nothing [] False Nothing True Nothing
                 (Map.singleton (VTake, "intact")
-                    (MultipleOutcomes
-                        [ StartQuest "find_treasure" "Journal updated: The Lost Treasure."
-                        , SetFlag "quest_started" "true" "" ])))
+                    (Sequence
+                        [ QuestOp StartQuest "find_treasure"
+                        , SetValue (VRFlag "quest_started") (EVString "true") ])))
             , ("gold", ItemDef "gold" "gold" "A pile of shiny gold coins."
-                ["gold", "coins", "gold coins"] Set.empty Nothing [] False Nothing Map.empty)
+                ["gold", "coins", "gold coins"] Set.empty Nothing [] False Nothing True Nothing Map.empty)
             , ("jewel", ItemDef "jewel" "jewel" "A sparkling ruby that catches the light."
-                ["jewel", "ruby", "sparkling ruby"] Set.empty Nothing [] False Nothing Map.empty)
+                ["jewel", "ruby", "sparkling ruby"] Set.empty Nothing [] False Nothing True Nothing Map.empty)
             , ("potion_healing", ItemDef "potion_healing" "healing potion" "A small vial filled with a bubbling red liquid."
-                ["potion", "red potion", "healing potion"] Set.empty Nothing [] False Nothing
+                ["potion", "red potion", "healing potion"] Set.empty Nothing [] False Nothing True Nothing
                 (Map.singleton (VUse, "intact")
-                    (MultipleOutcomes
-                        [ HealPlayer 50 "You drink the potion and feel your wounds closing!"
-                        , ModifyItemProp "potion_healing" "uses" (-1) "The potion has less liquid now."
-                        , ChangeItemState "empty" "The vial is now empty." ])))
+                    (Sequence
+                        [ ModifyValue VRPlayerHealth 50
+                        , SetValue (VRItemProp "potion_healing" "uses") (EVInt (-1))
+                        , SetValue (VRProperty "potion_healing" "state") (EVString "empty") ])))
             -- Equipment examples
             , ("sword_rusty", ItemDef "sword_rusty" "rusty sword" "A pitted blade, but it will do."
                 ["sword", "rusty sword", "blade"] (Set.fromList ["weapon"])
-                (Just Weapon) [AttackBonus 5] False Nothing Map.empty)
+                (Just Weapon) [AttackBonus 5] False Nothing True Nothing Map.empty)
             , ("leather_armor", ItemDef "leather_armor" "leather armor" "Supple boiled leather, well worn."
                 ["armor", "leather armor"] Set.empty
-                (Just Body) [DefenseBonus 3] False Nothing Map.empty)
+                (Just Body) [DefenseBonus 3] False Nothing True Nothing Map.empty)
             , ("ring_vigor", ItemDef "ring_vigor" "ring of vigor" "A plain bronze band that feels warm."
                 ["ring", "ring of vigor"] Set.empty
-                (Just Accessory) [MaxHealthBonus 20] False Nothing Map.empty)
+                (Just Accessory) [MaxHealthBonus 20] False Nothing True Nothing Map.empty)
             -- Hidden item, found via `search`
             , ("note_old", ItemDef "note_old" "old note" "A folded scrap of parchment, brittle with age."
                 ["note", "old note"] Set.empty Nothing []
-                True (Just "Wedged behind a loose brick you find an old note.") Map.empty)
+                True (Just "Wedged behind a loose brick you find an old note.") True Nothing Map.empty)
             -- Vehicle demo (Phase 3)
             , ("carriage", ItemDef "carriage" "carriage" "A sturdy horse-drawn carriage with polished wood panels."
-                ["carriage", "wagon", "coach"] (Set.fromList ["vehicle"]) Nothing [] False Nothing Map.empty)
+                ["carriage", "wagon", "coach"] (Set.fromList ["vehicle"]) Nothing [] False Nothing True Nothing Map.empty)
             , ("hay", ItemDef "hay" "bale of hay" "A fragrant bale of hay — prime horse fuel."
-                ["hay", "bale", "bale of hay"] Set.empty Nothing [] False Nothing Map.empty)
+                ["hay", "bale", "bale of hay"] Set.empty Nothing [] False Nothing True Nothing Map.empty)
             ]
         , npcDefs = Map.fromList
             [ ("oldman", NPCDef "oldman" "old man" "A withered old man in robes."
                 (Map.singleton "alive" "It's dangerous to go alone! Take... well, I don't have anything actually.")
                 (Map.singleton "alive" (DialogueTree "greeting" (Map.fromList
                     [ ("greeting", DialogueNode "greeting" "Greetings, traveler! What brings you into this dark place?"
-                        [ DialogueChoice "Who are you?" (Just "who") (MessageOnly "")
-                        , DialogueChoice "Tell me about the treasure." (Just "rumor") (MessageOnly "")
-                        , DialogueChoice "Farewell." Nothing (MessageOnly "Stay safe, friend.")
+                        [ DialogueChoice "Who are you?" (Just "who") (Sequence [])
+                        , DialogueChoice "Tell me about the treasure." (Just "rumor") (Sequence [])
+                        , DialogueChoice "Farewell." Nothing (SendMessage "Stay safe, friend.")
                         ])
                     , ("who", DialogueNode "who" "I am just an old hermit who watches over these ruins."
-                        [ DialogueChoice "What do you know about the treasure?" (Just "rumor") (MessageOnly "")
-                        , DialogueChoice "Goodbye." Nothing (MessageOnly "May the light guide your steps.")
+                        [ DialogueChoice "What do you know about the treasure?" (Just "rumor") (Sequence [])
+                        , DialogueChoice "Goodbye." Nothing (SendMessage "May the light guide your steps.")
                         ])
                     , ("rumor", DialogueNode "rumor" "The treasure room lies beyond the eastern door, but it is locked with a brass key lost in the hallway."
-                        [ DialogueChoice "Thank you for the advice!" Nothing (SetFlag "met_oldman" "true" "The old man smiles knowingly.")
+                        [ DialogueChoice "Thank you for the advice!" Nothing (SetValue (VRFlag "met_oldman") (EVString "true"))
                         ])
                     ])))
                 ["man", "old man"] Nothing 0 0 Map.empty)
@@ -147,7 +147,7 @@ initSampleGame = GameState
                 , QuestStage "find_key" "Find the brass key."              Nothing
                 , QuestStage "open_up"  "Unlock the treasure room door."   Nothing
                 ]
-                (Just (MessageOnly "The treasure is yours! Well, what's left of it after the goblin.")))
+                (Just (SendMessage "The treasure is yours! Well, what's left of it after the goblin.")))
             , ("gated_quest", Quest
                 "gated_quest"
                 "A Favor for the Old Man"
@@ -173,27 +173,30 @@ initSampleGame = GameState
                 (Just ("hay", 10))
                 Map.empty)
             ]
+        , verbDefs = Map.empty
+        , varDefs = Map.empty
+        , triggerDefs = []
         }
     , save = SaveState
         { player = Player 100 100 10 5 (Map.singleton "lockpick" 2)
         , currentRoom = "start"
         , inventory = []
         , itemStates = Map.fromList
-            [ ("torch", ItemState "start" "burning" Map.empty False)
-            , ("key", ItemState "hallway" "intact" Map.empty False)
-            , ("gold", ItemState "treasure" "intact" Map.empty False)
-            , ("jewel", ItemState "treasure" "intact" Map.empty False)
-            , ("potion_healing", ItemState "start" "intact" (Map.singleton "uses" 3) False)
-            , ("sword_rusty", ItemState "start" "intact" Map.empty False)
-            , ("leather_armor", ItemState "start" "intact" Map.empty False)
-            , ("ring_vigor", ItemState "start" "intact" Map.empty False)
-            , ("note_old", ItemState "hallway" "intact" Map.empty False)
-            , ("carriage", ItemState "meadow" "intact" Map.empty False)
-            , ("hay", ItemState "meadow" "intact" Map.empty False)
+            [ ("torch", ItemState (InRoom "start") "burning" Map.empty False)
+            , ("key", ItemState (InRoom "hallway") "intact" Map.empty False)
+            , ("gold", ItemState (InRoom "treasure") "intact" Map.empty False)
+            , ("jewel", ItemState (InRoom "treasure") "intact" Map.empty False)
+            , ("potion_healing", ItemState (InRoom "start") "intact" (Map.singleton "uses" 3) False)
+            , ("sword_rusty", ItemState (InRoom "start") "intact" Map.empty False)
+            , ("leather_armor", ItemState (InRoom "start") "intact" Map.empty False)
+            , ("ring_vigor", ItemState (InRoom "start") "intact" Map.empty False)
+            , ("note_old", ItemState (InRoom "hallway") "intact" Map.empty False)
+            , ("carriage", ItemState (InRoom "meadow") "intact" Map.empty False)
+            , ("hay", ItemState (InRoom "meadow") "intact" Map.empty False)
             ]
         , npcStates = Map.fromList
-            [ ("oldman", NPCState "start" "alive" Nothing Map.empty Nothing)
-            , ("goblin", NPCState "hallway" "alive" (Just 30) Map.empty Nothing)
+            [ ("oldman", NPCState (InRoom "start") "alive" Nothing Map.empty Nothing)
+            , ("goblin", NPCState (InRoom "hallway") "alive" (Just 30) Map.empty Nothing)
             ]
         , entityStates = Map.singleton "treasure_door" "locked"
         , flags = Map.empty
@@ -209,6 +212,10 @@ initSampleGame = GameState
             (VehicleState "meadow" (Just 10) Set.empty Map.empty)
         , currentVehicle = Nothing
         , activeDialogue = Nothing
+        , rngState       = initialRngState
+        , variables      = Map.empty
+        , containers     = Map.empty
+        , triggerStates = Map.empty
         }
     , pendingNarrative = Nothing
     }

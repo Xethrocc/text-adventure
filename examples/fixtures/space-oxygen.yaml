@@ -1,0 +1,26 @@
+name: Space Oxygen Test
+start_room: airlock
+variables:
+  - name: oxygen
+    type: int
+    initial: 100
+    min: 0
+    max: 100
+  - name: hull_integrity
+    type: int
+    initial: 100
+    min: 0
+    max: 100
+  - name: gravity_active
+    type: bool
+    initial: true
+  - name: ship_name
+    type: text
+    initial: "ISS Hermes"
+rooms:
+  - id: airlock
+    name: Airlock
+    desc: A small airlock chamber. Through a window you see the stars.
+    exits: {}
+items: []
+npcs: []

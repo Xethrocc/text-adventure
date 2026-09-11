@@ -9,6 +9,8 @@ import Data.Aeson
 import Control.Applicative ((<|>))
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
+import qualified Data.Text as T
+import qualified Types as E
 
 -- ---------------------------------------------------------------------------
 -- Top-level adventure
@@ -23,6 +25,9 @@ data Adventure = Adventure
     , advQuests      :: [AQuest]
     , advVehicles    :: [AVehicle]
     , advInteractions :: Maybe AInteractions
+    , advVerbs       :: [AVerb]
+    , advVariables   :: [AVariable]
+    , advTriggers    :: [ATrigger]
     } deriving (Show, Eq, Generic)
 
 instance FromJSON Adventure where
@@ -35,6 +40,40 @@ instance FromJSON Adventure where
         <*> o .:? "quests"          .!= []
         <*> o .:? "vehicles"        .!= []
         <*> o .:? "interactions"
+        <*> o .:? "verbs"           .!= []
+        <*> o .:? "variables"       .!= []
+        <*> o .:? "rules"           .!= []
+
+-- | A declared adventure verb: canonical name + input aliases (Phase 3a).
+data AVerb = AVerb
+    { avbName    :: String
+    , avbAliases :: [String]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AVerb where
+    parseJSON = withObject "AVerb" $ \o -> AVerb
+        <$> o .:  "name"
+        <*> o .:? "aliases" .!= []
+
+-- | A trigger rule as authored in YAML (Phase 3f).
+--   `on` is a string like "enter loc_3", "take crystal", "turn", "custom foo".
+data ATrigger = ATrigger
+    { atId        :: String
+    , atOn        :: String
+    , atWhen      :: Maybe E.Predicate     -- ^ optional condition (reuses engine predicate parsing)
+    , atEffects   :: [AActionOutcome]
+    , atOnce      :: Bool
+    , atCooldown  :: Int
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ATrigger where
+    parseJSON = withObject "ATrigger" $ \o -> ATrigger
+        <$> o .:  "id"
+        <*> o .:  "on"
+        <*> o .:? "when"
+        <*> o .:? "effects" .!= []
+        <*> o .:? "once"    .!= False
+        <*> o .:? "cooldown" .!= 0
 
 -- ---------------------------------------------------------------------------
 -- Rooms
@@ -78,7 +117,7 @@ data AExitRef = AExitRef
 
 instance FromJSON AExitRef where
     -- Plain string "hallway" -> Open "hallway"
-    parseJSON (String s) = pure (AExitRef (show s) Nothing)
+    parseJSON (String s) = pure (AExitRef (T.unpack s) Nothing)
     -- Object { to: ..., locked_by: ... }
     parseJSON v = withObject "AExitRef" (\o -> AExitRef
         <$> o .:  "to"
@@ -183,7 +222,7 @@ data ADialogueChoice = ADialogueChoice
     } deriving (Show, Eq, Generic)
 
 instance FromJSON ADialogueChoice where
-    parseJSON (String s) = pure (ADialogueChoice (show s) Nothing [])
+    parseJSON (String s) = pure (ADialogueChoice (T.unpack s) Nothing [])
     parseJSON v = withObject "ADialogueChoice" (\o -> ADialogueChoice
         <$> o .:  "text"
         <*> o .:? "next"
@@ -256,6 +295,27 @@ instance FromJSON AVehicle where
         <*> o .:? "conditions" .!= Map.empty
 
 -- ---------------------------------------------------------------------------
+-- Variables (Phase 3b)
+-- ---------------------------------------------------------------------------
+
+-- | An adventure-declared variable in the YAML schema.
+data AVariable = AVariable
+    { avbVarName    :: String
+    , avbVarType    :: String
+    , avbInitial    :: Maybe Value
+    , avbMin        :: Maybe Int
+    , avbMax        :: Maybe Int
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AVariable where
+    parseJSON = withObject "AVariable" $ \o -> AVariable
+        <$> o .:  "name"
+        <*> o .:  "type"
+        <*> o .:? "initial"
+        <*> o .:? "min"
+        <*> o .:? "max"
+
+-- ---------------------------------------------------------------------------
 -- Interactions
 -- ---------------------------------------------------------------------------
 
@@ -291,7 +351,7 @@ data AActionOutcome
 
 -- Parse an outcome from an object with a single recognized key
 instance FromJSON AActionOutcome where
-    parseJSON (String s) = pure (AOMessage (show s))
+    parseJSON (String s) = pure (AOMessage (T.unpack s))
     parseJSON v = withObject "AActionOutcome" (\o ->
             (AOMessage <$> o .: "msg")
         <|> (AOHealPlayer <$> o .: "heal")

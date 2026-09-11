@@ -45,7 +45,7 @@ data Command
     | Unknown String
     deriving (Show, Eq)
 
--- | Map common strings to Verbs
+-- | Map common strings to core Verbs
 parseVerb :: String -> Maybe Verb
 parseVerb v = case v of
     "take"    -> Just VTake
@@ -68,6 +68,21 @@ parseVerb v = case v of
     "kill"    -> Just VAttack
     "search"  -> Just VSearch
     _         -> Nothing
+
+-- | Build the lookup tables (alias → canonical) from the world's verb registry.
+verbAliasMap :: Map.Map String VerbDef -> Map.Map String String
+verbAliasMap defs =
+    Map.unions
+        [ Map.singleton (map toLower (vdName def)) (vdName def)
+          `Map.union` Map.fromList [ (map toLower a, vdName def) | a <- vdAliases def ]
+        | def <- Map.elems defs ]
+
+-- | Resolve an input verb word against the registry: core verbs first, then
+--   adventure-declared custom verbs.
+parseVerbWith :: Map.Map String VerbDef -> String -> Maybe Verb
+parseVerbWith defs v = case parseVerb v of
+    Just verb -> Just verb
+    Nothing   -> VCustom <$> Map.lookup (map toLower v) (verbAliasMap defs)
 
 -- | Stop words to strip from target phrases
 stopWords :: [String]
@@ -95,36 +110,40 @@ splitOnLastAnd tokens =
                   ("and" : after) | not (null before) && not (null after) -> Just (before, after)
                   _ -> Nothing
 
--- | Parse user input into a command
+-- | Parse user input into a command (no custom verbs)
 parseCommand :: String -> Command
-parseCommand input =
+parseCommand = parseCommandWith Map.empty
+
+-- | Parse user input with the adventure's verb registry
+parseCommandWith :: Map.Map String VerbDef -> String -> Command
+parseCommandWith defs input =
     let tokens = words (map toLower input)
     in case tokens of
         [] -> Unknown ""
-        _ | isCompoundCandidate tokens -> parseCompoundCommand tokens
-          | otherwise -> parseSimpleCommand tokens input
+        _ | isCompoundCandidateWith defs tokens -> parseCompoundCommandWith defs tokens
+          | otherwise -> parseSimpleCommandWith defs tokens input
 
 -- | Check if this looks like a compound command (has "and" after a verb)
-isCompoundCandidate :: [String] -> Bool
-isCompoundCandidate (v : rest) = case parseVerb v of
+isCompoundCandidateWith :: Map.Map String VerbDef -> [String] -> Bool
+isCompoundCandidateWith defs (v : rest) = case parseVerbWith defs v of
     Just _ -> "and" `elem` rest
     Nothing -> case v of
         "pick" -> "and" `elem` rest
         _      -> False
-isCompoundCandidate _ = False
+isCompoundCandidateWith _ _ = False
 
 -- | Parse a compound command by splitting on last "and"
-parseCompoundCommand :: [String] -> Command
-parseCompoundCommand tokens@(v : rest) =
+parseCompoundCommandWith :: Map.Map String VerbDef -> [String] -> Command
+parseCompoundCommandWith defs tokens@(v : rest) =
     let targetParts = case rest of
             ("up" : parts) -> parts  -- "pick up X and Y"
             _              -> rest
     in case splitOnLastAnd targetParts of
         Just (_, after) ->
-            let cmd1 = parseSimpleCommand (v : rest `takeWhileNotLast` "and") (unwords tokens)
-                cmd2 = parseSimpleCommand (v : after) (unwords (v : after))
+            let cmd1 = parseSimpleCommandWith defs (v : rest `takeWhileNotLast` "and") (unwords tokens)
+                cmd2 = parseSimpleCommandWith defs (v : after) (unwords (v : after))
             in CompoundCommand [cmd1, cmd2]
-        Nothing -> parseSimpleCommand tokens (unwords tokens)
+        Nothing -> parseSimpleCommandWith defs tokens (unwords tokens)
   where
     takeWhileNotLast :: [String] -> String -> [String]
     takeWhileNotLast ts target =
@@ -132,11 +151,11 @@ parseCompoundCommand tokens@(v : rest) =
         in case indices of
             [] -> ts
             _  -> take (last indices) ts
-parseCompoundCommand [] = Unknown ""
+parseCompoundCommandWith _ [] = Unknown ""
 
--- | Parse a single (non-compound) command
-parseSimpleCommand :: [String] -> String -> Command
-parseSimpleCommand tokens input = case tokens of
+-- | Parse a single (non-compound) command with the verb registry
+parseSimpleCommandWith :: Map.Map String VerbDef -> [String] -> String -> Command
+parseSimpleCommandWith defs tokens input = case tokens of
     []                     -> Unknown ""
     ["go", dir]            -> parseDirection dir input
     ["go", "to", dir]      -> parseDirection dir input
@@ -150,6 +169,12 @@ parseSimpleCommand tokens input = case tokens of
     ["down"]               -> Go Down
     ["southeast"]          -> Go Southeast
     ["se"]                 -> Go Southeast
+    ["southwest"]          -> Go Southwest
+    ["sw"]                 -> Go Southwest
+    ["northeast"]          -> Go Northeast
+    ["ne"]                 -> Go Northeast
+    ["northwest"]          -> Go Northwest
+    ["nw"]                 -> Go Northwest
     ["swim"]               -> Go Southeast
     ["crawl"]              -> Go Southeast
     ["dig"]                -> Go Southeast
@@ -193,7 +218,7 @@ parseSimpleCommand tokens input = case tokens of
     ["list", "saves"]      -> ListSaves
     ["unequip", "all"]     -> UnequipAllCmd
     ["unequip"]            -> UnequipAllCmd
-    "save" : []            -> Save "savegame"
+    ["save"]               -> Save "savegame"
     "save" : nameParts     -> Save (unwords nameParts)
     "load" : []            -> Load "savegame"
     "load" : nameParts     -> Load (unwords nameParts)
@@ -214,11 +239,15 @@ parseSimpleCommand tokens input = case tokens of
     "talk"  : "to"   : targetParts | not (null targetParts) -> Interact VTalk (unwords (safeStripStopWords targetParts))
     "speak" : "with" : targetParts | not (null targetParts) -> Interact VTalk (unwords (safeStripStopWords targetParts))
     "use"   : useParts -> parseUse useParts input
-    -- Generic verb-noun parsing with multi-word noun phrases + stop-word stripping
-    v : targetParts | not (null targetParts) -> case parseVerb v of
+    -- Generic verb-noun parsing: resolve against registry (core + custom)
+    v : targetParts | not (null targetParts) -> case parseVerbWith defs v of
         Just verb -> Interact verb (unwords (safeStripStopWords targetParts))
         Nothing   -> Unknown input
     _ -> Unknown input
+
+-- | Keep the original name for backward compatibility in tests
+parseSimpleCommand :: [String] -> String -> Command
+parseSimpleCommand = parseSimpleCommandWith Map.empty
 
 parseDirection :: String -> String -> Command
 parseDirection dir input = case dir of
@@ -230,6 +259,12 @@ parseDirection dir input = case dir of
     "down"    -> Go Down
     "southeast" -> Go Southeast
     "se"      -> Go Southeast
+    "southwest" -> Go Southwest
+    "sw"      -> Go Southwest
+    "northeast" -> Go Northeast
+    "ne"      -> Go Northeast
+    "northwest" -> Go Northwest
+    "nw"      -> Go Northwest
     _         -> Unknown input
 
 parseUse :: [String] -> String -> Command
@@ -242,8 +277,6 @@ parseUse useParts input =
         (itemParts, []) | not (null itemParts) ->
             Interact VUse (unwords (safeStripStopWords itemParts))
         _ -> Unknown input
-
-type CommandResult = (GameState, String)
 
 normalizeText :: String -> String
 normalizeText = map toLower
@@ -268,7 +301,7 @@ reachableExitEntities state = case getCurrentRoom state of
 reachableEntityAliases :: GameState -> [String]
 reachableEntityAliases state =
     let currentRoomId = currentRoom (save state)
-        roomItems = getItemsInLocation currentRoomId state
+        roomItems = getItemsInLocation (InRoom currentRoomId) state
         roomNPCs = getNPCsInRoom currentRoomId state
         exitEntities = reachableExitEntities state
         doorAliases = if null exitEntities then [] else ["door", "locked door"]
@@ -278,7 +311,7 @@ resolveEntityCandidates :: String -> GameState -> [String]
 resolveEntityCandidates entityStr state =
     let target = normalizeText entityStr
         currentRoomId = currentRoom (save state)
-        roomItems = getItemsInLocation currentRoomId state
+        roomItems = getItemsInLocation (InRoom currentRoomId) state
         roomNPCs = getNPCsInRoom currentRoomId state
         exitEntities = reachableExitEntities state
         matchedItem = find (matchesItemTarget target) roomItems
@@ -290,154 +323,6 @@ resolveEntityCandidates entityStr state =
     in nub $ doorCandidates ++ [target] ++ maybe [] itemAliases matchedItem ++ maybe [] npcAliases matchedNPC
 
 -- ---------------------------------------------------------------------------
--- Outcome application
--- ---------------------------------------------------------------------------
-
--- | Maximum nesting depth for outcomes. Prevents runaway recursion from
---   malformed content (e.g. a CheckFlag whose branch loops back).
-maxOutcomeDepth :: Int
-maxOutcomeDepth = 20
-
--- | Outcome application with a threaded RNG salt and recursion depth.
---   Returns (state, message, nextSalt, nextDepth).
-applyOutcomeWith :: Int -> Int -> ActionOutcome -> ItemID -> GameState -> (GameState, String, Int)
-applyOutcomeWith depth salt outcome targetId state
-    | depth > maxOutcomeDepth = (state, "[ERROR] Maximum outcome depth exceeded.", salt)
-    | otherwise = case outcome of
-    MessageOnly msg -> (state, msg, salt)
-
-    ChangeItemState newState msg ->
-        let state' = state { save = (save state) { itemStates = Map.adjust (\s -> s { itemStatus = newState }) targetId (itemStates (save state)) } }
-        in (state', msg, salt)
-
-    ChangeNPCState newState msg ->
-        let state' = state { save = (save state) { npcStates = Map.adjust (\s -> s { npcStatus = newState }) targetId (npcStates (save state)) } }
-        in (state', msg, salt)
-
-    TransitionRoom newRoom msg -> (moveToRoom newRoom state, msg, salt)
-
-    HealPlayer amount msg -> (updatePlayerHealth (+ amount) state, msg, salt)
-
-    DamagePlayer amount msg ->
-        let state' = updatePlayerHealth (subtract amount) state
-        in (if isPlayerDead state' then endGame Death state' else state', msg, salt)
-
-    UpdateNPCHealth nId delta msg ->
-        case Map.lookup nId (npcStates (save state)) of
-            Nothing -> (state, msg, salt)
-            Just n ->
-                let oldHealth = fromMaybe 0 (npcHealth n)
-                    newHealth = oldHealth + delta
-                    state' = updateNPCState nId (n { npcHealth = Just newHealth }) state
-                    state'' = clampNPCHealth nId state'
-                in (if newHealth <= 0 then killNPC nId state'' else state'', msg, salt)
-
-    ModifyItemProp iId prop delta msg -> (modifyItemProp iId prop delta state, msg, salt)
-
-    ModifyNPCProp nId prop delta msg -> (modifyNPCProp nId prop delta state, msg, salt)
-
-    SetEntityState entity newState msg -> (setEntityState entity newState state, msg, salt)
-
-    -- Salt is threaded through children so consecutive RandomChoices differ
-    MultipleOutcomes outcomes ->
-        let (st', msg', salt') = foldl (\(st, acc, s) o ->
-                let (st2, m2, s2) = applyOutcomeWith (depth + 1) s o targetId st
-                in (st2, if null acc then m2 else acc ++ "\n" ++ m2, s2))
-                (state, "", salt) outcomes
-        in (st', msg', salt')
-
-    GiveItem iId msg -> (giveItem iId state, msg, salt)
-
-    MoveItem iId targetRoom msg -> (moveItemToRoom iId targetRoom state, msg, salt)
-
-    ConsumeItem iId msg -> (consumeItem iId state, msg, salt)
-
-    MoveNPC nId targetRoom msg -> (moveNPCToRoom nId targetRoom state, msg, salt)
-
-    SetRoomVisited rId visited msg -> (setRoomVisited rId visited state, msg, salt)
-
-    SetFlag flagName flagValue msg -> (setFlag flagName flagValue state, msg, salt)
-
-    CheckFlag flagName expectedVal thenOutcome elseOutcome ->
-        case getFlag flagName state of
-            Just val | val == expectedVal -> applyOutcomeWith (depth + 1) salt thenOutcome targetId state
-            _                            -> applyOutcomeWith (depth + 1) salt elseOutcome targetId state
-
-    RandomChoice outcomes ->
-        if null outcomes
-        then (state, "", salt)
-        else let idx = gameRandomIndex state salt (length outcomes)
-             in applyOutcomeWith (depth + 1) (salt + 1) (outcomes !! idx) targetId state
-
-    GameEnd reason msg -> (endGame reason state, msg, salt)
-
-    EquipItem iId msg ->
-        case equipItem iId state of
-            Left err    -> (state, err, salt)
-            Right state' -> (state', msg, salt)
-
-    UnequipItem iId msg ->
-        if isEquipped iId state
-        then (unequipItem iId state, msg, salt)
-        else (state, "You don't have that equipped.", salt)
-
-    -- Skills (Phase 2): skill + d(salt-derived) vs DC
-    CheckSkill skillId dc passOutcome failOutcome ->
-        let skillVal = getSkill skillId state
-            roll = 1 + (gameRandom state salt `mod` 6)   -- d6
-            total = skillVal + roll
-        in if total >= dc
-           then let (st', m, s') = applyOutcomeWith (depth + 1) (salt + 1) passOutcome targetId state
-                in (st', "[" ++ skillId ++ " " ++ show skillVal ++ "+" ++ show roll ++ " vs " ++ show dc ++ "] " ++ m, s')
-           else let (st', m, s') = applyOutcomeWith (depth + 1) (salt + 1) failOutcome targetId state
-                in (st', "[" ++ skillId ++ " " ++ show skillVal ++ "+" ++ show roll ++ " vs " ++ show dc ++ "] " ++ m, s')
-
-    ModifySkill skillId delta msg -> (modifySkill skillId delta state, msg, salt)
-
-    -- Conditions (Phase 2)
-    ApplyCondition name turns tick end -> (applyCondition name turns tick end state, "", salt)
-    ClearCondition name msg -> (clearCondition name state, msg, salt)
-    HasCondition name thenOutcome elseOutcome ->
-        if hasCondition name state
-        then applyOutcomeWith (depth + 1) salt thenOutcome targetId state
-        else applyOutcomeWith (depth + 1) salt elseOutcome targetId state
-
-    -- Quests (Phase 2)
-    StartQuest qId msg ->
-        if canStartQuest qId state
-        then (startQuest qId state, msg, salt)
-        else (state, "You cannot start that quest right now.", salt)
-    AdvanceQuest qId msg ->
-        if Map.member qId (activeQuests (save state))
-        then (advanceQuest qId state, msg, salt)
-        else (state, "That quest is not active.", salt)
-    CompleteQuest qId msg ->
-        if Map.member qId (activeQuests (save state))
-        then let (st', rewardMsg) = completeQuestWithMsg qId state
-                 fullMsg = intercalate "\n" (filter (not . null) [msg, rewardMsg])
-             in (st', fullMsg, salt)
-        else (state, "That quest is not active.", salt)
-
-    -- Narratives (Phase 4.4): store lines + follow-up for interactive rendering
-    Narrative lines followUp ->
-        (state { pendingNarrative = Just (lines, followUp) }, intercalate "\n" lines, salt)
-
--- | Public wrapper: apply a single outcome starting at depth 0 / salt 0
-applyOutcome :: ActionOutcome -> ItemID -> GameState -> CommandResult
-applyOutcome outcome targetId state =
-    let (st, msg, _) = applyOutcomeWith 0 0 outcome targetId state
-    in (st, msg)
-
--- | Apply zero or more outcomes in sequence
-applyOutcomes :: [ActionOutcome] -> ItemID -> GameState -> CommandResult
-applyOutcomes outcomes targetId state =
-    let (st, msg, _) = foldl (\(s, acc, slt) o ->
-            let (s2, m2, slt2) = applyOutcomeWith 0 slt o targetId s
-            in (s2, if null acc then m2 else acc ++ "\n" ++ m2, slt2))
-            (state, "", 0) outcomes
-    in (st, msg)
-
--- ---------------------------------------------------------------------------
 -- Command execution
 -- ---------------------------------------------------------------------------
 
@@ -446,21 +331,18 @@ executeCommand :: Command -> GameState -> CommandResult
 
 executeCommand (Go dir) state
     | canMove dir state = case getExitInDirection dir state of
-        Just (Open destinationRoom) -> goTo destinationRoom (clearActiveDialogue state)
+        Just (Open destinationRoom) ->
+            let (st', hookMsg) = transitionToRoom destinationRoom (clearActiveDialogue state)
+                fullMsg = intercalate "\n" (filter (not . null) ["You move " ++ show dir ++ ".", hookMsg])
+            in (st', fullMsg)
         Just (Locked destinationRoom entityTarget)
             | getEntityState entityTarget state == Just "unlocked" ->
-                goTo destinationRoom (clearActiveDialogue state)
+                let (st', hookMsg) = transitionToRoom destinationRoom (clearActiveDialogue state)
+                    fullMsg = intercalate "\n" (filter (not . null) ["You move " ++ show dir ++ ".", hookMsg])
+                in (st', fullMsg)
             | otherwise -> (state, "The door is locked.")
         Nothing -> (state, "There's nothing in that direction.")
     | otherwise = (state, "You can't go that way.")
-  where
-    goTo dest st =
-        let (stAfterExit, exitMsg) = runRoomHook roomOnExit (currentRoom (save st)) st
-            moved = moveToRoom dest stAfterExit
-            visited = markCurrentRoomVisited moved
-            (finalState, enterMsg) = runRoomHook roomOnEnter dest visited
-            fullMsg = intercalate "\n" (filter (not . null) [exitMsg, "You move " ++ show dir ++ ".", enterMsg])
-        in (finalState, fullMsg)
 
 executeCommand Look state = case getCurrentRoom state of
     Nothing -> (state, "You're in a void. There's nothing here.")
@@ -476,7 +358,7 @@ executeCommand Look state = case getCurrentRoom state of
                 desc = case (vIdOverride, baseRoom) of
                     (Just override, Just _) -> override
                     _ -> maybe "" (\r -> resolveDescription r state) baseRoom
-                itemsInRoom = getItemsInLocation (currentRoom (save state)) state
+                itemsInRoom = getItemsInLocation (InRoom (currentRoom (save state))) state
                 npcsInRoom = getNPCsInRoom (currentRoom (save state)) state
                 itemDesc = if null itemsInRoom
                            then "\nYou see nothing of interest."
@@ -494,7 +376,7 @@ executeCommand Look state = case getCurrentRoom state of
             in (state', full)
 
 executeCommand Inventory state =
-    let invItems = getItemsInLocation "inventory" state
+    let invItems = getItemsInLocation (CarriedBy "player") state
     in if null invItems
        then (state, "You're not carrying anything.")
        else (state, "Inventory: " ++ intercalate ", " (map itemName invItems))
@@ -581,7 +463,7 @@ executeCommand UnequipAllCmd state
     | otherwise = (state { save = (save state) { equipment = Map.empty } }, "You remove all equipment.")
 
 executeCommand TakeAll state =
-    let roomItems = getItemsInLocation (currentRoom (save state)) state
+    let roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
     in if null roomItems
        then (state, "There's nothing here to take.")
        else let (finalState, msgs) = foldl (\(s, ms) item ->
@@ -590,7 +472,7 @@ executeCommand TakeAll state =
             in (finalState, intercalate "\n" msgs)
 
 executeCommand DropAll state =
-    let invItems = getItemsInLocation "inventory" state
+    let invItems = getItemsInLocation (CarriedBy "player") state
     in if null invItems
        then (state, "You're not carrying anything to drop.")
        else let (finalState, msgs) = foldl (\(s, ms) item ->
@@ -609,7 +491,7 @@ executeCommand (SearchCmd maybeTarget) state =
         Nothing -> searchRoom state
         Just targetStr ->
             -- `search <thing>`: try a matching item/NPC's VSearch verb first
-            let roomItems = getItemsInLocation (currentRoom (save state)) state
+            let roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
                 roomNPCs = getNPCsInRoom (currentRoom (save state)) state
             in case find (matchesItemTarget targetStr) roomItems of
                 Just item ->
@@ -628,8 +510,8 @@ executeCommand (SearchCmd maybeTarget) state =
                     Nothing -> (state, "You don't see '" ++ targetStr ++ "' here.")
 
 executeCommand (Interact verb targetStr) state =
-    let roomItems = getItemsInLocation (currentRoom (save state)) state
-        invItems = getItemsInLocation "inventory" state
+    let roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
+        invItems = getItemsInLocation (CarriedBy "player") state
         allReachableItems = roomItems ++ invItems
         roomNPCs = getNPCsInRoom (currentRoom (save state)) state
         targetItem = find (matchesItemTarget targetStr) allReachableItems
@@ -642,7 +524,7 @@ executeCommand (Interact verb targetStr) state =
             in case Map.lookup (verb, currentStatus) (itemVerbMap item) of
                 Just outcome -> applyOutcome outcome iId state
                 Nothing ->
-                    if verb == VTake && maybe False ((/= "inventory") . itemLocation) maybeItemState
+                    if verb == VTake && maybe False (\loc -> loc /= CarriedBy "player") (fmap itemLocation maybeItemState)
                     then (pickupItem iId state, "You take the " ++ itemName item ++ ".")
                     else if verb == VDrop && hasItem iId state
                     then (dropItem iId state, "You drop the " ++ itemName item ++ ".")
@@ -668,7 +550,7 @@ executeCommand (Interact verb targetStr) state =
 executeCommand (InteractWith VUseOn itemStr entityStr) state =
     let itemTarget = normalizeText itemStr
         entityTarget = normalizeText entityStr
-        inventoryItems = getItemsInLocation "inventory" state
+        inventoryItems = getItemsInLocation (CarriedBy "player") state
         maybeItem = find (matchesItemTarget itemTarget) inventoryItems
         maybeVehicle = findVehicle entityStr state
     in case maybeItem of
@@ -813,8 +695,8 @@ findVehicle targetStr state =
 -- | Look up an item by target string in inventory or current room
 findMatchingItem :: String -> GameState -> Maybe ItemDef
 findMatchingItem targetStr state =
-    let roomItems = getItemsInLocation (currentRoom (save state)) state
-        invItems = getItemsInLocation "inventory" state
+    let roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
+        invItems = getItemsInLocation (CarriedBy "player") state
     in find (matchesItemTarget targetStr) (invItems ++ roomItems)
 
 -- | Is the room dark?
@@ -839,13 +721,6 @@ resolveDescription room state =
         (d:_) -> d
         []    -> roomDescription room
 
--- | Run a room hook (onEnter / onLook / onExit) if one is defined
-runRoomHook :: (Room -> Maybe ActionOutcome) -> RoomID -> GameState -> (GameState, String)
-runRoomHook hook rId state =
-    case Map.lookup rId (rooms (world state)) >>= hook of
-        Nothing -> (state, "")
-        Just outcome -> applyOutcome outcome "" state
-
 -- | `search` — reveal hidden items and run the room's search outcome
 searchRoom :: GameState -> CommandResult
 searchRoom state =
@@ -853,7 +728,7 @@ searchRoom state =
         -- hidden items currently in this room
         hidden = [ iId
                  | (iId, st) <- Map.toList (itemStates (save state))
-                 , itemLocation st == roomId
+                 , itemLocation st == InRoom roomId
                  , Just def <- [Map.lookup iId (itemDefs (world state))]
                  , itemHidden def
                  , not (itemDiscovered st)

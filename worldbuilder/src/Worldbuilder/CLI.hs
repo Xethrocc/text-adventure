@@ -1,8 +1,8 @@
 -- | Worldbuilder CLI: validate, compile, check
 module Worldbuilder.CLI (runCLI) where
 
-import Worldbuilder.Types (Adventure)
-import Worldbuilder.Compile (CompileResult(..), compileAdventure)
+import Worldbuilder.Types ()
+import Worldbuilder.Compile (CompileResult(..), compileAdventure, CompileIssue(..), Severity(..))
 import Worldbuilder.ParseFile (parseAdventureFile)
 
 -- JSON encoding (output only)
@@ -10,7 +10,7 @@ import Data.Aeson (encode)
 import qualified Data.ByteString.Lazy as BL
 
 -- Engine
-import Validate (validateWorld, ValidationError(..))
+import Validate (validateWorld, validateGameState)
 import qualified Types as E
 
 -- System
@@ -35,12 +35,32 @@ usage = unlines
     [ "worldbuilder - text-adventure authoring toolchain"
     , ""
     , "Usage:"
-    , "  worldbuilder validate <adventure.json>      Check for consistency errors"
-    , "  worldbuilder compile <adventure.json> -o <dir>  Emit world.json + save.json"
+    , "  worldbuilder validate <adventure.json>      Check for consistency errors (exit 1 on errors)"
+    , "  worldbuilder compile <adventure.json> -o <dir> [--force]  Emit world.json + save.json"
+    , "                                              --force writes even if validation has issues"
     , "  worldbuilder check <adventure.json>         Print content statistics"
     , ""
     , "Supports .json, .yaml and .yml files."
     ]
+
+-- ---------------------------------------------------------------------------
+-- Helpers
+-- ---------------------------------------------------------------------------
+
+-- | Render a list of compile issues in a readable format
+showIssue :: CompileIssue -> String
+showIssue i =
+    let sev = case ciSeverity i of
+            SError  -> "error"
+            SWarning -> "warning"
+    in "  [" ++ sev ++ "] " ++ ciCode i ++ " at " ++ ciPath i ++ ": " ++ ciMessage i
+
+printCompileIssues :: [CompileIssue] -> IO ()
+printCompileIssues = mapM_ (putStrLn . showIssue)
+
+-- | Render validation errors (ValidationError derives Show)
+showValidationError :: Show a => a -> String
+showValidationError = show
 
 -- ---------------------------------------------------------------------------
 -- Validate
@@ -57,20 +77,24 @@ validate path = do
             case compileAdventure adv of
                 Left errs -> do
                     putStrLn "Compilation errors:"
-                    mapM_ (\e -> putStrLn ("  - " ++ e)) errs
+                    printCompileIssues errs
+                    putStrLn ""
+                    putStrLn $ show (length errs) ++ " hard error(s); adventure cannot be compiled."
                     exitFailure
                 Right cr -> do
-                    let errors = validateWorld (crWorld cr)
-                    if null errors
+                    let worldErrs = validateWorld (crWorld cr)
+                        stateErrs = validateGameState (crWorld cr) (crSave cr)
+                        allErrs = worldErrs ++ stateErrs
+                    if null allErrs
                     then do
                         putStrLn "Adventure is valid! (no issues found)"
                         exitSuccess
                     else do
                         putStrLn "Validation found issues:"
-                        mapM_ (\e -> putStrLn ("  - " ++ show e)) errors
+                        mapM_ (\e -> putStrLn ("  - " ++ showValidationError e)) allErrs
                         putStrLn ""
-                        putStrLn "The adventure can still be played, but these issues may cause problems."
-                        exitSuccess
+                        putStrLn "These issues may cause problems during play."
+                        exitFailure
 
 -- ---------------------------------------------------------------------------
 -- Compile
@@ -82,6 +106,7 @@ compile path rest = do
             "-o" : d : _ -> d
             "--output" : d : _ -> d
             _            -> "."
+        force = "--force" `elem` rest
     mbAdv <- parseAdventureFile path
     case mbAdv of
         Nothing -> do
@@ -90,23 +115,31 @@ compile path rest = do
         Just adv -> case compileAdventure adv of
             Left errs -> do
                 putStrLn "Compilation errors:"
-                mapM_ (\e -> putStrLn ("  - " ++ e)) errs
+                printCompileIssues errs
+                putStrLn ""
+                putStrLn $ show (length errs) ++ " hard error(s); output not written."
                 exitFailure
             Right cr -> do
-                createDirectoryIfMissing True outDir
-                let worldPath = outDir </> "world.json"
-                BL.writeFile worldPath (encode (crWorld cr))
-                putStrLn $ "Wrote " ++ worldPath
-                let savePath = outDir </> "save.json"
-                BL.writeFile savePath (encode (crSave cr))
-                putStrLn $ "Wrote " ++ savePath
-                let errors = validateWorld (crWorld cr)
-                if null errors
-                then putStrLn "No validation issues found."
+                let errors = validateWorld (crWorld cr) ++ validateGameState (crWorld cr) (crSave cr)
+                if not (null errors) && not force
+                then do
+                    putStrLn "Validation found issues (use --force to write anyway):"
+                    mapM_ (\e -> putStrLn ("  - " ++ showValidationError e)) errors
+                    exitFailure
                 else do
-                    putStrLn "Validation warnings:"
-                    mapM_ (\e -> putStrLn ("  - " ++ show e)) errors
-                exitSuccess
+                    createDirectoryIfMissing True outDir
+                    let worldPath = outDir </> "world.json"
+                    BL.writeFile worldPath (encode (crWorld cr))
+                    putStrLn $ "Wrote " ++ worldPath
+                    let savePath = outDir </> "save.json"
+                    BL.writeFile savePath (encode (crSave cr))
+                    putStrLn $ "Wrote " ++ savePath
+                    if null errors
+                    then putStrLn "No validation issues found."
+                    else do
+                        putStrLn "Validation warnings (written with --force):"
+                        mapM_ (\e -> putStrLn ("  - " ++ showValidationError e)) errors
+                    exitSuccess
 
 -- ---------------------------------------------------------------------------
 -- Check stats
@@ -122,7 +155,7 @@ checkStats path = do
         Just adv -> case compileAdventure adv of
             Left errs -> do
                 putStrLn "Compilation errors:"
-                mapM_ (\e -> putStrLn ("  - " ++ e)) errs
+                printCompileIssues errs
                 exitFailure
             Right cr -> do
                 let gw = crWorld cr
@@ -137,8 +170,8 @@ checkStats path = do
                 putStrLn $ "Dialogue nodes: " ++ show totalDlg
                 putStrLn $ "Entity ints:    " ++ show (length (E.entityInteractions gw))
                 putStrLn $ "Item ints:      " ++ show (length (E.itemInteractions gw))
-                let validationErrors = validateWorld gw
+                let validationErrors = validateWorld gw ++ validateGameState gw (crSave cr)
                 if null validationErrors
                 then putStrLn "Validation:     CLEAN"
-                else putStrLn $ "Validation:     " ++ show (length validationErrors) ++ " warnings"
+                else putStrLn $ "Validation:     " ++ show (length validationErrors) ++ " issue(s)"
                 exitSuccess

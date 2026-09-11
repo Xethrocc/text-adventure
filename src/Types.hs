@@ -7,9 +7,11 @@ module Types where
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
+import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Data.Aeson
 import Data.Aeson.Types (Parser, toJSONKeyText, FromJSONKeyFunction (..))
+import Control.Applicative ((<|>))
 import Data.Bits (xor, shiftR)
 
 -- ---------------------------------------------------------------------------
@@ -27,11 +29,50 @@ type FlagID    = String
 type FactionID = String
 
 -- ---------------------------------------------------------------------------
--- Basic enumerations
+-- | Combined result of executing a command
+type CommandResult = (GameState, String)
+
+-- ---------------------------------------------------------------------------
+-- Variable system (Phase 3b): deklarierte Variablen für erweiterte Profile
+-- ---------------------------------------------------------------------------
+
+-- | Variable type: determines valid values and validation.
+data VariableType
+    = VTBool                     -- ^ true/false (stored as Int 0/1)
+    | VTInt (Maybe Int) (Maybe Int)  -- ^ integer range (Nothing = unbounded)
+    | VTText                     -- ^ arbitrary string
+    | VTEnum [String]            -- ^ one of the listed values
+    deriving (Show, Eq, Generic)
+
+instance ToJSON VariableType
+instance FromJSON VariableType
+
+-- | A runtime variable value.
+data VariableValue
+    = VVBool Bool
+    | VVInt  Int
+    | VVText String
+    deriving (Show, Eq, Generic)
+
+instance ToJSON VariableValue
+instance FromJSON VariableValue
+
+-- | Static definition of an adventure-declared variable.
+data VarDef = VarDef
+    { vdVarName    :: String
+    , vdVarType    :: VariableType
+    , vdVarInitial :: VariableValue
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON VarDef
+instance FromJSON VarDef
+
+-- | Basic enumerations
 -- ---------------------------------------------------------------------------
 
 -- | Direction enumeration for movement
-data Direction = North | South | East | West | Up | Down | Southeast
+data Direction = North | South | East | West | Up | Down
+               | Northeast | Northwest | Southeast | Southwest
     deriving (Show, Eq, Ord, Enum, Bounded, Generic)
 
 instance ToJSON Direction
@@ -48,13 +89,26 @@ data Exit
 instance ToJSON Exit
 instance FromJSON Exit
 
--- | Verb enumeration for dynamic actions
+-- | Verb for dynamic actions. Core verbs are built in; adventures may
+--   declare additional verbs (e.g. cast, hack, dock) via the world's verb
+--   registry (Phase 3a). VUnknown is a parse fallback, never authored.
 data Verb = VGo | VLook | VLookAt | VTake | VDrop | VInventory | VUse | VUseOn
           | VTalk | VAttack | VSearch | VHelp | VQuit | VUnknown
-    deriving (Show, Read, Eq, Ord, Enum, Bounded, Generic)
+          | VCustom String
+    deriving (Show, Read, Eq, Ord, Generic)
 
 instance ToJSON Verb
 instance FromJSON Verb
+
+-- | A declared adventure verb: canonical name plus input aliases.
+--   The canonical name is what appears in verb_map keys ("cast,intact").
+data VerbDef = VerbDef
+    { vdName    :: String
+    , vdAliases :: [String]
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON VerbDef
+instance FromJSON VerbDef
 
 -- | Reason the game ended
 data GameOverReason = Victory | Death | Custom String
@@ -104,60 +158,121 @@ instance FromJSON EquipEffect
 -- Action outcomes
 -- ---------------------------------------------------------------------------
 
--- | Action Outcome representing the result of an interaction
-data ActionOutcome
-    = MessageOnly String
-    | ChangeItemState String String       -- ^ New State, Message
-    | ChangeNPCState String String        -- ^ New State, Message
-    | TransitionRoom String String        -- ^ New RoomID, Message
-    | HealPlayer Int String               -- ^ Health to add, Message
-    | DamagePlayer Int String             -- ^ Damage to deal, Message
-    | UpdateNPCHealth String Int String   -- ^ NPC ID, health delta (+/-), Message
-    | ModifyItemProp String String Int String -- ^ Item ID, Prop Name, delta (+/-), Message
-    | ModifyNPCProp String String Int String  -- ^ NPC ID, Prop Name, delta (+/-), Message
-    | SetEntityState String String String -- ^ Entity, New State, Message
-    | MultipleOutcomes [ActionOutcome]
-    | GiveItem ItemID String              -- ^ Add item to player inventory, Message
-    | MoveItem ItemID RoomID String       -- ^ Move item to a room (loot drops), Message
-    | ConsumeItem ItemID String           -- ^ Remove item from play entirely (location → "consumed"), Message
-    | MoveNPC String RoomID String        -- ^ Move NPC to a different room, Message
-    | SetRoomVisited RoomID Bool String   -- ^ Mark room visited/unvisited, Message
-    | SetFlag String String String        -- ^ Flag name, value, Message
-    | CheckFlag String String ActionOutcome ActionOutcome -- ^ Flag, expected value, then-branch, else-branch
-    | RandomChoice [ActionOutcome]        -- ^ Pick one outcome deterministically via game-state hash
-    | GameEnd GameOverReason String       -- ^ End the game with a reason, Message
-    -- Equipment (Phase 0)
-    | EquipItem ItemID String             -- ^ Equip an item the player carries, Message
-    | UnequipItem ItemID String           -- ^ Unequip an item, Message
-    -- Skills (Phase 2)
-    | CheckSkill SkillID Int ActionOutcome ActionOutcome -- ^ Skill, DC, Pass-branch, Fail-branch
-    | ModifySkill SkillID Int String      -- ^ Skill, delta (+/-), Message
-    -- Conditions (Phase 2)
-    | ApplyCondition String Int (Maybe ActionOutcome) (Maybe ActionOutcome) -- ^ Name, turns, tick, end
-    | ClearCondition String String        -- ^ Condition name, Message
-    | HasCondition String ActionOutcome ActionOutcome -- ^ Condition name, then-branch, else-branch
-    -- Quests (Phase 2)
-    | StartQuest QuestID String           -- ^ Quest, Message
-    | AdvanceQuest QuestID String         -- ^ Quest, Message (moves to next stage)
-    | CompleteQuest QuestID String        -- ^ Quest, Message (fires questReward)
-    -- Narratives (Phase 4.4)
-    | Narrative [String] ActionOutcome    -- ^ Lines to show, then follow-up outcome
+-- | Comparison operator for predicates
+data Comparator = CEq | CNeq | CLt | CLte | CGt | CGte
     deriving (Show, Eq, Generic)
 
-instance ToJSON ActionOutcome
-instance FromJSON ActionOutcome
+instance ToJSON Comparator
+instance FromJSON Comparator
+
+-- | Reference to a value that can be compared in a predicate or modified in an effect.
+data ValueRef
+    = VRFlag    FlagID                -- ^ flag value as string
+    | VRVariable String                -- ^ adventure variable name (float/int)
+    | VRItemProp ItemID String         -- ^ (item name, property name)
+    | VRProperty String String         -- ^ (entity name, property name)
+    | VRPlayerHealth                   -- ^ player hit points
+    deriving (Show, Eq, Generic)
+
+instance ToJSON ValueRef
+instance FromJSON ValueRef
+
+-- | Predicate: composable condition language for the generic rule system (Phase 3c).
+--   A single outcome `Conditional Predicate a a` replaces CheckFlag, HasCondition,
+--   CheckSkill, and any future bespoke check.
+data Predicate
+    = PTrue
+    | PNot Predicate
+    | PAll  [Predicate]       -- ^ logical AND
+    | PAny [Predicate]       -- ^ logical OR
+    | Compare ValueRef Comparator ValueRef   -- ^ compare two values/constants
+    | PlayerHas ItemID                       -- ^ does the player carry this item?
+    | EntityHasState String String           -- ^ entity, expected state (e.g. "wolf", "dead")
+    | HasFlag FlagID                         -- ^ flag == "true"
+    | RoomHasTag RoomID String               -- ^ room has a given tag
+    | Location String String   -- ^ entity ID, room ID (is entity in this room?)
+    deriving (Show, Eq, Generic)
+
+instance ToJSON Predicate
+instance FromJSON Predicate where
+    parseJSON = withObject "Predicate" $ \o ->
+            (PAll  <$> o .: "all")
+        <|> (PAny  <$> o .: "any")
+        <|> (PNot  <$> o .: "not")
+        <|> (PTrue <$ (o .: "true" :: Parser Bool))
+        <|> (PlayerHas <$> o .: "has_item")
+        <|> (HasFlag   <$> o .: "has_flag")
+        <|> (EntityHasState <$> o .: "state" <*> o .: "is")
+        <|> (RoomHasTag     <$> o .: "room"  <*> o .: "has_tag")
+        <|> (Location       <$> o .: "at"    <*> o .: "room")
+        <|> (Compare <$> o .: "lhs" <*> o .: "op" <*> o .: "rhs")
+        <|> fail "Unknown predicate"
+
+-- | Action Outcome representing the result of an interaction
+--   This is the engine-level Effect-DSL: a compact, composable set of
+--   effect constructors that replace the previous 30-specific Effect
+--   variants. The Worldbuilder compiles its higher-level shorthands into
+--   these Effects.
+data Effect
+    = Sequence [Effect]                          -- ^ Do many effects in order
+    | Conditional Predicate Effect Effect         -- ^ Branch: if (pred) then this else that
+    | RandomChoice [(Int, Effect)]               -- ^ Weighted random pick from candidates
+    | SetValue ValueRef EffectValue                     -- ^ Set any value (flag, variable, property)
+    | ModifyValue ValueRef Int                    -- ^ Modify a numeric value (hp, skill, prop, etc.)
+    | MoveEntity EntityID Location                -- ^ Move an entity to a location
+    | SendMessage String                          -- ^ Show a message to the player
+    | ApplyCondition String Int (Maybe Effect) (Maybe Effect) -- ^ Name, turns, tick, end effects
+    | ClearCondition String                       -- ^ Remove a condition by name
+    | ModifySkill SkillID Int                     -- ^ Change a skill by delta
+    | QuestOp QuestOp String                      -- ^ Quest lifecycle operation
+    | GameEnd GameOverReason String               -- ^ End the game with a reason
+    | Narrative [String] Effect                   -- ^ Lines to show, then follow-up (stored as pendingNarrative)
+    | Noop                                        -- ^ Do nothing
+    deriving (Show, Eq, Generic)
+
+-- | Quest operations for the Effect DSL
+data QuestOp = StartQuest | AdvanceQuest | CompleteQuest
+    deriving (Show, Eq, Generic)
+
+instance ToJSON QuestOp
+instance FromJSON QuestOp
+
+-- | A runtime value that can be stored via SetValue.
+data EffectValue
+    = EVInt Int
+    | EVString String
+    | EVBool Bool
+    deriving (Show, Eq, Generic)
+
+instance ToJSON EffectValue
+instance FromJSON EffectValue
+
+-- | Typed location for MoveEntity.
+data Location
+    = InRoom RoomID
+    | CarriedBy EntityID
+    | InContainer EntityID
+    | EquippedBy EntityID String
+    | Removed
+    deriving (Show, Eq, Generic)
+
+instance ToJSON Location
+instance FromJSON Location
+
+instance ToJSON Effect
+instance FromJSON Effect
 
 -- ---------------------------------------------------------------------------
 -- JSON helpers for compound Map keys
 -- ---------------------------------------------------------------------------
 
 -- | Encode a Map with (Verb, String) keys as "VTake:intact" style keys
-verbStateMapToJSON :: Map.Map (Verb, String) ActionOutcome -> Value
+verbStateMapToJSON :: Map.Map (Verb, String) Effect -> Value
 verbStateMapToJSON = toJSON . Map.mapKeys (\(v, s) -> show v ++ ":" ++ s)
 
-verbStateMapFromJSON :: Value -> Parser (Map.Map (Verb, String) ActionOutcome)
+verbStateMapFromJSON :: Value -> Parser (Map.Map (Verb, String) Effect)
 verbStateMapFromJSON v = do
-    m <- parseJSON v :: Parser (Map.Map String ActionOutcome)
+    m <- parseJSON v :: Parser (Map.Map String Effect)
     let parsePair k = case break (== ':') k of
             (vStr, ':':sStr) -> case reads vStr of
                 [(verb, "")] -> Right ((verb, sStr), ())
@@ -195,16 +310,18 @@ tupleMapFromJSON v = do
 -- | Static item definition (loaded from JSON)
 data ItemDef = ItemDef
     { itemId            :: ItemID
-    , itemName          :: String
-    , itemDescription   :: String
-    , itemKeywords      :: [String]
-    , itemTags          :: Set.Set String        -- ^ e.g. "lightsource", "weapon", "key"
-    , itemEquipSlot     :: Maybe EquipSlot       -- ^ Nothing = not equippable
-    , itemEquipEffects  :: [EquipEffect]         -- ^ Passive bonuses while equipped
-    , itemHidden        :: Bool                  -- ^ Hidden until discovered via `search`
-    , itemDiscoverText  :: Maybe String          -- ^ Message shown on discovery
-    , itemVerbMap       :: Map.Map (Verb, String) ActionOutcome
-    } deriving (Show, Eq)
+        , itemName          :: String
+        , itemDescription   :: String
+        , itemKeywords      :: [String]
+        , itemTags          :: Set.Set String        -- ^ e.g. "lightsource", "weapon", "key"
+        , itemEquipSlot     :: Maybe EquipSlot       -- ^ Nothing = not equippable
+        , itemEquipEffects  :: [EquipEffect]         -- ^ Passive bonuses while equipped
+        , itemHidden        :: Bool                  -- ^ Hidden until discovered via `search`
+        , itemDiscoverText  :: Maybe String          -- ^ Message shown on discovery
+        , itemPortable      :: Bool                  -- ^ Can the player pick this up?
+        , itemTakeFailure   :: Maybe String          -- ^ Message when take fails (non-portable)
+        , itemVerbMap       :: Map.Map (Verb, String) Effect
+        } deriving (Show, Eq)
 
 instance ToJSON ItemDef where
     toJSON def = object
@@ -217,6 +334,8 @@ instance ToJSON ItemDef where
         , "itemEquipEffects" .= itemEquipEffects def
         , "itemHidden"       .= itemHidden def
         , "itemDiscoverText" .= itemDiscoverText def
+        , "itemPortable"     .= itemPortable def
+        , "itemTakeFailure"  .= itemTakeFailure def
         , "itemVerbMap"      .= verbStateMapToJSON (itemVerbMap def)
         ]
 
@@ -231,11 +350,13 @@ instance FromJSON ItemDef where
         <*> o .:? "itemEquipEffects" .!= []
         <*> o .:? "itemHidden"       .!= False
         <*> o .:? "itemDiscoverText" .!= Nothing
+        <*> o .:? "itemPortable"     .!= True
+        <*> o .:? "itemTakeFailure"  .!= Nothing
         <*> (o .: "itemVerbMap" >>= verbStateMapFromJSON)
 
 -- | Dynamic item state
 data ItemState = ItemState
-    { itemLocation    :: RoomID  -- ^ Room ID, "inventory", "consumed" or "container:<id>"
+    { itemLocation    :: Location
     , itemStatus      :: String  -- ^ e.g., "intact", "burned", "open"
     , itemProps       :: Map.Map String Int
     , itemDiscovered  :: Bool    -- ^ Has a hidden item been found?
@@ -257,7 +378,7 @@ instance FromJSON ItemState where
 data DialogueChoice = DialogueChoice
     { dcText     :: String          -- ^ What the player says (shown as option)
     , dcNextNode :: Maybe String    -- ^ Next node in current tree (Nothing = exit dialogue)
-    , dcOutcome  :: ActionOutcome   -- ^ Outcome applied when chosen
+    , dcOutcome  :: Effect   -- ^ Outcome applied when chosen
     } deriving (Show, Eq, Generic)
 
 instance ToJSON DialogueChoice where
@@ -271,7 +392,7 @@ instance FromJSON DialogueChoice where
     parseJSON = withObject "DialogueChoice" $ \o -> DialogueChoice
         <$> o .:  "dcText"
         <*> o .:? "dcNextNode" .!= Nothing
-        <*> o .:? "dcOutcome"  .!= MessageOnly ""
+        <*> o .:? "dcOutcome"  .!= SendMessage ""
 
 -- | One node (= one NPC utterance plus replies)
 data DialogueNode = DialogueNode
@@ -307,7 +428,7 @@ data NPCDef = NPCDef
     , npcMaxHealth     :: Maybe Int
     , npcAttackBase    :: Int
     , npcDefenseBase   :: Int
-    , npcVerbMap       :: Map.Map (Verb, String) ActionOutcome
+    , npcVerbMap       :: Map.Map (Verb, String) Effect
     } deriving (Show, Eq)
 
 instance ToJSON NPCDef where
@@ -339,7 +460,7 @@ instance FromJSON NPCDef where
 
 -- | Dynamic NPC state
 data NPCState = NPCState
-    { npcLocation  :: RoomID
+    { npcLocation  :: Location
     , npcStatus    :: String    -- ^ e.g., "alive", "dead", "sleeping"
     , npcHealth    :: Maybe Int
     , npcProps     :: Map.Map String Int
@@ -354,6 +475,16 @@ instance FromJSON NPCState where
         <*> o .:  "npcHealth"
         <*> o .:? "npcProps"         .!= Map.empty
         <*> o .:? "npcDialogueNode"  .!= Nothing
+
+-- | Persistent state of an openable/closeable container.
+data ContainerState = ContainerState
+    { containerOpen     :: Bool
+    , containerLocked   :: Bool
+    , containerCapacity :: Maybe Int
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON ContainerState
+instance FromJSON ContainerState
 
 -- ---------------------------------------------------------------------------
 -- Player
@@ -388,8 +519,8 @@ instance FromJSON Player where
 data Condition = Condition
     { condName        :: String
     , condRemaining   :: Int                -- ^ Turns until it expires
-    , condTickOutcome :: Maybe ActionOutcome -- ^ Fired every turn while active
-    , condEndOutcome  :: Maybe ActionOutcome -- ^ Fired once when it expires
+    , condTickOutcome :: Maybe Effect -- ^ Fired every turn while active
+    , condEndOutcome  :: Maybe Effect -- ^ Fired once when it expires
     } deriving (Show, Eq, Generic)
 
 instance ToJSON Condition
@@ -416,7 +547,7 @@ data Quest = Quest
     , questDescription :: String
     , questPrereqs     :: Map.Map FlagID String -- ^ Flags that must match before StartQuest works
     , questStages      :: [QuestStage]
-    , questReward      :: Maybe ActionOutcome
+    , questReward      :: Maybe Effect
     } deriving (Show, Eq, Generic)
 
 instance ToJSON Quest
@@ -460,7 +591,7 @@ data VehicleDef = VehicleDef
     , vehicleStops            :: Map.Map RoomID VehicleStop     -- ^ outside room -> stop
     , vehicleKeywords         :: [String]
     , vehicleFuelProp         :: Maybe (String, Int)            -- ^ (fuel name, max units)
-    , vehicleConditionEffects :: Map.Map String ActionOutcome   -- ^ condition -> outcome fired vehicle-wide
+    , vehicleConditionEffects :: Map.Map String Effect   -- ^ condition -> outcome fired vehicle-wide
     } deriving (Show, Eq)
 
 instance ToJSON VehicleDef where
@@ -522,10 +653,10 @@ data Room = Room
     , roomTags            :: Set.Set String            -- ^ "dark", "safe", "vehicle", ...
     , roomAltDescriptions :: Map.Map FlagID String     -- ^ flag -> alternative description
     , roomLightFlag       :: Maybe FlagID              -- ^ when "true", a "dark" room is lit
-    , roomOnEnter         :: Maybe ActionOutcome
-    , roomOnLook          :: Maybe ActionOutcome
-    , roomOnExit          :: Maybe ActionOutcome
-    , roomSearchOutcome   :: Maybe ActionOutcome
+    , roomOnEnter         :: Maybe Effect
+    , roomOnLook          :: Maybe Effect
+    , roomOnExit          :: Maybe Effect
+    , roomSearchOutcome   :: Maybe Effect
     , roomAscii           :: Maybe String              -- ^ Optional ASCII art banner (Phase 4.6)
     } deriving (Show, Eq, Generic)
 
@@ -567,15 +698,58 @@ type Inventory = [ItemID]
 -- World & save state
 -- ---------------------------------------------------------------------------
 
+-- | Event type that triggers rules: what happened in the game world.
+data EventType
+    = OnEnter RoomID
+    | OnLeave RoomID
+    | OnLook RoomID
+    | OnTake ItemID
+    | OnDrop ItemID
+    | OnUse ItemID
+    | OnSearch RoomID
+    | OnStateChange String
+    | OnCustomEvent String
+    | OnTurn
+    | OnCommand String                 -- ^ verb name (e.g. "activate")
+    deriving (Show, Eq, Generic)
+
+instance ToJSON EventType
+instance FromJSON EventType
+
+-- | A trigger rule: when event matches conditions, fire effects.
+data TriggerDef = TriggerDef
+    { trId         :: String
+    , trEvent      :: EventType
+    , trCondition  :: Maybe Predicate
+    , trEffects    :: [Effect]
+    , trOnce       :: Bool
+    , trCooldown   :: Int              -- ^ turns between re-firing (0 = no cooldown)
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON TriggerDef
+instance FromJSON TriggerDef
+
+-- | Runtime state of a trigger rule.
+data TriggerState = TriggerState
+    { tsFired           :: Bool
+    , tsCooldownRemaining :: Int
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON TriggerState
+instance FromJSON TriggerState
+
 -- | Static world definition containing blueprint/map data
 data GameWorld = GameWorld
     { rooms              :: Map.Map RoomID Room
     , itemDefs           :: Map.Map ItemID ItemDef
     , npcDefs            :: Map.Map NPCID NPCDef
     , entityInteractions :: Map.Map (String, String) (String, String)
-    , itemInteractions   :: Map.Map (String, String) ActionOutcome  -- ^ (Item, Item) -> outcome
+    , itemInteractions   :: Map.Map (String, String) Effect  -- ^ (Item, Item) -> outcome
     , questDefs          :: Map.Map QuestID Quest                    -- ^ Static quest definitions
     , vehicleDefs        :: Map.Map VehicleID VehicleDef             -- ^ Static vehicle definitions (Phase 3)
+    , verbDefs           :: Map.Map String VerbDef                   -- ^ Adventure-declared verbs (Phase 3a)
+    , varDefs            :: Map.Map String VarDef                    -- ^ Adventure-declared variables (Phase 3b)
+    , triggerDefs        :: [TriggerDef]                              -- ^ Trigger rules (Phase 3f)
     } deriving (Show, Eq)
 
 instance ToJSON GameWorld where
@@ -587,6 +761,9 @@ instance ToJSON GameWorld where
         , "itemInteractions"   .= Map.mapKeys (\(a, b) -> a ++ "|" ++ b) (itemInteractions gw)
         , "questDefs"          .= questDefs gw
         , "vehicleDefs"        .= vehicleDefs gw
+        , "verbDefs"           .= verbDefs gw
+        , "varDefs"            .= varDefs gw
+        , "triggerDefs"       .= triggerDefs gw
         ]
 
 instance FromJSON GameWorld where
@@ -598,8 +775,11 @@ instance FromJSON GameWorld where
         <*> (o .:? "itemInteractions" .!= Map.empty >>= parseItemInteractions)
         <*> o .:? "questDefs" .!= Map.empty
         <*> o .:? "vehicleDefs" .!= Map.empty
+        <*> o .:? "verbDefs" .!= Map.empty
+        <*> o .:? "varDefs"  .!= Map.empty
+        <*> o .:? "triggerDefs" .!= []
 
-parseItemInteractions :: Map.Map String ActionOutcome -> Parser (Map.Map (String, String) ActionOutcome)
+parseItemInteractions :: Map.Map String Effect -> Parser (Map.Map (String, String) Effect)
 parseItemInteractions m =
     case mapM parseKey (Map.toList m) of
         Right pairs -> pure (Map.fromList pairs)
@@ -629,6 +809,10 @@ data SaveState = SaveState
     , vehicleStates      :: Map.Map VehicleID VehicleState    -- ^ Dynamic vehicle state (Phase 3)
     , currentVehicle     :: Maybe VehicleID                   -- ^ Vehicle the player is inside (Phase 3)
     , activeDialogue     :: Maybe NPCID                       -- ^ Currently engaged dialogue NPC (Phase 4.6)
+    , rngState           :: Word64                            -- ^ Explicit RNG state for deterministic random outcomes (Phase 1)
+    , variables          :: Map.Map String VariableValue       -- ^ Adventure-declared variables (Phase 3b)
+    , containers         :: Map.Map EntityID ContainerState    -- ^ Container open/closed/locked states
+    , triggerStates      :: Map.Map String TriggerState      -- ^ Runtime state of trigger rules (fired/cooldown)
     } deriving (Show, Eq)
 
 instance ToJSON SaveState where
@@ -651,6 +835,10 @@ instance ToJSON SaveState where
         , "vehicleStates"   .= vehicleStates ss
         , "currentVehicle"  .= currentVehicle ss
         , "activeDialogue"  .= activeDialogue ss
+        , "rngState"        .= rngState ss
+        , "variables"       .= variables ss
+        , "containers"      .= containers ss
+        , "triggerStates"   .= triggerStates ss
         ]
 
 instance FromJSON SaveState where
@@ -673,6 +861,10 @@ instance FromJSON SaveState where
         <*> o .:? "vehicleStates"   .!= Map.empty
         <*> o .:? "currentVehicle"  .!= Nothing
         <*> o .:? "activeDialogue"  .!= Nothing
+        <*> o .:? "rngState"        .!= 0
+        <*> o .:? "variables"       .!= Map.empty
+        <*> o .:? "containers"      .!= Map.empty
+        <*> o .:? "triggerStates"   .!= Map.empty
 
 -- | Save file wrapper with metadata for save slots
 data SaveFile = SaveFile
@@ -690,7 +882,7 @@ instance FromJSON SaveFile
 data GameState = GameState
     { world :: GameWorld
     , save  :: SaveState
-    , pendingNarrative :: Maybe ([String], ActionOutcome)  -- ^ Narrative lines + follow-up (Phase 4.4)
+    , pendingNarrative :: Maybe ([String], Effect)  -- ^ Narrative lines + follow-up (Phase 4.4)
     } deriving (Show, Eq)
 
 -- ---------------------------------------------------------------------------
@@ -723,3 +915,11 @@ gameRandomIndex :: GameState -> Int -> Int -> Int
 gameRandomIndex state salt n
     | n <= 0    = 0
     | otherwise = gameRandom state salt `mod` n
+
+-- | Initial seed for a fresh playthrough (golden-ratio constant, nonzero).
+initialRngState :: Word64
+initialRngState = 0x9E3779B97F4A7C15
+
+-- | Advance the explicit RNG state (linear congruential generator).
+nextRng :: Word64 -> Word64
+nextRng w = w * 6364136223846793005 + 1

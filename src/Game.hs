@@ -19,6 +19,9 @@ emptyGameWorld = GameWorld
     , itemInteractions   = Map.empty
     , questDefs          = Map.empty
     , vehicleDefs        = Map.empty
+    , verbDefs           = Map.empty
+    , varDefs            = Map.empty
+    , triggerDefs        = []
     }
 
 -- | Default empty game state
@@ -44,6 +47,10 @@ emptyGameState = GameState
         , vehicleStates      = Map.empty
         , currentVehicle     = Nothing
         , activeDialogue     = Nothing
+        , rngState           = initialRngState
+        , variables          = Map.empty
+        , containers         = Map.empty
+        , triggerStates      = Map.empty
         }
     , pendingNarrative = Nothing
     }
@@ -58,7 +65,7 @@ getCurrentRoom state = Map.lookup (currentRoom (save state)) (rooms (world state
 
 -- | Get all visible items in a location.
 --   Hidden items only appear once they have been discovered via `search`.
-getItemsInLocation :: RoomID -> GameState -> [ItemDef]
+getItemsInLocation :: Location -> GameState -> [ItemDef]
 getItemsInLocation loc state =
     [ def
     | (iId, st) <- Map.toList (itemStates (save state))
@@ -68,7 +75,7 @@ getItemsInLocation loc state =
     ]
 
 -- | All items in a location, including hidden ones (used internally)
-getAllItemsInLocation :: RoomID -> GameState -> [ItemDef]
+getAllItemsInLocation :: Location -> GameState -> [ItemDef]
 getAllItemsInLocation loc state =
     let itemIds = Map.keys $ Map.filter (\s -> itemLocation s == loc) (itemStates (save state))
     in [def | iId <- itemIds, Just def <- [Map.lookup iId (itemDefs (world state))]]
@@ -76,7 +83,7 @@ getAllItemsInLocation loc state =
 -- | Check if player has an item in inventory
 hasItem :: ItemID -> GameState -> Bool
 hasItem iId state = case Map.lookup iId (itemStates (save state)) of
-    Just itemState -> itemLocation itemState == "inventory"
+    Just itemState -> itemLocation itemState == CarriedBy "player"
     Nothing        -> False
 
 -- | Check if an item is currently equipped
@@ -92,7 +99,7 @@ syncInventory saveState =
     saveState
         { inventory =
             Map.keys
-                (Map.filter (\itemState -> itemLocation itemState == "inventory") (itemStates saveState))
+                (Map.filter (\itemState -> itemLocation itemState == CarriedBy "player") (itemStates saveState))
         }
 
 -- ---------------------------------------------------------------------------
@@ -140,49 +147,44 @@ getExitInDirection dir state = case getCurrentRoom state of
 
 -- | Add item to player's inventory
 pickupItem :: ItemID -> GameState -> GameState
-pickupItem iId state =
-    let saveState = save state
-        updatedSave =
-            saveState
-                { itemStates =
-                    Map.adjust (\s -> s { itemLocation = "inventory" }) iId (itemStates saveState)
-                }
-    in state { save = syncInventory updatedSave }
+pickupItem iId state = relocateItem iId (CarriedBy "player") state
 
 -- | Remove item from player's inventory to current room
 dropItem :: ItemID -> GameState -> GameState
-dropItem iId state =
-    let saveState = save state
-        updatedSave =
-            saveState
-                { itemStates =
-                    Map.adjust (\s -> s { itemLocation = currentRoom saveState }) iId (itemStates saveState)
-                }
-    in state { save = syncInventory updatedSave }
+dropItem iId state = relocateItem iId (InRoom (currentRoom (save state))) state
 
 -- | Give item directly to player inventory (e.g., NPC reward, loot)
 giveItem :: ItemID -> GameState -> GameState
-giveItem iId state =
-    let saveState = save state
-        updatedSave = saveState
-            { itemStates = Map.adjust (\s -> s { itemLocation = "inventory" }) iId (itemStates saveState) }
-    in state { save = syncInventory updatedSave }
+giveItem iId state = relocateItem iId (CarriedBy "player") state
 
 -- | Move an item to a specific room (e.g., loot drop)
 moveItemToRoom :: ItemID -> RoomID -> GameState -> GameState
-moveItemToRoom iId targetRoom state =
-    let saveState = save state
-        updatedSave = saveState
-            { itemStates = Map.adjust (\s -> s { itemLocation = targetRoom }) iId (itemStates saveState) }
-    in state { save = syncInventory updatedSave }
+moveItemToRoom iId targetRoom state = relocateItem iId (InRoom targetRoom) state
 
 -- | Consume an item, removing it from play entirely
 consumeItem :: ItemID -> GameState -> GameState
-consumeItem iId state =
+consumeItem iId state = relocateItem iId Removed state
+
+-- | Central relocation: move an item to a new location and keep inventory
+--   and equipment consistent.  If the item was equipped it is unequipped
+--   automatically (dropping/consuming a worn item must not keep its bonuses),
+--   and health is clamped to the new effective max afterwards.
+relocateItem :: ItemID -> Location -> GameState -> GameState
+relocateItem iId newLoc state =
     let saveState = save state
         updatedSave = saveState
-            { itemStates = Map.adjust (\s -> s { itemLocation = "consumed" }) iId (itemStates saveState) }
-    in state { save = syncInventory updatedSave }
+            { itemStates = Map.adjust (\s -> s { itemLocation = newLoc }) iId (itemStates saveState)
+            , equipment  = Map.filter (/= iId) (equipment saveState)
+            }
+        st' = state { save = syncInventory updatedSave }
+    in clampHealthToMax st'
+
+-- | Clamp current health to effective max health (e.g. after losing a maxhp bonus)
+clampHealthToMax :: GameState -> GameState
+clampHealthToMax state =
+    let p = player (save state)
+        newHealth = min (playerHealth p) (effectiveMaxHealth state)
+    in state { save = (save state) { player = p { playerHealth = newHealth } } }
 
 -- | Modify an item's property
 modifyItemProp :: String -> String -> Int -> GameState -> GameState
@@ -308,7 +310,7 @@ isPlayerDead state = playerHealth (player (save state)) <= 0
 -- | Get all NPCs in a specific room
 getNPCsInRoom :: RoomID -> GameState -> [NPCDef]
 getNPCsInRoom rId state =
-    let npcIds = Map.keys $ Map.filter (\s -> npcLocation s == rId) (npcStates (save state))
+    let npcIds = Map.keys $ Map.filter (\s -> npcLocation s == InRoom rId) (npcStates (save state))
     in [def | nId <- npcIds, Just def <- [Map.lookup nId (npcDefs (world state))]]
 
 -- | Update NPC state (health, status, etc)
@@ -319,7 +321,7 @@ updateNPCState targetNpcId newNpcState state = state
 -- | Move NPC to void (dead)
 killNPC :: String -> GameState -> GameState
 killNPC targetNpcId state = state
-    { save = (save state) { npcStates = Map.adjust (\s -> s { npcLocation = "void", npcStatus = "dead" }) targetNpcId (npcStates (save state)) } }
+    { save = (save state) { npcStates = Map.adjust (\s -> s { npcLocation = Removed, npcStatus = "dead" }) targetNpcId (npcStates (save state)) } }
 
 -- | Modify an NPC's property
 modifyNPCProp :: String -> String -> Int -> GameState -> GameState
@@ -332,7 +334,7 @@ modifyNPCProp nId prop delta state = state
 -- | Move an NPC to a different room
 moveNPCToRoom :: String -> RoomID -> GameState -> GameState
 moveNPCToRoom nId targetRoom state = state
-    { save = (save state) { npcStates = Map.adjust (\s -> s { npcLocation = targetRoom }) nId (npcStates (save state)) } }
+    { save = (save state) { npcStates = Map.adjust (\s -> s { npcLocation = InRoom targetRoom }) nId (npcStates (save state)) } }
 
 -- | Set the current dialogue node for an NPC
 setDialogueNode :: String -> Maybe String -> GameState -> GameState
@@ -340,7 +342,7 @@ setDialogueNode nId node state =
     let curRoom = currentRoom (save state)
         mDef = Map.lookup nId (npcDefs (world state))
         defaultSt = NPCState
-            { npcLocation = curRoom
+            { npcLocation = InRoom curRoom
             , npcStatus = "alive"
             , npcHealth = mDef >>= npcMaxHealth
             , npcProps = Map.empty
@@ -439,7 +441,7 @@ modifySkill skillId delta state = state
 -- ---------------------------------------------------------------------------
 
 -- | Apply (or refresh) a timed status effect
-applyCondition :: String -> Int -> Maybe ActionOutcome -> Maybe ActionOutcome -> GameState -> GameState
+applyCondition :: String -> Int -> Maybe Effect -> Maybe Effect -> GameState -> GameState
 applyCondition name turns tick end state = state
     { save = (save state)
         { conditions = Map.insert name (Condition name turns tick end) (conditions (save state)) } }
@@ -462,32 +464,306 @@ tickConditions state = foldl step (state, []) (Map.toList (conditions (save stat
     step (st, msgs) (name, cond) =
         let remaining = condRemaining cond - 1
         in if remaining <= 0
-           then let (stEnd, mEnd) = maybe (st, "") (\o -> applyOutcomePure o st) (condEndOutcome cond)
+           then let (stEnd, mEnd) = maybe (st, "") (\o -> applyOutcome o "" st) (condEndOutcome cond)
                     st' = clearCondition name stEnd
                 in (st', if null mEnd then msgs else msgs ++ [mEnd])
            else let st1 = st { save = (save st) { conditions = Map.adjust (\c -> c { condRemaining = remaining }) name (conditions (save st)) } }
-                    (st2, mTick) = maybe (st1, "") (\o -> applyOutcomePure o st1) (condTickOutcome cond)
+                    (st2, mTick) = maybe (st1, "") (\o -> applyOutcome o "" st1) (condTickOutcome cond)
                 in (st2, if null mTick then msgs else msgs ++ [mTick])
-    -- local wrapper to avoid a module cycle with Parser
-    applyOutcomePure = applyOutcomeFallback
 
--- | Outcome application for conditions. Lives in Game to avoid a Parser
---   dependency; supports the subset of outcomes that make sense for ticks.
-applyOutcomeFallback :: ActionOutcome -> GameState -> (GameState, String)
-applyOutcomeFallback outcome state = case outcome of
-    MessageOnly msg          -> (state, msg)
-    HealPlayer amount msg    -> (updatePlayerHealth (+ amount) state, msg)
-    DamagePlayer amount msg  ->
-        let st' = updatePlayerHealth (subtract amount) state
-        in (if isPlayerDead st' then endGame Death st' else st', msg)
-    SetFlag n v msg          -> (setFlag n v state, msg)
-    MultipleOutcomes os ->
-        let (st', msgs) = foldl (\(s, ms) o ->
-                let (s2, m2) = applyOutcomeFallback o s
-                in (s2, if null m2 then ms else ms ++ [m2]))
-                (state, []) os
-        in (st', intercalate "\n" msgs)
-    _ -> (state, "")  -- unsupported in tick context, silently ignored
+-- ---------------------------------------------------------------------------
+-- Variables (Phase 3b)
+-- ---------------------------------------------------------------------------
+
+-- | Read an adventure-declared variable value.
+getVariable :: String -> GameState -> Maybe VariableValue
+getVariable name state = Map.lookup name (variables (save state))
+
+-- | Set an adventure-declared variable.
+setVariable :: String -> VariableValue -> GameState -> GameState
+setVariable name val state = state
+    { save = (save state) { variables = Map.insert name val (variables (save state)) } }
+
+-- | Evaluate a Predicate against the current game state.
+evalPredicate :: Predicate -> GameState -> Bool
+evalPredicate PTrue _ = True
+evalPredicate (PNot p) st = not (evalPredicate p st)
+evalPredicate (PAll ps) st = all (\p -> evalPredicate p st) ps
+evalPredicate (PAny ps) st = any (\p -> evalPredicate p st) ps
+evalPredicate (PlayerHas iId) st = hasItem iId st
+evalPredicate (HasFlag f) st = getFlag f st == Just "true"
+evalPredicate (EntityHasState entity expected) st =
+    getEntityState entity st == Just expected
+evalPredicate (RoomHasTag rId tag) st =
+    case Map.lookup rId (rooms (world st)) of
+        Just room -> tag `Set.member` roomTags room
+        Nothing   -> False
+evalPredicate (Location eId rId) st =
+    case Map.lookup eId (npcStates (save st)) of
+        Just ns  -> npcLocation ns == InRoom rId
+        Nothing  -> case Map.lookup eId (itemStates (save st)) of
+            Just is -> itemLocation is == InRoom rId
+            Nothing -> False
+evalPredicate (Compare lhs op rhs) st =
+    let lval = resolveValueRef lhs st
+        rval = resolveValueRef rhs st
+    in case compareValues op lval rval of
+        Just b  -> b
+        Nothing -> False
+
+-- | Resolve a ValueRef to an Int for comparisons.
+resolveValueRef :: ValueRef -> GameState -> Int
+resolveValueRef (VRVariable name) st =
+    case Map.lookup name (variables (save st)) of
+        Just (VVInt n)  -> n
+        _               -> 0
+resolveValueRef (VRFlag f) st =
+    case getFlag f st of
+        Just "true"  -> 1
+        Just _       -> 0
+        Nothing      -> 0
+resolveValueRef (VRItemProp iId prop) st =
+    case Map.lookup iId (itemStates (save st)) of
+        Just is -> Map.findWithDefault 0 prop (itemProps is)
+        Nothing -> 0
+resolveValueRef (VRProperty eId prop) st =
+    case Map.lookup eId (npcStates (save st)) of
+        Just ns -> case prop of
+            "hp" -> fromMaybe 0 (npcHealth ns)
+            _    -> Map.findWithDefault 0 prop (npcProps ns)
+        Nothing -> 0
+resolveValueRef VRPlayerHealth st =
+    playerHealth (player (save st))
+
+-- | Compare two Int values using the comparator. Returns Nothing on invalid op
+--   (same behaviour as False for unknown variables).
+compareValues :: Comparator -> Int -> Int -> Maybe Bool
+compareValues CEq  a b = Just (a == b)
+compareValues CNeq a b = Just (a /= b)
+compareValues CLt  a b = Just (a <  b)
+compareValues CLte a b = Just (a <= b)
+compareValues CGt  a b = Just (a >  b)
+compareValues CGte a b = Just (a >= b)
+
+-- ---------------------------------------------------------------------------
+-- Outcome interpreter (single, shared implementation)
+--   Used by command execution (Parser), condition ticks, quest rewards and
+--   vehicle condition ticks — no divergent fallback clones.
+-- ---------------------------------------------------------------------------
+
+-- | Maximum nesting depth for outcomes. Prevents runaway recursion from
+--   malformed content (e.g. a CheckFlag whose branch loops back).
+maxOutcomeDepth :: Int
+maxOutcomeDepth = 20
+
+-- | Outcome application with a threaded RNG salt and recursion depth.
+--   Returns (state, message, nextSalt, nextDepth).
+applyOutcomeWith :: Int -> Int -> Effect -> ItemID -> GameState -> (GameState, String, Int)
+applyOutcomeWith depth salt outcome targetId state
+    | depth > maxOutcomeDepth = (state, "[ERROR] Maximum outcome depth exceeded.", salt)
+    | otherwise = case outcome of
+    SendMessage msg -> (state, msg, salt)
+
+    Sequence outcomes ->
+        let (st', msg', salt') = foldl (\(st, acc, s) o ->
+                let (st2, m2, s2) = applyOutcomeWith (depth + 1) s o targetId st
+                in (st2, if null acc then m2 else acc ++ "\n" ++ m2, s2))
+                (state, "", salt) outcomes
+        in (st', msg', salt')
+
+    SetValue vr ev ->
+        let state' = applySetValue vr ev state
+        in (state', "", salt)
+
+    ModifyValue VRPlayerHealth delta ->
+        let state' = if delta >= 0
+                     then updatePlayerHealth (+ delta) state
+                     else let st' = updatePlayerHealth (+ delta) state
+                          in if isPlayerDead st' then endGame Death st' else st'
+        in (state', "", salt)
+    ModifyValue vr delta ->
+        let state' = modifyValueProp vr delta state
+        in (state', "", salt)
+
+    MoveEntity eid (InRoom room) ->
+        let state' = moveEntityToRoom eid room state
+        in (state', "", salt)
+    MoveEntity eid (CarriedBy _) ->
+        let state' = giveItem eid state
+        in (state', "", salt)
+    MoveEntity eid Removed ->
+        let state' = consumeItem eid state
+        in (state', "", salt)
+    MoveEntity eid (EquippedBy _ slot) ->
+        case equipItem eid state of
+            Left err    -> (state, err, salt)
+            Right st'   -> (st', "", salt)
+    MoveEntity eid (InContainer _) ->
+        (state, "", salt)
+
+    QuestOp StartQuest qId ->
+        if canStartQuest qId state
+        then (startQuest qId state, "", salt)
+        else (state, "You cannot start that quest right now.", salt)
+    QuestOp AdvanceQuest qId ->
+        if Map.member qId (activeQuests (save state))
+        then (advanceQuest qId state, "", salt)
+        else (state, "That quest is not active.", salt)
+    QuestOp CompleteQuest qId ->
+        if Map.member qId (activeQuests (save state))
+        then let (st', rewardMsg) = completeQuestWithMsg qId state
+             in (st', rewardMsg, salt)
+        else (state, "That quest is not active.", salt)
+
+    Conditional predicate thenOutcome elseOutcome ->
+        if evalPredicate predicate state
+        then applyOutcomeWith (depth + 1) salt thenOutcome targetId state
+        else applyOutcomeWith (depth + 1) salt elseOutcome targetId state
+
+    RandomChoice [] -> (state, "", salt)
+    RandomChoice weighted ->
+        let totalWeight = max 1 (sum (map fst weighted))
+            rng = rngState (save state)
+            pick = fromIntegral (rng `mod` fromIntegral totalWeight)
+            st' = state { save = (save state) { rngState = nextRng (rng + fromIntegral salt) } }
+            go :: Int -> [(Int, Effect)] -> Effect
+            go _ [(_, e)] = e
+            go acc ((w, e):rest)
+                | pick < acc + w = e
+                | otherwise = go (acc + w) rest
+            go _ [] = Noop
+        in applyOutcomeWith (depth + 1) (salt + 1) (go 0 weighted) targetId st'
+
+    GameEnd reason msg -> (endGame reason state, msg, salt)
+
+    ApplyCondition name turns tick end -> (applyCondition name turns tick end state, "", salt)
+    ClearCondition name -> (clearCondition name state, "", salt)
+
+    ModifySkill skillId delta -> (modifySkill skillId delta state, "", salt)
+
+    -- Narrative: store lines + follow-up for interactive display
+    Narrative lines followUp ->
+        (state { pendingNarrative = Just (lines, followUp) }, intercalate "\n" lines, salt)
+
+    Noop -> (state, "", salt)
+
+-- | Apply SetValue: set a value reference to a new value (handles flags, variables, states)
+applySetValue :: ValueRef -> EffectValue -> GameState -> GameState
+applySetValue (VRFlag name) val state =
+    setFlag name (effectValueToString val) state
+applySetValue (VRVariable name) val state =
+    setVariable name (effectValToVarVal val) state
+applySetValue (VRProperty eId "state") val state =
+    setEntityState eId (effectValueToString val) state
+applySetValue (VRProperty "player" "room") val state =
+    fst (transitionToRoom (effectValueToString val) (clearActiveDialogue state))
+applySetValue (VRProperty rId "visited") val state =
+    let b = case val of { EVInt n -> n /= 0; _ -> False }
+    in setRoomVisited rId b state
+applySetValue VRPlayerHealth val state =
+    let n = case val of { EVInt n -> n; _ -> 0 }
+    in if n <= 0 then endGame Death (setPlayerHP n state) else setPlayerHP n state
+applySetValue _ _ state = state
+
+-- | Convert EffectValue to VariableValue
+effectValToVarVal :: EffectValue -> VariableValue
+effectValToVarVal (EVInt n)    = VVInt n
+effectValToVarVal (EVString s) = VVText s
+effectValToVarVal (EVBool b)   = VVInt (if b then 1 else 0)
+
+-- | Apply ModifyValue to a non-player-health reference
+modifyValueProp :: ValueRef -> Int -> GameState -> GameState
+
+-- | Convert EffectValue to String (for flag/state values)
+effectValueToString :: EffectValue -> String
+effectValueToString (EVInt n)    = show n
+effectValueToString (EVString s) = s
+effectValueToString (EVBool b)   = if b then "true" else "false"
+
+-- | Apply ModifyValue to a non-player-health reference
+modifyValueProp (VRFlag name) delta state =
+    let cur = case getFlag name state of
+            Just "true" -> 1
+            _           -> 0
+        newVal = if cur + delta > 0 then "true" else "false"
+    in setFlag name newVal state
+modifyValueProp (VRVariable name) delta state =
+    let cur = case getVariable name state of
+            Just (VVInt n)  -> n
+            Just (VVText s) -> case reads s of [(n,_)] -> n; _ -> 0
+            _               -> 0
+    in setVariable name (VVInt (cur + delta)) state
+modifyValueProp (VRItemProp iId prop) delta state =
+    modifyItemProp iId prop delta state
+modifyValueProp (VRProperty eId "hp") delta state =
+    modifyNPCHealth eId delta state
+modifyValueProp (VRProperty nId prop) delta state =
+    modifyNPCProp nId prop delta state
+modifyValueProp _ _ state = state
+
+-- | Modify an NPC's health, killing them if <= 0
+modifyNPCHealth :: NPCID -> Int -> GameState -> GameState
+modifyNPCHealth nId delta state =
+    case Map.lookup nId (npcStates (save state)) of
+        Nothing -> state
+        Just n ->
+            let oldHealth = fromMaybe 0 (npcHealth n)
+                newHealth = oldHealth + delta
+                state' = updateNPCState nId (n { npcHealth = Just newHealth }) state
+                state'' = clampNPCHealth nId state'
+            in if newHealth <= 0 then killNPC nId state'' else state''
+
+-- | Move an entity (player or NPC) to a room
+moveEntityToRoom :: EntityID -> RoomID -> GameState -> GameState
+moveEntityToRoom "player" room state =
+    fst (transitionToRoom room (clearActiveDialogue state))
+moveEntityToRoom eId room state =
+    moveNPCToRoom eId room state
+
+-- | Set player HP directly (clamped to max)
+setPlayerHP :: Int -> GameState -> GameState
+setPlayerHP n state =
+    let saveSt = save state
+        p = player saveSt
+        maxHp = playerMaxHealth p
+        p' = p { playerHealth = max 0 (min maxHp n) }
+    in state { save = saveSt { player = p' } }
+
+-- | Public wrapper: apply a single outcome starting at depth 0 / salt 0
+applyOutcome :: Effect -> ItemID -> GameState -> CommandResult
+applyOutcome outcome targetId state =
+    let (st, msg, _) = applyOutcomeWith 0 0 outcome targetId state
+    in (st, msg)
+
+-- | Apply zero or more outcomes in sequence
+applyOutcomes :: [Effect] -> ItemID -> GameState -> CommandResult
+applyOutcomes outcomes targetId state =
+    let (st, msg, _) = foldl (\(s, acc, slt) o ->
+            let (s2, m2, slt2) = applyOutcomeWith 0 slt o targetId s
+            in (s2, if null acc then m2 else acc ++ "\n" ++ m2, slt2))
+            (state, "", 0) outcomes
+    in (st, msg)
+
+-- | Run a room hook (onEnter / onLook / onExit) if one is defined
+runRoomHook :: (Room -> Maybe Effect) -> RoomID -> GameState -> (GameState, String)
+runRoomHook hook rId state =
+    case Map.lookup rId (rooms (world state)) >>= hook of
+        Nothing -> (state, "")
+        Just outcome -> applyOutcome outcome "" state
+
+-- | Move the player to another room, running exit/enter hooks and marking the
+--   destination visited. Used by both walking (Go) and TransitionRoom outcomes
+--   so data-driven teleports behave exactly like walks.
+transitionToRoom :: RoomID -> GameState -> (GameState, String)
+transitionToRoom dest state =
+    let cur = currentRoom (save state)
+        stAfterDialogue = clearActiveDialogue state
+        (stAfterExit, exitMsg) = runRoomHook roomOnExit cur stAfterDialogue
+        moved = moveToRoom dest stAfterExit
+        visited = markCurrentRoomVisited moved
+        (finalState, enterMsg) = runRoomHook roomOnEnter dest visited
+        fullMsg = intercalate "\n" (filter (not . null) [exitMsg, enterMsg])
+    in (finalState, fullMsg)
 
 -- ---------------------------------------------------------------------------
 -- Quests (Phase 2)
@@ -541,7 +817,7 @@ completeQuestWithMsg qId state =
                 , completedQuests = Set.insert qId (completedQuests (save state)) } }
     in case lookupQuest qId state >>= questReward of
         Nothing -> (withoutActive, "")
-        Just outcome -> applyOutcomeFallback outcome withoutActive
+        Just outcome -> applyOutcome outcome "" withoutActive
 
 -- | Mark a quest completed (ignoring the reward message)
 completeQuest :: QuestID -> GameState -> GameState
@@ -756,7 +1032,7 @@ vehicleConditionTick state = case currentVehicle (save state) of
                then (state, "")
                else
                    let (st', msgs) = foldl (\(s, ms) o ->
-                            let (s2, m2) = applyOutcomeFallback o s
+                            let (s2, m2) = applyOutcome o "" s
                             in (s2, if null m2 then ms else ms ++ [m2]))
                             (state, []) outcomes
                    in (st', intercalate "\n" msgs)
@@ -783,3 +1059,48 @@ vehicleLookAddon state = case currentVehicle (save state) of
             in if null (trim statusLine) then Nothing else Just (trim statusLine)
   where
     trim = f . f where f = reverse . dropWhile (== '\n')
+
+-- ---------------------------------------------------------------------------
+-- Trigger system (Phase 3f)
+-- ---------------------------------------------------------------------------
+
+-- | Fire triggers matching the given event type.
+--   Returns updated state and accumulated messages from all triggered effects.
+fireTriggers :: EventType -> GameState -> (GameState, String)
+fireTriggers event state =
+    let triggers = triggerDefs (world state)
+        matching = filter (\t -> trEvent t == event) triggers
+    in fireTriggerList matching state
+
+-- | Fire a specific list of triggers (internal, also used by nested call from effects)
+fireTriggerList :: [TriggerDef] -> GameState -> (GameState, String)
+fireTriggerList triggers state =
+    foldl fireOne (state, "") triggers
+  where
+    ts = triggerStates (save state)
+
+    fireOne (st, acc) tr =
+        let tId = trId tr
+            tState = Map.lookup tId ts
+            alreadyFired = maybe False tsFired tState
+            cooldownRemaining = maybe 0 tsCooldownRemaining tState
+        in if trOnce tr && alreadyFired
+           then (st, acc)
+           else if cooldownRemaining > 0
+           then (decrementCooldown tId st, acc)
+           else case trCondition tr of
+                Just p  -> if evalPredicate p st
+                           then applyTrigEffects tId tr st acc
+                           else (st, acc)
+                Nothing -> applyTrigEffects tId tr st acc
+
+    decrementCooldown tId st =
+        let newTs = Map.adjust (\s -> s { tsCooldownRemaining = max 0 (tsCooldownRemaining s - 1) }) tId (triggerStates (save st))
+        in st { save = (save st) { triggerStates = newTs } }
+
+    applyTrigEffects tId tr st acc =
+        let (st', msgs) = foldl (\(s, a) e ->
+                let (s', m, _) = applyOutcomeWith 0 0 e "" s
+                in (s', a ++ m ++ "\n")) (st { save = (save st) { triggerStates = updatedTs } }, acc) (trEffects tr)
+            updatedTs = Map.insert tId (TriggerState True (trCooldown tr)) (triggerStates (save st))
+        in (st', msgs)
