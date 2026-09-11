@@ -1,0 +1,228 @@
+name: Cold Orbit (Space Opera)
+start_room: docking_ring
+
+# Genre: Space Opera — custom verb `dock`, variable `oxygen` draining each turn,
+# a player-controlled shuttle vehicle with stops, crew variable, death + victory ends.
+
+verbs:
+  - name: dock
+    aliases: [moor, berth]
+
+variables:
+  - name: oxygen
+    type: int
+    initial: 60
+    min: 0
+    max: 60
+  - name: morale
+    type: int
+    initial: 5
+    min: 0
+    max: 10
+
+rooms:
+  - id: docking_ring
+    name: Docking Ring
+    desc: The station's outer ring. Stars turn slowly past the viewports. A hatch leads inward; the hangar is east.
+    exits:
+      north: {to: station_hub}
+      east: {to: hangar}
+  - id: station_hub
+    name: Station Hub
+    desc: The crossroads of the station. Med bay west, crew quarters east, reactor south.
+    exits:
+      south: {to: docking_ring}
+      west: {to: med_bay}
+      east: {to: crew_quarters}
+      down: {to: reactor_room}
+  - id: med_bay
+    name: Med Bay
+    desc: White surfaces and a humming autodoc. Spare oxygen canisters are racked on the wall.
+    exits:
+      east: {to: station_hub}
+  - id: crew_quarters
+    name: Crew Quarters
+    desc: Bunks, a cold coffee bulb, and a photo taped to the bulkhead. The engineer is on watch.
+    exits:
+      west: {to: station_hub}
+  - id: reactor_room
+    name: Reactor Room
+    desc: Blue Cherenkov light. The reactor breathes. A sealed panel hides the comms array.
+    exits:
+      up: {to: station_hub}
+      north: {to: comms_array}
+  - id: comms_array
+    name: Comms Array
+    desc: A cramped service crawl behind the reactor, full of cabling.
+    exits:
+      south: {to: reactor_room}
+  - id: hangar
+    name: Hangar
+    desc: The hangar bay stands open to vacuum, force-field shimmering. Your shuttle waits on the pad.
+    exits:
+      west: {to: docking_ring}
+  - id: derelict_airlock
+    name: Derelict Airlock
+    desc: The derelict's airlock is cold and dark. A corridor leads in.
+    exits:
+      north: {to: derelict_corridor}
+  - id: derelict_corridor
+    name: Derelict Corridor
+    desc: Frost on the walls. A bridge lies north; a cargo hold to the east.
+    exits:
+      south: {to: derelict_airlock}
+      north: {to: derelict_bridge}
+      east: {to: derelict_hold}
+  - id: derelict_bridge
+    name: Derelict Bridge
+    desc: Dead consoles and a frozen captain. The flight recorder sits in its cradle.
+    exits:
+      south: {to: derelict_corridor}
+  - id: derelict_hold
+    name: Cargo Hold
+    desc: Empty crates drift in the dark. Something clanks deeper in.
+    exits:
+      west: {to: derelict_corridor}
+  - id: moon_surface
+    name: Luna Regio
+    desc: Grey dust and a black sky full of stars. A cave mouth yawns nearby.
+    exits:
+      north: {to: moon_cave}
+  - id: moon_cave
+    name: Subsurface Cave
+    desc: Ice glitters in the beam of your lamp. A strange artefact rests in the frost.
+    exits:
+      south: {to: moon_surface}
+
+vehicles:
+  - id: shuttle
+    name: shuttle
+    desc: A battered surface-to-orbit shuttle. The cabin smells of ozone.
+    type: player
+    interior:
+      - id: shuttle_cabin
+        name: Shuttle Cabin
+        desc: Two crash couches and a humming console. The airlock is aft.
+        exits: {}
+    entry_room: shuttle_cabin
+    cockpit: shuttle_cabin
+    stops:
+      hangar: hangar
+      derelict: derelict_airlock
+      moon: moon_surface
+    start_stop: hangar
+    keys: [shuttle, ship, craft]
+    fuel: [fuel_rod, 6]
+
+items:
+  - id: o2_canister
+    name: oxygen canister
+    desc: A full O2 canister, heavy in the hand.
+    keys: [canister, oxygen, o2]
+    location: med_bay
+    verb_map:
+      use,intact:
+        - {add_var: oxygen, delta: 25}
+        - {consume: o2_canister}
+        - {msg: "You crack the canister and breathe deep. Your head clears."}
+  - id: flight_recorder
+    name: flight recorder
+    desc: A scorched black box, still faintly warm.
+    keys: [recorder, box]
+    location: derelict_bridge
+  - id: fuel_rod
+    name: fuel rod
+    desc: A spare fuel rod for the shuttle.
+    keys: [rod, fuel]
+    location: reactor_room
+  - id: artefact
+    name: xeno artefact
+    desc: A lattice of frozen light, older than the moon.
+    keys: [artefact, alien]
+    location: moon_cave
+    verb_map:
+      take,intact:
+        - {msg: "You lift the artefact. It hums, and the station's comms light up across the void."}
+        - {set_flag: artefact_taken, val: "true"}
+        - {add_var: morale, delta: 3}
+
+npcs:
+  - id: engineer
+    name: engineer
+    desc: A tired engineer with grease to the elbows.
+    keys: [engineer, crew]
+    location: crew_quarters
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "Oxygen's bleeding out of the ring seals. Take a canister before you go."
+            choices:
+              - {text: "How long do I have?", next: time}
+              - text: "Cheer up. We'll dock at the derelict."
+                next: cheer
+                outcomes:
+                  - {add_var: morale, delta: 1}
+              - {text: "Understood.", next: null}
+          time:
+            text: "Watch the gauge. Past zero, nothing I can do for you."
+            choices:
+              - {text: "Noted.", next: null}
+          cheer:
+            text: "...You always say that. Fine. Bring back the recorder and I'll believe you."
+            choices:
+              - {text: "Count on it.", next: null}
+
+quests:
+  - id: cold_orbit
+    name: Cold Orbit
+    desc: Recover the derelict's flight recorder and the xeno artefact, then make it back.
+    stages:
+      - {id: prep, desc: Take oxygen and fuel from the station.}
+      - {id: board, desc: Board the shuttle and undock.}
+      - {id: salvage, desc: Salvage the derelict and the moon cave.}
+      - {id: return, desc: Return to the station with both.}
+    reward:
+      - {msg: "You dock with both prizes aboard. The crew will eat well tonight."}
+
+rules:
+  - id: start_cold_orbit
+    on: enter station_hub
+    once: true
+    effects:
+      - {start_quest: cold_orbit}
+  - id: oxygen_drain
+    on: turn
+    effects:
+      - {add_var: oxygen, delta: -1}
+  - id: oxygen_critical
+    on: turn
+    once: true
+    when: {compare_var: {name: oxygen, op: lte, value: 10}}
+    effects:
+      - {msg: "Your vision swims. Oxygen critical — find a canister now."}
+  - id: suffocation
+    on: turn
+    when: {compare_var: {name: oxygen, op: lte, value: 0}}
+    effects:
+      - {game_end: death, msg: "You collapse as the last of the oxygen bleeds away. The station turns on, empty."}
+  - id: dock_derelict
+    on: command dock
+    when: {has_flag: recorder_aboard}
+    effects:
+      - {msg: "The docking clamps engage with a clang you feel in your teeth."}
+  - id: recovered_recorder
+    on: take flight_recorder
+    effects:
+      - {set_flag: recorder_aboard, val: "true"}
+  - id: cold_orbit_win
+    on: enter docking_ring
+    when: {all: [{has_flag: recorder_aboard}, {has_flag: artefact_taken}]}
+    effects:
+      - {msg: "You step onto the ring with both prizes aboard. The station lights come up to meet you."}
+      - {game_end: victory, msg: "VICTORY — Cold Orbit complete: the recorder and the artefact are recovered."}
+
+interactions:
+  entity: []
+  item: []

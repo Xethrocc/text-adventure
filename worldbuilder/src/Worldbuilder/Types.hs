@@ -342,6 +342,7 @@ data AVehicle = AVehicle
     , avKeywords   :: [String]
     , avFuel       :: Maybe (String, Int)
     , avConditions :: Map.Map String [AActionOutcome]
+    , avStartStop  :: Maybe String        -- ^ label of the stop the vehicle starts at
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AVehicle where
@@ -357,6 +358,7 @@ instance FromJSON AVehicle where
         <*> o .:? "keys"       .!= []
         <*> o .:? "fuel"
         <*> o .:? "conditions" .!= Map.empty
+        <*> o .:? "start_stop"
 
 -- ---------------------------------------------------------------------------
 -- Variables (Phase 3b)

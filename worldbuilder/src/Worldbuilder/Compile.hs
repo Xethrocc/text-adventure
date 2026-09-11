@@ -540,9 +540,11 @@ combineOutcomes os = E.Sequence os
 
 compileVehicleState :: AVehicle -> E.VehicleState
 compileVehicleState v = E.VehicleState
-    { E.vsCurrentStop = case Map.lookup (headSafe (Map.keys (avStops v))) (avStops v) of
+    { E.vsCurrentStop = case avStartStop v >>= (`Map.lookup` avStops v) of
           Just room -> room
-          Nothing   -> avEntryRoom v
+          Nothing   -> case Map.lookup (headSafe (Map.keys (avStops v))) (avStops v) of
+              Just room -> room
+              Nothing   -> avEntryRoom v
     , E.vsFuel = Nothing
     , E.vsActiveConditions = Set.empty
     , E.vsRoomOverrides = Map.empty

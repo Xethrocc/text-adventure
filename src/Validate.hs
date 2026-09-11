@@ -82,11 +82,20 @@ checkUnreachableRooms gw =
     let start = if Map.member "start" (rooms gw) then "start"
                 else if Map.null (rooms gw) then ""
                 else fst (Map.findMin (rooms gw))
-        reachable = reachableRooms start gw
+        -- Vehicle stops and interiors are reached by boarding/driving, not by
+        -- room exits, so they must not be flagged as unreachable.
+        vehRoomSet = Set.fromList
+            ( concat [ (stopExternalRoom <$> Map.elems (vehicleStops vd))
+                       ++ vehicleRooms vd
+                     | vd <- Map.elems (vehicleDefs gw) ] )
+        reachable = Set.fromList
+            ( concat [ reachableRooms s gw
+                     | s <- start : Set.toList vehRoomSet
+                     , Map.member s (rooms gw) ] )
         allRooms = [ rId | rId <- Map.keys (rooms gw)
                          , let room = rooms gw Map.! rId
                          , not ("vehicle" `Set.member` roomTags room) ]
-    in [UnreachableRoom rId | rId <- allRooms, rId `notElem` reachable]
+    in [UnreachableRoom rId | rId <- allRooms, not (Set.member rId reachable)]
 
 -- | BFS from a starting room, following both open and locked exits.
 reachableRooms :: RoomID -> GameWorld -> [RoomID]
