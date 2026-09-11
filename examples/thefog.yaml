@@ -53,7 +53,8 @@
       "desc": "Your are on a Street. You can go to North or South. In the North you can see many treetops",
       "exits": {
         "north": {
-          "to": "loc_6"
+          "to": "loc_6",
+          "locked_by": "wolf"
         },
         "south": {
           "to": "loc_2"
@@ -69,11 +70,6 @@
           "to": "loc_0"
         }
       }
-    },
-    {
-      "id": "loc_5",
-      "name": "Errorfield",
-      "desc": "You are in an Error"
     },
     {
       "id": "loc_6",
@@ -688,17 +684,6 @@
           "to": "loc_51"
         }
       }
-    },
-    {
-      "id": "loc_53",
-      "name": "Start Menu",
-      "desc": "Welcome to The Fog! Enter 'game' to start.",
-      "ascii": "   _________   \n  /   THE   \\\n |    FOG    |\n  \\_________/"
-    },
-    {
-      "id": "loc_54",
-      "name": "Wolf Fight",
-      "desc": "You are in a fight!"
     }
   ],
   "items": [
@@ -782,6 +767,8 @@
         "shrine"
       ],
       "location": "loc_38",
+      "state": "alive",
+      "portable": false,
       "verb_map": {
         "activate,alive": [
           {
@@ -806,6 +793,8 @@
         "shrine"
       ],
       "location": "loc_45",
+      "state": "alive",
+      "portable": false,
       "verb_map": {
         "activate,alive": [
           {
@@ -830,6 +819,8 @@
         "shrine"
       ],
       "location": "loc_52",
+      "state": "alive",
+      "portable": false,
       "verb_map": {
         "activate,alive": [
           {
@@ -854,6 +845,8 @@
         "shrine"
       ],
       "location": "loc_28",
+      "state": "alive",
+      "portable": false,
       "verb_map": {
         "activate,alive": [
           {
@@ -992,6 +985,41 @@
         {
           "msg": "The path is clear. You feel stronger."
         }
+      ]
+    }
+  ],
+  "rules": [
+    {
+      "id": "start_activate_water",
+      "on": "enter loc_38",
+      "effects": [{ "start_quest": "activate_water" }]
+    },
+    {
+      "id": "start_activate_fire",
+      "on": "enter loc_45",
+      "effects": [{ "start_quest": "activate_fire" }]
+    },
+    {
+      "id": "start_activate_air",
+      "on": "enter loc_52",
+      "effects": [{ "start_quest": "activate_air" }]
+    },
+    {
+      "id": "start_activate_earth",
+      "on": "enter loc_28",
+      "effects": [{ "start_quest": "activate_earth" }]
+    },
+    {
+      "id": "start_defeat_wolf",
+      "on": "enter loc_3",
+      "effects": [{ "start_quest": "defeat_wolf" }]
+    },
+    {
+      "id": "complete_defeat_wolf",
+      "on": "state wolf",
+      "effects": [
+        { "complete_quest": "defeat_wolf" },
+        { "msg": "The wolf is dead. The path north is clear." }
       ]
     }
   ],

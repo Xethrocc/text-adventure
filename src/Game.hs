@@ -318,10 +318,15 @@ updateNPCState :: String -> NPCState -> GameState -> GameState
 updateNPCState targetNpcId newNpcState state = state
     { save = (save state) { npcStates = Map.insert targetNpcId newNpcState (npcStates (save state)) } }
 
--- | Move NPC to void (dead)
+-- | Move NPC to void (dead) and fire state-change triggers, unlocking entity.
 killNPC :: String -> GameState -> GameState
-killNPC targetNpcId state = state
-    { save = (save state) { npcStates = Map.adjust (\s -> s { npcLocation = Removed, npcStatus = "dead" }) targetNpcId (npcStates (save state)) } }
+killNPC targetNpcId state =
+    let state' = state
+            { save = (save state)
+                { npcStates = Map.adjust (\s -> s { npcLocation = Removed, npcStatus = "dead" }) targetNpcId (npcStates (save state))
+                , entityStates = Map.insert targetNpcId "dead" (entityStates (save state))
+                } }
+    in fst (fireTriggers (OnStateChange targetNpcId) state')
 
 -- | Modify an NPC's property
 modifyNPCProp :: String -> String -> Int -> GameState -> GameState

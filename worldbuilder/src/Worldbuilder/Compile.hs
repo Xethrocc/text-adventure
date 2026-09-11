@@ -364,8 +364,8 @@ compileItemDefSafe registry i =
                 , E.itemEquipEffects = effects
                 , E.itemHidden = aiHidden i
                 , E.itemDiscoverText = aiDiscover i
-                , E.itemPortable = True
-                , E.itemTakeFailure = Nothing
+                , E.itemPortable = fromMaybe True (aiPortable i)
+                , E.itemTakeFailure = aiTakeFailure i
                 , E.itemVerbMap = verbMap'
                 })
 

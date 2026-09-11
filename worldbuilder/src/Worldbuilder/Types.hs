@@ -198,6 +198,8 @@ data AItem = AItem
     , aiProps      :: Map.Map String Int
     , aiOnTake     :: Maybe [AActionOutcome]
     , aiVerbMap    :: Map.Map String [AActionOutcome]  -- "verb,state" -> outcomes
+    , aiPortable   :: Maybe Bool       -- default Nothing → True (backwards compat)
+    , aiTakeFailure :: Maybe String
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AItem where
@@ -216,6 +218,8 @@ instance FromJSON AItem where
         <*> o .:? "props"     .!= Map.empty
         <*> o .:? "on_take"
         <*> o .:? "verb_map"  .!= Map.empty
+        <*> o .:? "portable"
+        <*> o .:? "take_failure"
 
 -- ---------------------------------------------------------------------------
 -- NPCs

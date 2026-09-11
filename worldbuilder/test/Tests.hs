@@ -218,6 +218,8 @@ minItem iid = AItem
     , aiProps = Map.empty
     , aiOnTake = Nothing
     , aiVerbMap = Map.empty
+    , aiPortable = Nothing
+    , aiTakeFailure = Nothing
     }
 
 advWithItem :: AItem -> Adventure
