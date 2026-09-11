@@ -1199,6 +1199,36 @@ testDialogueChoiceVisibleWhen = do
     r3 <- expectTrue "gated choice visible once flag set" ("Tell me about the treasure" `isInfixOf` msg2)
     pure (r1 && r2 && r3)
 
+-- | Phase 6: OnUse trigger fires for a multi-word item alias (e.g. "oil can").
+testOnUseTriggerMultiWordAlias :: IO Bool
+testOnUseTriggerMultiWordAlias = do
+    let sample = initSampleGame
+        w = (world sample)
+            { itemDefs = Map.insert "oil_can"
+                (ItemDef "oil_can" "oil can" (plainText "A dented oil can.") ["oil", "can"]
+                         Set.empty Nothing [] False Nothing True Nothing Map.empty)
+                (itemDefs (world sample))
+            , triggerDefs =
+                [ TriggerDef "light_lantern" (OnUse "oil_can") Nothing
+                    [SetValue (VRFlag "lantern_lit") (EVString "true")] False 0 ]
+            }
+        st = sample
+            { world = w
+            , save = (save sample)
+                { itemStates = Map.insert "oil_can"
+                    (ItemState (CarriedBy "player") "intact" Map.empty True)
+                    (itemStates (save sample)) } }
+        runForm t = let (ls', _) = applyLoopCommand (Interact VUse t) (initLoopState st)
+                    in Map.lookup "lantern_lit" (flags (save (lsCurrent ls')))
+        -- every alias form must resolve to the item id and fire the trigger
+        byId     = runForm "oil_can"
+        byName   = runForm "oil can"
+        byKey    = runForm "oil"
+    r1 <- expectEqual (Just "true") byId
+    r2 <- expectEqual (Just "true") byName
+    r3 <- expectEqual (Just "true") byKey
+    pure (r1 && r2 && r3)
+
 testDialogueInvalidChoice :: IO Bool
 testDialogueInvalidChoice = do
     let (st1, _) = executeCommand (Interact VTalk "old man") initSampleGame
@@ -1409,6 +1439,7 @@ main = do
         , runTest "dialogue tree start and render" testDialogueTreeStartAndRender
         , runTest "dialogue choice navigation" testDialogueChoiceNavigation
         , runTest "dialogue choice visible_when gating" testDialogueChoiceVisibleWhen
+        , runTest "OnUse trigger fires for multi-word item alias" testOnUseTriggerMultiWordAlias
         , runTest "dialogue bare number choice" testDialogueBareNumberChoice
         , runTest "dialogue invalid choice" testDialogueInvalidChoice
         , runTest "dialogue end clears active" testDialogueEndClearsActive

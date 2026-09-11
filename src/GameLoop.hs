@@ -235,9 +235,9 @@ commandEvents cmd before after = concat
            then [OnLeave oldRoom, OnEnter newRoom]
            else []
     takeDropUseEvents = case cmd of
-        Interact VTake t -> [OnTake t | Just _ <- [findItemIdByAlias t after]]
-        Interact VDrop t -> [OnDrop t | Just _ <- [findItemIdByAlias t after]]
-        Interact VUse t  -> [OnUse t | Just _ <- [findItemIdByAlias t after]]
+        Interact VTake t -> [OnTake iid | Just iid <- [findItemIdByAlias t after]]
+        Interact VDrop t -> [OnDrop iid | Just iid <- [findItemIdByAlias t after]]
+        Interact VUse t  -> [OnUse iid | Just iid <- [findItemIdByAlias t after]]
         _ -> []
     lookSearchEvents = case cmd of
         Look            -> [OnLook (currentRoom (save after)) | currentRoom (save after) `elem` Map.keys (rooms (world after))]
@@ -267,6 +267,7 @@ commandVerbName cmd = case cmd of
     EquipCmd _    -> "equip"
     UnequipCmd _  -> "unequip"
     UnequipAllCmd -> "unequip"
+    Interact (VCustom name) _ -> map toLower name
     Interact v _  -> map toLower (drop 1 (show v))  -- "VTake" -> "take"
     InteractWith VUseOn _ _ -> "use"
     _             -> "unknown"

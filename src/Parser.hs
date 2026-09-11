@@ -215,6 +215,8 @@ parseSimpleCommandWith defs tokens input = case tokens of
     v : targetParts | not (null targetParts) -> case parseVerbWith defs v of
         Just verb -> Interact verb (unwords (safeStripStopWords targetParts))
         Nothing   -> Unknown input
+    -- Bare custom verb with no object (e.g. "align", "pray", "accuse")
+    [v] | Just verb <- parseVerbWith defs v -> Interact verb ""
     _ -> Unknown input
 
 -- | Keep the original name for backward compatibility in tests
@@ -516,7 +518,9 @@ executeCommand (Interact verb targetStr) state =
                     | verb == VLookAt -> (state, resolveCondText (npcDescription npc) state)
                     | otherwise -> (state, "You can't do that to " ++ npcName npc ++ ".")
 
-        (Nothing, Nothing) -> (state, "You don't see '" ++ targetStr ++ "' here.")
+        (Nothing, Nothing)
+            | null targetStr -> (state, "")   -- bare verb (e.g. custom command); triggers carry the message
+            | otherwise -> (state, "You don't see '" ++ targetStr ++ "' here.")
 
 -- | Handle "use <item> on <entity>" with weapon→attack fallback
 executeCommand (InteractWith VUseOn itemStr entityStr) state =
