@@ -721,6 +721,13 @@
       ],
       "props": {
         "uses": 1
+      },
+      "verb_map": {
+          "use,intact": [
+          { "heal": 10 },
+          { "consume": "apple" },
+          { "msg": "You eat the apple. It's delicious and healing!" }
+        ]
       }
     },
     {
@@ -883,7 +890,14 @@
       "keys": [
         "princess"
       ],
-      "location": "loc_33"
+      "location": "loc_33",
+      "verb_map": {
+        "use,alive": [
+          { "move_npc": "princess", "to": "loc_0" },
+          { "msg": "You guide the princess to safety!" },
+          { "complete_quest": "rescue_princess" }
+        ]
+      }
     }
   ],
   "quests": [
@@ -986,6 +1000,24 @@
           "msg": "The path is clear. You feel stronger."
         }
       ]
+    },
+    {
+      "id": "rescue_princess",
+      "name": "Rescue the Princess",
+      "desc": "Save the princess from the river cave.",
+      "stages": [
+        {
+          "id": "find",
+          "desc": "Find the princess in the river cave."
+        },
+        {
+          "id": "swim",
+          "desc": "Swim to save the princess."
+        }
+      ],
+      "reward": [
+        { "msg": "The princess is safe! She thanks you warmly." }
+      ]
     }
   ],
   "rules": [
@@ -1021,6 +1053,22 @@
         { "complete_quest": "defeat_wolf" },
         { "msg": "The wolf is dead. The path north is clear." }
       ]
+    },
+    {
+      "id": "start_rescue_princess",
+      "on": "enter loc_33",
+      "effects": [{ "start_quest": "rescue_princess" }]
+    },
+    {
+      "id": "throne_victory",
+      "on": "enter loc_37",
+      "when": { "all": [
+        { "has_flag": "water_shrine_active" },
+        { "has_flag": "fire_shrine_active" },
+        { "has_flag": "air_shrine_active" },
+        { "has_flag": "earth_shrine_active" }
+      ]},
+      "effects": [{ "msg": "You have proven your worth. The throne is yours!" }]
     }
   ],
   "interactions": {

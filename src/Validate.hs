@@ -163,11 +163,14 @@ checkDialogueTrees gw =
 checkMissingItemsInDefs :: GameWorld -> [ValidationError]
 checkMissingItemsInDefs gw =
     let itemRefs = Set.fromList (Map.keys (itemDefs gw))
+        -- MoveEntity is ambiguous (items AND NPCs); NPC refs are validated by
+        -- checkMissingNPCsInDefs, so exclude them here.
+        npcRefs = Set.fromList (Map.keys (npcDefs gw))
         allRefs =
             concatMap idsFromOutcomeItem (allOutcomes gw)
             ++ [i1 | (i1, _) <- Map.keys (itemInteractions gw)]
             ++ [i2 | (_, i2) <- Map.keys (itemInteractions gw)]
-    in [MissingItem iId | iId <- nub allRefs, not (Set.member iId itemRefs)]
+    in [MissingItem iId | iId <- nub allRefs, not (Set.member iId itemRefs), not (Set.member iId npcRefs)]
 
 checkMissingNPCsInDefs :: GameWorld -> [ValidationError]
 checkMissingNPCsInDefs gw =
@@ -182,7 +185,10 @@ checkMissingNPCsInDefs gw =
 
 checkMissingEntitiesInDefs :: GameWorld -> [ValidationError]
 checkMissingEntitiesInDefs gw =
-    let entityRefs = Set.fromList (Map.keys (itemDefs gw) ++ Map.keys (npcDefs gw))
+    let -- "player" is a built-in entity valid for VRProperty refs
+        -- (e.g. VRProperty "player" "room" teleports the player).
+        entityRefs = Set.insert "player"
+            (Set.fromList (Map.keys (itemDefs gw) ++ Map.keys (npcDefs gw)))
         allRefs = concatMap idsFromOutcomeEntity (allOutcomes gw)
     in [MissingEntity eId "property" | eId <- nub allRefs, not (Set.member eId entityRefs)]
 

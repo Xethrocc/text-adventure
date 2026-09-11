@@ -630,6 +630,7 @@ compileAActionOutcome ao = case ao of
     AOCompleteQuest q -> E.QuestOp E.CompleteQuest q
     AOEquipItem i -> E.MoveEntity i (E.EquippedBy "player" "weapon")
     AORoomTransition r -> E.SetValue (E.VRProperty "player" "room") (E.EVString r)
+    AOMoveNPC n r -> E.MoveEntity n (E.InRoom r)
     AONarrative ls -> E.Sequence (map E.SendMessage ls ++ [E.Noop])
 
 -- ---------------------------------------------------------------------------

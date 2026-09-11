@@ -406,6 +406,7 @@ data AActionOutcome
     | AOCompleteQuest String
     | AOEquipItem String
     | AORoomTransition String
+    | AOMoveNPC String String          -- ^ npc id, target room (move_npc + to)
     | AONarrative [String]
     deriving (Show, Eq, Generic)
 
@@ -424,6 +425,7 @@ instance FromJSON AActionOutcome where
         <|> (AOCompleteQuest <$> o .: "complete_quest")
         <|> (AOEquipItem <$> o .: "equip")
         <|> (AORoomTransition <$> o .: "move")
+        <|> (AOMoveNPC <$> o .: "move_npc" <*> o .: "to")
         <|> (AONarrative <$> o .: "narrative")
         <|> fail "Unknown outcome type. Use one of: msg, heal, damage, give, consume, set_flag, start_quest, etc."
         ) v
