@@ -193,7 +193,21 @@ data Predicate
     | Location String String   -- ^ entity ID, room ID (is entity in this room?)
     deriving (Show, Eq, Generic)
 
-instance ToJSON Predicate
+-- | Serialize to the same compact object shape that FromJSON accepts
+--   (mirrors the YAML shorthand so saved worlds round-trip cleanly).
+instance ToJSON Predicate where
+    toJSON p = case p of
+        PTrue              -> object [ "true"     .= True ]
+        PNot q             -> object [ "not"      .= q ]
+        PAll qs            -> object [ "all"      .= qs ]
+        PAny qs            -> object [ "any"      .= qs ]
+        Compare l op r     -> object [ "lhs" .= l, "op" .= op, "rhs" .= r ]
+        PlayerHas i        -> object [ "has_item" .= i ]
+        EntityHasState e s -> object [ "state"    .= e, "is" .= s ]
+        HasFlag f          -> object [ "has_flag" .= f ]
+        RoomHasTag r t     -> object [ "room"     .= r, "has_tag" .= t ]
+        Location e r       -> object [ "at"       .= e, "room" .= r ]
+
 instance FromJSON Predicate where
     parseJSON = withObject "Predicate" $ \o ->
             (PAll  <$> o .: "all")
@@ -278,7 +292,11 @@ data CondText = CondText
     , ctVariants :: [TextVariant]
     } deriving (Show, Eq, Generic)
 
-instance ToJSON CondText
+instance ToJSON CondText where
+    toJSON (CondText def vars) = object
+        [ "default"  .= def
+        , "variants" .= vars
+        ]
 
 -- Accept either an object {default, variants} or a plain string (shorthand).
 instance FromJSON CondText where

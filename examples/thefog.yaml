@@ -696,7 +696,12 @@
         "note",
         "prophecy"
       ],
-      "location": "loc_0"
+      "location": "loc_0",
+      "verb_map": {
+        "read,intact": [
+          { "msg": "The prophecy reads: 'Four shrines shall call, a crystal to wake them all, a wolf shall fall, and a princess saved before the throne.'" }
+        ]
+      }
     },
     {
       "id": "map",
@@ -705,7 +710,12 @@
       "keys": [
         "map"
       ],
-      "location": "loc_0"
+      "location": "loc_0",
+      "verb_map": {
+        "read,intact": [
+          { "msg": "The map shows: home in the south, a street crossing, a forest to the north, and far mountains. Four shrines are marked." }
+        ]
+      }
     },
     {
       "id": "apple",
