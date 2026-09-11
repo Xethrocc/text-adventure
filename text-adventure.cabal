@@ -14,6 +14,11 @@ extra-source-files:
     README.md
     CHANGELOG.md
     docs/adventure-schema.md
+    docs/genres.md
+    docs/thefog-playthrough.md
+    scripts/ci.sh
+    ci/e2e/*.in
+    ci/e2e/*.expect
 
 library
   exposed-modules:     Types, Verbs, Game, GameLoop, Parser, SaveLoad, World, Sample, Validate

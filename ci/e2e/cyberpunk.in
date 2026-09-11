@@ -1,0 +1,29 @@
+east
+north
+west
+take cred-chip
+talk fixer
+1
+1
+east
+east
+north
+up
+up
+up
+hack office terminal
+east
+down
+hack server console
+east
+take black datashard
+west
+up
+west
+down
+down
+west
+south
+south
+west
+quit
