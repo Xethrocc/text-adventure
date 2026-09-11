@@ -1,0 +1,230 @@
+name: Chrome & Ash (Cyberpunk)
+start_room: street_corner
+
+# Genre: Cyberpunk — custom verb `hack`, variable `heat` with an escalation
+# threshold, faction flags, corporate infiltration, loot, betrayal ending.
+
+verbs:
+  - name: hack
+    aliases: [crack, breach]
+
+variables:
+  - name: heat
+    type: int
+    initial: 0
+    min: 0
+    max: 10
+
+rooms:
+  - id: street_corner
+    name: Street Corner
+    desc: Neon bleeds into puddles. A noodle bar steams to the east; a dark alley runs north; a loading yard lies west.
+    exits:
+      east: {to: noodle_bar}
+      north: {to: alley}
+      west: {to: escape_yard}
+  - id: noodle_bar
+    name: Noodle Bar
+    desc: Steam, cicadas of static from a cracked screen. The cook watches you over the counter.
+    exits:
+      west: {to: street_corner}
+      north: {to: market}
+  - id: market
+    name: Night Market
+    desc: Tarpaulined stalls, bootleg chrome, whispered deals. A fixer holds court in a doorway west.
+    exits:
+      south: {to: noodle_bar}
+      west: {to: fixer_den}
+      east: {to: subway}
+  - id: fixer_den
+    name: Fixer's Den
+    desc: A back room lit by one monitor. The fixer leans back, spinning a cred-chip.
+    exits:
+      east: {to: market}
+  - id: subway
+    name: Subway Platform
+    desc: The train never comes. A service tunnel gapes black to the north.
+    exits:
+      west: {to: market}
+      north: {to: tunnel}
+  - id: tunnel
+    name: Service Tunnel
+    desc: Cables run the ceiling like veins. A hatch leads up into the tower's spine.
+    exits:
+      south: {to: subway}
+      up: {to: corp_entrance}
+  - id: alley
+    name: Back Alley
+    desc: Dumpsters and drip. A barred back door sits in the wall, its lock blinking red.
+    exits:
+      south: {to: street_corner}
+      north: {to: back_door}
+  - id: back_door
+    name: Back Door
+    desc: A service door with a card reader. Beyond it, the corp lobby.
+    exits:
+      south: {to: alley}
+      east: {to: corp_entrance}
+  - id: corp_entrance
+    name: Corp Lobby
+    desc: Marble, chrome, and a reception drone. An elevator stands open; the stairwell is to the west.
+    exits:
+      down: {to: tunnel}
+      west: {to: back_door}
+      up: {to: elevator}
+  - id: elevator
+    name: Elevator
+    desc: Muzak and mirrored walls. Buttons for office floor and vault level.
+    exits:
+      down: {to: corp_entrance}
+      up: {to: office_floor}
+  - id: office_floor
+    name: Office Floor
+    desc: Empty desks in blue light. A terminal hums on the far desk; the rooftop access is east.
+    exits:
+      down: {to: elevator}
+      east: {to: rooftop}
+  - id: rooftop
+    name: Rooftop
+    desc: Wind, antennae, and the city below like a circuit board. A service shaft drops east.
+    exits:
+      west: {to: office_floor}
+      down: {to: server_room}
+  - id: server_room
+    name: Server Room
+    desc: Racks of cold servers breathe in the dark. Here the corp's secrets live.
+    exits:
+      up: {to: rooftop}
+      east: {to: vault}
+  - id: vault
+    name: Data Vault
+    desc: A single pedestal holds a black datashard. Everything in this tower was built around this room.
+    exits:
+      west: {to: server_room}
+  - id: escape_yard
+    name: Escape Yard
+    desc: A loading yard behind the tower. A gap in the fence opens east to the street.
+    exits:
+      east: {to: street_corner}
+
+items:
+  - id: cred_chip
+    name: cred-chip
+    desc: A fixer's cred-chip, still warm.
+    keys: [chip, cred]
+    location: fixer_den
+  - id: datashard
+    name: black datashard
+    desc: A matte-black datashard, humming with something valuable.
+    keys: [datashard, shard, data]
+    location: vault
+    verb_map:
+      take,intact:
+        - {msg: "You pocket the datashard. Alarm klaxons begin to wail."}
+        - {set_flag: shard_taken, val: "true"}
+        - {add_var: heat, delta: 4}
+  - id: back_door_terminal
+    name: card reader
+    desc: A red-blinking card reader on the service door.
+    keys: [reader, terminal, lock]
+    location: back_door
+    portable: false
+    verb_map:
+      hack,intact:
+        - {set_flag: back_door_open, val: "true"}
+        - {msg: "The reader's light goes green. The door clicks open."}
+        - {add_var: heat, delta: 2}
+  - id: office_terminal
+    name: office terminal
+    desc: A terminal on the far desk, still logged in.
+    keys: [terminal, console]
+    location: office_floor
+    portable: false
+    verb_map:
+      hack,intact:
+        - {set_flag: office_hacked, val: "true"}
+        - {msg: "You pull the floor plans: the vault sits one level east of the server room."}
+        - {add_var: heat, delta: 3}
+  - id: server_terminal
+    name: server console
+    desc: A console among the server racks.
+    keys: [console, server]
+    location: server_room
+    portable: false
+    verb_map:
+      hack,intact:
+        - {set_flag: vault_unlocked, val: "true"}
+        - {msg: "The vault door exhales and slides open."}
+        - {add_var: heat, delta: 4}
+
+npcs:
+  - id: fixer
+    name: fixer
+    desc: A woman in a mirror-shade coat, counting someone else's cred.
+    keys: [fixer]
+    location: fixer_den
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "So you want in on the Blackwood tower. That'll cost."
+            choices:
+              - text: "I have your cred-chip."
+                next: deal
+                visible_when: {has_item: cred_chip}
+                outcomes:
+                  - {set_flag: gang_ally, val: "true"}
+              - {text: "What's in the tower?", next: what}
+              - {text: "Later.", next: null}
+          what:
+            text: "A datashard with every name that matters. Walk out with it and you're made."
+            choices:
+              - {text: "Noted.", next: null}
+          deal:
+            text: "Good. The back door reader is patched to accept my chip's signature. Move quiet; heat kills."
+            choices:
+              - {text: "Understood.", next: null}
+  - id: guard
+    name: security drone
+    desc: A hovering drone with a stubby weapon mount.
+    keys: [drone, guard]
+    location: corp_entrance
+    max_hp: 18
+    attack: 6
+    defense: 3
+
+quests:
+  - id: blackwood_job
+    name: The Blackwood Job
+    desc: Break into the Blackwood tower and walk out with the datashard.
+    stages:
+      - {id: recon, desc: Find a way into the tower.}
+      - {id: infiltrate, desc: Get past the corp security.}
+      - {id: exfil, desc: Steal the datashard and get clear.}
+    reward:
+      - {msg: "The datashard is yours. The city opens its doors."}
+
+rules:
+  - id: start_job
+    on: enter market
+    once: true
+    effects:
+      - {start_quest: blackwood_job}
+  - id: heat_escalation
+    on: turn
+    once: true
+    when: {compare_var: {name: heat, op: gte, value: 8}}
+    effects:
+      - {set_flag: corp_alert, val: "true"}
+      - {msg: "Corp security floods the net. Every drone in the tower is looking for you now."}
+  - id: exfil_win
+    on: enter escape_yard
+    when: {has_flag: shard_taken}
+    effects:
+      - {msg: "You drop from the fence gap into the crowd and are gone."}
+      - {game_end: victory, msg: "VICTORY — You make your exit with the datashard."}
+
+interactions:
+  entity: []
+  item: []
