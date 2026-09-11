@@ -1,0 +1,309 @@
+name: The Glass Alibi (Detective)
+start_room: street
+
+# Genre: Detective — predicate chains, dialogue gated by visible_when, a custom
+# `accuse` verb whose outcome depends on the evidence you collected.
+# Wrong accusation with full evidence = failure end.
+
+verbs:
+  - name: accuse
+    aliases: [charge, denounce]
+
+variables:
+  - name: suspicion
+    type: int
+    initial: 0
+    min: 0
+    max: 5
+
+rooms:
+  - id: street
+    name: Ashfield Lane
+    desc: Fog and gaslight. Tall iron gates stand north, leading to the Wren manor.
+    exits:
+      north: {to: manor_gate}
+  - id: manor_gate
+    name: Manor Gates
+    desc: An arch of black iron, one hinge broken. The drive runs north to the house.
+    exits:
+      south: {to: street}
+      north: {to: drive}
+  - id: drive
+    name: Gravel Drive
+    desc: Gravel crunches underfoot. The foyer door stands open; stables lie east, the walled garden west.
+    exits:
+      south: {to: manor_gate}
+      north: {to: foyer}
+      east: {to: stables}
+      west: {to: garden}
+  - id: stables
+    name: Stables
+    desc: The horses are restless. A note is pinned to the last stall, in a hurried hand.
+    exits:
+      west: {to: drive}
+  - id: foyer
+    name: Grand Foyer
+    desc: A chandelier, unlit. The butler stands by the stair, immaculate. The drawing room is west, the library east.
+    exits:
+      south: {to: drive}
+      west: {to: drawing_room}
+      east: {to: library}
+      up: {to: landing}
+  - id: drawing_room
+    name: Drawing Room
+    desc: The widow sits by a dead fire, twisting a ring. A greenhouse door opens south.
+    exits:
+      east: {to: foyer}
+      south: {to: greenhouse}
+  - id: greenhouse
+    name: Greenhouse
+    desc: Orchids and condensation. A rack of apothecary bottles stands by the potting bench.
+    exits:
+      north: {to: drawing_room}
+  - id: library
+    name: Library
+    desc: Shelves to the ceiling. A ledger lies open on the reading desk, half-corrected.
+    exits:
+      west: {to: foyer}
+      north: {to: study_door}
+  - id: study_door
+    name: Study Door
+    desc: The study door stands ajar, its lock forced. The body was found here.
+    exits:
+      south: {to: library}
+      north: {to: study}
+  - id: study
+    name: The Study
+    desc: A fallen lamp, a shattered decanter, and a chalk outline on the rug. The doctor crouches over it, taking notes.
+    exits:
+      south: {to: study_door}
+  - id: landing
+    name: Upstairs Landing
+    desc: Dark portraits. A bedroom east, the attic stairs north.
+    exits:
+      down: {to: foyer}
+      east: {to: bedroom}
+      north: {to: attic}
+  - id: bedroom
+    name: Master Bedroom
+    desc: A bed turned down but not slept in. A wardrobe stands open.
+    exits:
+      west: {to: landing}
+  - id: attic
+    name: Attic
+    desc: Dust, trunks, and a torn letter pinned under a loose floorboard.
+    exits:
+      south: {to: landing}
+  - id: kitchen
+    name: Kitchen
+    desc: Cold stoves. The maid scrubs a pot she has clearly already scrubbed. A cellar door stands open.
+    exits:
+      west: {to: garden}
+      down: {to: cellar}
+  - id: cellar
+    name: Wine Cellar
+    desc: Racks of dusty bottles. A single gardener's glove lies in the corner, stained dark.
+    exits:
+      up: {to: kitchen}
+  - id: garden
+    name: Walled Garden
+    desc: Roses gone to seed. A chapel door stands west, the kitchen door east, the drive beyond the gate north.
+    exits:
+      north: {to: drive}
+      west: {to: chapel}
+      east: {to: kitchen}
+  - id: chapel
+    name: Private Chapel
+    desc: A cold chapel with a single stained window. The family Bible lies open on the altar.
+    exits:
+      east: {to: garden}
+
+items:
+  - id: alibi_note
+    name: hurried note
+    desc: A note in a hurried hand, pinned in the stables.
+    keys: [note, alibi]
+    location: stables
+    on_take:
+      - {set_flag: note_found, val: "true"}
+      - {msg: "The note reads: 'The doctor was not in his room at eleven. He lied.'"}
+  - id: ledger
+    name: household ledger
+    desc: The household ledger, half-corrected in two different inks.
+    keys: [ledger, book]
+    location: library
+    on_take:
+      - {set_flag: ledger_found, val: "true"}
+      - {msg: "Two payments to a chemist, both in the doctor's hand, both erased."}
+  - id: torn_letter
+    name: torn letter
+    desc: Half a letter, torn across.
+    keys: [letter, torn]
+    location: attic
+    hidden: true
+    discover: "Under a loose floorboard you find half a letter."
+    on_take:
+      - {set_flag: letter_found, val: "true"}
+      - {msg: "Only the end survives: '...and if the will is read, I am ruined. — R.'"}
+  - id: bloody_glove
+    name: gardener's glove
+    desc: A gardener's glove, stained dark.
+    keys: [glove]
+    location: cellar
+    on_take:
+      - {set_flag: glove_found, val: "true"}
+      - {msg: "The stain is not soil. The glove is far too large for any gardener here."}
+
+npcs:
+  - id: butler
+    name: butler
+    desc: A butler of forty years' service, immaculate and unreadable.
+    keys: [butler]
+    location: foyer
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "A tragedy, sir. I have served this house since before you were born."
+            choices:
+              - {text: "Where were you at eleven?", next: alibi}
+              - text: "I found the household ledger."
+                next: ledger
+                visible_when: {has_item: ledger}
+              - {text: "That is all.", next: null}
+          alibi:
+            text: "Below stairs, sir, laying the fires. The whole staff will swear to it."
+            choices:
+              - {text: "Convenient.", next: null}
+          ledger:
+            text: "Two payments erased? ...Then you had best speak to the doctor, sir. Not I."
+            choices:
+              - text: "You knew."
+                next: knew
+                outcomes:
+                  - {add_var: suspicion, delta: 1}
+              - {text: "We shall see.", next: null}
+          knew:
+            text: "I knew the master was being bled by someone. I did not know by whom. I swear it."
+            choices:
+              - {text: "Thank you, that is all.", next: null}
+    verb_map:
+      accuse,alive:
+        - if:
+            all:
+              - {has_item: ledger}
+              - {has_item: alibi_note}
+              - {has_item: torn_letter}
+              - {has_item: bloody_glove}
+          then:
+            - {msg: "You name the butler. He does not flinch. 'Then you have evidence only of my silence, sir — not of my hand.'"}
+            - {game_end: death, msg: "FAILURE — You accused the wrong person. The real killer walks. The case goes cold."}
+          else:
+            - {msg: "You accuse the butler. He regards you with pity. You have nothing but a hunch."}
+  - id: widow
+    name: widow
+    desc: The widow, pale and precise, twisting a ring that no longer fits.
+    keys: [widow, lady]
+    location: drawing_room
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "You must forgive me. I cannot grieve and be questioned at the same time."
+            choices:
+              - {text: "Who benefits from the will?", next: will}
+              - text: "I found a torn letter."
+                next: letter
+                visible_when: {has_item: torn_letter}
+              - {text: "I will leave you.", next: null}
+          will:
+            text: "I do. And the doctor holds my husband's debts. Do with that what you will."
+            choices:
+              - {text: "Noted.", next: null}
+          letter:
+            text: "'R'? No — the doctor signs himself 'R. Ashgrove'. He was my husband's physician, and his creditor."
+            choices:
+              - text: "That is the name I needed."
+                next: null
+                outcomes:
+                  - {set_flag: knows_name, val: "true"}
+                  - {add_var: suspicion, delta: 1}
+    verb_map:
+      accuse,alive:
+        - if: {has_item: torn_letter}
+          then: [{msg: "You name the widow. She laughs, once. 'If I wanted him dead, I would not have waited for the will to be read.' She is right."}]
+          else: [{msg: "You accuse the widow. She laughs, once, and turns away."}]
+  - id: doctor
+    name: doctor
+    desc: The doctor, crouched over the body with a notebook and very steady hands.
+    keys: [doctor, physician]
+    location: study
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "A sad business. A blow to the head, I should say. I was in my room all evening, of course."
+            choices:
+              - text: "The stables say otherwise."
+                next: confront
+                visible_when: {has_item: alibi_note}
+              - text: "These are your payments in the ledger?"
+                next: payments
+                visible_when: {has_item: ledger}
+              - {text: "Of course.", next: null}
+          confront:
+            text: "...The stable boy is a drunk. Believe whom you like."
+            choices:
+              - text: "Then explain the glove."
+                next: glove
+                visible_when: {has_item: bloody_glove}
+                outcomes:
+                  - {add_var: suspicion, delta: 1}
+              - {text: "We shall see.", next: null}
+          payments:
+            text: "A physician extends credit. That is not a crime."
+            choices:
+              - {text: "Neither is being solvent. Yet you were not.", next: null}
+          glove:
+            text: "A gardener's glove proves a gardener's hand, not mine."
+            choices:
+              - {text: "It would not fit a gardener. It would fit you.", next: null}
+    verb_map:
+      accuse,alive:
+        - if:
+            all:
+              - {has_item: ledger}
+              - {has_item: alibi_note}
+              - {has_item: torn_letter}
+              - {has_item: bloody_glove}
+          then:
+            - {msg: "You lay it out: the erased payments, the false alibi, the letter signed 'R', the glove no gardener could wear. The doctor's hands, at last, are not steady."}
+            - {set_flag: solved, val: "true"}
+            - {game_end: victory, msg: "VICTORY — Dr. R. Ashgrove confesses. The case is closed, and the glass alibi is broken."}
+          else:
+            - {msg: "You accuse the doctor. He smiles thinly. 'A theory, sir, is not a case.' You need the payments, the alibi, the letter and the glove."}
+
+quests:
+  - id: wren_case
+    name: The Wren Case
+    desc: Gather the four pieces of evidence, then name the killer.
+    stages:
+      - {id: scene, desc: Examine the scene and the household.}
+      - {id: evidence, desc: Collect the payments, alibi, letter and glove.}
+      - {id: accuse, desc: Accuse the right person with the evidence in hand.}
+    reward:
+      - {msg: "The case is closed."}
+
+rules:
+  - id: start_case
+    on: enter foyer
+    once: true
+    effects:
+      - {start_quest: wren_case}
+
+interactions:
+  entity: []
+  item: []

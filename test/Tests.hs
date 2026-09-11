@@ -1229,6 +1229,48 @@ testOnUseTriggerMultiWordAlias = do
     r3 <- expectEqual (Just "true") byKey
     pure (r1 && r2 && r3)
 
+-- | take of an item with on_take picks the item up AND fires the effects.
+testTakeWithOnTakePicksUp :: IO Bool
+testTakeWithOnTakePicksUp = do
+    let sample = initSampleGame
+        w = (world sample)
+            { itemDefs = Map.insert "token"
+                (ItemDef "token" "token" (plainText "A token.") ["token"] Set.empty
+                         Nothing [] False Nothing True Nothing
+                         (Map.singleton (VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))))
+                (itemDefs (world sample)) }
+        here = currentRoom (save sample)
+        st = sample { world = w
+                    , save = (save sample)
+                        { itemStates = Map.insert "token"
+                            (ItemState (InRoom here) "intact" Map.empty True)
+                            (itemStates (save sample)) } }
+        (st', _) = executeCommand (Interact VTake "token") st
+    r1 <- expectTrue "item is carried" (hasItem "token" st')
+    r2 <- expectEqual (Just "true") (getFlag "took" st')
+    pure (r1 && r2)
+
+-- | take of a non-portable item fails with the authored take_failure message.
+testTakeNonPortableFails :: IO Bool
+testTakeNonPortableFails = do
+    let sample = initSampleGame
+        w = (world sample)
+            { itemDefs = Map.insert "statue"
+                (ItemDef "statue" "statue" (plainText "A statue.") ["statue"] Set.empty
+                         Nothing [] False Nothing False (Just "Too heavy to lift.")
+                         Map.empty)
+                (itemDefs (world sample)) }
+        here = currentRoom (save sample)
+        st = sample { world = w
+                    , save = (save sample)
+                        { itemStates = Map.insert "statue"
+                            (ItemState (InRoom here) "intact" Map.empty True)
+                            (itemStates (save sample)) } }
+        (st', msg) = executeCommand (Interact VTake "statue") st
+    r1 <- expectTrue "shows take_failure" ("Too heavy to lift." `isInfixOf` msg)
+    r2 <- expectTrue "not carried" (not (hasItem "statue" st'))
+    pure (r1 && r2)
+
 testDialogueInvalidChoice :: IO Bool
 testDialogueInvalidChoice = do
     let (st1, _) = executeCommand (Interact VTalk "old man") initSampleGame
@@ -1440,6 +1482,8 @@ main = do
         , runTest "dialogue choice navigation" testDialogueChoiceNavigation
         , runTest "dialogue choice visible_when gating" testDialogueChoiceVisibleWhen
         , runTest "OnUse trigger fires for multi-word item alias" testOnUseTriggerMultiWordAlias
+        , runTest "take with on_take picks up and fires effects" testTakeWithOnTakePicksUp
+        , runTest "take of non-portable item shows take_failure" testTakeNonPortableFails
         , runTest "dialogue bare number choice" testDialogueBareNumberChoice
         , runTest "dialogue invalid choice" testDialogueInvalidChoice
         , runTest "dialogue end clears active" testDialogueEndClearsActive

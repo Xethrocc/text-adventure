@@ -495,16 +495,32 @@ executeCommand (Interact verb targetStr) state =
             let iId = itemId item
                 maybeItemState = Map.lookup iId (itemStates (save state))
                 currentStatus = maybe "unknown" itemStatus maybeItemState
-            in case Map.lookup (verb, currentStatus) (itemVerbMap item) of
-                Just outcome -> applyOutcome outcome iId state
-                Nothing ->
-                    if verb == VTake && maybe False (\loc -> loc /= CarriedBy "player") (fmap itemLocation maybeItemState)
-                    then (pickupItem iId state, "You take the " ++ itemName item ++ ".")
-                    else if verb == VDrop && hasItem iId state
-                    then (dropItem iId state, "You drop the " ++ itemName item ++ ".")
-                    else if verb == VLookAt
-                    then (state, resolveCondText (itemDescription item) state)
-                    else (state, "You can't do that to the " ++ itemName item ++ " right now.")
+                notCarried = maybe False (\loc -> loc /= CarriedBy "player") (fmap itemLocation maybeItemState)
+                vmLookup = Map.lookup (verb, currentStatus) (itemVerbMap item)
+            in case (verb, vmLookup) of
+                -- Taking: enforce portability, then pick up AND run on_take.
+                (VTake, _)
+                    | not notCarried ->
+                        (state, "You already have the " ++ itemName item ++ ".")
+                    | otherwise ->
+                        case itemPortable item of
+                            False -> (state, fromMaybe ("You can't take the " ++ itemName item ++ ".")
+                                                     (itemTakeFailure item))
+                            True ->
+                                let (st', extra) = case vmLookup of
+                                        Just outcome -> applyOutcome outcome iId state
+                                        Nothing      -> (state, "")
+                                    takeMsg = "You take the " ++ itemName item ++ "."
+                                in (pickupItem iId st',
+                                    if null extra then takeMsg else takeMsg ++ "\n" ++ extra)
+                _ -> case vmLookup of
+                    Just outcome -> applyOutcome outcome iId state
+                    Nothing ->
+                        if verb == VDrop && hasItem iId state
+                        then (dropItem iId state, "You drop the " ++ itemName item ++ ".")
+                        else if verb == VLookAt
+                        then (state, resolveCondText (itemDescription item) state)
+                        else (state, "You can't do that to the " ++ itemName item ++ " right now.")
 
         (Nothing, Just npc) ->
             let nId = npcId npc
