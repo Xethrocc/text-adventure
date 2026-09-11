@@ -15,19 +15,18 @@ initSampleGame = GameState
             [ ("start", Room
                 "start"
                 "Starting Room"
-                "You are in a small stone chamber with torches on the walls. There are exits to the north and east. The east door looks sturdy and has a keyhole."
+                (plainText "You are in a small stone chamber with torches on the walls. There are exits to the north and east. The east door looks sturdy and has a keyhole.")
                 (Map.fromList [(North, Open "hallway"), (East, Locked "treasure" "treasure_door"), (South, Open "meadow")])
                 Set.empty
-                Map.empty
                 Nothing
                 Nothing Nothing Nothing Nothing Nothing)
             , ("hallway", Room
                 "hallway"
                 "Dark Hallway"
-                "A long, dark hallway stretches before you. The air is damp and cold. There's an exit to the south."
+                (CondText "A long, dark hallway stretches before you. The air is damp and cold. There's an exit to the south."
+                [TextVariant (HasFlag "torch_lit") "The torches along the wall sputter to life, pushing the darkness back."])
                 (Map.fromList [(South, Open "start")])
                 (Set.fromList ["dark"])
-                (Map.singleton "torch_lit" "The torches along the wall sputter to life, pushing the darkness back.")
                 (Just "torch_lit")
                 Nothing Nothing Nothing
                 (Just (Sequence
@@ -37,20 +36,18 @@ initSampleGame = GameState
             , ("treasure", Room
                 "treasure"
                 "Treasure Room"
-                "You've entered a magnificent treasure room! Gold coins and jewels are scattered everywhere. There's an exit to the west."
+                (plainText "You've entered a magnificent treasure room! Gold coins and jewels are scattered everywhere. There's an exit to the west.")
                 (Map.fromList [(West, Open "start")])
                 Set.empty
-                Map.empty
                 Nothing
                 Nothing Nothing Nothing Nothing Nothing)
             -- Vehicle demo (Phase 3): a horse-drawn carriage
             , ("meadow", Room
                 "meadow"
                 "Sunny Meadow"
-                "A wide meadow stretches to the horizon. Wildflowers sway in the breeze. Your carriage is parked here."
+                (plainText "A wide meadow stretches to the horizon. Wildflowers sway in the breeze. Your carriage is parked here.")
                 (Map.fromList [(North, Open "start")])
                 Set.empty
-                Map.empty
                 Nothing
                 (Just (Sequence
                     (map SendMessage ["A gentle breeze rustles the grass.",
@@ -61,28 +58,27 @@ initSampleGame = GameState
             , ("carriage_cabin", Room
                 "carriage_cabin"
                 "Carriage Cabin"
-                "You sit inside a comfortably worn carriage. A small window lets you watch the road. The reins are within reach."
+                (plainText "You sit inside a comfortably worn carriage. A small window lets you watch the road. The reins are within reach.")
                 Map.empty
                 (Set.fromList ["vehicle"])
-                Map.empty
                 Nothing
                 Nothing Nothing Nothing Nothing Nothing)
             ]
         , itemDefs = Map.fromList
-            [ ("torch", ItemDef "torch" "torch" "A burning torch that provides light."
+            [ ("torch", ItemDef "torch" "torch" (plainText "A burning torch that provides light.")
                 ["torch", "burning torch"] (Set.fromList ["lightsource"])
                 Nothing [] False Nothing True Nothing Map.empty)
-            , ("key", ItemDef "key" "key" "A small brass key."
+            , ("key", ItemDef "key" "key" (plainText "A small brass key.")
                 ["key", "brass key"] Set.empty Nothing [] False Nothing True Nothing
                 (Map.singleton (VTake, "intact")
                     (Sequence
                         [ QuestOp StartQuest "find_treasure"
                         , SetValue (VRFlag "quest_started") (EVString "true") ])))
-            , ("gold", ItemDef "gold" "gold" "A pile of shiny gold coins."
+            , ("gold", ItemDef "gold" "gold" (plainText "A pile of shiny gold coins.")
                 ["gold", "coins", "gold coins"] Set.empty Nothing [] False Nothing True Nothing Map.empty)
-            , ("jewel", ItemDef "jewel" "jewel" "A sparkling ruby that catches the light."
+            , ("jewel", ItemDef "jewel" "jewel" (plainText "A sparkling ruby that catches the light.")
                 ["jewel", "ruby", "sparkling ruby"] Set.empty Nothing [] False Nothing True Nothing Map.empty)
-            , ("potion_healing", ItemDef "potion_healing" "healing potion" "A small vial filled with a bubbling red liquid."
+            , ("potion_healing", ItemDef "potion_healing" "healing potion" (plainText "A small vial filled with a bubbling red liquid.")
                 ["potion", "red potion", "healing potion"] Set.empty Nothing [] False Nothing True Nothing
                 (Map.singleton (VUse, "intact")
                     (Sequence
@@ -90,27 +86,27 @@ initSampleGame = GameState
                         , SetValue (VRItemProp "potion_healing" "uses") (EVInt (-1))
                         , SetValue (VRProperty "potion_healing" "state") (EVString "empty") ])))
             -- Equipment examples
-            , ("sword_rusty", ItemDef "sword_rusty" "rusty sword" "A pitted blade, but it will do."
+            , ("sword_rusty", ItemDef "sword_rusty" "rusty sword" (plainText "A pitted blade, but it will do.")
                 ["sword", "rusty sword", "blade"] (Set.fromList ["weapon"])
                 (Just Weapon) [AttackBonus 5] False Nothing True Nothing Map.empty)
-            , ("leather_armor", ItemDef "leather_armor" "leather armor" "Supple boiled leather, well worn."
+            , ("leather_armor", ItemDef "leather_armor" "leather armor" (plainText "Supple boiled leather, well worn.")
                 ["armor", "leather armor"] Set.empty
                 (Just Body) [DefenseBonus 3] False Nothing True Nothing Map.empty)
-            , ("ring_vigor", ItemDef "ring_vigor" "ring of vigor" "A plain bronze band that feels warm."
+            , ("ring_vigor", ItemDef "ring_vigor" "ring of vigor" (plainText "A plain bronze band that feels warm.")
                 ["ring", "ring of vigor"] Set.empty
                 (Just Accessory) [MaxHealthBonus 20] False Nothing True Nothing Map.empty)
             -- Hidden item, found via `search`
-            , ("note_old", ItemDef "note_old" "old note" "A folded scrap of parchment, brittle with age."
+            , ("note_old", ItemDef "note_old" "old note" (plainText "A folded scrap of parchment, brittle with age.")
                 ["note", "old note"] Set.empty Nothing []
                 True (Just "Wedged behind a loose brick you find an old note.") True Nothing Map.empty)
             -- Vehicle demo (Phase 3)
-            , ("carriage", ItemDef "carriage" "carriage" "A sturdy horse-drawn carriage with polished wood panels."
+            , ("carriage", ItemDef "carriage" "carriage" (plainText "A sturdy horse-drawn carriage with polished wood panels.")
                 ["carriage", "wagon", "coach"] (Set.fromList ["vehicle"]) Nothing [] False Nothing True Nothing Map.empty)
-            , ("hay", ItemDef "hay" "bale of hay" "A fragrant bale of hay — prime horse fuel."
+            , ("hay", ItemDef "hay" "bale of hay" (plainText "A fragrant bale of hay — prime horse fuel.")
                 ["hay", "bale", "bale of hay"] Set.empty Nothing [] False Nothing True Nothing Map.empty)
             ]
         , npcDefs = Map.fromList
-            [ ("oldman", NPCDef "oldman" "old man" "A withered old man in robes."
+            [ ("oldman", NPCDef "oldman" "old man" (plainText "A withered old man in robes.")
                 (Map.singleton "alive" "It's dangerous to go alone! Take... well, I don't have anything actually.")
                 (Map.singleton "alive" (DialogueTree "greeting" (Map.fromList
                     [ ("greeting", DialogueNode "greeting" "Greetings, traveler! What brings you into this dark place?"
@@ -127,7 +123,7 @@ initSampleGame = GameState
                         ])
                     ])))
                 ["man", "old man"] Nothing 0 0 Map.empty)
-            , ("goblin", NPCDef "goblin" "goblin" "A nasty little green goblin."
+            , ("goblin", NPCDef "goblin" "goblin" (plainText "A nasty little green goblin.")
                 (Map.singleton "alive" "Grrr!! I will eat you!")
                 Map.empty
                 ["goblin", "monster"] (Just 30) 8 2 Map.empty)

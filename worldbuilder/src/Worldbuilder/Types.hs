@@ -6,6 +6,7 @@
 module Worldbuilder.Types where
 
 import Data.Aeson
+import Data.Aeson.Types (Parser, Object)
 import Control.Applicative ((<|>))
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
@@ -75,6 +76,39 @@ instance FromJSON ATrigger where
         <*> o .:? "once"    .!= False
         <*> o .:? "cooldown" .!= 0
 
+-- | A conditional text variant in YAML: `when:` predicate gates `text:`.
+data ATextVariant = ATextVariant
+    { atvWhen :: E.Predicate
+    , atvText :: String
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ATextVariant where
+    parseJSON = withObject "ATextVariant" $ \o -> ATextVariant
+        <$> o .:  "when"
+        <*> o .:  "text"
+
+-- | YAML shorthand for the engine's CondText: plain string or {default, variants}.
+data ACondText = ACondText
+    { actDefault  :: String
+    , actVariants :: [ATextVariant]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ACondText where
+    parseJSON v = case v of
+        String s -> pure (ACondText (T.unpack s) [])
+        _ -> withObject "ACondText" (\o -> ACondText
+                <$> o .:? "default"  .!= ""
+                <*> o .:? "variants" .!= []) v
+
+-- | Parse a `description` field: prefers the new CondText object, falls back
+--   to legacy `desc:` string.
+textField :: Object -> Parser ACondText
+textField o = do
+    mNew <- o .:? "description"
+    case mNew of
+        Just ct -> pure ct
+        Nothing -> ACondText <$> o .:? "desc" .!= "" <*> pure []
+
 -- ---------------------------------------------------------------------------
 -- Rooms
 -- ---------------------------------------------------------------------------
@@ -82,10 +116,9 @@ instance FromJSON ATrigger where
 data ARoom = ARoom
     { arId          :: String
     , arName        :: String
-    , arDesc        :: String
+    , arTexts       :: ACondText
     , arExits       :: Map.Map String AExitRef
     , arTags        :: [String]
-    , arAltDesc     :: Map.Map String String
     , arLightFlag   :: Maybe String
     , arOnEnter     :: Maybe [AActionOutcome]
     , arOnLook      :: Maybe [AActionOutcome]
@@ -98,10 +131,9 @@ instance FromJSON ARoom where
     parseJSON = withObject "ARoom" $ \o -> ARoom
         <$> o .:  "id"
         <*> o .:  "name"
-        <*> o .:? "desc"      .!= ""
+        <*> textField o
         <*> o .:? "exits"     .!= Map.empty
         <*> o .:? "tags"      .!= []
-        <*> o .:? "alt_desc"  .!= Map.empty
         <*> o .:? "light_flag"
         <*> o .:? "on_enter"
         <*> o .:? "on_look"
@@ -130,7 +162,7 @@ instance FromJSON AExitRef where
 data AItem = AItem
     { aiId         :: String
     , aiName       :: String
-    , aiDesc       :: String
+    , aiTexts      :: ACondText
     , aiKeywords   :: [String]
     , aiTags       :: [String]
     , aiLocation   :: String           -- room id or "inventory"
@@ -148,7 +180,7 @@ instance FromJSON AItem where
     parseJSON = withObject "AItem" $ \o -> AItem
         <$> o .:  "id"
         <*> o .:  "name"
-        <*> o .:? "desc"      .!= ""
+        <*> textField o
         <*> o .:? "keys"      .!= []
         <*> o .:? "tags"      .!= []
         <*> o .:? "location"  .!= "start"
@@ -168,7 +200,7 @@ instance FromJSON AItem where
 data ANPC = ANPC
     { anId          :: String
     , anName        :: String
-    , anDesc        :: String
+    , anTexts       :: ACondText
     , anKeywords    :: [String]
     , anLocation    :: String
     , anState       :: String
@@ -183,7 +215,7 @@ instance FromJSON ANPC where
     parseJSON = withObject "ANPC" $ \o -> ANPC
         <$> o .:  "id"
         <*> o .:  "name"
-        <*> o .:? "desc"      .!= ""
+        <*> textField o
         <*> o .:? "keys"      .!= []
         <*> o .:? "location"  .!= "start"
         <*> o .:? "state"     .!= "alive"

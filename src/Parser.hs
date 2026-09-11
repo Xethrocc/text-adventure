@@ -529,7 +529,7 @@ executeCommand (Interact verb targetStr) state =
                     else if verb == VDrop && hasItem iId state
                     then (dropItem iId state, "You drop the " ++ itemName item ++ ".")
                     else if verb == VLookAt
-                    then (state, itemDescription item)
+                    then (state, resolveCondText (itemDescription item) state)
                     else (state, "You can't do that to the " ++ itemName item ++ " right now.")
 
         (Nothing, Just npc) ->
@@ -541,7 +541,7 @@ executeCommand (Interact verb targetStr) state =
                 Nothing
                     | verb == VTalk -> talkTo npc maybeNpcState state
                     | verb == VAttack -> executeAttack npc maybeNpcState targetStr state
-                    | verb == VLookAt -> (state, npcDescription npc)
+                    | verb == VLookAt -> (state, resolveCondText (npcDescription npc) state)
                     | otherwise -> (state, "You can't do that to " ++ npcName npc ++ ".")
 
         (Nothing, Nothing) -> (state, "You don't see '" ++ targetStr ++ "' here.")
@@ -712,14 +712,9 @@ isDark room state =
         Nothing  -> False
         Just flg -> getFlag flg state == Just "true"
 
--- | Pick the room description: an alternative one if its flag is set
+-- | Pick the room description: resolve CondText variants against game state.
 resolveDescription :: Room -> GameState -> String
-resolveDescription room state =
-    let alts = roomAltDescriptions room
-        matching = [d | (flag, d) <- Map.toList alts, getFlag flag state == Just "true"]
-    in case matching of
-        (d:_) -> d
-        []    -> roomDescription room
+resolveDescription room state = resolveCondText (roomDescription room) state
 
 -- | `search` — reveal hidden items and run the room's search outcome
 searchRoom :: GameState -> CommandResult

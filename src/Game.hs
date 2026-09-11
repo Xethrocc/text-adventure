@@ -546,6 +546,18 @@ compareValues CGt  a b = Just (a >  b)
 compareValues CGte a b = Just (a >= b)
 
 -- ---------------------------------------------------------------------------
+-- Conditional text (Phase 3g)
+-- ---------------------------------------------------------------------------
+
+-- | Resolve a CondText: first variant whose predicate holds wins; otherwise
+--   the default is returned.
+resolveCondText :: CondText -> GameState -> String
+resolveCondText ct state =
+    case [tvText tv | tv <- ctVariants ct, evalPredicate (tvWhen tv) state] of
+        (s:_) -> s
+        []    -> ctDefault ct
+
+-- ---------------------------------------------------------------------------
 -- Outcome interpreter (single, shared implementation)
 --   Used by command execution (Parser), condition ticks, quest rewards and
 --   vehicle condition ticks — no divergent fallback clones.

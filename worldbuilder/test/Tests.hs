@@ -109,10 +109,9 @@ minRoom :: String -> ARoom
 minRoom rid = ARoom
     { arId = rid
     , arName = rid
-    , arDesc = "test room"
+    , arTexts = ACondText "test room" []
     , arExits = Map.empty
     , arTags = []
-    , arAltDesc = Map.empty
     , arLightFlag = Nothing
     , arOnEnter = Nothing
     , arOnLook = Nothing

@@ -185,10 +185,9 @@ compileRoom r =
        then Right $ E.Room
             { E.roomId = arId r
             , E.roomName = arName r
-            , E.roomDescription = arDesc r
+            , E.roomDescription = compileCondText (arTexts r)
             , E.roomConnections = Map.fromList goodPairs
             , E.roomTags = Set.fromList (arTags r)
-            , E.roomAltDescriptions = arAltDesc r
             , E.roomLightFlag = arLightFlag r
             , E.roomOnEnter = compileMaybeOutcomes (arOnEnter r)
             , E.roomOnLook = compileMaybeOutcomes (arOnLook r)
@@ -351,7 +350,7 @@ compileItemDefSafe registry i =
             in Right (i, E.ItemDef
                 { E.itemId = aiId i
                 , E.itemName = aiName i
-                , E.itemDescription = aiDesc i
+                , E.itemDescription = compileCondText (aiTexts i)
                 , E.itemKeywords = aiKeywords i
                 , E.itemTags = Set.fromList (aiTags i)
                 , E.itemEquipSlot = slot
@@ -424,7 +423,7 @@ compileNPCDefSafe registry n =
         Right verbMap -> Right (n, E.NPCDef
             { E.npcId = anId n
             , E.npcName = anName n
-            , E.npcDescription = anDesc n
+            , E.npcDescription = compileCondText (anTexts n)
             , E.npcDialogue = Map.empty  -- legacy, we use DialogueTrees
             , E.npcDialogueTrees = compileDialogueTrees (anDialogue n)
             , E.npcKeywords = anKeywords n
@@ -643,6 +642,17 @@ compileAActionOutcome ao = case ao of
     AOEquipItem i -> E.MoveEntity i (E.EquippedBy "player" "weapon")
     AORoomTransition r -> E.SetValue (E.VRProperty "player" "room") (E.EVString r)
     AONarrative ls -> E.Sequence (map E.SendMessage ls ++ [E.Noop])
+
+-- ---------------------------------------------------------------------------
+-- Conditional text (Phase 3g)
+-- ---------------------------------------------------------------------------
+
+-- | Compile YAML ACondText into engine CondText.
+compileCondText :: ACondText -> E.CondText
+compileCondText act = E.CondText
+    { E.ctDefault = actDefault act
+    , E.ctVariants = [ E.TextVariant (atvWhen tv) (atvText tv) | tv <- actVariants act ]
+    }
 
 -- ---------------------------------------------------------------------------
 -- Trigger rules (Phase 3f)

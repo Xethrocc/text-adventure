@@ -259,6 +259,39 @@ data Location
 instance ToJSON Location
 instance FromJSON Location
 
+-- ---------------------------------------------------------------------------
+-- Conditionally selected text (Phase 3g)
+-- ---------------------------------------------------------------------------
+
+-- | A text variant with a predicate condition: first matching variant wins.
+data TextVariant = TextVariant
+    { tvWhen :: Predicate
+    , tvText :: String
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON TextVariant
+instance FromJSON TextVariant
+
+-- | A text with conditional variants and a default fallback.
+data CondText = CondText
+    { ctDefault  :: String
+    , ctVariants :: [TextVariant]
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON CondText
+
+-- Accept either an object {default, variants} or a plain string (shorthand).
+instance FromJSON CondText where
+    parseJSON v = case v of
+        String s -> pure (CondText (T.unpack s) [])
+        _ -> withObject "CondText" (\o -> CondText
+                <$> o .:  "default"
+                <*> o .:? "variants" .!= []) v
+
+-- | Smart constructor: a plain string becomes CondText with just a default.
+plainText :: String -> CondText
+plainText s = CondText s []
+
 instance ToJSON Effect
 instance FromJSON Effect
 
@@ -311,7 +344,7 @@ tupleMapFromJSON v = do
 data ItemDef = ItemDef
     { itemId            :: ItemID
         , itemName          :: String
-        , itemDescription   :: String
+        , itemDescription   :: CondText
         , itemKeywords      :: [String]
         , itemTags          :: Set.Set String        -- ^ e.g. "lightsource", "weapon", "key"
         , itemEquipSlot     :: Maybe EquipSlot       -- ^ Nothing = not equippable
@@ -421,7 +454,7 @@ instance FromJSON DialogueTree
 data NPCDef = NPCDef
     { npcId            :: NPCID
     , npcName          :: String
-    , npcDescription   :: String
+    , npcDescription   :: CondText
     , npcDialogue      :: Map.Map String String        -- ^ Legacy: Status -> single line
     , npcDialogueTrees :: Map.Map String DialogueTree  -- ^ Status -> branching dialogue
     , npcKeywords      :: [String]
@@ -648,10 +681,9 @@ instance FromJSON VehicleState where
 data Room = Room
     { roomId              :: RoomID
     , roomName            :: String
-    , roomDescription     :: String
+    , roomDescription     :: CondText
     , roomConnections     :: Map.Map Direction Exit
     , roomTags            :: Set.Set String            -- ^ "dark", "safe", "vehicle", ...
-    , roomAltDescriptions :: Map.Map FlagID String     -- ^ flag -> alternative description
     , roomLightFlag       :: Maybe FlagID              -- ^ when "true", a "dark" room is lit
     , roomOnEnter         :: Maybe Effect
     , roomOnLook          :: Maybe Effect
@@ -667,7 +699,6 @@ instance ToJSON Room where
         , "roomDescription"     .= roomDescription r
         , "roomConnections"     .= roomConnections r
         , "roomTags"            .= roomTags r
-        , "roomAltDescriptions" .= roomAltDescriptions r
         , "roomLightFlag"       .= roomLightFlag r
         , "roomOnEnter"         .= roomOnEnter r
         , "roomOnLook"          .= roomOnLook r
@@ -683,7 +714,6 @@ instance FromJSON Room where
         <*> o .:  "roomDescription"
         <*> o .:  "roomConnections"
         <*> o .:? "roomTags"            .!= Set.empty
-        <*> o .:? "roomAltDescriptions" .!= Map.empty
         <*> o .:? "roomLightFlag"       .!= Nothing
         <*> o .:? "roomOnEnter"         .!= Nothing
         <*> o .:? "roomOnLook"          .!= Nothing

@@ -1126,7 +1126,7 @@ testSampleWorldIsValid = do
 
 testDanglingExitDetected :: IO Bool
 testDanglingExitDetected = do
-    let roomA = Room "roomA" "Room A" "desc." (Map.singleton North (Open "roomZ")) Set.empty Map.empty Nothing
+    let roomA = Room "roomA" "Room A" (plainText "desc.") (Map.singleton North (Open "roomZ")) Set.empty Nothing
             Nothing Nothing Nothing Nothing Nothing
         gw = (world initSampleGame) { rooms = Map.singleton "roomA" roomA }
         errors = validateWorld gw
@@ -1135,7 +1135,7 @@ testDanglingExitDetected = do
 testDuplicateIDsBetweenItemsAndRooms :: IO Bool
 testDuplicateIDsBetweenItemsAndRooms = do
     let gw = (world initSampleGame)
-                { rooms = Map.insert "key" (Room "key" "Duplicate" "desc." Map.empty Set.empty Map.empty Nothing
+                { rooms = Map.insert "key" (Room "key" "Duplicate" (plainText "desc.") Map.empty Set.empty Nothing
                     Nothing Nothing Nothing Nothing Nothing) (rooms (world initSampleGame)) }
         errors = validateWorld gw
     expectTrue "duplicate key found" (any isDup errors)
@@ -1145,7 +1145,7 @@ testDuplicateIDsBetweenItemsAndRooms = do
 
 testUnreachableRoomDetected :: IO Bool
 testUnreachableRoomDetected = do
-    let roomIsolated = Room "isolated" "Isolated" "Alone." Map.empty Set.empty Map.empty Nothing
+    let roomIsolated = Room "isolated" "Isolated" (plainText "Alone.") Map.empty Set.empty Nothing
             Nothing Nothing Nothing Nothing Nothing
         gw = (world initSampleGame)
                 { rooms = Map.insert "isolated" roomIsolated (rooms (world initSampleGame)) }

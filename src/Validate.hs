@@ -359,15 +359,45 @@ validateGameState gw st = concat
 setFlagsInWorld :: GameWorld -> Set.Set FlagID
 setFlagsInWorld gw =
     let setFromOutcomes = foldl scanSetFlags Set.empty (allOutcomes gw)
-        setFromAltDesc  = Set.fromList
+        setFromTexts    = Set.fromList
             [ f | r <- Map.elems (rooms gw)
-                , f <- Map.keys (roomAltDescriptions r)
+                , f <- flagsInCondText (roomDescription r)
+                , not (null f) ]
+            `Set.union`
+            Set.fromList
+            [ f | i <- Map.elems (itemDefs gw)
+                , f <- flagsInCondText (itemDescription i)
+                , not (null f) ]
+            `Set.union`
+            Set.fromList
+            [ f | n <- Map.elems (npcDefs gw)
+                , f <- flagsInCondText (npcDescription n)
                 , not (null f) ]
         setFromLight    = Set.fromList
             [ f | r <- Map.elems (rooms gw)
                 , Just f <- [roomLightFlag r]
                 , not (null f) ]
-    in setFromOutcomes `Set.union` setFromAltDesc `Set.union` setFromLight
+    in setFromOutcomes `Set.union` setFromTexts `Set.union` setFromLight
+
+-- | Collect flags referenced by a predicate (HasFlag / Compare on VRFlag).
+flagsInPredicate :: Predicate -> [FlagID]
+flagsInPredicate p = case p of
+    PTrue               -> []
+    PNot q              -> flagsInPredicate q
+    PAll qs             -> concatMap flagsInPredicate qs
+    PAny qs             -> concatMap flagsInPredicate qs
+    HasFlag f           -> [f]
+    Compare (VRFlag f) _ (VRFlag g) -> [f, g]
+    Compare lhs _ _     -> flagsInRef lhs
+    Compare _ _ rhs     -> flagsInRef rhs
+    _                   -> []
+  where
+    flagsInRef (VRFlag f) = [f]
+    flagsInRef _          = []
+
+-- | Collect flags referenced by a CondText's variant predicates.
+flagsInCondText :: CondText -> [FlagID]
+flagsInCondText ct = concatMap (flagsInPredicate . tvWhen) (ctVariants ct)
 
 scanSetFlags :: Set.Set FlagID -> Effect -> Set.Set FlagID
 scanSetFlags acc outcome = case outcome of
