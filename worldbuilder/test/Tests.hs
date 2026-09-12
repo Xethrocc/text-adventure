@@ -139,6 +139,7 @@ minAdventure room = Adventure
     , advInitialFlags = Map.empty
     , advActiveQuests = []
     , advFactions = []
+    , advEncounterTables = []
     }
 
 -- ---------------------------------------------------------------------------
@@ -928,6 +929,80 @@ testTradeFixtureCompiles = do
                         r2 <- expectEqual [] sErrs
                         pure (r1 && r2)
 
+-- ---------------------------------------------------------------------------
+-- Phase 7c: encounter tables
+-- ---------------------------------------------------------------------------
+
+-- | An encounter table compiles to one trigger carrying a RandomChoice over
+--   the weighted entries; a per-entry `when` becomes a Conditional gate.
+testEncounterTableCompiles :: IO Bool
+testEncounterTableCompiles = do
+    let tbl = AEncounterTable "wilds" "turn"
+                (Just (E.PNot (E.HasFlag "camp_cleared"))) 5
+                [ AEncounterEntry 3 Nothing
+                    [ AOMessage "A wolf!" ]
+                , AEncounterEntry 1 (Just (E.PlayerHas "torch"))
+                    [ AOMessage "Fireflies." ]
+                ]
+        adv = (minAdventure (minRoom "loc_0")) { advEncounterTables = [tbl] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let tr = head (E.triggerDefs (crWorld cr))
+            r1 <- expectEqual "encounter.wilds" (E.trId tr)
+            r2 <- expectEqual E.OnTurn (E.trEvent tr)
+            r3 <- expectEqual (Just (E.PNot (E.HasFlag "camp_cleared"))) (E.trCondition tr)
+            r4 <- expectEqual 5 (E.trCooldown tr)
+            r5 <- expectEqual [ E.RandomChoice
+                                    [ (3, E.SendMessage "A wolf!")
+                                    , (1, E.Conditional (E.PlayerHas "torch")
+                                            (E.SendMessage "Fireflies.") E.Noop) ] ]
+                    (E.trEffects tr)
+            pure (r1 && r2 && r3 && r4 && r5)
+
+-- | A table without entries is rejected; zero weights are rejected.
+testEncounterTableValidation :: IO Bool
+testEncounterTableValidation = do
+    let emptyTbl = AEncounterTable "empty" "turn" Nothing 0 []
+        advEmpty = (minAdventure (minRoom "loc_0")) { advEncounterTables = [emptyTbl] }
+    r1 <- case compileAdventure advEmpty of
+            Left errs -> expectContains "EmptyEncounterTable" (issuesText errs)
+            Right _   -> expectTrue "expected EmptyEncounterTable" False
+    let badTbl = AEncounterTable "bad" "turn" Nothing 0
+                    [AEncounterEntry 0 Nothing [AOMessage "x"]]
+        advBad = (minAdventure (minRoom "loc_0")) { advEncounterTables = [badTbl] }
+    r2 <- case compileAdventure advBad of
+            Left errs -> expectContains "BadEncounterWeight" (issuesText errs)
+            Right _   -> expectTrue "expected BadEncounterWeight" False
+    pure (r1 && r2)
+
+-- | The 7c mini-fixture compiles and validates clean.
+testEncounterFixtureCompiles :: IO Bool
+testEncounterFixtureCompiles = do
+    mbPath <- findExampleModule "encounters.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  examples/modules/encounters.yaml not found"
+            pure False
+        Just path -> do
+            mbAdv <- parseAdventureFile path
+            case mbAdv of
+                Nothing -> do
+                    putStrLn "  failed to parse examples/modules/encounters.yaml"
+                    pure False
+                Just adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  compile errors: " ++ show errs
+                        pure False
+                    Right cr -> do
+                        let wErrs = validateWorld (crWorld cr)
+                            sErrs = validateGameState (crWorld cr) (crSave cr)
+                        r1 <- expectEqual [] wErrs
+                        r2 <- expectEqual [] sErrs
+                        pure (r1 && r2)
+
 -- | Try candidate paths for the modules directory.
 findExampleModule :: String -> IO (Maybe FilePath)
 findExampleModule fname = firstExisting
@@ -995,6 +1070,10 @@ tests =
     , ("standing reference to unknown faction fails", testUnknownFactionFails)
     , ("factions fixture compiles + validates", testFactionsFixtureCompiles)
     , ("trade fixture compiles + validates", testTradeFixtureCompiles)
+    -- Phase 7c: encounter tables
+    , ("encounter table compiles to weighted RandomChoice trigger", testEncounterTableCompiles)
+    , ("encounter table validation (empty / zero weight)", testEncounterTableValidation)
+    , ("encounters fixture compiles + validates", testEncounterFixtureCompiles)
     ]
 
 main :: IO ()

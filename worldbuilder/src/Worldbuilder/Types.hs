@@ -34,6 +34,7 @@ data Adventure = Adventure
     , advInitialFlags     :: Map.Map String String       -- ^ initial_flags (Phase 4d)
     , advActiveQuests     :: [String]                    -- ^ active_quests (Phase 4d)
     , advFactions         :: [AFaction]                  -- ^ factions + standing (Phase 7a)
+    , advEncounterTables  :: [AEncounterTable]           -- ^ encounter tables (Phase 7c)
     } deriving (Show, Eq, Generic)
 
 instance FromJSON Adventure where
@@ -54,6 +55,7 @@ instance FromJSON Adventure where
         <*> o .:? "initial_flags"     .!= Map.empty
         <*> o .:? "active_quests"     .!= []
         <*> o .:? "factions"          .!= []
+        <*> o .:? "encounter_tables"  .!= []
 
 -- | Optional player stats block in YAML (Phase 4d).
 --   `player: { max_hp: 50, attack: 8, defense: 3, skills: { lockpick: 5 } }`
@@ -414,6 +416,42 @@ instance FromJSON AFaction where
         <*> o .:? "name"    .!= ""
         <*> o .:? "initial" .!= 0
         <*> o .:? "levels"  .!= []
+
+-- ---------------------------------------------------------------------------
+-- Encounter tables (Phase 7c)
+-- ---------------------------------------------------------------------------
+
+-- | A weighted random-event table: compiles to one trigger whose effects are a
+--   single `RandomChoice [(weight, Effect)]`. The `on`/`cooldown`/`when` reuse
+--   the regular trigger machinery.
+data AEncounterTable = AEncounterTable
+    { ertId       :: String
+    , ertOn       :: String                       -- ^ e.g. "turn" or "enter wilds"
+    , ertWhen     :: Maybe E.Predicate            -- ^ table-level gate
+    , ertCooldown :: Int                          -- ^ turns between draws
+    , ertEntries  :: [AEncounterEntry]
+    } deriving (Show, Eq, Generic)
+
+-- | One weighted row; `weight` is relative. Optional `when` gates the row.
+data AEncounterEntry = AEncounterEntry
+    { eneWeight  :: Int
+    , eneWhen    :: Maybe E.Predicate
+    , eneEffects :: [AActionOutcome]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AEncounterEntry where
+    parseJSON = withObject "AEncounterEntry" $ \o -> AEncounterEntry
+        <$> o .:  "weight"
+        <*> o .:? "when"    .!= Nothing
+        <*> o .:? "effects" .!= []
+
+instance FromJSON AEncounterTable where
+    parseJSON = withObject "AEncounterTable" $ \o -> AEncounterTable
+        <$> o .:  "id"
+        <*> o .:? "on"        .!= "turn"
+        <*> o .:? "when"      .!= Nothing
+        <*> o .:? "cooldown"  .!= 0
+        <*> o .:? "entries"   .!= []
 
 -- ---------------------------------------------------------------------------
 -- Interactions

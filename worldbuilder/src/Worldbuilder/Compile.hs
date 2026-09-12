@@ -66,6 +66,8 @@ compileAdventure adv =
         
         (varErrs, varDefs, varInitials) = compileVariables (advVariables adv)
         (trigErrs, triggerDefs) = compileTriggers (advTriggers adv)
+        (encErrs, encounterDefs) = compileEncounterTables (advEncounterTables adv)
+        allTriggerDefs = triggerDefs ++ encounterDefs
         (facErrs, factionDefs, factionInitials) = compileFactions (advFactions adv)
         (facConflictErrs, allVarDefs, allVarInitials) =
             mergeFactionVars varDefs varInitials factionDefs factionInitials
@@ -85,13 +87,14 @@ compileAdventure adv =
                 , E.vehicleDefs = vehicleDefs
                 , E.verbDefs = verbRegistry
                 , E.varDefs = allVarDefs
-                , E.triggerDefs = triggerDefs
+                , E.triggerDefs = allTriggerDefs
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
+        encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
 
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
-                    ++ varErrs ++ facErrs ++ facConflictErrs ++ trigErrs ++ initVarErrs
-                    ++ initStateErrs ++ facRefErrs
+                    ++ varErrs ++ facErrs ++ facConflictErrs ++ trigErrs ++ encErrs
+                    ++ initVarErrs ++ initStateErrs ++ facRefErrs ++ encRefErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -822,6 +825,47 @@ compileAtOn s =
         ["custom", n]                -> Right (E.OnCustomEvent n)
         ["command", v]               -> Right (E.OnCommand v)
         _                            -> Left ("Unsupported trigger event '" ++ s ++ "'")
+
+-- ---------------------------------------------------------------------------
+-- Encounter tables (Phase 7c)
+-- ---------------------------------------------------------------------------
+
+-- | Compile encounter tables into one trigger each: a `RandomChoice` over the
+--   weighted entries, wrapped so per-entry `when` gates become a Conditional.
+compileEncounterTables :: [AEncounterTable] -> ([CompileIssue], [E.TriggerDef])
+compileEncounterTables tables =
+    let results = map compileTable tables
+        errors = concat [e | Left e <- results]
+        defs = [d | Right d <- results]
+    in (errors, defs)
+  where
+    compileTable t = case compileAtOn (ertOn t) of
+        Left err -> Left [ciError ("encounter_tables." ++ ertId t) "BadTriggerEvent" err]
+        Right ev -> Right E.TriggerDef
+            { E.trId = "encounter." ++ ertId t
+            , E.trEvent = ev
+            , E.trCondition = ertWhen t
+            , E.trEffects = [E.RandomChoice [(eneWeight e, compileEntry e) | e <- ertEntries t]]
+            , E.trOnce = False
+            , E.trCooldown = ertCooldown t
+            }
+    compileEntry e = case eneWhen e of
+        Nothing -> compileOutcomes (eneEffects e)
+        Just p  -> E.Conditional p (compileOutcomes (eneEffects e)) E.Noop
+
+-- | Validate encounter tables: unique ids, non-empty entries, positive weights.
+checkEncounterRefs :: [AEncounterTable] -> E.GameWorld -> [CompileIssue]
+checkEncounterRefs tables _ =
+    [ ciError ("encounter_tables." ++ ertId t) "DuplicateEncounterTable"
+        ("table '" ++ ertId t ++ "' is declared more than once")
+    | t <- tables
+    , length [t' | t' <- tables, ertId t == ertId t'] > 1 ]
+    ++ [ ciError ("encounter_tables." ++ ertId t) "EmptyEncounterTable"
+            "encounter table has no entries"
+       | t <- tables, null (ertEntries t) ]
+    ++ [ ciError ("encounter_tables." ++ ertId t ++ ".entries") "BadEncounterWeight"
+            "entry weight must be a positive integer"
+       | t <- tables, e <- ertEntries t, eneWeight e < 1 ]
 
 -- ---------------------------------------------------------------------------
 -- Player & initial state (Phase 4d)

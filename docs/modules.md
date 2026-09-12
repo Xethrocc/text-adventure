@@ -74,3 +74,42 @@ verbs:
 Fixture: `examples/modules/trade.yaml` — 13 Räume, Krämer mit drei Artikeln,
 Member-Preis über die Händlergilde (7a), Sieg über das Werfttor (braucht das
 Gildensiegel).
+
+---
+
+## 7c — Encounter-Tabellen
+
+**Kernänderung: keine.** Ein `encounter_tables:`-Block kompiliert zu
+gewöhnlichen Triggern, deren Effekt ein einziger `RandomChoice` über die
+gewichteten Einträge ist; `on`, `when` und `cooldown` sind die normale
+Trigger-Mechanik, ein optionales `when` pro Eintrag wird zu einem
+`Conditional`-Gate. Die Engine kennt nur Trigger, RandomChoice und
+Conditional — das Modul ist reiner Schema-Sugar.
+
+```yaml
+encounter_tables:
+  - id: wilds
+    on: turn
+    cooldown: 2
+    when: { not: { has_flag: camp_cleared } }
+    entries:
+      - { weight: 3, effects: [ { msg: "Ein Wolf!" }, { damage: 1 } ] }
+      - { weight: 2, effects: [ { msg: "Nur Wind." } ] }
+      - weight: 1
+        when: { has_item: torch }
+        effects: [ { msg: "Glühwürmchen." } ]
+```
+
+- Jede Tabelle → ein Trigger `encounter.<id>` mit `trEffects = [RandomChoice
+  [(weight, effect) | Einträge]]`; ungültige Tabelle (`DuplicateEncounterTable`,
+  `EmptyEncounterTable`, `BadEncounterWeight`) ist ein Compile-Fehler.
+- **Determinismus:** gezogen wird aus dem `rngState` des Saves — gleicher
+  Seed → identische Zugfolge (Engine-Test `testRandomChoiceDeterministic`).
+- **Cooldown:** nach dem Feuern bleibt die Tabelle für `cooldown` weitere
+  Feuerversuche stumm (Engine-Test `testTriggerCooldownGatesTurns`).
+
+Fixture: `examples/modules/encounters.yaml` — Der Spieler durchquert die
+Wildnis zum Schrein; Wölfe, Wind und (mit Fackel) Glühwürmchen wechseln sich
+ab. Das Lagerfeuer setzt `camp_cleared`, wodurch die aggressive Tabelle
+`wilds` verstummt und die ruhige `calm` übernimmt — das `when`-Gate auf
+Tabellen- und Eintragsebene ist damit in einem Spiel belegt.

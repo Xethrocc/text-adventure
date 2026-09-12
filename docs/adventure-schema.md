@@ -265,3 +265,32 @@ Jede Faktion erzeugt die Variable `faction.<id>` (int) mit dem Startwert
 **Fehler:** doppelte Faktions-IDs; `faction.X` als gewöhnliche Variable
 deklariert; Referenz auf nicht deklarierte Faktion (wenn das `factions:`-Segment
 existiert).
+
+---
+
+## Encounter-Tabellen (Module 7c)
+
+Gewichtete Zufallsereignisse: jede Tabelle kompiliert zu einem Trigger
+(`encounter.<id>`), dessen Effekt ein `RandomChoice` über die gewichteten
+Einträge ist. `on`, `when` und `cooldown` sind normale Triggerfelder.
+
+```yaml
+encounter_tables:
+  - id: wilds
+    on: turn                      # wie Rules: turn / enter <room> / command <verb> …
+    cooldown: 2                   # nach dem Feuern N Feuerversuche stumm
+    when: { not: { has_flag: camp_cleared } }
+    entries:
+      - { weight: 3, effects: [ { msg: "Ein Wolf!" }, { damage: 1 } ] }
+      - weight: 1                 # optionales Gate pro Eintrag
+        when: { has_item: torch }
+        effects: [ { msg: "Glühwürmchen." } ]
+```
+
+- `weight` muss eine positive ganze Zahl sein; `cooldown` Default 0 (kein
+  Cooldown). Gezogen wird aus dem Save-`rngState` — gleicher Seed →
+  identische Zugfolge.
+- **Fehler:** `DuplicateEncounterTable` (doppelte IDs), `EmptyEncounterTable`
+  (keine Einträge), `BadEncounterWeight` (Gewicht < 1).
+
+Siehe `docs/modules.md` (7c) für Details und die Referenz-Fixture.

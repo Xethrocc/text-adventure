@@ -1044,6 +1044,32 @@ testTriggerFiresOnEnter = do
     r2 <- expectTrue "message mentions treasure" (isInfixOf "treasure" msg)
     pure (r1 && r2)
 
+-- | Cooldown: after firing, the trigger stays silent for `trCooldown` further
+--   OnTurn events, then fires again (module 7c relies on this for encounters).
+testTriggerCooldownGatesTurns :: IO Bool
+testTriggerCooldownGatesTurns = do
+    let trigger = TriggerDef "cd_test" OnTurn Nothing
+            [ModifyValue (VRVariable "hits") 1] False 2
+        st0 = initSampleGame
+            { world = (world initSampleGame) { triggerDefs = [trigger] }
+            , save = (save initSampleGame) { variables = Map.singleton "hits" (VVInt 0) } }
+        count st = case getVariable "hits" st of
+            Just (VVInt n) -> n
+            _ -> (-1)
+        (st1, msg1) = fireTriggers OnTurn st0
+        (st2, msg2) = fireTriggers OnTurn st1
+        (st3, msg3) = fireTriggers OnTurn st2
+        (st4, msg4) = fireTriggers OnTurn st3
+    r1 <- expectEqual 1 (count st1)
+    r2 <- expectTrue "fired on turn 1" (not (null msg1))
+    r3 <- expectEqual 1 (count st2)
+    r4 <- expectTrue "silent during cooldown (turn 2)" (null msg2)
+    r5 <- expectEqual 1 (count st3)
+    r6 <- expectTrue "silent during cooldown (turn 3)" (null msg3)
+    r7 <- expectEqual 2 (count st4)
+    r8 <- expectTrue "fires again after cooldown (turn 4)" (not (null msg4))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
 testTriggerOnceFiresOnce :: IO Bool
 testTriggerOnceFiresOnce = do
     let trigger = TriggerDef "once_test" (OnEnter "treasure") Nothing
@@ -1731,6 +1757,7 @@ main = do
         , runTest "Conditional outcome with predicate" testConditionalOutcome
         -- Phase 3f: Trigger
         , runTest "trigger fires on enter" testTriggerFiresOnEnter
+        , runTest "trigger cooldown gates turns" testTriggerCooldownGatesTurns
         , runTest "once trigger fires only once" testTriggerOnceFiresOnce
         , runTest "trigger condition gates firing" testTriggerConditionGates
         , runTest "OnCommand trigger fires" testTriggerCommandEvent
