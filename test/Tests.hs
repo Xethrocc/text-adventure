@@ -1519,6 +1519,77 @@ testStandingOutcomeViaDialogue = do
         Just (VVInt n) -> expectEqual 20 n
         _ -> expectTrue "dialogue standing outcome not applied" False
 
+-- ===== Phase 7b: Handelsmodule — Market::buy/sell über Item verb_map =====
+
+-- | Shop item whose `buy` verb_map entry handles the transaction: stock and
+--   credits live in the VarMap; no sales beyond stock; price via CompareVar.
+tradeWorld :: [(String, Int)] -> Int -> GameState
+tradeWorld stock credits =
+    let sample = initSampleGame
+        buyEff = Conditional
+            (PAll [ CompareVar "credits" CGte 12
+                  , CompareVar ("shop.merchant." ++ "rope") CGt 0 ])
+            (Sequence [ ModifyValue (VRVariable "credits") (-12)
+                      , ModifyValue (VRVariable "shop.merchant.rope") (-1)
+                      , MoveEntity "rope" (CarriedBy "player")
+                      , SendMessage "You buy the rope." ])
+            (SendMessage "You can't afford it.")
+        sellEff = Sequence [ ModifyValue (VRVariable "credits") 5
+                           , MoveEntity "rope" Removed
+                           , SendMessage "You sell the rope." ]
+    in sample
+        { world = (world sample)
+            { itemDefs = Map.singleton "rope"
+                (ItemDef "rope" "rope" (plainText "A coil of rope.")
+                    ["rope"] Set.empty Nothing [] False Nothing True Nothing
+                    (Map.singleton (VCustom "buy", "intact") buyEff
+                        `Map.union` Map.singleton (VCustom "sell", "intact") sellEff))
+            , verbDefs = Map.singleton "buy" (VerbDef "buy" ["purchase"])
+                `Map.union` Map.singleton "sell" (VerbDef "sell" ["pawn"])
+            }
+        , save = (save sample)
+            { itemStates = Map.singleton "rope"
+                (ItemState (InRoom "start") "intact" Map.empty True)
+            , variables = Map.fromList
+                (("credits", VVInt credits)
+                    : [ (k, VVInt v) | (k, v) <- stock ])
+            }
+        }
+
+-- | Buying with enough credits deducts, decrements stock, and hands over the item.
+testTradeBuyWithFunds :: IO Bool
+testTradeBuyWithFunds = do
+    let st = tradeWorld [("shop.merchant.rope", 2)] 50
+        (st', _) = executeCommand (Interact (VCustom "buy") "rope") st
+    r1 <- expectEqual (Just (VVInt 38)) (getVariable "credits" st')
+    r2 <- expectTrue "rope carried" (hasItem "rope" st')
+    r3 <- expectEqual (Just (VVInt 1)) (getVariable "shop.merchant.rope" st')
+    pure (r1 && r2 && r3)
+
+-- | Buying without cover changes nothing: no deduction, no item, no stock drop.
+testTradeBuyInsufficientFundsChangesNothing :: IO Bool
+testTradeBuyInsufficientFundsChangesNothing = do
+    let st = tradeWorld [("shop.merchant.rope", 2)] 5
+        (st', msg) = executeCommand (Interact (VCustom "buy") "rope") st
+    r1 <- expectTrue "rejection message" ("can't afford" `isInfixOf` msg)
+    r2 <- expectEqual (Just (VVInt 5)) (getVariable "credits" st')
+    r3 <- expectTrue "not carried" (not (hasItem "rope" st'))
+    r4 <- expectEqual (Just (VVInt 2)) (getVariable "shop.merchant.rope" st')
+    pure (r1 && r2 && r3 && r4)
+
+-- | Selling a carried item pays out and removes it from the inventory.
+testTradeSellAddsCredits :: IO Bool
+testTradeSellAddsCredits = do
+    let st = tradeWorld [] 20
+        withRope = st { save = (save st)
+            { itemStates = Map.insert "rope"
+                (ItemState (CarriedBy "player") "intact" Map.empty True)
+                (itemStates (save st)) } }
+        (st', _) = executeCommand (Interact (VCustom "sell") "rope") withRope
+    r1 <- expectEqual (Just (VVInt 25)) (getVariable "credits" st')
+    r2 <- expectTrue "rope removed" (not (hasItem "rope" st'))
+    pure (r1 && r2)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -1699,5 +1770,9 @@ main = do
         , runTest "standing predicate evaluates against faction var" testStandingPredicateEval
         , runTest "standing outcome writes faction.* variable" testStandingOutcomeWritesVariable
         , runTest "standing outcome applies via dialogue choice" testStandingOutcomeViaDialogue
+        -- Phase 7b: Handel
+        , runTest "buy with funds deducts and delivers" testTradeBuyWithFunds
+        , runTest "buy without cover changes nothing" testTradeBuyInsufficientFundsChangesNothing
+        , runTest "sell adds credits and removes item" testTradeSellAddsCredits
         ]
     when (not (and results)) exitFailure

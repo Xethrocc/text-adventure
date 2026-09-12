@@ -42,3 +42,35 @@ Der Auftrag für die Wache senkt das Standing der Gilde; das Gleiche gilt
 umgekehrt. Der Gilde-Gefallen hebt `faction.smugglers` auf 20, worauf eine
 Rule (`on: turn` + `when: standing … at_least: 20`) per `set_state` das
 `locked_by`-Tor zur Höhle öffnet; der Höhleneintrag ist das Victory-Ende.
+
+---
+
+## 7b — Handel und Ökonomie
+
+**Kernänderung: keine.** Währung und Lagerbestand sind `VarMap`-Einträge;
+`buy`/`sell` sind Custom-Verben, die Transaktionslogik läuft als
+Outcome-Effekte über die Item-`verb_map` (Conditional + CompareVar).
+
+```yaml
+variables:
+  - { name: credits, type: int, initial: 50 }
+initial_variables:
+  shop.merchant.rope: 2        # Lager — ein VarMap-Eintrag pro Artikel
+
+verbs:
+  - { name: buy, aliases: [purchase] }
+  - { name: sell, aliases: [pawn] }
+```
+
+- **Preis + Bestand als Daten:** `{ if: {compare_var: {name: credits, op: gte,
+  value: 12}}, then: [{add_var: credits, delta: -12}, {add_var:
+  shop.merchant.rope, delta: -1}, {give: rope}], else: [{msg: …}] }` — der
+  Erfolgszweig ändert Währung + Bestand, der Ablehnungszweig nur den Text.
+- **Kauf ohne Deckung verändert nachweislich nichts** (nur `msg` im `else`).
+- **Rabatt über 7a:** ein `standing`-Prädikat öffnet einen Dialogoption
+  (Member-Preis), ein gesetztes Flag gated den günstigeren `if`-Zweig.
+- **`on: command buy`-Rule** als generische Reaktion (z. B. Standing-Gewinn).
+
+Fixture: `examples/modules/trade.yaml` — 13 Räume, Krämer mit drei Artikeln,
+Member-Preis über die Händlergilde (7a), Sieg über das Werfttor (braucht das
+Gildensiegel).

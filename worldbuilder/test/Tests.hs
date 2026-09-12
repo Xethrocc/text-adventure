@@ -903,6 +903,31 @@ testFactionsFixtureCompiles = do
                         r2 <- expectEqual [] sErrs
                         pure (r1 && r2)
 
+-- | The 7b mini-fixture compiles and validates clean (trade module).
+testTradeFixtureCompiles :: IO Bool
+testTradeFixtureCompiles = do
+    mbPath <- findExampleModule "trade.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  examples/modules/trade.yaml not found"
+            pure False
+        Just path -> do
+            mbAdv <- parseAdventureFile path
+            case mbAdv of
+                Nothing -> do
+                    putStrLn "  failed to parse examples/modules/trade.yaml"
+                    pure False
+                Just adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  compile errors: " ++ show errs
+                        pure False
+                    Right cr -> do
+                        let wErrs = validateWorld (crWorld cr)
+                            sErrs = validateGameState (crWorld cr) (crSave cr)
+                        r1 <- expectEqual [] wErrs
+                        r2 <- expectEqual [] sErrs
+                        pure (r1 && r2)
+
 -- | Try candidate paths for the modules directory.
 findExampleModule :: String -> IO (Maybe FilePath)
 findExampleModule fname = firstExisting
@@ -969,6 +994,7 @@ tests =
     , ("set_state outcome compiles to entity state effect", testSetEntityStateCompiles)
     , ("standing reference to unknown faction fails", testUnknownFactionFails)
     , ("factions fixture compiles + validates", testFactionsFixtureCompiles)
+    , ("trade fixture compiles + validates", testTradeFixtureCompiles)
     ]
 
 main :: IO ()

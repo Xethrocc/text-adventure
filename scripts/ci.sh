@@ -33,11 +33,11 @@ echo "== 4. e2e playthroughs =="
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-for name in thefog pure-if fantasy cyberpunk space-opera detective horror factions; do
+for name in thefog pure-if fantasy cyberpunk space-opera detective horror factions trade; do
     case "$name" in
-        thefog)   src=examples/thefog.yaml ;;
-        factions) src="examples/modules/$name.yaml" ;;
-        *)        src="examples/genres/$name.yaml" ;;
+        thefog)             src=examples/thefog.yaml ;;
+        factions|trade)     src="examples/modules/$name.yaml" ;;
+        *)                  src="examples/genres/$name.yaml" ;;
     esac
     "${WORLDBUILDER[@]}" compile "$src" -o "$tmp/$name" >/dev/null
     out="$("${GAME[@]}" --world "$tmp/$name/world.json" --save "$tmp/$name/save.json" \
