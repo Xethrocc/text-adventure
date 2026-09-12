@@ -15,6 +15,7 @@ extra-source-files:
     CHANGELOG.md
     docs/adventure-schema.md
     docs/genres.md
+    docs/modules.md
     docs/thefog-playthrough.md
     scripts/ci.sh
     ci/e2e/*.in

@@ -1,198 +1,164 @@
-# Text Adventure Game
+# text-adventure
 
-A simple text-based adventure game engine written in Haskell.
+A data-driven text adventure engine in Haskell. The **engine** plays the game;
+the **worldbuilder** turns authored YAML/JSON into the data the engine loads.
+There is no engine code per genre — rooms, items, NPCs, dialogue, rules, combat
+profiles and gameplay modules are all content.
 
 ## Features
 
-- **Flexible Game Engine**: Create rooms, items, NPCs, and player interactions
-- **Architectural Separation**: Strict separation between `GameWorld` (static map/item metadata) and `SaveState` (dynamic variables, player inventory) enabling pure JSON/YAML world creation.
-- **Data-Driven Interactions**: Complex sequences involving `HealPlayer`, `ModifyItemProp`, etc., are processed entirely generically without modifying Haskell codebase.
-- **Dynamic Verb System**: Verbs as an ADT with synonym parsing and per-item/NPC verb maps.
-- **Command Parser**: Natural language command processing with synonyms.
-- **Save & Load**: Fast JSON saves that only persist the active `SaveState` without duplicating static `GameWorld` data.
-- **Extensible Architecture**: Easy to add new commands and game logic
-- **Sample Adventure**: Complete working example included
-- **Haskell Best Practices**: Clean, modular code with proper type safety
+**Engine (`src/`, package `text-adventure`)**
 
-## Installation
+- Rooms with exits and locks (`locked_by`), darkness with light sources, optional ASCII-art banners
+- Items: containers, equipment with stat bonuses, portability, hidden items found via `search`
+- NPCs: dialogue trees with conditional choices, per-NPC verb maps, state-dependent behaviour
+- **Rule core:** an effect DSL (`SetValue`, `ModifyValue`, `MoveEntity`, `Conditional`, `RandomChoice`, `GameEnd`, …) plus triggers on events (`enter`, `leave`, `look`, `search`, `take`, `drop`, `use`, `state`, `command`, `turn`, `custom`) with `when` / `once` / `cooldown`
+- Variables as a `VarMap` for counters, faction standing and supplies, plus predicates such as `standing`, `compare_var`, `has_item`, `has_flag`, `at: player, room: …`
+- Quests with stages and rewards; conditions with tick and end effects
+- Vehicles: player-steered, automatic routes and paid rides — fuel, interior rooms, stops — and **ships with systems and stations** (power/shields/hull/weapons, station verbs)
+- Combat profiles `off` | `narrative` | `classic` (default), resolved by a pure combat module that also drives companions and the player's ship
+- Deterministic RNG **in the save**, save/load (`saves/<slot>.json`), undo history, restart, tab completion
+- Validation: `validateWorld` + `validateGameState` (used by the CLI and the tests)
 
-### From Source
+**Worldbuilder (`worldbuilder/`)**
 
-1. Clone the repository:
+- Authoring schema for everything above, in YAML or JSON, with structured diagnostics
+- CLI: `validate`, `compile`, `check`
+- Optional gameplay modules (Phase 7): factions/standing, trade, encounter tables, survival/weather, stealth, party/companions, starships — see `docs/modules.md`
 
-   ```bash
-   git clone https://github.com/Xethrocc/text-adventure.git
-   cd text-adventure
-   ```
+## Quick start
 
-2. Build with Cabal:
+```bash
+cabal build all
 
-   ```bash
-   cabal update
-   cabal build
-   ```
+# play the bundled sample adventure
+cabal run text-adventure
 
-3. Run the game:
+# author: check and compile an adventure
+cabal run worldbuilder -- validate examples/thefog.yaml
+cabal run worldbuilder -- compile examples/thefog.yaml -o /tmp/thefog
 
-   ```bash
-   cabal run
-   ```
+# play what you compiled
+cabal run text-adventure -- --world /tmp/thefog/world.json --save /tmp/thefog/save.json
+```
 
-### Using Stack
+Engine flags: `--world FILE` (compiled GameWorld), `--save FILE` (initial
+SaveState, must exist), `--allow-invalid`, `--help`. In-game saves are written
+to `saves/<slot>.json`.
 
-1. Build with Stack:
+Whole pipeline — build, both test suites, validation of every shipped
+adventure, 18 scripted playthroughs:
 
-   ```bash
-   stack build
-   ```
+```bash
+bash scripts/ci.sh
+```
 
-2. Run the game:
+## In-game commands
 
-   ```bash
-   stack exec text-adventure
-   ```
+- Movement: `go` / `move` / `walk <direction>`, or just the direction
+- `look`, `look at` / `examine <target>`, `search`
+- `take` / `get` / `grab <item>`, `take all`, `take <item> and <item>`, `drop <item>`, `drop all`
+- `use <item>`, `use <item> on <target>`
+- `talk to <npc>`, `choose <n>` (pick a dialogue option)
+- `attack` / `hit <target>`
+- `equip` / `wear` / `wield <item>`, `unequip` / `remove`, `unequip all`, `stats`
+- Vehicles: `enter` / `board <vehicle>`, `disembark`, `drive to <station>`, `wait`, `refuel`, `repair <condition>` — note that `exit` quits the game
+- System: `inventory`, `undo`, `save [name]`, `load [name]`, `saves`, `restart`, `help`, `quit`
+- `Tab` completes commands, directions and reachable targets
 
-## Usage
+## Repository layout
 
-### Playing the Game
+| Path | Content |
+|---|---|
+| `src/` | engine: types, game logic, parser, combat, validation, save/load |
+| `app/` | CLI entry point (flags, validation gate, game loop) |
+| `worldbuilder/` | authoring schema, compiler, validator, CLI |
+| `img2ascii/` | helper tool: images → ASCII art for room banners |
+| `examples/` | `thefog.yaml` (reference game), `demo.yaml`, `genres/` (6 genre fixtures), `modules/` (7a–7h fixtures + `combo.yaml` composition proof), `fixtures/` (small feature fixtures) |
+| `ci/e2e/` | scripted playthroughs: `<name>.in` plus the expected marker in `<name>.expect` |
+| `docs/` | `adventure-schema.md`, `modules.md`, `genres.md`, `thefog-playthrough.md` |
+| `scripts/ci.sh` | the whole pipeline in one command |
 
-Once running, use these commands:
+## Authoring
 
-- `go north/south/east/west/up/down` - Move between rooms
-- `look` - Examine current location
-- `look at <item>` - Examine specific items
-- `take <item>` - Pick up items
-- `inventory` - Check what you're carrying
-- `use <item>` - Use items from inventory
-- `talk to <npc>` - Interact with characters
-- `attack <npc>` - Attack an enemy in the room
-- `save [name]` - Save game progress (default: `savegame.json`)
-- `load [name]` - Load a saved game (default: `savegame.json`)
-- `help` - Show available commands
-- `quit` - Exit the game
-- Press `Tab` while typing to auto-complete commands, directions, and reachable targets
+Start with `docs/adventure-schema.md`. Minimal adventure:
 
-### Game Commands
+```yaml
+name: "My Adventure"
+start_room: hall
 
-The parser supports multiple synonyms:
+rooms:
+  - id: hall
+    name: Hall
+    desc: "A cold stone hall. A corridor leads north."
+    exits:
+      north: {to: cellar}
 
-- Movement: `go`, `move`, `walk` + direction
-- Taking items: `take`, `pick up`, `grab`, `get`
-- Combat: `attack`, `hit`, `kill`
-- Looking: `look`, `examine`, `inspect`
-- Inventory: `inventory`, `inv`, `i`
-- Saving: `save`, `save <name>`
-- Loading: `load`, `load <name>`
-- Quitting: `quit`, `exit`, `q`
+npcs:
+  - id: cat
+    name: cat
+    location: hall
+    keys: [cat, katti]
+    max_hp: 9
+    attack: 1
+    defense: 1
 
-Multi-word targets are supported (for example: `look at old man`, `take healing potion`, `use brass key on treasure door`).
+variables:
+  - {name: courage, type: int, initial: 0}
+
+rules:
+  - id: first_visit
+    on: enter hall
+    once: true
+    effects:
+      - {msg: "The door falls shut behind you."}
+      - {add_var: courage, delta: 1}
+```
+
+Custom verbs are authored, not compiled in: declare `verbs: [{name: pray}]`,
+then attach effects to it with a `rules:` entry (`on: command pray`), an item's
+`verb_map`, or an NPC's `verb_map` — no Haskell changes needed.
+
+Gameplay modules (factions, trade, encounters, survival, stealth, party,
+starships) are optional YAML segments that follow one rule: no new interpreter,
+no own state file. Their state lives in the existing `VarMap`
+(`faction.<id>`, `party.<npc>`, `ship.<id>.<system>`) — see `docs/modules.md`.
 
 ## Architecture
 
-### Core Data Types
-
-- **GameWorld**: The static blueprint of the game. Holds immutable definitions like `Room`, `ItemDef`, `NPCDef`, and `entityInteractions`.
-- **SaveState**: The active, dynamic data that changes as you play. Holds the `Player` stats, `inventory`, `currentRoom`, and the mutable properties inside `ItemState`/`NPCState`.
-- **GameState**: A unified wrapper holding both the active `GameWorld` and the current `SaveState`.
-- **ItemDef** / **ItemState**: Static definitions and dynamic states for items. Now enhanced with dynamic generic `itemProps` (like `uses_left = 3`) that can be interacted with exclusively through JSON without hardcoded logic.
-- **NPCDef** / **NPCState**: Static definitions and dynamic states for characters, also enhanced with dynamic numeric properties `npcProps`.
-- **Verb** / **ActionOutcome**: Dynamic actions and their results. Supports complex operations like `HealPlayer Int`, `ModifyItemProp String String Int`, and `MultipleOutcomes`.
-- **Command**: Parsed player actions.
-
-### Main Modules
-
-- `Main.hs`: Entry point and game initialization
-- `Game.hs`: Core game logic and state management
-- `GameLoop.hs`: Main game loop and user interaction
-- `Parser.hs`: Command parsing and execution
-- `Types.hs`: Data type definitions
-
-## Creating Your Own Adventure
-
-### Adding Rooms
-
-To create custom adventures, modify the `initSampleGame` function in `GameLoop.hs`:
-
-```haskell
-initMyGame :: GameState
-initMyGame = GameState
-    { rooms = Map.fromList
-        [ ("start", Room "start" "Starting Room" "Your starting location description"
-            (Map.fromList [(North, Open "room2")]) True)
-        , ("room2", Room "room2" "Second Room" "Another room description"
-            (Map.fromList [(South, Open "start")]) False)
-        ]
-    , player = Player 100 100 10 5
-    , currentRoom = "start"
-    , inventory = []
-    , itemStates = Map.fromList 
-        [ ("item_1", ItemState "start" "intact") ]
-    , itemDefs = Map.fromList
-        [ ("item_1", ItemDef "item_1" "item_name" "Item description." ["keyword1", "keyword2"] Map.empty) ]
-    , npcStates = Map.fromList
-        [ ("goblin_1", NPCState "start" "alive" (Just 20)) ]
-    , npcDefs = Map.fromList
-        [ ("goblin_1", NPCDef "goblin_1" "goblin" "A small green goblin." (Map.singleton "alive" "Grrr!") ["goblin", "monster"] (Just 20) 5 1 Map.empty) ]
-    , entityStates = Map.empty
-    , entityInteractions = Map.empty
-    , gameOver = False
-    }
-```
-
-### Adding Custom Commands
-
-Thanks to the dynamic verb system, adding custom commands is often as simple as updating `Types.hs` and `Parser.hs`:
-
-1. Add your new verb to the `Verb` enum in `Types.hs`:
-
-```haskell
-data Verb = VGo | VLook | VTake | VDrop | VUse | VAttack | VCustom -- Added VCustom
-```
-
-1. Map a word to your verb in `parseVerb` in `Parser.hs`:
-
-```haskell
-parseVerb :: String -> Maybe Verb
-parseVerb "custom" = Just VCustom
--- ...
-```
-
-Then you can assign this verb to an `ItemDef` or `NPCDef` via their `itemVerbMap` or `npcVerbMap` to trigger specific actions (like transitioning rooms or changing states) without writing custom `executeCommand` logic for every interaction!
+- **GameWorld** (static blueprint) vs **SaveState** (dynamic play data) vs
+  **GameState** (both together). Saves persist only the `SaveState`, never the
+  world.
+- **One interpreter:** every effect — parser dispatch, rule triggers, dialogue
+  choices, quest rewards, room hooks, vehicle conditions — runs through
+  `applyOutcomeWith`. Modules compile down to existing concepts instead of
+  adding code paths.
+- **State lives in the existing `SaveState`**, preferably as `VarMap` entries,
+  so no feature needs its own save file or state silo.
+- Main modules: `Types.hs`, `Game.hs`, `GameLoop.hs`, `Parser.hs`, `Combat.hs`,
+  `Validate.hs`, `SaveLoad.hs`, `Verbs.hs`, `World.hs`, `Sample.hs` plus
+  `worldbuilder/src/Worldbuilder/{Types,Compile,CLI,ParseFile}.hs`.
 
 ## Development
 
-### Building
-
 ```bash
-cabal build
+cabal build all
+cabal test all --test-show-details=direct    # 174 engine tests, 62 worldbuilder tests
+bash scripts/ci.sh                           # build + tests + validation + 18 E2E playthroughs
+cabal run worldbuilder -- check examples/thefog.yaml   # content statistics
 ```
 
-### Running Tests
+Adding a feature end to end: an adventure in `examples/` (with a fixture under
+`examples/modules/` for optional systems), an `.in`/`.expect` pair in `ci/e2e/`,
+an entry in `scripts/ci.sh`, tests in `test/Tests.hs` or
+`worldbuilder/test/Tests.hs`, and a docs update.
 
-```bash
-cabal test
-```
+## Requirements
 
-### Running Benchmarks
-
-```bash
-cabal bench
-```
-
-### Code Formatting
-
-```bash
-cabal-fmt --inplace *.hs src/*.hs
-```
-
-## Dependencies
-
-- `base` (standard Haskell library)
-- `containers` (for Map data structure)
-- `aeson` (JSON serialization/deserialization)
-- `aeson-pretty` (pretty-printed JSON output)
-- `bytestring` (efficient byte-level I/O)
-- `text` (Unicode text handling)
+- GHC 9.6 (developed with 9.6.7) and cabal-install 3.14+
+- Dependencies are resolved by cabal: `aeson`, `aeson-pretty`, `bytestring`,
+  `containers`, `text`, `haskeline`, `time`, `directory` (engine);
+  `HsYAML-aeson`, `filepath` (worldbuilder); `JuicyPixels`, `vector` (img2ascii)
 
 ## Contributing
 
@@ -200,12 +166,12 @@ cabal-fmt --inplace *.hs src/*.hs
 2. Create a feature branch
 3. Make your changes
 4. Add tests for new functionality
-5. Ensure all tests pass
+5. Run `bash scripts/ci.sh`
 6. Submit a pull request
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE).
 
 ## Acknowledgments
 

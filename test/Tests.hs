@@ -11,7 +11,7 @@ import System.Timeout (timeout)
 import Control.Exception (evaluate)
 import Game
 import GameLoop (commandCompletion, LoopState (..), initLoopState, applyLoopCommand)
-import Parser (Command (..), executeCommand, parseCommand, parseCommandWith)
+import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText)
 import Verbs (verbAliasMap)
 import Game (applyOutcome, getVariable, setVariable, evalPredicate)
 import Validate (ValidationError (..), validateWorld)
@@ -662,6 +662,16 @@ testLocationPlayerPredicate = do
     r1 <- expectTrue "player in room" (evalPredicate (Location "player" "hallway") st)
     r2 <- expectTrue "player not in room" (not (evalPredicate (Location "player" "start") st))
     r3 <- expectTrue "npc location still works" (evalPredicate (Location "goblin" "hallway") st)
+    pure (r1 && r2 && r3)
+
+-- | `exit` is the quit alias, `disembark` leaves a vehicle — the help text has
+--   to say the same, otherwise players quit the game instead of leaving a ship.
+testExitIsNotDisembark :: IO Bool
+testExitIsNotDisembark = do
+    r1 <- expectEqual Quit (parseCommand "exit")
+    r2 <- expectEqual ExitVehicleCmd (parseCommand "disembark")
+    r3 <- expectTrue "help does not advertise 'exit' for vehicles"
+        (isInfixOf "disembark" helpText && not (isInfixOf "exit / disembark" helpText))
     pure (r1 && r2 && r3)
 
 testPlayerDeathSetsGameOver :: IO Bool
@@ -2052,6 +2062,7 @@ main = do
         , runTest "ordinary vehicle fights exactly like on foot" testOrdinaryVehicleUnchanged
         , runTest "ship systems survive save/load" testShipSystemsSaveLoad
         , runTest "Location player predicate gates on the player's room" testLocationPlayerPredicate
+        , runTest "exit quits, disembark leaves the vehicle" testExitIsNotDisembark
         , runTest "player death sets gameOver + Death reason" testPlayerDeathSetsGameOver
         -- Completion tests
         , runTest "completion suggests NPC target" testCompletionSuggestsNpcName
