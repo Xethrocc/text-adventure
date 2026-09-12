@@ -354,4 +354,35 @@ stealth:
 - **Fehler:** `UnknownObserverNPC` (NPC nicht unter `npcs:` deklariert),
   `StealthVariableClash` (Autor deklariert die noise-Variable separat).
 
-Siehe `docs/modules.md` (7e) für Details und die Referenz-Fixture.
+---
+
+## Combat: Kampfprofile (Module 7f)
+
+Kampf ist eine über Daten gewählte Policy; ohne `combat:`-Block gilt
+`classic` (exakt das Verhalten vor 7f).
+
+```yaml
+combat:
+  profile: classic            # off | narrative | classic
+  attack_refused: "..."       # off: Abgelehnt-Meldung (Default generisch)
+  difficulty: 3               # narrative: Bonus auf die NPC-Verteidigung
+  on_win:  [ ... ]            # narrative: Effekte bei Sieg
+  on_lose: [ ... ]            # narrative: Effekte bei Niederlage
+```
+
+- `off`: `attack` wird abgelehnt (`attack_refused`, Default-Text), keine
+  Seite verliert HP.
+- `narrative`: ein Wurf `Spieler-Angriff >= NPC-Verteidigung + difficulty`;
+  `on_win`/`on_lose` sind normale Effekt-Listen, die entscheiden, was
+  passiert — keine automatische HP-Attrition.
+- `classic`: bit-identisch zur Vor-7f-Logik (Schaden `attack − defense`,
+  Konter im selben Befehl, Tod via HP ≤ 0). Default ohne `combat:`-Block.
+- `tactical` ist bis Phase 7f-3 deaktiviert (`CombatProfileNotSupported`).
+- **Fehler:** `UnknownCombatProfile` (unbekannter Name),
+  `CombatProfileNotSupported` (tactical).
+
+Umsetzung: `src/Combat.hs` — `resolveCombat :: CombatProfile ->
+[CombatActor] -> CombatTarget -> GameState -> ([Effect], [String])`,
+pure Effekt-Erzeugung durch den einen Interpreter.
+
+Siehe `docs/modules.md` (7f) für Details und die Referenz-Fixtures.

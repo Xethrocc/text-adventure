@@ -848,7 +848,50 @@ data GameWorld = GameWorld
     , verbDefs           :: Map.Map String VerbDef                   -- ^ Adventure-declared verbs (Phase 3a)
     , varDefs            :: Map.Map String VarDef                    -- ^ Adventure-declared variables (Phase 3b)
     , triggerDefs        :: [TriggerDef]                              -- ^ Trigger rules (Phase 3f)
+    , combatProfile      :: CombatProfile                            -- ^ combat policy (Phase 7f)
     } deriving (Show, Eq)
+
+-- | Combat policy, chosen by authored data (Phase 7f). `CombatClassic` is
+--   the exact pre-7f behaviour and the default when no `combat:` block is
+--   present (bit-identical regression gate).
+data CombatProfile
+    = CombatOff (Maybe String)                 -- ^ attack refused; optional custom message
+    | CombatNarrative NarrativeCombat          -- ^ opposed roll -> on_win/on_lose effects
+    | CombatClassic                            -- ^ today's behaviour: attack vs defense, retaliation
+    deriving (Show, Eq, Generic)
+
+-- | Narrative combat: the player's effective attack is rolled against the
+--   target's defense + a difficulty offset. No HP attrition — the on_win /
+--   on_lose effects decide everything.
+data NarrativeCombat = NarrativeCombat
+    { ncDifficulty :: Int
+    , ncOnWin      :: Effect
+    , ncOnLose     :: Effect
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON CombatProfile where
+    toJSON (CombatOff mRefused) = object
+        [ "profile" .= ("off" :: String)
+        , "attack_refused" .= mRefused ]
+    toJSON (CombatNarrative nc) = object
+        [ "profile" .= ("narrative" :: String)
+        , "difficulty" .= ncDifficulty nc
+        , "on_win"  .= ncOnWin nc
+        , "on_lose" .= ncOnLose nc ]
+    toJSON CombatClassic = object [ "profile" .= ("classic" :: String) ]
+
+instance FromJSON CombatProfile where
+    parseJSON v = withObject "CombatProfile" (\o -> do
+        prof <- o .: "profile"
+        case prof of
+            "off"       -> CombatOff <$> o .:? "attack_refused"
+            "narrative" -> CombatNarrative <$>
+                (NarrativeCombat
+                    <$> o .:? "difficulty" .!= 0
+                    <*> o .:? "on_win"  .!= Noop
+                    <*> o .:? "on_lose" .!= Noop)
+            "classic"   -> pure CombatClassic
+            other       -> fail ("unknown combat profile '" ++ other ++ "'")) v
 
 instance ToJSON GameWorld where
     toJSON gw = object
@@ -862,6 +905,7 @@ instance ToJSON GameWorld where
         , "verbDefs"           .= verbDefs gw
         , "varDefs"            .= varDefs gw
         , "triggerDefs"       .= triggerDefs gw
+        , "combatProfile"     .= combatProfile gw
         ]
 
 instance FromJSON GameWorld where
@@ -876,6 +920,7 @@ instance FromJSON GameWorld where
         <*> o .:? "verbDefs" .!= Map.empty
         <*> o .:? "varDefs"  .!= Map.empty
         <*> o .:? "triggerDefs" .!= []
+        <*> o .:? "combatProfile" .!= CombatClassic
 
 parseItemInteractions :: Map.Map String Effect -> Parser (Map.Map (String, String) Effect)
 parseItemInteractions m =

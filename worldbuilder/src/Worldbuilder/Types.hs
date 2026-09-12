@@ -37,6 +37,7 @@ data Adventure = Adventure
     , advEncounterTables  :: [AEncounterTable]           -- ^ encounter tables (Phase 7c)
     , advEnvironment      :: Maybe AEnvironment          -- ^ weather + drains (Phase 7d)
     , advStealth          :: Maybe AStealth              -- ^ noise + observers (Phase 7e)
+    , advCombat           :: Maybe ACombat               -- ^ combat profile (Phase 7f)
     } deriving (Show, Eq, Generic)
 
 instance FromJSON Adventure where
@@ -60,6 +61,7 @@ instance FromJSON Adventure where
         <*> o .:? "encounter_tables"  .!= []
         <*> o .:? "environment"
         <*> o .:? "stealth"
+        <*> o .:? "combat"
 
 -- | Optional player stats block in YAML (Phase 4d).
 --   `player: { max_hp: 50, attack: 8, defense: 3, skills: { lockpick: 5 } }`
@@ -567,6 +569,32 @@ instance FromJSON AObserver where
         <*> o .:  "hears_at"
         <*> o .:? "cooldown" .!= 0
         <*> o .:? "on_hear"  .!= []
+
+-- ---------------------------------------------------------------------------
+-- Combat (Phase 7f): authored combat profile
+-- ---------------------------------------------------------------------------
+
+-- | The `combat:` segment: `profile` is one of off | narrative | classic.
+--   `tactical` is declared later (Phase 7f-3) and rejected here until then.
+--   - off:      attack is refused (attack_refused message), no HP spent
+--   - narrative: opposed roll (player effective attack vs defense +
+--     difficulty offset); on_win / on_lose effects decide everything
+--   - classic:  exactly today's behaviour — and the default without a block
+data ACombat = ACombat
+    { acProfile       :: String
+    , acAttackRefused :: Maybe String
+    , acDifficulty    :: Int
+    , acOnWin         :: [AActionOutcome]
+    , acOnLose        :: [AActionOutcome]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ACombat where
+    parseJSON = withObject "ACombat" $ \o -> ACombat
+        <$> o .:? "profile"       .!= "classic"
+        <*> o .:? "attack_refused"
+        <*> o .:? "difficulty"    .!= 0
+        <*> o .:? "on_win"        .!= []
+        <*> o .:? "on_lose"       .!= []
 
 -- ---------------------------------------------------------------------------
 -- Interactions

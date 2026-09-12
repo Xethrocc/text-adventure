@@ -200,3 +200,53 @@ Fixture: `examples/modules/stealth.yaml` — Die Nachtschicht. Fünf
 sneak-Bewegungen halten den Lärm unter der Hör-Schwelle der Wache; wer
 rennt, wird gehört (Tod), wer die Laterne nimmt, wird im dunklen Posten
 gesehen. Tresorraum = Victory.
+
+---
+
+## 7f — Kampfprofile
+
+**Kernänderung: ja — der einzige echte Umbau der Phase 7.** Kampf verlässt
+`Parser.executeAttack` und wird eine über Daten gewählte Policy im
+Regelkern. Neue Datei: `src/Combat.hs`.
+
+```yaml
+combat:
+  profile: classic            # off | narrative | classic
+  # off:        attack wird abgelehnt (attack_refused), kein HP-Verbrauch
+  # narrative:  vergleichender Wurf (Spieler-Angriff vs. Verteidigung +
+  #             difficulty) -> on_win / on_lose-Effects, keine HP-Attrition
+  # classic:    exakt das Verhalten vor 7f — Default ohne combat:-Block
+```
+
+**Architektur-Regel (umgesetzt):** `resolveCombat :: CombatProfile ->
+[CombatActor] -> CombatTarget -> GameState -> ([Effect], [String])` — eine
+reine Funktion, die Effects erzeugt, die anschließend durch
+`applyOutcomeWith` laufen. Kein zweiter Interpreter, kein zweiter
+`applyLoopCommand`-Pfad. `Parser.executeAttack` ist ein dünner Wrapper
+(Profil + `[PlayerActor]` + `TargetNPC` verdrahten, Effekte anwenden,
+Meldungen durchreichen). `CombatActor` ist von Anfang an eine Liste —
+Begleiter (7g) erweitern sie, ohne die Signatur zu ändern.
+
+- **classic bleibt bit-identisch:** keine `combat:`-Block-Variante ist ein
+  eigener Test (Engine: `testCombatDamageUsesDefense` u. a.), und die
+  Fixture `combat-classic.yaml` belegt das Verhalten mit explizitem Block.
+  Schaden = `attack − defense` (min 1 / min 0), Gegner kontert im selben
+  Befehl, NPC-Tod via `killNPC`, Spieler-Tod via `endGame`.
+- **narrative:** `effectiveAttack >= npcDefenseBase + difficulty` gewinnt.
+  Die `on_win`-/`on_lose`-Effects entscheiden alles; die klassische
+  HP-Attrition entfällt komplett (Fixture: Kampf öffnet ein Tor, statt den
+  gegner zu zerhauen).
+- **off:** `attack` wird mit `attack_refused`-Text abgelehnt; niemand
+  verliert HP (Fixture: „Der Verhandlungsweg").
+- **7f-3 (`tactical`)** bleibt Teilstopp: im Worldbuilder mit
+  `CombatProfileNotSupported` abgelehnt, bis ein Referenzspiel es verlangt
+  (Entscheidung im Plan ✅). `CombatProfile`-JSON kennt den Konstruktor noch
+  nicht — er kommt mit 7f-3.
+- **Validierung:** `UnknownCombatProfile` (unbekannter Name),
+  `CombatProfileNotSupported` (tactical bis 7f-3).
+
+Fixtures: `examples/modules/combat-off.yaml` („Der Verhandlungsweg" —
+Wächterin, Umhang-Quest, Sieg ohne einen Schlag), `combat-narrative.yaml`
+(„Der Duellplatz" — ein Wurf entscheidet, Tor öffnet sich),
+`combat-classic.yaml` („Der Kerkerkopf" — expliziter Classic-Block,
+6 Treffer, Tod per `killNPC` öffnet den Schatzraum via `locked_by`).

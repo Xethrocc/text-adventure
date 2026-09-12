@@ -5,6 +5,7 @@ module Parser where
 
 import Types
 import Game
+import Combat (CombatActor (..), CombatTarget (..), resolveCombat)
 import Control.Applicative ((<|>))
 import Data.Char (toLower, isDigit)
 import Data.List (find, intercalate, nub)
@@ -789,26 +790,24 @@ renderDialogue npc tree maybeNpcState state =
 -- Combat
 -- ---------------------------------------------------------------------------
 
--- | Combat logic extracted for reuse and correctness
+-- | Combat logic delegated to the pure resolver (Phase 7f). The parser only
+--   wires profile + actors + target and applies the returned effects through
+--   the single outcome interpreter. Messages come from the resolver.
 executeAttack :: NPCDef -> Maybe NPCState -> String -> GameState -> CommandResult
-executeAttack npc maybeNpcState targetStr state =
-    case maybeNpcState >>= npcHealth of
-        Nothing -> (state, "You can't attack the " ++ npcName npc ++ ".")
-        Just hp ->
-            let nId = npcId npc
-                playerDmg = max 1 (effectiveAttack state - npcDefenseBase npc)
-                newHp = hp - playerDmg
-            in if newHp <= 0
-               then (killNPC nId state, "You attack the " ++ targetStr ++ " and kill it!")
-               else
-                   let npcDmg = max 0 (npcAttackBase npc - effectiveDefense state)
-                       state' = case maybeNpcState of
-                           Just npcState -> updateNPCState nId (npcState { npcHealth = Just newHp }) state
-                           Nothing       -> state
-                       state'' = updatePlayerHealth (\h -> h - npcDmg) state'
-                   in if isPlayerDead state''
-                      then (endGame Death state'', "The " ++ targetStr ++ " strikes back and kills you!")
-                      else (state'', "You hit for " ++ show playerDmg ++ ", it hits you for " ++ show npcDmg ++ ".")
+executeAttack npc _ targetStr state =
+    let nId = npcId npc
+        profile = combatProfile (world state)
+        (effects, msgs) = resolveCombat profile [PlayerActor] (TargetNPC nId targetStr) state
+        (st', m, _) = case effects of
+            [] -> (state, "", 0)
+            _  -> foldl (\(s, _, _) e -> applyOutcomeWith 0 0 e nId s)
+                        (state, "", 0) effects
+        body = combineMsgs (m : msgs)
+    in if null body then (st', "") else (st', body)
+
+-- | Concatenate non-empty combat messages.
+combineMsgs :: [String] -> String
+combineMsgs = unlines . filter (not . null)
 
 -- ---------------------------------------------------------------------------
 -- Help text

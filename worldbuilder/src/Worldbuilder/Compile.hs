@@ -82,6 +82,7 @@ compileAdventure adv =
         (stealthConflictErrs, allVarDefs, allVarInitials) =
             mergeStealthVars envAllVarDefs envAllVarInitials stealthVarDefs stealthVarInitials
         allTriggerDefs = triggerDefs ++ encounterDefs ++ envTriggerDefs ++ stealthTriggerDefs
+        (combatErrs, combatProfileCompiled) = compileCombat (advCombat adv)
         (initVarErrs, initialVars) =
             compileInitialVariables allVarDefs allVarInitials (advInitialVariables adv)
         (initStateErrs, initialFlags, initialQuests) =
@@ -98,6 +99,7 @@ compileAdventure adv =
                 , E.verbDefs = verbRegistry
                 , E.varDefs = allVarDefs
                 , E.triggerDefs = allTriggerDefs
+                , E.combatProfile = combatProfileCompiled
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
@@ -106,6 +108,7 @@ compileAdventure adv =
                     ++ varErrs ++ facErrs ++ facConflictErrs ++ trigErrs ++ encErrs
                     ++ envErrs ++ envConflictErrs
                     ++ stealthErrs ++ stealthConflictErrs
+                    ++ combatErrs
                     ++ initVarErrs ++ initStateErrs ++ facRefErrs ++ encRefErrs
     in case allErrors of
         (_:_) -> Left allErrors
@@ -471,6 +474,30 @@ mergeStealthVars varDefs varInitials stealthDefs stealthInitials =
             | name <- Map.keys varDefs
             , name `Map.member` stealthDefs ]
     in (clashErrs, Map.union stealthDefs varDefs, Map.union stealthInitials varInitials)
+
+-- ---------------------------------------------------------------------------
+-- Combat (Phase 7f)
+-- ---------------------------------------------------------------------------
+
+-- | Compile the `combat:` segment into the engine's CombatProfile.
+--   Nothing -> CombatClassic (the default; without a block everything stays
+--   bit-identical to pre-7f behaviour). Rejects unknown profiles and the
+--   not-yet-implemented `tactical` profile.
+compileCombat :: Maybe ACombat -> ([CompileIssue], E.CombatProfile)
+compileCombat Nothing = ([], E.CombatClassic)
+compileCombat (Just ac) = case acProfile ac of
+    "off"       -> ([], E.CombatOff (acAttackRefused ac))
+    "classic"   -> ([], E.CombatClassic)
+    "narrative" -> ([], E.CombatNarrative (E.NarrativeCombat
+                        (acDifficulty ac)
+                        (compileOutcomes (acOnWin ac))
+                        (compileOutcomes (acOnLose ac))))
+    "tactical"  -> ([ ciError "combat.profile" "CombatProfileNotSupported"
+                        "the 'tactical' combat profile is not implemented yet (Phase 7f-3)" ]
+                    , E.CombatClassic)
+    other       -> ([ ciError "combat.profile" "UnknownCombatProfile"
+                        ("unknown combat profile '" ++ other ++ "' (expected off | narrative | classic)") ]
+                    , E.CombatClassic)
 
 -- | Verify every `faction.<id>` reference in the compiled world resolves to a
 --   declared faction. Only runs when the `factions:` segment is present

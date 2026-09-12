@@ -22,6 +22,7 @@ emptyGameWorld = GameWorld
     , verbDefs           = Map.empty
     , varDefs            = Map.empty
     , triggerDefs        = []
+    , combatProfile      = CombatClassic
     }
 
 -- | Default empty game state

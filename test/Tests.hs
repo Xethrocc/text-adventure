@@ -387,6 +387,54 @@ testCombatDamageUsesDefense = do
     r2 <- expectEqual (Just 22) goblinHp
     pure (r1 && r2)
 
+-- | Phase 7f: with `combat: profile: off` the attack is refused and neither
+--   side loses HP (no attrition).
+testCombatOffRefusesAttack :: IO Bool
+testCombatOffRefusesAttack = do
+    let worldOff = (world initSampleGame) { combatProfile = CombatOff Nothing }
+        st = initSampleGame { world = worldOff, save = (save initSampleGame) { currentRoom = "hallway" } }
+        (newState, msg) = executeCommand (Interact VAttack "goblin") st
+        goblinHp = (Map.lookup "goblin" (npcStates (save newState))) >>= npcHealth
+    r1 <- expectTrue "refused message" (isInfixOf "can't attack" msg)
+    r2 <- expectEqual (Just 30) goblinHp
+    r3 <- expectEqual 100 (playerHealth (player (save newState)))
+    pure (r1 && r2 && r3)
+
+-- | Phase 7f: `attack_refused` overrides the default off message.
+testCombatOffCustomRefusal :: IO Bool
+testCombatOffCustomRefusal = do
+    let worldOff = (world initSampleGame) { combatProfile = CombatOff (Just "Guards are watching!") }
+        st = initSampleGame { world = worldOff, save = (save initSampleGame) { currentRoom = "hallway" } }
+        (_, msg) = executeCommand (Interact VAttack "goblin") st
+    expectTrue "custom refusal shown" (isInfixOf "Guards are watching" msg)
+
+-- | Phase 7f: narrative combat rolls attack vs defense + difficulty and runs
+--   on_win / on_lose effects. No HP is spent on either side.
+testCombatNarrativeWin :: IO Bool
+testCombatNarrativeWin = do
+    let narrative = CombatNarrative (NarrativeCombat 0 (SetValue (VRFlag "fight_won") (EVString "true")) (SetValue (VRFlag "fight_lost") (EVString "true")))
+        worldN = (world initSampleGame) { combatProfile = narrative }
+        st = initSampleGame { world = worldN, save = (save initSampleGame) { currentRoom = "hallway" } }
+        (newState, msg) = executeCommand (Interact VAttack "goblin") st
+        goblinHp = (Map.lookup "goblin" (npcStates (save newState))) >>= npcHealth
+    r1 <- expectEqual (Just "true") (getFlag "fight_won" newState)
+    r2 <- expectEqual (Just 30) goblinHp
+    r3 <- expectTrue "win message" (isInfixOf "win the fight" msg)
+    pure (r1 && r2 && r3)
+
+testCombatNarrativeLose :: IO Bool
+testCombatNarrativeLose = do
+    -- difficulty 20 > attack 10 -> lose
+    let narrative = CombatNarrative (NarrativeCombat 20 (SetValue (VRFlag "fight_won") (EVString "true")) (SetValue (VRFlag "fight_lost") (EVString "true")))
+        worldN = (world initSampleGame) { combatProfile = narrative }
+        st = initSampleGame { world = worldN, save = (save initSampleGame) { currentRoom = "hallway" } }
+        (newState, msg) = executeCommand (Interact VAttack "goblin") st
+        goblinHp = (Map.lookup "goblin" (npcStates (save newState))) >>= npcHealth
+    r1 <- expectEqual (Just "true") (getFlag "fight_lost" newState)
+    r2 <- expectEqual (Just 30) goblinHp
+    r3 <- expectTrue "lose message" (isInfixOf "lose the fight" msg)
+    pure (r1 && r2 && r3)
+
 testPlayerDeathSetsGameOver :: IO Bool
 testPlayerDeathSetsGameOver = do
     let weakPlayer = initSampleGame { save = (save initSampleGame) { currentRoom = "hallway", player = Player 1 100 10 0 Map.empty } }
@@ -1754,6 +1802,10 @@ main = do
         , runTest "RandomChoice produces independent draws" testRandomChoiceSaltDiffers
         -- Combat tests
         , runTest "combat damage uses npcDefenseBase" testCombatDamageUsesDefense
+        , runTest "combat off refuses attack" testCombatOffRefusesAttack
+        , runTest "combat off custom refusal message" testCombatOffCustomRefusal
+        , runTest "combat narrative win runs on_win" testCombatNarrativeWin
+        , runTest "combat narrative lose runs on_lose" testCombatNarrativeLose
         , runTest "player death sets gameOver + Death reason" testPlayerDeathSetsGameOver
         -- Completion tests
         , runTest "completion suggests NPC target" testCompletionSuggestsNpcName

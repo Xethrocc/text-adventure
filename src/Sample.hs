@@ -172,6 +172,7 @@ initSampleGame = GameState
         , verbDefs = Map.empty
         , varDefs = Map.empty
         , triggerDefs = []
+        , combatProfile = CombatClassic
         }
     , save = SaveState
         { player = Player 100 100 10 5 (Map.singleton "lockpick" 2)

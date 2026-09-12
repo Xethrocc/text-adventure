@@ -30,6 +30,10 @@ minWorld = E.GameWorld
     , itemInteractions = Map.empty
     , questDefs = Map.empty
     , vehicleDefs = Map.empty
+    , verbDefs = Map.empty
+    , varDefs = Map.empty
+    , triggerDefs = []
+    , combatProfile = E.CombatClassic
     }
 
 -- | Helper: a minimal valid SaveState referencing room_0
@@ -142,6 +146,7 @@ minAdventure room = Adventure
     , advEncounterTables = []
     , advEnvironment = Nothing
     , advStealth = Nothing
+    , advCombat = Nothing
     }
 
 -- ---------------------------------------------------------------------------
@@ -1185,6 +1190,81 @@ testStealthFixtureCompiles = do
                         r2 <- expectEqual [] sErrs
                         pure (r1 && r2)
 
+-- | The 7f combat segment: default without a block is CombatClassic; off /
+--   narrative compile to their profiles; tactical and unknown profiles are
+--   rejected (Phase 7f-3 stays open).
+testCombatCompiles :: IO Bool
+testCombatCompiles = do
+    -- default: no combat block -> classic
+    r0 <- case compileAdventure (minAdventure (minRoom "loc_0")) of
+            Left _ -> expectTrue "default compiles" False
+            Right cr -> expectEqual E.CombatClassic (E.combatProfile (crWorld cr))
+    -- off with custom refusal
+    let advOff = (minAdventure (minRoom "loc_0"))
+            { advCombat = Just (ACombat "off" (Just "Im Fokus: Gespräch, nicht Gewalt.") 0 [] []) }
+    r1 <- case compileAdventure advOff of
+            Left _   -> expectTrue "off compiles" False
+            Right cr -> expectEqual (E.CombatOff (Just "Im Fokus: Gespräch, nicht Gewalt."))
+                                     (E.combatProfile (crWorld cr))
+    -- narrative with on_win/on_lose effects
+    let advNarr = (minAdventure (minRoom "loc_0"))
+            { advCombat = Just (ACombat "narrative" Nothing 3
+                                    [ AOMessage "Du überzeugst ihn." ]
+                                    [ AODamagePlayer 4 ]) }
+    r2 <- case compileAdventure advNarr of
+            Left _   -> expectTrue "narrative compiles" False
+            Right cr -> case E.combatProfile (crWorld cr) of
+                E.CombatNarrative nc -> do
+                    rA <- expectEqual 3 (E.ncDifficulty nc)
+                    rB <- expectEqual (E.SendMessage "Du überzeugst ihn.") (E.ncOnWin nc)
+                    rC <- expectEqual (E.ModifyValue E.VRPlayerHealth (-4)) (E.ncOnLose nc)
+                    pure (rA && rB && rC)
+                _ -> expectTrue "expected narrative profile" False
+    -- tactical: rejected until 7f-3
+    let advTac = (minAdventure (minRoom "loc_0"))
+            { advCombat = Just (ACombat "tactical" Nothing 0 [] []) }
+    r3 <- case compileAdventure advTac of
+            Left errs -> expectContains "CombatProfileNotSupported" (issuesText errs)
+            Right _   -> expectTrue "expected tactical rejection" False
+    -- unknown profile
+    let advBad = (minAdventure (minRoom "loc_0"))
+            { advCombat = Just (ACombat "quantum" Nothing 0 [] []) }
+    r4 <- case compileAdventure advBad of
+            Left errs -> expectContains "UnknownCombatProfile" (issuesText errs)
+            Right _   -> expectTrue "expected unknown profile rejection" False
+    pure (r0 && r1 && r2 && r3 && r4)
+
+-- | The 7f combat fixture(s) compile and validate clean.
+testCombatFixturesCompile :: IO Bool
+testCombatFixturesCompile = do
+    r1 <- fixtureOk "combat-off.yaml"
+    r2 <- fixtureOk "combat-narrative.yaml"
+    r3 <- fixtureOk "combat-classic.yaml"
+    pure (r1 && r2 && r3)
+  where
+    fixtureOk fname = do
+        mbPath <- findExampleModule fname
+        case mbPath of
+            Nothing -> do
+                putStrLn $ "  examples/modules/" ++ fname ++ " not found"
+                pure False
+            Just path -> do
+                mbAdv <- parseAdventureFile path
+                case mbAdv of
+                    Nothing -> do
+                        putStrLn $ "  failed to parse examples/modules/" ++ fname
+                        pure False
+                    Just adv -> case compileAdventure adv of
+                        Left errs -> do
+                            putStrLn $ "  compile errors (" ++ fname ++ "): " ++ show errs
+                            pure False
+                        Right cr -> do
+                            let wErrs = validateWorld (crWorld cr)
+                                sErrs = validateGameState (crWorld cr) (crSave cr)
+                            rA <- expectEqual [] wErrs
+                            rB <- expectEqual [] sErrs
+                            pure (rA && rB)
+
 -- | Try candidate paths for the modules directory.
 findExampleModule :: String -> IO (Maybe FilePath)
 findExampleModule fname = firstExisting
@@ -1265,6 +1345,9 @@ tests =
     , ("stealth compiles to noise/observer/decay triggers", testStealthCompiles)
     , ("stealth validation (unknown npc / var clash)", testStealthValidation)
     , ("stealth fixture compiles + validates", testStealthFixtureCompiles)
+    -- Phase 7f: combat profiles
+    , ("combat segment compiles (default/off/narrative/tactical-fail)", testCombatCompiles)
+    , ("combat fixtures compile + validate", testCombatFixturesCompile)
     ]
 
 main :: IO ()

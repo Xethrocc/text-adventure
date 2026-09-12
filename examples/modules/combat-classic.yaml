@@ -1,0 +1,128 @@
+name: "Der Kerkerkopf (Combat: classic)"
+start_room: cc_entry
+
+# Module 7f — Kampfprofil `classic`, explizit gesetzt.
+# Verhalten bit-identisch zum Default (ohne combat:-Block): Spieler schlägt
+# zuerst, Gegner kontert, Schaden = attack - defense (min 1 / min 0).
+# Diese Fixture belegt, dass der explizite Block nichts am Verhalten ändert.
+
+combat:
+  profile: classic
+
+npcs:
+  - id: hulk
+    name: Kerkerkopf
+    desc: "Ein muskelbepackter Gefangener, der den Durchgang zum Schatz bewacht."
+    keys: [kerkerkopf, hulk, riese]
+    location: cc_chamber
+    state: alive
+    max_hp: 40
+    attack: 6
+    defense: 3
+    dialogue:
+      alive:
+        entry: greet
+        nodes:
+          greet:
+            text: "„Hier kommst du nicht durch, Kleiner.“"
+            choices:
+              - { text: "Wir werden sehen.", next: null }
+              - { text: "Friedlich zurücktreten.", next: null }
+
+rooms:
+  - id: cc_entry
+    name: Kerkerzugang
+    desc: "Fackeln flackern an feuchten Wänden. Im Norden beginnt die Zellengasse."
+    exits:
+      north: {to: cc_corridor}
+      west: {to: cc_torture}
+      east: {to: cc_cellar}
+  - id: cc_corridor
+    name: Zellengasse
+    desc: "Verriegelte Türen links und rechts. Schritte hallen im Norden."
+    exits:
+      north: {to: cc_hall}
+      south: {to: cc_entry}
+      west: {to: cc_torture2}
+      east: {to: cc_storeroom}
+  - id: cc_hall
+    name: Wachhalle
+    desc: "Ein alter Tisch, vergammelte Karten. Im Osten lauert etwas Großes."
+    exits:
+      north: {to: cc_chamber}
+      south: {to: cc_corridor}
+      west: {to: cc_cell}
+      east: {to: cc_stairdown}
+    search:
+      - { give: iron_key }
+      - { msg: "Unter dem Tisch findest du einen eisernen Schlüssel." }
+  - id: cc_cell
+    name: Verwaiste Zelle
+    desc: "Ketten an der Wand, Stroh auf dem Boden. Hier war jemand eingesperrt."
+    exits:
+      east: {to: cc_hall}
+    search:
+      - { msg: "Nichts außer Staub und einem alten Knochen." }
+  - id: cc_chamber
+    name: Kammer des Kerkerkopfs
+    desc: "Der Kerkerkopf steht breitbeinig vor dem nördlichen Durchgang."
+    exits:
+      north: {to: cc_vault, locked_by: hulk}
+      south: {to: cc_hall}
+  - id: cc_vault
+    name: Schatzkammer
+    desc: "Goldkisten bis zur Decke. Der Durchgang ist frei — der Kerkerkopf liegt."
+    exits:
+      south: {to: cc_chamber}
+    on_enter:
+      - { game_end: victory, msg: "VICTORY — Der Kerkerkopf ist besiegt: die Schatzkammer gehört dir." }
+  - id: cc_storeroom
+    name: Vorratskammer
+    desc: "Fässer mit Salzfisch und hartem Brot."
+    exits:
+      south: {to: cc_corridor}
+  - id: cc_torture
+    name: Folterkammer
+    desc: "Ein Gestell, Kohlenbecken, Stille. Nicht einladend."
+    exits:
+      north: {to: cc_corridor}
+      east: {to: cc_entry}
+  - id: cc_stairdown
+    name: Wendeltreppe
+    desc: "Die Stufen führen hinab in die tiefste Ebene."
+    exits:
+      south: {to: cc_hall}
+      north: {to: cc_sewer}
+  - id: cc_sewer
+    name: Kanalisation
+    desc: "Wasser läuft an den Wänden, Ratten huschen davon."
+    exits:
+      south: {to: cc_stairdown}
+      north: {to: cc_guardroom}
+  - id: cc_torture2
+    name: Alte Folterkammer
+    desc: "Doppelte Ketten, doppeltes Schweigen."
+    exits:
+      east: {to: cc_corridor}
+  - id: cc_guardroom
+    name: Wachstube
+    desc: "Hocker, ein Tisch, ein vergessenes Kartenspiel."
+    exits:
+      north: {to: cc_corridor}
+  - id: cc_cellar
+    name: Keller
+    desc: "Kühle Luft und Fässer voller Stille."
+    exits:
+      east: {to: cc_entry}
+
+items:
+  - id: iron_key
+    name: Eiserner Schlüssel
+    desc: "Schwer, kalt, und er öffnet nichts Nützliches mehr."
+    keys: [schlüssel, key]
+    location: cc_hall
+    hidden: true
+
+interactions:
+  entity: []
+  item: []
