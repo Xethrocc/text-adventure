@@ -797,8 +797,11 @@ executeAttack :: NPCDef -> Maybe NPCState -> String -> GameState -> CommandResul
 executeAttack npc _ targetStr state =
     let nId = npcId npc
         profile = combatProfile (world state)
-        -- Phase 7g: party members standing here fight alongside the player.
-        actors = PlayerActor : map CompanionActor (partyMembersInRoom state)
+        -- Phase 7g/7h: party members standing here and the ship the player is
+        -- aboard fight alongside the player.
+        actors = [PlayerActor]
+                 ++ map CompanionActor (partyMembersInRoom state)
+                 ++ [ShipActor vId | Just vId <- [currentVehicle (save state)]]
         (effects, msgs) = resolveCombat profile actors (TargetNPC nId targetStr) state
         (st', m, _) = case effects of
             [] -> (state, "", 0)

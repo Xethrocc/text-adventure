@@ -169,6 +169,57 @@ dialogue:
     broken_wheel: "Wheel wobbles dangerously."
 ```
 
+Befehle: `enter/board <vehicle>`, `disembark` (nicht `exit` — das beendet
+das Spiel), `drive to <label>`, `wait` (Automatikroute), `refuel`,
+`repair <condition>`.
+
+### Fahrzeug mit Systemen (Module 7h)
+
+`systems:` und `stations:` machen aus einem Fahrzeug ein Schiff:
+
+```yaml
+vehicles:
+  - id: kestrel
+    name: Kestrel
+    type: player
+    entry_room: ks_bridge     # = cockpit
+    cockpit: ks_bridge
+    interior:
+      - { id: ks_bridge, name: Brücke, desc: "…", exits: { north: {to: ks_engine} } }
+      - { id: ks_engine, name: Maschinenraum, desc: "…" }
+    stops:
+      "Dock 7": ks_dock       # Label -> Außenraum
+      "Asteroidengürtel": ks_asteroid
+    start_stop: "Dock 7"
+    systems:                   # -> VarMap ship.kestrel.<name>
+      power:   { initial: 6, max: 6 }
+      shields: { initial: 8, max: 8 }
+      hull:    { initial: 12, max: 12 }
+      weapons: { initial: 2, max: 5 }
+    stations:                  # Interior-Raum + Verb, nur dort benutzbar
+      - room: ks_engine
+        verb: umleiten         # muss unter `verbs:` deklariert sein
+        effects: [ { add_var: ship.kestrel.power, delta: 3 } ]
+        when: { has_flag: reaktor_ok }   # optionales Zusatz-Gate
+```
+
+| Feld | Typ | Default | Beschreibung |
+|---|---|---|---|
+| `systems.<name>.initial` | Int | 0 | Startwert der Variable `ship.<vehicleId>.<name>` |
+| `systems.<name>.max` | Int | 0 | Obergrenze (0 = keine) — Deko, Clamps sind Autoren-Sache |
+| `stations[].room` | String | **required** | Interior-Raum des Fahrzeugs |
+| `stations[].verb` | String | **required** | deklariertes Custom-Verb |
+| `stations[].effects` | [Effekt] | `[]` | läuft wie jeder andere Effekt-Baum |
+| `stations[].when` | Predicate | — | zusätzliches Gate |
+
+- Das Verb wirkt **nur** im angegebenen Raum (der Compiler baut den Gate
+  `{ at: player, room: <room> }`); überall sonst passiert nichts.
+- Die vier Namen `power`, `shields`, `hull`, `weapons` haben Kampfbedeutung
+  (siehe `docs/modules.md`, 7h) — andere Systemnamen sind freie Vorräte für
+  Rules. Werte werden **nicht** automatisch geklemmt: Obergrenzen als
+  `if: { compare_var: … gt N }, then: [ { set_var: …, value: N } ]` nachziehen.
+- **Fehler:** `UnknownStationRoom`, `UnknownStationVerb`, `ShipVariableClash`.
+
 ---
 
 ## Variables

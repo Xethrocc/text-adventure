@@ -318,3 +318,64 @@ Fixture: `examples/modules/party.yaml` („Der Knappenzug", 14 Räume) — Knapp
 per `folgen alwin` anwerben, Wolf mit zwei Aktoren besiegen, Steinschlag tötet
 den Knappen, seine `on: state`-Rule öffnet das Runentor (`set_state`), Sieg in
 der Bergkammer. E2E: `ci/e2e/party.in/.expect`.
+
+---
+
+## 7h — Erweiterte Fahrzeuge und Raumschiffe
+
+**Kernänderung: ja — drei kleine Stellen.** (1) `Location "player" <room>`
+prüft jetzt auch den Spielerraum (vorher nur NPCs/Items), (2) `ShipActor` im
+7f-Resolver, (3) der Compiler-Pass für `systems:`/`stations:`. Kein neues
+Save-Feld, keine neue Datei unter `src/`.
+
+```yaml
+vehicles:
+  - id: kestrel
+    type: player
+    entry_room: ks_bridge      # = cockpit
+    interior: [ ks_bridge, ks_engine, ks_guns, ks_cargo ]
+    stops: { "Dock 7": ks_dock, "Asteroidengürtel": ks_asteroid }
+    systems:
+      power:   { initial: 6, max: 6 }     # je Salve 1
+      shields: { initial: 8, max: 8 }     # fängt den Konter ab
+      hull:    { initial: 12, max: 12 }   # nimmt den Rest
+      weapons: { initial: 2, max: 5 }     # Schaden des Schiffes
+    stations:
+      - { room: ks_engine, verb: umleiten, effects: [ { add_var: ship.kestrel.power, delta: 3 } ] }
+      - { room: ks_guns,   verb: aufladen, effects: [ { add_var: ship.kestrel.weapons, delta: 1 } ] }
+```
+
+- **Systeme = VarMap:** je System eine Variable `ship.<vehicleId>.<name>` mit
+  `min 0`/`max` aus dem Block; Autoren dürfen sie nicht selbst deklarieren
+  (`ShipVariableClash`) — der dritte Beleg der „kein State-Silo"-Regel nach
+  `faction.<id>` (7a) und `party.<id>` (7g). Obergrenzen sind **Deko**: ein
+  Clamp gehört als `if: { compare_var: … gt N } → set_var` in die Effekte.
+- **Stationen = Interior-Raum + Verb:** der Compiler erzeugt je Station einen
+  Trigger `ship.<id>.station.<room>` (`on: command <verb>`) mit dem Gate
+  `{ at: player, room: <room> }` plus optionalem `when:`. Die einzige
+  Kernänderung dafür ist generisch: `evalPredicate (Location "player" r)` war
+  implementiert, aber blind für den Spieler (nur NPC/Item-Locations).
+  Validierung: `UnknownStationRoom` (kein Interior-Raum),
+  `UnknownStationVerb` (nicht deklariert — Core-Verben werden bewusst
+  abgelehnt, sie würden das Built-in im Raum verdecken).
+- **Schiffs-Kampf = Vehicle als Aktor:** `CombatActor` hat jetzt `ShipActor
+  VehicleID`; `Parser.executeAttack` hängt das Schiff an, wenn der Spieler an
+  Bord ist. Ein Fahrzeug „hat Systeme", sobald irgendeine `ship.<id>.*`-Variable
+  existiert — ohne `systems:` bleibt alles bit-identisch (Engine-Test
+  `testOrdinaryVehicleUnchanged`). Im `classic`-Profil:
+  - das Schiff feuert `weapons` und verbraucht 1 `power`; ohne Energie bleibt
+    es stumm (Meldung, kein Schaden);
+  - der Konter trifft **das Schiff**: `shields` fangen ab, der Rest geht auf
+    `hull`; beide werden als geclampte `SetValue`-Effekte emittiert, weil
+    `VTInt`-Grenzen im Kern nicht durchgesetzt werden;
+  - ohne Schilde **und** Hülle nimmt weiter der Spieler den Schaden (7f).
+  - `hull <= 0` ist kein Kern-Sonderpfad: die Fixture beendet das Spiel mit
+    einer `on: turn`-Rule.
+- **Grenze der Ausbaustufe:** Ein *gegnerisches* Schiff ist in dieser Stufe
+  ein NPC mit `max_hp`/`attack` (die Türme treffen dein Schiff). Duell
+  Schiff-gegen-Schiff als zwei Fahrzeuge wäre ein eigener Schritt (7h-2) —
+  `CombatTarget` kennt nur NPC-Ziele.
+- **Fixtures:** `examples/modules/starship.yaml` („Der Kestrel-Lauf",
+  14 Räume, E2E `ci/e2e/starship.in/.expect`): Stationen nutzen (Energie
+  umleiten, Läufe aufladen), fliegen, Batterie anstöpseln (Clamp sichtbar),
+  Korsar beschießen — Schilde fangen ab, brechen, die Hülle nimmt Schaden.

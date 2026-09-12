@@ -1408,6 +1408,120 @@ testPartyFixtureCompiles = do
                         rB <- expectEqual [] sErrs
                         pure (rA && rB)
 
+-- ---------------------------------------------------------------------------
+-- Phase 7h: ship systems and stations
+-- ---------------------------------------------------------------------------
+
+-- | A minimal ship: two interior rooms, three systems, no stations.
+minShip :: String -> AVehicle
+minShip vid = AVehicle
+    { avId = vid
+    , avName = "Kestrel"
+    , avDesc = "A lean courier."
+    , avType = "player"
+    , avInterior = [minRoom (vid ++ "_bridge"), minRoom (vid ++ "_guns")]
+    , avEntryRoom = vid ++ "_bridge"
+    , avCockpit = Just (vid ++ "_bridge")
+    , avStops = Map.empty
+    , avKeywords = ["ship", vid]
+    , avFuel = Nothing
+    , avConditions = Map.empty
+    , avStartStop = Nothing
+    , avSystems = Map.fromList [ ("power", ASystem 4 4)
+                               , ("weapons", ASystem 2 5)
+                               , ("hull", ASystem 6 6) ]
+    , avStations = []
+    }
+
+-- | `systems:` becomes VarMap entries, `stations:` one gated trigger per room.
+testShipSystemsCompile :: IO Bool
+testShipSystemsCompile = do
+    let ship = (minShip "kestrel")
+            { avStations = [ AStation "kestrel_guns" "feuern" [AOMessage "Die Waffen feuern."] Nothing ] }
+        adv = (minAdventure (minRoom "loc_0"))
+            { advVehicles = [ship]
+            , advVerbs = [AVerb "feuern" []] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let vars = variables (crSave cr)
+                stationTriggers = [ t | t <- E.triggerDefs (crWorld cr)
+                                      , E.trId t == "ship.kestrel.station.kestrel_guns" ]
+            r1 <- expectEqual (Just (E.VVInt 4)) (Map.lookup "ship.kestrel.power" vars)
+            r2 <- expectEqual (Just (E.VVInt 2)) (Map.lookup "ship.kestrel.weapons" vars)
+            r3 <- expectEqual (Just (E.VVInt 6)) (Map.lookup "ship.kestrel.hull" vars)
+            r4 <- expectTrue "weapons system declared" (Map.member "ship.kestrel.weapons" (E.varDefs (crWorld cr)))
+            r5 <- case stationTriggers of
+                [t] -> do
+                    a <- expectEqual [E.OnCommand "feuern"] (map E.trEvent stationTriggers)
+                    b <- expectEqual (Just (E.PAll [E.Location "player" "kestrel_guns"])) (E.trCondition t)
+                    c <- expectEqual [E.SendMessage "Die Waffen feuern."] (E.trEffects t)
+                    pure (a && b && c)
+                _ -> do
+                    putStrLn $ "  expected exactly one station trigger, got " ++ show (length stationTriggers)
+                    pure False
+            pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Station validation: room must be an interior room, the verb must be a
+--   declared custom verb, and systems are module-owned variables.
+testShipSystemsValidation :: IO Bool
+testShipSystemsValidation = do
+    let withStation st ship = ship { avStations = [st] }
+    -- unknown interior room
+    let advRoom = (minAdventure (minRoom "loc_0"))
+            { advVehicles = [withStation (AStation "nowhere" "feuern" [] Nothing) (minShip "kestrel")]
+            , advVerbs = [AVerb "feuern" []] }
+    r1 <- case compileAdventure advRoom of
+            Left errs -> expectContains "UnknownStationRoom" (issuesText errs)
+            Right _   -> expectTrue "expected UnknownStationRoom" False
+    -- undeclared verb
+    let advVerb = (minAdventure (minRoom "loc_0"))
+            { advVehicles = [withStation (AStation "kestrel_guns" "salutieren" [] Nothing) (minShip "kestrel")] }
+    r2 <- case compileAdventure advVerb of
+            Left errs -> expectContains "UnknownStationVerb" (issuesText errs)
+            Right _   -> expectTrue "expected UnknownStationVerb" False
+    -- a core verb would shadow the built-in behaviour of that room
+    let advCore = (minAdventure (minRoom "loc_0"))
+            { advVehicles = [withStation (AStation "kestrel_guns" "look" [] Nothing) (minShip "kestrel")] }
+    r3 <- case compileAdventure advCore of
+            Left errs -> expectContains "UnknownStationVerb" (issuesText errs)
+            Right _   -> expectTrue "expected UnknownStationVerb for core verb" False
+    -- the system variable is module-owned
+    let advClash = (minAdventure (minRoom "loc_0"))
+            { advVehicles = [minShip "kestrel"]
+            , advVariables = [AVariable "ship.kestrel.hull" "int" (Just (Aeson.Number 0)) Nothing Nothing] }
+    r4 <- case compileAdventure advClash of
+            Left errs -> expectContains "ShipVariableClash" (issuesText errs)
+            Right _   -> expectTrue "expected ShipVariableClash" False
+    pure (r1 && r2 && r3 && r4)
+
+-- | The 7h mini-fixture compiles and validates clean.
+testStarshipFixtureCompiles :: IO Bool
+testStarshipFixtureCompiles = do
+    mbPath <- findExampleModule "starship.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  examples/modules/starship.yaml not found"
+            pure False
+        Just path -> do
+            mbAdv <- parseAdventureFile path
+            case mbAdv of
+                Nothing -> do
+                    putStrLn "  failed to parse examples/modules/starship.yaml"
+                    pure False
+                Just adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  compile errors (starship.yaml): " ++ show errs
+                        pure False
+                    Right cr -> do
+                        let wErrs = validateWorld (crWorld cr)
+                            sErrs = validateGameState (crWorld cr) (crSave cr)
+                        rA <- expectEqual [] wErrs
+                        rB <- expectEqual [] sErrs
+                        pure (rA && rB)
+
 -- | Try candidate paths for the modules directory.
 findExampleModule :: String -> IO (Maybe FilePath)
 findExampleModule fname = firstExisting
@@ -1497,6 +1611,10 @@ tests =
     , ("party validation (verb / hp / variable clash)", testPartyValidation)
     , ("damage_npc compiles and validates its target", testDamageNpcCompiles)
     , ("party fixture compiles + validates", testPartyFixtureCompiles)
+    -- Phase 7h: ship systems + stations
+    , ("ship systems compile to VarMap + station triggers", testShipSystemsCompile)
+    , ("ship validation (station room / verb / variable clash)", testShipSystemsValidation)
+    , ("starship fixture compiles + validates", testStarshipFixtureCompiles)
     ]
 
 main :: IO ()

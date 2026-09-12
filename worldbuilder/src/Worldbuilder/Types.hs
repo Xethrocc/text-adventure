@@ -378,7 +378,38 @@ data AVehicle = AVehicle
     , avFuel       :: Maybe (String, Int)
     , avConditions :: Map.Map String [AActionOutcome]
     , avStartStop  :: Maybe String        -- ^ label of the stop the vehicle starts at
+    , avSystems    :: Map.Map String ASystem  -- ^ ship systems -> VarMap (Phase 7h)
+    , avStations   :: [AStation]          -- ^ interior-room verbs (Phase 7h)
     } deriving (Show, Eq, Generic)
+
+-- | A ship system (Phase 7h): compiled into the VarMap entry
+--   `ship.<vehicleId>.<name>`. `power`, `shields`, `hull` and `weapons` carry
+--   combat meaning in the 7f resolver; every other name is free for rules.
+data ASystem = ASystem
+    { asInitial :: Int   -- ^ starting value
+    , asMax     :: Int   -- ^ upper bound (0 = no declared bound)
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ASystem where
+    parseJSON = withObject "ASystem" $ \o -> ASystem
+        <$> o .:? "initial" .!= 0
+        <*> o .:? "max"     .!= 0
+
+-- | A station on a ship (Phase 7h): an interior room plus a verb that only
+--   works while the player stands there.
+data AStation = AStation
+    { astRoom    :: String                    -- ^ interior room id
+    , astVerb    :: String                    -- ^ declared custom verb
+    , astEffects :: [AActionOutcome]
+    , astWhen    :: Maybe E.Predicate         -- ^ extra gate
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AStation where
+    parseJSON = withObject "AStation" $ \o -> AStation
+        <$> o .:  "room"
+        <*> o .:  "verb"
+        <*> o .:? "effects" .!= []
+        <*> o .:? "when"
 
 instance FromJSON AVehicle where
     parseJSON = withObject "AVehicle" $ \o -> AVehicle
@@ -394,6 +425,8 @@ instance FromJSON AVehicle where
         <*> o .:? "fuel"
         <*> o .:? "conditions" .!= Map.empty
         <*> o .:? "start_stop"
+        <*> o .:? "systems"    .!= Map.empty
+        <*> o .:? "stations"   .!= []
 
 -- ---------------------------------------------------------------------------
 -- Variables (Phase 3b)

@@ -1,0 +1,192 @@
+name: "Der Kestrel-Lauf (Starship)"
+start_room: ks_dock
+
+# Module 7h — Erweiterte Fahrzeuge/Raumschiffe.
+# Die Kestrel hat `systems:` (power/shields/hull/weapons) — die leben als
+# VarMap-Einträge ship.kestrel.*, kein neues Save-Feld — und zwei `stations:`
+# (Maschinenraum/Waffenstation), die als Trigger mit Raum-Gate
+# ({at: player, room: …}) kompilieren. Im Kampf ist das Schiff ein zusätzlicher
+# Aktor im 7f-Resolver: es feuert `weapons` (kostet 1 power) und fängt den
+# Konter über `shields`/`hull` ab, statt dass der Spieler Schaden nimmt.
+
+verbs:
+  - { name: umleiten, aliases: [reroute] }
+  - { name: aufladen, aliases: [charge] }
+
+vehicles:
+  - id: kestrel
+    name: Kestrel
+    desc: "Ein schlanker Kurier der Randwacht, vier Decks, eine Narbe im Lack."
+    type: player
+    entry_room: ks_bridge
+    cockpit: ks_bridge
+    keys: [kestrel, schiff, kurier]
+    interior:
+      - id: ks_bridge
+        name: Brücke
+        desc: "Sichtschirme, drei Sessel, ein surrendes Konsolenlicht. Nach Norden liegt der Maschinenraum."
+        exits:
+          north: {to: ks_engine}
+          east: {to: ks_guns}
+          south: {to: ks_cargo}
+      - id: ks_engine
+        name: Maschinenraum
+        desc: "Ein Reaktorherz in Kupferwicklungen. Die Umleitschiene summt vor Ungeduld."
+        exits:
+          south: {to: ks_bridge}
+      - id: ks_guns
+        name: Waffenstation
+        desc: "Zwei Geschütztürme unter den Sichtschirmen, ihre Zuführung wartet."
+        exits:
+          west: {to: ks_bridge}
+      - id: ks_cargo
+        name: Frachtraum
+        desc: "Kisten, Gurte, der Geruch von kaltem Metall."
+        exits:
+          north: {to: ks_bridge}
+    stops:
+      "Dock 7": ks_dock
+      "Asteroidengürtel": ks_asteroid
+      "Mondbasis": ks_moon
+    start_stop: "Dock 7"
+    systems:
+      power:   { initial: 6, max: 6 }
+      shields: { initial: 8, max: 8 }
+      hull:    { initial: 12, max: 12 }
+      weapons: { initial: 2, max: 5 }
+    stations:
+      - room: ks_engine
+        verb: umleiten
+        effects:
+          - { add_var: ship.kestrel.power, delta: 3 }
+          - if: { compare_var: { name: ship.kestrel.power, op: gt, value: 6 } }
+            then: [ { set_var: ship.kestrel.power, value: 6 } ]
+          - { msg: "Du legst die Umleitschiene um — die Energieanzeige klettert bis an den Anschlag." }
+      - room: ks_guns
+        verb: aufladen
+        effects:
+          - { add_var: ship.kestrel.weapons, delta: 1 }
+          - if: { compare_var: { name: ship.kestrel.weapons, op: gt, value: 5 } }
+            then: [ { set_var: ship.kestrel.weapons, value: 5 } ]
+          - { msg: "Die Läufe laden nach — ein grünes Band läuft über die Konsole." }
+
+rooms:
+  - id: ks_dock
+    name: Dock 7
+    desc: "Kabel hängen wie Ranken im Dock. Die Kestrel liegt backbord an der Rampe."
+    exits:
+      north: {to: ks_hall}
+      east: {to: ks_market}
+  - id: ks_hall
+    name: Stationsring
+    desc: "Ein rotierender Ring aus Gängen, Menschen in grauen Overalls."
+    exits:
+      south: {to: ks_dock}
+      north: {to: ks_comm}
+      west: {to: ks_reactor}
+  - id: ks_comm
+    name: Funkkabine
+    desc: "Verschlissene Kopfhörer, ein Stapel alter Peilscheine."
+    exits:
+      south: {to: ks_hall}
+  - id: ks_market
+    name: Marktzeile
+    desc: "Gebratenes auf Stäben, Ersatzteile auf ausgebreiteten Decken."
+    exits:
+      west: {to: ks_dock}
+  - id: ks_reactor
+    name: Reaktorwartung
+    desc: "Warm, laut, und niemand sieht dir hier zu."
+    exits:
+      east: {to: ks_hall}
+    search:
+      - { give: ersatzbatterie }
+      - { msg: "Hinter einem losen Blech liegt eine Ersatzbatterie." }
+  - id: ks_asteroid
+    name: Asteroidengürtel
+    desc: "Geröll treibt im Leerlauf. Dazwischen wartet ein dunkler Rumpf."
+    exits:
+      north: {to: ks_wreck}
+  - id: ks_wreck
+    name: Wrackfeld
+    desc: "Ausgeweidete Frachter, ihre Rippen zeigen in alle Richtungen."
+    exits:
+      south: {to: ks_asteroid}
+      north: {to: ks_derelict}
+  - id: ks_derelict
+    name: Korsarenschiff
+    desc: "Der Rumpf des Roten Korsaren, aufgeschlitzt. An Bord wartet die Beute."
+    exits:
+      south: {to: ks_wreck}
+    on_enter:
+      - { game_end: victory, msg: "VICTORY — Der Korsar ist erledigt, die Beute geborgen: der Kestrel-Lauf ist gewonnen." }
+  - id: ks_moon
+    name: Mondbasis
+    desc: "Eine Kuppel aus grauem Staub und hartem Licht."
+    exits:
+      north: {to: ks_cave}
+  - id: ks_cave
+    name: Eishöhle
+    desc: "Frost auf dem Visier, Stille in den Ohren."
+    exits:
+      south: {to: ks_moon}
+
+npcs:
+  - id: korsar
+    name: Roter Korsar
+    desc: "Ein schwer bewaffnetes Piratenschiff, dessen Türme auf die Kestrel zeigen."
+    keys: [korsar, pirat, schiff]
+    location: ks_asteroid
+    state: alive
+    max_hp: 30
+    attack: 11
+    defense: 3
+    dialogue:
+      alive:
+        entry: hail
+        nodes:
+          hail:
+            text: "„Energie in die Waffen, Kleiner. Oder zahlst du lieber?“"
+            choices:
+              - { text: "Wir zahlen nicht.", next: null }
+              - { text: "Wir schießen.", next: null }
+
+items:
+  - id: ersatzbatterie
+    name: Ersatzbatterie
+    desc: "Ein schwerer Zellblock, geladen bis zum Rand."
+    keys: [batterie, zelle, ersatzbatterie]
+    location: ks_reactor
+    hidden: true
+    verb_map:
+      use,intact:
+        - { add_var: ship.kestrel.power, delta: 4 }
+        - if: { compare_var: { name: ship.kestrel.power, op: gt, value: 6 } }
+          then: [ { set_var: ship.kestrel.power, value: 6 } ]
+        - { msg: "Du stöpselst die Batterie an die Zuführung — die Anzeige springt hoch und bleibt am Anschlag hängen." }
+        - { consume: ersatzbatterie }
+
+rules:
+  - id: korsar_appears
+    on: enter ks_asteroid
+    once: true
+    effects:
+      - { msg: "Der Rote Korsar dreht bei. Seine Türme richten sich auf die Kestrel aus." }
+  # Ein Sprung ins Dock meldet den Systemstand (VarMap ist im Spiel sichtbar).
+  - id: dock_report
+    on: enter ks_dock
+    once: true
+    effects:
+      - { msg: "Die Docksysteme melden: Schilde und Hülle der Kestrel sind voll geladen." }
+  - id: hull_failure
+    on: turn
+    when:
+      all:
+        - { compare_var: { name: ship.kestrel.hull, op: lte, value: 0 } }
+        - { state: korsar, is: alive }
+    effects:
+      - { game_end: death, msg: "Die Hülle der Kestrel bricht auf — du verglühst mit dem Schiff." }
+
+interactions:
+  entity: []
+  item: []

@@ -554,6 +554,116 @@ testNPCDeathEventMessageShown = do
     r2 <- expectEqual (Just "true") (getFlag "goblin_down" st')
     pure (r1 && r2)
 
+-- ===== Ship System Tests (Phase 7h) =====
+
+-- | Sample game plus a courier ship with `systems:` (as VarMap entries) and
+--   the player aboard, standing where the goblin is.
+shipGame :: Int -> Int -> Int -> Int -> GameState
+shipGame power weapons shields hull =
+    let base = initSampleGame
+        shipDef = VehicleDef "ship" "Kestrel" "A lean courier."
+            PlayerControlled
+            ["carriage_cabin"] "carriage_cabin" (Just "carriage_cabin")
+            (Map.fromList [("hallway", VehicleStop "hallway" "the dark hallway" Nothing)])
+            ["ship", "kestrel"] Nothing Map.empty
+        vars = Map.fromList
+            [ ("ship.ship.power",   VVInt power)
+            , ("ship.ship.weapons", VVInt weapons)
+            , ("ship.ship.shields", VVInt shields)
+            , ("ship.ship.hull",    VVInt hull) ]
+    in base
+        { world = (world base) { vehicleDefs = Map.insert "ship" shipDef (vehicleDefs (world base)) }
+        , save = (save base)
+            { currentRoom = "hallway"
+            , currentVehicle = Just "ship"
+            , vehicleStates = Map.insert "ship"
+                (VehicleState "hallway" Nothing Set.empty Map.empty)
+                (vehicleStates (save base))
+            , variables = vars } }
+
+shipVarOf :: String -> GameState -> Maybe Int
+shipVarOf name st = case getVariable name st of
+    Just (VVInt n) -> Just n
+    _              -> Nothing
+
+-- | The ship fires its `weapons` alongside the player and spends one power.
+testShipFiresAndSpendsPower :: IO Bool
+testShipFiresAndSpendsPower = do
+    let (st', msg) = executeCommand (Interact VAttack "goblin") (shipGame 2 3 4 10)
+        goblinHp = (Map.lookup "goblin" (npcStates (save st'))) >>= npcHealth
+    r1 <- expectEqual (Just 19) goblinHp            -- player 8 + ship 3
+    r2 <- expectEqual (Just 1) (shipVarOf "ship.ship.power" st')
+    r3 <- expectTrue "ship volley reported" (isInfixOf "Kestrel fires for 3" msg)
+    pure (r1 && r2 && r3)
+
+-- | Without power the ship's guns stay silent; the player still attacks.
+testShipWithoutPowerDoesNotFire :: IO Bool
+testShipWithoutPowerDoesNotFire = do
+    let (st', msg) = executeCommand (Interact VAttack "goblin") (shipGame 0 3 4 10)
+        goblinHp = (Map.lookup "goblin" (npcStates (save st'))) >>= npcHealth
+    r1 <- expectEqual (Just 22) goblinHp
+    r2 <- expectEqual (Just 0) (shipVarOf "ship.ship.power" st')
+    r3 <- expectTrue "no power reported" (isInfixOf "has no power" msg)
+    pure (r1 && r2 && r3)
+
+-- | The return fire hits the ship: shields absorb first, the rest goes into
+--   the hull, and the player is unharmed.
+testShipShieldsAbsorbReturnFire :: IO Bool
+testShipShieldsAbsorbReturnFire = do
+    let (st', msg) = executeCommand (Interact VAttack "goblin") (shipGame 2 3 2 10)
+    r1 <- expectEqual 100 (playerHealth (player (save st')))
+    r2 <- expectEqual (Just 0) (shipVarOf "ship.ship.shields" st')
+    r3 <- expectEqual (Just 9) (shipVarOf "ship.ship.hull" st')     -- 3 damage - 2 absorbed
+    r4 <- expectTrue "absorb reported" (isInfixOf "shields absorb 2" msg)
+    r5 <- expectTrue "hull spill reported" (isInfixOf "hull takes 1" msg)
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | A ship with a hull but no shields takes the full hit on the hull.
+testShipHullTakesHit :: IO Bool
+testShipHullTakesHit = do
+    let st0 = shipGame 2 3 0 10
+        st1 = st0 { save = (save st0) { variables = Map.delete "ship.ship.shields" (variables (save st0)) } }
+        (st', msg) = executeCommand (Interact VAttack "goblin") st1
+    r1 <- expectEqual 100 (playerHealth (player (save st')))
+    r2 <- expectEqual (Just 7) (shipVarOf "ship.ship.hull" st')
+    r3 <- expectTrue "hull hit reported" (isInfixOf "the hull takes 3" msg)
+    pure (r1 && r2 && r3)
+
+-- | Regression gate: an ordinary vehicle (no `systems:`) behaves exactly like
+--   a fight on foot.
+testOrdinaryVehicleUnchanged :: IO Bool
+testOrdinaryVehicleUnchanged = do
+    let base = initSampleGame
+        st0 = base { save = (save base) { currentRoom = "hallway", currentVehicle = Just "carriage" } }
+        (st', msg) = executeCommand (Interact VAttack "goblin") st0
+        goblinHp = (Map.lookup "goblin" (npcStates (save st'))) >>= npcHealth
+    r1 <- expectEqual (Just 22) goblinHp
+    r2 <- expectEqual 97 (playerHealth (player (save st')))
+    r3 <- expectTrue "no ship chatter" (not (isInfixOf "fires for" msg) && not (isInfixOf "shields" msg))
+    pure (r1 && r2 && r3)
+
+-- | Ship systems live in the VarMap, so they survive save/load.
+testShipSystemsSaveLoad :: IO Bool
+testShipSystemsSaveLoad = do
+    let st = shipGame 2 3 4 10
+        decoded = Aeson.decode (Aeson.encode (save st)) :: Maybe SaveState
+    case decoded of
+        Nothing -> do putStrLn "  decode failed"; pure False
+        Just ss -> do
+            r1 <- expectEqual (Just (VVInt 3)) (Map.lookup "ship.ship.weapons" (variables ss))
+            r2 <- expectEqual (Just (VVInt 10)) (Map.lookup "ship.ship.hull" (variables ss))
+            pure (r1 && r2)
+
+-- | `Location "player" <room>` gates on the player's room (Phase 7h); the
+--   entity form keeps working.
+testLocationPlayerPredicate :: IO Bool
+testLocationPlayerPredicate = do
+    let st = initSampleGame { save = (save initSampleGame) { currentRoom = "hallway" } }
+    r1 <- expectTrue "player in room" (evalPredicate (Location "player" "hallway") st)
+    r2 <- expectTrue "player not in room" (not (evalPredicate (Location "player" "start") st))
+    r3 <- expectTrue "npc location still works" (evalPredicate (Location "goblin" "hallway") st)
+    pure (r1 && r2 && r3)
+
 testPlayerDeathSetsGameOver :: IO Bool
 testPlayerDeathSetsGameOver = do
     let weakPlayer = initSampleGame { save = (save initSampleGame) { currentRoom = "hallway", player = Player 1 100 10 0 Map.empty } }
@@ -1934,6 +2044,14 @@ main = do
         , runTest "party: dead companion inactive + event" testPartyDeadCompanionInactive
         , runTest "party roster survives save/load" testPartyRosterSaveLoadRoundTrip
         , runTest "npc death event message reaches the player" testNPCDeathEventMessageShown
+        -- Phase 7h: ship systems
+        , runTest "ship fires its weapons and spends power" testShipFiresAndSpendsPower
+        , runTest "ship without power does not fire" testShipWithoutPowerDoesNotFire
+        , runTest "ship shields absorb the return fire" testShipShieldsAbsorbReturnFire
+        , runTest "ship hull takes the hit without shields" testShipHullTakesHit
+        , runTest "ordinary vehicle fights exactly like on foot" testOrdinaryVehicleUnchanged
+        , runTest "ship systems survive save/load" testShipSystemsSaveLoad
+        , runTest "Location player predicate gates on the player's room" testLocationPlayerPredicate
         , runTest "player death sets gameOver + Death reason" testPlayerDeathSetsGameOver
         -- Completion tests
         , runTest "completion suggests NPC target" testCompletionSuggestsNpcName

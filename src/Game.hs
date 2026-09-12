@@ -553,12 +553,14 @@ evalPredicate (RoomHasTag rId tag) st =
     case Map.lookup rId (rooms (world st)) of
         Just room -> tag `Set.member` roomTags room
         Nothing   -> False
-evalPredicate (Location eId rId) st =
-    case Map.lookup eId (npcStates (save st)) of
-        Just ns  -> npcLocation ns == InRoom rId
-        Nothing  -> case Map.lookup eId (itemStates (save st)) of
-            Just is -> itemLocation is == InRoom rId
-            Nothing -> False
+evalPredicate (Location eId rId) st
+    | eId == "player" = currentRoom (save st) == rId
+    | otherwise =
+        case Map.lookup eId (npcStates (save st)) of
+            Just ns  -> npcLocation ns == InRoom rId
+            Nothing  -> case Map.lookup eId (itemStates (save st)) of
+                Just is -> itemLocation is == InRoom rId
+                Nothing -> False
 evalPredicate (CompareVar name op n) st =
     case Map.lookup name (variables (save st)) of
         Just (VVInt v) -> fromMaybe False (compareValues op v n)

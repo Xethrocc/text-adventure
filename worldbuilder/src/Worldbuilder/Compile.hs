@@ -86,11 +86,17 @@ compileAdventure adv =
         -- and one order verb that toggles membership.
         (partyErrs, partyVerbEntries, partyVarDefs, partyVarInitials) =
             compileParty verbRegistry (advNPCs adv)
-        (partyConflictErrs, allVarDefs, allVarInitials) =
+        (partyConflictErrs, partyAllVarDefs, partyAllVarInitials) =
             mergePartyVars stealthAllVarDefs stealthAllVarInitials partyVarDefs partyVarInitials
         npcDefsWithParty = Map.mapWithKey (addPartyVerbEntry partyVerbEntries) npcDefs
 
-        allTriggerDefs = triggerDefs ++ encounterDefs ++ envTriggerDefs ++ stealthTriggerDefs
+        -- Phase 7h: ship systems (VarMap) + station verbs per interior room
+        (shipErrs, shipTriggerDefs, shipVarDefs, shipVarInitials) =
+            compileShipSystems verbRegistry (advVehicles adv)
+        (shipConflictErrs, allVarDefs, allVarInitials) =
+            mergeShipVars partyAllVarDefs partyAllVarInitials shipVarDefs shipVarInitials
+
+        allTriggerDefs = triggerDefs ++ encounterDefs ++ envTriggerDefs ++ stealthTriggerDefs ++ shipTriggerDefs
         (combatErrs, combatProfileCompiled) = compileCombat (advCombat adv)
         (initVarErrs, initialVars) =
             compileInitialVariables allVarDefs allVarInitials (advInitialVariables adv)
@@ -119,6 +125,7 @@ compileAdventure adv =
                     ++ envErrs ++ envConflictErrs
                     ++ stealthErrs ++ stealthConflictErrs
                     ++ partyErrs ++ partyConflictErrs
+                    ++ shipErrs ++ shipConflictErrs
                     ++ combatErrs
                     ++ initVarErrs ++ initStateErrs ++ facRefErrs ++ encRefErrs ++ npcRefErrs
     in case allErrors of
@@ -558,6 +565,70 @@ mergePartyVars varDefs varInitials partyDefs partyInitials =
             | name <- Map.keys varDefs
             , name `Map.member` partyDefs ]
     in (clashErrs, Map.union partyDefs varDefs, Map.union partyInitials varInitials)
+
+-- ---------------------------------------------------------------------------
+-- Ship systems and stations (Phase 7h)
+-- ---------------------------------------------------------------------------
+
+-- | Phase 7h: compile `systems:` and `stations:` on vehicles.
+--   Systems become VarMap entries `ship.<vehicleId>.<name>` (no new state
+--   field, no new save file); every station becomes a trigger on its verb,
+--   gated to the interior room the player has to stand in
+--   (`{ at: player, room: <room> }`).
+compileShipSystems :: Map.Map String E.VerbDef -> [AVehicle]
+                   -> ([CompileIssue], [E.TriggerDef], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+compileShipSystems registry vehicles =
+    let sysVar v name = "ship." ++ avId v ++ "." ++ name
+        entries = [ (v, name, spec)
+                  | v <- vehicles, (name, spec) <- Map.toList (avSystems v) ]
+        varDefs = Map.fromList
+            [ (sysVar v name, E.VarDef (sysVar v name) (E.VTInt (Just 0) (bound spec)) (E.VVInt (asInitial spec)))
+            | (v, name, spec) <- entries ]
+        initials = Map.fromList
+            [ (sysVar v name, E.VVInt (asInitial spec))
+            | (v, name, spec) <- entries ]
+        bound spec = if asMax spec > 0 then Just (asMax spec) else Nothing
+        roomIds v = map arId (avInterior v)
+        stationDefs =
+            [ E.TriggerDef
+                ( "ship." ++ avId v ++ ".station." ++ astRoom st )
+                (E.OnCommand verb)
+                (Just (E.PAll ([E.Location "player" (astRoom st)] ++ maybe [] (:[]) (astWhen st))))
+                [ compileOutcomes (astEffects st) ]
+                False
+                0
+            | v <- vehicles
+            , st <- avStations v
+            , Just verb <- [resolveStationVerb registry (astVerb st)] ]
+        errors = concat
+            [ [ ciError ("vehicles." ++ avId v ++ ".stations") "UnknownStationRoom"
+                  ("station room '" ++ astRoom st ++ "' is not an interior room of '" ++ avId v ++ "'")
+              | st <- avStations v, astRoom st `notElem` roomIds v ]
+              ++ [ ciError ("vehicles." ++ avId v ++ ".stations") "UnknownStationVerb"
+                     ("station verb '" ++ astVerb st ++ "' is not a declared adventure verb")
+                 | st <- avStations v, resolveStationVerb registry (astVerb st) == Nothing ]
+            | v <- vehicles ]
+    in (errors, stationDefs, varDefs, initials)
+
+-- | Canonical custom-verb name of a station verb. Core verbs are rejected:
+--   a station must not shadow built-in behaviour for its room.
+resolveStationVerb :: Map.Map String E.VerbDef -> String -> Maybe String
+resolveStationVerb registry w = case Verbs.resolveVerb registry w of
+    Just (E.VCustom name) -> Just name
+    _                     -> Nothing
+
+-- | Merge the ship systems into the declared variables, rejecting a clash
+--   (the author must not declare them themselves, e.g. under `variables:`).
+mergeShipVars :: Map.Map String E.VarDef -> Map.Map String E.VariableValue
+              -> Map.Map String E.VarDef -> Map.Map String E.VariableValue
+              -> ([CompileIssue], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+mergeShipVars varDefs varInitials shipDefs shipInitials =
+    let clashErrs =
+            [ ciError ("variables." ++ name) "ShipVariableClash"
+                ("'" ++ name ++ "' is a ship system; it comes from the 'systems:' block of that vehicle")
+            | name <- Map.keys varDefs
+            , name `Map.member` shipDefs ]
+    in (clashErrs, Map.union shipDefs varDefs, Map.union shipInitials varInitials)
 
 -- ---------------------------------------------------------------------------
 -- Combat (Phase 7f)
