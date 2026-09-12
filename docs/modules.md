@@ -379,3 +379,27 @@ vehicles:
   14 Räume, E2E `ci/e2e/starship.in/.expect`): Stationen nutzen (Energie
   umleiten, Läufe aufladen), fliegen, Batterie anstöpseln (Clamp sichtbar),
   Korsar beschießen — Schilde fangen ab, brechen, die Hülle nimmt Schaden.
+
+---
+
+## Kompositionsbeweis — `examples/modules/combo.yaml`
+
+Abnahmepunkt 2 der Phase: **ein** Referenzspiel nutzt **fünf** Module
+gleichzeitig (7a, 7b, 7d, 7g, 7h) — und kein Modul weiß vom anderen. Alle
+Verknüpfungen sind Autoren-Regeln über bestehende Konzepte (Flags, `standing`,
+`has_item`, `compare_var`, `{ at: player, room: … }`-Gates):
+
+| Modul | Beitrag im Spiel |
+|---|---|
+| 7a Fraktionen | Gildenauftrag hebt `gilde` auf 12; die `standing`-Rule öffnet das Siegel (`set_state`); der Freibeuter-Deal ist der Gegenläufer (gilde −10 / freibeuter +10) |
+| 7b Handel | `buy` auf Kanister (12) und Zelle (25) gegen `credits`; Bestand in `shop.haendler.*` |
+| 7d Survival | `oxygen` −1 je Zug, `at_zero` = Tod; der zweite Drain macht den Strahlungssturm (`env.weather >= 1`) teurer |
+| 7g Party | `folgen vela` holt die Schrauberin in die Gruppe; sie folgt und schlägt im Kampf mit |
+| 7h Raumschiff | Tarsis VII mit `umleiten`/`aufladen` an den Stationen; Kampf gegen den Kaperer über Schilde und Hülle |
+
+Die Verkettung: Kanister kaufen (7b) → Atemluft sichern (7d) → Vela anwerben
+(7g) → Gildenauftrag annehmen (7a) → Stationen bedienen und zum Gürtel fliegen
+(7h) → Kaperer besiegen (7h + 7g) → Schwarzbox bergen → beim Gildenbüro abgeben
+(7a) → das Siegel öffnet den Tresorraum → Sieg. E2E:
+`ci/e2e/combo.in/.expect`, registriert in `scripts/ci.sh` (jetzt 18
+Playthroughs).

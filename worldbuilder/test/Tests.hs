@@ -1522,6 +1522,34 @@ testStarshipFixtureCompiles = do
                         rB <- expectEqual [] sErrs
                         pure (rA && rB)
 
+-- | Compile + validate a shipped module fixture.
+fixtureCompilesAndValidates :: String -> IO Bool
+fixtureCompilesAndValidates fname = do
+    mbPath <- findExampleModule fname
+    case mbPath of
+        Nothing -> do
+            putStrLn $ "  examples/modules/" ++ fname ++ " not found"
+            pure False
+        Just path -> do
+            mbAdv <- parseAdventureFile path
+            case mbAdv of
+                Nothing -> do
+                    putStrLn $ "  failed to parse examples/modules/" ++ fname
+                    pure False
+                Just adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  compile errors (" ++ fname ++ "): " ++ show errs
+                        pure False
+                    Right cr -> do
+                        rA <- expectEqual [] (validateWorld (crWorld cr))
+                        rB <- expectEqual [] (validateGameState (crWorld cr) (crSave cr))
+                        pure (rA && rB)
+
+-- | The Phase-7 composition proof: one game using 7a + 7b + 7d + 7g + 7h at
+--   the same time, coupled only by authored rules.
+testComboFixtureCompiles :: IO Bool
+testComboFixtureCompiles = fixtureCompilesAndValidates "combo.yaml"
+
 -- | Try candidate paths for the modules directory.
 findExampleModule :: String -> IO (Maybe FilePath)
 findExampleModule fname = firstExisting
@@ -1615,6 +1643,8 @@ tests =
     , ("ship systems compile to VarMap + station triggers", testShipSystemsCompile)
     , ("ship validation (station room / verb / variable clash)", testShipSystemsValidation)
     , ("starship fixture compiles + validates", testStarshipFixtureCompiles)
+    -- Phase 7 acceptance: composition proof
+    , ("combo fixture (5 modules) compiles + validates", testComboFixtureCompiles)
     ]
 
 main :: IO ()
