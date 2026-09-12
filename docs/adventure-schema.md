@@ -293,4 +293,35 @@ encounter_tables:
 - **Fehler:** `DuplicateEncounterTable` (doppelte IDs), `EmptyEncounterTable`
   (keine Einträge), `BadEncounterWeight` (Gewicht < 1).
 
-Siehe `docs/modules.md` (7c) für Details und die Referenz-Fixture.
+---
+
+## Environment: Wetter und Drains (Module 7d)
+
+Automatik pro Zug: Wetterübergänge und Variablen-Drains (Hunger, Temperatur…).
+
+```yaml
+environment:
+  weather:
+    states: [clear, storm]
+    initial: clear
+    transitions:
+      - when: { compare_var: { name: day, op: gte, value: 3 } }
+        to: storm
+        effects: [ { msg: "Ein Sturm zieht auf." } ]
+  drains:
+    - { var: hunger, per_turn: -1, when: { not: { has_flag: fed } },
+        at_zero: [ { game_end: death, msg: "Du verhungerst." } ] }
+```
+
+- Wetter wird als Int-Variable `env.weather` gespeichert (Index in `states`,
+  `initial` bestimmt den Start; der Namespace `env.*` ist reserviert).
+  Raumtexte wechseln per CondText-Varianten, z. B.
+  `when: {compare_var: {name: env.weather, op: eq, value: 1}}`.
+- Jede Transition kompiliert zu einem `on: turn`-Trigger (`when` als
+  Bedingung); jeder Drain zu `environment.drain.<var>` mit `ModifyValue
+  per_turn` + `Conditional (var ≤ 0)` auf die `at_zero`-Effekte.
+- **Fehler:** `UnknownWeatherState` (initial/`to` nicht in `states`),
+  `UnknownDrainVariable` (Drain-Var nicht deklariert),
+  `EnvironmentVariableClash` (Autor deklariert `env.*`).
+
+Siehe `docs/modules.md` (7d) für Details und die Referenz-Fixture.

@@ -11,7 +11,7 @@ import Types as E
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Char (toLower)
-import Data.List (nub, stripPrefix)
+import Data.List (nub, stripPrefix, takeWhile, zip, notElem)
 import Data.Maybe (mapMaybe, fromMaybe, catMaybes)
 import Data.Either (partitionEithers)
 import Text.Read (readMaybe)
@@ -67,10 +67,14 @@ compileAdventure adv =
         (varErrs, varDefs, varInitials) = compileVariables (advVariables adv)
         (trigErrs, triggerDefs) = compileTriggers (advTriggers adv)
         (encErrs, encounterDefs) = compileEncounterTables (advEncounterTables adv)
-        allTriggerDefs = triggerDefs ++ encounterDefs
         (facErrs, factionDefs, factionInitials) = compileFactions (advFactions adv)
-        (facConflictErrs, allVarDefs, allVarInitials) =
+        (facConflictErrs, facVarDefs, facVarInitials) =
             mergeFactionVars varDefs varInitials factionDefs factionInitials
+        (envErrs, envTriggerDefs, envVarDefs, envVarInitials) =
+            compileEnvironment facVarDefs (advEnvironment adv)
+        (envConflictErrs, allVarDefs, allVarInitials) =
+            mergeEnvironmentVars facVarDefs facVarInitials envVarDefs envVarInitials
+        allTriggerDefs = triggerDefs ++ encounterDefs ++ envTriggerDefs
         (initVarErrs, initialVars) =
             compileInitialVariables allVarDefs allVarInitials (advInitialVariables adv)
         (initStateErrs, initialFlags, initialQuests) =
@@ -94,6 +98,7 @@ compileAdventure adv =
 
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
                     ++ varErrs ++ facErrs ++ facConflictErrs ++ trigErrs ++ encErrs
+                    ++ envErrs ++ envConflictErrs
                     ++ initVarErrs ++ initStateErrs ++ facRefErrs ++ encRefErrs
     in case allErrors of
         (_:_) -> Left allErrors
@@ -325,6 +330,83 @@ mergeFactionVars varDefs varInitials facDefs facInitials =
             | name <- Map.keys varDefs
             , name `Map.member` facDefs ]
     in (clashErrs, Map.union facDefs varDefs, Map.union facInitials varInitials)
+
+-- ---------------------------------------------------------------------------
+-- Environment (Phase 7d): weather + drains
+-- ---------------------------------------------------------------------------
+
+-- | Compile the `environment:` segment. Weather becomes the `env.weather`
+--   variable (index into `states`, initial state index) plus one OnTurn
+--   trigger per transition; each drain becomes an OnTurn trigger that moves
+--   the variable and, once it hits ≤ 0, fires the at_zero outcomes.
+--   `facVarDefs` are the declared variables (author + faction) used to
+--   reject drains on undeclared variables.
+compileEnvironment :: Map.Map String E.VarDef -> Maybe AEnvironment
+                   -> ([CompileIssue], [E.TriggerDef], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+compileEnvironment _ Nothing = ([], [], Map.empty, Map.empty)
+compileEnvironment varDefs (Just env) =
+    let (wErrs, wTriggers, wVarDefs, wInitials) = compileWeather (envWeather env)
+        (dErrs, dTriggers) = compileDrains varDefs (envDrains env)
+    in (wErrs ++ dErrs, wTriggers ++ dTriggers, wVarDefs, wInitials)
+
+-- | Weather machine: validate states/transitions, seed `env.weather`, and
+--   turn each transition into an OnTurn trigger that sets the new state.
+compileWeather :: Maybe AWeatherDef
+               -> ([CompileIssue], [E.TriggerDef], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+compileWeather Nothing = ([], [], Map.empty, Map.empty)
+compileWeather (Just wd) =
+    let states = weaStates wd
+        stateIndex s = length (takeWhile (/= s) states)
+        badInitial = if weaInitial wd `elem` states
+                        then [] else [ ciError "environment.weather.initial" "UnknownWeatherState"
+                            ("weather state '" ++ weaInitial wd ++ "' is not in 'states'") ]
+        badTransitions =
+            [ ciError ("environment.weather.transitions." ++ show i) "UnknownWeatherState"
+                ("weather state '" ++ wtTo t ++ "' is not in 'states'")
+            | (i, t) <- zip [0 ..] (weaTransitions wd)
+            , wtTo t `notElem` states ]
+        initIdx = stateIndex (weaInitial wd)
+        varDefs = Map.singleton "env.weather"
+            (E.VarDef "env.weather" (E.VTInt Nothing Nothing) (E.VVInt initIdx))
+        initials = Map.singleton "env.weather" (E.VVInt initIdx)
+        transitions =
+            [ E.TriggerDef ("environment.weather." ++ show i) E.OnTurn (wtWhen t)
+                (E.SetValue (E.VRVariable "env.weather") (E.EVInt (stateIndex (wtTo t)))
+                    : map compileAActionOutcome (wtEffects t)) False 0
+            | (i, t) <- zip [0 ..] (weaTransitions wd)
+            , stateIndex (wtTo t) >= 0 ]
+    in (badInitial ++ badTransitions, transitions, varDefs, initials)
+
+-- | Each drain: OnTurn trigger whose condition is the drain's `when`, whose
+--   effects move the variable then check `var ≤ 0` to fire at_zero outcomes.
+compileDrains :: Map.Map String E.VarDef -> [ADrainDef] -> ([CompileIssue], [E.TriggerDef])
+compileDrains varDefs drains =
+    let unknown =
+            [ ciError ("environment.drains." ++ drVar d) "UnknownDrainVariable"
+                ("drain variable '" ++ drVar d ++ "' is not declared under 'variables:'")
+            | d <- drains
+            , drVar d `Map.notMember` varDefs ]
+        triggers =
+            [ E.TriggerDef ("environment.drain." ++ drVar d) E.OnTurn (drWhen d)
+                [ E.ModifyValue (E.VRVariable (drVar d)) (drPerTurn d)
+                , E.Conditional (E.CompareVar (drVar d) E.CLte 0)
+                    (compileOutcomes (drAtZero d)) E.Noop ]
+                False 0
+            | d <- drains ]
+    in (unknown, triggers)
+
+-- | Merge the `env.weather` variable into the declared variables, rejecting
+--   an author-declared clash (the `env.*` namespace is reserved).
+mergeEnvironmentVars :: Map.Map String E.VarDef -> Map.Map String E.VariableValue
+                      -> Map.Map String E.VarDef -> Map.Map String E.VariableValue
+                      -> ([CompileIssue], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+mergeEnvironmentVars varDefs varInitials envDefs envInitials =
+    let clashErrs =
+            [ ciError ("variables." ++ name) "EnvironmentVariableClash"
+                ("'" ++ name ++ "' is an environment variable; the 'env.*' namespace is reserved")
+            | name <- Map.keys varDefs
+            , name `Map.member` envDefs ]
+    in (clashErrs, Map.union envDefs varDefs, Map.union envInitials varInitials)
 
 -- | Verify every `faction.<id>` reference in the compiled world resolves to a
 --   declared faction. Only runs when the `factions:` segment is present

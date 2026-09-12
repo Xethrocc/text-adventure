@@ -35,6 +35,7 @@ data Adventure = Adventure
     , advActiveQuests     :: [String]                    -- ^ active_quests (Phase 4d)
     , advFactions         :: [AFaction]                  -- ^ factions + standing (Phase 7a)
     , advEncounterTables  :: [AEncounterTable]           -- ^ encounter tables (Phase 7c)
+    , advEnvironment      :: Maybe AEnvironment          -- ^ weather + drains (Phase 7d)
     } deriving (Show, Eq, Generic)
 
 instance FromJSON Adventure where
@@ -56,6 +57,7 @@ instance FromJSON Adventure where
         <*> o .:? "active_quests"     .!= []
         <*> o .:? "factions"          .!= []
         <*> o .:? "encounter_tables"  .!= []
+        <*> o .:? "environment"
 
 -- | Optional player stats block in YAML (Phase 4d).
 --   `player: { max_hp: 50, attack: 8, defense: 3, skills: { lockpick: 5 } }`
@@ -452,6 +454,67 @@ instance FromJSON AEncounterTable where
         <*> o .:? "when"      .!= Nothing
         <*> o .:? "cooldown"  .!= 0
         <*> o .:? "entries"   .!= []
+
+-- ---------------------------------------------------------------------------
+-- Environment (Phase 7d): weather + drains
+-- ---------------------------------------------------------------------------
+
+-- | The `environment:` segment: an optional weather machine and a list of
+--   per-turn variable drains (hunger, temperature, ...).
+data AEnvironment = AEnvironment
+    { envWeather :: Maybe AWeatherDef
+    , envDrains  :: [ADrainDef]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AEnvironment where
+    parseJSON = withObject "AEnvironment" $ \o -> AEnvironment
+        <$> o .:? "weather"
+        <*> o .:? "drains" .!= []
+
+-- | Weather: a finite set of states (clear, storm, ...) stored as the int
+--   variable `env.weather` (index into `states`). Transitions fire on
+--   `on: turn`, gated by `when`; when several apply, the later one wins.
+data AWeatherDef = AWeatherDef
+    { weaStates      :: [String]
+    , weaInitial     :: String
+    , weaTransitions :: [AWeatherTransition]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AWeatherDef where
+    parseJSON = withObject "AWeatherDef" $ \o -> AWeatherDef
+        <$> o .:  "states"
+        <*> o .:? "initial"      .!= ""
+        <*> o .:? "transitions"  .!= []
+
+-- | One guarded weather transition: if `when` holds on a turn, the weather
+--   moves to `to` (and the extra effects run).
+data AWeatherTransition = AWeatherTransition
+    { wtWhen    :: Maybe E.Predicate
+    , wtTo      :: String
+    , wtEffects :: [AActionOutcome]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AWeatherTransition where
+    parseJSON = withObject "AWeatherTransition" $ \o -> AWeatherTransition
+        <$> o .:? "when"    .!= Nothing
+        <*> o .:  "to"
+        <*> o .:? "effects" .!= []
+
+-- | One drain: every turn (while `when` holds) the variable moves by
+--   `per_turn`; once it reaches 0 or below, `at_zero` fires.
+data ADrainDef = ADrainDef
+    { drVar     :: String
+    , drPerTurn :: Int
+    , drWhen    :: Maybe E.Predicate
+    , drAtZero  :: [AActionOutcome]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ADrainDef where
+    parseJSON = withObject "ADrainDef" $ \o -> ADrainDef
+        <$> o .:  "var"
+        <*> o .:  "per_turn"
+        <*> o .:? "when"    .!= Nothing
+        <*> o .:? "at_zero" .!= []
 
 -- ---------------------------------------------------------------------------
 -- Interactions

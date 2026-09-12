@@ -140,6 +140,7 @@ minAdventure room = Adventure
     , advActiveQuests = []
     , advFactions = []
     , advEncounterTables = []
+    , advEnvironment = Nothing
     }
 
 -- ---------------------------------------------------------------------------
@@ -1003,6 +1004,107 @@ testEncounterFixtureCompiles = do
                         r2 <- expectEqual [] sErrs
                         pure (r1 && r2)
 
+-- | The 7d environment: a weather machine compiles to the `env.weather`
+--   variable (initial state index), one OnTurn trigger per transition, and
+--   each drain becomes a guarded OnTurn trigger with a zero-check.
+testEnvironmentWeatherCompiles :: IO Bool
+testEnvironmentWeatherCompiles = do
+    let weather = AWeatherDef
+            [ "clear", "storm" ] "clear"
+            [ AWeatherTransition (Just (E.CompareVar "day" E.CGte 3)) "storm"
+                [ AOMessage "Ein Sturm zieht auf!" ] ]
+        adv = (minAdventure (minRoom "loc_0"))
+            { advEnvironment = Just (AEnvironment (Just weather) []) }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            r1 <- expectEqual
+                (Just (E.VVInt 0)) (Map.lookup "env.weather" (variables (crSave cr)))
+            let trs = filter (\t -> E.trId t == "environment.weather.0") (E.triggerDefs (crWorld cr))
+            r2 <- expectEqual 1 (length trs)
+            r3 <- expectEqual
+                (Just (E.CompareVar "day" E.CGte 3)) (E.trCondition (head trs))
+            r4 <- expectEqual
+                [ E.SetValue (E.VRVariable "env.weather") (E.EVInt 1)
+                , E.SendMessage "Ein Sturm zieht auf!" ]
+                (E.trEffects (head trs))
+            pure (r1 && r2 && r3 && r4)
+
+testEnvironmentDrainCompiles :: IO Bool
+testEnvironmentDrainCompiles = do
+    let drain = ADrainDef "hunger" (-1)
+                (Just (E.PNot (E.HasFlag "fed")))
+                [ AOGameEnd "death" (Just "Du verhungerst.") ]
+        adv = (minAdventure (minRoom "loc_0"))
+            { advEnvironment = Just (AEnvironment Nothing [drain])
+            , advVariables = [ AVariable "hunger" "int" (Just (Aeson.Number 2)) Nothing Nothing ] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let tr = head (filter (\t -> E.trId t == "environment.drain.hunger") (E.triggerDefs (crWorld cr)))
+            r1 <- expectEqual E.OnTurn (E.trEvent tr)
+            r2 <- expectEqual
+                (Just (E.PNot (E.HasFlag "fed"))) (E.trCondition tr)
+            r3 <- expectEqual
+                [ E.ModifyValue (E.VRVariable "hunger") (-1)
+                , E.Conditional (E.CompareVar "hunger" E.CLte 0)
+                    (E.GameEnd E.Death "Du verhungerst.") E.Noop ]
+                (E.trEffects tr)
+            pure (r1 && r2 && r3)
+
+testEnvironmentValidation :: IO Bool
+testEnvironmentValidation = do
+    -- Unknown weather state in `to` / bad initial state
+    let badTo = AWeatherDef [ "clear", "storm" ] "clear"
+                    [ AWeatherTransition Nothing "blizzard" [ AOMessage "x" ] ]
+        advBadTo = (minAdventure (minRoom "loc_0"))
+            { advEnvironment = Just (AEnvironment (Just badTo) []) }
+    r1 <- case compileAdventure advBadTo of
+            Left errs -> expectContains "UnknownWeatherState" (issuesText errs)
+            Right _   -> expectTrue "expected UnknownWeatherState" False
+    let badInit = AWeatherDef [ "clear", "storm" ] "foggy" []
+        advBadInit = (minAdventure (minRoom "loc_0"))
+            { advEnvironment = Just (AEnvironment (Just badInit) []) }
+    r2 <- case compileAdventure advBadInit of
+            Left errs -> expectContains "UnknownWeatherState" (issuesText errs)
+            Right _   -> expectTrue "expected UnknownWeatherState" False
+    -- Drain variable must be declared
+    let advNoVar = (minAdventure (minRoom "loc_0"))
+            { advEnvironment = Just (AEnvironment Nothing [ ADrainDef "mana" (-2) Nothing [ AOMessage "x" ] ]) }
+    r3 <- case compileAdventure advNoVar of
+            Left errs -> expectContains "UnknownDrainVariable" (issuesText errs)
+            Right _   -> expectTrue "expected UnknownDrainVariable" False
+    pure (r1 && r2 && r3)
+
+-- | The 7d mini-fixture compiles and validates clean.
+testSurvivalFixtureCompiles :: IO Bool
+testSurvivalFixtureCompiles = do
+    mbPath <- findExampleModule "survival.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  examples/modules/survival.yaml not found"
+            pure False
+        Just path -> do
+            mbAdv <- parseAdventureFile path
+            case mbAdv of
+                Nothing -> do
+                    putStrLn "  failed to parse examples/modules/survival.yaml"
+                    pure False
+                Just adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  compile errors: " ++ show errs
+                        pure False
+                    Right cr -> do
+                        let wErrs = validateWorld (crWorld cr)
+                            sErrs = validateGameState (crWorld cr) (crSave cr)
+                        r1 <- expectEqual [] wErrs
+                        r2 <- expectEqual [] sErrs
+                        pure (r1 && r2)
+
 -- | Try candidate paths for the modules directory.
 findExampleModule :: String -> IO (Maybe FilePath)
 findExampleModule fname = firstExisting
@@ -1073,7 +1175,12 @@ tests =
     -- Phase 7c: encounter tables
     , ("encounter table compiles to weighted RandomChoice trigger", testEncounterTableCompiles)
     , ("encounter table validation (empty / zero weight)", testEncounterTableValidation)
-    , ("encounters fixture compiles + validates", testEncounterFixtureCompiles)
+    , ("encounter fixture compiles + validates", testEncounterFixtureCompiles)
+    -- Phase 7d: environment (weather + drains)
+    , ("weather machine compiles to env.weather + OnTurn transitions", testEnvironmentWeatherCompiles)
+    , ("drains compile to guarded OnTurn triggers", testEnvironmentDrainCompiles)
+    , ("environment validation (unknown state / unknown drain var)", testEnvironmentValidation)
+    , ("survival fixture compiles + validates", testSurvivalFixtureCompiles)
     ]
 
 main :: IO ()

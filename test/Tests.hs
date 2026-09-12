@@ -1070,6 +1070,44 @@ testTriggerCooldownGatesTurns = do
     r8 <- expectTrue "fires again after cooldown (turn 4)" (not (null msg4))
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
 
+-- | Drain (module 7d): a per-turn variable drain gated by a flag is
+--   stoppable — with `fed` set no value is lost, without it the value sinks
+--   and the at_zero outcome (game end) fires once the variable hits ≤ 0.
+testDrainStopsWhenFlagged :: IO Bool
+testDrainStopsWhenFlagged = do
+    let drainTrig = TriggerDef "environment.drain.hunger" OnTurn
+            (Just (PNot (HasFlag "fed")))
+            [ ModifyValue (VRVariable "hunger") (-1)
+            , Conditional (CompareVar "hunger" CLte 0)
+                (GameEnd Death "Du verhungerst.") Noop ]
+            False 0
+        base = initSampleGame
+            { world = (world initSampleGame) { triggerDefs = [drainTrig] }
+            , save = (save initSampleGame) { variables = Map.fromList [("hunger", VVInt 3)] } }
+        (fed0, _)   = fireTriggers OnTurn base
+        (starved, _) = fireTriggers OnTurn fed0
+        (starved2, _) = fireTriggers OnTurn starved
+    r1 <- case getVariable "hunger" fed0 of
+            Just (VVInt n) -> expectEqual 2 n
+            _ -> expectTrue "hunger after first turn" False
+    r2 <- case getVariable "hunger" starved of
+            Just (VVInt n) -> expectEqual 1 n
+            _ -> expectTrue "hunger after second turn" False
+    r3 <- expectTrue "drain kills at zero" (gameOverReason (save starved2) == Just Death)
+    -- Now with fed set: no drain, no death.
+    let fedState = initSampleGame
+            { world = (world initSampleGame) { triggerDefs = [drainTrig] }
+            , save = (save initSampleGame)
+                { variables = Map.fromList [("hunger", VVInt 1)]
+                , flags = Map.singleton "fed" "true" } }
+        (fed1, _)  = fireTriggers OnTurn fedState
+        (still, _) = fireTriggers OnTurn fed1
+    r4 <- case getVariable "hunger" still of
+            Just (VVInt n) -> expectEqual 1 n
+            _ -> expectTrue "hunger unchanged while fed" False
+    r5 <- expectEqual Nothing (gameOverReason (save still))
+    pure (r1 && r2 && r3 && r4 && r5)
+
 testTriggerOnceFiresOnce :: IO Bool
 testTriggerOnceFiresOnce = do
     let trigger = TriggerDef "once_test" (OnEnter "treasure") Nothing
@@ -1758,6 +1796,7 @@ main = do
         -- Phase 3f: Trigger
         , runTest "trigger fires on enter" testTriggerFiresOnEnter
         , runTest "trigger cooldown gates turns" testTriggerCooldownGatesTurns
+        , runTest "drain stops when flag fed" testDrainStopsWhenFlagged
         , runTest "once trigger fires only once" testTriggerOnceFiresOnce
         , runTest "trigger condition gates firing" testTriggerConditionGates
         , runTest "OnCommand trigger fires" testTriggerCommandEvent

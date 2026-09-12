@@ -113,3 +113,45 @@ Wildnis zum Schrein; Wölfe, Wind und (mit Fackel) Glühwürmchen wechseln sich
 ab. Das Lagerfeuer setzt `camp_cleared`, wodurch die aggressive Tabelle
 `wilds` verstummt und die ruhige `calm` übernimmt — das `when`-Gate auf
 Tabellen- und Eintragsebene ist damit in einem Spiel belegt.
+
+---
+
+## 7d — Survival, Wetter, Umweltgefahren
+
+**Kernänderung: keine.** Das `environment:`-Segment ist Schema-Sugar auf
+`on: turn`-Trigger: Wetter ist die Int-Variable `env.weather` (Index in
+`states`), jede Transition wird ein OnTurn-Trigger mit `SetValue`, jeder
+Drain ein OnTurn-Trigger mit `ModifyValue` + `Conditional` (at_zero bei ≤ 0).
+
+```yaml
+environment:
+  weather:
+    states: [clear, storm]
+    initial: clear
+    transitions:
+      - { when: {compare_var: {name: day, op: gte, value: 3}}, to: storm,
+          effects: [ { msg: "Ein Sturm zieht auf." } ] }
+  drains:
+    - { var: hunger, per_turn: -1, when: { not: { has_flag: fed } },
+        at_zero: [ { game_end: death, msg: "Du verhungerst." } ] }
+```
+
+- **Wetter als Variable:** `env.weather` wird automatisch deklariert
+  (`env.*`-Namespace ist reserviert, `EnvironmentVariableClash` bei
+  Autor-Deklaration). CondText-Varianten im Raum prüfen den Index, z. B.
+  `when: {compare_var: {name: env.weather, op: eq, value: 1}}` für „storm".
+  Der Wetterzustand liegt damit im Save und überlebt Save/Load.
+- **Retro-Notiz:** CondText in Räumen heißt im YAML `description:` mit
+  `default`/`variants` — das alte String-Feld heißt `desc:`.
+- **Mehrere Transitionen:** jede wird ein eigener `on: turn`-Trigger; gilt
+  mehr als eine gleichzeitig, gewinnt die später deklarierte (Doku: Guard
+  mit Flags bauen, wenn Einmaligkeit gewünscht ist).
+- **Drain-Validierung:** `UnknownWeatherState` (initial/`to` nicht in
+  `states`), `UnknownDrainVariable` (Var nicht unter `variables:`
+  deklariert).
+- **Engine-Tests:** „drain stops when flag fed" — Drain stoppt bei Flag,
+  Tod bei 0; „trigger cooldown gates turns" (7c) gilt auch hier.
+
+Fixture: `examples/modules/survival.yaml` — Der Eispass. Hunger-Drain
+(essen → `fed` stoppt ihn), Tag-Zähler, Sturm ab Tag 4, Raumtext am Kamm
+wechselt per CondText mit dem Wetter, Schutzhütte = Victory.

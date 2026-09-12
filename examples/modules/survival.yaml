@@ -1,0 +1,150 @@
+name: Der Eispass (Survival)
+start_room: gla_0
+
+# Module 7d — Survival/Wetter/Umweltgefahren.
+# Kein Kern-Eingriff: Wetter ist die Variable `env.weather` (Index in `states`),
+# Drains sind `on: turn`-Trigger mit ModifyValue + Conditional (at_zero).
+
+environment:
+  weather:
+    states: [clear, storm]
+    initial: clear
+    transitions:
+      - when: { all: [ {compare_var: {name: day, op: gte, value: 4}}, { not: { has_flag: storm_blown } } ] }
+        to: storm
+        effects:
+          - { set_flag: storm_blown, val: "true" }
+          - { msg: "Ein Sturm zieht über den Pass!" }
+  drains:
+    - var: hunger
+      per_turn: -1
+      when: { not: { has_flag: fed } }
+      at_zero:
+        - { game_end: death, msg: "Deine Kräfte verlassen dich — du verhungerst im Eis." }
+
+verbs:
+  - { name: eat, aliases: [essen, fressen] }
+
+rules:
+  - id: day_ticker
+    on: turn
+    effects:
+      - { add_var: day, delta: 1 }
+  - id: hut_victory
+    on: enter gla_12
+    effects:
+      - { msg: "Du reißt die Tür der Schutzhütte auf. Feuerholz liegt bereit." }
+      - { game_end: victory, msg: "VICTORY — Die Hütte ist erreicht. Der Pass hat dich nicht gekriegt." }
+
+rooms:
+  - id: gla_0
+    name: Passanfang
+    desc: "Schneeverwehungen bedecken den Pfad. Er steigt nach Norden an."
+    exits:
+      north: {to: gla_1}
+  - id: gla_1
+    name: Felsvorsprünge
+    desc: "Gefrierender Wind zupft an deinem Mantel. Weiter geht es nach Norden."
+    exits:
+      north: {to: gla_2}
+      south: {to: gla_0}
+  - id: gla_2
+    name: Schneefeld
+    desc: "Ein weißes Meer, so weit du siehst. Die Spur führt nach Norden."
+    exits:
+      north: {to: gla_3}
+      south: {to: gla_1}
+  - id: gla_3
+    name: Eisseen
+    desc: "Fächer aus Splittereis knirschen unter den Stiefeln."
+    exits:
+      north: {to: gla_4}
+      south: {to: gla_2}
+  - id: gla_4
+    name: Biwaksack
+    desc: "Ein verlassener Biwaksack. Etwas steckt im Schnee davor."
+    exits:
+      north: {to: gla_5}
+      south: {to: gla_3}
+    search:
+      - { give: dried_meat }
+      - { msg: "Im Rucksack klappert eine Büchse Trockenfleisch." }
+  - id: gla_5
+    name: Gletscherspalte
+    desc: "Eine tiefe Spalte gähnt links des Pfades. Der Steig windet sich hindurch."
+    exits:
+      north: {to: gla_6}
+      south: {to: gla_4}
+  - id: gla_6
+    name: Felsnase
+    desc: "Die Kante ist vereist. Auf der anderen Seite wartet der Kamm."
+    exits:
+      north: {to: gla_7}
+      south: {to: gla_5}
+  - id: gla_7
+    name: Der Kamm
+    description:
+      default: "Der Kamm liegt still unter blassem Himmel. Der Grat führt nach Norden."
+      variants:
+        - when: { compare_var: { name: env.weather, op: eq, value: 1 } }
+          text: "Der Sturm peitscht über den Kamm. Du klammerst dich an den Fels."
+    exits:
+      north: {to: gla_8}
+      south: {to: gla_6}
+  - id: gla_8
+    name: Steilabfall
+    desc: "Der Pfad stürzt zur Gletscherzunge ab. Ein Trampelpfad führt hinunter."
+    exits:
+      north: {to: gla_9}
+      south: {to: gla_7}
+  - id: gla_9
+    name: Eisstufen
+    desc: "In den Hang gehauene Stufen, spiegelglatt. Unten beginnt der Wald."
+    exits:
+      north: {to: gla_10}
+      south: {to: gla_8}
+  - id: gla_10
+    name: Wolfsspur
+    desc: "Frische Tritte im Pulverschnee, dicht an dicht. Der Waldrand ist nah."
+    exits:
+      north: {to: gla_11}
+      south: {to: gla_9}
+  - id: gla_11
+    name: Fallholz
+    desc: "Eine uralte Fichte sperrt den Weg; man klettert darüber oder drunter."
+    exits:
+      north: {to: gla_12}
+      south: {to: gla_10}
+  - id: gla_12
+    name: Schutzhütte
+    desc: "Ein Blockhaus mit verrammelter Tür. Rauchfahnen steigen aus dem Kamin."
+    exits:
+      south: {to: gla_11}
+
+items:
+  - id: dried_meat
+    name: Büchse Trockenfleisch
+    desc: "Zäh, salzig — aber es hält dich am Leben."
+    keys: [fleisch, büchse, meat, trockenfleisch]
+    location: gla_4
+    hidden: true
+    verb_map:
+      eat,intact:
+        - { set_flag: fed, val: "true" }
+        - { add_var: hunger, delta: 15 }
+        - { msg: "Du beißt ab — salzig, zäh, wunderbar. Dein Magen meldet sich nicht mehr." }
+
+variables:
+  - { name: hunger, type: int, initial: 20, min: 0 }
+  - { name: day, type: int, initial: 0, min: 0 }
+
+quests:
+  - id: reach_hut
+    name: Die Schutzhütte
+    desc: "Überlebe den Pass und erreiche die Schutzhütte."
+    stages:
+      - { id: descend, desc: "Kämpfe dich über den Kamm zur Hütte." }
+
+interactions:
+  entity: []
+  item: []
