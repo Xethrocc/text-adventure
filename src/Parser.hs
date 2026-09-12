@@ -797,7 +797,9 @@ executeAttack :: NPCDef -> Maybe NPCState -> String -> GameState -> CommandResul
 executeAttack npc _ targetStr state =
     let nId = npcId npc
         profile = combatProfile (world state)
-        (effects, msgs) = resolveCombat profile [PlayerActor] (TargetNPC nId targetStr) state
+        -- Phase 7g: party members standing here fight alongside the player.
+        actors = PlayerActor : map CompanionActor (partyMembersInRoom state)
+        (effects, msgs) = resolveCombat profile actors (TargetNPC nId targetStr) state
         (st', m, _) = case effects of
             [] -> (state, "", 0)
             _  -> foldl (\(s, _, _) e -> applyOutcomeWith 0 0 e nId s)

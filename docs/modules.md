@@ -250,3 +250,71 @@ Wächterin, Umhang-Quest, Sieg ohne einen Schlag), `combat-narrative.yaml`
 („Der Duellplatz" — ein Wurf entscheidet, Tor öffnet sich),
 `combat-classic.yaml` („Der Kerkerkopf" — expliziter Classic-Block,
 6 Treffer, Tod per `killNPC` öffnet den Schatzraum via `locked_by`).
+
+---
+
+## 7g — Party und Begleiter
+
+**Kernänderung: ja — klein und an genau drei Stellen.** (1) `followParty` in
+`Game.hs`, (2) Begleiter als zusätzliche Aktoren im 7f-Resolver, (3) der
+Order-Verb-Toggle als Compiler-Pass. Kein neues Save-Feld, keine neue Datei
+unter `src/`.
+
+```yaml
+npcs:
+  - id: alwin
+    name: Knappe Alwin
+    max_hp: 20
+    attack: 4
+    defense: 2
+    party:
+      can_join: true         # false: Block inert
+      order_verb: folgen     # Custom-Verb; toggelt Beitritt/Verlassen
+      hp_tracked: true       # verlangt max_hp
+      follow_msg: "…"
+      stay_msg: "…"
+```
+
+- **Roster ohne State-Silo:** Mitgliedschaft ist der `VarMap`-Eintrag
+  `party.<npcId>` (1 = folgt). Der Compiler deklariert ihn aus dem Block;
+  Autoren dürfen ihn nicht zusätzlich unter `variables:` anlegen
+  (`PartyVariableClash`) — die Referenz, dass ein Modul ohne neues Feld
+  auskommt (vgl. `faction.<id>` in 7a, `env.*` in 7d).
+- **Anwerben/Entlassen:** ein `npcVerbMap`-Eintrag
+  `(VCustom order_verb, npc-state)` → `Conditional (party.<id> gte 1)`
+  entlässt, sonst wirbt an. Derselbe Befehl toggelt. Autoren-Effekte auf
+  demselben Schlüssel laufen zuerst, der Toggle danach. Core-Verben als
+  `order_verb` werden abgelehnt (sie würden das Built-in für diesen NPC
+  verdecken).
+- **Folgen (Kern):** `followParty :: RoomID -> GameState -> GameState`
+  verschiebt lebende Begleiter in den neuen Raum und wird überall dort
+  aufgerufen, wo sich der Spielerraum ändert: `transitionToRoom` (Gehen **und**
+  Teleport), `enterVehicle`, `exitVehicle`, `moveVehicleToStop`. Bewusste
+  Alternative zu einem Trigger pro (Raum × NPC), das wären O(Räume × NPCs)
+  Regeln für eine Kernmechanik.
+- **Kampf (Kern):** `Parser.executeAttack` baut
+  `PlayerActor : [CompanionActor nid | Mitglieder im Raum]`. Im `classic`-Profil
+  schlägt jeder Begleiter mit, der dort steht, wo das Ziel steht
+  (`max 1 (attack − defense)`); beendet der Spieler das Ziel im selben Schlag,
+  schlagen Begleiter nicht mehr zu. Der Konter trifft weiter den Spieler
+  (kein Balance-Umbau), `narrative`/`off` ignorieren Begleiter. Ohne Begleiter
+  ist die Ausgabe bit-identisch (Engine-Test `testPartyNoCompanionUnchanged`).
+- **Tod feuert ein Event:** `killNPC` feuert `OnStateChange <npc>`; ein toter
+  Begleiter folgt nicht mehr und schlägt nicht mehr zu. Neu ist außerdem, dass
+  die Meldungen dieser Tod-Event-Rules **durchgereicht** werden:
+  `killNPCWithMsg`/`modifyNPCHealth`/`modifyValueProp` geben sie als String
+  zurück, statt sie im Interpreter mit `fst` zu verwerfen (Engine-Test
+  `testNPCDeathEventMessageShown`).
+- **`damage_npc: { npc: id, amount: N }`** — Zucker auf den bestehenden
+  `ModifyValue (VRProperty id "hp")`-Kern-Effekt, damit das YAML NPC-Schaden
+  ausdrücken kann (Begleiter-Tod per Falle). Compile-Check `UnknownDamageNPC`.
+- **Validierung:** `PartyOrderVerbUnknown`, `PartyHealthMissing`,
+  `PartyVariableClash`, `UnknownDamageNPC`.
+- **Referenz-Bausteine:** `collectFactionRefs` und `checkDamageNpcRefs` teilen
+  sich jetzt `allWorldEffects`/`allWorldPredicates` — der nächste Modul-Check
+  muss die Welt nicht erneut durchlaufen.
+
+Fixture: `examples/modules/party.yaml` („Der Knappenzug", 14 Räume) — Knappe
+per `folgen alwin` anwerben, Wolf mit zwei Aktoren besiegen, Steinschlag tötet
+den Knappen, seine `on: state`-Rule öffnet das Runentor (`set_state`), Sieg in
+der Bergkammer. E2E: `ci/e2e/party.in/.expect`.

@@ -79,8 +79,17 @@ compileAdventure adv =
 
         (stealthErrs, stealthTriggerDefs, stealthVarDefs, stealthVarInitials) =
             compileStealth (Map.keys allRooms) (map anId (advNPCs adv)) (advStealth adv)
-        (stealthConflictErrs, allVarDefs, allVarInitials) =
+        (stealthConflictErrs, stealthAllVarDefs, stealthAllVarInitials) =
             mergeStealthVars envAllVarDefs envAllVarInitials stealthVarDefs stealthVarInitials
+
+        -- Phase 7g: `party:` blocks declare the follow variable party.<npcId>
+        -- and one order verb that toggles membership.
+        (partyErrs, partyVerbEntries, partyVarDefs, partyVarInitials) =
+            compileParty verbRegistry (advNPCs adv)
+        (partyConflictErrs, allVarDefs, allVarInitials) =
+            mergePartyVars stealthAllVarDefs stealthAllVarInitials partyVarDefs partyVarInitials
+        npcDefsWithParty = Map.mapWithKey (addPartyVerbEntry partyVerbEntries) npcDefs
+
         allTriggerDefs = triggerDefs ++ encounterDefs ++ envTriggerDefs ++ stealthTriggerDefs
         (combatErrs, combatProfileCompiled) = compileCombat (advCombat adv)
         (initVarErrs, initialVars) =
@@ -91,7 +100,7 @@ compileAdventure adv =
         gw = E.GameWorld
                 { E.rooms = allRooms
                 , E.itemDefs = itemDefs
-                , E.npcDefs = npcDefs
+                , E.npcDefs = npcDefsWithParty
                 , E.entityInteractions = entityInteractions
                 , E.itemInteractions = itemInteractions
                 , E.questDefs = questDefs
@@ -103,13 +112,15 @@ compileAdventure adv =
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
+        npcRefErrs = checkDamageNpcRefs gw
 
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
                     ++ varErrs ++ facErrs ++ facConflictErrs ++ trigErrs ++ encErrs
                     ++ envErrs ++ envConflictErrs
                     ++ stealthErrs ++ stealthConflictErrs
+                    ++ partyErrs ++ partyConflictErrs
                     ++ combatErrs
-                    ++ initVarErrs ++ initStateErrs ++ facRefErrs ++ encRefErrs
+                    ++ initVarErrs ++ initStateErrs ++ facRefErrs ++ encRefErrs ++ npcRefErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -476,6 +487,79 @@ mergeStealthVars varDefs varInitials stealthDefs stealthInitials =
     in (clashErrs, Map.union stealthDefs varDefs, Map.union stealthInitials varInitials)
 
 -- ---------------------------------------------------------------------------
+-- Party (Phase 7g)
+-- ---------------------------------------------------------------------------
+
+-- | Phase 7g: compile the `party:` blocks on NPCs. Each recruitable NPC gets
+--   the follow variable `party.<npcId>` (a plain VarMap entry — no new
+--   SaveState field, no NPCState field) and one order-verb entry in its
+--   compiled verb map that toggles membership. The returned per-NPC entries
+--   are merged by `addPartyVerbEntry`.
+compileParty :: Map.Map String E.VerbDef -> [ANPC]
+             -> ( [CompileIssue]
+                , Map.Map E.NPCID ((E.Verb, String), E.Effect)
+                , Map.Map String E.VarDef
+                , Map.Map String E.VariableValue )
+compileParty registry npcs =
+    let parties = [(n, p) | n <- npcs, Just p <- [anParty n], aptCanJoin p]
+        varName n = "party." ++ anId n
+        varDefs = Map.fromList
+            [ (varName n, E.VarDef (varName n) (E.VTInt (Just 0) (Just 1)) (E.VVInt 0))
+            | (n, _) <- parties ]
+        initials = Map.fromList [(varName n, E.VVInt 0) | (n, _) <- parties]
+        toggle n p = E.Conditional (E.CompareVar (varName n) E.CGte 1)
+            (E.Sequence [ E.SendMessage (fromMaybe (anName n ++ " stays behind.") (aptStayMsg p))
+                        , E.SetValue (E.VRVariable (varName n)) (E.EVInt 0) ])
+            (E.Sequence [ E.SendMessage (fromMaybe (anName n ++ " falls in behind you.") (aptFollowMsg p))
+                        , E.SetValue (E.VRVariable (varName n)) (E.EVInt 1) ])
+        entries = Map.fromList
+            [ (anId n, ((E.VCustom verb, anState n), toggle n p))
+            | (n, p) <- parties
+            , Just verb <- [resolveOrderVerb registry (aptOrderVerb p)] ]
+        errors = concat
+            [ (if resolveOrderVerb registry (aptOrderVerb p) == Nothing
+               then [ ciError ("npcs." ++ anId n ++ ".party.order_verb") "PartyOrderVerbUnknown"
+                        ("party order verb '" ++ aptOrderVerb p ++ "' is not a declared adventure verb") ]
+               else [])
+              ++ (if aptHpTracked p && anMaxHealth n == Nothing
+                  then [ ciError ("npcs." ++ anId n ++ ".party") "PartyHealthMissing"
+                            ("party npc '" ++ anId n ++ "' tracks hp but declares no max_hp") ]
+                  else [])
+            | (n, p) <- parties ]
+    in (errors, entries, varDefs, initials)
+
+-- | Canonical custom-verb name for an order verb. It must resolve to a
+--   *declared* adventure verb: a core verb is rejected, because it would
+--   shadow the built-in behaviour for that NPC.
+resolveOrderVerb :: Map.Map String E.VerbDef -> String -> Maybe String
+resolveOrderVerb registry w = case Verbs.resolveVerb registry w of
+    Just (E.VCustom name) -> Just name
+    _                     -> Nothing
+
+-- | Merge an NPC's compiled party order verb into its def. An authored entry
+--   with the same `(verb, state)` key runs first; the membership toggle runs
+--   after it.
+addPartyVerbEntry :: Map.Map E.NPCID ((E.Verb, String), E.Effect) -> E.NPCID -> E.NPCDef -> E.NPCDef
+addPartyVerbEntry entries nId def = case Map.lookup nId entries of
+    Nothing -> def
+    Just (key, eff) -> def
+        { E.npcVerbMap = Map.insertWith (\new old -> E.Sequence [old, new]) key eff (E.npcVerbMap def) }
+
+-- | Merge the party follow variables into the declared variables, rejecting a
+--   clash (the author must not declare them themselves, e.g. under
+--   `variables:`).
+mergePartyVars :: Map.Map String E.VarDef -> Map.Map String E.VariableValue
+               -> Map.Map String E.VarDef -> Map.Map String E.VariableValue
+               -> ([CompileIssue], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+mergePartyVars varDefs varInitials partyDefs partyInitials =
+    let clashErrs =
+            [ ciError ("variables." ++ name) "PartyVariableClash"
+                ("'" ++ name ++ "' is a party follow variable; it comes from the 'party:' block of that NPC")
+            | name <- Map.keys varDefs
+            , name `Map.member` partyDefs ]
+    in (clashErrs, Map.union partyDefs varDefs, Map.union partyInitials varInitials)
+
+-- ---------------------------------------------------------------------------
 -- Combat (Phase 7f)
 -- ---------------------------------------------------------------------------
 
@@ -515,29 +599,47 @@ checkStandingRefs factions gw
 -- | Collect every `faction.<id>` identifier referenced anywhere in the world
 --   (effects, predicates, dialogue gates, conditional texts).
 collectFactionRefs :: E.GameWorld -> [String]
-collectFactionRefs gw = nub $ concat
-    [ concatMap refsInEffect roomEffs
-    | r <- Map.elems (rooms gw)
-    , let roomEffs = catMaybes [roomOnEnter r, roomOnLook r, roomOnExit r, roomSearchOutcome r]
+collectFactionRefs gw = nub (concatMap refsInEffect (allWorldEffects gw)
+                             ++ concatMap refsInPredicate (allWorldPredicates gw))
+
+-- | Every effect tree reachable from the compiled world: room hooks, item and
+--   NPC verb maps, dialogue choices, trigger effects, quest rewards, vehicle
+--   conditions and item interactions. Shared by the module reference checks so
+--   a new module does not have to walk the world again.
+allWorldEffects :: E.GameWorld -> [E.Effect]
+allWorldEffects gw = concat
+    [ concatMap roomHooks (Map.elems (rooms gw))
+    , concatMap (Map.elems . itemVerbMap) (Map.elems (itemDefs gw))
+    , concatMap (Map.elems . npcVerbMap) (Map.elems (npcDefs gw))
+    , map dcOutcome (worldDialogueChoices gw)
+    , concatMap trEffects (triggerDefs gw)
+    , [ e | Just e <- map questReward (Map.elems (questDefs gw)) ]
+    , concatMap (Map.elems . vehicleConditionEffects) (Map.elems (vehicleDefs gw))
+    , Map.elems (itemInteractions gw)
     ]
-    ++ concatMap (refsInEffect . snd) (concatMap (Map.toList . itemVerbMap) (Map.elems (itemDefs gw)))
-    ++ concatMap (refsInEffect . snd) (concatMap (Map.toList . npcVerbMap) (Map.elems (npcDefs gw)))
-    ++ concatMap refsInChoice
-        [ c | npc <- Map.elems (npcDefs gw)
-            , tree <- Map.elems (npcDialogueTrees npc)
-            , node <- Map.elems (dtNodes tree)
-            , c <- dnChoices node ]
-    ++ concatMap refsInCondText (map roomDescription (Map.elems (rooms gw)))
-    ++ concatMap refsInCondText (map itemDescription (Map.elems (itemDefs gw)))
-    ++ concatMap refsInCondText (map npcDescription (Map.elems (npcDefs gw)))
-    ++ concatMap (maybe [] refsInPredicate . trCondition) (triggerDefs gw)
-    ++ concatMap refsInEffect (concatMap trEffects (triggerDefs gw))
-    ++ concatMap (maybe [] refsInEffect) (map questReward (Map.elems (questDefs gw)))
-    ++ concatMap (refsInEffect . snd) (concatMap (Map.toList . vehicleConditionEffects) (Map.elems (vehicleDefs gw)))
-    ++ concatMap (refsInEffect . snd) (Map.toList (itemInteractions gw))
   where
-    refsInChoice c = refsInEffect (dcOutcome c) ++ maybe [] refsInPredicate (dcVisible c)
-    refsInCondText ct = concatMap (refsInPredicate . tvWhen) (ctVariants ct)
+    roomHooks r = catMaybes [roomOnEnter r, roomOnLook r, roomOnExit r, roomSearchOutcome r]
+
+-- | Every predicate tree reachable from the compiled world (dialogue gates,
+--   trigger conditions, conditional texts).
+allWorldPredicates :: E.GameWorld -> [E.Predicate]
+allWorldPredicates gw = concat
+    [ [ p | Just p <- map dcVisible (worldDialogueChoices gw) ]
+    , [ p | Just p <- map trCondition (triggerDefs gw) ]
+    , concatMap condTextPreds (map roomDescription (Map.elems (rooms gw)))
+    , concatMap condTextPreds (map itemDescription (Map.elems (itemDefs gw)))
+    , concatMap condTextPreds (map npcDescription (Map.elems (npcDefs gw)))
+    ]
+  where
+    condTextPreds ct = map tvWhen (ctVariants ct)
+
+-- | Every dialogue choice in every NPC dialogue tree.
+worldDialogueChoices :: E.GameWorld -> [E.DialogueChoice]
+worldDialogueChoices gw =
+    [ c | npc <- Map.elems (npcDefs gw)
+        , tree <- Map.elems (npcDialogueTrees npc)
+        , node <- Map.elems (dtNodes tree)
+        , c <- dnChoices node ]
 
 -- | Faction references inside an Effect tree.
 refsInEffect :: E.Effect -> [String]
@@ -569,6 +671,36 @@ factionFromVar :: String -> [String]
 factionFromVar n = case stripPrefix "faction." n of
     Just rest | not (null rest) -> [rest]
     _                           -> []
+
+-- ---------------------------------------------------------------------------
+-- Party references (Phase 7g)
+-- ---------------------------------------------------------------------------
+
+-- | Phase 7g: every `damage_npc` target must be a declared NPC. The reference
+--   is collected from the compiled world, so effects in rules, room hooks,
+--   dialogue choices and verb maps all count.
+checkDamageNpcRefs :: E.GameWorld -> [CompileIssue]
+checkDamageNpcRefs gw =
+    let declared = Set.fromList (Map.keys (npcDefs gw))
+        refs = nub (concatMap hpTargetsInEffect (allWorldEffects gw))
+    in [ ciError "damage_npc" "UnknownDamageNPC"
+            ("damage_npc targets '" ++ nid ++ "', which is not declared under 'npcs:'")
+       | nid <- refs, nid `Set.notMember` declared ]
+
+-- | `VRProperty <entity> "hp"` references inside an Effect tree — what
+--   `damage_npc` compiles to.
+hpTargetsInEffect :: E.Effect -> [String]
+hpTargetsInEffect e = case e of
+    E.ModifyValue (E.VRProperty eid "hp") _ -> [eid]
+    E.SetValue (E.VRProperty eid "hp") _    -> [eid]
+    E.Sequence es                           -> concatMap hpTargetsInEffect es
+    E.RandomChoice cs                       -> concatMap (hpTargetsInEffect . snd) cs
+    E.Conditional _ t el                    -> hpTargetsInEffect t ++ hpTargetsInEffect el
+    E.Narrative _ follow                    -> hpTargetsInEffect follow
+    E.ApplyCondition _ _ (Just t) (Just el) -> hpTargetsInEffect t ++ hpTargetsInEffect el
+    E.ApplyCondition _ _ (Just t) Nothing   -> hpTargetsInEffect t
+    E.ApplyCondition _ _ Nothing (Just el)  -> hpTargetsInEffect el
+    _                                       -> []
 
 -- ---------------------------------------------------------------------------
 -- Verbs (Phase 3a): adventure-declared custom verbs
@@ -928,6 +1060,7 @@ compileAActionOutcome ao = case ao of
     AOEquipItem i -> E.MoveEntity i (E.EquippedBy "player" "weapon")
     AORoomTransition r -> E.SetValue (E.VRProperty "player" "room") (E.EVString r)
     AOMoveNPC n r -> E.MoveEntity n (E.InRoom r)
+    AODamageNPC n amount -> E.ModifyValue (E.VRProperty n "hp") (-amount)
     AOGameEnd r m -> E.GameEnd (parseGameOverReason r) (fromMaybe "" m)
     AOConditional p ts es ->
         E.Conditional p (compileOutcomes ts) (compileOutcomes es)

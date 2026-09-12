@@ -1,0 +1,183 @@
+name: "Der Knappenzug (Party)"
+start_room: rb_entry
+
+# Module 7g — Party/Begleiter.
+# Ein NPC mit `party:`-Block lässt sich per Order-Verb anwerben (folgen/stay
+# toggelt die Variable `party.alwin`, die der Compiler aus dem Block ableitet).
+# Der Begleiter folgt auf jedem Raumwechsel (Kern: followParty), greift im
+# classic-Kampf als zusätzlicher Aktor mit (Kern: 7f-Resolver) und sein Tod
+# feuert `OnStateChange alwin` — die Rule `alwin_falls` öffnet damit das
+# Runentor (locked_by rune_gate). Kein neues Save-Feld, kein zweiter
+# Interpreter.
+
+verbs:
+  - { name: folgen, aliases: [follow, mitkommen] }
+
+npcs:
+  - id: alwin
+    name: Knappe Alwin
+    desc: "Ein junger Knappe mit geerbtem Kettenhemd und zu großen Stiefeln."
+    keys: [alwin, knappe, squire]
+    location: rb_camp
+    state: alive
+    max_hp: 20
+    attack: 4
+    defense: 2
+    party:
+      can_join: true
+      order_verb: folgen
+      hp_tracked: true
+      follow_msg: "Knappe Alwin fällt hinter dir in Schritt."
+      stay_msg: "Knappe Alwin bleibt am Lagerfeuer zurück."
+    dialogue:
+      alive:
+        entry: greet
+        nodes:
+          greet:
+            text: "„Mein Herr, ich bin bereit. Sagt nur ein Wort, und ich folge Euch.“"
+            choices:
+              - { text: "Dann folge mir.", next: null }
+              - { text: "Bleib hier, es ist zu gefährlich.", next: null }
+  - id: wolf
+    name: Grauwolf
+    desc: "Ein ausgehungerter Wolf, der den Weg zur Rinne bewacht."
+    keys: [wolf, grauwolf, bestie]
+    location: rb_wolfden
+    state: alive
+    max_hp: 24
+    attack: 7
+    defense: 2
+    dialogue:
+      alive:
+        entry: growl
+        nodes:
+          growl:
+            text: "Der Wolf fletscht die Zähne."
+            choices:
+              - { text: "Zurückweichen.", next: null }
+
+rooms:
+  - id: rb_entry
+    name: Zollstation
+    desc: "Ein umgestürzter Schlagbaum, dahinter steigt der Karrenweg in die Schlucht."
+    exits:
+      north: {to: rb_road}
+      east: {to: rb_shed}
+  - id: rb_shed
+    name: Schuppen
+    desc: "Leere Kisten, ein Haufen alter Stricke. Etwas glänzt darunter."
+    exits:
+      west: {to: rb_entry}
+    search:
+      - { give: seil }
+      - { msg: "Unter den Stricken liegt ein brauchbares Seil." }
+  - id: rb_road
+    name: Karrenweg
+    desc: "Radspuren im Schlamm. Norden und Osten teilen sich die Schlucht."
+    exits:
+      south: {to: rb_entry}
+      north: {to: rb_mill}
+      east: {to: rb_glade}
+  - id: rb_mill
+    name: Alte Mühle
+    desc: "Das Rad steht still, Mehl staubt auf dem Boden."
+    exits:
+      south: {to: rb_road}
+  - id: rb_glade
+    name: Lichtung
+    desc: "Zwischen den Felsen brennt weiter nördlich ein kleines Feuer."
+    exits:
+      west: {to: rb_road}
+      north: {to: rb_camp}
+      east: {to: rb_ford}
+      south: {to: rb_pond}
+  - id: rb_pond
+    name: Regentümpel
+    desc: "Schwarzes Wasser, kein Fisch, kein Windhauch."
+    exits:
+      north: {to: rb_glade}
+  - id: rb_camp
+    name: Lagerfeuer
+    desc: "Die Glut knistert. Ein Knappe hockt daneben und mustert dich."
+    exits:
+      south: {to: rb_glade}
+  - id: rb_ford
+    name: Furt
+    desc: "Knietiefes Wasser. Im Osten riecht es nach nassem Fell."
+    exits:
+      west: {to: rb_glade}
+      east: {to: rb_wolfden}
+      north: {to: rb_ridge}
+  - id: rb_wolfden
+    name: Wolfsbau
+    desc: "Zerschlagene Knochen, ein Rudel war hier. Eines ist noch da."
+    exits:
+      west: {to: rb_ford}
+  - id: rb_ridge
+    name: Grat
+    desc: "Der Wind reißt an Kleidung und Haar. Über dir hängen lose Steine."
+    exits:
+      south: {to: rb_ford}
+      north: {to: rb_ravine}
+      east: {to: rb_watchtower}
+  - id: rb_watchtower
+    name: Alter Wachturm
+    desc: "Eine brüchige Brüstung, sonst nichts als Weite."
+    exits:
+      west: {to: rb_ridge}
+  - id: rb_ravine
+    name: Geröllrinne
+    desc: "Eine enge Rinne, übersät mit scharfem Schutt. Nördlich steht das Runentor."
+    exits:
+      south: {to: rb_ridge}
+      north: {to: rb_gate, locked_by: rune_gate}
+  - id: rb_gate
+    name: Runentor
+    desc: "Zwei glatte Felsflügel, von erloschenen Runen überzogen."
+    exits:
+      south: {to: rb_ravine}
+      north: {to: rb_vault}
+  - id: rb_vault
+    name: Bergkammer
+    desc: "Eine trockene Kammer hinter dem Tor — der Knappenzug ist geschafft."
+    exits:
+      south: {to: rb_gate}
+    on_enter:
+      - { game_end: victory, msg: "VICTORY — Durch das Runentor in die Bergkammer: der Knappenzug ist bestanden." }
+
+items:
+  - id: seil
+    name: Seil
+    desc: "Ein brauchbares Hanfseil, hart geworden in der Nässe."
+    keys: [seil, rope]
+    location: rb_shed
+    hidden: true
+
+rules:
+  # Der Steinschlag überrascht die Gruppe in der Rinne und tötet den Knappen.
+  - id: rockfall
+    on: enter rb_ravine
+    once: true
+    when: { compare_var: { name: party.alwin, op: gte, value: 1 } }
+    effects:
+      - { msg: "Über dir löst sich Geröll. Alwin stößt dich zur Seite und wird begraben." }
+      - { damage_npc: { npc: alwin, amount: 25 } }
+  # Der Tod des Begleiters ist ein Event: es öffnet das Runentor.
+  - id: alwin_falls
+    on: state alwin
+    once: true
+    effects:
+      - { msg: "Der Knappe ist tot. Sein Blut läuft in die Runen — das Tor schwingt auf." }
+      - { set_flag: alwin_buried, val: "true" }
+      - { set_state: rune_gate, to: unlocked }
+  # Ohne Begleiter ist die Rinne nur unheimlich.
+  - id: ravine_alone
+    on: enter rb_ravine
+    once: true
+    when: { not: { compare_var: { name: party.alwin, op: gte, value: 1 } } }
+    effects:
+      - { msg: "Steine rollen den Hang hinab. Sonst ist es still hier." }
+
+interactions:
+  entity: []
+  item: []

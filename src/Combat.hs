@@ -65,34 +65,65 @@ resolveNarrative nc _ (TargetNPC nid disp) st =
                then ([ncOnWin nc], ["You win the fight against the " ++ disp ++ "! Your attack lands cleanly."])
                else ([ncOnLose nc], ["You lose the fight against the " ++ disp ++ ". Your attack is turned aside."])
 
--- | Classic: bit-identical to `Parser.executeAttack` pre-7f.
+-- | Classic: bit-identical to `Parser.executeAttack` pre-7f when the actor
+--   list is just the player. Phase 7g adds companions: every living
+--   `CompanionActor` standing where the target stands strikes the same target
+--   after the player's blow (damage = attack - target defense, min 1), unless
+--   the player's blow already killed it. The target's counterattack still hits
+--   the player, and companions never strike themselves.
 --   The damage math is fully deterministic, so the outcome (kill / survive,
 --   player death / survival) is decided here; the returned effects are plain
 --   HP modifications — NPC death (killNPC) and player death (endGame) are
 --   handled automatically by `modifyNPCHealth` / `ModifyValue VRPlayerHealth`
 --   in the single outcome interpreter.
 resolveClassic :: [CombatActor] -> CombatTarget -> GameState -> ([Effect], [String])
-resolveClassic _ (TargetNPC nid disp) st =
+resolveClassic actors (TargetNPC nid disp) st =
     case Map.lookup nid (npcStates (save st)) of
-        Nothing -> ([], ["You can't attack the " ++ disp ++ "."])
+        Nothing -> ([], [cannotAttack])
         Just ns ->
             case Map.lookup nid (npcDefs (world st)) of
-                Nothing -> ([], ["You can't attack the " ++ disp ++ "."])
+                Nothing -> ([], [cannotAttack])
                 Just npc -> case npcHealth ns of
-                    Nothing -> ([], ["You can't attack the " ++ disp ++ "."])
+                    Nothing -> ([], [cannotAttack])
                     Just hp ->
                         let playerDmg = max 1 (effectiveAttack st - npcDefenseBase npc)
-                            newHp = hp - playerDmg
-                        in if newHp <= 0
-                           then ( [ ModifyValue (VRProperty nid "hp") (-playerDmg) ]
+                            playerEffects = [ ModifyValue (VRProperty nid "hp") (-playerDmg) ]
+                        in if hp - playerDmg <= 0
+                           then ( playerEffects
                                 , [ "You attack the " ++ disp ++ " and kill it!" ] )
                            else
-                               let npcDmg = max 0 (npcAttackBase npc - effectiveDefense st)
-                                   playerHpAfter = playerHealth (player (save st)) - npcDmg
-                                   effects = [ ModifyValue (VRProperty nid "hp") (-playerDmg)
-                                             , ModifyValue VRPlayerHealth (-npcDmg) ]
-                               in if playerHpAfter <= 0
+                               let allies = companionHits nid (npcLocation ns) (npcDefenseBase npc) actors st
+                                   allyEffects = [ ModifyValue (VRProperty nid "hp") (-d)
+                                                 | (_, _, d) <- allies ]
+                                   allyMsgs = [ npcName allyNpc ++ " strikes for " ++ show d ++ "."
+                                              | (_, allyNpc, d) <- allies ]
+                                   allyTotal = sum [ d | (_, _, d) <- allies ]
+                                   effects = playerEffects ++ allyEffects
+                               in if hp - playerDmg - allyTotal <= 0
                                   then ( effects
-                                       , [ "The " ++ disp ++ " strikes back and kills you!" ] )
-                                  else ( effects
-                                       , [ "You hit for " ++ show playerDmg ++ ", it hits you for " ++ show npcDmg ++ "." ] )
+                                       , ("You attack the " ++ disp ++ " and kill it!") : allyMsgs )
+                                  else
+                                      let npcDmg = max 0 (npcAttackBase npc - effectiveDefense st)
+                                          playerHpAfter = playerHealth (player (save st)) - npcDmg
+                                          withRetaliation = effects ++ [ ModifyValue VRPlayerHealth (-npcDmg) ]
+                                      in if playerHpAfter <= 0
+                                         then ( withRetaliation
+                                              , ("The " ++ disp ++ " strikes back and kills you!") : allyMsgs )
+                                         else ( withRetaliation
+                                              , ("You hit for " ++ show playerDmg
+                                                 ++ ", it hits you for " ++ show npcDmg ++ ".") : allyMsgs )
+  where
+    cannotAttack = "You can't attack the " ++ disp ++ "."
+
+-- | Companions that strike alongside the player: alive, present where the
+--   target stands, and not the target itself. Returns (npc id, def, damage).
+companionHits :: NPCID -> Location -> Int -> [CombatActor] -> GameState -> [(NPCID, NPCDef, Int)]
+companionHits targetId targetLoc targetDefense actors st =
+    [ (cid, cnpc, max 1 (npcAttackBase cnpc - targetDefense))
+    | CompanionActor cid <- actors
+    , cid /= targetId
+    , Just cns <- [Map.lookup cid (npcStates (save st))]
+    , npcStatus cns /= "dead"
+    , npcLocation cns == targetLoc
+    , Just cnpc <- [Map.lookup cid (npcDefs (world st))]
+    ]

@@ -1121,7 +1121,7 @@ testStealthCompiles = do
                     [ AOSetFlag "alarmed" "true", AOMessage "The guard heard you!" ]
         adv = (minAdventure (minRoom "loc_0"))
             { advStealth = Just (AStealth noise [guard])
-            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty ] }
+            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing ] }
     case compileAdventure adv of
         Left errs -> do
             putStrLn $ "  compile errors: " ++ show errs
@@ -1265,6 +1265,149 @@ testCombatFixturesCompile = do
                             rB <- expectEqual [] sErrs
                             pure (rA && rB)
 
+-- ---------------------------------------------------------------------------
+-- Phase 7g: party / companions
+-- ---------------------------------------------------------------------------
+
+-- | A party-capable NPC with an explicit state, for the party tests.
+partySquire :: Maybe AParty -> ANPC
+partySquire party
+    = ANPC "squire" "Knappe" (ACondText "Knappe" []) [] "loc_0" "alive"
+        (Just 20) 3 1 Map.empty Map.empty party
+
+followVerb :: AVerb
+followVerb = AVerb "follow" ["escort"]
+
+-- | The expected membership toggle for `squire`.
+expectedToggle :: E.Effect
+expectedToggle = E.Conditional (E.CompareVar "party.squire" E.CGte 1)
+    (E.Sequence [ E.SendMessage "Knappe stays behind."
+                , E.SetValue (E.VRVariable "party.squire") (E.EVInt 0) ])
+    (E.Sequence [ E.SendMessage "Knappe falls in behind you."
+                , E.SetValue (E.VRVariable "party.squire") (E.EVInt 1) ])
+
+-- | The `party:` block compiles to the follow variable `party.<npc>` plus one
+--   order-verb entry in the NPC's compiled verb map.
+testPartyCompiles :: IO Bool
+testPartyCompiles = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advVerbs = [followVerb]
+            , advNPCs = [partySquire (Just (AParty True "follow" True Nothing Nothing))] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let vars = variables (crSave cr)
+                def = Map.lookup "squire" (E.npcDefs (crWorld cr))
+                entry = def >>= Map.lookup (E.VCustom "follow", "alive") . E.npcVerbMap
+            r1 <- expectEqual (Just (E.VVInt 0)) (Map.lookup "party.squire" vars)
+            r2 <- expectTrue "follow variable declared" (Map.member "party.squire" (E.varDefs (crWorld cr)))
+            r3 <- expectEqual (Just expectedToggle) entry
+            pure (r1 && r2 && r3)
+
+-- | Without `can_join` the block is inert: no variable, no order verb, and a
+--   plain NPC is untouched (module default invariant).
+testPartyCanJoinFalseIsInert :: IO Bool
+testPartyCanJoinFalseIsInert = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advVerbs = [followVerb]
+            , advNPCs = [ partySquire (Just (AParty False "follow" True Nothing Nothing))
+                        , (partySquire Nothing) { anId = "plainnpc" } ] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            r1 <- expectEqual Nothing (Map.lookup "party.squire" (variables (crSave cr)))
+            r2 <- expectTrue "no follow variable declared" (not (Map.member "party.squire" (E.varDefs (crWorld cr))))
+            r3 <- expectEqual (Just []) (Map.lookup "squire" (E.npcDefs (crWorld cr)) >>= Just . Map.keys . E.npcVerbMap)
+            pure (r1 && r2 && r3)
+
+-- | Party validation: unknown/core order verb, hp tracked without max_hp and
+--   an author-declared follow variable are all compile errors.
+testPartyValidation :: IO Bool
+testPartyValidation = do
+    -- the order verb is not declared under `verbs:`
+    let advNoVerb = (minAdventure (minRoom "loc_0"))
+            { advNPCs = [partySquire (Just (AParty True "follow" True Nothing Nothing))] }
+    r1 <- case compileAdventure advNoVerb of
+            Left errs -> expectContains "PartyOrderVerbUnknown" (issuesText errs)
+            Right _   -> expectTrue "expected PartyOrderVerbUnknown" False
+    -- a core verb would shadow the built-in behaviour -> rejected as well
+    let advCoreVerb = (minAdventure (minRoom "loc_0"))
+            { advNPCs = [partySquire (Just (AParty True "look" True Nothing Nothing))] }
+    r2 <- case compileAdventure advCoreVerb of
+            Left errs -> expectContains "PartyOrderVerbUnknown" (issuesText errs)
+            Right _   -> expectTrue "expected PartyOrderVerbUnknown for core verb" False
+    -- hp_tracked needs a max_hp
+    let advNoHp = (minAdventure (minRoom "loc_0"))
+            { advVerbs = [followVerb]
+            , advNPCs = [(partySquire (Just (AParty True "follow" True Nothing Nothing))) { anMaxHealth = Nothing }] }
+    r3 <- case compileAdventure advNoHp of
+            Left errs -> expectContains "PartyHealthMissing" (issuesText errs)
+            Right _   -> expectTrue "expected PartyHealthMissing" False
+    -- the follow variable is module-owned
+    let advClash = (minAdventure (minRoom "loc_0"))
+            { advVerbs = [followVerb]
+            , advNPCs = [partySquire (Just (AParty True "follow" True Nothing Nothing))]
+            , advVariables = [ AVariable "party.squire" "int" (Just (Aeson.Number 0)) Nothing Nothing ] }
+    r4 <- case compileAdventure advClash of
+            Left errs -> expectContains "PartyVariableClash" (issuesText errs)
+            Right _   -> expectTrue "expected PartyVariableClash" False
+    pure (r1 && r2 && r3 && r4)
+
+-- | `damage_npc: { npc: X, amount: N }` is sugar over the existing NPC-HP
+--   effect, and an unknown target is a compile error.
+testDamageNpcCompiles :: IO Bool
+testDamageNpcCompiles = do
+    let stabber target = (partySquire Nothing)
+            { anId = "trapper"
+            , anVerbMap = Map.fromList [("stab,alive", [AODamageNPC target 25])] }
+        advOk = (minAdventure (minRoom "loc_0"))
+            { advVerbs = [AVerb "stab" []]
+            , advNPCs = [partySquire Nothing, stabber "squire"] }
+        advBad = (minAdventure (minRoom "loc_0"))
+            { advVerbs = [AVerb "stab" []]
+            , advNPCs = [partySquire Nothing, stabber "ghost"] }
+    r1 <- case compileAdventure advOk of
+            Left errs -> do
+                putStrLn $ "  compile errors: " ++ show errs
+                pure False
+            Right cr -> expectEqual
+                (Just (E.ModifyValue (E.VRProperty "squire" "hp") (-25)))
+                (Map.lookup "trapper" (E.npcDefs (crWorld cr))
+                    >>= Map.lookup (E.VCustom "stab", "alive") . E.npcVerbMap)
+    r2 <- case compileAdventure advBad of
+            Left errs -> expectContains "UnknownDamageNPC" (issuesText errs)
+            Right _   -> expectTrue "expected UnknownDamageNPC" False
+    pure (r1 && r2)
+
+-- | The 7g mini-fixture compiles and validates clean.
+testPartyFixtureCompiles :: IO Bool
+testPartyFixtureCompiles = do
+    mbPath <- findExampleModule "party.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  examples/modules/party.yaml not found"
+            pure False
+        Just path -> do
+            mbAdv <- parseAdventureFile path
+            case mbAdv of
+                Nothing -> do
+                    putStrLn "  failed to parse examples/modules/party.yaml"
+                    pure False
+                Just adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  compile errors (party.yaml): " ++ show errs
+                        pure False
+                    Right cr -> do
+                        let wErrs = validateWorld (crWorld cr)
+                            sErrs = validateGameState (crWorld cr) (crSave cr)
+                        rA <- expectEqual [] wErrs
+                        rB <- expectEqual [] sErrs
+                        pure (rA && rB)
+
 -- | Try candidate paths for the modules directory.
 findExampleModule :: String -> IO (Maybe FilePath)
 findExampleModule fname = firstExisting
@@ -1348,6 +1491,12 @@ tests =
     -- Phase 7f: combat profiles
     , ("combat segment compiles (default/off/narrative/tactical-fail)", testCombatCompiles)
     , ("combat fixtures compile + validate", testCombatFixturesCompile)
+    -- Phase 7g: party / companions
+    , ("party block compiles to follow var + order verb", testPartyCompiles)
+    , ("party block with can_join false is inert", testPartyCanJoinFalseIsInert)
+    , ("party validation (verb / hp / variable clash)", testPartyValidation)
+    , ("damage_npc compiles and validates its target", testDamageNpcCompiles)
+    , ("party fixture compiles + validates", testPartyFixtureCompiles)
     ]
 
 main :: IO ()

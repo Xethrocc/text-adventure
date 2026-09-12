@@ -323,17 +323,23 @@ updateNPCState targetNpcId newNpcState state = state
 --   Also unlocks any exit locked by this entity (entityStates -> "unlocked").
 --   Killing an already-dead NPC is a no-op, which bounds event recursion:
 --   a trigger that re-kills the same NPC cannot loop.
+--   Use `killNPCWithMsg` when the death-event messages should reach the
+--   player (the outcome interpreter does; it returns them with the state).
 killNPC :: String -> GameState -> GameState
-killNPC targetNpcId state =
+killNPC targetNpcId state = fst (killNPCWithMsg targetNpcId state)
+
+-- | `killNPC`, keeping the messages of the fired `OnStateChange` trigger rules.
+killNPCWithMsg :: String -> GameState -> (GameState, String)
+killNPCWithMsg targetNpcId state =
     case npcStatus <$> Map.lookup targetNpcId (npcStates (save state)) of
-        Just "dead" -> state
+        Just "dead" -> (state, "")
         _ ->
             let state' = state
                     { save = (save state)
                         { npcStates = Map.adjust (\s -> s { npcLocation = Removed, npcStatus = "dead" }) targetNpcId (npcStates (save state))
                         , entityStates = Map.insert targetNpcId "unlocked" (entityStates (save state))
                         } }
-            in fst (fireTriggers (OnStateChange targetNpcId) state')
+            in fireTriggers (OnStateChange targetNpcId) state'
 
 -- | Modify an NPC's property
 modifyNPCProp :: String -> String -> Int -> GameState -> GameState
@@ -347,6 +353,43 @@ modifyNPCProp nId prop delta state = state
 moveNPCToRoom :: String -> RoomID -> GameState -> GameState
 moveNPCToRoom nId targetRoom state = state
     { save = (save state) { npcStates = Map.adjust (\s -> s { npcLocation = InRoom targetRoom }) nId (npcStates (save state)) } }
+
+-- ---------------------------------------------------------------------------
+-- Party (Phase 7g)
+-- ---------------------------------------------------------------------------
+
+-- | The follow variable of a party member: `party.<npcId>`, 1 = following.
+--   Kept in the existing VarMap, so party membership survives save/load with
+--   no new state field (module rule: no state silo).
+partyVariable :: NPCID -> String
+partyVariable nId = "party." ++ nId
+
+-- | Is this NPC currently following the player?
+isInParty :: NPCID -> GameState -> Bool
+isInParty nId state = getVariable (partyVariable nId) state == Just (VVInt 1)
+
+-- | Living party members standing in the player's room — the combat roster
+--   the 7f resolver receives. Deterministic (sorted by NPC id).
+partyMembersInRoom :: GameState -> [NPCID]
+partyMembersInRoom state =
+    [ nId
+    | (nId, ns) <- Map.toList (npcStates (save state))
+    , npcStatus ns /= "dead"
+    , npcLocation ns == InRoom (currentRoom (save state))
+    , isInParty nId state ]
+
+-- | Party members follow the player into `room`. Called from every place the
+--   player's room changes (walking, teleport, boarding / leaving a vehicle),
+--   so following needs no per-(room x npc) trigger rules.
+--   Dead members stay where they fell.
+followParty :: RoomID -> GameState -> GameState
+followParty room state =
+    foldl (\st nId -> moveNPCToRoom nId room st) state
+        [ nId
+        | (nId, ns) <- Map.toList (npcStates (save state))
+        , npcStatus ns /= "dead"
+        , npcLocation ns /= InRoom room
+        , isInParty nId state ]
 
 -- | Set the current dialogue node for an NPC
 setDialogueNode :: String -> Maybe String -> GameState -> GameState
@@ -610,8 +653,8 @@ applyOutcomeWith depth salt outcome targetId state
                           in if isPlayerDead st' then endGame Death st' else st'
         in (state', "", salt)
     ModifyValue vr delta ->
-        let state' = modifyValueProp vr delta state
-        in (state', "", salt)
+        let (state', m) = modifyValueProp vr delta state
+        in (state', m, salt)
 
     MoveEntity eid (InRoom room) ->
         let state' = moveEntityToRoom eid room state
@@ -699,8 +742,11 @@ effectValToVarVal (EVInt n)    = VVInt n
 effectValToVarVal (EVString s) = VVText s
 effectValToVarVal (EVBool b)   = VVInt (if b then 1 else 0)
 
--- | Apply ModifyValue to a non-player-health reference
-modifyValueProp :: ValueRef -> Int -> GameState -> GameState
+-- | Apply ModifyValue to a non-player-health reference.
+--   Returns the updated state plus any message produced by a side effect
+--   (an NPC death firing its `OnStateChange` rules) — messages are threaded,
+--   never discarded.
+modifyValueProp :: ValueRef -> Int -> GameState -> (GameState, String)
 
 -- | Convert EffectValue to String (for flag/state values)
 effectValueToString :: EffectValue -> String
@@ -714,32 +760,33 @@ modifyValueProp (VRFlag name) delta state =
             Just "true" -> 1
             _           -> 0
         newVal = if cur + delta > 0 then "true" else "false"
-    in setFlag name newVal state
+    in (setFlag name newVal state, "")
 modifyValueProp (VRVariable name) delta state =
     let cur = case getVariable name state of
             Just (VVInt n)  -> n
             Just (VVText s) -> case reads s of [(n,_)] -> n; _ -> 0
             _               -> 0
-    in setVariable name (VVInt (cur + delta)) state
+    in (setVariable name (VVInt (cur + delta)) state, "")
 modifyValueProp (VRItemProp iId prop) delta state =
-    modifyItemProp iId prop delta state
+    (modifyItemProp iId prop delta state, "")
 modifyValueProp (VRProperty eId "hp") delta state =
     modifyNPCHealth eId delta state
 modifyValueProp (VRProperty nId prop) delta state =
-    modifyNPCProp nId prop delta state
-modifyValueProp _ _ state = state
+    (modifyNPCProp nId prop delta state, "")
+modifyValueProp _ _ state = (state, "")
 
--- | Modify an NPC's health, killing them if <= 0
-modifyNPCHealth :: NPCID -> Int -> GameState -> GameState
+-- | Modify an NPC's health, killing them if <= 0. The kill's state-change
+--   event messages are threaded back to the caller.
+modifyNPCHealth :: NPCID -> Int -> GameState -> (GameState, String)
 modifyNPCHealth nId delta state =
     case Map.lookup nId (npcStates (save state)) of
-        Nothing -> state
+        Nothing -> (state, "")
         Just n ->
             let oldHealth = fromMaybe 0 (npcHealth n)
                 newHealth = oldHealth + delta
                 state' = updateNPCState nId (n { npcHealth = Just newHealth }) state
                 state'' = clampNPCHealth nId state'
-            in if newHealth <= 0 then killNPC nId state'' else state''
+            in if newHealth <= 0 then killNPCWithMsg nId state'' else (state'', "")
 
 -- | Move an entity (player or NPC) to a room
 moveEntityToRoom :: EntityID -> RoomID -> GameState -> GameState
@@ -790,8 +837,9 @@ transitionToRoom dest state =
         moved = moveToRoom dest stAfterExit
         visited = markCurrentRoomVisited moved
         (finalState, enterMsg) = runRoomHook roomOnEnter dest visited
+        followed = followParty dest finalState
         fullMsg = intercalate "\n" (filter (not . null) [exitMsg, enterMsg])
-    in (finalState, fullMsg)
+    in (followed, fullMsg)
 
 -- ---------------------------------------------------------------------------
 -- Quests (Phase 2)
@@ -933,10 +981,11 @@ enterVehicle vId state = case lookupVehicle vId state of
         in if currentRoom (save state) /= stopRoom
            then Left ("The " ++ vehicleName v ++ " is not here.")
            else Right
-                ( state { save = (save state)
-                    { currentVehicle = Just vId
-                    , currentRoom = vehicleEntryRoom v
-                    , visitedRooms = Set.insert (vehicleEntryRoom v) (visitedRooms (save state)) } }
+                ( followParty (vehicleEntryRoom v)
+                    ( state { save = (save state)
+                        { currentVehicle = Just vId
+                        , currentRoom = vehicleEntryRoom v
+                        , visitedRooms = Set.insert (vehicleEntryRoom v) (visitedRooms (save state)) } } )
                 , "You board the " ++ vehicleName v ++ "." )
 
 -- | Exit the current vehicle back to its current stop's outside room
@@ -949,10 +998,11 @@ exitVehicle state = case currentVehicle (save state) of
             let vState = getVehicleState vId state
                 outside = vsCurrentStop vState
             in Right
-                ( state { save = (save state)
-                    { currentVehicle = Nothing
-                    , currentRoom = outside
-                    , visitedRooms = Set.insert outside (visitedRooms (save state)) } }
+                ( followParty outside
+                    ( state { save = (save state)
+                        { currentVehicle = Nothing
+                        , currentRoom = outside
+                        , visitedRooms = Set.insert outside (visitedRooms (save state)) } } )
                 , "You disembark from the " ++ vehicleName v ++ "." )
 
 -- | Move a vehicle to a stop's outside room (updates its position).
@@ -961,8 +1011,9 @@ moveVehicleToStop :: VehicleID -> RoomID -> GameState -> GameState
 moveVehicleToStop vId stopRoom state
     | currentVehicle (save state) == Just vId =
         -- Player is aboard: travel with the vehicle
-        setVehicleState vId ((getVehicleState vId state) { vsCurrentStop = stopRoom })
-            state { save = (save state) { currentRoom = stopRoom } }
+        followParty stopRoom $
+            setVehicleState vId ((getVehicleState vId state) { vsCurrentStop = stopRoom })
+                state { save = (save state) { currentRoom = stopRoom } }
     | otherwise =
         setVehicleState vId ((getVehicleState vId state) { vsCurrentStop = stopRoom }) state
 

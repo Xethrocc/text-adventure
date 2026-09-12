@@ -435,6 +435,125 @@ testCombatNarrativeLose = do
     r3 <- expectTrue "lose message" (isInfixOf "lose the fight" msg)
     pure (r1 && r2 && r3)
 
+-- ===== Party Tests (Phase 7g) =====
+
+-- | A minimal companion-capable NPC used by the party tests.
+squireDef :: NPCDef
+squireDef = NPCDef "squire" "squire" (plainText "A loyal squire with a chipped blade.")
+    Map.empty Map.empty ["squire", "knappe"] (Just 20) 3 1 Map.empty
+
+-- | Sample game plus a `squire`. Joining is just the roster convention:
+--   the follow variable `party.squire` set to 1.
+partyGame :: Bool -> GameState
+partyGame following =
+    let base = initSampleGame
+        npcSt = NPCState (InRoom "start") "alive" (Just 20) Map.empty Nothing
+    in base
+        { world = (world base) { npcDefs = Map.insert "squire" squireDef (npcDefs (world base)) }
+        , save = (save base)
+            { npcStates = Map.insert "squire" npcSt (npcStates (save base))
+            , variables = if following then Map.singleton "party.squire" (VVInt 1) else Map.empty
+            }
+        }
+
+-- | Move the squire into the hallway (where the goblin is).
+partyGameInHallway :: Bool -> GameState
+partyGameInHallway following =
+    let st = partyGame following
+    in st { save = (save st)
+            { currentRoom = "hallway"
+            , npcStates = Map.insert "squire"
+                (NPCState (InRoom "hallway") "alive" (Just 20) Map.empty Nothing)
+                (npcStates (save st)) } }
+
+-- | Phase 7g: a party member follows the player through a walk.
+testPartyFollowsOnRoomChange :: IO Bool
+testPartyFollowsOnRoomChange = do
+    let (st', _) = executeCommand (Go North) (partyGame True)
+    r1 <- expectEqual (Just (InRoom "hallway")) (npcLocation <$> Map.lookup "squire" (npcStates (save st')))
+    r2 <- expectEqual (Just (InRoom "start")) (npcLocation <$> Map.lookup "oldman" (npcStates (save st')))
+    pure (r1 && r2)
+
+-- | A non-member stays where it is (leave/dismiss = follow variable not 1).
+testPartyNonMemberStays :: IO Bool
+testPartyNonMemberStays = do
+    let (st', _) = executeCommand (Go North) (partyGame False)
+    expectEqual (Just (InRoom "start")) (npcLocation <$> Map.lookup "squire" (npcStates (save st')))
+
+-- | The party follows teleports too (same shared room-transition helper).
+testPartyFollowsOnTeleport :: IO Bool
+testPartyFollowsOnTeleport = do
+    let teleport = SetValue (VRProperty "player" "room") (EVString "treasure")
+        (st', _) = applyOutcome teleport "" (partyGame True)
+    expectEqual (Just (InRoom "treasure")) (npcLocation <$> Map.lookup "squire" (npcStates (save st')))
+
+-- | Phase 7g: a companion standing where the target stands strikes alongside
+--   the player (player 8 + squire 3-2=1 damage), no special combat path.
+testPartyCompanionFights :: IO Bool
+testPartyCompanionFights = do
+    let (st', msg) = executeCommand (Interact VAttack "goblin") (partyGameInHallway True)
+        goblinHp = (Map.lookup "goblin" (npcStates (save st'))) >>= npcHealth
+    r1 <- expectEqual (Just 21) goblinHp
+    r2 <- expectTrue "companion strike reported" (isInfixOf "squire strikes for 1" msg)
+    pure (r1 && r2)
+
+-- | Regression gate: without a companion the classic combat output is
+--   unchanged (same damage, same message, no companion line).
+testPartyNoCompanionUnchanged :: IO Bool
+testPartyNoCompanionUnchanged = do
+    let (st', msg) = executeCommand (Interact VAttack "goblin") (partyGameInHallway False)
+        goblinHp = (Map.lookup "goblin" (npcStates (save st'))) >>= npcHealth
+    r1 <- expectEqual (Just 22) goblinHp
+    r2 <- expectTrue "classic damage line" (isInfixOf "You hit for 8, it hits you for 3." msg)
+    r3 <- expectTrue "no companion line" (not (isInfixOf "strikes for" msg))
+    pure (r1 && r2 && r3)
+
+-- | A killed companion neither follows nor fights, and its death fires the
+--   state-change event the fixture rules listen to.
+testPartyDeadCompanionInactive :: IO Bool
+testPartyDeadCompanionInactive = do
+    let st0 = (partyGameInHallway True)
+        killed = killNPC "squire" st0
+        (st', msg) = executeCommand (Interact VAttack "goblin") killed
+        goblinHp = (Map.lookup "goblin" (npcStates (save st'))) >>= npcHealth
+        roster = partyMembersInRoom st0
+        rosterAfter = partyMembersInRoom killed
+    r1 <- expectEqual ["squire"] roster
+    r2 <- expectEqual [] rosterAfter
+    r3 <- expectEqual (Just 22) goblinHp
+    r4 <- expectTrue "dead companion stays silent" (not (isInfixOf "strikes for" msg))
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 7g: the roster survives save/load because it is a plain VarMap
+--   entry, and so does the companion's position.
+testPartyRosterSaveLoadRoundTrip :: IO Bool
+testPartyRosterSaveLoadRoundTrip = do
+    let st = partyGameInHallway True
+        encoded = Aeson.encode (save st)
+        decoded = Aeson.decode encoded :: Maybe SaveState
+    case decoded of
+        Nothing -> do putStrLn "  decode failed"; pure False
+        Just ss -> do
+            r1 <- expectEqual (Just (VVInt 1)) (Map.lookup "party.squire" (variables ss))
+            r2 <- expectEqual (Just (InRoom "hallway")) (npcLocation <$> Map.lookup "squire" (npcStates ss))
+            pure (r1 && r2)
+
+-- | An `OnStateChange` rule's message must reach the player when the NPC dies
+--   from HP damage: the interpreter threads the death-event messages instead
+--   of discarding them.
+testNPCDeathEventMessageShown :: IO Bool
+testNPCDeathEventMessageShown = do
+    let sample = initSampleGame
+        w = (world sample)
+            { triggerDefs = [ TriggerDef "death_note" (OnStateChange "goblin") Nothing
+                                [ SendMessage "Der Goblin fällt und lässt die Keule fallen."
+                                , SetValue (VRFlag "goblin_down") (EVString "true") ] False 0 ] }
+        st = sample { world = w }
+        (st', msg) = applyOutcome (ModifyValue (VRProperty "goblin" "hp") (-100)) "" st
+    r1 <- expectTrue "death event message threaded" (isInfixOf "Der Goblin fällt" msg)
+    r2 <- expectEqual (Just "true") (getFlag "goblin_down" st')
+    pure (r1 && r2)
+
 testPlayerDeathSetsGameOver :: IO Bool
 testPlayerDeathSetsGameOver = do
     let weakPlayer = initSampleGame { save = (save initSampleGame) { currentRoom = "hallway", player = Player 1 100 10 0 Map.empty } }
@@ -1806,6 +1925,15 @@ main = do
         , runTest "combat off custom refusal message" testCombatOffCustomRefusal
         , runTest "combat narrative win runs on_win" testCombatNarrativeWin
         , runTest "combat narrative lose runs on_lose" testCombatNarrativeLose
+        -- Phase 7g: party / companions
+        , runTest "party member follows on room change" testPartyFollowsOnRoomChange
+        , runTest "party non-member stays put" testPartyNonMemberStays
+        , runTest "party follows teleport" testPartyFollowsOnTeleport
+        , runTest "party companion strikes in combat" testPartyCompanionFights
+        , runTest "party regression: no companion, classic output" testPartyNoCompanionUnchanged
+        , runTest "party: dead companion inactive + event" testPartyDeadCompanionInactive
+        , runTest "party roster survives save/load" testPartyRosterSaveLoadRoundTrip
+        , runTest "npc death event message reaches the player" testNPCDeathEventMessageShown
         , runTest "player death sets gameOver + Death reason" testPlayerDeathSetsGameOver
         -- Completion tests
         , runTest "completion suggests NPC target" testCompletionSuggestsNpcName

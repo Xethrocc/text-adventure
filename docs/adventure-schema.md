@@ -94,6 +94,7 @@ description:
 | `{ standing: { faction: id, add: N } }` | ModifyValue (VRVariable "faction.id") +N — Module 7a |
 | `{ standing: { faction: id, set: N } }` | SetValue (VRVariable "faction.id") N — Module 7a |
 | `{ set_state: entity, to: state }` | SetValue (VRProperty entity "state") — z. B. `locked_by`-Tore öffnen |
+| `{ damage_npc: { npc: id, amount: N } }` | ModifyValue (VRProperty id "hp") −N — Module 7g |
 
 Item-Felder für Container:
 
@@ -118,6 +119,7 @@ Item-Felder für Container:
 | `defense` | Int | 0 | Verteidigungswert |
 | `dialogue` | Object | `{}` | Dialogbäume (siehe unten) |
 | `verb_map` | Object | `{}` | `{ "verb,state": [effects] }` |
+| `party` | Object | — | Begleiter-Block (Module 7g, siehe unten) |
 
 ### Dialogue Tree
 
@@ -383,6 +385,70 @@ combat:
 
 Umsetzung: `src/Combat.hs` — `resolveCombat :: CombatProfile ->
 [CombatActor] -> CombatTarget -> GameState -> ([Effect], [String])`,
-pure Effekt-Erzeugung durch den einen Interpreter.
+pure Effekt-Erzeugung durch den einen Interpreter. Mit einem Begleiter in der
+Gruppe enthält die Aktor-Liste zusätzlich `CompanionActor <npc>` (Module 7g).
 
-Siehe `docs/modules.md` (7f) für Details und die Referenz-Fixtures.
+---
+
+## Party: Begleiter (Module 7g)
+
+Ein NPC mit `party:`-Block lässt sich anwerben, folgt dem Spieler und kämpft im
+`classic`-Profil als zusätzlicher Aktor mit.
+
+```yaml
+verbs:
+  - { name: folgen, aliases: [follow] }
+
+npcs:
+  - id: alwin
+    name: Knappe Alwin
+    location: lager
+    max_hp: 20
+    attack: 4
+    defense: 2
+    party:
+      can_join: true        # false: Block ist inert (kein Verb, keine Variable)
+      order_verb: folgen    # Custom-Verb, das Beitritt/Verlassen toggelt
+      hp_tracked: true      # verlangt max_hp
+      follow_msg: "Alwin fällt hinter dir in Schritt."
+      stay_msg: "Alwin bleibt zurück."
+```
+
+| Feld | Typ | Default | Beschreibung |
+|---|---|---|---|
+| `can_join` | Bool | `true` | `false`: der Block tut nichts (NPC bleibt unanwerbbar) |
+| `order_verb` | String | `"follow"` | Custom-Verb aus `verbs:` (Core-Verben werden abgelehnt) |
+| `hp_tracked` | Bool | `true` | Begleiter-HP wird geführt (verlangt `max_hp`) |
+| `follow_msg` | String | generisch | Meldung beim Anwerben |
+| `stay_msg` | String | generisch | Meldung beim Entlassen |
+
+- **Mitgliedschaft = `VarMap`-Eintrag `party.<npcId>`** (1 = folgt). Der
+  Compiler deklariert die Variable aus dem Block; sie darf **nicht** selbst
+  unter `variables:` stehen (`PartyVariableClash`) — genau wie `faction.<id>`
+  (7a) und `env.*` (7d). Kein neues Save-Feld: der Roster überlebt Save/Load
+  automatisch.
+- **Order-Verb:** ein Toggle. Derselbe Befehl (`folgen alwin`) setzt die
+  Variable auf 1, ein zweiter Aufruf auf 0. Autoren können denselben
+  `verb_map`-Schlüssel zusätzlich belegen; ihre Effekte laufen zuerst, der
+  Toggle danach.
+- **Folgen:** `followParty` verschiebt jeden lebenden Begleiter auf jedem
+  Raumwechsel des Spielers mit (Gehen, Teleport, Ein-/Aussteigen und Fahrt im
+  Vehicle). Tote Begleiter bleiben liegen.
+- **Kampf:** im `classic`-Profil schlägt jeder Begleiter, der dort steht, wo
+  das Ziel steht, mit (Schaden = `attack − defense`, min 1) — es sei denn, der
+  Spieler hat das Ziel im selben Schlag schon getötet. Der Konter des Ziels
+  trifft weiter den Spieler; `narrative`/`off` ignorieren Begleiter. Ohne
+  Begleiter bleibt die Ausgabe bit-identisch zu 7f.
+- **Tod ist ein Event:** ein toter Begleiter feuert `OnStateChange <npc>`,
+  also greift die normale `on: state <npc>`-Rule (Fixture: sein Tod öffnet per
+  `set_state` das Runentor). Zum Auslösen von NPC-Schaden im YAML gibt es
+  `damage_npc`.
+- **Fehler:** `PartyOrderVerbUnknown` (Verb nicht deklariert oder Core-Verb),
+  `PartyHealthMissing` (`hp_tracked` ohne `max_hp`), `PartyVariableClash`,
+  `UnknownDamageNPC` (`damage_npc` auf unbekannten NPC).
+
+Fixture: `examples/modules/party.yaml` („Der Knappenzug") — anwerben mit
+`folgen alwin`, Wolfskampf mit zwei Aktoren, Steinschlag tötet den Knappen,
+sein Tod öffnet das Runentor.
+
+Siehe `docs/modules.md` (7f/7g) für Details und die Referenz-Fixtures.

@@ -249,7 +249,31 @@ data ANPC = ANPC
     , anDefense     :: Int
     , anDialogue    :: Map.Map String ADialogueTree
     , anVerbMap     :: Map.Map String [AActionOutcome]
+    , anParty       :: Maybe AParty          -- ^ party / companion block (Phase 7g)
     } deriving (Show, Eq, Generic)
+
+-- | The `party:` block on an NPC (Phase 7g): the NPC can be recruited,
+--   follows the player and fights alongside them.
+--
+--     party: { can_join: true, order_verb: follow, hp_tracked: true }
+--
+--   Compiles to the follow variable `party.<npcId>` plus one order verb that
+--   toggles membership — no engine-side party state of its own.
+data AParty = AParty
+    { aptCanJoin   :: Bool    -- ^ false: never recruitable (the block is inert)
+    , aptOrderVerb :: String  -- ^ custom verb that toggles follow / stay
+    , aptHpTracked :: Bool    -- ^ true: companion HP is tracked (needs max_hp)
+    , aptFollowMsg :: Maybe String  -- ^ message when the companion joins
+    , aptStayMsg   :: Maybe String  -- ^ message when the companion stays behind
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AParty where
+    parseJSON = withObject "AParty" $ \o -> AParty
+        <$> o .:? "can_join"   .!= True
+        <*> o .:? "order_verb" .!= "follow"
+        <*> o .:? "hp_tracked" .!= True
+        <*> o .:? "follow_msg"
+        <*> o .:? "stay_msg"
 
 instance FromJSON ANPC where
     parseJSON = withObject "ANPC" $ \o -> ANPC
@@ -264,6 +288,7 @@ instance FromJSON ANPC where
         <*> o .:? "defense"   .!= 0
         <*> o .:? "dialogue"  .!= Map.empty
         <*> o .:? "verb_map"  .!= Map.empty
+        <*> o .:? "party"
 
 -- | Dialogue tree: { entry: ..., nodes: { ... } }
 data ADialogueTree = ADialogueTree
@@ -656,6 +681,7 @@ data AActionOutcome
     | AOEquipItem String
     | AORoomTransition String
     | AOMoveNPC String String          -- ^ npc id, target room (move_npc + to)
+    | AODamageNPC String Int           -- ^ damage_npc: { npc: id, amount: N } (Phase 7g)
     | AOGameEnd String (Maybe String)  -- ^ reason (victory/death/custom), optional msg
     | AOConditional E.Predicate [AActionOutcome] [AActionOutcome]  -- ^ if/then/else
     | AOSetVar String Int              -- ^ set a declared numeric variable
@@ -688,6 +714,9 @@ instance FromJSON AActionOutcome where
         <|> (AOEquipItem <$> o .: "equip")
         <|> (AORoomTransition <$> o .: "move")
         <|> (AOMoveNPC <$> o .: "move_npc" <*> o .: "to")
+        -- Phase 7g: damage an NPC (companion death via trap, scripted harm)
+        <|> (do dn <- o .: "damage_npc"
+                AODamageNPC <$> dn .: "npc" <*> dn .: "amount")
         <|> (AONarrative <$> o .: "narrative")
         -- Phase 7a: standing sugar + set_state
         <|> (do st <- o .: "standing"
