@@ -155,3 +155,48 @@ environment:
 Fixture: `examples/modules/survival.yaml` — Der Eispass. Hunger-Drain
 (essen → `fed` stoppt ihn), Tag-Zähler, Sturm ab Tag 4, Raumtext am Kamm
 wechselt per CondText mit dem Wetter, Schutzhütte = Victory.
+
+---
+
+## 7e — Stealth und Lärm
+
+**Kernänderung: keine — und das ist der Punkt.** Der Plan erlaubte maximal
+*eine* generische Predicate-Erweiterung (`perceived_by`), aber die Fixture
+brauchte sie nicht: Lärm, Schwelle und Wahrnehmung sind vollständig als
+Daten ausdrückbar. `stealth:`-Segment kompiliert zu gewöhnlichen Triggern
+und einer Variablen.
+
+```yaml
+stealth:
+  noise:
+    var: noise        # Variablenname (Default "noise")
+    on_move: 2        # Lärm-Zuwachs bei Raumwechsel (eigener on:enter-Trigger je Raum)
+    decay_per_turn: -1
+    max: 10           # Obergrenze; der Compiler hängt Conditional-Clamps an
+  observers:
+    - npc: guard
+      hears_at: 5
+      cooldown: 3     # optional: N Turns bis die Wache wieder hört
+      on_hear: [ { set_flag: alarmed, val: "true" }, ... ]
+```
+
+- **Reihenfolge:** Beobachter feuern VOR dem Decay-Trigger, damit die Wache
+  den vollen Lärm desselben Zuges hört, bevor er abklingt.
+- **Schleichen ist nicht magisch:** ein Custom-Verb (`sneak`) + eine
+  `on: command sneak`-Regel, die `noise` senkt — dieselbe Datenmechanik wie
+  `buy` in 7b.
+- **Dunkle Räume / light_flag:** `isDark` existierte schon im Kern. Die
+  Fixture nutzt es: Im dunklen Wachposten hört die Wache erst ab `hears_at`,
+  mit Laterne (Item mit `tags: [lightsource]` oder `light_flag` gesetzt)
+  greift eine eigene Regel mit niedrigerer Schwelle — Wahrnehmung als Daten,
+  nicht als neues Predicate.
+- **Validierung:** `UnknownObserverNPC` (Observer-NPC existiert nicht),
+  `StealthVariableClash` (Autor deklariert die noise-Variable separat).
+- **Engine-Tests:** „noise observer hears at threshold then cooldown" —
+  Lärm steigt beim Bewegen, Wache hört ab Schwelle einmal, Cooldown remmt
+  das Wiederhören, Decay läuft danach.
+
+Fixture: `examples/modules/stealth.yaml` — Die Nachtschicht. Fünf
+sneak-Bewegungen halten den Lärm unter der Hör-Schwelle der Wache; wer
+rennt, wird gehört (Tod), wer die Laterne nimmt, wird im dunklen Posten
+gesehen. Tresorraum = Victory.

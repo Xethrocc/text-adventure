@@ -36,6 +36,7 @@ data Adventure = Adventure
     , advFactions         :: [AFaction]                  -- ^ factions + standing (Phase 7a)
     , advEncounterTables  :: [AEncounterTable]           -- ^ encounter tables (Phase 7c)
     , advEnvironment      :: Maybe AEnvironment          -- ^ weather + drains (Phase 7d)
+    , advStealth          :: Maybe AStealth              -- ^ noise + observers (Phase 7e)
     } deriving (Show, Eq, Generic)
 
 instance FromJSON Adventure where
@@ -58,6 +59,7 @@ instance FromJSON Adventure where
         <*> o .:? "factions"          .!= []
         <*> o .:? "encounter_tables"  .!= []
         <*> o .:? "environment"
+        <*> o .:? "stealth"
 
 -- | Optional player stats block in YAML (Phase 4d).
 --   `player: { max_hp: 50, attack: 8, defense: 3, skills: { lockpick: 5 } }`
@@ -515,6 +517,56 @@ instance FromJSON ADrainDef where
         <*> o .:  "per_turn"
         <*> o .:? "when"    .!= Nothing
         <*> o .:? "at_zero" .!= []
+
+-- ---------------------------------------------------------------------------
+-- Stealth (Phase 7e): noise + observers
+-- ---------------------------------------------------------------------------
+
+-- | The `stealth:` segment: a noise variable that rises on movement and
+--   decays per turn, plus observers (NPCs) that react once noise crosses a
+--   threshold. Pure schema-sugar on triggers/variables — no core change.
+data AStealth = AStealth
+    { stNoise    :: ANoiseSpec
+    , stObservers :: [AObserver]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AStealth where
+    parseJSON = withObject "AStealth" $ \o -> AStealth
+        <$> o .:  "noise"
+        <*> o .:? "observers" .!= []
+
+-- | Noise machine: variable name (default "noise"), gain per move, decay
+--   per turn, and an upper clamp. The compiler emits one `on: enter` trigger
+--   per room (gain) plus one `on: turn` trigger (decay).
+data ANoiseSpec = ANoiseSpec
+    { nsVar      :: String
+    , nsOnMove   :: Int
+    , nsDecay    :: Int
+    , nsMax      :: Int
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ANoiseSpec where
+    parseJSON = withObject "ANoiseSpec" $ \o -> ANoiseSpec
+        <$> o .:? "var"         .!= "noise"
+        <*> o .:? "on_move"     .!= 0
+        <*> o .:? "decay_per_turn" .!= 0
+        <*> o .:? "max"         .!= 100
+
+-- | One observer: an NPC who reacts when noise >= `hears_at`. `cooldown`
+--   re-arms the guard after N turns (0 = react every turn while loud).
+data AObserver = AObserver
+    { obNPC     :: String
+    , obHearsAt :: Int
+    , obCooldown :: Int
+    , obOnHear  :: [AActionOutcome]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AObserver where
+    parseJSON = withObject "AObserver" $ \o -> AObserver
+        <$> o .:  "npc"
+        <*> o .:  "hears_at"
+        <*> o .:? "cooldown" .!= 0
+        <*> o .:? "on_hear"  .!= []
 
 -- ---------------------------------------------------------------------------
 -- Interactions

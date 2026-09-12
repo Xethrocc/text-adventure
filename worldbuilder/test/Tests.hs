@@ -4,7 +4,7 @@
 module Main where
 
 import Control.Monad (when)
-import Data.List (isInfixOf)
+import Data.List (isInfixOf, takeWhile)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
@@ -141,6 +141,7 @@ minAdventure room = Adventure
     , advFactions = []
     , advEncounterTables = []
     , advEnvironment = Nothing
+    , advStealth = Nothing
     }
 
 -- ---------------------------------------------------------------------------
@@ -1105,6 +1106,85 @@ testSurvivalFixtureCompiles = do
                         r2 <- expectEqual [] sErrs
                         pure (r1 && r2)
 
+-- | The stealth segment compiles to a noise variable, one OnEnter trigger
+--   per room (gain + clamp), one OnTurn observer per NPC (threshold gate),
+--   and one final decay trigger. Observers must precede decay.
+testStealthCompiles :: IO Bool
+testStealthCompiles = do
+    let noise = ANoiseSpec "noise" 2 (-1) 10
+        guard = AObserver "guard" 5 3
+                    [ AOSetFlag "alarmed" "true", AOMessage "The guard heard you!" ]
+        adv = (minAdventure (minRoom "loc_0"))
+            { advStealth = Just (AStealth noise [guard])
+            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty ] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let trs = E.triggerDefs (crWorld cr)
+                ids = map E.trId trs
+                nmove = filter (\t -> E.trId t == "stealth.nmove.loc_0") trs
+                observe = filter (\t -> E.trId t == "stealth.observe.guard") trs
+                decay = filter (\t -> E.trId t == "stealth.decay") trs
+            r1 <- expectEqual (Just (E.VVInt 0)) (Map.lookup "noise" (variables (crSave cr)))
+            r2 <- expectEqual [ E.OnEnter "loc_0" ] (map E.trEvent nmove)
+            r3 <- expectEqual [ E.ModifyValue (E.VRVariable "noise") 2
+                              , E.Conditional (E.CompareVar "noise" E.CGte 10)
+                                    (E.SetValue (E.VRVariable "noise") (E.EVInt 10)) E.Noop ]
+                    (concatMap E.trEffects nmove)
+            r4 <- expectEqual [E.OnTurn] (map E.trEvent observe)
+            r5 <- expectEqual (Just (E.CompareVar "noise" E.CGte 5)) (E.trCondition (head observe))
+            r6 <- expectEqual 3 (E.trCooldown (head observe))
+            r7 <- expectEqual [E.OnTurn] (map E.trEvent decay)
+            -- observer before decay in trigger order
+            r8 <- expectTrue "observer precedes decay"
+                (length (takeWhile (/= "stealth.observe.guard") ids) < length (takeWhile (/= "stealth.decay") ids))
+            pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- | Stealth validation: observer NPC must exist; the noise variable must not
+--   be declared separately.
+testStealthValidation :: IO Bool
+testStealthValidation = do
+    let advBadNpc = (minAdventure (minRoom "loc_0"))
+            { advStealth = Just (AStealth (ANoiseSpec "noise" 2 (-1) 10)
+                                    [ AObserver "ghost" 5 0 [ AOMessage "x" ] ]) }
+    r1 <- case compileAdventure advBadNpc of
+            Left errs -> expectContains "UnknownObserverNPC" (issuesText errs)
+            Right _   -> expectTrue "expected UnknownObserverNPC" False
+    let advClash = (minAdventure (minRoom "loc_0"))
+            { advStealth = Just (AStealth (ANoiseSpec "noise" 2 (-1) 10) [])
+            , advVariables = [ AVariable "noise" "int" (Just (Aeson.Number 0)) Nothing Nothing ] }
+    r2 <- case compileAdventure advClash of
+            Left errs -> expectContains "StealthVariableClash" (issuesText errs)
+            Right _   -> expectTrue "expected StealthVariableClash" False
+    pure (r1 && r2)
+
+-- | The 7e mini-fixture compiles and validates clean.
+testStealthFixtureCompiles :: IO Bool
+testStealthFixtureCompiles = do
+    mbPath <- findExampleModule "stealth.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  examples/modules/stealth.yaml not found"
+            pure False
+        Just path -> do
+            mbAdv <- parseAdventureFile path
+            case mbAdv of
+                Nothing -> do
+                    putStrLn "  failed to parse examples/modules/stealth.yaml"
+                    pure False
+                Just adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  compile errors: " ++ show errs
+                        pure False
+                    Right cr -> do
+                        let wErrs = validateWorld (crWorld cr)
+                            sErrs = validateGameState (crWorld cr) (crSave cr)
+                        r1 <- expectEqual [] wErrs
+                        r2 <- expectEqual [] sErrs
+                        pure (r1 && r2)
+
 -- | Try candidate paths for the modules directory.
 findExampleModule :: String -> IO (Maybe FilePath)
 findExampleModule fname = firstExisting
@@ -1181,6 +1261,10 @@ tests =
     , ("drains compile to guarded OnTurn triggers", testEnvironmentDrainCompiles)
     , ("environment validation (unknown state / unknown drain var)", testEnvironmentValidation)
     , ("survival fixture compiles + validates", testSurvivalFixtureCompiles)
+    -- Phase 7e: stealth
+    , ("stealth compiles to noise/observer/decay triggers", testStealthCompiles)
+    , ("stealth validation (unknown npc / var clash)", testStealthValidation)
+    , ("stealth fixture compiles + validates", testStealthFixtureCompiles)
     ]
 
 main :: IO ()

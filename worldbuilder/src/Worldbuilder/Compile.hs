@@ -72,15 +72,21 @@ compileAdventure adv =
             mergeFactionVars varDefs varInitials factionDefs factionInitials
         (envErrs, envTriggerDefs, envVarDefs, envVarInitials) =
             compileEnvironment facVarDefs (advEnvironment adv)
-        (envConflictErrs, allVarDefs, allVarInitials) =
+        (envConflictErrs, envAllVarDefs, envAllVarInitials) =
             mergeEnvironmentVars facVarDefs facVarInitials envVarDefs envVarInitials
-        allTriggerDefs = triggerDefs ++ encounterDefs ++ envTriggerDefs
+
+        allRooms = Map.union compiledRooms vehicleExtraRooms
+
+        (stealthErrs, stealthTriggerDefs, stealthVarDefs, stealthVarInitials) =
+            compileStealth (Map.keys allRooms) (map anId (advNPCs adv)) (advStealth adv)
+        (stealthConflictErrs, allVarDefs, allVarInitials) =
+            mergeStealthVars envAllVarDefs envAllVarInitials stealthVarDefs stealthVarInitials
+        allTriggerDefs = triggerDefs ++ encounterDefs ++ envTriggerDefs ++ stealthTriggerDefs
         (initVarErrs, initialVars) =
             compileInitialVariables allVarDefs allVarInitials (advInitialVariables adv)
         (initStateErrs, initialFlags, initialQuests) =
             compileInitialState (advActiveQuests adv) (advInitialFlags adv) questDefs
 
-        allRooms = Map.union compiledRooms vehicleExtraRooms
         gw = E.GameWorld
                 { E.rooms = allRooms
                 , E.itemDefs = itemDefs
@@ -99,6 +105,7 @@ compileAdventure adv =
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
                     ++ varErrs ++ facErrs ++ facConflictErrs ++ trigErrs ++ encErrs
                     ++ envErrs ++ envConflictErrs
+                    ++ stealthErrs ++ stealthConflictErrs
                     ++ initVarErrs ++ initStateErrs ++ facRefErrs ++ encRefErrs
     in case allErrors of
         (_:_) -> Left allErrors
@@ -407,6 +414,63 @@ mergeEnvironmentVars varDefs varInitials envDefs envInitials =
             | name <- Map.keys varDefs
             , name `Map.member` envDefs ]
     in (clashErrs, Map.union envDefs varDefs, Map.union envInitials varInitials)
+
+-- ---------------------------------------------------------------------------
+-- Stealth (Phase 7e): noise + observers
+-- ---------------------------------------------------------------------------
+
+-- | Compile the `stealth:` segment. Noise becomes a variable; the compiler
+--   emits one `on: enter` trigger per room (gain, clamped to max), one
+--   `on: turn` observer trigger per NPC (fires while noise >= hears_at,
+--   re-arms after `cooldown` turns), and one final `on: turn` decay trigger.
+--   Order matters: observers run BEFORE decay, so a guard hears the full
+--   noise of the same turn before it fades. No core change.
+compileStealth :: [String] -> [String] -> Maybe AStealth
+               -> ([CompileIssue], [E.TriggerDef], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+compileStealth _ _ Nothing = ([], [], Map.empty, Map.empty)
+compileStealth roomIds npcIds (Just st) =
+    let spec = stNoise st
+        var = nsVar spec
+        onMove = nsOnMove spec
+        decay = nsDecay spec
+        maxN = nsMax spec
+        varDefs = Map.singleton var (E.VarDef var (E.VTInt Nothing (Just maxN)) (E.VVInt 0))
+        initials = Map.singleton var (E.VVInt 0)
+        clampToMax = E.Conditional (E.CompareVar var E.CGte maxN)
+                         (E.SetValue (E.VRVariable var) (E.EVInt maxN)) E.Noop
+        clampToZero = E.Conditional (E.CompareVar var E.CLte 0)
+                          (E.SetValue (E.VRVariable var) (E.EVInt 0)) E.Noop
+        moveTriggers =
+            [ E.TriggerDef ("stealth.nmove." ++ rId) (E.OnEnter rId) Nothing
+                [ E.ModifyValue (E.VRVariable var) onMove, clampToMax ] False 0
+            | rId <- roomIds ]
+        observerTriggers =
+            [ E.TriggerDef ("stealth.observe." ++ obNPC o) E.OnTurn
+                (Just (E.CompareVar var E.CGte (obHearsAt o)))
+                [ compileOutcomes (obOnHear o) ] False (obCooldown o)
+            | o <- stObservers st ]
+        decayTrigger =
+            [ E.TriggerDef "stealth.decay" E.OnTurn Nothing
+                [ E.ModifyValue (E.VRVariable var) decay, clampToZero ] False 0 ]
+        unknownNpc =
+            [ ciError ("stealth.observers." ++ obNPC o) "UnknownObserverNPC"
+                ("observer npc '" ++ obNPC o ++ "' is not declared under 'npcs:'")
+            | o <- stObservers st
+            , obNPC o `notElem` npcIds ]
+    in (unknownNpc, moveTriggers ++ observerTriggers ++ decayTrigger, varDefs, initials)
+
+-- | Merge the noise variable into the declared variables, rejecting a clash
+--   (the author must not declare it, e.g. also under `variables:`).
+mergeStealthVars :: Map.Map String E.VarDef -> Map.Map String E.VariableValue
+                  -> Map.Map String E.VarDef -> Map.Map String E.VariableValue
+                  -> ([CompileIssue], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+mergeStealthVars varDefs varInitials stealthDefs stealthInitials =
+    let clashErrs =
+            [ ciError ("variables." ++ name) "StealthVariableClash"
+                ("'" ++ name ++ "' is the stealth noise variable; declare it under 'stealth:' instead")
+            | name <- Map.keys varDefs
+            , name `Map.member` stealthDefs ]
+    in (clashErrs, Map.union stealthDefs varDefs, Map.union stealthInitials varInitials)
 
 -- | Verify every `faction.<id>` reference in the compiled world resolves to a
 --   declared faction. Only runs when the `factions:` segment is present

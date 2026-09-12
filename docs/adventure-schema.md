@@ -324,4 +324,34 @@ environment:
   `UnknownDrainVariable` (Drain-Var nicht deklariert),
   `EnvironmentVariableClash` (Autor deklariert `env.*`).
 
-Siehe `docs/modules.md` (7d) für Details und die Referenz-Fixture.
+---
+
+## Stealth: Lärm und Beobachter (Module 7e)
+
+Lärm erzeugen und Wachen reagieren lassen — alles auf Trigger/Variablen.
+
+```yaml
+stealth:
+  noise:
+    var: noise        # Name der Lärm-Variable (Default "noise")
+    on_move: 2        # +Lärm bei jedem Raumwechsel
+    decay_per_turn: -1
+    max: 10
+  observers:
+    - npc: guard
+      hears_at: 5
+      cooldown: 3     # optional: N Turns bis Wache wieder hört (Default 0)
+      on_hear: [ { set_flag: alarmed, val: "true" } ]
+```
+
+- Kompiliert zu: einer Int-Variable, einem `on: enter <raum>`-Trigger je Raum
+  (Clamp auf `max`), einem `on: turn`-Observer je NPC (`compare_var noise
+  gte hears_at`, `cooldown` als Trigger-Cooldown) und einem letzten
+  `on: turn`-Decay-Trigger (Clamp auf 0). Beobachter laufen VOR dem Decay.
+- Schleichen = beliebiges Custom-Verb + `on: command`-Regel, das die
+  Variable senkt (7b-Muster); Dunkelheit/Wahrnehmung via `tags: [dark]`,
+  `light_flag` und `lightsource`-Items — alles bestehende Prädikate.
+- **Fehler:** `UnknownObserverNPC` (NPC nicht unter `npcs:` deklariert),
+  `StealthVariableClash` (Autor deklariert die noise-Variable separat).
+
+Siehe `docs/modules.md` (7e) für Details und die Referenz-Fixture.

@@ -1108,6 +1108,47 @@ testDrainStopsWhenFlagged = do
     r5 <- expectEqual Nothing (gameOverReason (save still))
     pure (r1 && r2 && r3 && r4 && r5)
 
+-- | Noise (module 7e): the compiled stealth triggers behave as a noise
+--   meter. A move raises noise (clamped to max), the observer reacts only
+--   while noise >= hears_at and then re-arms via cooldown, and decay runs
+--   after the observer so a guard hears the full noise of the same turn.
+testNoiseObserverAndDecay :: IO Bool
+testNoiseObserverAndDecay = do
+    let noiseTrig = TriggerDef "stealth.nmove.start" (OnEnter "start") Nothing
+            [ ModifyValue (VRVariable "noise") 6
+            , Conditional (CompareVar "noise" CGte 10) (SetValue (VRVariable "noise") (EVInt 10)) Noop ]
+            False 0
+        observeTrig = TriggerDef "stealth.observe.guard" OnTurn
+            (Just (CompareVar "noise" CGte 3))
+            [ ModifyValue (VRVariable "hearings") 1 ]
+            False 2
+        decayTrig = TriggerDef "stealth.decay" OnTurn Nothing
+            [ ModifyValue (VRVariable "noise") (-1)
+            , Conditional (CompareVar "noise" CLte 0) (SetValue (VRVariable "noise") (EVInt 0)) Noop ]
+            False 0
+        st0 = initSampleGame
+            { world = (world initSampleGame)
+                { triggerDefs = [noiseTrig, observeTrig, decayTrig] }
+            , save = (save initSampleGame) { variables = Map.singleton "hearings" (VVInt 0) } }
+        count st = case getVariable "hearings" st of
+            Just (VVInt n) -> n
+            _ -> (-1)
+        (st1, _) = fireTriggers (OnEnter "start") st0
+        (st2, _) = fireTriggers OnTurn st1
+        (st3, _) = fireTriggers OnTurn st2
+        (st4, _) = fireTriggers OnTurn st3
+        (st5, _) = fireTriggers OnTurn st4
+    -- after move: noise 6, observer (>=3) hears once, decay -> 5
+    r1 <- case getVariable "noise" st2 of
+            Just (VVInt n) -> expectEqual 5 n
+            _ -> expectTrue "noise after move+decay" False
+    r2 <- expectEqual 1 (count st2)
+    -- cooldown 2: no re-fire on the next two OnTurn events, then hears again
+    r3 <- expectEqual 1 (count st3)
+    r4 <- expectEqual 1 (count st4)
+    r5 <- expectEqual 2 (count st5)
+    pure (r1 && r2 && r3 && r4 && r5)
+
 testTriggerOnceFiresOnce :: IO Bool
 testTriggerOnceFiresOnce = do
     let trigger = TriggerDef "once_test" (OnEnter "treasure") Nothing
@@ -1797,6 +1838,7 @@ main = do
         , runTest "trigger fires on enter" testTriggerFiresOnEnter
         , runTest "trigger cooldown gates turns" testTriggerCooldownGatesTurns
         , runTest "drain stops when flag fed" testDrainStopsWhenFlagged
+        , runTest "noise observer hears at threshold then cooldown" testNoiseObserverAndDecay
         , runTest "once trigger fires only once" testTriggerOnceFiresOnce
         , runTest "trigger condition gates firing" testTriggerConditionGates
         , runTest "OnCommand trigger fires" testTriggerCommandEvent

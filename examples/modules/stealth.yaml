@@ -1,0 +1,159 @@
+name: Die Nachtschicht (Stealth)
+start_room: start_hall
+
+# Module 7e — Stealth/Lärm.
+# Kein Kern-Eingriff: noise ist eine Variable, Bewegung erzeugt Lärm
+# (ein on:enter-Trigger je Raum), der pro Zug abklingt (on:turn-Decay),
+# und die Wache ist ein on:turn-Observer mit Hör-Schwelle. „Schleichen"
+# ist ein Custom-Verb, das noise senkt — alles Daten, nichts Neues im Kern.
+
+stealth:
+  noise:
+    var: noise
+    on_move: 2
+    decay_per_turn: -1
+    max: 10
+  observers:
+    - npc: watchman
+      hears_at: 5
+      on_hear:
+        - { set_flag: caught, val: "true" }
+        - { msg: "„Was war das?“ — die Wache rüstet um." }
+
+verbs:
+  - { name: sneak, aliases: [schleichen, creep] }
+
+rules:
+  - id: sneak_quiet
+    on: command sneak
+    effects:
+      - { add_var: noise, delta: -4 }
+      - { msg: "Du gehst in die Hocke und schleichst leise weiter." }
+  - id: seen_with_lantern
+    on: enter guard_post
+    when: { all: [ { has_item: lantern }, { compare_var: { name: noise, op: gte, value: 2 } } ] }
+    effects:
+      - { set_flag: caught, val: "true" }
+      - { msg: "Die Laterne verrät dich — die Wache starrt direkt in dein Gesicht!" }
+  - id: caught_death
+    on: turn
+    when: { has_flag: caught }
+    effects:
+      - { game_end: death, msg: "Die Wache hat dich erwischt. Die Nachtschicht endet für dich." }
+  - id: vault_victory
+    on: enter vault
+    effects:
+      - { msg: "Du schließt den Vorhängeschloss-Kasten. Die Beute ist dein." }
+      - { game_end: victory, msg: "VICTORY — Leise wie ein Schatten hast du den Tresorraum geplündert." }
+
+rooms:
+  - id: start_hall
+    name: Laderampe
+    desc: "Der Geruch von Teer und Salz. Nach Norden führt der Gang zu den Lagerhallen, nach Süden steht ein Häuschen."
+    exits:
+      north: {to: gang_dark}
+      south: {to: gate_house}
+  - id: gang_dark
+    name: Dunkler Verbindungsgang
+    desc: "Kein Lichtstrahl dringt hierher. Etwas liegt im Staub."
+    tags: [dark]
+    light_flag: lamp_lit
+    exits:
+      north: {to: junction}
+      south: {to: start_hall}
+    search:
+      - { give: lantern }
+      - { msg: "Zwischen leeren Kisten: eine Öllaterne. Wer sie anzündet, ist weithin sichtbar." }
+  - id: junction
+    name: Flurkreuzung
+    desc: "Vier Gänge treffen sich. Nach Norden bewacht man den Tresor, nach Westen lagert Ware."
+    exits:
+      north: {to: corridor_a}
+      south: {to: gang_dark}
+      west: {to: storage}
+  - id: corridor_a
+    name: Korridor A
+    desc: "Rote Signalleuchten blinken im Rhythmus der Wellen. Eine Tür zeigt nach Osten."
+    exits:
+      north: {to: guard_post}
+      south: {to: junction}
+      east: {to: office}
+  - id: guard_post
+    name: Wachposten
+    desc: "Ein Stuhl, eine leere Kaffeetasse — und ein wachsamer Posten. Nur die Tür nach Norden führt weiter."
+    tags: [dark]
+    light_flag: lamp_lit
+    exits:
+      north: {to: vault_door}
+      south: {to: corridor_a}
+  - id: vault_door
+    name: Tresortür
+    desc: "Eine Stahltür mit Vorhängeschloss. Das Schloss weicht, wenn niemand hinsieht."
+    exits:
+      north: {to: vault}
+      south: {to: guard_post}
+  - id: vault
+    name: Tresorraum
+    desc: "Regale voller Schmuggelgut. Du hast es geschafft."
+    exits:
+      south: {to: vault_door}
+  - id: storage
+    name: Lagerhalle B
+    desc: "Stapel aus Tee, Tabak, Fässern. Ein staubiger Umweg zurück zur Kreuzung."
+    exits:
+      east: {to: junction}
+  - id: office
+    name: Kanzlei
+    desc: "Papierstöße auf dem Schreibtisch. Von hier hörst du jeden Schritt im Korridor."
+    exits:
+      south: {to: corridor_a}
+  - id: stairs_down
+    name: Treppe zum Keller
+    desc: "Eiserne Stufen führen hinunter in die Kühle."
+    exits:
+      north: {to: cellar}
+      south: {to: start_hall}
+  - id: cellar
+    name: Weinkeller
+    desc: "Flaschen stehen dicht an dicht. Auch hier unten hallt jeder Tritt."
+    exits:
+      south: {to: stairs_down}
+  - id: gate_house
+    name: Pförtnerhäuschen
+    desc: "Ein vergittertes Fenster zur Rampe. Der Schlüsselbund der Wache hängt am Haken."
+    exits:
+      east: {to: corridor_a}
+      north: {to: start_hall}
+  - id: boiler_room
+    name: Kesselhaus
+    desc: "Zischende Rohre und ein ruhig surrendes Aggregat. Gut, um Schritte zu übertönen."
+    exits:
+      west: {to: junction}
+      north: {to: stairs_down}
+
+items:
+  - id: lantern
+    name: Öllaterne
+    desc: "Hell, aber laut in der Stille: Jede Flamme hat einen Schatten."
+    keys: [laterne, lampe, lantern]
+    location: gang_dark
+    hidden: true
+    tags: [lightsource]
+
+npcs:
+  - id: watchman
+    name: Nachtwächter
+    desc: "Ein müder Mann, der seinen Dienst ernst nimmt."
+    keys: [wache, wächter, guard, watchman]
+    location: guard_post
+
+quests:
+  - id: nightswatch_heist
+    name: Nachtschicht
+    desc: "Schleiche an der Wache vorbei und plündere den Tresor."
+    stages:
+      - { id: reach_vault, desc: "Erreiche den Tresorraum, ohne gesehen zu werden." }
+
+interactions:
+  entity: []
+  item: []
