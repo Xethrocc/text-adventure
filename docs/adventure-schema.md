@@ -91,6 +91,9 @@ description:
 | `{ game_end: victory }` / `{ game_end: death, msg: "…" }` | GameEnd |
 | `{ if: <predicate>, then: […], else: […] }` | Conditional — Prädikat-gesteuerter Zweig |
 | `{ msg: "Text", then: [...], else: [...] }` | Sequence [SendMessage, Conditional...] |
+| `{ standing: { faction: id, add: N } }` | ModifyValue (VRVariable "faction.id") +N — Module 7a |
+| `{ standing: { faction: id, set: N } }` | SetValue (VRVariable "faction.id") N — Module 7a |
+| `{ set_state: entity, to: state }` | SetValue (VRProperty entity "state") — z. B. `locked_by`-Tore öffnen |
 
 Item-Felder für Container:
 
@@ -237,3 +240,28 @@ interactions:
         - {msg: "You grind the herb into a paste."}
         - {set_flag: paste_made, val: "true"}
 ```
+
+## Factions (Standing — Module 7a)
+
+```yaml
+factions:
+  - id: smugglers
+    name: Schmuggler-Gilde
+    initial: 0                # Start-Standing (Default 0)
+    levels:                    # Autoren-Hinweise (Schwellen-Metadaten)
+      - { at: 20,  name: ally }
+      - { at: -20, name: hunted }
+```
+
+Jede Faktion erzeugt die Variable `faction.<id>` (int) mit dem Startwert
+`initial`. Standings werden über Effekte verändert und über Prädikate abgefragt
+— siehe `docs/modules.md`:
+
+- Effekt: `{ standing: { faction: smugglers, add: 20 } }` bzw. `{ set: N }`
+- Prädikat: `standing: { faction: smugglers, at_least: 20 }` (auch
+  `at_most`, `equals`) — einsetzbar überall dort, wo Prädikate stehen
+  (`when:`, `visible_when:`, `if:`).
+
+**Fehler:** doppelte Faktions-IDs; `faction.X` als gewöhnliche Variable
+deklariert; Referenz auf nicht deklarierte Faktion (wenn das `factions:`-Segment
+existiert).

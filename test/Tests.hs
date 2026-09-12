@@ -1427,6 +1427,98 @@ testDanglingDialogueChoiceDetected = do
     expectTrue "dangling dialogue choice detected"
         (DanglingDialogueChoice "oldman" "alive" "greeting" "missing_target" `elem` errors)
 
+-- | A rule event must carry the RESOLVED canonical id, not the raw player text -- see skill.
+-- ---------------------------------------------------------------------------
+-- Phase 7a: standing predicate sugar (factions as VarMap variables)
+-- ---------------------------------------------------------------------------
+
+-- | `standing: { faction: X, at_least: N }` decodes to CompareVar on the
+--   `faction.<id>` variable (pure parse alias — no new constructor).
+testStandingPredicateParsesToCompareVar :: IO Bool
+testStandingPredicateParsesToCompareVar = do
+    let j = "{\"standing\":{\"faction\":\"corp\",\"at_least\":20}}"
+    case Aeson.decode (BLC.pack j) :: Maybe Predicate of
+        Just (CompareVar "faction.corp" CGte 20) -> pure True
+        Just other -> do
+            putStrLn $ "  decoded to: " ++ show other
+            pure False
+        Nothing -> do
+            putStrLn "  standing predicate did not decode"
+            pure False
+
+-- | `at_most` maps to CLte, `equals` to CEq.
+testStandingPredicateVariants :: IO Bool
+testStandingPredicateVariants = do
+    let jAtMost = "{\"standing\":{\"faction\":\"corp\",\"at_most\":5}}"
+        jEquals = "{\"standing\":{\"faction\":\"corp\",\"equals\":3}}"
+    case ( Aeson.decode (BLC.pack jAtMost) :: Maybe Predicate
+         , Aeson.decode (BLC.pack jEquals) :: Maybe Predicate ) of
+        (Just (CompareVar "faction.corp" CLte 5), Just (CompareVar "faction.corp" CEq 3)) -> pure True
+        (a, b) -> do
+            putStrLn $ "  at_most decoded to: " ++ show a
+            putStrLn $ "  equals decoded to: " ++ show b
+            pure False
+
+-- | Round-trip: a compiled CompareVar stays CompareVar through save/load
+--   (ToJSON stays the canonical compare_var form; standing is input-only sugar).
+testStandingPredicateJSONRoundTrip :: IO Bool
+testStandingPredicateJSONRoundTrip = do
+    let p = CompareVar "faction.corp" CGte 20 :: Predicate
+        encoded = Aeson.encode p
+    case Aeson.decode encoded :: Maybe Predicate of
+        Just p' -> expectEqual p p'
+        Nothing -> do
+            putStrLn $ "  round-trip failed for: " ++ show encoded
+            pure False
+
+-- | evalPredicate on a faction variable: true above threshold, false below.
+testStandingPredicateEval :: IO Bool
+testStandingPredicateEval = do
+    let low  = setVariable "faction.corp" (VVInt 10) initSampleGame
+        high = setVariable "faction.corp" (VVInt 25) initSampleGame
+        gate = CompareVar "faction.corp" CGte 20
+    r1 <- expectTrue "low standing blocked" (not (evalPredicate gate low))
+    r2 <- expectTrue "high standing passes" (evalPredicate gate high)
+    pure (r1 && r2)
+
+-- | The outcome interpreter writes the faction.* VarMap entry via
+--   ModifyValue (VRVariable ...) — the core promise of module 7a.
+testStandingOutcomeWritesVariable :: IO Bool
+testStandingOutcomeWritesVariable = do
+    let base = initSampleGame
+    let (st, _) = applyOutcome (ModifyValue (VRVariable "faction.smugglers") 20) "" base
+    case getVariable "faction.smugglers" st of
+        Just (VVInt n) -> expectEqual 20 n
+        _ -> expectTrue "expected faction.smugglers = 20" False
+
+-- | A dialogue choice with a `standing` outcome applies through the full
+--   parse → choose path (Parser.executeCommand → applyOutcomeWith).
+testStandingOutcomeViaDialogue :: IO Bool
+testStandingOutcomeViaDialogue = do
+    let sample = initSampleGame
+        w = (world sample)
+            { npcDefs = Map.insert "recruiter"
+                (NPCDef "recruiter" "recruiter" (plainText "A quiet recruiter.")
+                    Map.empty
+                    (Map.singleton "alive"
+                        (DialogueTree "intro"
+                            (Map.singleton "intro"
+                                (DialogueNode "intro" "Join us."
+                                    [ DialogueChoice "I accept." Nothing Nothing
+                                        (ModifyValue (VRVariable "faction.smugglers") 20) ]))))
+                    ["recruiter"] Nothing 0 0 Map.empty)
+                (npcDefs (world sample)) }
+        st0 = sample { world = w
+                     , save = (save sample)
+                        { npcStates = Map.insert "recruiter"
+                            (NPCState (InRoom (currentRoom (save sample))) "alive" Nothing Map.empty Nothing)
+                            (npcStates (save sample)) } }
+    let (st1, _) = executeCommand (Interact VTalk "recruiter") st0
+        (st2, _) = executeCommand (ChooseCmd 1) st1
+    case getVariable "faction.smugglers" st2 of
+        Just (VVInt n) -> expectEqual 20 n
+        _ -> expectTrue "dialogue standing outcome not applied" False
+
 main :: IO ()
 main = do
     results <- sequence
@@ -1600,5 +1692,12 @@ main = do
         , runTest "room ASCII art display" testRoomAsciiArtDisplay
         , runTest "missing dialogue node detected" testMissingDialogueNodeDetected
         , runTest "dangling dialogue choice detected" testDanglingDialogueChoiceDetected
+        -- Phase 7a: standing predicate sugar
+        , runTest "standing predicate parses to CompareVar" testStandingPredicateParsesToCompareVar
+        , runTest "standing at_most/equals variants" testStandingPredicateVariants
+        , runTest "standing predicate JSON round-trip" testStandingPredicateJSONRoundTrip
+        , runTest "standing predicate evaluates against faction var" testStandingPredicateEval
+        , runTest "standing outcome writes faction.* variable" testStandingOutcomeWritesVariable
+        , runTest "standing outcome applies via dialogue choice" testStandingOutcomeViaDialogue
         ]
     when (not (and results)) exitFailure

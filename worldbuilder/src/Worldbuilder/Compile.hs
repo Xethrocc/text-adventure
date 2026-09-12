@@ -11,7 +11,8 @@ import Types as E
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Char (toLower)
-import Data.Maybe (mapMaybe, fromMaybe)
+import Data.List (nub, stripPrefix)
+import Data.Maybe (mapMaybe, fromMaybe, catMaybes)
 import Data.Either (partitionEithers)
 import Text.Read (readMaybe)
 import qualified Data.Aeson as Aeson
@@ -65,30 +66,36 @@ compileAdventure adv =
         
         (varErrs, varDefs, varInitials) = compileVariables (advVariables adv)
         (trigErrs, triggerDefs) = compileTriggers (advTriggers adv)
+        (facErrs, factionDefs, factionInitials) = compileFactions (advFactions adv)
+        (facConflictErrs, allVarDefs, allVarInitials) =
+            mergeFactionVars varDefs varInitials factionDefs factionInitials
         (initVarErrs, initialVars) =
-            compileInitialVariables varDefs varInitials (advInitialVariables adv)
+            compileInitialVariables allVarDefs allVarInitials (advInitialVariables adv)
         (initStateErrs, initialFlags, initialQuests) =
             compileInitialState (advActiveQuests adv) (advInitialFlags adv) questDefs
 
+        allRooms = Map.union compiledRooms vehicleExtraRooms
+        gw = E.GameWorld
+                { E.rooms = allRooms
+                , E.itemDefs = itemDefs
+                , E.npcDefs = npcDefs
+                , E.entityInteractions = entityInteractions
+                , E.itemInteractions = itemInteractions
+                , E.questDefs = questDefs
+                , E.vehicleDefs = vehicleDefs
+                , E.verbDefs = verbRegistry
+                , E.varDefs = allVarDefs
+                , E.triggerDefs = triggerDefs
+                }
+        facRefErrs = checkStandingRefs (advFactions adv) gw
+
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
-                    ++ varErrs ++ trigErrs ++ initVarErrs ++ initStateErrs
+                    ++ varErrs ++ facErrs ++ facConflictErrs ++ trigErrs ++ initVarErrs
+                    ++ initStateErrs ++ facRefErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
-            let allRooms = Map.union compiledRooms vehicleExtraRooms
-                startRoomId = advStartRoom adv
-                gw = E.GameWorld
-                        { E.rooms = allRooms
-                        , E.itemDefs = itemDefs
-                        , E.npcDefs = npcDefs
-                        , E.entityInteractions = entityInteractions
-                        , E.itemInteractions = itemInteractions
-                        , E.questDefs = questDefs
-                        , E.vehicleDefs = vehicleDefs
-                        , E.verbDefs = verbRegistry
-                        , E.varDefs = varDefs
-                        , E.triggerDefs = triggerDefs
-                        }
+            let startRoomId = advStartRoom adv
                 startSave = E.SaveState
                         { E.player = compilePlayer (advPlayer adv)
                         , E.currentRoom = startRoomId
@@ -281,6 +288,111 @@ compileVarInitial av vt = case (vt, avbInitial av) of
     (E.VTEnum _, Just (Aeson.String s))        -> Right (E.VVText (T.unpack s))
     (E.VTEnum _, Nothing)                      -> Right (E.VVText "")
     (E.VTEnum _, _)                            -> Left "expected string for variable type enum"
+
+-- ---------------------------------------------------------------------------
+-- Factions (Phase 7a)
+-- ---------------------------------------------------------------------------
+
+-- | Compile `factions:` into VarDefs + initial VarMap values. Each faction
+--   becomes the variable `faction.<id>` (int, initial standing).
+compileFactions :: [AFaction] -> ([CompileIssue], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+compileFactions factions =
+    let dupErrs =
+            [ ciError ("factions." ++ fid) "DuplicateFaction"
+                ("faction '" ++ fid ++ "' is declared more than once")
+            | (fid, others) <- collisions [(afId f, afId f) | f <- factions]
+            , not (null others) ]
+        defs = Map.fromList
+            [ ("faction." ++ afId f, E.VarDef ("faction." ++ afId f) (E.VTInt Nothing Nothing) (E.VVInt (afInitial f)))
+            | f <- factions ]
+        initials = Map.fromList
+            [ ("faction." ++ afId f, E.VVInt (afInitial f))
+            | f <- factions ]
+    in (dupErrs, defs, initials)
+
+-- | Merge faction vars into the declared variables, rejecting name clashes
+--   (an author must not declare `faction.X` as a plain variable).
+mergeFactionVars :: Map.Map String E.VarDef -> Map.Map String E.VariableValue
+                 -> Map.Map String E.VarDef -> Map.Map String E.VariableValue
+                 -> ([CompileIssue], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+mergeFactionVars varDefs varInitials facDefs facInitials =
+    let clashErrs =
+            [ ciError ("variables." ++ name) "FactionVariableClash"
+                ("'" ++ name ++ "' is a faction variable; declare it under 'factions:' instead")
+            | name <- Map.keys varDefs
+            , name `Map.member` facDefs ]
+    in (clashErrs, Map.union facDefs varDefs, Map.union facInitials varInitials)
+
+-- | Verify every `faction.<id>` reference in the compiled world resolves to a
+--   declared faction. Only runs when the `factions:` segment is present
+--   (default-invariant: without it, `faction.*` strings are plain variables).
+checkStandingRefs :: [AFaction] -> E.GameWorld -> [CompileIssue]
+checkStandingRefs factions gw
+    | null factions = []
+    | otherwise =
+        let declared = Set.fromList (map afId factions)
+            refs = nub (collectFactionRefs gw)
+        in [ ciError "factions" "UnknownFaction"
+                ("faction '" ++ fid ++ "' is referenced but not declared in 'factions:'")
+           | fid <- refs, fid `Set.notMember` declared ]
+
+-- | Collect every `faction.<id>` identifier referenced anywhere in the world
+--   (effects, predicates, dialogue gates, conditional texts).
+collectFactionRefs :: E.GameWorld -> [String]
+collectFactionRefs gw = nub $ concat
+    [ concatMap refsInEffect roomEffs
+    | r <- Map.elems (rooms gw)
+    , let roomEffs = catMaybes [roomOnEnter r, roomOnLook r, roomOnExit r, roomSearchOutcome r]
+    ]
+    ++ concatMap (refsInEffect . snd) (concatMap (Map.toList . itemVerbMap) (Map.elems (itemDefs gw)))
+    ++ concatMap (refsInEffect . snd) (concatMap (Map.toList . npcVerbMap) (Map.elems (npcDefs gw)))
+    ++ concatMap refsInChoice
+        [ c | npc <- Map.elems (npcDefs gw)
+            , tree <- Map.elems (npcDialogueTrees npc)
+            , node <- Map.elems (dtNodes tree)
+            , c <- dnChoices node ]
+    ++ concatMap refsInCondText (map roomDescription (Map.elems (rooms gw)))
+    ++ concatMap refsInCondText (map itemDescription (Map.elems (itemDefs gw)))
+    ++ concatMap refsInCondText (map npcDescription (Map.elems (npcDefs gw)))
+    ++ concatMap (maybe [] refsInPredicate . trCondition) (triggerDefs gw)
+    ++ concatMap refsInEffect (concatMap trEffects (triggerDefs gw))
+    ++ concatMap (maybe [] refsInEffect) (map questReward (Map.elems (questDefs gw)))
+    ++ concatMap (refsInEffect . snd) (concatMap (Map.toList . vehicleConditionEffects) (Map.elems (vehicleDefs gw)))
+    ++ concatMap (refsInEffect . snd) (Map.toList (itemInteractions gw))
+  where
+    refsInChoice c = refsInEffect (dcOutcome c) ++ maybe [] refsInPredicate (dcVisible c)
+    refsInCondText ct = concatMap (refsInPredicate . tvWhen) (ctVariants ct)
+
+-- | Faction references inside an Effect tree.
+refsInEffect :: E.Effect -> [String]
+refsInEffect e = case e of
+    E.ModifyValue (E.VRVariable n) _ -> factionFromVar n
+    E.SetValue (E.VRVariable n) _     -> factionFromVar n
+    E.Sequence es                     -> concatMap refsInEffect es
+    E.RandomChoice cs                 -> concatMap (refsInEffect . snd) cs
+    E.Conditional p t el              -> refsInPredicate p ++ refsInEffect t ++ refsInEffect el
+    E.Narrative _ follow              -> refsInEffect follow
+    E.ApplyCondition _ _ (Just t) (Just el) -> refsInEffect t ++ refsInEffect el
+    E.ApplyCondition _ _ (Just t) Nothing   -> refsInEffect t
+    E.ApplyCondition _ _ Nothing (Just el)  -> refsInEffect el
+    _                                 -> []
+
+-- | Faction references inside a Predicate tree.
+refsInPredicate :: E.Predicate -> [String]
+refsInPredicate p = case p of
+    E.CompareVar name _ _          -> factionFromVar name
+    E.Compare (E.VRVariable n) _ _ -> factionFromVar n
+    E.Compare _ _ (E.VRVariable n) -> factionFromVar n
+    E.PNot q                       -> refsInPredicate q
+    E.PAll qs                      -> concatMap refsInPredicate qs
+    E.PAny qs                      -> concatMap refsInPredicate qs
+    _                              -> []
+
+-- | `"faction.x"` -> `Just "x"`; anything else -> Nothing.
+factionFromVar :: String -> [String]
+factionFromVar n = case stripPrefix "faction." n of
+    Just rest | not (null rest) -> [rest]
+    _                           -> []
 
 -- ---------------------------------------------------------------------------
 -- Verbs (Phase 3a): adventure-declared custom verbs
@@ -646,6 +758,9 @@ compileAActionOutcome ao = case ao of
     AOSetVar name v -> E.SetValue (E.VRVariable name) (E.EVInt v)
     AOAddVar name d -> E.ModifyValue (E.VRVariable name) d
     AONarrative ls -> E.Sequence (map E.SendMessage ls ++ [E.Noop])
+    AOStandingAdd fid n -> E.ModifyValue (E.VRVariable ("faction." ++ fid)) n
+    AOStandingSet fid n -> E.SetValue (E.VRVariable ("faction." ++ fid)) (E.EVInt n)
+    AOSetEntityState e s -> E.SetValue (E.VRProperty e "state") (E.EVString s)
 
 -- | Parse a game-end reason string ("victory", "death", or a custom label).
 parseGameOverReason :: String -> E.GameOverReason

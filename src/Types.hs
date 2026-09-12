@@ -257,6 +257,16 @@ instance FromJSON Predicate where
                 case parseComparatorName opS of
                     Just cmp -> pure (CompareVar n cmp v)
                     Nothing  -> fail ("Unknown comparator '" ++ opS ++ "' in compare_var"))
+        -- Phase 7a: standing sugar -> CompareVar on the "faction.<id>" variable.
+        --   Input-only alias: ToJSON stays the canonical compare_var form, so
+        --   saved worlds round-trip through the existing CompareVar branch.
+        <|> (do st   <- o .: "standing"
+                fid  <- st .: "faction"
+                let var = "faction." ++ fid
+                (   (CompareVar var CGte <$> st .: "at_least")
+                 <|> (CompareVar var CLte <$> st .: "at_most")
+                 <|> (CompareVar var CEq  <$> st .: "equals")
+                 <|> fail "standing: expected at_least, at_most, or equals" ))
         <|> fail "Unknown predicate"
 
 -- | Action Outcome representing the result of an interaction

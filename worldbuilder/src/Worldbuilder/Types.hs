@@ -33,6 +33,7 @@ data Adventure = Adventure
     , advInitialVariables :: Map.Map String Value -- ^ initial_variables overrides (Phase 4d)
     , advInitialFlags     :: Map.Map String String       -- ^ initial_flags (Phase 4d)
     , advActiveQuests     :: [String]                    -- ^ active_quests (Phase 4d)
+    , advFactions         :: [AFaction]                  -- ^ factions + standing (Phase 7a)
     } deriving (Show, Eq, Generic)
 
 instance FromJSON Adventure where
@@ -52,6 +53,7 @@ instance FromJSON Adventure where
         <*> o .:? "initial_variables" .!= Map.empty
         <*> o .:? "initial_flags"     .!= Map.empty
         <*> o .:? "active_quests"     .!= []
+        <*> o .:? "factions"          .!= []
 
 -- | Optional player stats block in YAML (Phase 4d).
 --   `player: { max_hp: 50, attack: 8, defense: 3, skills: { lockpick: 5 } }`
@@ -382,6 +384,38 @@ instance FromJSON AVariable where
         <*> o .:? "max"
 
 -- ---------------------------------------------------------------------------
+-- Factions (Phase 7a)
+-- ---------------------------------------------------------------------------
+
+-- | A declared faction: standing lives as the VarMap entry `faction.<id>`.
+--   `levels` are well-formedness-checked authoring hints (threshold metadata);
+--   runtime gating uses the numeric standing predicates (`at_least`/`at_most`).
+data AFaction = AFaction
+    { afId     :: String
+    , afName   :: String
+    , afInitial :: Int
+    , afLevels :: [AFactionLevel]   -- ^ threshold metadata (authoring hints)
+    } deriving (Show, Eq, Generic)
+
+-- | A named standing threshold: at `at` points the relation is called `name`.
+data AFactionLevel = AFactionLevel
+    { aflAt   :: Int
+    , aflName :: String
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AFactionLevel where
+    parseJSON = withObject "AFactionLevel" $ \o -> AFactionLevel
+        <$> o .:  "at"
+        <*> o .:  "name"
+
+instance FromJSON AFaction where
+    parseJSON = withObject "AFaction" $ \o -> AFaction
+        <$> o .:  "id"
+        <*> o .:? "name"    .!= ""
+        <*> o .:? "initial" .!= 0
+        <*> o .:? "levels"  .!= []
+
+-- ---------------------------------------------------------------------------
 -- Interactions
 -- ---------------------------------------------------------------------------
 
@@ -446,6 +480,9 @@ data AActionOutcome
     | AOSetVar String Int              -- ^ set a declared numeric variable
     | AOAddVar String Int              -- ^ add a delta to a declared numeric variable
     | AONarrative [String]
+    | AOStandingAdd String Int         -- ^ standing: {faction: X, add: N} (Phase 7a)
+    | AOStandingSet String Int         -- ^ standing: {faction: X, set: N} (Phase 7a)
+    | AOSetEntityState String String   -- ^ set_state: <entity>, to: <state> (Phase 7a)
     deriving (Show, Eq, Generic)
 
 -- Parse an outcome from an object with a single recognized key
@@ -471,5 +508,11 @@ instance FromJSON AActionOutcome where
         <|> (AORoomTransition <$> o .: "move")
         <|> (AOMoveNPC <$> o .: "move_npc" <*> o .: "to")
         <|> (AONarrative <$> o .: "narrative")
+        -- Phase 7a: standing sugar + set_state
+        <|> (do st <- o .: "standing"
+                fid <- st .: "faction"
+                (   (AOStandingAdd fid <$> st .: "add")
+                 <|> (AOStandingSet fid <$> st .: "set") ))
+        <|> (AOSetEntityState <$> o .: "set_state" <*> o .: "to")
         <|> fail "Unknown outcome type. Use one of: msg, heal, damage, give, consume, set_flag, start_quest, etc."
         ) v

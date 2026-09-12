@@ -138,6 +138,7 @@ minAdventure room = Adventure
     , advInitialVariables = Map.empty
     , advInitialFlags = Map.empty
     , advActiveQuests = []
+    , advFactions = []
     }
 
 -- ---------------------------------------------------------------------------
@@ -801,6 +802,121 @@ testGenreFixturesCompile = do
                                     pure False
 
 -- ---------------------------------------------------------------------------
+-- Phase 7a: factions / standing / set_state
+-- ---------------------------------------------------------------------------
+
+-- | `factions:` seeds varDefs + initial variables `faction.<id>`.
+testFactionsSeedVariables :: IO Bool
+testFactionsSeedVariables = do
+    let fac = [ AFaction "corp" "Arasaka" 0 []
+              , AFaction "guild" "Thieves Guild" 5 [] ]
+        adv = (minAdventure (minRoom "loc_0")) { advFactions = fac }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let defs = E.varDefs (crWorld cr)
+                vars = E.variables (crSave cr)
+            r1 <- expectEqual (Just (E.VarDef "faction.corp" (E.VTInt Nothing Nothing) (E.VVInt 0)))
+                      (Map.lookup "faction.corp" defs)
+            r2 <- expectEqual (Just (E.VVInt 5)) (Map.lookup "faction.guild" vars)
+            pure (r1 && r2)
+
+-- | `standing: {faction, add/set}` compiles to ModifyValue/SetValue on the
+--   `faction.<id>` variable.
+testStandingOutcomeCompiles :: IO Bool
+testStandingOutcomeCompiles = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advFactions = [AFaction "corp" "Arasaka" 0 []]
+            , advTriggers = [ ATrigger "quest_reward" "turn" Nothing
+                                [ AOStandingAdd "corp" 10
+                                , AOStandingSet "corp" 25
+                                ] False 0 ] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let tr = head (E.triggerDefs (crWorld cr))
+                effs = E.trEffects tr
+            r1 <- expectTrue "add compiles to ModifyValue faction.corp"
+                (E.ModifyValue (E.VRVariable "faction.corp") 10 `elem` effs)
+            r2 <- expectTrue "set compiles to SetValue faction.corp"
+                (E.SetValue (E.VRVariable "faction.corp") (E.EVInt 25) `elem` effs)
+            -- initial standing of guild var is 0 (not seeded)
+            pure (r1 && r2)
+
+-- | `set_state: <entity>, to: <state>` compiles to the entity-state effect.
+testSetEntityStateCompiles :: IO Bool
+testSetEntityStateCompiles = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advTriggers = [ ATrigger "open_gate" "turn" Nothing
+                                [ AOSetEntityState "guild_gate" "unlocked" ] False 0 ] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let tr = head (E.triggerDefs (crWorld cr))
+            expectTrue "set_state compiles to SetValue (VRProperty e \"state\")"
+                (E.SetValue (E.VRProperty "guild_gate" "state") (E.EVString "unlocked")
+                    `elem` E.trEffects tr)
+
+-- | Any `faction.<id>` reference (standing outcome / predicate) must point at a
+--   declared faction once the `factions:` segment is present.
+testUnknownFactionFails :: IO Bool
+testUnknownFactionFails = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advFactions = [AFaction "corp" "Arasaka" 0 []]
+            , advTriggers = [ ATrigger "bad" "turn" Nothing
+                                [ AOStandingAdd "nonexistent" 10 ] False 0 ] }
+    case compileAdventure adv of
+        Right _ -> do
+            putStrLn "  expected UnknownFaction compile error, got Right"
+            pure False
+        Left errs ->
+            expectContains "UnknownFaction" (issuesText errs)
+
+-- | The 7a mini-fixture compiles and validates clean.
+testFactionsFixtureCompiles :: IO Bool
+testFactionsFixtureCompiles = do
+    mbPath <- findExampleModule "factions.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  examples/modules/factions.yaml not found"
+            pure False
+        Just path -> do
+            mbAdv <- parseAdventureFile path
+            case mbAdv of
+                Nothing -> do
+                    putStrLn "  failed to parse examples/modules/factions.yaml"
+                    pure False
+                Just adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  compile errors: " ++ show errs
+                        pure False
+                    Right cr -> do
+                        let wErrs = validateWorld (crWorld cr)
+                            sErrs = validateGameState (crWorld cr) (crSave cr)
+                        r1 <- expectEqual [] wErrs
+                        r2 <- expectEqual [] sErrs
+                        pure (r1 && r2)
+
+-- | Try candidate paths for the modules directory.
+findExampleModule :: String -> IO (Maybe FilePath)
+findExampleModule fname = firstExisting
+    [ "examples/modules" </> fname
+    , "../examples/modules" </> fname
+    , "../../examples/modules" </> fname
+    ]
+  where
+    firstExisting [] = pure Nothing
+    firstExisting (p : rest) = do
+        ok <- doesFileExist p
+        if ok then pure (Just p) else firstExisting rest
+
+-- ---------------------------------------------------------------------------
 -- Main
 -- ---------------------------------------------------------------------------
 tests :: [(String, IO Bool)]
@@ -847,6 +963,12 @@ tests =
     , ("item-on-item (crafting) interaction compiles", testItemInteractionCompiles)
     , ("entity interaction (use on target) compiles", testEntityInteractionCompiles)
     , ("all 6 genre fixtures compile + validate clean", testGenreFixturesCompile)
+    -- Phase 7a: factions / standing / set_state
+    , ("factions segment seeds faction.* variables", testFactionsSeedVariables)
+    , ("standing add/set outcome compiles to faction var", testStandingOutcomeCompiles)
+    , ("set_state outcome compiles to entity state effect", testSetEntityStateCompiles)
+    , ("standing reference to unknown faction fails", testUnknownFactionFails)
+    , ("factions fixture compiles + validates", testFactionsFixtureCompiles)
     ]
 
 main :: IO ()
