@@ -1,27 +1,136 @@
 # Changelog
 
-## [0.8.1.0] — Unreleased
+## [0.10.0.0] — Unreleased
 
-Phase 4.6 (Core Polish): Dialogue-Tree-Interaktivität, CLI-Validierung und Room-ASCII-Art.
+Phase 6 (Genre-Fixtures + CI) und Phase 7 (optionale Gameplay-Module 7a–7h).
+Leitprinzip der Phase 7: ein Modul ist **YAML-Segment + Compiler-Pass** auf
+bestehende Core-Konzepte (Predicate, Effect, Trigger, VarMap, Location) —
+kein eigener Interpreter, kein State-Silo, kein eigenes Package. Ohne das
+Modul-Segment bleibt jede bestehende Welt bit-identisch.
 
 ### Added
-- **Interaktives Dialogue-Tree-System**:
-  - `ChooseCmd Int` im Command-Parser: unterstützt `choose <n>`, `pick <n>`, `option <n>`, `select <n>` und bare Zahlen (`1`, `2`, ...).
-  - `SaveState.activeDialogue :: Maybe NPCID`: Trackt den aktiven Gesprächspartner zur Laufzeit (rückwärtskompatibel, default `Nothing`).
-  - `DialogueChoice`: Neues Feld `dcNextNode :: Maybe String` für nahtlose Navigation im Dialogbaum (`Nothing` beendet das Gespräch).
-  - Automatisches Rendern des nächsten Dialogknotens nach Ausführen des Choice-Outcomes.
-  - `setDialogueNode` erzeugt initialen State, falls der NPC noch nicht in `npcStates` existiert.
-  - Verlassen des Dialogs bei Bewegung oder Verlassen des Gesprächs.
-  - Help-Text und Tab-Completion (`choose`, `option`) aktualisiert.
-  - Sample-Adventure: `oldman` hat jetzt einen vollwertigen verzweigten Dialogbaum mit Quest-Hint und Flag-Setzung.
-- **World-Validierung in CLI (`app/Main.hs`)**:
-  - `validateWorld` wird bei `--world` vor dem Spielstart ausgeführt und listet gefundene Konsistenzfehler als Warnung auf.
-- **Dialogue-Tree-Validierung in `Validate.hs`**:
-  - Neue Fehler: `MissingDialogueNode` (fehlender Einstiegsknoten) und `DanglingDialogueChoice` (ungültiger Folgeknoten).
-  - `allOutcomes` erfasst jetzt auch alle ActionOutcomes aus Dialogue-Choices.
-- **ASCII-Art Unterstützung in Räumen**:
-  - `Room.roomAscii :: Maybe String`: Optionales Banner-Feld (z. B. aus `img2ascii`), das bei `look` über dem Raumnamen angezeigt wird.
-- 8 neue Tests für Dialoge, ASCII-Art und Dialogue-Validierung (jetzt 95 Tests, alle grün).
+- **Phase 6a — Mini-Genre-Fixtures** (`examples/genres/`, Doku `docs/genres.md`):
+  sechs vollständige Adventures (13–18 Räume), die den Kern gegen
+  unterschiedliche Genre-Anforderungen prüfen — **ohne** Genre-spezifischen
+  Engine-Code. `pure-if` (Exploration, `search`, Container, `visible_when`,
+  Custom-Verb, Trigger-Puzzle), `fantasy` (`cast`, `mana`, Crafting, Loot,
+  Quest), `cyberpunk` (`hack`, `heat`-Eskalation), `space-opera` (`dock`,
+  `oxygen`-Drain, Vehicle mit Stops), `detective` (Predicate-Ketten,
+  `accuse` → Victory/Failure), `horror` (`sanity`, Scheduler `on: turn` +
+  `cooldown`, vier Enden). Dabei generisch geschlossen (waren
+  Abstraktionslücken): `visible_when` für Dialog-Optionen, Bare Custom-Verbs
+  + `OnCommand`-Name, `OnUse`/`OnTake`/`OnDrop` tragen die Item-ID statt
+  Rohtext, `compare_var`, `set_var`/`add_var`, `in_container`, `move_npc`,
+  `game_end`, autorisierbare Entity-/Item-Interactions (Crafting), `take` +
+  `on_take`, `portable`/`take_failure`, Vehicle-Erreichbarkeit im Validator,
+  `start_stop`.
+- **Phase 6b — Invarianten-Tests**: equipped → carried; jede Entity an genau
+  einer Location; Container-Refs auflösbar; Save/Load-Round-Trip erhält RNG,
+  Variablen, Quests und Scheduler (`triggerStates`); alle
+  `verb_map`-Keys lösen zu Core- oder deklarierten Custom-Verbs auf.
+- **Phase 6c — CI-Pipeline**: `scripts/ci.sh` (build → `cabal test all` →
+  `validate` von demo/thefog/6 Genres/11 Modul-Fixtures → E2E-Playthroughs)
+  plus `.github/workflows/ci.yml` (GHC 9.6.7 + cabal-Cache). Eingaben und
+  Erwartungen unter `ci/e2e/<name>.in` / `.expect`.
+- **Phase 7a — Fraktionen/Reputation**: `factions:`-Segment; Standing ist der
+  `VarMap`-Eintrag `faction.<id>` (kein neues Save-Feld). Effect
+  `standing: {faction, add|set}`, Predicate
+  `standing: {faction, at_least|at_most|equals}`. Compile-Fehler
+  `DuplicateFaction`, `FactionVariableClash`, `UnknownFaction`.
+- **Phase 7b — Handel/Ökonomie**: `buy`/`sell` als Custom-Verben; Währung und
+  Lagerbestand als `VarMap`-Einträge (`credits`,
+  `shop.<merchant>.<item>`); Preis-/Bestandslogik als `Conditional` +
+  `CompareVar` über die Item-`verb_map`; ein Kauf ohne Deckung verändert
+  nachweislich nichts; Member-Preis über 7a.
+- **Phase 7c — Encounter-Tabellen**: `encounter_tables:` kompiliert zu
+  gewöhnlichen Triggern mit einem gewichteten `RandomChoice`; ein optionales
+  `when` pro Eintrag wird ein `Conditional`-Gate. Fehler:
+  `DuplicateEncounterTable`, `EmptyEncounterTable`, `BadEncounterWeight`.
+  Deterministisch über den `rngState` des Saves (Test
+  `testRandomChoiceDeterministic`).
+- **Phase 7d — Survival/Wetter/Umweltgefahren**: `environment:`-Segment —
+  Wetter ist die Variable `env.weather`, Transitionen und Drains werden
+  `on: turn`-Trigger (`SetValue`/`ModifyValue` + `Conditional` für `at_zero`).
+  Fehler: `UnknownWeatherState`, `UnknownDrainVariable`,
+  `EnvironmentVariableClash`.
+- **Phase 7e — Stealth/Lärm**: `stealth:`-Segment — Lärm als Variable
+  (`noise`), Observer als Trigger mit `hears_at`-Schwelle und `cooldown`.
+  Bewusst **keine** Kernänderung: der Plan erlaubte maximal eine generische
+  Predicate-Erweiterung, die Fixture brauchte sie nicht. Fehler:
+  `UnknownObserverNPC`, `StealthVariableClash`.
+- **Phase 7f — Kampfprofile**: Kampf verlässt `Parser.executeAttack` und wird
+  eine datengetriebene Policy im Kern (neue Datei `src/Combat.hs`):
+  `resolveCombat :: CombatProfile -> [CombatActor] -> CombatTarget ->
+  GameState -> ([Effect], [String])` erzeugt Effects, die anschließend durch
+  `applyOutcomeWith` laufen — kein zweiter Interpreter. Profile: `off`
+  (Ablehnung, kein HP-Verbrauch), `narrative` (ein vergleichender Wurf,
+  `on_win`/`on_lose`), `classic` (Default, bit-identisch zum Vorzustand).
+  `tactical` bleibt Teilstopp (`CombatProfileNotSupported`).
+- **Phase 7g — Party/Begleiter**: `party:`-Block am NPC; Mitgliedschaft ist
+  der `VarMap`-Eintrag `party.<npcId>` (kein neues Save-Feld). Ein Order-Verb
+  toggelt Beitritt/Verlassen; `followParty` zieht lebende Begleiter bei jedem
+  Raumwechsel mit (Gehen, Teleport, Fahrzeug-Ein-/Ausstieg, Fahrt);
+  Begleiter sind zusätzliche `CompanionActor` im 7f-Resolver.
+  `damage_npc: {npc, amount}` als Zucker auf
+  `ModifyValue (VRProperty id "hp")`. Fehler: `PartyOrderVerbUnknown`,
+  `PartyHealthMissing`, `PartyVariableClash`, `UnknownDamageNPC`.
+- **Phase 7h — Raumschiffe**: `systems:` → je System die Variable
+  `ship.<vehicleId>.<name>` (`power`, `shields`, `hull`, `weapons`);
+  `stations:` → Interior-Raum + Verb, kompiliert zu `on: command`-Triggern
+  mit `{ at: player, room: … }`-Gate. `ShipActor` im 7f-Resolver: das Schiff
+  feuert `weapons` und kostet 1 `power`, der Konter trifft Schilde → Hülle;
+  ohne Systeme bleibt alles bit-identisch. Fehler: `ShipVariableClash`,
+  `UnknownStationRoom`, `UnknownStationVerb`.
+- **Kompositionsbeweis** `examples/modules/combo.yaml` („Der Ring von Tarsis"):
+  ein Referenzspiel nutzt **fünf Module gleichzeitig** (7a, 7b, 7d, 7g, 7h),
+  verbunden ausschließlich über Autoren-Regeln — kein Modul kennt ein anderes.
+- **Doku**: `docs/modules.md` (Referenz je Modul) und `docs/genres.md` neu;
+  `docs/adventure-schema.md` und `README.md` auf Phase-7-Stand.
+
+### Changed
+- Neue Datei `src/Combat.hs`: `resolveCombat` als reine Funktion;
+  `Parser.executeAttack` ist nur noch ein Wrapper (Profil + Aktoren +
+  Ziel verdrahten, Effekte anwenden, Meldungen durchreichen).
+- `CombatActor` ist eine Liste — `PlayerActor`, `CompanionActor` (7g) und
+  `ShipActor` (7h) erweitern sie ohne Signaturänderung.
+- `evalPredicate (Location "player" r)` prüft jetzt auch den Spielerraum
+  (vorher nur NPC-/Item-Locations).
+- Tests: **179** Engine- + **62** Worldbuilder-Tests, **18** E2E-Playthroughs
+  (`scripts/ci.sh`).
+
+### Fixed
+- `killNPC` ist idempotent — ein Trigger, der denselben NPC erneut tötet,
+  konnte vorher eine Endlosschleife auslösen (jetzt per Test abgesichert).
+- `take` setzte `portable`/`on_take` nicht durch.
+- `OnUse`/`OnTake`/`OnDrop`-Events trugen den Rohtext statt der Item-ID.
+- `visible_when` bei Dialog-Optionen war nicht auswertbar.
+- Drei generische Parser-/Trigger-Bugs (aus der Pure-IF-Fixture).
+- Tod-Event-Meldungen wurden im Interpreter mit `fst` verworfen; `killNPCWithMsg`
+  / `modifyNPCHealth` / `modifyValueProp` reichen sie jetzt durch.
+- Help-Text: `exit` ist der Quit-Alias — ein Fahrzeug verlässt man mit
+  `disembark`.
+- `World.defaultSaveState` (Code-Review P0-1) ließ vier `SaveState`-Felder
+  unbesetzt (`rngState`, `variables`, `containers`, `triggerStates`) — jedes
+  davon war beim ersten Zugriff `undefined` (z. B. `RandomChoice`, `CompareVar`,
+  Container-Lookup). Alle Felder werden jetzt initialisiert; `variables`
+  übernimmt die deklarierten `VarDef`-Startwerte. Per Regressionstest
+  abgesichert.
+- `Parser.executeAttack` (P0-2) verwarf in einer eigenen Faltung alle
+  Effekt-Meldungen bis auf die letzte und setzte den RNG-Salt je Effekt zurück.
+  Nutzt jetzt den gemeinsamen Interpreter `applyOutcomes` — Tod-Event-Meldungen
+  (`killNPCWithMsg`) überleben auch mitkämpfende Begleiter (7g) und Schiffe (7h).
+- `Validate.flagsInPredicate` (P1-2): die unerreichbare `Compare`-Klausel ließ
+  Flag-Referenzen auf der **rechten** Seite eines Vergleichs ungeprüft; die
+  Klauseln sind zusammengeführt, beide Seiten werden validiert.
+- Worldbuilder-Test-Fixture `minSave` (P0-3) ließ zwei `SaveState`-Felder
+  unbesetzt — die Suite war dadurch „falsches Grün".
+- Warnungs-Cleanup: **53 → 0** GHC-Warnungen (`-Wname-shadowing`,
+  `-Wunused-imports`, `-Wunused-local-binds`, `-Wunused-matches`,
+  `-Wunused-top-binds`, `-Wtype-defaults`, `-Woverlapping-patterns`); keine
+  Unterdrückung per `OPTIONS_GHC`. `-Werror=missing-fields` ist jetzt in allen
+  Paketen (library/executable/test-suite) aktiv, damit diese Feldklasse nicht
+  zurückkehrt.
+- `scripts/ci.sh` hat das Execute-Bit (vorher `Permission denied`, Exit 126).
 
 ## [0.9.0.0] — Unreleased
 
@@ -44,6 +153,29 @@ Phase 5 (Worldbuilder + Ports): Worldbuilder YAML/JSON-Compiler und TheFog-Porti
   - 5 Quests (4 Schrein-Aktivierungen + Wolf besiegen).
   - 4 Schrein-Interaktionen: `use crystal on <shrine>` aktiviert den Schrein und schaltet die Quest weiter.
   - Wird via `worldbuilder compile examples/thefog.yaml` in spielbare Engine-Dateien übersetzt.
+
+## [0.8.1.0] — Unreleased
+
+Phase 4.6 (Core Polish): Dialogue-Tree-Interaktivität, CLI-Validierung und Room-ASCII-Art.
+
+### Added
+- **Interaktives Dialogue-Tree-System**:
+  - `ChooseCmd Int` im Command-Parser: unterstützt `choose <n>`, `pick <n>`, `option <n>`, `select <n>` und bare Zahlen (`1`, `2`, ...).
+  - `SaveState.activeDialogue :: Maybe NPCID`: Trackt den aktiven Gesprächspartner zur Laufzeit (rückwärtskompatibel, default `Nothing`).
+  - `DialogueChoice`: Neues Feld `dcNextNode :: Maybe String` für nahtlose Navigation im Dialogbaum (`Nothing` beendet das Gespräch).
+  - Automatisches Rendern des nächsten Dialogknotens nach Ausführen des Choice-Outcomes.
+  - `setDialogueNode` erzeugt initialen State, falls der NPC noch nicht in `npcStates` existiert.
+  - Verlassen des Dialogs bei Bewegung oder Verlassen des Gesprächs.
+  - Help-Text und Tab-Completion (`choose`, `option`) aktualisiert.
+  - Sample-Adventure: `oldman` hat jetzt einen vollwertigen verzweigten Dialogbaum mit Quest-Hint und Flag-Setzung.
+- **World-Validierung in CLI (`app/Main.hs`)**:
+  - `validateWorld` wird bei `--world` vor dem Spielstart ausgeführt und listet gefundene Konsistenzfehler als Warnung auf.
+- **Dialogue-Tree-Validierung in `Validate.hs`**:
+  - Neue Fehler: `MissingDialogueNode` (fehlender Einstiegsknoten) und `DanglingDialogueChoice` (ungültiger Folgeknoten).
+  - `allOutcomes` erfasst jetzt auch alle ActionOutcomes aus Dialogue-Choices.
+- **ASCII-Art Unterstützung in Räumen**:
+  - `Room.roomAscii :: Maybe String`: Optionales Banner-Feld (z. B. aus `img2ascii`), das bei `look` über dem Raumnamen angezeigt wird.
+- 8 neue Tests für Dialoge, ASCII-Art und Dialogue-Validierung (jetzt 95 Tests, alle grün).
 
 ## [0.8.0.0] — Unreleased
 
