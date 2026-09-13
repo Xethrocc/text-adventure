@@ -667,11 +667,11 @@ applyOutcomeWith depth salt outcome targetId state
     MoveEntity eid Removed ->
         let state' = consumeItem eid state
         in (state', "", salt)
-    MoveEntity eid (EquippedBy _ slot) ->
+    MoveEntity eid (EquippedBy _ _) ->
         case equipItem eid state of
             Left err    -> (state, err, salt)
             Right st'   -> (st', "", salt)
-    MoveEntity eid (InContainer _) ->
+    MoveEntity _ (InContainer _) ->
         (state, "", salt)
 
     QuestOp StartQuest qId ->
@@ -715,8 +715,8 @@ applyOutcomeWith depth salt outcome targetId state
     ModifySkill skillId delta -> (modifySkill skillId delta state, "", salt)
 
     -- Narrative: store lines + follow-up for interactive display
-    Narrative lines followUp ->
-        (state { pendingNarrative = Just (lines, followUp) }, intercalate "\n" lines, salt)
+    Narrative nls followUp ->
+        (state { pendingNarrative = Just (nls, followUp) }, intercalate "\n" nls, salt)
 
     Noop -> (state, "", salt)
 
@@ -734,7 +734,7 @@ applySetValue (VRProperty rId "visited") val state =
     let b = case val of { EVInt n -> n /= 0; _ -> False }
     in setRoomVisited rId b state
 applySetValue VRPlayerHealth val state =
-    let n = case val of { EVInt n -> n; _ -> 0 }
+    let n = case val of { EVInt m -> m; _ -> 0 }
     in if n <= 0 then endGame Death (setPlayerHP n state) else setPlayerHP n state
 applySetValue _ _ state = state
 
@@ -1024,9 +1024,9 @@ moveVehicleToStop vId stopRoom state
 payStopCost :: VehicleStop -> GameState -> Either String GameState
 payStopCost stop state = case stopCost stop of
     Nothing -> Right state
-    Just (itemId, errMsg) ->
-        if hasItem itemId state
-        then Right (consumeItem itemId state)
+    Just (costItem, errMsg) ->
+        if hasItem costItem state
+        then Right (consumeItem costItem state)
         else Left errMsg
 
 -- | PlayerControlled: drive to a station by name (matched against stop labels
@@ -1092,9 +1092,9 @@ refuelVehicle vId amount state = case lookupVehicle vId state >>= vehicleFuelPro
 
 -- | Clear a vehicle condition (e.g. after `repair`)
 clearVehicleCondition :: VehicleID -> String -> GameState -> GameState
-clearVehicleCondition vId condName state =
+clearVehicleCondition vId condId state =
     let vs = getVehicleState vId state
-    in setVehicleState vId (vs { vsActiveConditions = Set.delete condName (vsActiveConditions vs) }) state
+    in setVehicleState vId (vs { vsActiveConditions = Set.delete condId (vsActiveConditions vs) }) state
 
 -- | Fire a vehicle-wide condition effect, if defined.
 --   Returns the (possibly updated) state plus a message ("" if nothing fired).

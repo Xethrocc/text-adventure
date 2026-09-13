@@ -29,7 +29,7 @@ library
                        directory >=1.3 && <2,
                        text >=1.2 && <3
   default-language:    Haskell2010
-  ghc-options:         -Wall
+  ghc-options:         -Wall -Werror=missing-fields
 
 executable worldbuilder
   main-is:             Main.hs
@@ -37,7 +37,7 @@ executable worldbuilder
   build-depends:       base >=4.12 && <5,
                        worldbuilder
   default-language:    Haskell2010
-  ghc-options:         -Wall
+  ghc-options:         -Wall -Werror=missing-fields
 
 test-suite worldbuilder-tests
   type:                exitcode-stdio-1.0
@@ -53,4 +53,4 @@ test-suite worldbuilder-tests
                        directory >=1.3 && <2,
                        HsYAML-aeson >=0.2 && <1
   default-language:    Haskell2010
-  ghc-options:         -Wall
+  ghc-options:         -Wall -Werror=missing-fields

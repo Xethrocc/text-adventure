@@ -12,7 +12,7 @@ import Data.List (find, intercalate, nub)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Set as Set
-import Verbs (verbAliasMap, resolveVerb)
+import Verbs (resolveVerb)
 
 -- | Parsed command structure
 data Command
@@ -712,11 +712,11 @@ resolveDescription room state = resolveCondText (roomDescription room) state
 -- | `search` — reveal hidden items and run the room's search outcome
 searchRoom :: GameState -> CommandResult
 searchRoom state =
-    let roomId = currentRoom (save state)
+    let rId = currentRoom (save state)
         -- hidden items currently in this room
         hidden = [ iId
                  | (iId, st) <- Map.toList (itemStates (save state))
-                 , itemLocation st == InRoom roomId
+                 , itemLocation st == InRoom rId
                  , Just def <- [Map.lookup iId (itemDefs (world state))]
                  , itemHidden def
                  , not (itemDiscovered st)
@@ -726,7 +726,7 @@ searchRoom state =
                              (Map.lookup iId (itemDefs (world state)) >>= itemDiscoverText)
                          | iId <- hidden ]
         (stateFinal, hookMsg) =
-            case Map.lookup roomId (rooms (world state)) >>= roomSearchOutcome of
+            case Map.lookup rId (rooms (world state)) >>= roomSearchOutcome of
                 Nothing -> (stateAfterReveal, "")
                 Just outcome -> applyOutcome outcome "" stateAfterReveal
         full = intercalate "\n" (filter (not . null) (discoveredMsgs ++ [hookMsg]))
@@ -803,11 +803,12 @@ executeAttack npc _ targetStr state =
                  ++ map CompanionActor (partyMembersInRoom state)
                  ++ [ShipActor vId | Just vId <- [currentVehicle (save state)]]
         (effects, msgs) = resolveCombat profile actors (TargetNPC nId targetStr) state
-        (st', m, _) = case effects of
-            [] -> (state, "", 0)
-            _  -> foldl (\(s, _, _) e -> applyOutcomeWith 0 0 e nId s)
-                        (state, "", 0) effects
-        body = combineMsgs (m : msgs)
+        -- Apply the whole effect list through the shared interpreter: it
+        -- threads the RNG salt and joins every effect message instead of
+        -- discarding all but the last (killNPCWithMsg / OnStateChange rules
+        -- produce text that must survive trailing companion/ship effects).
+        (st', effectMsg) = applyOutcomes effects nId state
+        body = combineMsgs (effectMsg : msgs)
     in if null body then (st', "") else (st', body)
 
 -- | Concatenate non-empty combat messages.

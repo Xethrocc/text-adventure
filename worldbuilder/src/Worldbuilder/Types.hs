@@ -6,7 +6,7 @@
 module Worldbuilder.Types where
 
 import Data.Aeson
-import Data.Aeson.Types (Parser, Object)
+import Data.Aeson.Types (Parser)
 import Control.Applicative ((<|>))
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map

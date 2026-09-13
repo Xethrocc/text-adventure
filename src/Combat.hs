@@ -15,7 +15,7 @@ module Combat
     ) where
 
 import Types
-import Game (effectiveAttack, effectiveDefense, isPlayerDead, getVariable)
+import Game (effectiveAttack, effectiveDefense, getVariable)
 import qualified Data.Map.Strict as Map
 import Data.List (isPrefixOf)
 import Data.Maybe (listToMaybe)

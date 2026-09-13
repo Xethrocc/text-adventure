@@ -222,9 +222,9 @@ checkMissingVehiclesInDefs gw =
 --   interaction) anywhere in the world definitions.
 checkFlags :: GameWorld -> [ValidationError]
 checkFlags gw =
-    let (setFlags, checkFlags) = foldl scanFlags (Set.empty, Set.empty)
+    let (setFlags, checked) = foldl scanFlags (Set.empty, Set.empty)
             (allOutcomes gw)
-        missing = Set.toList (Set.difference checkFlags setFlags)
+        missing = Set.toList (Set.difference checked setFlags)
     in [MissingSetFlag flg "checked but never set in any outcome" | flg <- missing]
 
 scanFlags :: (Set.Set FlagID, Set.Set FlagID) -> Effect
@@ -329,11 +329,11 @@ validateGameState gw st = concat
         | currentRoom st `notElem` roomKeys ]
 
     checkItemLocs =
-        [ InvalidItemLocation iId roomId
+        [ InvalidItemLocation iId rId
         | (iId, is) <- Map.toList (itemStates st)
         , let loc = itemLocation is
-        , (roomId) <- case loc of { InRoom r -> [r]; _ -> [] }
-        , roomId `notElem` roomKeys ]
+        , (rId) <- case loc of { InRoom r -> [r]; _ -> [] }
+        , rId `notElem` roomKeys ]
 
     -- Items that start inside a container must reference an existing item id.
     checkContainerRefs =
@@ -343,11 +343,11 @@ validateGameState gw st = concat
         , cid `notElem` itemKeys ]
 
     checkNPCLocs =
-        [ InvalidNPCLocation nId roomId
+        [ InvalidNPCLocation nId rId
         | (nId, ns) <- Map.toList (npcStates st)
         , let loc = npcLocation ns
-        , (roomId) <- case loc of { InRoom r -> [r]; _ -> [] }
-        , roomId `notElem` roomKeys ]
+        , (rId) <- case loc of { InRoom r -> [r]; _ -> [] }
+        , rId `notElem` roomKeys ]
 
     checkVehicleRefs =
         concat [ checkVehicle vId (vehicleDefs gw Map.! vId)
@@ -412,9 +412,7 @@ flagsInPredicate p = case p of
     PAll qs             -> concatMap flagsInPredicate qs
     PAny qs             -> concatMap flagsInPredicate qs
     HasFlag f           -> [f]
-    Compare (VRFlag f) _ (VRFlag g) -> [f, g]
-    Compare lhs _ _     -> flagsInRef lhs
-    Compare _ _ rhs     -> flagsInRef rhs
+    Compare lhs _ rhs   -> flagsInRef lhs ++ flagsInRef rhs
     _                   -> []
   where
     flagsInRef (VRFlag f) = [f]

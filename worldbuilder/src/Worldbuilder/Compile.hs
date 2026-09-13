@@ -7,11 +7,15 @@ module Worldbuilder.Compile
     ) where
 
 import Worldbuilder.Types
-import Types as E
+import Types hiding
+    ( itemDefs, itemStates, npcDefs, npcStates, questDefs
+    , vehicleDefs, vehicleStates, entityInteractions, itemInteractions
+    , varDefs, triggerDefs, rooms )
+import qualified Types as E
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Char (toLower)
-import Data.List (nub, stripPrefix, takeWhile, zip, notElem)
+import Data.List (nub, stripPrefix)
 import Data.Maybe (mapMaybe, fromMaybe, catMaybes)
 import Data.Either (partitionEithers)
 import Text.Read (readMaybe)
@@ -391,7 +395,7 @@ compileWeather (Just wd) =
         badTransitions =
             [ ciError ("environment.weather.transitions." ++ show i) "UnknownWeatherState"
                 ("weather state '" ++ wtTo t ++ "' is not in 'states'")
-            | (i, t) <- zip [0 ..] (weaTransitions wd)
+            | (i, t) <- zip [0 :: Int ..] (weaTransitions wd)
             , wtTo t `notElem` states ]
         initIdx = stateIndex (weaInitial wd)
         varDefs = Map.singleton "env.weather"
@@ -401,7 +405,7 @@ compileWeather (Just wd) =
             [ E.TriggerDef ("environment.weather." ++ show i) E.OnTurn (wtWhen t)
                 (E.SetValue (E.VRVariable "env.weather") (E.EVInt (stateIndex (wtTo t)))
                     : map compileAActionOutcome (wtEffects t)) False 0
-            | (i, t) <- zip [0 ..] (weaTransitions wd)
+            | (i, t) <- zip [0 :: Int ..] (weaTransitions wd)
             , stateIndex (wtTo t) >= 0 ]
     in (badInitial ++ badTransitions, transitions, varDefs, initials)
 
@@ -679,14 +683,14 @@ collectFactionRefs gw = nub (concatMap refsInEffect (allWorldEffects gw)
 --   a new module does not have to walk the world again.
 allWorldEffects :: E.GameWorld -> [E.Effect]
 allWorldEffects gw = concat
-    [ concatMap roomHooks (Map.elems (rooms gw))
-    , concatMap (Map.elems . itemVerbMap) (Map.elems (itemDefs gw))
-    , concatMap (Map.elems . npcVerbMap) (Map.elems (npcDefs gw))
+    [ concatMap roomHooks (Map.elems (E.rooms gw))
+    , concatMap (Map.elems . itemVerbMap) (Map.elems (E.itemDefs gw))
+    , concatMap (Map.elems . npcVerbMap) (Map.elems (E.npcDefs gw))
     , map dcOutcome (worldDialogueChoices gw)
-    , concatMap trEffects (triggerDefs gw)
-    , [ e | Just e <- map questReward (Map.elems (questDefs gw)) ]
-    , concatMap (Map.elems . vehicleConditionEffects) (Map.elems (vehicleDefs gw))
-    , Map.elems (itemInteractions gw)
+    , concatMap trEffects (E.triggerDefs gw)
+    , [ e | Just e <- map questReward (Map.elems (E.questDefs gw)) ]
+    , concatMap (Map.elems . vehicleConditionEffects) (Map.elems (E.vehicleDefs gw))
+    , Map.elems (E.itemInteractions gw)
     ]
   where
     roomHooks r = catMaybes [roomOnEnter r, roomOnLook r, roomOnExit r, roomSearchOutcome r]
@@ -696,10 +700,10 @@ allWorldEffects gw = concat
 allWorldPredicates :: E.GameWorld -> [E.Predicate]
 allWorldPredicates gw = concat
     [ [ p | Just p <- map dcVisible (worldDialogueChoices gw) ]
-    , [ p | Just p <- map trCondition (triggerDefs gw) ]
-    , concatMap condTextPreds (map roomDescription (Map.elems (rooms gw)))
-    , concatMap condTextPreds (map itemDescription (Map.elems (itemDefs gw)))
-    , concatMap condTextPreds (map npcDescription (Map.elems (npcDefs gw)))
+    , [ p | Just p <- map trCondition (E.triggerDefs gw) ]
+    , concatMap condTextPreds (map roomDescription (Map.elems (E.rooms gw)))
+    , concatMap condTextPreds (map itemDescription (Map.elems (E.itemDefs gw)))
+    , concatMap condTextPreds (map npcDescription (Map.elems (E.npcDefs gw)))
     ]
   where
     condTextPreds ct = map tvWhen (ctVariants ct)
@@ -707,7 +711,7 @@ allWorldPredicates gw = concat
 -- | Every dialogue choice in every NPC dialogue tree.
 worldDialogueChoices :: E.GameWorld -> [E.DialogueChoice]
 worldDialogueChoices gw =
-    [ c | npc <- Map.elems (npcDefs gw)
+    [ c | npc <- Map.elems (E.npcDefs gw)
         , tree <- Map.elems (npcDialogueTrees npc)
         , node <- Map.elems (dtNodes tree)
         , c <- dnChoices node ]
@@ -752,7 +756,7 @@ factionFromVar n = case stripPrefix "faction." n of
 --   dialogue choices and verb maps all count.
 checkDamageNpcRefs :: E.GameWorld -> [CompileIssue]
 checkDamageNpcRefs gw =
-    let declared = Set.fromList (Map.keys (npcDefs gw))
+    let declared = Set.fromList (Map.keys (E.npcDefs gw))
         refs = nub (concatMap hpTargetsInEffect (allWorldEffects gw))
     in [ ciError "damage_npc" "UnknownDamageNPC"
             ("damage_npc targets '" ++ nid ++ "', which is not declared under 'npcs:'")
@@ -1062,10 +1066,6 @@ compileInteractions (Just ix) = (entityMap, itemMap)
 -- ---------------------------------------------------------------------------
 -- Verb maps (strict — unknown verb = compile error, custom verbs resolved)
 -- ---------------------------------------------------------------------------
-
--- | Build alias→canonical lookup table from the verb registry.
-verbAliasLookup :: Map.Map String E.VerbDef -> Map.Map String String
-verbAliasLookup = Verbs.verbAliasMap
 
 -- | Compile a verb map with structured diagnostics.  The path prefix points at
 --   the owning field (e.g. "items.crystal.verb_map").  The registry resolves

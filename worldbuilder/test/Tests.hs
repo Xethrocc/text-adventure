@@ -4,7 +4,7 @@
 module Main where
 
 import Control.Monad (when)
-import Data.List (isInfixOf, takeWhile)
+import Data.List (isInfixOf)
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
@@ -59,6 +59,8 @@ minSave = E.SaveState
     , activeDialogue = Nothing
     , rngState = 0
     , variables = Map.empty
+    , containers = Map.empty
+    , triggerStates = Map.empty
     }
 
 runTest :: String -> IO Bool -> IO Bool
@@ -695,15 +697,15 @@ testPlayerConfigFixtureCompiles = do
                         putStrLn $ "  compile errors: " ++ show errs
                         pure False
                     Right cr -> do
-                        let save = crSave cr
-                            p = E.player save
+                        let saved = crSave cr
+                            p = E.player saved
                         r1 <- expectEqual 50 (E.playerMaxHealth p)
                         r2 <- expectEqual 8 (E.playerAttack p)
                         r3 <- expectEqual 3 (E.playerDefense p)
                         r4 <- expectEqual (Just 5) (Map.lookup "lockpick" (E.playerSkills p))
-                        r5 <- expectEqual (Just (E.VVInt 30)) (Map.lookup "mana" (E.variables save))
-                        r6 <- expectEqual (Just "true") (Map.lookup "started" (E.flags save))
-                        r7 <- expectEqual (Just 0) (Map.lookup "find_treasure" (E.activeQuests save))
+                        r5 <- expectEqual (Just (E.VVInt 30)) (Map.lookup "mana" (E.variables saved))
+                        r6 <- expectEqual (Just "true") (Map.lookup "started" (E.flags saved))
+                        r7 <- expectEqual (Just 0) (Map.lookup "find_treasure" (E.activeQuests saved))
                         pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
 
 -- | Phase 5h: item with in_container starts inside that container.

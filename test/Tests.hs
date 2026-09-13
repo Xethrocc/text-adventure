@@ -13,12 +13,12 @@ import Game
 import GameLoop (commandCompletion, LoopState (..), initLoopState, applyLoopCommand)
 import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText)
 import Verbs (verbAliasMap)
-import Game (applyOutcome, getVariable, setVariable, evalPredicate)
 import Validate (ValidationError (..), validateWorld)
 import Sample (initSampleGame)
 import System.Console.Haskeline (Completion (..))
 import System.Exit (exitFailure)
 import Types
+import World (loadGame)
 
 runTest :: String -> IO Bool -> IO Bool
 runTest name testAction = do
@@ -682,6 +682,130 @@ testPlayerDeathSetsGameOver = do
     r2 <- expectEqual (Just Death) (gameOverReason (save newState))
     pure (r1 && r2)
 
+-- ===== P0-Regressionen: defaultSaveState + Kampf-Effektmeldungen =====
+
+-- | P0-1: `loadGame world Nothing` walks through `defaultSaveState`. Every
+--   SaveState field must be initialised. The four formerly-missing fields
+--   (`rngState`, `variables`, `containers`, `triggerStates`) were `undefined`
+--   at runtime, so the first variable / trigger / RNG evaluation aborted the
+--   game with \"Missing field in record construction\". The fields are forced
+--   here so a regression fails the test instead of crashing much later.
+testDefaultSaveStateFieldsInitialised :: IO Bool
+testDefaultSaveStateFieldsInitialised = do
+    let base = initSampleGame
+        w = (world base)
+            { varDefs = Map.fromList
+                [ ("quest_stage", VarDef "quest_stage" (VTInt Nothing Nothing) (VVInt 3)) ]
+            , triggerDefs =
+                [ TriggerDef "welcome" (OnEnter "start") Nothing
+                    [ SendMessage "Willkommen zurück." ] False 0 ]
+            }
+        worldPath = "/tmp/ta-p01-defaultsavestate-world.json"
+    BLC.writeFile worldPath (Aeson.encode w)
+    loaded <- loadGame worldPath Nothing
+    case loaded of
+        Left err -> do
+            putStrLn ("  loadGame (without save) failed: " ++ err)
+            pure False
+        Right st -> do
+            let ss = save st
+            _ <- evaluate (rngState ss)
+            _ <- evaluate (variables ss)
+            _ <- evaluate (containers ss)
+            _ <- evaluate (triggerStates ss)
+            r1 <- expectEqual initialRngState (rngState ss)
+            r2 <- expectEqual (Just (VVInt 3)) (Map.lookup "quest_stage" (variables ss))
+            r3 <- expectTrue "containers default to empty" (Map.null (containers ss))
+            r4 <- expectTrue "triggerStates default to empty" (Map.null (triggerStates ss))
+            -- the variable must be usable by the predicate DSL ...
+            r5 <- expectTrue "CompareVar evaluates against the default variable"
+                    (evalPredicate (CompareVar "quest_stage" CGte 3) st)
+            -- ... and a real loop turn must run through the rule engine.
+            let (loop', _) = applyLoopCommand (Go North) (initLoopState st)
+                st' = lsCurrent loop'
+            r6 <- expectEqual "hallway" (currentRoom (save st'))
+            pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | Second companion used by the P0-2 combat regressions.
+guardDef :: NPCDef
+guardDef = NPCDef "guard" "guard" (plainText "A silent guard.")
+    Map.empty Map.empty ["guard"] (Just 20) 3 1 Map.empty
+
+-- | P0-2 fixture: sample game in the hallway with two companions (guard,
+--   squire) and a rule that announces the goblin's death. `goblinHp` decides
+--   whether the player's own blow is lethal (5) or helper blows are needed (9).
+twoCompanionGame :: Int -> GameState
+twoCompanionGame goblinHp =
+    let st0 = partyGameInHallway True
+        deathRule = TriggerDef "goblin_dies" (OnStateChange "goblin") Nothing
+            [ SendMessage "Der Goblin fällt und lässt die Keule fallen." ] False 0
+    in st0
+        { world = (world st0)
+            { npcDefs = Map.insert "guard" guardDef (npcDefs (world st0))
+            , triggerDefs = [deathRule] }
+        , save = (save st0)
+            { npcStates = Map.insert "guard"
+                (NPCState (InRoom "hallway") "alive" (Just 20) Map.empty Nothing)
+                (Map.insert "goblin"
+                    (NPCState (InRoom "hallway") "alive" (Just goblinHp) Map.empty Nothing)
+                    (npcStates (save st0)))
+            , variables = Map.insert "party.guard" (VVInt 1) (variables (save st0)) }
+        }
+
+-- | P0-2 (a), literal review case: a companion is in the room and the target
+--   dies to the player's own strike; the OnStateChange message must survive.
+testCombatDeathMessagePlayerKill :: IO Bool
+testCombatDeathMessagePlayerKill = do
+    let (st', msg) = executeCommand (Interact VAttack "goblin") (twoCompanionGame 5)
+    r1 <- expectTrue "NPC death event message reaches the player"
+            (isInfixOf "Der Goblin fällt und lässt die Keule fallen." msg)
+    r2 <- expectTrue "player kill line still shown" (isInfixOf "kill it" msg)
+    r3 <- expectEqual (Just "dead") (npcStatus <$> Map.lookup "goblin" (npcStates (save st')))
+    pure (r1 && r2 && r3)
+
+-- | P0-2 (b), the actual regression: the lethal blow is a companion's, and a
+--   second companion's (silent) effect follows it. The old `executeAttack`
+--   folded effects itself and kept only the LAST effect's message, so the
+--   death message was swallowed.
+testCombatDeathMessageAfterTrailingEffect :: IO Bool
+testCombatDeathMessageAfterTrailingEffect = do
+    let (st', msg) = executeCommand (Interact VAttack "goblin") (twoCompanionGame 9)
+    r1 <- expectTrue "NPC death event message survives a trailing effect"
+            (isInfixOf "Der Goblin fällt und lässt die Keule fallen." msg)
+    r2 <- expectTrue "companion strikes still reported" (isInfixOf "strikes for" msg)
+    r3 <- expectEqual (Just "dead") (npcStatus <$> Map.lookup "goblin" (npcStates (save st')))
+    pure (r1 && r2 && r3)
+
+-- | P0-2 (c): the same shape with the player's ship aboard — the ship's power
+--   spend and hull effect trail the lethal companion strike.
+shipCompanionGame :: GameState
+shipCompanionGame =
+    let st0 = shipGame 2 3 4 10
+        w0 = world st0
+        deathRule = TriggerDef "goblin_dies" (OnStateChange "goblin") Nothing
+            [ SendMessage "Der Goblin fällt und lässt die Keule fallen." ] False 0
+    in st0
+        { world = w0
+            { npcDefs = Map.insert "squire" squireDef (npcDefs w0)
+            , triggerDefs = [deathRule] }
+        , save = (save st0)
+            { npcStates = Map.insert "squire"
+                (NPCState (InRoom "hallway") "alive" (Just 20) Map.empty Nothing)
+                (Map.insert "goblin"
+                    (NPCState (InRoom "hallway") "alive" (Just 9) Map.empty Nothing)
+                    (npcStates (save st0)))
+            , variables = Map.insert "party.squire" (VVInt 1) (variables (save st0)) }
+        }
+
+testCombatDeathMessageWithShip :: IO Bool
+testCombatDeathMessageWithShip = do
+    let (st', msg) = executeCommand (Interact VAttack "goblin") shipCompanionGame
+    r1 <- expectTrue "NPC death event message survives with the ship present"
+            (isInfixOf "Der Goblin fällt und lässt die Keule fallen." msg)
+    r2 <- expectTrue "ship volley still reported" (isInfixOf "Kestrel fires for 3" msg)
+    r3 <- expectEqual (Just "dead") (npcStatus <$> Map.lookup "goblin" (npcStates (save st')))
+    pure (r1 && r2 && r3)
+
 -- ===== Completion Tests =====
 
 testCompletionSuggestsNpcName :: IO Bool
@@ -1294,8 +1418,6 @@ testPredicateRoomHasTag :: IO Bool
 testPredicateRoomHasTag = do
     let hallRoom = rooms (world initSampleGame) Map.! "hallway"
     expectTrue "dark tag" (Set.member "dark" (roomTags hallRoom))
-  where
-    roomHasTag r tag = tag `Set.member` roomTags r
 
 -- | Compare mit Flags (VRFlag) – Flags sind "true"=1, sonst 0
 testPredicateCompareFlag :: IO Bool
@@ -1326,7 +1448,7 @@ testTriggerFiresOnEnter = do
             [SendMessage "You found the treasure room!"] False 0
         stateWithTrigger = initSampleGame
             { world = (world initSampleGame) { triggerDefs = [trigger] } }
-        (st, msg) = fireTriggers (OnEnter "treasure") stateWithTrigger
+        (_, msg) = fireTriggers (OnEnter "treasure") stateWithTrigger
     r1 <- expectTrue "trigger fired" (not (null msg))
     r2 <- expectTrue "message mentions treasure" (isInfixOf "treasure" msg)
     pure (r1 && r2)
@@ -1458,7 +1580,7 @@ testTriggerConditionGates = do
             (Just (HasFlag "allowed")) [SendMessage "Flag is set!"] False 0
         stateWithTrigger = flagSet
             { world = (world flagSet) { triggerDefs = [trigger] } }
-        (st1, msg1) = fireTriggers (OnEnter "treasure") initSampleGame
+        (_, msg1) = fireTriggers (OnEnter "treasure") initSampleGame
         (_, msg2) = fireTriggers (OnEnter "treasure") stateWithTrigger
     r1 <- expectTrue "condition prevents firing" (null msg1)
     r2 <- expectTrue "condition allows firing" (not (null msg2))
@@ -2054,6 +2176,11 @@ main = do
         , runTest "party: dead companion inactive + event" testPartyDeadCompanionInactive
         , runTest "party roster survives save/load" testPartyRosterSaveLoadRoundTrip
         , runTest "npc death event message reaches the player" testNPCDeathEventMessageShown
+        -- P0-Regressionen
+        , runTest "P0-1 defaultSaveState initialises all fields" testDefaultSaveStateFieldsInitialised
+        , runTest "P0-2 death event message survives (player kill)" testCombatDeathMessagePlayerKill
+        , runTest "P0-2 death event message survives trailing effect" testCombatDeathMessageAfterTrailingEffect
+        , runTest "P0-2 death event message survives with ship" testCombatDeathMessageWithShip
         -- Phase 7h: ship systems
         , runTest "ship fires its weapons and spends power" testShipFiresAndSpendsPower
         , runTest "ship without power does not fire" testShipWithoutPowerDoesNotFire

@@ -10,7 +10,7 @@ import qualified Data.Text as T
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Data.Aeson
-import Data.Aeson.Types (Parser, toJSONKeyText, FromJSONKeyFunction (..))
+import Data.Aeson.Types (Parser, toJSONKeyText)
 import Control.Applicative ((<|>))
 import Data.Bits (xor, shiftR)
 import Data.Char (toLower)
@@ -925,7 +925,7 @@ instance FromJSON GameWorld where
 parseItemInteractions :: Map.Map String Effect -> Parser (Map.Map (String, String) Effect)
 parseItemInteractions m =
     case mapM parseKey (Map.toList m) of
-        Right pairs -> pure (Map.fromList pairs)
+        Right kvs -> pure (Map.fromList kvs)
         Left err    -> fail err
   where
     parseKey (k, v) = case break (== '|') k of

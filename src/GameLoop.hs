@@ -324,14 +324,14 @@ loopGame loopState
                             Nothing -> do
                                 putStrLn message
                                 loopGame loopState'
-                            Just (lines, followUp) -> do
-                                case lines of
+                            Just (nls, followUp) -> do
+                                case nls of
                                     [] -> return ()
                                     [single] -> putStrLn single
                                     _ -> do
                                         mapM_ (\l -> putStrLn l >> putStr "  [Press Enter to continue]" >> getLine >> return ())
-                                            (init lines)
-                                        putStrLn (last lines)
+                                            (init nls)
+                                        putStrLn (last nls)
                                 let (finalState, followMsg) = applyOutcome followUp "" (lsCurrent loopState')
                                     clearedState = finalState { pendingNarrative = Nothing }
                                 if null followMsg

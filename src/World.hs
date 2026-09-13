@@ -49,6 +49,11 @@ loadGame worldPath maybeSavePath = do
 
 -- | A bare starting state for a freshly loaded world.
 --   Rooms exist but nothing is placed; use an initial-save file for that.
+--   Every SaveState field is initialised here: a missing field would be
+--   `undefined` and abort the game with \"Missing field in record
+--   construction\" the first time it is read (rngState on RandomChoice,
+--   variables on any CompareVar, triggerStates on any rule, containers on a
+--   container lookup). `-Werror=missing-fields` keeps it that way.
 defaultSaveState :: GameWorld -> SaveState
 defaultSaveState gw = SaveState
     { player         = Player 100 100 10 5 Map.empty
@@ -69,6 +74,10 @@ defaultSaveState gw = SaveState
     , vehicleStates   = Map.empty
     , currentVehicle  = Nothing
     , activeDialogue  = Nothing
+    , rngState        = initialRngState
+    , variables       = Map.map vdVarInitial (varDefs gw)
+    , containers      = Map.empty
+    , triggerStates   = Map.empty
     }
 
 -- | Preferred starting room: "start" if it exists, else the first room by key order

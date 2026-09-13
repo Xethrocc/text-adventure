@@ -21,7 +21,7 @@ library
                        JuicyPixels >=3.3 && <4,
                        vector >=0.12 && <1
   default-language:    Haskell2010
-  ghc-options:         -Wall
+  ghc-options:         -Wall -Werror=missing-fields
 
 executable img2ascii
   main-is:             Main.hs
@@ -30,4 +30,4 @@ executable img2ascii
                        img2ascii,
                        JuicyPixels >=3.3 && <4
   default-language:    Haskell2010
-  ghc-options:         -Wall
+  ghc-options:         -Wall -Werror=missing-fields
