@@ -873,6 +873,29 @@ testSetEntityStateCompiles = do
                 (E.SetValue (E.VRProperty "guild_gate" "state") (E.EVString "unlocked")
                     `elem` E.trEffects tr)
 
+-- | P1-6: two `rules:` with the same `id` would share one runtime
+--   `TriggerState` (fired/cooldown), so a duplicate id is a compile error.
+testDuplicateTriggerIdFails :: IO Bool
+testDuplicateTriggerIdFails = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advTriggers =
+                [ ATrigger "dup" "turn" Nothing [AOMessage "a"] False 0
+                , ATrigger "dup" "turn" Nothing [AOMessage "b"] False 0 ] }
+    case compileAdventure adv of
+        Left errs -> expectContains "DuplicateTriggerId" (issuesText errs)
+        Right _   -> expectTrue "expected DuplicateTriggerId" False
+
+-- | P1-6: an author rule id must not use a compiler-owned prefix
+--   (encounter./environment./stealth./ship./party.) — those ids belong to
+--   generated module triggers in the same `triggerStates` namespace.
+testReservedTriggerIdFails :: IO Bool
+testReservedTriggerIdFails = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advTriggers = [ ATrigger "stealth.decay" "turn" Nothing [AOMessage "x"] False 0 ] }
+    case compileAdventure adv of
+        Left errs -> expectContains "ReservedTriggerId" (issuesText errs)
+        Right _   -> expectTrue "expected ReservedTriggerId" False
+
 -- | Any `faction.<id>` reference (standing outcome / predicate) must point at a
 --   declared faction once the `factions:` segment is present.
 testUnknownFactionFails :: IO Bool
@@ -1616,6 +1639,8 @@ tests =
     , ("factions segment seeds faction.* variables", testFactionsSeedVariables)
     , ("standing add/set outcome compiles to faction var", testStandingOutcomeCompiles)
     , ("set_state outcome compiles to entity state effect", testSetEntityStateCompiles)
+    , ("duplicate rule id is a compile error (P1-6)", testDuplicateTriggerIdFails)
+    , ("reserved rule id prefix is a compile error (P1-6)", testReservedTriggerIdFails)
     , ("standing reference to unknown faction fails", testUnknownFactionFails)
     , ("factions fixture compiles + validates", testFactionsFixtureCompiles)
     , ("trade fixture compiles + validates", testTradeFixtureCompiles)

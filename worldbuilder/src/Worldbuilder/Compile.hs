@@ -15,7 +15,7 @@ import qualified Types as E
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Char (toLower)
-import Data.List (nub, stripPrefix)
+import Data.List (nub, stripPrefix, isPrefixOf)
 import Data.Maybe (mapMaybe, fromMaybe, catMaybes)
 import Data.Either (partitionEithers)
 import Text.Read (readMaybe)
@@ -123,6 +123,7 @@ compileAdventure adv =
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
         npcRefErrs = checkDamageNpcRefs gw
+        trigIdErrs = checkTriggerIds (advTriggers adv)
 
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
                     ++ varErrs ++ facErrs ++ facConflictErrs ++ trigErrs ++ encErrs
@@ -132,6 +133,7 @@ compileAdventure adv =
                     ++ shipErrs ++ shipConflictErrs
                     ++ combatErrs
                     ++ initVarErrs ++ initStateErrs ++ facRefErrs ++ encRefErrs ++ npcRefErrs
+                    ++ trigIdErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -1182,6 +1184,25 @@ compileTriggers triggers =
             , E.trOnce = atOnce t
             , E.trCooldown = atCooldown t
             }
+
+-- | Compiler-owned trigger-id prefixes. The compiler generates triggers with
+--   these ids (encounter.<id>, environment.*, stealth.*, ship.*, party.*) and
+--   they share the runtime `triggerStates` namespace with author `rules:` ids.
+reservedTriggerPrefixes :: [String]
+reservedTriggerPrefixes = ["encounter.", "environment.", "stealth.", "ship.", "party."]
+
+-- | Validate authored trigger rules: ids must be unique and must not use a
+--   compiler-owned prefix (which would silently hijack a module trigger).
+checkTriggerIds :: [ATrigger] -> [CompileIssue]
+checkTriggerIds ts =
+    [ ciError ("rules." ++ tid) "DuplicateTriggerId"
+        ("rule id '" ++ tid ++ "' is declared more than once")
+    | (tid, others) <- collisions [(atId t, atId t) | t <- ts]
+    , not (null others) ]
+    ++
+    [ ciError ("rules." ++ atId t) "ReservedTriggerId"
+        ("rule id '" ++ atId t ++ "' uses a compiler-owned prefix")
+    | t <- ts, p <- reservedTriggerPrefixes, p `isPrefixOf` atId t ]
 
 -- | Parse the `on` string into an EventType.
 --   Supported: "enter <room>", "leave <room>", "look <room>", "search <room>",

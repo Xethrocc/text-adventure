@@ -95,7 +95,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `ShipActor` (7h) erweitern sie ohne Signaturänderung.
 - `evalPredicate (Location "player" r)` prüft jetzt auch den Spielerraum
   (vorher nur NPC-/Item-Locations).
-- Tests: **182** Engine- + **62** Worldbuilder-Tests, **18** E2E-Playthroughs
+- Tests: **186** Engine- + **64** Worldbuilder-Tests, **18** E2E-Playthroughs
   (`scripts/ci.sh`).
 
 ### Fixed
@@ -159,6 +159,27 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   durch, weil der geratene Startraum zufällig `boiler_room` war) — behoben mit
   zwei additiven Exits (`start_hall: down → stairs_down`,
   `junction: east → boiler_room`).
+- `Game.fireTriggerList` (P1-5) las `once`/`cooldown` aus einem beim Eintritt
+  gebundenen Snapshot des Trigger-States. Eine verschachtelte Ereignisrunde
+  (`killNPCWithMsg` → `OnStateChange`) markierte einen Trigger als gefeuert,
+  ohne dass die äußere Faltung das sah — `once: true` konnte dadurch erneut
+  feuern. Der Zustand wird jetzt aus dem laufenden Fold-State gelesen.
+- Worldbuilder: Trigger-IDs wurden nicht auf Eindeutigkeit geprüft (P1-6).
+  Neu: `DuplicateTriggerId` (Fehler) und `ReservedTriggerId` für die
+  compiler-eigenen Präfixe `encounter.`/`environment.`/`stealth.`/`ship.`/
+  `party.`; verifiziert, dass keine ausgelieferte Welt betroffen ist.
+- `Game.RandomChoice` (P1-7) zog den Index über `mod` direkt aus dem
+  LCG-Zustand und damit aus dessen niederwertigen Bits — bei diesem LCG hat
+  Bit 0 die Periode 2, eine Zwei-Wege-Auswahl degenerierte zu A,B,A,B. Der
+  Index kommt jetzt aus den hohen Bits (`shiftR 33`, volle Periode). Die
+  LCG-Schrittfolge bleibt identisch, Determinismus/Undo/Save-Load unverändert.
+- `set_state` setzte den Entity-State, ohne `OnStateChange` zu feuern, während
+  jeder andere Mutationspfad (z. B. NPC-Tod) es tut (P1-12). Neu:
+  `setEntityStateWithEvents` feuert das Event an der Mutationsstelle; ein
+  Schreibvorgang auf den bereits gesetzten State ist ein No-op, und genau diese
+  Idempotenz ist die Rekursionsschranke für eine Regel, die ihren eigenen
+  Zustand aus dem `on: state`-Handler erneut schreibt. `applySetValue` liefert
+  dafür jetzt `(GameState, String)` und reicht die Handler-Meldung durch.
 
 ## [0.9.0.0] — Unreleased
 

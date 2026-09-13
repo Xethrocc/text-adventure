@@ -4,6 +4,7 @@ module Game where
 
 import Types
 import Data.List (intercalate, find, elemIndex)
+import Data.Bits (shiftR)
 import Data.Char (toLower)
 import Data.Maybe (listToMaybe, fromMaybe)
 import qualified Data.Map.Strict as Map
@@ -341,6 +342,17 @@ killNPCWithMsg targetNpcId state =
                         } }
             in fireTriggers (OnStateChange targetNpcId) state'
 
+-- | Set an entity's state and fire its `OnStateChange` event, so authored
+--   `on: state <entity>` rules react to an explicit `set_state:` exactly as
+--   they do to an NPC death (`killNPCWithMsg`).
+--   Writing the state the entity already has is a no-op: that idempotent
+--   guard IS the recursion bound for a rule whose effect re-writes the same
+--   state from its own `on: state` handler.
+setEntityStateWithEvents :: String -> String -> GameState -> (GameState, String)
+setEntityStateWithEvents eId val state
+    | getEntityState eId state == Just val = (state, "")
+    | otherwise = fireTriggers (OnStateChange eId) (setEntityState eId val state)
+
 -- | Modify an NPC's property
 modifyNPCProp :: String -> String -> Int -> GameState -> GameState
 modifyNPCProp nId prop delta state = state
@@ -645,8 +657,8 @@ applyOutcomeWith depth salt outcome targetId state
         in (st', msg', salt')
 
     SetValue vr ev ->
-        let state' = applySetValue vr ev state
-        in (state', "", salt)
+        let (state', msg') = applySetValue vr ev state
+        in (state', msg', salt)
 
     ModifyValue VRPlayerHealth delta ->
         let state' = if delta >= 0
@@ -696,9 +708,13 @@ applyOutcomeWith depth salt outcome targetId state
     RandomChoice [] -> (state, "", salt)
     RandomChoice weighted ->
         let totalWeight = max 1 (sum (map fst weighted))
-            rng = rngState (save state)
-            pick = fromIntegral (rng `mod` fromIntegral totalWeight)
-            st' = state { save = (save state) { rngState = nextRng (rng + fromIntegral salt) } }
+            -- Advance first, then draw from the HIGH bits of the LCG state.
+            -- `nextRng` is an LCG mod 2^64 whose low bits have tiny periods
+            -- (bit 0 toggles every step), so a raw `mod` would degenerate a
+            -- two-way choice into A,B,A,B. Bits 33+ have full period.
+            rng = nextRng (rngState (save state) + fromIntegral salt)
+            pick = fromIntegral ((rng `shiftR` 33) `mod` fromIntegral totalWeight)
+            st' = state { save = (save state) { rngState = rng } }
             go :: Int -> [(Int, Effect)] -> Effect
             go _ [(_, e)] = e
             go acc ((w, e):rest)
@@ -720,23 +736,25 @@ applyOutcomeWith depth salt outcome targetId state
 
     Noop -> (state, "", salt)
 
--- | Apply SetValue: set a value reference to a new value (handles flags, variables, states)
-applySetValue :: ValueRef -> EffectValue -> GameState -> GameState
+-- | Apply SetValue: set a value reference to a new value (handles flags,
+--   variables, entity states). Returns the state plus any message produced by
+--   the fired side effects (an entity-state change fires its `OnStateChange`).
+applySetValue :: ValueRef -> EffectValue -> GameState -> (GameState, String)
 applySetValue (VRFlag name) val state =
-    setFlag name (effectValueToString val) state
+    (setFlag name (effectValueToString val) state, "")
 applySetValue (VRVariable name) val state =
-    setVariable name (effectValToVarVal val) state
+    (setVariable name (effectValToVarVal val) state, "")
 applySetValue (VRProperty eId "state") val state =
-    setEntityState eId (effectValueToString val) state
+    setEntityStateWithEvents eId (effectValueToString val) state
 applySetValue (VRProperty "player" "room") val state =
-    fst (transitionToRoom (effectValueToString val) (clearActiveDialogue state))
+    (fst (transitionToRoom (effectValueToString val) (clearActiveDialogue state)), "")
 applySetValue (VRProperty rId "visited") val state =
     let b = case val of { EVInt n -> n /= 0; _ -> False }
-    in setRoomVisited rId b state
+    in (setRoomVisited rId b state, "")
 applySetValue VRPlayerHealth val state =
     let n = case val of { EVInt m -> m; _ -> 0 }
-    in if n <= 0 then endGame Death (setPlayerHP n state) else setPlayerHP n state
-applySetValue _ _ state = state
+    in if n <= 0 then (endGame Death (setPlayerHP n state), "") else (setPlayerHP n state, "")
+applySetValue _ _ state = (state, "")
 
 -- | Convert EffectValue to VariableValue
 effectValToVarVal :: EffectValue -> VariableValue
@@ -1158,11 +1176,13 @@ fireTriggerList :: [TriggerDef] -> GameState -> (GameState, String)
 fireTriggerList triggers state =
     foldl fireOne (state, "") triggers
   where
-    ts = triggerStates (save state)
-
+    -- Read the trigger state from the CURRENT fold state, not a snapshot
+    -- taken at entry: a nested event round fired by an earlier trigger's
+    -- effect may already have marked a later trigger as fired, and a stale
+    -- snapshot would let an `once: true` rule fire a second time.
     fireOne (st, acc) tr =
         let tId = trId tr
-            tState = Map.lookup tId ts
+            tState = Map.lookup tId (triggerStates (save st))
             alreadyFired = maybe False tsFired tState
             cooldownRemaining = maybe 0 tsCooldownRemaining tState
         in if trOnce tr && alreadyFired

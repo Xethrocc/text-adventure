@@ -1312,6 +1312,25 @@ testNextRngDeterministic = do
     r4 <- expectTrue "deterministic" (nextRng s0 == s1)
     pure (r1 && r2 && r3 && r4)
 
+-- | P1-7: drawing from the LCG's HIGH bits must give a real spread, not the
+--   strict A,B,A,B toggle the low bits (period-2 bit 0) produce. 200 draws
+--   from a two-way choice: both branches in 35%-65% and the sequence must not
+--   be a strict alternation.
+testRandomChoiceDistribution :: IO Bool
+testRandomChoiceDistribution = do
+    let outcome = RandomChoice [(1, SendMessage "A"), (1, SendMessage "B")]
+        go :: Int -> GameState -> [String]
+        go 0 _ = []
+        go n s = let (s', m) = applyOutcome outcome "" s in m : go (n - 1) s'
+        draws = go 200 initSampleGame
+        countA = length (filter (== "A") draws)
+        countB = length (filter (== "B") draws)
+        notAlternating = any (\(x, y) -> x == y) (zip draws (tail draws))
+    r1 <- expectTrue ("both branches >= 35% (A=" ++ show countA ++ ")") (countA >= 70)
+    r2 <- expectTrue ("both branches >= 35% (B=" ++ show countB ++ ")") (countB >= 70)
+    r3 <- expectTrue "sequence is not a strict alternation" notAlternating
+    pure (r1 && r2 && r3)
+
 -- ===== Phase 3a: Verb Registry (Custom-Verben) =====
 
 -- | Ein YAML mit `verbs: [{name: cast, aliases: [magic, spell]}]` erzeugt
@@ -1572,6 +1591,54 @@ testTriggerOnceFiresOnce = do
             Just ts -> tsFired ts
             Nothing -> False)
     pure (r1 && r2)
+
+-- | P1-5: a `once` trigger that a nested event round already fired must not
+--   fire again when the outer fold subsequently reaches it. Trigger A kills
+--   the wolf; the resulting OnStateChange round fires B (once); the outer
+--   OnStateChange fold must then SKIP B, not re-fire it from a stale snapshot.
+testTriggerOnceNoDoubleFireAcrossNestedRound :: IO Bool
+testTriggerOnceNoDoubleFireAcrossNestedRound = do
+    let sample = initSampleGame
+        killWolf = TriggerDef "a_kill" (OnStateChange "wolf") Nothing
+                        [ ModifyValue (VRProperty "wolf" "hp") (-100) ] True 0
+        counter  = TriggerDef "b_count" (OnStateChange "wolf") Nothing
+                        [ ModifyValue (VRVariable "fired") 1 ] True 0
+        st = sample
+                { world = (world sample) { triggerDefs = [killWolf, counter] }
+                , save = (save sample)
+                    { npcStates = Map.insert "wolf"
+                        (NPCState (InRoom "start") "alive" (Just 5) Map.empty Nothing)
+                        (npcStates (save sample))
+                    , variables = Map.singleton "fired" (VVInt 0) } }
+        (st', _) = fireTriggers (OnStateChange "wolf") st
+    case getVariable "fired" st' of
+        Just (VVInt n) -> expectEqual 1 n
+        _ -> expectTrue "fired variable present" False
+
+-- | P1-12: `set_state` must fire the entity's `OnStateChange` event, so an
+--   authored `on: state <entity>` rule reacts to it (not only to NPC death).
+testSetStateFiresStateChange :: IO Bool
+testSetStateFiresStateChange = do
+    let rule = TriggerDef "gate_opens" (OnStateChange "gate") Nothing
+                    [ SendMessage "The gate rumbles open." ] False 0
+        st = initSampleGame { world = (world initSampleGame) { triggerDefs = [rule] } }
+        (st', msg) = applyOutcome (SetValue (VRProperty "gate" "state") (EVString "unlocked")) "" st
+    r1 <- expectTrue "OnStateChange fired on set_state" (isInfixOf "rumbles" msg)
+    r2 <- expectEqual (Just "unlocked") (getEntityState "gate" st')
+    pure (r1 && r2)
+
+-- | P1-12 recursion bound: a rule whose `on: state` handler re-writes the same
+--   state must terminate — the idempotent writer is the recursion bound.
+testSetStateIdempotentNoRecursion :: IO Bool
+testSetStateIdempotentNoRecursion = do
+    let rule = TriggerDef "gate_loop" (OnStateChange "gate") Nothing
+                    [ SetValue (VRProperty "gate" "state") (EVString "unlocked") ] False 0
+        st = initSampleGame { world = (world initSampleGame) { triggerDefs = [rule] } }
+        run = fst (applyOutcome (SetValue (VRProperty "gate" "state") (EVString "unlocked")) "" st)
+    result <- timeout 3000000 (evaluate (length (show run)))
+    case result of
+        Nothing -> do putStrLn "  set_state recursion did not terminate"; pure False
+        Just _ -> expectEqual (Just "unlocked") (getEntityState "gate" run)
 
 testTriggerConditionGates :: IO Bool
 testTriggerConditionGates = do
@@ -2314,6 +2381,7 @@ main = do
         -- Phase 1: RNG-State (1f)
         , runTest "RandomChoice advances explicit RNG state" testRandomChoiceAdvancesRng
         , runTest "RandomChoice is deterministic for same seed" testRandomChoiceDeterministic
+        , runTest "RandomChoice uses high LCG bits, not low-bit toggle (P1-7)" testRandomChoiceDistribution
         , runTest "LCG nextRng is deterministic and advances" testNextRngDeterministic
         -- Phase 3a: Verb Registry (Custom-Verben)
         , runTest "custom verb parses to VCustom with aliases" testCustomVerbParseCreatesVCustom
@@ -2338,6 +2406,9 @@ main = do
         , runTest "drain stops when flag fed" testDrainStopsWhenFlagged
         , runTest "noise observer hears at threshold then cooldown" testNoiseObserverAndDecay
         , runTest "once trigger fires only once" testTriggerOnceFiresOnce
+        , runTest "once trigger not double-fired by nested round (P1-5)" testTriggerOnceNoDoubleFireAcrossNestedRound
+        , runTest "set_state fires OnStateChange (P1-12)" testSetStateFiresStateChange
+        , runTest "set_state handler is idempotent, no recursion (P1-12)" testSetStateIdempotentNoRecursion
         , runTest "trigger condition gates firing" testTriggerConditionGates
         , runTest "OnCommand trigger fires" testTriggerCommandEvent
         , runTest "trigger fires through game loop" testTriggerThroughGameLoop
