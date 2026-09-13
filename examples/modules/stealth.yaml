@@ -53,6 +53,7 @@ rooms:
     exits:
       north: {to: gang_dark}
       south: {to: gate_house}
+      down: {to: stairs_down}
   - id: gang_dark
     name: Dunkler Verbindungsgang
     desc: "Kein Lichtstrahl dringt hierher. Etwas liegt im Staub."
@@ -71,6 +72,7 @@ rooms:
       north: {to: corridor_a}
       south: {to: gang_dark}
       west: {to: storage}
+      east: {to: boiler_room}
   - id: corridor_a
     name: Korridor A
     desc: "Rote Signalleuchten blinken im Rhythmus der Wellen. Eine Tür zeigt nach Osten."

@@ -585,14 +585,14 @@ testFantasyMagicFixtureCompiles = do
                     Right cr -> do
                         let errors = validateWorld (crWorld cr)
                             stateErrs = validateGameState (crWorld cr) (crSave cr)
-                            -- Allow known unreachable-start-room warnings (validator
-                            -- searches for "start" rather than the actual start_room)
-                            acceptable = filter (\e -> case e of
-                                UnreachableRoom _ -> False
-                                _ -> True) errors
-                        if not (null acceptable) || not (null stateErrs)
+                        -- No masking filter: the reachability check now runs in
+                        -- validateGameState, where the real start_room
+                        -- (crSave.currentRoom = room_start) is known. Previously
+                        -- UnreachableRoom was filtered out because the validator
+                        -- guessed the start room as the alphabetically-first one.
+                        if not (null errors) || not (null stateErrs)
                         then do
-                            putStrLn $ "  validation issues: " ++ show (acceptable ++ stateErrs)
+                            putStrLn $ "  validation issues: " ++ show (errors ++ stateErrs)
                             pure False
                         else do
                             -- Verify the verb registry contains 'cast'

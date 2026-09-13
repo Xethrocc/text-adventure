@@ -95,7 +95,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `ShipActor` (7h) erweitern sie ohne Signaturänderung.
 - `evalPredicate (Location "player" r)` prüft jetzt auch den Spielerraum
   (vorher nur NPC-/Item-Locations).
-- Tests: **179** Engine- + **62** Worldbuilder-Tests, **18** E2E-Playthroughs
+- Tests: **182** Engine- + **62** Worldbuilder-Tests, **18** E2E-Playthroughs
   (`scripts/ci.sh`).
 
 ### Fixed
@@ -131,6 +131,34 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   Paketen (library/executable/test-suite) aktiv, damit diese Feldklasse nicht
   zurückkehrt.
 - `scripts/ci.sh` hat das Execute-Bit (vorher `Permission denied`, Exit 126).
+- `Validate.allOutcomes` (Code-Review P1-1) erfasste **keine Trigger-Effekte**
+  — damit war der Validator für die seit Phase 3f/7 in `rules:` lebende
+  Spiellogik blind (`give:`, `start_quest:`, Flag-Referenzen). Alle
+  Trigger-Effekte werden jetzt mitgesammelt; die Zuständigkeit ist damit
+  dieselbe wie im Worldbuilder (`allWorldEffects`).
+- **`Validate.checkFlags` war seit jeher wirkungslos** (beim P1-1-Fix
+  entdeckt): der „checked"-Akkumulator wurde in *keinem* Zweig befüllt,
+  `MissingSetFlag` konnte deshalb **nie** feuern. Die geprüften Flags stammen
+  jetzt aus dem Predicate-Baum (Trigger-Bedingungen, `visible_when`,
+  `CondText`) via `flagsInPredicate`; neue Prüfhilfe `allPredicates` spiegelt
+  `allWorldPredicates` des Worldbuilders. Exit-Schlüssel aus `locked_by:`
+  gelten dabei als gültige Entitäten, sonst würde jedes `set_state` auf einem
+  Schloss als fehlende Entität gemeldet.
+- `Validate.checkMissingVehiclesInDefs` (P1-3) konnte nie etwas melden
+  (`allRefs = []`). Es sammelt jetzt `ship.<vehicleId>.<system>`-Referenzen aus
+  Effekten und Prädikaten (rekursiv, inkl. `Narrative`-Folgeeffekt,
+  `Conditional`, `ApplyCondition`) und meldet undeklarierte Fahrzeug-IDs.
+- `Validate` Erreichbarkeitsprüfung (P1-4) riet den Startraum (bevorzugt
+  `start`, sonst alphabetisch kleinster Raum) und ein Test deckte das Ergebnis
+  zu. Stattdessen `checkUnreachableFrom : RoomID -> GameWorld -> …`, aufgerufen
+  aus `validateGameState` mit `currentRoom` — der echte `start_room` lebt nur
+  im `SaveState`. `validateWorld` rät nicht mehr; die Test-Maskierung in
+  `worldbuilder/test/Tests.hs` ist entfernt. **Folgefund:** dadurch aufgedeckt,
+  dass in `examples/modules/stealth.yaml` die Räume `boiler_room`,
+  `stairs_down` und `cellar` keinen Eingang hatten (die alte Prüfung ging nur
+  durch, weil der geratene Startraum zufällig `boiler_room` war) — behoben mit
+  zwei additiven Exits (`start_hall: down → stairs_down`,
+  `junction: east → boiler_room`).
 
 ## [0.9.0.0] — Unreleased
 

@@ -13,7 +13,7 @@ import Game
 import GameLoop (commandCompletion, LoopState (..), initLoopState, applyLoopCommand)
 import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText)
 import Verbs (verbAliasMap)
-import Validate (ValidationError (..), validateWorld)
+import Validate (ValidationError (..), validateWorld, validateGameState)
 import Sample (initSampleGame)
 import System.Console.Haskeline (Completion (..))
 import System.Exit (exitFailure)
@@ -1666,8 +1666,70 @@ testUnreachableRoomDetected = do
             Nothing Nothing Nothing Nothing Nothing
         gw = (world initSampleGame)
                 { rooms = Map.insert "isolated" roomIsolated (rooms (world initSampleGame)) }
+        -- Reachability is checked where the real start room is known, i.e. in
+        -- validateGameState (SaveState.currentRoom) -- not guessed by validateWorld.
+        errors = validateGameState gw (save initSampleGame)
+    r1 <- expectTrue "unreachable room detected from the real start room"
+            (UnreachableRoom "isolated" `elem` errors)
+    r2 <- expectTrue "validateWorld does not guess a start room"
+            (UnreachableRoom "isolated" `notElem` validateWorld gw)
+    pure (r1 && r2)
+
+-- | P1-1: effects inside trigger rules must be part of the validation collection.
+--   A `give: ghost_item` / `start_quest: ghost_quest` inside a rule was invisible.
+testRuleEffectsAreValidated :: IO Bool
+testRuleEffectsAreValidated = do
+    let gw = (world initSampleGame)
+                { triggerDefs =
+                    [ TriggerDef "t_missing_item" OnTurn Nothing
+                        [ MoveEntity "ghost_item" (InRoom "isolated_void") ] False 0
+                    , TriggerDef "t_missing_quest" OnTurn Nothing
+                        [ QuestOp StartQuest "ghost_quest" ] False 0
+                    ] }
         errors = validateWorld gw
-    expectTrue "unreachable room detected" (UnreachableRoom "isolated" `elem` errors)
+    r1 <- expectTrue "item referenced in a rule is detected"
+            (MissingItem "ghost_item" `elem` errors)
+    r2 <- expectTrue "quest referenced in a rule is detected"
+            (MissingQuest "ghost_quest" `elem` errors)
+    pure (r1 && r2)
+
+-- | P1-1: a flag set by a rule (and checked in a rule condition) is not a false
+--   MissingSetFlag; a flag only ever checked is one.
+testRuleFlagCheckedButNeverSet :: IO Bool
+testRuleFlagCheckedButNeverSet = do
+    let gw = (world initSampleGame)
+                { triggerDefs =
+                    [ TriggerDef "t_set" OnTurn (Just (HasFlag "rule_flag"))
+                        [ SetValue (VRFlag "rule_flag") (EVBool True) ] False 0
+                    , TriggerDef "t_check" OnTurn (Just (HasFlag "never_set_flag"))
+                        [ SendMessage "checked only" ] False 0
+                    ] }
+        errors = validateWorld gw
+    r1 <- expectTrue "flag set by a rule is not reported as MissingSetFlag"
+            (MissingSetFlag "rule_flag" "checked but never set in any outcome" `notElem` errors)
+    r2 <- expectTrue "flag checked but never set is reported"
+            (any (\e -> case e of MissingSetFlag f _ -> f == "never_set_flag"; _ -> False) errors)
+    pure (r1 && r2)
+
+-- | P1-3: `ship.<id>.<system>` references must resolve to a declared vehicle.
+testMissingVehicleInRuleDetected :: IO Bool
+testMissingVehicleInRuleDetected = do
+    let gw = (world initSampleGame)
+                { triggerDefs =
+                    [ TriggerDef "t_ship" OnTurn
+                        (Just (CompareVar "ship.ghost.hull" CLte 0))
+                        [ ModifyValue (VRVariable "ship.ghost.power") (-1) ] False 0
+                    ] }
+        errors = validateWorld gw
+    r1 <- expectTrue "undeclared ship.<id> in a rule/predicate is detected"
+            (MissingVehicle "ghost" `elem` errors)
+    let gwOk = gw { vehicleDefs = Map.insert "ghost"
+                        (VehicleDef "ghost" "Ghost" "A ghost ship." PlayerControlled []
+                            "start" Nothing Map.empty [] Nothing Map.empty)
+                        (vehicleDefs gw) }
+    r2 <- expectTrue "declared vehicle id is not a false positive"
+            (MissingVehicle "ghost" `notElem` validateWorld gwOk)
+    pure (r1 && r2)
 
 -- ===== Dialogue tests (Phase 4.6) =====
 
@@ -2288,6 +2350,9 @@ main = do
         , runTest "dangling exit is detected" testDanglingExitDetected
         , runTest "duplicate IDs across categories" testDuplicateIDsBetweenItemsAndRooms
         , runTest "unreachable room is detected" testUnreachableRoomDetected
+        , runTest "rule effects are validated (P1-1)" testRuleEffectsAreValidated
+        , runTest "rule flag checked-but-never-set (P1-1)" testRuleFlagCheckedButNeverSet
+        , runTest "missing vehicle in rule is detected (P1-3)" testMissingVehicleInRuleDetected
         -- Dialogue & Polish (Phase 4.6)
         , runTest "dialogue tree start and render" testDialogueTreeStartAndRender
         , runTest "dialogue choice navigation" testDialogueChoiceNavigation

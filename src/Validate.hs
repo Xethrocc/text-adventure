@@ -3,7 +3,7 @@
 module Validate (ValidationError(..), validateWorld, validateGameState, setFlagsInWorld) where
 
 import Types
-import Data.List (nub)
+import Data.List (nub, stripPrefix)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
@@ -43,7 +43,6 @@ validateWorld :: GameWorld -> [ValidationError]
 validateWorld gw =
     concat
         [ checkDanglingExits gw
-        , checkUnreachableRooms gw
         , checkDuplicateIDs gw
         , checkDialogueTrees gw
         , checkMissingItemsInDefs gw
@@ -76,26 +75,35 @@ exitRoomID (Locked r _) = r
 -- Reachability
 -- ---------------------------------------------------------------------------
 
--- | Find all rooms reachable from "start" via Open exits, then flag the rest.
-checkUnreachableRooms :: GameWorld -> [ValidationError]
-checkUnreachableRooms gw =
-    let start = if Map.member "start" (rooms gw) then "start"
-                else if Map.null (rooms gw) then ""
-                else fst (Map.findMin (rooms gw))
-        -- Vehicle stops and interiors are reached by boarding/driving, not by
-        -- room exits, so they must not be flagged as unreachable.
-        vehRoomSet = Set.fromList
-            ( concat [ (stopExternalRoom <$> Map.elems (vehicleStops vd))
-                       ++ vehicleRooms vd
-                     | vd <- Map.elems (vehicleDefs gw) ] )
-        reachable = Set.fromList
-            ( concat [ reachableRooms s gw
-                     | s <- start : Set.toList vehRoomSet
-                     , Map.member s (rooms gw) ] )
-        allRooms = [ rId | rId <- Map.keys (rooms gw)
-                         , let room = rooms gw Map.! rId
-                         , not ("vehicle" `Set.member` roomTags room) ]
-    in [UnreachableRoom rId | rId <- allRooms, not (Set.member rId reachable)]
+-- | Rooms unreachable from the given start room via Open/Locked exits, plus the
+--   vehicle stops and interiors (reached by boarding/driving, not by room
+--   exits). The caller supplies the start room: `validateGameState` uses
+--   `currentRoom` from the SaveState, which is the only place the real
+--   `start_room` is known. `validateWorld` has no start room and therefore does
+--   not guess one.
+--
+--   A start room that does not exist is reported as `InvalidStartRoom` by
+--   `validateGameState`; reachability is skipped in that case to avoid
+--   flagging every room as unreachable on top of it.
+checkUnreachableFrom :: RoomID -> GameWorld -> [ValidationError]
+checkUnreachableFrom start gw
+    | Map.null (rooms gw) = []
+    | not (Map.member start (rooms gw)) = []
+    | otherwise =
+        let -- Vehicle stops and interiors are reached by boarding/driving, not by
+            -- room exits, so they must not be flagged as unreachable.
+            vehRoomSet = Set.fromList
+                ( concat [ (stopExternalRoom <$> Map.elems (vehicleStops vd))
+                           ++ vehicleRooms vd
+                         | vd <- Map.elems (vehicleDefs gw) ] )
+            reachable = Set.fromList
+                ( concat [ reachableRooms s gw
+                         | s <- start : Set.toList vehRoomSet
+                         , Map.member s (rooms gw) ] )
+            allRooms = [ rId | rId <- Map.keys (rooms gw)
+                             , let room = rooms gw Map.! rId
+                             , not ("vehicle" `Set.member` roomTags room) ]
+        in [UnreachableRoom rId | rId <- allRooms, not (Set.member rId reachable)]
 
 -- | BFS from a starting room, following both open and locked exits.
 reachableRooms :: RoomID -> GameWorld -> [RoomID]
@@ -197,8 +205,14 @@ checkMissingEntitiesInDefs :: GameWorld -> [ValidationError]
 checkMissingEntitiesInDefs gw =
     let -- "player" is a built-in entity valid for VRProperty refs
         -- (e.g. VRProperty "player" "room" teleports the player).
+        -- Exit lock keys (`locked_by: <id>`) are entities too: `set_state`
+        -- compiles to `VRProperty <lockId> "state"`, which the engine stores in
+        -- `entityStates` and reads back for the locked exit. Without them, every
+        -- `set_state` on a lock would read as a missing entity.
+        lockEntities = [ e | room <- Map.elems (rooms gw)
+                           , Locked _ e <- Map.elems (roomConnections room) ]
         entityRefs = Set.insert "player"
-            (Set.fromList (Map.keys (itemDefs gw) ++ Map.keys (npcDefs gw)))
+            (Set.fromList (Map.keys (itemDefs gw) ++ Map.keys (npcDefs gw) ++ lockEntities))
         allRefs = concatMap idsFromOutcomeEntity (allOutcomes gw)
     in [MissingEntity eId "property" | eId <- nub allRefs, not (Set.member eId entityRefs)]
 
@@ -208,36 +222,32 @@ checkMissingQuestsInDefs gw =
         allRefs = concatMap idsFromOutcomeQuest (allOutcomes gw)
     in [MissingQuest qId | qId <- nub allRefs, not (Set.member qId questRefs)]
 
+-- | Vehicle IDs referenced from the world: `ship.<vehicleId>.<system>`
+--   variable reads/writes in effects and predicates. An undeclared vehicle id
+--   in such a reference is a typo the engine would silently evaluate against a
+--   missing variable, so it is a real validation error.
 checkMissingVehiclesInDefs :: GameWorld -> [ValidationError]
 checkMissingVehiclesInDefs gw =
     let vehicleRefs = Set.fromList (Map.keys (vehicleDefs gw))
-        allRefs = []
+        allRefs = concatMap idsFromOutcomeVehicle (allOutcomes gw)
+               ++ concatMap idsFromPredicateVehicle (allPredicates gw)
     in [MissingVehicle vId | vId <- nub allRefs, not (Set.member vId vehicleRefs)]
 
 -- ---------------------------------------------------------------------------
 -- Flag consistency
 -- ---------------------------------------------------------------------------
 
--- | Find flags that are checked (CheckFlag) but never set (SetFlag or flag
---   interaction) anywhere in the world definitions.
+-- | Find flags that are checked in a predicate (HasFlag / Compare on VRFlag)
+--   but never set (SetFlag outcome) anywhere in the world definitions.
 checkFlags :: GameWorld -> [ValidationError]
 checkFlags gw =
-    let (setFlags, checked) = foldl scanFlags (Set.empty, Set.empty)
-            (allOutcomes gw)
-        missing = Set.toList (Set.difference checked setFlags)
+    let setFlags = foldl scanSetFlags Set.empty (allOutcomes gw)
+        checked  = Set.fromList (concatMap flagsInPredicate (allPredicates gw))
+        missing  = Set.toList (Set.difference checked setFlags)
     in [MissingSetFlag flg "checked but never set in any outcome" | flg <- missing]
 
-scanFlags :: (Set.Set FlagID, Set.Set FlagID) -> Effect
-          -> (Set.Set FlagID, Set.Set FlagID)
-scanFlags (setAcc, checkAcc) outcome = case outcome of
-    SetValue (VRFlag n) _         -> (Set.insert n setAcc, checkAcc)
-    Sequence os                   -> foldl scanFlags (setAcc, checkAcc) os
-    RandomChoice os               -> foldl scanFlags (setAcc, checkAcc) (map snd os)
-    Conditional _ t e             -> scanFlags (scanFlags (setAcc, checkAcc) t) e
-    _                             -> (setAcc, checkAcc)
-
 -- ---------------------------------------------------------------------------
--- Collect all ActionOutcomes defined in a GameWorld
+-- Collect all ActionOutcomes / predicates defined in a GameWorld
 -- ---------------------------------------------------------------------------
 
 allOutcomes :: GameWorld -> [Effect]
@@ -250,12 +260,33 @@ allOutcomes gw = concat
     , catMaybes (map questReward (Map.elems (questDefs gw)))
     , concatMap (\(_, o) -> [o])
         (concatMap (Map.toList . vehicleConditionEffects) (Map.elems (vehicleDefs gw)))
-    , [ dcOutcome choice
-      | npc <- Map.elems (npcDefs gw)
-      , tree <- Map.elems (npcDialogueTrees npc)
-      , node <- Map.elems (dtNodes tree)
-      , choice <- dnChoices node
-      ]
+    , map dcOutcome (worldDialogueChoices gw)
+    -- Trigger rules carry the bulk of the gameplay logic since Phase 3f/7; a
+    -- validator that ignores them is blind to `give:`, `start_quest:` and flag
+    -- references inside `rules:`.
+    , concatMap trEffects (triggerDefs gw)
+    ]
+
+-- | Every predicate tree reachable from a GameWorld: trigger conditions,
+--   dialogue-choice gates and conditional-text variants. Mirrors the
+--   worldbuilder's `allWorldPredicates` so both packages see one reference set.
+allPredicates :: GameWorld -> [Predicate]
+allPredicates gw = concat
+    [ [ p | TriggerDef { trCondition = Just p } <- triggerDefs gw ]
+    , catMaybes (map dcVisible (worldDialogueChoices gw))
+    , concatMap (map tvWhen . ctVariants) (map roomDescription (Map.elems (rooms gw)))
+    , concatMap (map tvWhen . ctVariants) (map itemDescription (Map.elems (itemDefs gw)))
+    , concatMap (map tvWhen . ctVariants) (map npcDescription (Map.elems (npcDefs gw)))
+    ]
+
+-- | Every dialogue choice in every NPC dialogue tree.
+worldDialogueChoices :: GameWorld -> [DialogueChoice]
+worldDialogueChoices gw =
+    [ choice
+    | npc <- Map.elems (npcDefs gw)
+    , tree <- Map.elems (npcDialogueTrees npc)
+    , node <- Map.elems (dtNodes tree)
+    , choice <- dnChoices node
     ]
 
 catMaybes :: [Maybe a] -> [a]
@@ -305,6 +336,43 @@ idsFromOutcomeQuest outcome = case outcome of
     Conditional _ t e            -> idsFromOutcomeQuest t ++ idsFromOutcomeQuest e
     _                            -> []
 
+-- | Vehicle IDs referenced via `ship.<id>.<system>` variables in an Effect.
+idsFromOutcomeVehicle :: Effect -> [String]
+idsFromOutcomeVehicle outcome = case outcome of
+    SetValue (VRVariable n) _      -> shipFromVar n
+    ModifyValue (VRVariable n) _   -> shipFromVar n
+    Sequence os                    -> concatMap idsFromOutcomeVehicle os
+    RandomChoice os                -> concatMap (idsFromOutcomeVehicle . snd) os
+    Conditional p t e              -> idsFromPredicateVehicle p
+                                   ++ idsFromOutcomeVehicle t
+                                   ++ idsFromOutcomeVehicle e
+    Narrative _ followUp           -> idsFromOutcomeVehicle followUp
+    ApplyCondition _ _ mt me       -> concatMap idsFromOutcomeVehicle (catMaybes [mt, me])
+    _                              -> []
+
+-- | Vehicle IDs referenced via `ship.<id>.<system>` variables in a Predicate.
+idsFromPredicateVehicle :: Predicate -> [String]
+idsFromPredicateVehicle p = case p of
+    PNot q              -> idsFromPredicateVehicle q
+    PAll qs             -> concatMap idsFromPredicateVehicle qs
+    PAny qs             -> concatMap idsFromPredicateVehicle qs
+    CompareVar n _ _    -> shipFromVar n
+    Compare lhs _ rhs   -> shipFromRef lhs ++ shipFromRef rhs
+    _                   -> []
+  where
+    shipFromRef (VRVariable n) = shipFromVar n
+    shipFromRef _              = []
+
+-- | `"ship.<vehicleId>.<system>"` -> `Just "<vehicleId>"`; anything else ->
+--   Nothing. Requires a non-empty vehicle id and a following ".system" part,
+--   so a bare `"ship."` or `"ship.x"` is not treated as a reference.
+shipFromVar :: String -> [String]
+shipFromVar n = case stripPrefix "ship." n of
+    Just rest -> case break (== '.') rest of
+        (vId, '.':_) | not (null vId) -> [vId]
+        _                             -> []
+    Nothing -> []
+
 -- ---------------------------------------------------------------------------
 -- Phase 2a: SaveState / reference validation
 -- ---------------------------------------------------------------------------
@@ -319,6 +387,8 @@ validateGameState gw st = concat
     , checkVehicleRefs
     , checkQuestStageCounts
     , checkQuestPrereqFlags
+    -- Reachability needs the real start room, which only the SaveState knows.
+    , checkUnreachableFrom (currentRoom st) gw
     ]
   where
     roomKeys = Map.keys (rooms gw)
@@ -384,6 +454,10 @@ validateGameState gw st = concat
 setFlagsInWorld :: GameWorld -> Set.Set FlagID
 setFlagsInWorld gw =
     let setFromOutcomes = foldl scanSetFlags Set.empty (allOutcomes gw)
+        setFromPredicates = Set.fromList
+            [ f | p <- allPredicates gw
+                , f <- flagsInPredicate p
+                , not (null f) ]
         setFromTexts    = Set.fromList
             [ f | r <- Map.elems (rooms gw)
                 , f <- flagsInCondText (roomDescription r)
@@ -402,7 +476,7 @@ setFlagsInWorld gw =
             [ f | r <- Map.elems (rooms gw)
                 , Just f <- [roomLightFlag r]
                 , not (null f) ]
-    in setFromOutcomes `Set.union` setFromTexts `Set.union` setFromLight
+    in setFromOutcomes `Set.union` setFromPredicates `Set.union` setFromTexts `Set.union` setFromLight
 
 -- | Collect flags referenced by a predicate (HasFlag / Compare on VRFlag).
 flagsInPredicate :: Predicate -> [FlagID]
