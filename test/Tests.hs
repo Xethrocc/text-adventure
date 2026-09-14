@@ -565,7 +565,7 @@ shipGame power weapons shields hull =
             PlayerControlled
             ["carriage_cabin"] "carriage_cabin" (Just "carriage_cabin")
             (Map.fromList [("hallway", VehicleStop "hallway" "the dark hallway" Nothing)])
-            ["ship", "kestrel"] Nothing Map.empty
+            [] ["ship", "kestrel"] Nothing Map.empty
         vars = Map.fromList
             [ ("ship.ship.power",   VVInt power)
             , ("ship.ship.weapons", VVInt weapons)
@@ -711,12 +711,10 @@ testDefaultSaveStateFieldsInitialised = do
             let ss = save st
             _ <- evaluate (rngState ss)
             _ <- evaluate (variables ss)
-            _ <- evaluate (containers ss)
             _ <- evaluate (triggerStates ss)
             r1 <- expectEqual initialRngState (rngState ss)
             r2 <- expectEqual (Just (VVInt 3)) (Map.lookup "quest_stage" (variables ss))
-            r3 <- expectTrue "containers default to empty" (Map.null (containers ss))
-            r4 <- expectTrue "triggerStates default to empty" (Map.null (triggerStates ss))
+            r3 <- expectTrue "triggerStates default to empty" (Map.null (triggerStates ss))
             -- the variable must be usable by the predicate DSL ...
             r5 <- expectTrue "CompareVar evaluates against the default variable"
                     (evalPredicate (CompareVar "quest_stage" CGte 3) st)
@@ -724,7 +722,7 @@ testDefaultSaveStateFieldsInitialised = do
             let (loop', _) = applyLoopCommand (Go North) (initLoopState st)
                 st' = lsCurrent loop'
             r6 <- expectEqual "hallway" (currentRoom (save st'))
-            pure (r1 && r2 && r3 && r4 && r5 && r6)
+            pure (r1 && r2 && r3 && r5 && r6)
 
 -- | Second companion used by the P0-2 combat regressions.
 guardDef :: NPCDef
@@ -1792,7 +1790,7 @@ testMissingVehicleInRuleDetected = do
             (MissingVehicle "ghost" `elem` errors)
     let gwOk = gw { vehicleDefs = Map.insert "ghost"
                         (VehicleDef "ghost" "Ghost" "A ghost ship." PlayerControlled []
-                            "start" Nothing Map.empty [] Nothing Map.empty)
+                            "start" Nothing Map.empty [] ["ghost"] (Just ("hay", 10)) Map.empty)
                         (vehicleDefs gw) }
     r2 <- expectTrue "declared vehicle id is not a false positive"
             (MissingVehicle "ghost" `notElem` validateWorld gwOk)
@@ -2233,6 +2231,89 @@ testTradeSellAddsCredits = do
     r2 <- expectTrue "rope removed" (not (hasItem "rope" st'))
     pure (r1 && r2)
 
+-- ===== P1-8: VTInt-Grenzen wirksam =====
+
+-- | `set_state` auf eine int-Variable respektiert min/max der Variablendefinition
+--   (P1-8). Ohne Clamping würde 15 statt 10 gespeichert.
+testVTIntBoundsEnforcedOnSet :: IO Bool
+testVTIntBoundsEnforcedOnSet = do
+    let w = (world initSampleGame)
+            { varDefs = Map.insert "score"
+                (VarDef "score" (VTInt (Just 0) (Just 10)) (VVInt 5))
+                (varDefs (world initSampleGame)) }
+        base = initSampleGame { world = w }
+        (over, _)  = applyOutcome (SetValue (VRVariable "score") (EVInt 15)) "" base
+        (under, _) = applyOutcome (SetValue (VRVariable "score") (EVInt (-3))) "" base
+    r1 <- expectEqual (Just (VVInt 10)) (getVariable "score" over)
+    r2 <- expectEqual (Just (VVInt 0)) (getVariable "score" under)
+    pure (r1 && r2)
+
+-- | `modify_value` clampt auf die Ober-/Untergrenze (P1-8).
+testVTIntBoundsEnforcedOnModify :: IO Bool
+testVTIntBoundsEnforcedOnModify = do
+    let w = (world initSampleGame)
+            { varDefs = Map.insert "score"
+                (VarDef "score" (VTInt (Just 0) (Just 10)) (VVInt 8))
+                (varDefs (world initSampleGame)) }
+        base = initSampleGame
+            { world = w
+            , save = (save initSampleGame) { variables = Map.singleton "score" (VVInt 8) } }
+        (up, _)   = applyOutcome (ModifyValue (VRVariable "score") 5) "" base
+        (down, _) = applyOutcome (ModifyValue (VRVariable "score") (-100)) "" base
+    r1 <- expectEqual (Just (VVInt 10)) (getVariable "score" up)
+    r2 <- expectEqual (Just (VVInt 0)) (getVariable "score" down)
+    pure (r1 && r2)
+
+-- ===== P1-9: Fuel-Text in vehicleLookAddon =====
+
+-- | Hilfszustand: an Bord der Kutsche mit vorgegebenem Treibstoffstand.
+aboardWithFuel :: Int -> GameState
+aboardWithFuel f = initSampleGame
+    { save = (save initSampleGame)
+        { currentVehicle = Just "carriage"
+        , vehicleStates = Map.insert "carriage"
+            ((getVehicleState "carriage" initSampleGame) { vsFuel = Just f })
+            (vehicleStates (save initSampleGame)) } }
+
+-- | Leerer Tank meldet "Out of hay (0/10)" statt eines kaputten Strings
+--   (P1-9: `if f <= 0 then ... else ...` vertauschte Zweige).
+testVehicleLookFuelEmpty :: IO Bool
+testVehicleLookFuelEmpty = do
+    r1 <- expectEqual (Just "Out of hay (0/10)") (vehicleLookAddon (aboardWithFuel 0))
+    r2 <- expectEqual (Just "Out of hay (0/10)") (vehicleLookAddon (aboardWithFuel (-2)))
+    pure (r1 && r2)
+
+-- | Gefüllter Tank meldet "Fuel (hay: n/10)".
+testVehicleLookFuelFilled :: IO Bool
+testVehicleLookFuelFilled = do
+    let addon = vehicleLookAddon (aboardWithFuel 7)
+    r1 <- expectEqual (Just "Fuel (hay: 7/10)") addon
+    pure r1
+
+-- ===== P1-10/.11: geänderte Fahrzeug-Klauseln =====
+
+-- | `move ... in_container:` ist ein dokumentierter No-op mit Fehlermeldung
+--   statt eines stillen No-ops (P1-11).
+testMoveEntityInContainerReportsError :: IO Bool
+testMoveEntityInContainerReportsError = do
+    let (st, msg) = applyOutcome (MoveEntity "torch" (InContainer "chest")) "" initSampleGame
+        torchLoc = itemLocation <$> Map.lookup "torch" (itemStates (save st))
+    r1 <- expectTrue "error message shown" ("can't move" `isInfixOf` msg)
+    r2 <- expectTrue "item did not move" (torchLoc == Just (InRoom "start"))
+    pure (r1 && r2)
+
+-- | `vehicleStopList` liefert Stops in der AUTOREN-Reihenfolge, wenn
+--   `vehicleRoute` gesetzt ist — nicht in Map-Schlüsselreihenfolge (P1-10).
+testVehicleStopListUsesAuthoredRoute :: IO Bool
+testVehicleStopListUsesAuthoredRoute = do
+    let v0 = (vehicleDefs (world initSampleGame)) Map.! "carriage"
+        v' = v0 { vehicleRoute = ["start", "meadow"] }
+        authored = map fst (vehicleStopList v')
+    r1 <- expectEqual ["start", "meadow"] authored
+    -- ohne route: Fallback bleibt Map-Reihenfolge (abwärtskompatibel)
+    r2 <- expectEqual ["meadow", "start"] (map fst (vehicleStopList v0))
+    pure (r1 && r2)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -2454,5 +2535,15 @@ main = do
         , runTest "buy with funds deducts and delivers" testTradeBuyWithFunds
         , runTest "buy without cover changes nothing" testTradeBuyInsufficientFundsChangesNothing
         , runTest "sell adds credits and removes item" testTradeSellAddsCredits
+        -- P1-8: VTInt-Grenzen wirksam
+        , runTest "set_state clamps to VTInt bounds (P1-8)" testVTIntBoundsEnforcedOnSet
+        , runTest "modify_value clamps to VTInt bounds (P1-8)" testVTIntBoundsEnforcedOnModify
+        -- P1-9: Fuel-Text
+        , runTest "vehicle look: empty fuel text (P1-9)" testVehicleLookFuelEmpty
+        , runTest "vehicle look: filled fuel text (P1-9)" testVehicleLookFuelFilled
+        -- P1-11: InContainer kein stiller No-op
+        , runTest "move into container reports error (P1-11)" testMoveEntityInContainerReportsError
+        -- P1-10: Autoren-Reihenfolge der Stops
+        , runTest "vehicle stops follow authored route (P1-10)" testVehicleStopListUsesAuthoredRoute
         ]
     when (not (and results)) exitFailure

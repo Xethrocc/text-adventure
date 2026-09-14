@@ -690,6 +690,7 @@ data VehicleDef = VehicleDef
     , vehicleEntryRoom        :: RoomID                         -- ^ where `enter` puts the player
     , vehicleCockpitRoom      :: Maybe RoomID                   -- ^ required for `drive` (PlayerControlled)
     , vehicleStops            :: Map.Map RoomID VehicleStop     -- ^ outside room -> stop
+    , vehicleRoute            :: [RoomID]                       -- ^ AUTHORED stop order; empty = Map key order (backward compat)
     , vehicleKeywords         :: [String]
     , vehicleFuelProp         :: Maybe (String, Int)            -- ^ (fuel name, max units)
     , vehicleConditionEffects :: Map.Map String Effect   -- ^ condition -> outcome fired vehicle-wide
@@ -705,6 +706,7 @@ instance ToJSON VehicleDef where
         , "vehicleEntryRoom"        .= vehicleEntryRoom v
         , "vehicleCockpitRoom"      .= vehicleCockpitRoom v
         , "vehicleStops"            .= vehicleStops v
+        , "vehicleRoute"            .= vehicleRoute v
         , "vehicleKeywords"         .= vehicleKeywords v
         , "vehicleFuelProp"         .= vehicleFuelProp v
         , "vehicleConditionEffects" .= vehicleConditionEffects v
@@ -720,6 +722,7 @@ instance FromJSON VehicleDef where
         <*> o .:  "vehicleEntryRoom"
         <*> o .:? "vehicleCockpitRoom"      .!= Nothing
         <*> o .:? "vehicleStops"            .!= Map.empty
+        <*> o .:? "vehicleRoute"            .!= []
         <*> o .:? "vehicleKeywords"         .!= []
         <*> o .:? "vehicleFuelProp"         .!= Nothing
         <*> o .:? "vehicleConditionEffects" .!= Map.empty
@@ -954,9 +957,8 @@ data SaveState = SaveState
     , activeDialogue     :: Maybe NPCID                       -- ^ Currently engaged dialogue NPC (Phase 4.6)
     , rngState           :: Word64                            -- ^ Explicit RNG state for deterministic random outcomes (Phase 1)
     , variables          :: Map.Map String VariableValue       -- ^ Adventure-declared variables (Phase 3b)
-    , containers         :: Map.Map EntityID ContainerState    -- ^ Container open/closed/locked states
     , triggerStates      :: Map.Map String TriggerState      -- ^ Runtime state of trigger rules (fired/cooldown)
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Generic)
 
 instance ToJSON SaveState where
     toJSON ss = object
@@ -980,7 +982,6 @@ instance ToJSON SaveState where
         , "activeDialogue"  .= activeDialogue ss
         , "rngState"        .= rngState ss
         , "variables"       .= variables ss
-        , "containers"      .= containers ss
         , "triggerStates"   .= triggerStates ss
         ]
 
@@ -1006,7 +1007,6 @@ instance FromJSON SaveState where
         <*> o .:? "activeDialogue"  .!= Nothing
         <*> o .:? "rngState"        .!= 0
         <*> o .:? "variables"       .!= Map.empty
-        <*> o .:? "containers"      .!= Map.empty
         <*> o .:? "triggerStates"   .!= Map.empty
 
 -- | Save file wrapper with metadata for save slots

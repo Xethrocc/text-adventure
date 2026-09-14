@@ -159,7 +159,6 @@ compileAdventure adv =
                         , E.activeDialogue = Nothing
                         , E.rngState = E.initialRngState
                         , E.variables = initialVars
-                        , E.containers = Map.empty
                         , E.triggerStates = Map.empty
                         }
             in Right (CompileResult gw startSave)
@@ -1018,6 +1017,7 @@ compileVehicleDefSafe v =
                     , E.vehicleEntryRoom = avEntryRoom v
                     , E.vehicleCockpitRoom = avCockpit v
                     , E.vehicleStops = Map.fromList [(rId, E.VehicleStop rId label Nothing) | (label, rId) <- Map.toList (avStops v)]
+                    , E.vehicleRoute = []  -- authored stop order; empty = key order
                     , E.vehicleKeywords = avKeywords v
                     , E.vehicleFuelProp = avFuel v
                     , E.vehicleConditionEffects = Map.map (\os -> combineOutcomes (map compileAActionOutcome os)) (avConditions v)

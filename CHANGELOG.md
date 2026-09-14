@@ -180,6 +180,31 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   Idempotenz ist die Rekursionsschranke für eine Regel, die ihren eigenen
   Zustand aus dem `on: state`-Handler erneut schreibt. `applySetValue` liefert
   dafür jetzt `(GameState, String)` und reicht die Handler-Meldung durch.
+- `set_var`/`modify_value` ignorierten die `min:`/`max:`-Grenzen einer
+  `int`-Variablen (Code-Review P1-8) — ein `set_var: 99` auf eine Variable mit
+  `max: 10` speicherte 99. Neu: `setVariableChecked` clampt beim Setzen **und**
+  beim Modifizieren über `clampToVarDef` auf die deklarierte Spanne; unbeschränkte
+  Seiten (`min:`/`max:` weggelassen, `Nothing`) bleiben unberührt. Durch
+  `-Werror=missing-fields` und Regressionstests abgesichert.
+- Fahrzeug-`look` erzeugte für einen leeren Tank einen kaputten Text
+  (P1-9): `if f <= 0 then "Out of " else "Fuel ("` mit anschließendem
+  `if f > 0`, kombiniert mit `++ "")` und `++ ")"` produzierte z. B.
+  `Out of 0/10)` oder `Fuel (0/10)`. Der Text ist jetzt sauber
+  zweizeilig: `Out of hay (0/10)` bzw. `Fuel (hay: 7/10)`.
+- Fahrzeug-Stops wurden immer in Sortierreihenfolge der Map-Schlüssel
+  zurückgegeben (P1-10) — die Autoren-Reihenfolge der `stops:`-Liste (und die
+  daraus abgeleitete Routenrichtung) ging verloren. Neu: optionales
+  Schema-Feld `route:` (`VehicleDef.vehicleRoute`); `vehicleStopList`
+  respektiert es und fällt ohne Angabe auf `Map.toList` zurück
+  (abwärtskompatibel).
+- `move … in_container:` war ein **stiller No-op** (P1-11): nichts wurde
+  bewegt, keine Meldung, kein Fehler — Autoren konnten eine Container-API
+  vermuten, die es nicht gibt. Container sind nur eine **Kompilierzeit-**
+  Startplatzierung (`in_container:` auf Items, validiert über
+  `checkContainerRefs`); Items bewegen sich zur Laufzeit über
+  `give`/`drop`/`consume`. Der Effektzweig meldet jetzt den Fehler statt zu
+  schweigen, und das tote Laufzeit-Feld `SaveState.containers` (+
+  `ContainerState`) ist entfernt.
 
 ## [0.9.0.0] — Unreleased
 

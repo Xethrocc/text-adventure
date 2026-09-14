@@ -59,7 +59,6 @@ minSave = E.SaveState
     , activeDialogue = Nothing
     , rngState = 0
     , variables = Map.empty
-    , containers = Map.empty
     , triggerStates = Map.empty
     }
 

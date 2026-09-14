@@ -51,7 +51,6 @@ emptyGameState = GameState
         , activeDialogue     = Nothing
         , rngState           = initialRngState
         , variables          = Map.empty
-        , containers         = Map.empty
         , triggerStates      = Map.empty
         }
     , pendingNarrative = Nothing
@@ -551,6 +550,22 @@ setVariable :: String -> VariableValue -> GameState -> GameState
 setVariable name val state = state
     { save = (save state) { variables = Map.insert name val (variables (save state)) } }
 
+-- | Clamp an integer to the min/max declared for a VTInt variable (P1-8).
+clampToVarDef :: String -> Int -> GameState -> Int
+clampToVarDef name v state =
+    case vdVarType <$> Map.lookup name (varDefs (world state)) of
+        Just (VTInt lo hi) ->
+            let vLo = maybe v (\l -> max v l) lo
+            in maybe vLo (\h -> min vLo h) hi
+        _ -> v
+
+-- | Set a variable, clamping int values to the declared VTInt bounds (P1-8).
+setVariableChecked :: String -> VariableValue -> GameState -> GameState
+setVariableChecked name val state =
+    case val of
+        VVInt n -> setVariable name (VVInt (clampToVarDef name n state)) state
+        _       -> setVariable name val state
+
 -- | Evaluate a Predicate against the current game state.
 evalPredicate :: Predicate -> GameState -> Bool
 evalPredicate PTrue _ = True
@@ -684,7 +699,15 @@ applyOutcomeWith depth salt outcome targetId state
             Left err    -> (state, err, salt)
             Right st'   -> (st', "", salt)
     MoveEntity _ (InContainer _) ->
-        (state, "", salt)
+        -- P1-11: `InContainer` as a runtime effect is a silent no-op — it
+        -- moved nothing and said nothing, so an author writing
+        -- `move: ... in_container: chest` got no effect and no error. The
+        -- container mechanism is a compile-time START placement only
+        -- (`in_container:` on items, validated by `checkContainerRefs`).
+        -- Items are moved in/out via `give`/`drop`/`consume` like any other
+        -- location. This clause is kept as a documented no-op so the
+        -- outcome tree stays exhaustive; it is NOT a supported container API.
+        (state, "You can't move an item into a container that way.", salt)
 
     QuestOp StartQuest qId ->
         if canStartQuest qId state
@@ -743,7 +766,7 @@ applySetValue :: ValueRef -> EffectValue -> GameState -> (GameState, String)
 applySetValue (VRFlag name) val state =
     (setFlag name (effectValueToString val) state, "")
 applySetValue (VRVariable name) val state =
-    (setVariable name (effectValToVarVal val) state, "")
+    (setVariableChecked name (effectValToVarVal val) state, "")
 applySetValue (VRProperty eId "state") val state =
     setEntityStateWithEvents eId (effectValueToString val) state
 applySetValue (VRProperty "player" "room") val state =
@@ -786,7 +809,7 @@ modifyValueProp (VRVariable name) delta state =
             Just (VVInt n)  -> n
             Just (VVText s) -> case reads s of [(n,_)] -> n; _ -> 0
             _               -> 0
-    in (setVariable name (VVInt (cur + delta)) state, "")
+    in (setVariableChecked name (VVInt (cur + delta)) state, "")
 modifyValueProp (VRItemProp iId prop) delta state =
     (modifyItemProp iId prop delta state, "")
 modifyValueProp (VRProperty eId "hp") delta state =
@@ -980,7 +1003,12 @@ inVehicleRoom state = case currentVehicle (save state) of
 
 -- | All stops of a vehicle in route order (Map order = key order)
 vehicleStopList :: VehicleDef -> [(RoomID, VehicleStop)]
-vehicleStopList v = Map.toList (vehicleStops v)
+vehicleStopList v
+    | null (vehicleRoute v) = Map.toList (vehicleStops v)
+    | otherwise =
+        [ (rId, stop)
+        | rId <- vehicleRoute v
+        , Just stop <- [Map.lookup rId (vehicleStops v)] ]
 
 -- | The next stop after the current one (wrapping around the route)
 nextVehicleStop :: VehicleDef -> RoomID -> Maybe (RoomID, VehicleStop)
@@ -1150,8 +1178,9 @@ vehicleLookAddon state = case currentVehicle (save state) of
                                 ++ "!"
                 fuelLine = case (vehicleFuelProp v, vsFuel vState) of
                     (Just (fname, maxF), Just f) ->
-                        "\n" ++ (if f <= 0 then "Out of " else "Fuel (") ++ ""
-                                ++ (if f > 0 then fname ++ ": " else "") ++ show f ++ "/" ++ show maxF ++ ")"
+                        if f <= 0
+                            then "\nOut of " ++ fname ++ " (0/" ++ show maxF ++ ")"
+                            else "\nFuel (" ++ fname ++ ": " ++ show f ++ "/" ++ show maxF ++ ")"
                     _ -> ""
                 statusLine = unlines (filter (not . null) [condLine]) ++
                              (if null condLine then "" else "\n") ++ fuelLine

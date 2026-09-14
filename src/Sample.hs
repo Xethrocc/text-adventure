@@ -165,9 +165,11 @@ initSampleGame = GameState
                     [ ("meadow", VehicleStop "meadow" "the sunny meadow" Nothing)
                     , ("start",  VehicleStop "start"  "the stone chamber's entrance" Nothing)
                     ])
-                ["carriage", "wagon", "coach"]
-                (Just ("hay", 10))
-                Map.empty)
+                []                          -- ^ vehicleRoute (authored stop order)
+                ["carriage", "wagon", "coach"]  -- ^ vehicleKeywords
+                (Just ("hay", 10))              -- ^ vehicleFuelProp
+                Map.empty                       -- ^ vehicleConditionEffects (Phase 3)
+            )
             ]
         , verbDefs = Map.empty
         , varDefs = Map.empty
@@ -211,7 +213,6 @@ initSampleGame = GameState
         , activeDialogue = Nothing
         , rngState       = initialRngState
         , variables      = Map.empty
-        , containers     = Map.empty
         , triggerStates = Map.empty
         }
     , pendingNarrative = Nothing

@@ -76,7 +76,6 @@ defaultSaveState gw = SaveState
     , activeDialogue  = Nothing
     , rngState        = initialRngState
     , variables       = Map.map vdVarInitial (varDefs gw)
-    , containers      = Map.empty
     , triggerStates   = Map.empty
     }
 
