@@ -16,7 +16,8 @@ data ValidationError
     | MissingItem      ItemID                       -- ^ Referenced item def is missing
     | MissingNPC       NPCID                        -- ^ Referenced NPC def is missing
     | MissingQuest     QuestID                      -- ^ Referenced quest is missing
-    | MissingVehicle   VehicleID                    -- ^ Referenced vehicle is missing
+    | MissingVehicle   VehicleID                   -- ^ Referenced vehicle is missing
+    | MissingItemState ItemID                       -- ^ ItemDef exists but is placed nowhere (P2-8)
     | DanglingExit     RoomID Direction RoomID      -- ^ Exit points to a non-existent room
     | UnreachableRoom  RoomID                       -- ^ Room cannot be reached from start
     | DuplicateID      String String String         -- ^ (id, type1, type2)
@@ -382,6 +383,7 @@ validateGameState :: GameWorld -> SaveState -> [ValidationError]
 validateGameState gw st = concat
     [ checkStartRoom
     , checkItemLocs
+    , checkItemStateCoverage
     , checkContainerRefs
     , checkNPCLocs
     , checkVehicleRefs
@@ -404,6 +406,14 @@ validateGameState gw st = concat
         , let loc = itemLocation is
         , (rId) <- case loc of { InRoom r -> [r]; _ -> [] }
         , rId `notElem` roomKeys ]
+
+    -- P2-8: item lookup scans `itemStates`, so an `ItemDef` that is placed
+    -- nowhere is invisible at runtime (`take`/`look at` never see it). Fail
+    -- loudly instead of letting the item silently not exist.
+    checkItemStateCoverage =
+        [ MissingItemState iId
+        | iId <- itemKeys
+        , not (Map.member iId (itemStates st)) ]
 
     -- Items that start inside a container must reference an existing item id.
     checkContainerRefs =

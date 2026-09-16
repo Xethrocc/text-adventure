@@ -107,7 +107,6 @@ initSampleGame = GameState
             ]
         , npcDefs = Map.fromList
             [ ("oldman", NPCDef "oldman" "old man" (plainText "A withered old man in robes.")
-                (Map.singleton "alive" "It's dangerous to go alone! Take... well, I don't have anything actually.")
                 (Map.singleton "alive" (DialogueTree "greeting" (Map.fromList
                     [ ("greeting", DialogueNode "greeting" "Greetings, traveler! What brings you into this dark place?"
                         [ DialogueChoice "Who are you?" (Just "who") Nothing (Sequence [])
@@ -124,7 +123,6 @@ initSampleGame = GameState
                     ])))
                 ["man", "old man"] Nothing 0 0 Map.empty)
             , ("goblin", NPCDef "goblin" "goblin" (plainText "A nasty little green goblin.")
-                (Map.singleton "alive" "Grrr!! I will eat you!")
                 Map.empty
                 ["goblin", "monster"] (Just 30) 8 2 Map.empty)
             ]

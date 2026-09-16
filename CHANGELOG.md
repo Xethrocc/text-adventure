@@ -95,7 +95,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `ShipActor` (7h) erweitern sie ohne Signaturänderung.
 - `evalPredicate (Location "player" r)` prüft jetzt auch den Spielerraum
   (vorher nur NPC-/Item-Locations).
-- Tests: **198** Engine- + **71** Worldbuilder-Tests, **18** E2E-Playthroughs
+- Tests: **201** Engine- + **71** Worldbuilder-Tests, **18** E2E-Playthroughs
   (`scripts/ci.sh`).
 
 ### Fixed
@@ -239,7 +239,20 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   und validierte sauber, aber nichts löste es aus. Neu: Effekt `raise: <name>`
   (`RaiseEvent`); die Ereignis-Tiefe wird durch den Trigger-Pass gefädelt, damit
   selbstauslösende Regeln terminieren (Test mit Timeout-Guard).
-- Tests: **198** Engine- + **71** Worldbuilder-Tests, **18** E2E-Playthroughs.
+- Toter Code und Kleinigkeiten aus dem Review-P2-Block (Cluster A):
+  `mixHash`/`gameRandom`/`gameRandomIndex` entfernt (P2-1, Plan 1f verlangte
+  das bereits — sie luden ein, den expliziten RNG-State zu umgehen);
+  `executeCommand Restart` löschte die geladene Welt (P2-2); die
+  `modifyValueProp`-Signatur war durch eine fremde Definition von ihren
+  Klauseln getrennt (P2-3); `journalText` baute `unlines ("=== Journal ===" : [])`
+  (P2-6); `visited` wertete `EVBool` als `False` (P2-7); der ungenutzte
+  `EquippedBy`-Slot ist aus `Location` entfernt (P2-19); das Legacy-Feld
+  `npcDialogue` (P2-20) war für kompilierte Welten toter Pfad und ist samt
+  JSON und Parser-Fallback entfernt.
+- Ein `ItemDef` ohne `ItemState`-Eintrag war zur Laufzeit **unsichtbar** (P2-8):
+  `take`/`look at` scannen `itemStates`, das Item existierte also einfach nicht.
+  Neuer Validator-Fehler `MissingItemState` statt stillem Verschwinden.
+- Tests: **201** Engine- + **71** Worldbuilder-Tests, **18** E2E-Playthroughs.
 
 ## [0.9.0.0] — Unreleased
 

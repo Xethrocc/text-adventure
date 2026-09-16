@@ -85,7 +85,7 @@ description:
 | `{ start_quest: id }` | QuestOp StartQuest |
 | `{ advance_quest: id }` | QuestOp AdvanceQuest |
 | `{ complete_quest: id }` | QuestOp CompleteQuest |
-| `{ equip: item_id }` | MoveEntity to EquippedBy "player" "weapon" |
+| `{ equip: item_id }` | MoveEntity to EquippedBy "player" |
 | `{ move: room_id }` | SetValue (VRProperty "player" "room") — bewegt den Spieler |
 | `{ move_npc: npc_id, to: room_id }` | MoveEntity — bewegt einen NPC |
 | `{ game_end: victory }` / `{ game_end: death, msg: "…" }` | GameEnd |

@@ -12,7 +12,6 @@ import GHC.Generics (Generic)
 import Data.Aeson
 import Data.Aeson.Types (Parser, toJSONKeyText)
 import Control.Applicative ((<|>))
-import Data.Bits (xor, shiftR)
 import Data.Char (toLower)
 
 -- ---------------------------------------------------------------------------
@@ -314,7 +313,7 @@ data Location
     = InRoom RoomID
     | CarriedBy EntityID
     | InContainer EntityID
-    | EquippedBy EntityID String
+    | EquippedBy EntityID
     | Removed
     deriving (Show, Eq, Generic)
 
@@ -524,7 +523,6 @@ data NPCDef = NPCDef
     { npcId            :: NPCID
     , npcName          :: String
     , npcDescription   :: CondText
-    , npcDialogue      :: Map.Map String String        -- ^ Legacy: Status -> single line
     , npcDialogueTrees :: Map.Map String DialogueTree  -- ^ Status -> branching dialogue
     , npcKeywords      :: [String]
     , npcMaxHealth     :: Maybe Int
@@ -538,7 +536,6 @@ instance ToJSON NPCDef where
         [ "npcId"            .= npcId def
         , "npcName"          .= npcName def
         , "npcDescription"   .= npcDescription def
-        , "npcDialogue"      .= npcDialogue def
         , "npcDialogueTrees" .= npcDialogueTrees def
         , "npcKeywords"      .= npcKeywords def
         , "npcMaxHealth"     .= npcMaxHealth def
@@ -552,7 +549,6 @@ instance FromJSON NPCDef where
         <$> o .:  "npcId"
         <*> o .:  "npcName"
         <*> o .:  "npcDescription"
-        <*> o .:? "npcDialogue"      .!= Map.empty
         <*> o .:? "npcDialogueTrees" .!= Map.empty
         <*> o .:  "npcKeywords"
         <*> o .:  "npcMaxHealth"
@@ -1030,35 +1026,8 @@ data GameState = GameState
     } deriving (Show, Eq)
 
 -- ---------------------------------------------------------------------------
--- Deterministic pseudo-random number generation from game state
+-- Explicit deterministic RNG state (Phase 1f)
 -- ---------------------------------------------------------------------------
-
--- | Mix an integer through a Murmur3-style finalizer for good bit distribution
-mixHash :: Int -> Int
-mixHash x0 =
-    let x1 = (x0 `xor` (x0 `shiftR` 16)) * 0x45d9f3b
-        x2 = (x1 `xor` (x1 `shiftR` 16)) * 0x45d9f3b
-    in x2 `xor` (x2 `shiftR` 16)
-
--- | Derive a deterministic pseudo-random non-negative Int from the current game state.
-gameRandom :: GameState -> Int -> Int
-gameRandom state salt =
-    let tc      = turnCount (save state)
-        roomVal = foldl (\acc c -> acc * 31 + fromEnum c) 0 (currentRoom (save state))
-        invCnt  = length (inventory (save state))
-        hp      = playerHealth (player (save state))
-        combined = tc      * 2654435761
-                 + roomVal * 1442695040888963407
-                 + invCnt  * 31
-                 + hp      * 17
-                 + salt
-    in abs (mixHash combined)
-
--- | Pick an index from [0 .. n-1] using the game-state-derived RNG
-gameRandomIndex :: GameState -> Int -> Int -> Int
-gameRandomIndex state salt n
-    | n <= 0    = 0
-    | otherwise = gameRandom state salt `mod` n
 
 -- | Initial seed for a fresh playthrough (golden-ratio constant, nonzero).
 initialRngState :: Word64

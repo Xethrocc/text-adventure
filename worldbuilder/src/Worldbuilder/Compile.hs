@@ -933,7 +933,6 @@ compileNPCDefSafe registry n =
             { E.npcId = anId n
             , E.npcName = anName n
             , E.npcDescription = compileCondText (anTexts n)
-            , E.npcDialogue = Map.empty  -- legacy, we use DialogueTrees
             , E.npcDialogueTrees = compileDialogueTrees (anDialogue n)
             , E.npcKeywords = anKeywords n
             , E.npcMaxHealth = anMaxHealth n
@@ -1134,7 +1133,7 @@ compileAActionOutcome ao = case ao of
     AOStartQuest q -> E.QuestOp E.StartQuest q
     AOAdvanceQuest q -> E.QuestOp E.AdvanceQuest q
     AOCompleteQuest q -> E.QuestOp E.CompleteQuest q
-    AOEquipItem i -> E.MoveEntity i (E.EquippedBy "player" "weapon")
+    AOEquipItem i -> E.MoveEntity i (E.EquippedBy "player")
     AORoomTransition r -> E.SetValue (E.VRProperty "player" "room") (E.EVString r)
     AOMoveNPC n r -> E.MoveEntity n (E.InRoom r)
     AODamageNPC n amount -> E.ModifyValue (E.VRProperty n "hp") (-amount)

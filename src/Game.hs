@@ -694,7 +694,7 @@ applyOutcomeWith depth salt outcome targetId state
     MoveEntity eid Removed ->
         let state' = consumeItem eid state
         in (state', "", salt)
-    MoveEntity eid (EquippedBy _ _) ->
+    MoveEntity eid (EquippedBy _) ->
         case equipItem eid state of
             Left err    -> (state, err, salt)
             Right st'   -> (st', "", salt)
@@ -779,32 +779,18 @@ applySetValue (VRProperty eId "state") val state =
 applySetValue (VRProperty "player" "room") val state =
     (fst (transitionToRoom (effectValueToString val) (clearActiveDialogue state)), "")
 applySetValue (VRProperty rId "visited") val state =
-    let b = case val of { EVInt n -> n /= 0; _ -> False }
+    let b = case val of { EVInt n -> n /= 0; EVBool v -> v; _ -> False }
     in (setRoomVisited rId b state, "")
 applySetValue VRPlayerHealth val state =
     let n = case val of { EVInt m -> m; _ -> 0 }
     in if n <= 0 then (endGame Death (setPlayerHP n state), "") else (setPlayerHP n state, "")
 applySetValue _ _ state = (state, "")
 
--- | Convert EffectValue to VariableValue
-effectValToVarVal :: EffectValue -> VariableValue
-effectValToVarVal (EVInt n)    = VVInt n
-effectValToVarVal (EVString s) = VVText s
-effectValToVarVal (EVBool b)   = VVInt (if b then 1 else 0)
-
 -- | Apply ModifyValue to a non-player-health reference.
 --   Returns the updated state plus any message produced by a side effect
 --   (an NPC death firing its `OnStateChange` rules) — messages are threaded,
 --   never discarded.
 modifyValueProp :: ValueRef -> Int -> GameState -> (GameState, String)
-
--- | Convert EffectValue to String (for flag/state values)
-effectValueToString :: EffectValue -> String
-effectValueToString (EVInt n)    = show n
-effectValueToString (EVString s) = s
-effectValueToString (EVBool b)   = if b then "true" else "false"
-
--- | Apply ModifyValue to a non-player-health reference
 modifyValueProp (VRFlag name) delta state =
     let cur = case getFlag name state of
             Just "true" -> 1
@@ -824,6 +810,18 @@ modifyValueProp (VRProperty eId "hp") delta state =
 modifyValueProp (VRProperty nId prop) delta state =
     (modifyNPCProp nId prop delta state, "")
 modifyValueProp _ _ state = (state, "")
+
+-- | Convert EffectValue to VariableValue
+effectValToVarVal :: EffectValue -> VariableValue
+effectValToVarVal (EVInt n)    = VVInt n
+effectValToVarVal (EVString s) = VVText s
+effectValToVarVal (EVBool b)   = VVInt (if b then 1 else 0)
+
+-- | Convert EffectValue to String (for flag/state values)
+effectValueToString :: EffectValue -> String
+effectValueToString (EVInt n)    = show n
+effectValueToString (EVString s) = s
+effectValueToString (EVBool b)   = if b then "true" else "false"
 
 -- | Modify an NPC's health, killing them if <= 0. The kill's state-change
 --   event messages are threaded back to the caller.
@@ -964,7 +962,7 @@ journalText state =
             , Just q <- [lookupQuest qId state] ]
     in case (activeLines, completedLines) of
         ([], []) -> "Your journal is empty."
-        _ -> unlines ("=== Journal ===" : []) ++
+        _ -> "=== Journal ===\n" ++
              (if null activeLines then "" else unlines ("Active:" : activeLines)) ++
              (if null completedLines then "" else unlines ("Completed:" : completedLines))
   where

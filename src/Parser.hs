@@ -492,7 +492,7 @@ executeCommand (Interact verb targetStr) state =
             let iId = itemId item
                 maybeItemState = Map.lookup iId (itemStates (save state))
                 currentStatus = maybe "unknown" itemStatus maybeItemState
-                notCarried = maybe False (\loc -> loc /= CarriedBy "player") (fmap itemLocation maybeItemState)
+                notCarried = maybe True (\loc -> loc /= CarriedBy "player") (fmap itemLocation maybeItemState)
                 vmLookup = Map.lookup (verb, currentStatus) (itemVerbMap item)
             in case (verb, vmLookup) of
                 -- Taking: enforce portability, then pick up AND run on_take.
@@ -593,7 +593,7 @@ executeCommand (InteractWith VUseOn itemStr entityStr) state =
 
 executeCommand (InteractWith _ _ _) state = (state, "Nothing happens.")
 
-executeCommand Restart _ = (emptyGameState, "")
+executeCommand Restart state = (state, "")
 executeCommand ListSaves state = (state, "")
 
 executeCommand Help state = (state, helpText)
@@ -749,9 +749,7 @@ talkTo npc maybeNpcState state =
     let status = maybe "alive" npcStatus maybeNpcState
     in case Map.lookup status (npcDialogueTrees npc) of
         Just tree -> renderDialogue npc tree maybeNpcState state
-        Nothing -> case Map.lookup status (npcDialogue npc) of
-            Just speech -> (clearActiveDialogue state, npcName npc ++ " says: \"" ++ speech ++ "\"")
-            Nothing -> (clearActiveDialogue state, npcName npc ++ " has nothing to say.")
+        Nothing -> (clearActiveDialogue state, npcName npc ++ " has nothing to say.")
 
 -- | Choices of a node that pass their optional `visible_when` predicate.
 --   Used by both rendering and `choose N` so numbering stays consistent.

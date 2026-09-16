@@ -440,7 +440,7 @@ testCombatNarrativeLose = do
 -- | A minimal companion-capable NPC used by the party tests.
 squireDef :: NPCDef
 squireDef = NPCDef "squire" "squire" (plainText "A loyal squire with a chipped blade.")
-    Map.empty Map.empty ["squire", "knappe"] (Just 20) 3 1 Map.empty
+    Map.empty ["squire", "knappe"] (Just 20) 3 1 Map.empty
 
 -- | Sample game plus a `squire`. Joining is just the roster convention:
 --   the follow variable `party.squire` set to 1.
@@ -727,7 +727,7 @@ testDefaultSaveStateFieldsInitialised = do
 -- | Second companion used by the P0-2 combat regressions.
 guardDef :: NPCDef
 guardDef = NPCDef "guard" "guard" (plainText "A silent guard.")
-    Map.empty Map.empty ["guard"] (Just 20) 3 1 Map.empty
+    Map.empty ["guard"] (Just 20) 3 1 Map.empty
 
 -- | P0-2 fixture: sample game in the hallway with two companions (guard,
 --   squire) and a rule that announces the goblin's death. `goblinHp` decides
@@ -2233,7 +2233,6 @@ testStandingOutcomeViaDialogue = do
         w = (world sample)
             { npcDefs = Map.insert "recruiter"
                 (NPCDef "recruiter" "recruiter" (plainText "A quiet recruiter.")
-                    Map.empty
                     (Map.singleton "alive"
                         (DialogueTree "intro"
                             (Map.singleton "intro"
@@ -2425,6 +2424,44 @@ testGenreVerbFromRegistry = do
     let reg = Map.fromList [("swim", VerbDef "swim" [])]
     expectEqual (Interact (VCustom "swim") "") (parseCommandWith reg "swim")
 
+-- | P2-2: `executeCommand Restart` used to return `emptyGameState`, wiping the
+--   loaded world. It must leave the state alone (the loop handles Restart via
+--   `lsInitial`).
+testRestartKeepsWorld :: IO Bool
+testRestartKeepsWorld = do
+    let (st, _) = executeCommand Restart initSampleGame
+    r1 <- expectEqual (world initSampleGame) (world st)
+    r2 <- expectTrue "world is not empty" (not (Map.null (rooms (world st))))
+    pure (r1 && r2)
+
+-- | P2-7: `visited` via `SetValue (VRProperty room "visited")` must accept
+--   `EVBool`, not silently treat it as `False`.
+testVisitedAcceptsBool :: IO Bool
+testVisitedAcceptsBool = do
+    let (stT, _) = applyOutcome (SetValue (VRProperty "treasure" "visited") (EVBool True)) "" initSampleGame
+        (stF, _) = applyOutcome (SetValue (VRProperty "treasure" "visited") (EVBool False)) "" initSampleGame
+    r1 <- expectTrue "EVBool True marks the room visited" (isRoomVisited "treasure" stT)
+    r2 <- expectTrue "EVBool False clears it" (not (isRoomVisited "treasure" stF))
+    pure (r1 && r2)
+
+-- | P2-8: item lookup scans `itemStates`, so an `ItemDef` placed nowhere is
+--   invisible at runtime. The validator must report it (§`MissingItemState`)
+--   instead of letting the item silently not exist.
+testItemWithoutStateIsReported :: IO Bool
+testItemWithoutStateIsReported = do
+    let lamp = ItemDef "lamp" "lamp" (plainText "A brass lamp.") ["lamp"] Set.empty
+                    Nothing [] False Nothing True Nothing Map.empty
+        gw = (world initSampleGame)
+                { itemDefs = Map.insert "lamp" lamp (itemDefs (world initSampleGame)) }
+    r1 <- expectTrue "MissingItemState is reported"
+              (MissingItemState "lamp" `elem` validateGameState gw (save initSampleGame))
+    r2 <- expectTrue "sample world itself has no MissingItemState"
+              (not (any isMissingState (validateGameState (world initSampleGame) (save initSampleGame))))
+    pure (r1 && r2)
+  where
+    isMissingState (MissingItemState _) = True
+    isMissingState _                    = False
+
 main :: IO ()
 main = do
     results <- sequence
@@ -2607,6 +2644,10 @@ main = do
         , runTest "on: command examine fires for look at (P1-14)" testOnCommandExamineFires
         , runTest "take/drop events only on real inventory change (P1-15)" testTakeEventOnlyOnSuccess
         , runTest "raise fires on: custom, self-raise terminates (P1-20)" testRaiseEventFires
+        -- P2-Cluster A
+        , runTest "restart keeps the loaded world (P2-2)" testRestartKeepsWorld
+        , runTest "visited accepts EVBool (P2-7)" testVisitedAcceptsBool
+        , runTest "item without ItemState is reported (P2-8)" testItemWithoutStateIsReported
         -- Narratives (Phase 4.4)
         , runTest "narrative returns lines" testNarrativeReturnsLines
         , runTest "narrative stores pending (no side effects)" testNarrativeStoresPending
