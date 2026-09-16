@@ -6,7 +6,7 @@ description:        Turns authored YAML content into the GameWorld and SaveState
                     JSON files that the text-adventure engine loads.
 homepage:           https://github.com/Xethrocc/text-adventure
 license:            MIT
-license-file:       ../LICENSE
+license-file:       LICENSE
 author:             Xethrocc
 maintainer:         Xethrocc
 copyright:          2026 Xethrocc
@@ -22,6 +22,7 @@ library
   build-depends:       base >=4.12 && <5,
                        text-adventure,
                        HsYAML-aeson >=0.2 && <1,
+                       HsYAML >=0.2 && <1,
                        aeson >=2.0 && <3,
                        bytestring >=0.10 && <1,
                        containers >=0.6 && <0.8,

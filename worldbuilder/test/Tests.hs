@@ -10,7 +10,7 @@ import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import System.Exit (exitFailure)
-import System.Directory (doesFileExist)
+import System.Directory (doesFileExist, getTemporaryDirectory, removeFile)
 import System.FilePath ((</>))
 import Worldbuilder.Types
 import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome)
@@ -34,6 +34,7 @@ minWorld = E.GameWorld
     , varDefs = Map.empty
     , triggerDefs = []
     , combatProfile = E.CombatClassic
+    , worldName = ""
     }
 
 -- | Helper: a minimal valid SaveState referencing room_0
@@ -525,12 +526,12 @@ testDemoYamlCompiles = do
             putStrLn "  demo.yaml not found in examples/ or ../examples/"
             pure False
         Just path -> do
-            mbAdv <- parseAdventureFile path
-            case mbAdv of
-                Nothing -> do
-                    putStrLn "  failed to parse demo.yaml"
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse demo.yaml: " ++ err
                     pure False
-                Just adv -> compileCheck adv
+                Right adv -> compileCheck adv
   where
     compileCheck :: Adventure -> IO Bool
     compileCheck adv = case compileAdventure adv of
@@ -552,12 +553,12 @@ testTheFogYamlCompiles = do
             putStrLn "  thefog.yaml not found in examples/ or ../examples/"
             pure False
         Just path -> do
-            mbAdv <- parseAdventureFile path
-            case mbAdv of
-                Nothing -> do
-                    putStrLn "  failed to parse thefog.yaml"
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse thefog.yaml: " ++ err
                     pure False
-                Just adv -> case compileAdventure adv of
+                Right adv -> case compileAdventure adv of
                     Left errs -> do
                         putStrLn $ "  compile errors: " ++ show errs
                         pure False
@@ -572,12 +573,12 @@ testFantasyMagicFixtureCompiles = do
             putStrLn "  fantasy-magic.yaml not found"
             pure False
         Just path -> do
-            mbAdv <- parseAdventureFile path
-            case mbAdv of
-                Nothing -> do
-                    putStrLn "  failed to parse fantasy-magic.yaml"
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse fantasy-magic.yaml: " ++ err
                     pure False
-                Just adv -> case compileAdventure adv of
+                Right adv -> case compileAdventure adv of
                     Left errs -> do
                         putStrLn $ "  compile errors: " ++ show errs
                         pure False
@@ -614,12 +615,12 @@ testSpaceOxygenFixtureCompiles = do
             putStrLn "  space-oxygen.yaml not found"
             pure False
         Just path -> do
-            mbAdv <- parseAdventureFile path
-            case mbAdv of
-                Nothing -> do
-                    putStrLn "  failed to parse space-oxygen.yaml"
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse space-oxygen.yaml: " ++ err
                     pure False
-                Just adv -> case compileAdventure adv of
+                Right adv -> case compileAdventure adv of
                     Left errs -> do
                         putStrLn $ "  compile errors: " ++ show errs
                         pure False
@@ -657,12 +658,12 @@ testTriggerFixtureCompiles = do
             putStrLn "  trigger-test.yaml not found"
             pure False
         Just path -> do
-            mbAdv <- parseAdventureFile path
-            case mbAdv of
-                Nothing -> do
-                    putStrLn "  failed to parse trigger-test.yaml"
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse trigger-test.yaml: " ++ err
                     pure False
-                Just adv -> case compileAdventure adv of
+                Right adv -> case compileAdventure adv of
                     Left errs -> do
                         putStrLn $ "  compile errors: " ++ show errs
                         pure False
@@ -686,12 +687,12 @@ testPlayerConfigFixtureCompiles = do
             putStrLn "  player-config.yaml not found"
             pure False
         Just path -> do
-            mbAdv <- parseAdventureFile path
-            case mbAdv of
-                Nothing -> do
-                    putStrLn "  failed to parse player-config.yaml"
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse player-config.yaml: " ++ err
                     pure False
-                Just adv -> case compileAdventure adv of
+                Right adv -> case compileAdventure adv of
                     Left errs -> do
                         putStrLn $ "  compile errors: " ++ show errs
                         pure False
@@ -798,6 +799,76 @@ testP120RaiseEvent = do
             pure False
     pure (r1 && r2)
 
+-- | P2-15: a malformed adventure file must report the reason (and for YAML the
+--   line/column) instead of a bare "failed to parse"; an unreadable path is
+--   reported instead of throwing.
+testParseErrorIsReported :: IO Bool
+testParseErrorIsReported = do
+    tmp <- getTemporaryDirectory
+    let badPath = tmp </> "text-adventure-parse-error.yaml"
+    writeFile badPath "rooms: [\n"
+    result <- parseAdventureFile badPath
+    removeFile badPath
+    r1 <- case result of
+        Left err -> expectTrue ("mentions the YAML parse error: " ++ err)
+                                 ("YAML parse error" `isInfixOf` err)
+        Right _  -> expectTrue "expected a parse error" False
+    r2 <- case result of
+        Left err -> expectTrue "reports line/column"
+                                 ("line" `isInfixOf` err && "column" `isInfixOf` err)
+        Right _  -> pure False
+    missing <- parseAdventureFile (tmp </> "text-adventure-does-not-exist.yaml")
+    r3 <- case missing of
+        Left err -> expectTrue "unreadable file is reported" ("Cannot read" `isInfixOf` err)
+        Right _  -> expectTrue "expected an unreadable-file error" False
+    pure (r1 && r2 && r3)
+
+-- | P2-21: `fuel:` accepts the object form and the legacy array form, compiles
+--   to a `FuelSpec`, and a fuelled vehicle starts with a **full** tank (it used
+--   to start at `Nothing` = "0/<max>" until the player refuelled).
+testP121FuelSpec :: IO Bool
+testP121FuelSpec = do
+    r1 <- expectEqual (Just (AFuel "hay" 10))
+              (Aeson.decode (BLC.pack "{\"item\": \"hay\", \"max\": 10}") :: Maybe AFuel)
+    r2 <- expectEqual (Just (AFuel "hay" 10))
+              (Aeson.decode (BLC.pack "[\"hay\", 10]") :: Maybe AFuel)
+    let cart = (minShip "cart") { avFuel = Just (AFuel "hay" 10) }
+        adv  = (minAdventure (minRoom "loc_0")) { advVehicles = [cart] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ issuesText errs
+            pure False
+        Right cr -> do
+            let vdef = Map.findWithDefault (error "missing") "cart" (E.vehicleDefs (crWorld cr))
+                vst  = Map.lookup "cart" (E.vehicleStates (crSave cr))
+            r3 <- expectEqual (Just (E.FuelSpec "hay" 10)) (E.vehicleFuelProp vdef)
+            r4 <- expectEqual (Just (Just 10)) (E.vsFuel <$> vst)
+            pure (r1 && r2 && r3 && r4)
+
+-- | P2-18: `name:` reaches the engine's `worldName` (the game banner); duplicate
+--   or unnamed faction level thresholds are rejected instead of being inert
+--   decoration.
+testP218NameAndLevels :: IO Bool
+testP218NameAndLevels = do
+    let named = (minAdventure (minRoom "loc_0")) { advName = Just "Der Turm" }
+    r1 <- case compileAdventure named of
+        Right cr  -> expectEqual "Der Turm" (E.worldName (crWorld cr))
+        Left errs -> do
+            putStrLn $ "  errors: " ++ issuesText errs
+            pure False
+    let dupLevels = (minAdventure (minRoom "loc_0"))
+            { advFactions = [ AFaction "g" "Gilde" 0
+                                [AFactionLevel 10 "a", AFactionLevel 10 "b"] ] }
+    r2 <- case compileAdventure dupLevels of
+        Left errs -> expectContains "DuplicateFactionLevel" (issuesText errs)
+        Right _   -> expectTrue "expected DuplicateFactionLevel" False
+    let unnamedLevel = (minAdventure (minRoom "loc_0"))
+            { advFactions = [ AFaction "g" "Gilde" 0 [AFactionLevel 10 ""] ] }
+    r3 <- case compileAdventure unnamedLevel of
+        Left errs -> expectContains "BadFactionLevel" (issuesText errs)
+        Right _   -> expectTrue "expected BadFactionLevel" False
+    pure (r1 && r2 && r3)
+
 -- | Phase 5h: in_container pointing at a missing item is detected.
 testInvalidContainerDetected :: IO Bool
 testInvalidContainerDetected = do
@@ -851,12 +922,12 @@ testGenreFixturesCompile = do
                 putStrLn $ "  genre fixture not found: " ++ fname
                 pure False
             Just path -> do
-                mbAdv <- parseAdventureFile path
-                case mbAdv of
-                    Nothing -> do
-                        putStrLn $ "  failed to parse " ++ fname
+                advResult <- parseAdventureFile path
+                case advResult of
+                    Left err -> do
+                        putStrLn $ "  failed to parse " ++ fname ++ ": " ++ err
                         pure False
-                    Just adv -> case compileAdventure adv of
+                    Right adv -> case compileAdventure adv of
                         Left errs -> do
                             putStrLn $ "  " ++ fname ++ " compile errors: " ++ issuesText errs
                             pure False
@@ -1018,12 +1089,12 @@ testFactionsFixtureCompiles = do
             putStrLn "  examples/modules/factions.yaml not found"
             pure False
         Just path -> do
-            mbAdv <- parseAdventureFile path
-            case mbAdv of
-                Nothing -> do
-                    putStrLn "  failed to parse examples/modules/factions.yaml"
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse examples/modules/factions.yaml: " ++ err
                     pure False
-                Just adv -> case compileAdventure adv of
+                Right adv -> case compileAdventure adv of
                     Left errs -> do
                         putStrLn $ "  compile errors: " ++ show errs
                         pure False
@@ -1043,12 +1114,12 @@ testTradeFixtureCompiles = do
             putStrLn "  examples/modules/trade.yaml not found"
             pure False
         Just path -> do
-            mbAdv <- parseAdventureFile path
-            case mbAdv of
-                Nothing -> do
-                    putStrLn "  failed to parse examples/modules/trade.yaml"
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse examples/modules/trade.yaml: " ++ err
                     pure False
-                Just adv -> case compileAdventure adv of
+                Right adv -> case compileAdventure adv of
                     Left errs -> do
                         putStrLn $ "  compile errors: " ++ show errs
                         pure False
@@ -1117,12 +1188,12 @@ testEncounterFixtureCompiles = do
             putStrLn "  examples/modules/encounters.yaml not found"
             pure False
         Just path -> do
-            mbAdv <- parseAdventureFile path
-            case mbAdv of
-                Nothing -> do
-                    putStrLn "  failed to parse examples/modules/encounters.yaml"
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse examples/modules/encounters.yaml: " ++ err
                     pure False
-                Just adv -> case compileAdventure adv of
+                Right adv -> case compileAdventure adv of
                     Left errs -> do
                         putStrLn $ "  compile errors: " ++ show errs
                         pure False
@@ -1218,12 +1289,12 @@ testSurvivalFixtureCompiles = do
             putStrLn "  examples/modules/survival.yaml not found"
             pure False
         Just path -> do
-            mbAdv <- parseAdventureFile path
-            case mbAdv of
-                Nothing -> do
-                    putStrLn "  failed to parse examples/modules/survival.yaml"
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse examples/modules/survival.yaml: " ++ err
                     pure False
-                Just adv -> case compileAdventure adv of
+                Right adv -> case compileAdventure adv of
                     Left errs -> do
                         putStrLn $ "  compile errors: " ++ show errs
                         pure False
@@ -1297,12 +1368,12 @@ testStealthFixtureCompiles = do
             putStrLn "  examples/modules/stealth.yaml not found"
             pure False
         Just path -> do
-            mbAdv <- parseAdventureFile path
-            case mbAdv of
-                Nothing -> do
-                    putStrLn "  failed to parse examples/modules/stealth.yaml"
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse examples/modules/stealth.yaml: " ++ err
                     pure False
-                Just adv -> case compileAdventure adv of
+                Right adv -> case compileAdventure adv of
                     Left errs -> do
                         putStrLn $ "  compile errors: " ++ show errs
                         pure False
@@ -1372,12 +1443,12 @@ testCombatFixturesCompile = do
                 putStrLn $ "  examples/modules/" ++ fname ++ " not found"
                 pure False
             Just path -> do
-                mbAdv <- parseAdventureFile path
-                case mbAdv of
-                    Nothing -> do
-                        putStrLn $ "  failed to parse examples/modules/" ++ fname
+                advResult <- parseAdventureFile path
+                case advResult of
+                    Left err -> do
+                        putStrLn $ "  failed to parse examples/modules/" ++ fname ++ ": " ++ err
                         pure False
-                    Just adv -> case compileAdventure adv of
+                    Right adv -> case compileAdventure adv of
                         Left errs -> do
                             putStrLn $ "  compile errors (" ++ fname ++ "): " ++ show errs
                             pure False
@@ -1515,12 +1586,12 @@ testPartyFixtureCompiles = do
             putStrLn "  examples/modules/party.yaml not found"
             pure False
         Just path -> do
-            mbAdv <- parseAdventureFile path
-            case mbAdv of
-                Nothing -> do
-                    putStrLn "  failed to parse examples/modules/party.yaml"
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse examples/modules/party.yaml: " ++ err
                     pure False
-                Just adv -> case compileAdventure adv of
+                Right adv -> case compileAdventure adv of
                     Left errs -> do
                         putStrLn $ "  compile errors (party.yaml): " ++ show errs
                         pure False
@@ -1662,12 +1733,12 @@ testStarshipFixtureCompiles = do
             putStrLn "  examples/modules/starship.yaml not found"
             pure False
         Just path -> do
-            mbAdv <- parseAdventureFile path
-            case mbAdv of
-                Nothing -> do
-                    putStrLn "  failed to parse examples/modules/starship.yaml"
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse examples/modules/starship.yaml: " ++ err
                     pure False
-                Just adv -> case compileAdventure adv of
+                Right adv -> case compileAdventure adv of
                     Left errs -> do
                         putStrLn $ "  compile errors (starship.yaml): " ++ show errs
                         pure False
@@ -1687,12 +1758,12 @@ fixtureCompilesAndValidates fname = do
             putStrLn $ "  examples/modules/" ++ fname ++ " not found"
             pure False
         Just path -> do
-            mbAdv <- parseAdventureFile path
-            case mbAdv of
-                Nothing -> do
-                    putStrLn $ "  failed to parse examples/modules/" ++ fname
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse examples/modules/" ++ fname ++ ": " ++ err
                     pure False
-                Just adv -> case compileAdventure adv of
+                Right adv -> case compileAdventure adv of
                     Left errs -> do
                         putStrLn $ "  compile errors (" ++ fname ++ "): " ++ show errs
                         pure False
@@ -1766,6 +1837,9 @@ tests =
     , ("P1-18 check_flag is rejected, has_flag works", testP118CheckFlagRejected)
     , ("P1-19 paid stop cost reaches the engine", testP119StopCost)
     , ("P1-20 raise: fires a custom event", testP120RaiseEvent)
+    , ("P2-15 parse error reports reason + position", testParseErrorIsReported)
+    , ("P2-21 fuel object form + full tank", testP121FuelSpec)
+    , ("P2-18 world name + faction level validation", testP218NameAndLevels)
     , ("in_container at missing item is detected", testInvalidContainerDetected)
     , ("item-on-item (crafting) interaction compiles", testItemInteractionCompiles)
     , ("entity interaction (use on target) compiles", testEntityInteractionCompiles)

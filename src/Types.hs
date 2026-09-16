@@ -364,12 +364,31 @@ instance FromJSON Effect
 -- JSON helpers for compound Map keys
 -- ---------------------------------------------------------------------------
 
--- | Encode a Map with (Verb, String) keys as "VTake:intact" style keys
+-- | Encode a Map with (Verb, String) keys as `[{verb, state, effect}, …]`.
 verbStateMapToJSON :: Map.Map (Verb, String) Effect -> Value
-verbStateMapToJSON = toJSON . Map.mapKeys (\(v, s) -> show v ++ ":" ++ s)
+verbStateMapToJSON m =
+    toJSON [ object [ "verb" .= show v, "state" .= s, "effect" .= e ]
+           | ((v, s), e) <- Map.toList m ]
 
 verbStateMapFromJSON :: Value -> Parser (Map.Map (Verb, String) Effect)
-verbStateMapFromJSON v = do
+verbStateMapFromJSON v =
+    (do xs <- parseJSON v :: Parser [Value]
+        Map.fromList <$> mapM entry xs)
+    <|> verbStateMapFromLegacyJSON v
+  where
+    entry = withObject "verb-state entry" $ \o -> do
+        vTxt <- o .: "verb"
+        s    <- o .: "state"
+        e    <- o .: "effect"
+        case reads vTxt of
+            [(verb, "")] -> pure ((verb, s), e)
+            _            -> fail ("Bad verb encoding: " ++ vTxt)
+
+-- | Legacy form: one string key per entry, `"VTake:intact"`. Only the first
+--   `:` separates verb and state, so a state containing `:` used to be
+--   corrupted (P2-9); kept for reading old `world.json` files.
+verbStateMapFromLegacyJSON :: Value -> Parser (Map.Map (Verb, String) Effect)
+verbStateMapFromLegacyJSON v = do
     m <- parseJSON v :: Parser (Map.Map String Effect)
     let parsePair k = case break (== ':') k of
             (vStr, ':':sStr) -> case reads vStr of
@@ -383,12 +402,29 @@ verbStateMapFromJSON v = do
         Right parsedPairs -> pure $ Map.fromList parsedPairs
         Left err    -> fail err
 
--- | Encode a Map with (String, String) tuple keys using "a|b"
+-- | Encode a Map with (String, String) tuple keys as objects.
 tupleMapToJSON :: Map.Map (String, String) (String, String) -> Value
-tupleMapToJSON = toJSON . Map.mapKeys (\(a, b) -> a ++ "|" ++ b) . Map.map (\(a, b) -> [a, b])
+tupleMapToJSON m =
+    toJSON [ object [ "a" .= a, "b" .= b, "value" .= [v1, v2] ]
+           | ((a, b), (v1, v2)) <- Map.toList m ]
 
 tupleMapFromJSON :: Value -> Parser (Map.Map (String, String) (String, String))
-tupleMapFromJSON v = do
+tupleMapFromJSON v =
+    (do xs <- parseJSON v :: Parser [Value]
+        Map.fromList <$> mapM entry xs)
+    <|> tupleMapFromLegacyJSON v
+  where
+    entry = withObject "interaction entry" $ \o -> do
+        a   <- o .: "a"
+        b   <- o .: "b"
+        val <- o .: "value"
+        case val of
+            [v1, v2] -> pure ((a, b), (v1, v2))
+            _        -> fail "interaction value must be a 2-element array"
+
+-- | Legacy form: `"a|b"` string keys (P2-9).
+tupleMapFromLegacyJSON :: Value -> Parser (Map.Map (String, String) (String, String))
+tupleMapFromLegacyJSON v = do
     m <- parseJSON v :: Parser (Map.Map String [String])
     let parsePair k = case break (== '|') k of
             (a, '|':b) -> Right (a, b)
@@ -675,6 +711,25 @@ data VehicleStop = VehicleStop
 instance ToJSON VehicleStop
 instance FromJSON VehicleStop
 
+-- | Fuel specification for a vehicle (P2-21).
+--   Replaces a bare `(String, Int)` tuple; decoded from both the current
+--   object form `{"item": …, "max": …}` and the legacy two-element array.
+data FuelSpec = FuelSpec
+    { fsItem :: ItemID   -- ^ item that refuels this vehicle
+    , fsMax  :: Int      -- ^ tank capacity
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON FuelSpec where
+    toJSON fs = object [ "item" .= fsItem fs, "max" .= fsMax fs ]
+
+instance FromJSON FuelSpec where
+    parseJSON v =
+        (do xs <- parseJSON v :: Parser [Value]
+            case xs of
+                [i, m] -> FuelSpec <$> parseJSON i <*> parseJSON m
+                _      -> fail "fuel: expected [item, max] or {item, max}")
+        <|> withObject "FuelSpec" (\o -> FuelSpec <$> o .: "item" <*> o .: "max") v
+
 -- | Static vehicle definition. The vehicle's interior rooms live in the
 --   world's global `rooms` map (so hooks, tags and lighting work there too);
 --   `vehicleRooms` lists which room ids belong to this vehicle.
@@ -689,7 +744,7 @@ data VehicleDef = VehicleDef
     , vehicleStops            :: Map.Map RoomID VehicleStop     -- ^ outside room -> stop
     , vehicleRoute            :: [RoomID]                       -- ^ AUTHORED stop order; empty = Map key order (backward compat)
     , vehicleKeywords         :: [String]
-    , vehicleFuelProp         :: Maybe (String, Int)            -- ^ (fuel name, max units)
+    , vehicleFuelProp         :: Maybe FuelSpec                -- ^ fuel item + tank capacity
     , vehicleConditionEffects :: Map.Map String Effect   -- ^ condition -> outcome fired vehicle-wide
     } deriving (Show, Eq)
 
@@ -849,6 +904,7 @@ data GameWorld = GameWorld
     , varDefs            :: Map.Map String VarDef                    -- ^ Adventure-declared variables (Phase 3b)
     , triggerDefs        :: [TriggerDef]                              -- ^ Trigger rules (Phase 3f)
     , combatProfile      :: CombatProfile                            -- ^ combat policy (Phase 7f)
+    , worldName          :: String                                   -- ^ adventure title (`name:`), shown as the game banner
     } deriving (Show, Eq)
 
 -- | Combat policy, chosen by authored data (Phase 7f). `CombatClassic` is
@@ -899,13 +955,14 @@ instance ToJSON GameWorld where
         , "itemDefs"           .= itemDefs gw
         , "npcDefs"            .= npcDefs gw
         , "entityInteractions" .= tupleMapToJSON (entityInteractions gw)
-        , "itemInteractions"   .= Map.mapKeys (\(a, b) -> a ++ "|" ++ b) (itemInteractions gw)
+        , "itemInteractions"   .= itemInteractionsToJSON (itemInteractions gw)
         , "questDefs"          .= questDefs gw
         , "vehicleDefs"        .= vehicleDefs gw
         , "verbDefs"           .= verbDefs gw
         , "varDefs"            .= varDefs gw
         , "triggerDefs"       .= triggerDefs gw
-        , "combatProfile"     .= combatProfile gw
+        , "combatProfile"      .= combatProfile gw
+        , "worldName"          .= worldName gw
         ]
 
 instance FromJSON GameWorld where
@@ -914,23 +971,41 @@ instance FromJSON GameWorld where
         <*> o .:  "itemDefs"
         <*> o .:  "npcDefs"
         <*> (o .: "entityInteractions" >>= tupleMapFromJSON)
-        <*> (o .:? "itemInteractions" .!= Map.empty >>= parseItemInteractions)
+        <*> (o .:? "itemInteractions" >>= maybe (pure Map.empty) parseItemInteractions)
         <*> o .:? "questDefs" .!= Map.empty
         <*> o .:? "vehicleDefs" .!= Map.empty
         <*> o .:? "verbDefs" .!= Map.empty
         <*> o .:? "varDefs"  .!= Map.empty
         <*> o .:? "triggerDefs" .!= []
         <*> o .:? "combatProfile" .!= CombatClassic
+        <*> o .:? "worldName" .!= ""
 
-parseItemInteractions :: Map.Map String Effect -> Parser (Map.Map (String, String) Effect)
-parseItemInteractions m =
-    case mapM parseKey (Map.toList m) of
-        Right kvs -> pure (Map.fromList kvs)
-        Left err    -> fail err
+-- | Encode item-on-item outcomes as objects (P2-9).
+itemInteractionsToJSON :: Map.Map (String, String) Effect -> Value
+itemInteractionsToJSON m =
+    toJSON [ object [ "a" .= a, "b" .= b, "effect" .= e ]
+           | ((a, b), e) <- Map.toList m ]
+
+parseItemInteractions :: Value -> Parser (Map.Map (String, String) Effect)
+parseItemInteractions v =
+    (do xs <- parseJSON v :: Parser [Value]
+        Map.fromList <$> mapM entry xs)
+    <|> legacy
   where
-    parseKey (k, v) = case break (== '|') k of
-        (a, '|':b) -> Right ((a, b), v)
-        _          -> Left $ "Bad item interaction key: " ++ k
+    entry = withObject "item interaction entry" $ \o -> do
+        a <- o .: "a"
+        b <- o .: "b"
+        e <- o .: "effect"
+        pure ((a, b), e)
+    -- Legacy form: `"a|b"` string keys.
+    legacy = do
+        m <- parseJSON v :: Parser (Map.Map String Effect)
+        case mapM parseKey (Map.toList m) of
+            Right kvs -> pure (Map.fromList kvs)
+            Left err  -> fail err
+    parseKey (k, e) = case break (== '|') k of
+        (a, '|':b) -> Right ((a, b), e)
+        _          -> Left ("Bad item interaction key: " ++ k)
 
 -- | Dynamic state of an active playthrough
 data SaveState = SaveState

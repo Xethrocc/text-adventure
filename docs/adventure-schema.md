@@ -3,7 +3,7 @@
 ## Minimal Adventure (einfachster Einstieg)
 
 ```yaml
-name: My Adventure
+name: My Adventure              # Titel — erscheint als Banner beim Spielstart
 start_room: start
 
 rooms:
@@ -176,7 +176,7 @@ dialogue:
   desc: "A horse-drawn carriage."
   entry_room: meadow
   stops: [meadow, village, forest]
-  fuel: { prop: hay, max: 10 }
+  fuel: { item: hay, max: 10 }
   conditions:
     broken_wheel: "Wheel wobbles dangerously."
 ```
@@ -316,10 +316,15 @@ factions:
   - id: smugglers
     name: Schmuggler-Gilde
     initial: 0                # Start-Standing (Default 0)
-    levels:                    # Autoren-Hinweise (Schwellen-Metadaten)
+    levels:                    # Schwellen-Metadaten (s. u.)
       - { at: 20,  name: ally }
       - { at: -20, name: hunted }
 ```
+
+`levels:` ordnet Schwellen Namen zu. Die Liste wird nicht sortiert erwartet (die
+Fixtures ordnen nach Beziehungsqualität, nicht nach Schwelle); der Compiler
+lehnt aber **doppelte Schwellen** (`DuplicateFactionLevel`) und **leere Namen**
+(`BadFactionLevel`) ab.
 
 Jede Faktion erzeugt die Variable `faction.<id>` (int) mit dem Startwert
 `initial`. Standings werden über Effekte verändert und über Prädikate abgefragt

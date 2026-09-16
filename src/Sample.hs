@@ -165,7 +165,7 @@ initSampleGame = GameState
                     ])
                 []                          -- ^ vehicleRoute (authored stop order)
                 ["carriage", "wagon", "coach"]  -- ^ vehicleKeywords
-                (Just ("hay", 10))              -- ^ vehicleFuelProp
+                (Just (FuelSpec "hay" 10))      -- ^ vehicleFuelProp
                 Map.empty                       -- ^ vehicleConditionEffects (Phase 3)
             )
             ]
@@ -173,6 +173,7 @@ initSampleGame = GameState
         , varDefs = Map.empty
         , triggerDefs = []
         , combatProfile = CombatClassic
+        , worldName = "Sample Adventure"
         }
     , save = SaveState
         { player = Player 100 100 10 5 (Map.singleton "lockpick" 2)

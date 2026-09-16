@@ -95,7 +95,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `ShipActor` (7h) erweitern sie ohne Signaturänderung.
 - `evalPredicate (Location "player" r)` prüft jetzt auch den Spielerraum
   (vorher nur NPC-/Item-Locations).
-- Tests: **201** Engine- + **71** Worldbuilder-Tests, **18** E2E-Playthroughs
+- Tests: **202** Engine- + **74** Worldbuilder-Tests, **18** E2E-Playthroughs
   (`scripts/ci.sh`).
 
 ### Fixed
@@ -253,6 +253,35 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `take`/`look at` scannen `itemStates`, das Item existierte also einfach nicht.
   Neuer Validator-Fehler `MissingItemState` statt stillem Verschwinden.
 - Tests: **201** Engine- + **71** Worldbuilder-Tests, **18** E2E-Playthroughs.
+
+- Schema-/Packaging-Cluster aus dem Review-P2-Block (Cluster B):
+  `parseAdventureFile` verschluckte jeden Fehler (P2-15) — die CLI konnte nur
+  „Failed to parse adventure file: <path>" sagen, obwohl ein kaputtes
+  Adventure der häufigste Autorenfehler ist. Es liefert jetzt
+  `IO (Either String Adventure)` mit Grund und bei YAML **Zeile/Spalte**, und
+  eine unlesbare Datei wird gemeldet statt als Exception zu fliegen.
+  `license-file: ../LICENSE` im worldbuilder (P2-17) wies aus dem Paket
+  heraus (`[relative-path-outside]` beim `sdist`); die License-Kopie lag
+  bereits, der Verweis zeigt jetzt darauf.
+- Verbundene Map-Schlüssel im `world.json` (P2-9): `itemVerbMap`/`npcVerbMap`,
+  `entityInteractions` und `itemInteractions` kodierten ihren Schlüssel in
+  *einen* String (`"VTake:intact"`, `"a|b"`) und verloren damit still jeden
+  Status, Verben- oder Item-Namen, der das Trennzeichen enthielt. Sie sind
+  jetzt Listen von Objekten mit getrennten Feldern; die alte Form wird
+  weiterhin gelesen, damit bestehende `world.json` laden (Test deckt beide
+  Richtungen ab).
+- Fahrzeug-Treibstoff (P2-21): `vehicleFuelProp` war ein rohes `(String, Int)`,
+  und `vsFuel` startete immer bei `Nothing` — jedes Fahrzeug mit Tank meldete
+  „0/10", bis der Spieler tankte. Neu: `FuelSpec { fsItem, fsMax }`, das
+  Schema akzeptiert `fuel: { item: hay, max: 10 }` (alte Liste `[hay, 10]`
+  bleibt gültig), und ein betanktes Fahrzeug startet mit **vollem** Tank.
+- Ungenutzte Schema-Felder (P2-18): `name:` wurde geparst und nirgends
+  verwendet — es wird jetzt zu `GameWorld.worldName` und erscheint als
+  Startbanner. Die `levels:`-Schwellen waren reine Dekoration; der Compiler
+  lehnt nun doppelte Schwellen (`DuplicateFactionLevel`) und leere Namen
+  (`BadFactionLevel`) ab. Eine Sortierung der Liste wird bewusst *nicht*
+  verlangt — die Fixtures ordnen nach Beziehungsqualität.
+- Tests: **202** Engine- + **74** Worldbuilder-Tests, **18** E2E-Playthroughs.
 
 ## [0.9.0.0] — Unreleased
 

@@ -375,7 +375,7 @@ data AVehicle = AVehicle
     , avCockpit    :: Maybe String
     , avStops      :: Map.Map String AStop
     , avKeywords   :: [String]
-    , avFuel       :: Maybe (String, Int)
+    , avFuel       :: Maybe AFuel
     , avConditions :: Map.Map String [AActionOutcome]
     , avStartStop  :: Maybe String        -- ^ label of the stop the vehicle starts at
     , avSystems    :: Map.Map String ASystem  -- ^ ship systems -> VarMap (Phase 7h)
@@ -398,6 +398,21 @@ instance FromJSON AStop where
         <*> (o .:? "cost" >>= traverse
                 (\c -> (,) <$> c .: "item"
                            <*> c .:? "refused" .!= "You cannot pay the fare."))) v
+
+-- | Vehicle fuel (P2-21): `fuel: { item: hay, max: 10 }` or the legacy
+--   two-element form `fuel: [hay, 10]`.
+data AFuel = AFuel
+    { afItem :: String
+    , afMax  :: Int
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AFuel where
+    parseJSON v =
+        (do xs <- parseJSON v :: Parser [Value]
+            case xs of
+                [i, m] -> AFuel <$> parseJSON i <*> parseJSON m
+                _      -> fail "fuel: expected [item, max] or {item, max}")
+        <|> withObject "AFuel" (\o -> AFuel <$> o .: "item" <*> o .: "max") v
 
 -- | A ship system (Phase 7h): compiled into the VarMap entry
 --   `ship.<vehicleId>.<name>`. `power`, `shields`, `hull` and `weapons` carry

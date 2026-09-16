@@ -68,12 +68,12 @@ showValidationError = show
 
 validate :: FilePath -> IO ()
 validate path = do
-    mbAdv <- parseAdventureFile path
-    case mbAdv of
-        Nothing -> do
-            putStrLn $ "Failed to parse adventure file: " ++ path
+    advResult <- parseAdventureFile path
+    case advResult of
+        Left err -> do
+            putStrLn $ "Failed to parse adventure file: " ++ err
             exitFailure
-        Just adv -> do
+        Right adv -> do
             case compileAdventure adv of
                 Left errs -> do
                     putStrLn "Compilation errors:"
@@ -107,12 +107,12 @@ compile path rest = do
             "--output" : d : _ -> d
             _            -> "."
         force = "--force" `elem` rest
-    mbAdv <- parseAdventureFile path
-    case mbAdv of
-        Nothing -> do
-            putStrLn $ "Failed to parse adventure file: " ++ path
+    advResult <- parseAdventureFile path
+    case advResult of
+        Left err -> do
+            putStrLn $ "Failed to parse adventure file: " ++ err
             exitFailure
-        Just adv -> case compileAdventure adv of
+        Right adv -> case compileAdventure adv of
             Left errs -> do
                 putStrLn "Compilation errors:"
                 printCompileIssues errs
@@ -147,12 +147,12 @@ compile path rest = do
 
 checkStats :: FilePath -> IO ()
 checkStats path = do
-    mbAdv <- parseAdventureFile path
-    case mbAdv of
-        Nothing -> do
-            putStrLn $ "Failed to parse adventure file: " ++ path
+    advResult <- parseAdventureFile path
+    case advResult of
+        Left err -> do
+            putStrLn $ "Failed to parse adventure file: " ++ err
             exitFailure
-        Just adv -> case compileAdventure adv of
+        Right adv -> case compileAdventure adv of
             Left errs -> do
                 putStrLn "Compilation errors:"
                 printCompileIssues errs

@@ -4,7 +4,7 @@ module Main where
 import GameLoop (runGame)
 import Sample (initSampleGame)
 import World (loadGame)
-import Types (world, save)
+import Types (world, save, worldName)
 import Validate (validateWorld, validateGameState)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
@@ -32,13 +32,19 @@ parseArgs args = go args Nothing Nothing False
     go ("--allow-invalid" : rest) w s _ = go rest w s True
     go (_ : rest) w s a = go rest w s a
 
+-- | Banner line: the adventure title when the world carries one (P2-18).
+bannerFor :: String -> String
+bannerFor n
+    | null n    = "=== Text Adventure Game ==="
+    | otherwise = "=== " ++ n ++ " ==="
+
 main :: IO ()
 main = do
     args <- getArgs
     case parseArgs args of
         Nothing -> putStr usage
         Just (Nothing, _, _) -> do
-            putStrLn "=== Text Adventure Game ==="
+            putStrLn (bannerFor (worldName (world initSampleGame)))
             putStrLn "Type 'help' for available commands."
             putStrLn "----------------------------"
             runGame initSampleGame
@@ -61,7 +67,7 @@ main = do
                             putStrLn "Use --allow-invalid to start with these issues."
                             exitFailure
                     else return ()
-                    putStrLn "=== Text Adventure Game ==="
+                    putStrLn (bannerFor (worldName (world state)))
                     putStrLn ("Loaded world: " ++ worldPath)
                     putStrLn "Type 'help' for available commands."
                     putStrLn "----------------------------"

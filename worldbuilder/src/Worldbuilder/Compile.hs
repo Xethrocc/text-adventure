@@ -120,6 +120,7 @@ compileAdventure adv =
                 , E.varDefs = allVarDefs
                 , E.triggerDefs = allTriggerDefs
                 , E.combatProfile = combatProfileCompiled
+                , E.worldName = fromMaybe "" (advName adv)
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
@@ -353,7 +354,23 @@ compileFactions factions =
         initials = Map.fromList
             [ ("faction." ++ afId f, E.VVInt (afInitial f))
             | f <- factions ]
-    in (dupErrs, defs, initials)
+        -- P2-18: `levels:` were pure authoring decoration — nothing validated or
+        -- displayed them. Check that a threshold is named at most once and that
+        -- every name is non-empty. Ascending order is deliberately NOT required:
+        -- the fixtures order levels by relation quality (best first) and lookup
+        -- takes the highest matching threshold, so list order carries no meaning.
+        levelErrs =
+            [ ciError ("factions." ++ afId f ++ ".levels") "DuplicateFactionLevel"
+                ("threshold " ++ show at ++ " is named more than once")
+            | f <- factions
+            , at <- duplicates (map aflAt (afLevels f)) ]
+            ++
+            [ ciError ("factions." ++ afId f ++ ".levels") "BadFactionLevel"
+                ("level at " ++ show (aflAt l) ++ " needs a non-empty name")
+            | f <- factions, l <- afLevels f, null (aflName l) ]
+        duplicates xs =
+            [ x | (x, n) <- Map.toList (Map.fromListWith (+) [(x, 1 :: Int) | x <- xs]), n > 1 ]
+    in (dupErrs ++ levelErrs, defs, initials)
 
 -- | Merge faction vars into the declared variables, rejecting name clashes
 --   (an author must not declare `faction.X` as a plain variable).
@@ -1024,7 +1041,7 @@ compileVehicleDefSafe v =
                         | (label, stop) <- Map.toList (avStops v) ]
                     , E.vehicleRoute = []  -- authored stop order; empty = key order
                     , E.vehicleKeywords = avKeywords v
-                    , E.vehicleFuelProp = avFuel v
+                    , E.vehicleFuelProp = fmap (\f -> E.FuelSpec (afItem f) (afMax f)) (avFuel v)
                     , E.vehicleConditionEffects = Map.map (\os -> combineOutcomes (map compileAActionOutcome os)) (avConditions v)
                     }
             in Right (v, def)
@@ -1047,7 +1064,9 @@ compileVehicleState v = E.VehicleState
           Nothing   -> case Map.lookup (headSafe (Map.keys (avStops v))) (avStops v) of
               Just stop -> asRoom stop
               Nothing   -> avEntryRoom v
-    , E.vsFuel = Nothing
+    -- P2-21: a fuelled vehicle starts with a full tank (the old `Nothing` made
+    -- every vehicle report "0/<max>" until the player refuelled).
+    , E.vsFuel = afMax <$> avFuel v
     , E.vsActiveConditions = Set.empty
     , E.vsRoomOverrides = Map.empty
     }

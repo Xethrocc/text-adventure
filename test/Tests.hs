@@ -3,6 +3,7 @@ module Main where
 import Control.Monad (when)
 import Data.List (isInfixOf)
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Types as AesonT
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -1865,7 +1866,7 @@ testMissingVehicleInRuleDetected = do
             (MissingVehicle "ghost" `elem` errors)
     let gwOk = gw { vehicleDefs = Map.insert "ghost"
                         (VehicleDef "ghost" "Ghost" "A ghost ship." PlayerControlled []
-                            "start" Nothing Map.empty [] ["ghost"] (Just ("hay", 10)) Map.empty)
+                            "start" Nothing Map.empty [] ["ghost"] (Just (FuelSpec "hay" 10)) Map.empty)
                         (vehicleDefs gw) }
     r2 <- expectTrue "declared vehicle id is not a false positive"
             (MissingVehicle "ghost" `notElem` validateWorld gwOk)
@@ -2462,6 +2463,33 @@ testItemWithoutStateIsReported = do
     isMissingState (MissingItemState _) = True
     isMissingState _                    = False
 
+-- | P2-9: compound map keys are encoded as objects, so a verb state or item id
+--   containing the *old* separators (`:`, `|`) survives a round-trip. The
+--   legacy string-keyed form still decodes for existing `world.json` files
+--   (and is shown to be lossy: `("a|b","c")` cannot be expressed there).
+testCompoundKeyRoundTrip :: IO Bool
+testCompoundKeyRoundTrip = do
+    let gw0   = world initSampleGame
+        item0 = snd (Map.findMin (itemDefs gw0))
+        gw    = gw0
+            { itemDefs = Map.insert "weird"
+                (item0 { itemVerbMap = Map.fromList [((VCustom "buy", "intact:v2"), SendMessage "a")] })
+                (itemDefs gw0)
+            , entityInteractions = Map.fromList [(("a|b", "c"), ("unlocked", "msg"))]
+            , itemInteractions   = Map.fromList [(("x:y", "z|w"), SendMessage "b")] }
+    r1 <- expectEqual (Just gw) (Aeson.decode (Aeson.encode gw))
+    -- legacy form of the verb map: "VTake:intact"
+    let legacyVerbValue = Aeson.toJSON (Map.fromList [("VTake:intact", SendMessage "x")] :: Map.Map String Effect)
+    r2 <- case AesonT.parseMaybe verbStateMapFromJSON legacyVerbValue of
+        Just m  -> expectEqual (Map.fromList [((VTake, "intact"), SendMessage "x")]) m
+        Nothing -> expectTrue "legacy verb-state map decodes" False
+    -- legacy form of the interaction map: "a|b"
+    let legacyTupleValue = Aeson.toJSON (Map.fromList [("a|b", ["u", "m"])] :: Map.Map String [String])
+    r3 <- case AesonT.parseMaybe tupleMapFromJSON legacyTupleValue of
+        Just m  -> expectEqual (Map.fromList [(("a", "b"), ("u", "m"))]) m
+        Nothing -> expectTrue "legacy tuple map decodes" False
+    pure (r1 && r2 && r3)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -2648,6 +2676,7 @@ main = do
         , runTest "restart keeps the loaded world (P2-2)" testRestartKeepsWorld
         , runTest "visited accepts EVBool (P2-7)" testVisitedAcceptsBool
         , runTest "item without ItemState is reported (P2-8)" testItemWithoutStateIsReported
+        , runTest "compound map key round-trip incl. legacy (P2-9)" testCompoundKeyRoundTrip
         -- Narratives (Phase 4.4)
         , runTest "narrative returns lines" testNarrativeReturnsLines
         , runTest "narrative stores pending (no side effects)" testNarrativeStoresPending

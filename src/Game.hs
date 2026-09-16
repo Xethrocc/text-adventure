@@ -24,6 +24,7 @@ emptyGameWorld = GameWorld
     , varDefs            = Map.empty
     , triggerDefs        = []
     , combatProfile      = CombatClassic
+    , worldName          = ""
     }
 
 -- | Default empty game state
@@ -1132,9 +1133,9 @@ advanceVehicleRoute state = case currentVehicle (save state) of
 refuelVehicle :: VehicleID -> Int -> GameState -> Maybe (GameState, String)
 refuelVehicle vId amount state = case lookupVehicle vId state >>= vehicleFuelProp of
     Nothing -> Nothing
-    Just _ ->
+    Just fs ->
         let vs = getVehicleState vId state
-            maxFuel = maybe 0 snd (vehicleFuelProp =<< lookupVehicle vId state)
+            maxFuel = fsMax fs
             cur = fromMaybe 0 (vsFuel vs)
             newFuel = min maxFuel (cur + amount)
         in Just (setVehicleState vId (vs { vsFuel = Just newFuel }) state,
@@ -1182,10 +1183,10 @@ vehicleLookAddon state = case currentVehicle (save state) of
                            else "Warning: " ++ intercalate ", " (Set.toList (vsActiveConditions vState))
                                 ++ "!"
                 fuelLine = case (vehicleFuelProp v, vsFuel vState) of
-                    (Just (fname, maxF), Just f) ->
+                    (Just fs, Just f) ->
                         if f <= 0
-                            then "\nOut of " ++ fname ++ " (0/" ++ show maxF ++ ")"
-                            else "\nFuel (" ++ fname ++ ": " ++ show f ++ "/" ++ show maxF ++ ")"
+                            then "\nOut of " ++ fsItem fs ++ " (0/" ++ show (fsMax fs) ++ ")"
+                            else "\nFuel (" ++ fsItem fs ++ ": " ++ show f ++ "/" ++ show (fsMax fs) ++ ")"
                     _ -> ""
                 statusLine = unlines (filter (not . null) [condLine]) ++
                              (if null condLine then "" else "\n") ++ fuelLine

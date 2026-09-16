@@ -643,10 +643,10 @@ executeCommand (RefuelCmd targetStr) state =
                 vState = getVehicleState vId state
                 fuelStatus = case (vehicleFuelProp veh, vsFuel vState) of
                     (Nothing, _) -> "The " ++ vehicleName veh ++ " doesn't need fuel."
-                    (Just (fname, maxF), Just f) ->
-                        vehicleName veh ++ " fuel (" ++ fname ++ "): " ++ show f ++ "/" ++ show maxF
-                    (Just (fname, maxF), Nothing) ->
-                        vehicleName veh ++ " fuel (" ++ fname ++ "): 0/" ++ show maxF
+                    (Just fs, Just f) ->
+                        vehicleName veh ++ " fuel (" ++ fsItem fs ++ "): " ++ show f ++ "/" ++ show (fsMax fs)
+                    (Just fs, Nothing) ->
+                        vehicleName veh ++ " fuel (" ++ fsItem fs ++ "): 0/" ++ show (fsMax fs)
             in (state, fuelStatus)
 
 -- | Repair: `repair <condition>` clears a matching vehicle condition on the
