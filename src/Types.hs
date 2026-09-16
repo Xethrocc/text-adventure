@@ -284,6 +284,7 @@ data Effect
     | SendMessage String                          -- ^ Show a message to the player
     | ApplyCondition String Int (Maybe Effect) (Maybe Effect) -- ^ Name, turns, tick, end effects
     | ClearCondition String                       -- ^ Remove a condition by name
+    | RaiseEvent String                           -- ^ P1-20: fire `OnCustomEvent name`
     | ModifySkill SkillID Int                     -- ^ Change a skill by delta
     | QuestOp QuestOp String                      -- ^ Quest lifecycle operation
     | GameEnd GameOverReason String               -- ^ End the game with a reason

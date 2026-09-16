@@ -13,7 +13,7 @@ import System.Exit (exitFailure)
 import System.Directory (doesFileExist)
 import System.FilePath ((</>))
 import Worldbuilder.Types
-import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..))
+import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome)
 import Worldbuilder.ParseFile (parseAdventureFile)
 import Types as E
 import Validate (validateWorld, validateGameState, ValidationError (..))
@@ -740,6 +740,64 @@ testConditionalOutcomeCompiles = do
                     putStrLn $ "  unexpected effect: " ++ show other
                     pure False
 
+-- | P1-17: the five effects that had no YAML form. Each JSON case checks the
+--   *decoded constructor* (not merely that decoding succeeded) and the compiled
+--   engine effect.
+testP117EffectSugar :: IO Bool
+testP117EffectSugar = do
+    let dec = Aeson.decode :: BLC.ByteString -> Maybe AActionOutcome
+    r1 <- expectEqual (Just (AONarrative ["a", "b"] [AOMessage "x"]))
+              (dec (BLC.pack "{\"narrative\": [\"a\", \"b\"], \"then\": [{\"msg\": \"x\"}]}"))
+    r2 <- expectEqual (Just (AOApplyCondition "poisoned" 3 [AODamagePlayer 1] [AOMessage "over"]))
+              (dec (BLC.pack "{\"condition\": {\"name\": \"poisoned\", \"turns\": 3, \"tick\": [{\"damage\": 1}], \"end\": [{\"msg\": \"over\"}]}}"))
+    r3 <- expectEqual (Just (AOClearCondition "poisoned"))
+              (dec (BLC.pack "{\"clear_condition\": \"poisoned\"}"))
+    r4 <- expectEqual (Just (AOModifySkill "lockpick" 1))
+              (dec (BLC.pack "{\"skill\": {\"name\": \"lockpick\", \"delta\": 1}}"))
+    r5 <- expectEqual (Just (AORandomChoice [(3, [AOMessage "a"]), (1, [AOMessage "b"])]))
+              (dec (BLC.pack "{\"random\": [[3, [{\"msg\": \"a\"}]], [1, [{\"msg\": \"b\"}]]]}"))
+    c1 <- expectEqual (E.Narrative ["a"] (E.SendMessage "x"))
+              (compileAActionOutcome (AONarrative ["a"] [AOMessage "x"]))
+    c2 <- expectEqual (E.ApplyCondition "p" 2 (Just (E.SendMessage "t")) (Just (E.SendMessage "e")))
+              (compileAActionOutcome (AOApplyCondition "p" 2 [AOMessage "t"] [AOMessage "e"]))
+    c3 <- expectEqual (E.ClearCondition "p") (compileAActionOutcome (AOClearCondition "p"))
+    c4 <- expectEqual (E.ModifySkill "s" 2) (compileAActionOutcome (AOModifySkill "s" 2))
+    c5 <- expectEqual (E.RandomChoice [(2, E.SendMessage "a")])
+              (compileAActionOutcome (AORandomChoice [(2, [AOMessage "a"])]))
+    pure (and [r1, r2, r3, r4, r5, c1, c2, c3, c4, c5])
+
+-- | P1-18: the never-decodable `check_flag` shortcut is gone — flag tests now
+--   go through `if: { has_flag: … }` (and a stale `check_flag` is a parse error
+--   instead of a silently wrong compile).
+testP118CheckFlagRejected :: IO Bool
+testP118CheckFlagRejected = do
+    let dec = Aeson.decode :: BLC.ByteString -> Maybe AActionOutcome
+    r1 <- expectEqual Nothing
+              (dec (BLC.pack "{\"check_flag\": \"x\", \"then\": [], \"else\": []}"))
+    r2 <- expectEqual (Just (AOConditional (E.HasFlag "x") [AOMessage "y"] []))
+              (dec (BLC.pack "{\"if\": {\"has_flag\": \"x\"}, \"then\": [{\"msg\": \"y\"}]}"))
+    pure (r1 && r2)
+
+-- | P1-20: `raise:` decodes to `AORaiseEvent` and compiles to `RaiseEvent`,
+--   which fires a matching `on: custom <name>` rule at runtime.
+testP120RaiseEvent :: IO Bool
+testP120RaiseEvent = do
+    let dec = Aeson.decode :: BLC.ByteString -> Maybe AActionOutcome
+        adv = (minAdventure (minRoom "loc_0"))
+                { advTriggers =
+                    [ ATrigger "t_raise" "custom ritual_done"
+                        Nothing [AORaiseEvent "ritual_done"] False 0 ] }
+    r1 <- expectEqual (Just (AORaiseEvent "ritual_done"))
+              (dec (BLC.pack "{\"raise\": \"ritual_done\"}"))
+    r2 <- case compileAdventure adv of
+        Right cr -> expectTrue "raise compiles to RaiseEvent"
+                        (any (\t -> E.RaiseEvent "ritual_done" `elem` E.trEffects t)
+                             (E.triggerDefs (crWorld cr)))
+        Left errs -> do
+            putStrLn $ "  unexpected errors: " ++ issuesText errs
+            pure False
+    pure (r1 && r2)
+
 -- | Phase 5h: in_container pointing at a missing item is detected.
 testInvalidContainerDetected :: IO Bool
 testInvalidContainerDetected = do
@@ -894,6 +952,47 @@ testReservedTriggerIdFails = do
     case compileAdventure adv of
         Left errs -> expectContains "ReservedTriggerId" (issuesText errs)
         Right _   -> expectTrue "expected ReservedTriggerId" False
+
+-- | P1-13: `swim`/`crawl`/`dig`/`game` are genre verbs, not core words, so an
+--   adventure may now declare them (e.g. `verbs: [swim]`) without tripping
+--   `ReservedVerbName`.
+testGenreVerbDeclarable :: IO Bool
+testGenreVerbDeclarable = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advVerbs = [AVerb "swim" [], AVerb "game" []] }
+    case compileAdventure adv of
+        Right cr -> expectTrue "swim/game compile as custom verbs"
+                        (Map.member "swim" (E.verbDefs (crWorld cr))
+                          && Map.member "game" (E.verbDefs (crWorld cr)))
+        Left errs -> do
+            putStrLn $ "  unexpected errors: " ++ issuesText errs
+            pure False
+
+-- | P1-14: an `on: command <verb>` rule must name a core command or a declared
+--   custom verb; a bogus name would validate clean and silently never fire.
+testUnknownCommandVerbFails :: IO Bool
+testUnknownCommandVerbFails = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advTriggers =
+                [ ATrigger "t_bad" "command teleport" Nothing [AOMessage "x"] False 0 ] }
+    case compileAdventure adv of
+        Left errs -> expectContains "UnknownCommandVerb" (issuesText errs)
+        Right _   -> expectTrue "expected UnknownCommandVerb" False
+
+-- | P1-14: core command names (`examine`) and declared custom verbs both pass
+--   the command-verb check.
+testKnownCommandVerbCompiles :: IO Bool
+testKnownCommandVerbCompiles = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advVerbs = [AVerb "sneak" []]
+            , advTriggers =
+                [ ATrigger "t_core"   "command examine" Nothing [AOMessage "a"] False 0
+                , ATrigger "t_custom" "command sneak"   Nothing [AOMessage "b"] False 0 ] }
+    case compileAdventure adv of
+        Right _ -> pure True
+        Left errs -> do
+            putStrLn $ "  unexpected errors: " ++ issuesText errs
+            pure False
 
 -- | Any `faction.<id>` reference (standing outcome / predicate) must point at a
 --   declared faction once the `factions:` segment is present.
@@ -1457,6 +1556,39 @@ minShip vid = AVehicle
     , avStations = []
     }
 
+-- | P1-19: a stop with a declared cost (long form) reaches the engine as
+--   `VehicleStop … (Just (item, refused))`; an undeclared cost item is rejected.
+testP119StopCost :: IO Bool
+testP119StopCost = do
+    let tram = (minShip "tram")
+            { avType  = "paid"
+            , avStops = Map.fromList
+                [ ("Dock 7",  AStop "loc_1" (Just ("ticket", "Kein Ticket!")))
+                , ("Zentrum", AStop "loc_0" Nothing) ] }
+        adv = (minAdventure (minRoom "loc_0"))
+                { advRooms = [minRoom "loc_0", minRoom "loc_1"]
+                , advItems = [minItem "ticket"]
+                , advVehicles = [tram] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let vdef = Map.findWithDefault (error "missing") "tram" (E.vehicleDefs (crWorld cr))
+            r1 <- expectEqual (Just (Just ("ticket", "Kein Ticket!")))
+                      (E.stopCost <$> Map.lookup "loc_1" (E.vehicleStops vdef))
+            let bad = (minShip "tram2")
+                    { avType  = "paid"
+                    , avStops = Map.fromList
+                        [ ("Dock 7", AStop "loc_1" (Just ("ghost_ticket", "no"))) ] }
+                advBad = (minAdventure (minRoom "loc_0"))
+                            { advRooms = [minRoom "loc_0", minRoom "loc_1"]
+                            , advVehicles = [bad] }
+            r2 <- case compileAdventure advBad of
+                Left errs2 -> expectContains "UnknownStopCostItem" (issuesText errs2)
+                Right _    -> expectTrue "expected UnknownStopCostItem" False
+            pure (r1 && r2)
+
 -- | `systems:` becomes VarMap entries, `stations:` one gated trigger per room.
 testShipSystemsCompile :: IO Bool
 testShipSystemsCompile = do
@@ -1630,6 +1762,10 @@ tests =
     -- Phase 5h: containers + conditional outcomes
     , ("in_container places item inside container", testInContainerCompiles)
     , ("if/then/else outcome compiles to Conditional", testConditionalOutcomeCompiles)
+    , ("P1-17 effect sugar: narrative/condition/skill/random", testP117EffectSugar)
+    , ("P1-18 check_flag is rejected, has_flag works", testP118CheckFlagRejected)
+    , ("P1-19 paid stop cost reaches the engine", testP119StopCost)
+    , ("P1-20 raise: fires a custom event", testP120RaiseEvent)
     , ("in_container at missing item is detected", testInvalidContainerDetected)
     , ("item-on-item (crafting) interaction compiles", testItemInteractionCompiles)
     , ("entity interaction (use on target) compiles", testEntityInteractionCompiles)
@@ -1640,6 +1776,9 @@ tests =
     , ("set_state outcome compiles to entity state effect", testSetEntityStateCompiles)
     , ("duplicate rule id is a compile error (P1-6)", testDuplicateTriggerIdFails)
     , ("reserved rule id prefix is a compile error (P1-6)", testReservedTriggerIdFails)
+    , ("genre verb (swim/game) is declarable (P1-13)", testGenreVerbDeclarable)
+    , ("unknown command verb is a compile error (P1-14)", testUnknownCommandVerbFails)
+    , ("known command verb compiles (P1-14)", testKnownCommandVerbCompiles)
     , ("standing reference to unknown faction fails", testUnknownFactionFails)
     , ("factions fixture compiles + validates", testFactionsFixtureCompiles)
     , ("trade fixture compiles + validates", testTradeFixtureCompiles)

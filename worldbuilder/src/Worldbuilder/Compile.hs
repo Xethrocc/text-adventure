@@ -4,6 +4,7 @@ module Worldbuilder.Compile
     , compileAdventure
     , CompileIssue(..)
     , Severity(..)
+    , compileAActionOutcome
     ) where
 
 import Worldbuilder.Types
@@ -124,6 +125,8 @@ compileAdventure adv =
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
         npcRefErrs = checkDamageNpcRefs gw
         trigIdErrs = checkTriggerIds (advTriggers adv)
+        cmdVerbErrs = checkCommandVerbRefs verbRegistry (advTriggers adv)
+        stopCostErrs = checkStopCostItems (advVehicles adv) gw
 
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
                     ++ varErrs ++ facErrs ++ facConflictErrs ++ trigErrs ++ encErrs
@@ -134,6 +137,8 @@ compileAdventure adv =
                     ++ combatErrs
                     ++ initVarErrs ++ initStateErrs ++ facRefErrs ++ encRefErrs ++ npcRefErrs
                     ++ trigIdErrs
+                    ++ cmdVerbErrs
+                    ++ stopCostErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -276,7 +281,6 @@ reservedVerbWords =
     , "go", "move", "walk", "north", "south", "east", "west", "up", "down"
     , "enter", "board", "exit", "drive", "wait", "refuel", "repair"
     , "equip", "wear", "wield", "unequip", "remove"
-    , "swim", "crawl", "dig", "game"
     , "look", "inventory", "inv", "i", "stats", "journal", "quests"
     ]
 
@@ -1016,7 +1020,9 @@ compileVehicleDefSafe v =
                     , E.vehicleRooms = map arId (avInterior v)
                     , E.vehicleEntryRoom = avEntryRoom v
                     , E.vehicleCockpitRoom = avCockpit v
-                    , E.vehicleStops = Map.fromList [(rId, E.VehicleStop rId label Nothing) | (label, rId) <- Map.toList (avStops v)]
+                    , E.vehicleStops = Map.fromList
+                        [ (asRoom stop, E.VehicleStop (asRoom stop) label (asCost stop))
+                        | (label, stop) <- Map.toList (avStops v) ]
                     , E.vehicleRoute = []  -- authored stop order; empty = key order
                     , E.vehicleKeywords = avKeywords v
                     , E.vehicleFuelProp = avFuel v
@@ -1038,9 +1044,9 @@ combineOutcomes os = E.Sequence os
 compileVehicleState :: AVehicle -> E.VehicleState
 compileVehicleState v = E.VehicleState
     { E.vsCurrentStop = case avStartStop v >>= (`Map.lookup` avStops v) of
-          Just room -> room
+          Just stop -> asRoom stop
           Nothing   -> case Map.lookup (headSafe (Map.keys (avStops v))) (avStops v) of
-              Just room -> room
+              Just stop -> asRoom stop
               Nothing   -> avEntryRoom v
     , E.vsFuel = Nothing
     , E.vsActiveConditions = Set.empty
@@ -1125,8 +1131,6 @@ compileAActionOutcome ao = case ao of
     AOGiveItem i -> E.MoveEntity i (E.CarriedBy "player")
     AOConsumeItem i -> E.MoveEntity i E.Removed
     AOSetFlag f v -> E.SetValue (E.VRFlag f) (E.EVString v)
-    AOCheckFlag f _ t e ->
-        E.Conditional (E.HasFlag f) (compileAActionOutcome t) (compileAActionOutcome e)
     AOStartQuest q -> E.QuestOp E.StartQuest q
     AOAdvanceQuest q -> E.QuestOp E.AdvanceQuest q
     AOCompleteQuest q -> E.QuestOp E.CompleteQuest q
@@ -1139,10 +1143,24 @@ compileAActionOutcome ao = case ao of
         E.Conditional p (compileOutcomes ts) (compileOutcomes es)
     AOSetVar name v -> E.SetValue (E.VRVariable name) (E.EVInt v)
     AOAddVar name d -> E.ModifyValue (E.VRVariable name) d
-    AONarrative ls -> E.Sequence (map E.SendMessage ls ++ [E.Noop])
+    AONarrative ls follow -> E.Narrative ls (compileOutcomes follow)
     AOStandingAdd fid n -> E.ModifyValue (E.VRVariable ("faction." ++ fid)) n
     AOStandingSet fid n -> E.SetValue (E.VRVariable ("faction." ++ fid)) (E.EVInt n)
     AOSetEntityState e s -> E.SetValue (E.VRProperty e "state") (E.EVString s)
+    -- P1-17: previously unreachable engine effects, now authorable.
+    AOApplyCondition name turns tick end ->
+        E.ApplyCondition name turns (outcomesMaybe tick) (outcomesMaybe end)
+    AOClearCondition name -> E.ClearCondition name
+    AOModifySkill skillId delta -> E.ModifySkill skillId delta
+    AORandomChoice weighted ->
+        E.RandomChoice [ (w, compileOutcomes os) | (w, os) <- weighted ]
+    AORaiseEvent name -> E.RaiseEvent name
+
+-- | `Just` the compiled effect for a non-empty outcome list, else `Nothing`
+--   (engine `ApplyCondition` takes optional tick/end effects).
+outcomesMaybe :: [AActionOutcome] -> Maybe E.Effect
+outcomesMaybe [] = Nothing
+outcomesMaybe os = Just (compileOutcomes os)
 
 -- | Parse a game-end reason string ("victory", "death", or a custom label).
 parseGameOverReason :: String -> E.GameOverReason
@@ -1203,6 +1221,34 @@ checkTriggerIds ts =
     [ ciError ("rules." ++ atId t) "ReservedTriggerId"
         ("rule id '" ++ atId t ++ "' uses a compiler-owned prefix")
     | t <- ts, p <- reservedTriggerPrefixes, p `isPrefixOf` atId t ]
+
+-- | Every `on: command <verb>` rule must name a verb the runtime can actually
+--   emit (`GameLoop.commandVerbName`): a core command name or a declared
+--   custom verb. Otherwise the rule validates clean and silently never fires.
+checkCommandVerbRefs :: Map.Map String E.VerbDef -> [ATrigger] -> [CompileIssue]
+checkCommandVerbRefs registry triggers =
+    [ ciError ("rules." ++ atId t) "UnknownCommandVerb"
+        ("rule '" ++ atId t ++ "' listens on 'command " ++ v
+         ++ "', which is neither a core command nor a declared custom verb")
+    | t <- triggers
+    , Just v <- [commandVerbOf (atOn t)]
+    , not (Set.member (map toLower v) known) ]
+  where
+    known = Set.fromList (map (map toLower) (Verbs.coreCommandVerbs ++ Map.keys registry))
+    commandVerbOf s = case words s of
+        ["command", v] -> Just v
+        _              -> Nothing
+
+-- | A stop `cost.item` must be a declared item id (P1-19) — otherwise the fare
+--   can never be paid and the vehicle silently behaves like `auto`.
+checkStopCostItems :: [AVehicle] -> E.GameWorld -> [CompileIssue]
+checkStopCostItems vehicles gw =
+    [ ciError ("vehicles." ++ avId v ++ ".stops." ++ label) "UnknownStopCostItem"
+        ("stop '" ++ label ++ "' costs item '" ++ iid ++ "', which is not declared")
+    | v <- vehicles
+    , (label, stop) <- Map.toList (avStops v)
+    , Just (iid, _) <- [asCost stop]
+    , not (Map.member iid (E.itemDefs gw)) ]
 
 -- | Parse the `on` string into an EventType.
 --   Supported: "enter <room>", "leave <room>", "look <room>", "search <room>",

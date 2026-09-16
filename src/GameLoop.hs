@@ -12,6 +12,7 @@ module GameLoop
 import Types
 import Game
 import Parser hiding (reachableExitEntities)
+import Verbs (verbCanonicalName)
 import SaveLoad
 import Sample (initSampleGame)
 import Data.Char (toLower)
@@ -32,7 +33,7 @@ commandWords =
     , "equip", "wear", "wield", "unequip", "remove", "stats"
     , "enter", "board", "disembark", "drive", "wait", "refuel", "repair"
     , "undo", "save", "load", "saves", "restart", "help", "quit", "exit", "q"
-    , "activate", "swim", "crawl", "dig"
+    , "activate"
     ]
 
 directionWords :: [String]
@@ -165,6 +166,15 @@ consumesTurn cmd = case cmd of
     Unknown _      -> False
     _              -> True
 
+-- | Whether a command advances the game clock, evaluated against the state the
+--   command runs in. P1-16: an invalid dialogue choice (`99` in a 3-option
+--   prompt, or a bare number outside a conversation) is a typo, not an action,
+--   so it must not tick conditions, fire `on: turn` or grow the undo history.
+consumesTurnIn :: GameState -> Command -> Bool
+consumesTurnIn st cmd = case cmd of
+    ChooseCmd i -> isValidChoice i st
+    _           -> consumesTurn cmd
+
 -- | Pure command transition used by both the interactive loop and tests.
 --   Undo itself does not consume a turn. Other commands run the normal turn
 --   ticks and save the exact pre-command state for restoration.
@@ -183,7 +193,7 @@ applyLoopCommand (Save _) loopState = (loopState, "")
 applyLoopCommand (Load _) loopState = (loopState, "")
 applyLoopCommand ListSaves loopState = (loopState, "")
 applyLoopCommand command loopState
-    | not (consumesTurn command) =
+    | not (consumesTurnIn (lsCurrent loopState) command) =
         let (newState, message) = executeCommand command (lsCurrent loopState)
             (stateAfterTriggers, triggerMsg) = fireCommandTriggers command (lsCurrent loopState) newState
             combined = combineMessages message triggerMsg
@@ -225,7 +235,7 @@ commandEvents cmd before after = concat
     , takeDropUseEvents
     , lookSearchEvents
     , [OnCommand (commandVerbName cmd)]
-    , [OnTurn | consumesTurn cmd]
+    , [OnTurn | consumesTurnIn before cmd]
     ]
   where
     roomEvents =
@@ -235,23 +245,35 @@ commandEvents cmd before after = concat
            then [OnLeave oldRoom, OnEnter newRoom]
            else []
     takeDropUseEvents = case cmd of
-        Interact VTake t -> [OnTake iid | Just iid <- [findItemIdByAlias t after]]
-        Interact VDrop t -> [OnDrop iid | Just iid <- [findItemIdByAlias t after]]
+        -- P1-15: derive take/drop events from the actual state change, not from
+        -- the command. A failed `take` (not portable / already carried) or a
+        -- `drop` of something not held must not fire `OnTake`/`OnDrop`.
+        Interact VTake t ->
+            [ OnTake iid | Just iid <- [findItemIdByAlias t after]
+                         , itemLoc iid before /= Just (CarriedBy "player")
+                         , itemLoc iid after  == Just (CarriedBy "player") ]
+        Interact VDrop t ->
+            [ OnDrop iid | Just iid <- [findItemIdByAlias t after]
+                         , itemLoc iid before == Just (CarriedBy "player")
+                         , itemLoc iid after  /= Just (CarriedBy "player") ]
+        -- `use` has no state criterion (its effect is up to the author).
         Interact VUse t  -> [OnUse iid | Just iid <- [findItemIdByAlias t after]]
         _ -> []
+    itemLoc i st = itemLocation <$> Map.lookup i (itemStates (save st))
     lookSearchEvents = case cmd of
         Look            -> [OnLook (currentRoom (save after)) | currentRoom (save after) `elem` Map.keys (rooms (world after))]
         SearchCmd _     -> [OnSearch (currentRoom (save after)) | currentRoom (save after) `elem` Map.keys (rooms (world after))]
         _               -> []
 
--- | Best-effort lookup of an item ID by alias (returns the alias as fallback, since
---   triggers are matched by ID; the exact ID lookup makes favorite-item triggers work).
+-- | Look up an item ID by alias. Returns `Nothing` when no declared item matches
+--   (P1-15: the old fallback to the raw input invented events for item IDs that
+--   do not exist, e.g. `take blubb` -> `OnTake "blubb"`).
 findItemIdByAlias :: String -> GameState -> Maybe String
 findItemIdByAlias alias state =
     let allItems = Map.elems (itemDefs (world state))
     in case [itemId i | i <- allItems, normalizeText alias `elem` itemAliases i] of
         (iId:_) -> Just iId
-        []      -> Just alias
+        []      -> Nothing
 
 -- | Extract a canonical verb name for OnCommand triggers.
 commandVerbName :: Command -> String
@@ -267,9 +289,8 @@ commandVerbName cmd = case cmd of
     EquipCmd _    -> "equip"
     UnequipCmd _  -> "unequip"
     UnequipAllCmd -> "unequip"
-    Interact (VCustom name) _ -> map toLower name
-    Interact v _  -> map toLower (drop 1 (show v))  -- "VTake" -> "take"
-    InteractWith VUseOn _ _ -> "use"
+    Interact v _        -> verbCanonicalName v
+    InteractWith v _ _  -> verbCanonicalName v
     _             -> "unknown"
 
 -- | Main game loop function

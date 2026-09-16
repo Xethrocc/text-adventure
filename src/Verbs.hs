@@ -5,11 +5,14 @@ module Verbs
     ( coreVerbDefs
     , verbAliasMap
     , resolveVerb
+    , verbCanonicalName
+    , coreCommandVerbs
     ) where
 
 import Types
 import qualified Data.Map.Strict as Map
 import Data.Char (toLower)
+import Data.List (nub)
 
 -- | Default verb definitions shipped with the engine — the canonical verb-map
 --   verbs that the parser recognises. Each entry maps a canonical name to its
@@ -59,3 +62,35 @@ canonicalToVerb "talk"    = Just VTalk
 canonicalToVerb "attack"  = Just VAttack
 canonicalToVerb "search"  = Just VSearch
 canonicalToVerb _         = Nothing
+
+-- | Canonical name of a parsed verb — the name that appears in the
+--   `on: command <name>` trigger event. Derived from the registry so trigger
+--   events and parsing cannot diverge (`VLookAt` is `examine`, `VUseOn` is
+--   `use`; a `show`-derived name would yield `lookat`/`useon`).
+verbCanonicalName :: Verb -> String
+verbCanonicalName v = case v of
+    VCustom n  -> map toLower n
+    VGo        -> "go"
+    VLook      -> "look"
+    VLookAt    -> "examine"
+    VTake      -> "take"
+    VDrop      -> "drop"
+    VInventory -> "inventory"
+    VUse       -> "use"
+    VUseOn     -> "use"
+    VTalk      -> "talk"
+    VAttack    -> "attack"
+    VSearch    -> "search"
+    VHelp      -> "help"
+    VQuit      -> "quit"
+    VUnknown   -> "unknown"
+
+-- | Every name `GameLoop.commandVerbName` can emit for a built-in command.
+--   An `on: command <name>` rule must use one of these (or a declared custom
+--   verb) or it can never fire.
+coreCommandVerbs :: [String]
+coreCommandVerbs =
+    nub (map verbCanonicalName
+            [ VGo, VLook, VLookAt, VTake, VDrop, VInventory
+            , VUse, VUseOn, VTalk, VAttack, VSearch, VHelp, VQuit ])
+    ++ [ "stats", "journal", "equip", "unequip" ]

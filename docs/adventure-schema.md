@@ -81,7 +81,7 @@ description:
 | `{ give: item_id }` | MoveEntity to CarriedBy "player" |
 | `{ consume: item_id }` | MoveEntity Removed |
 | `{ set_flag: name, val: "true" }` | SetValue (VRFlag name) "true" |
-| `{ check_flag: name, then: [...], else: [...] }` | Conditional HasFlag |
+| `{ if: { has_flag: name }, then: [...], else: [...] }` | Conditional HasFlag — Flag-Test (ersetzt das entfernte, nie dekodierbare `check_flag`, P1-18) |
 | `{ start_quest: id }` | QuestOp StartQuest |
 | `{ advance_quest: id }` | QuestOp AdvanceQuest |
 | `{ complete_quest: id }` | QuestOp CompleteQuest |
@@ -95,6 +95,18 @@ description:
 | `{ standing: { faction: id, set: N } }` | SetValue (VRVariable "faction.id") N — Module 7a |
 | `{ set_state: entity, to: state }` | SetValue (VRProperty entity "state") — z. B. `locked_by`-Tore öffnen |
 | `{ damage_npc: { npc: id, amount: N } }` | ModifyValue (VRProperty id "hp") −N — Module 7g |
+| `{ narrative: ["Zeile 1", "Zeile 2"], then: [...] }` | Narrative — interaktive, seitenweise Ausgabe (`[Press Enter to continue]`); `then` sind Folge-Effekte nach der letzten Zeile |
+| `{ condition: { name: id, turns: N, tick: [...], end: [...] } }` | ApplyCondition — zeitlich begrenzter Status-Effekt (`tick` je Zug, `end` beim Ablauf) |
+| `{ clear_condition: id }` | ClearCondition — Status-Effekt vorzeitig entfernen |
+| `{ skill: { name: id, delta: N } }` | ModifySkill — Skill um `N` verändern (auch negativ) |
+| `{ random: [[gewicht, [effekte]], ...] }` | RandomChoice — gewichtete Zufallsauswahl (Gewicht ≥ 1) |
+| `{ raise: name }` | RaiseEvent — feuert alle Regeln `on: custom <name>` (P1-20) |
+
+Flags sind für Prädikate faktisch boolesch: `has_flag` prüft, ob ein Flag gesetzt
+ist (`"true"`). Ein Vergleich gegen einen *anderen* String-Wert ist nicht
+ausdrückbar — für solche Zustände `variables:` mit `type: text` verwenden
+(`set_var` / `compare_var`). Das frühere `check_flag`-Kürzel wurde entfernt
+(P1-18), weil es nie dekodierbar war und den Erwartungswert still verwarf.
 
 Item-Felder für Container:
 
@@ -188,8 +200,10 @@ vehicles:
       - { id: ks_bridge, name: Brücke, desc: "…", exits: { north: {to: ks_engine} } }
       - { id: ks_engine, name: Maschinenraum, desc: "…" }
     stops:
-      "Dock 7": ks_dock       # Label -> Außenraum
-      "Asteroidengürtel": ks_asteroid
+      "Dock 7": ks_dock        # Kurzform: Label -> Außenraum
+      "Zentrum":               # Langform mit Fahrpreis (P1-19)
+        room: ks_center
+        cost: { item: ticket, refused: "Ohne Ticket kommst du nicht mit." }
     start_stop: "Dock 7"
     systems:                   # -> VarMap ship.kestrel.<name>
       power:   { initial: 6, max: 6 }
@@ -206,7 +220,8 @@ vehicles:
 | Feld | Typ | Default | Beschreibung |
 |---|---|---|---|
 | `systems.<name>.initial` | Int | 0 | Startwert der Variable `ship.<vehicleId>.<name>` |
-| `systems.<name>.max` | Int | 0 | Obergrenze (0 = keine) — Deko, Clamps sind Autoren-Sache |
+| `systems.<name>.max` | Int | 0 | Obergrenze (0 = keine); wird seit P1-8 beim Setzen/Ändern der Variable erzwungen |
+| `stops.<label>` | String **oder** Object | **required** | Außenraum (Kurzform) oder `{ room, cost: { item, refused } }` (Fahrpreis, P1-19; `item` muss deklariert sein) |
 | `stations[].room` | String | **required** | Interior-Raum des Fahrzeugs |
 | `stations[].verb` | String | **required** | deklariertes Custom-Verb |
 | `stations[].effects` | [Effekt] | `[]` | läuft wie jeder andere Effekt-Baum |

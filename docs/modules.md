@@ -348,8 +348,9 @@ vehicles:
 - **Systeme = VarMap:** je System eine Variable `ship.<vehicleId>.<name>` mit
   `min 0`/`max` aus dem Block; Autoren dürfen sie nicht selbst deklarieren
   (`ShipVariableClash`) — der dritte Beleg der „kein State-Silo"-Regel nach
-  `faction.<id>` (7a) und `party.<id>` (7g). Obergrenzen sind **Deko**: ein
-  Clamp gehört als `if: { compare_var: … gt N } → set_var` in die Effekte.
+  `faction.<id>` (7a) und `party.<id>` (7g). Die Grenzen sind seit P1-8 wirksam:
+  `SetValue`/`ModifyValue` auf eine `VTInt`-Variable clampen automatisch auf
+  `min`/`max`, Autoren-Clamps sind nicht mehr nötig.
 - **Stationen = Interior-Raum + Verb:** der Compiler erzeugt je Station einen
   Trigger `ship.<id>.station.<room>` (`on: command <verb>`) mit dem Gate
   `{ at: player, room: <room> }` plus optionalem `when:`. Die einzige
@@ -366,8 +367,8 @@ vehicles:
   - das Schiff feuert `weapons` und verbraucht 1 `power`; ohne Energie bleibt
     es stumm (Meldung, kein Schaden);
   - der Konter trifft **das Schiff**: `shields` fangen ab, der Rest geht auf
-    `hull`; beide werden als geclampte `SetValue`-Effekte emittiert, weil
-    `VTInt`-Grenzen im Kern nicht durchgesetzt werden;
+    `hull`; beide werden als `SetValue`-Effekte emittiert (die `VTInt`-Grenzen
+    werden seit P1-8 beim Setzen durchgesetzt);
   - ohne Schilde **und** Hülle nimmt weiter der Spieler den Schaden (7f).
   - `hull <= 0` ist kein Kern-Sonderpfad: die Fixture beendet das Spiel mit
     einer `on: turn`-Rule.

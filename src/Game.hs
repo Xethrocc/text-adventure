@@ -751,6 +751,13 @@ applyOutcomeWith depth salt outcome targetId state
     ApplyCondition name turns tick end -> (applyCondition name turns tick end state, "", salt)
     ClearCondition name -> (clearCondition name state, "", salt)
 
+    -- P1-20: fire `OnCustomEvent name`. The event depth is threaded into the
+    -- nested trigger pass (depth + 1), so a rule whose effect raises the same
+    -- event again terminates at `maxOutcomeDepth` instead of looping.
+    RaiseEvent name ->
+        let (st', m) = fireTriggersWithDepth (depth + 1) (OnCustomEvent name) state
+        in (st', m, salt)
+
     ModifySkill skillId delta -> (modifySkill skillId delta state, "", salt)
 
     -- Narrative: store lines + follow-up for interactive display
@@ -1192,17 +1199,24 @@ vehicleLookAddon state = case currentVehicle (save state) of
 -- Trigger system (Phase 3f)
 -- ---------------------------------------------------------------------------
 
--- | Fire triggers matching the given event type.
+-- | Fire triggers matching the given event type (entry point, nesting depth 0).
 --   Returns updated state and accumulated messages from all triggered effects.
 fireTriggers :: EventType -> GameState -> (GameState, String)
-fireTriggers event state =
-    let triggers = triggerDefs (world state)
-        matching = filter (\t -> trEvent t == event) triggers
-    in fireTriggerList matching state
+fireTriggers = fireTriggersWithDepth 0
 
--- | Fire a specific list of triggers (internal, also used by nested call from effects)
-fireTriggerList :: [TriggerDef] -> GameState -> (GameState, String)
-fireTriggerList triggers state =
+-- | Like `fireTriggers`, but carrying the current event nesting depth so that
+--   recursively raising events (`RaiseEvent`) cannot loop forever.
+fireTriggersWithDepth :: Int -> EventType -> GameState -> (GameState, String)
+fireTriggersWithDepth depth event state
+    | depth > maxOutcomeDepth = (state, "")
+    | otherwise =
+        let triggers = triggerDefs (world state)
+            matching = filter (\t -> trEvent t == event) triggers
+        in fireTriggerList depth matching state
+
+-- | Fire a specific list of triggers (internal, also used by nested call from effects).
+fireTriggerList :: Int -> [TriggerDef] -> GameState -> (GameState, String)
+fireTriggerList depth triggers state =
     foldl fireOne (state, "") triggers
   where
     -- Read the trigger state from the CURRENT fold state, not a snapshot
@@ -1230,7 +1244,7 @@ fireTriggerList triggers state =
 
     applyTrigEffects tId tr st acc =
         let (st', msgs) = foldl (\(s, a) e ->
-                let (s', m, _) = applyOutcomeWith 0 0 e "" s
+                let (s', m, _) = applyOutcomeWith (depth + 1) 0 e "" s
                 in (s', a ++ m ++ "\n")) (st { save = (save st) { triggerStates = updatedTs } }, acc) (trEffects tr)
             updatedTs = Map.insert tId (TriggerState True (trCooldown tr)) (triggerStates (save st))
         in (st', msgs)

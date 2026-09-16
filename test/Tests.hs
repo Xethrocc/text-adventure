@@ -1675,6 +1675,81 @@ testTriggerThroughGameLoop = do
     r2 <- expectTrue "player moved to hallway" (currentRoom (save st) == "hallway")
     pure (r1 && r2)
 
+-- | P1-14: `on: command examine` must fire for `look at X`. The event name comes
+--   from the verb registry; a `show`-derived name would have been "lookat".
+--   Same for `use X on Y` (InteractWith) which must still be "use".
+testOnCommandExamineFires :: IO Bool
+testOnCommandExamineFires = do
+    let withTrigger t = initSampleGame
+            { world = (world initSampleGame) { triggerDefs = [t] } }
+        loopFor t = initLoopState (withTrigger t)
+    r1 <- do
+        let t = TriggerDef "examine_test" (OnCommand "examine") Nothing
+                    [SendMessage "You examine it closely."] False 0
+            (_, msg) = applyLoopCommand (Interact VLookAt "torch") (loopFor t)
+        expectTrue "on: command examine fires for look at X" (isInfixOf "examine it closely" msg)
+    r2 <- do
+        let t = TriggerDef "useon_test" (OnCommand "use") Nothing
+                    [SendMessage "You apply it to the door."] False 0
+            (_, msg) = applyLoopCommand (InteractWith VUseOn "oil_can" "door") (loopFor t)
+        expectTrue "on: command use fires for use X on Y" (isInfixOf "apply it to the door" msg)
+    pure (r1 && r2)
+
+-- | P1-15: `on: take`/`on: drop` must fire only on a real inventory change —
+--   not for a refused take (non-portable / already carried), not for an
+--   unknown item id, and not for dropping something not held.
+testTakeEventOnlyOnSuccess :: IO Bool
+testTakeEventOnlyOnSuccess = do
+    let base = initSampleGame
+        nonPortable = ItemDef "statue" "statue" (plainText "A heavy stone statue.")
+                          ["statue"] Set.empty Nothing [] False Nothing False
+                          (Just "The statue will not budge.") Map.empty
+        st0 = base { world = (world base)
+                         { itemDefs = Map.insert "statue" nonPortable (itemDefs (world base)) }
+                   , save  = (save base)
+                       { itemStates = Map.insert "statue"
+                             (ItemState (InRoom "start") "intact" Map.empty False)
+                             (itemStates (save base)) } }
+        carriedTorch = st0 { save = (save st0)
+                       { itemStates = Map.adjust (\i -> i { itemLocation = CarriedBy "player" })
+                                                 "torch" (itemStates (save st0)) } }
+        fires st ev cmd =
+            let st' = st { world = (world st)
+                             { triggerDefs = [TriggerDef "t" ev Nothing [SendMessage "FIRED"] False 0] } }
+                (_, msg) = applyLoopCommand cmd (initLoopState st')
+            in isInfixOf "FIRED" msg
+    r1 <- expectTrue "refused take (non-portable) does not fire OnTake"
+              (not (fires st0 (OnTake "statue") (Interact VTake "statue")))
+    r2 <- expectTrue "unknown item does not fire OnTake"
+              (not (fires st0 (OnTake "blubb") (Interact VTake "blubb")))
+    r3 <- expectTrue "take while already carried does not fire OnTake"
+              (not (fires carriedTorch (OnTake "torch") (Interact VTake "torch")))
+    r4 <- expectTrue "successful take fires OnTake"
+              (fires st0 (OnTake "torch") (Interact VTake "torch"))
+    r5 <- expectTrue "drop of a non-held item does not fire OnDrop"
+              (not (fires st0 (OnDrop "torch") (Interact VDrop "torch")))
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | P1-20: `RaiseEvent` fires the matching `on: custom` rule; an event with no
+--   listener is a no-op; and a rule that raises its own event terminates
+--   (bounded by the threaded event depth) instead of looping forever.
+testRaiseEventFires :: IO Bool
+testRaiseEventFires = do
+    let rule = TriggerDef "ritual" (OnCustomEvent "ritual_done") Nothing
+                   [SendMessage "The ritual is complete."] False 0
+        st0 = initSampleGame { world = (world initSampleGame) { triggerDefs = [rule] } }
+        (_, msg) = applyOutcome (RaiseEvent "ritual_done") "" st0
+    r1 <- expectTrue "raise fires the on: custom rule" (isInfixOf "ritual is complete" msg)
+    r2 <- expectEqual "" (snd (applyOutcome (RaiseEvent "nobody_listens") "" initSampleGame))
+    let looper = TriggerDef "loop" (OnCustomEvent "loop") Nothing
+                     [Sequence [SendMessage "tick", RaiseEvent "loop"]] False 0
+        st1 = initSampleGame { world = (world initSampleGame) { triggerDefs = [looper] } }
+    r3 <- timeout 3000000 (evaluate (length (snd (applyOutcome (RaiseEvent "loop") "" st1))))
+    r4 <- case r3 of
+        Just _  -> pure True
+        Nothing -> expectTrue "self-raising event terminates" False
+    pure (r1 && r2 && r4)
+
 -- ===== Narrative tests (Phase 4.4) =====
 
 testNarrativeReturnsLines :: IO Bool
@@ -2024,6 +2099,24 @@ testDialogueInvalidChoice = do
     r2 <- expectTrue "keeps dialogue active" (activeDialogue (save st2) == Just "oldman")
     pure (r1 && r2)
 
+-- | P1-16: an invalid dialogue choice (or a bare number outside a conversation)
+--   must not cost a turn: no condition tick, no `on: turn`, no undo history.
+--   A valid choice does advance the clock.
+testInvalidChoiceCostsNoTurn :: IO Bool
+testInvalidChoiceCostsNoTurn = do
+    let (stTalk, _) = executeCommand (Interact VTalk "old man") initSampleGame
+        loop        = initLoopState stTalk
+        turns l     = turnCount (save (lsCurrent l))
+        (loopBad,  _) = applyLoopCommand (ChooseCmd 99) loop
+        (loopGood, _) = applyLoopCommand (ChooseCmd 1) loop
+        loopNoDialogue = initLoopState initSampleGame
+        (loopNum, _)   = applyLoopCommand (ChooseCmd 1) loopNoDialogue
+    r1 <- expectEqual (turns loop) (turns loopBad)
+    r2 <- expectTrue "valid choice advances the clock" (turns loopGood > turns loop)
+    r3 <- expectTrue "invalid choice leaves no undo history" (null (lsHistory loopBad))
+    r4 <- expectEqual (turns loopNoDialogue) (turns loopNum)
+    pure (r1 && r2 && r3 && r4)
+
 testDialogueEndClearsActive :: IO Bool
 testDialogueEndClearsActive = do
     let (st1, _) = executeCommand (Interact VTalk "old man") initSampleGame
@@ -2314,6 +2407,24 @@ testVehicleStopListUsesAuthoredRoute = do
     r2 <- expectEqual ["meadow", "start"] (map fst (vehicleStopList v0))
     pure (r1 && r2)
 
+-- | P1-13: `swim`/`crawl`/`dig`/`game` were hardcoded in the core parser and
+--   all mapped to `Go Southeast`. They are genre content, not core verbs:
+--   with no adventure-declared verb they must parse as `Unknown`.
+testGenreVerbsNotCoreVerbs :: IO Bool
+testGenreVerbsNotCoreVerbs = do
+    r1 <- expectEqual (Unknown "swim")  (parseCommand "swim")
+    r2 <- expectEqual (Unknown "crawl") (parseCommand "crawl")
+    r3 <- expectEqual (Unknown "dig")   (parseCommand "dig")
+    r4 <- expectEqual (Unknown "game")  (parseCommand "game")
+    pure (and [r1, r2, r3, r4])
+
+-- | P1-13: the generic replacement — a genre verb declared by the adventure
+--   still parses (as `VCustom`), so `swim` needs no core code.
+testGenreVerbFromRegistry :: IO Bool
+testGenreVerbFromRegistry = do
+    let reg = Map.fromList [("swim", VerbDef "swim" [])]
+    expectEqual (Interact (VCustom "swim") "") (parseCommandWith reg "swim")
+
 main :: IO ()
 main = do
     results <- sequence
@@ -2493,6 +2604,9 @@ main = do
         , runTest "trigger condition gates firing" testTriggerConditionGates
         , runTest "OnCommand trigger fires" testTriggerCommandEvent
         , runTest "trigger fires through game loop" testTriggerThroughGameLoop
+        , runTest "on: command examine fires for look at (P1-14)" testOnCommandExamineFires
+        , runTest "take/drop events only on real inventory change (P1-15)" testTakeEventOnlyOnSuccess
+        , runTest "raise fires on: custom, self-raise terminates (P1-20)" testRaiseEventFires
         -- Narratives (Phase 4.4)
         , runTest "narrative returns lines" testNarrativeReturnsLines
         , runTest "narrative stores pending (no side effects)" testNarrativeStoresPending
@@ -2520,6 +2634,7 @@ main = do
         , runTest "invariant: item verb keys resolve" testItemVerbKeysResolve
         , runTest "dialogue bare number choice" testDialogueBareNumberChoice
         , runTest "dialogue invalid choice" testDialogueInvalidChoice
+        , runTest "invalid dialogue choice costs no turn (P1-16)" testInvalidChoiceCostsNoTurn
         , runTest "dialogue end clears active" testDialogueEndClearsActive
         , runTest "room ASCII art display" testRoomAsciiArtDisplay
         , runTest "missing dialogue node detected" testMissingDialogueNodeDetected
@@ -2545,5 +2660,8 @@ main = do
         , runTest "move into container reports error (P1-11)" testMoveEntityInContainerReportsError
         -- P1-10: Autoren-Reihenfolge der Stops
         , runTest "vehicle stops follow authored route (P1-10)" testVehicleStopListUsesAuthoredRoute
+        -- P1-13: Genre-Verben nicht mehr im Kern
+        , runTest "genre verbs are not core verbs (P1-13)" testGenreVerbsNotCoreVerbs
+        , runTest "genre verb comes from the registry (P1-13)" testGenreVerbFromRegistry
         ]
     when (not (and results)) exitFailure

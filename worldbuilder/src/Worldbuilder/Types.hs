@@ -373,7 +373,7 @@ data AVehicle = AVehicle
     , avInterior   :: [ARoom]
     , avEntryRoom  :: String
     , avCockpit    :: Maybe String
-    , avStops      :: Map.Map String String
+    , avStops      :: Map.Map String AStop
     , avKeywords   :: [String]
     , avFuel       :: Maybe (String, Int)
     , avConditions :: Map.Map String [AActionOutcome]
@@ -381,6 +381,23 @@ data AVehicle = AVehicle
     , avSystems    :: Map.Map String ASystem  -- ^ ship systems -> VarMap (Phase 7h)
     , avStations   :: [AStation]          -- ^ interior-room verbs (Phase 7h)
     } deriving (Show, Eq, Generic)
+
+-- | A vehicle stop (P1-19). Short form `label: room_id`, or long form
+--   `label: { room: room_id, cost: { item: ticket, refused: "…" } }`. A
+--   declared cost makes boarding consume the item — the engine's `paid`
+--   vehicle fare (`VehicleStop.stopCost`), previously unreachable from YAML.
+data AStop = AStop
+    { asRoom :: String
+    , asCost :: Maybe (String, String)   -- ^ (item consumed per stop, refusal message)
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AStop where
+    parseJSON (String s) = pure (AStop (T.unpack s) Nothing)
+    parseJSON v = withObject "AStop" (\o -> AStop
+        <$> o .:  "room"
+        <*> (o .:? "cost" >>= traverse
+                (\c -> (,) <$> c .: "item"
+                           <*> c .:? "refused" .!= "You cannot pay the fare."))) v
 
 -- | A ship system (Phase 7h): compiled into the VarMap entry
 --   `ship.<vehicleId>.<name>`. `power`, `shields`, `hull` and `weapons` carry
@@ -707,7 +724,6 @@ data AActionOutcome
     | AOGiveItem String
     | AOConsumeItem String
     | AOSetFlag String String
-    | AOCheckFlag String String AActionOutcome AActionOutcome
     | AOStartQuest String
     | AOAdvanceQuest String
     | AOCompleteQuest String
@@ -719,10 +735,17 @@ data AActionOutcome
     | AOConditional E.Predicate [AActionOutcome] [AActionOutcome]  -- ^ if/then/else
     | AOSetVar String Int              -- ^ set a declared numeric variable
     | AOAddVar String Int              -- ^ add a delta to a declared numeric variable
-    | AONarrative [String]
+    | AONarrative [String] [AActionOutcome]  -- ^ narrative: [...] + optional `then:` follow-ups
     | AOStandingAdd String Int         -- ^ standing: {faction: X, add: N} (Phase 7a)
     | AOStandingSet String Int         -- ^ standing: {faction: X, set: N} (Phase 7a)
     | AOSetEntityState String String   -- ^ set_state: <entity>, to: <state> (Phase 7a)
+    -- P1-17: effects that previously had no YAML form at all.
+    | AOApplyCondition String Int [AActionOutcome] [AActionOutcome]
+        -- ^ condition: {name, turns, tick, end} — timed status effect
+    | AOClearCondition String          -- ^ clear_condition: <name>
+    | AOModifySkill String Int         -- ^ skill: {name, delta}
+    | AORandomChoice [(Int, [AActionOutcome])]  -- ^ random: [[weight, [outcomes]], ...]
+    | AORaiseEvent String              -- ^ raise: <name> — fires `on: custom <name>` (P1-20)
     deriving (Show, Eq, Generic)
 
 -- Parse an outcome from an object with a single recognized key
@@ -733,6 +756,18 @@ instance FromJSON AActionOutcome where
             -- "game_end" and a "msg" for the end screen.
             (AOGameEnd <$> o .: "game_end" <*> o .:? "msg")
         <|> (AOConditional <$> o .: "if" <*> o .:? "then" .!= [] <*> o .:? "else" .!= [])
+        -- P1-17: effects that previously had no YAML form. These must stay
+        -- BEFORE the broad `msg` branch below — an object may carry a `msg`
+        -- sibling (cf. game_end at the top).
+        <|> (AONarrative <$> o .: "narrative" <*> o .:? "then" .!= [])
+        <|> (do cond <- o .: "condition"
+                AOApplyCondition <$> cond .: "name" <*> cond .: "turns"
+                                 <*> cond .:? "tick" .!= [] <*> cond .:? "end" .!= [])
+        <|> (AOClearCondition <$> o .: "clear_condition")
+        <|> (do sk <- o .: "skill"
+                AOModifySkill <$> sk .: "name" <*> sk .: "delta")
+        <|> (AORandomChoice <$> o .: "random")
+        <|> (AORaiseEvent <$> o .: "raise")
         <|> (AOSetVar <$> o .: "set_var" <*> o .: "value")
         <|> (AOAddVar <$> o .: "add_var" <*> o .: "delta")
         <|> (AOMessage <$> o .: "msg")
@@ -750,7 +785,6 @@ instance FromJSON AActionOutcome where
         -- Phase 7g: damage an NPC (companion death via trap, scripted harm)
         <|> (do dn <- o .: "damage_npc"
                 AODamageNPC <$> dn .: "npc" <*> dn .: "amount")
-        <|> (AONarrative <$> o .: "narrative")
         -- Phase 7a: standing sugar + set_state
         <|> (do st <- o .: "standing"
                 fid <- st .: "faction"

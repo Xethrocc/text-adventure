@@ -95,7 +95,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `ShipActor` (7h) erweitern sie ohne Signaturänderung.
 - `evalPredicate (Location "player" r)` prüft jetzt auch den Spielerraum
   (vorher nur NPC-/Item-Locations).
-- Tests: **186** Engine- + **64** Worldbuilder-Tests, **18** E2E-Playthroughs
+- Tests: **198** Engine- + **71** Worldbuilder-Tests, **18** E2E-Playthroughs
   (`scripts/ci.sh`).
 
 ### Fixed
@@ -205,6 +205,41 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `give`/`drop`/`consume`. Der Effektzweig meldet jetzt den Fehler statt zu
   schweigen, und das tote Laufzeit-Feld `SaveState.containers` (+
   `ContainerState`) ist entfernt.
+
+- Genre-Verben aus dem Kern (P1-13): `swim`/`crawl`/`dig`/`game` waren im
+  Parser hart auf `Go Southeast` verdrahtet, zusätzlich in `commandWords`
+  und als reservierte Verbnamen. Sie sind entfernt; TheFog deklariert
+  `swim`/`crawl` jetzt selbst (`verbs:` + `on: command …`-Regeln mit
+  `{ at: player, room: … }`-Gate) — Verhalten unverändert, aber generisch.
+- `on: command examine` feuerte nie (P1-14): `commandVerbName` leitete den
+  Namen aus `show` ab (`VLookAt` → `"lookat"`). Neu: `Verbs.verbCanonicalName`
+  aus der Registry; der Compiler lehnt unbekannte Verbnamen jetzt als
+  `UnknownCommandVerb` ab, statt eine Regel zu akzeptieren, die nie feuert.
+- `OnTake`/`OnDrop` feuerten auch bei **abgelehntem** Befehl (P1-15) — ein
+  `take` auf ein `portable: false`-Item verbrauchte eine `once: true`-Regel.
+  Events werden jetzt aus der tatsächlichen Zustandsänderung abgeleitet;
+  `findItemIdByAlias` erfindet keine IDs mehr aus der Roheingabe.
+- Eine ungültige Dialogwahl kostete einen Zug (P1-16, Plan-1e-Abweichung):
+  Conditions/Vehicle-Ticks liefen, `on: turn` feuerte, die Undo-Historie
+  wuchs. Neu: `consumesTurnIn` wertet die Wahl gegen den aktiven Dialogknoten
+  aus (`Parser.isValidChoice`).
+- Fünf Engine-Effekte waren aus dem Schema nicht erreichbar (P1-17):
+  `ApplyCondition`, `ClearCondition`, `ModifySkill`, `RandomChoice` und
+  `Narrative` — letzteres wurde zudem **falsch** kompiliert (zusammengeklebter
+  Block statt seitenweiser Ausgabe). Neu: `condition:`, `clear_condition:`,
+  `skill:`, `random:` und `narrative:` (+ `then:`).
+- `check_flag:` war dokumentiert, aber nie dekodierbar; der Konstruktor warf
+  den Erwartungswert weg (P1-18). Entfernt — Flag-Tests laufen über
+  `if: { has_flag: … }`; die String-Flag-Grenze ist in der Schema-Doku notiert.
+- `PaidVehicle` war aus dem Schema nicht erreichbar (P1-19): `stopCost` war
+  hart `Nothing`, `type: paid` verhielt sich wie `auto`. Neu: `stops:` erlaubt
+  die Langform `{ room, cost: { item, refused } }`; ein nicht deklariertes
+  Kosten-Item ist ein Compile-Fehler (`UnknownStopCostItem`).
+- `OnCustomEvent` wurde nie gefeuert (P1-20): `on: custom <name>` kompilierte
+  und validierte sauber, aber nichts löste es aus. Neu: Effekt `raise: <name>`
+  (`RaiseEvent`); die Ereignis-Tiefe wird durch den Trigger-Pass gefädelt, damit
+  selbstauslösende Regeln terminieren (Test mit Timeout-Guard).
+- Tests: **198** Engine- + **71** Worldbuilder-Tests, **18** E2E-Playthroughs.
 
 ## [0.9.0.0] — Unreleased
 

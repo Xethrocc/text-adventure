@@ -148,10 +148,6 @@ parseSimpleCommandWith defs tokens input = case tokens of
     ["ne"]                 -> Go Northeast
     ["northwest"]          -> Go Northwest
     ["nw"]                 -> Go Northwest
-    ["swim"]               -> Go Southeast
-    ["crawl"]              -> Go Southeast
-    ["dig"]                -> Go Southeast
-    ["game"]               -> Go Southeast
     ["look"]               -> Look
     ["inventory"]          -> Inventory
     ["inv"]                -> Inventory
@@ -763,6 +759,33 @@ visibleChoices :: GameState -> DialogueNode -> [DialogueChoice]
 visibleChoices state node =
     [ c | c <- dnChoices node
         , maybe True (\p -> evalPredicate p state) (dcVisible c) ]
+
+-- | The choices currently offered by the active dialogue, if any. Mirrors the
+--   node resolution in `executeCommand (ChooseCmd …)`; `Nothing` covers "not in
+--   a conversation", "npc gone" and "nothing more to say".
+activeChoices :: GameState -> Maybe [DialogueChoice]
+activeChoices state = case activeDialogue (save state) of
+    Nothing -> Nothing
+    Just nId -> case Map.lookup nId (npcDefs (world state)) of
+        Nothing -> Nothing
+        Just npc ->
+            let st = Map.lookup nId (npcStates (save state))
+                status = maybe "alive" npcStatus st
+            in case Map.lookup status (npcDialogueTrees npc) of
+                Nothing -> Nothing
+                Just tree ->
+                    let nodeId = fromMaybe (dtEntry tree) (st >>= npcDialogueNode)
+                    in case Map.lookup nodeId (dtNodes tree) of
+                        Nothing -> Nothing
+                        Just node -> Just (visibleChoices state node)
+
+-- | Whether `choose N` refers to an option that is actually offered right now.
+--   P1-16: an invalid choice is a typo, not a game action, and must not cost a
+--   turn (conditions/vehicle ticks, `on: turn`, undo history).
+isValidChoice :: Int -> GameState -> Bool
+isValidChoice idx state = case activeChoices state of
+    Just choices -> idx >= 1 && idx <= length choices
+    Nothing      -> False
 
 -- | Render the current node of a dialogue tree and list its choices
 renderDialogue :: NPCDef -> DialogueTree -> Maybe NPCState -> GameState -> CommandResult

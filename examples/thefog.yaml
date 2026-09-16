@@ -1051,6 +1051,10 @@
       ]
     }
   ],
+  "verbs": [
+    { "name": "swim" },
+    { "name": "crawl" }
+  ],
   "rules": [
     {
       "id": "start_activate_water",
@@ -1108,6 +1112,24 @@
       "effects": [
         { "msg": "You have proven your worth. The throne is yours!" },
         { "game_end": "victory", "msg": "VICTORY — The Fog lifts, and you are crowned ruler of the land." }
+      ]
+    },
+    {
+      "id": "swim_river",
+      "on": "command swim",
+      "when": { "at": "player", "room": "loc_33" },
+      "effects": [
+        { "move": "loc_38" },
+        { "msg": "You swim across the river into the cave." }
+      ]
+    },
+    {
+      "id": "crawl_mountain",
+      "on": "command crawl",
+      "when": { "at": "player", "room": "loc_44" },
+      "effects": [
+        { "move": "loc_45" },
+        { "msg": "You crawl through the narrow entrance." }
       ]
     }
   ],
