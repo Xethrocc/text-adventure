@@ -95,7 +95,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `ShipActor` (7h) erweitern sie ohne Signaturänderung.
 - `evalPredicate (Location "player" r)` prüft jetzt auch den Spielerraum
   (vorher nur NPC-/Item-Locations).
-- Tests: **208** Engine- + **74** Worldbuilder-Tests, **18** E2E-Playthroughs
+- Tests: **216** Engine- + **74** Worldbuilder-Tests, **23** E2E-Läufe
   (`scripts/ci.sh`).
 
 ### Fixed
@@ -346,6 +346,49 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
 - Damit ist der P2-Block aus dem Review abgearbeitet: gefixt (P2-1 bis P2-11,
   P2-15 bis P2-23), als Entscheidung dokumentiert (P2-12, P2-13, P2-24).
 - Tests: **208** Engine- + **74** Worldbuilder-Tests, **18** E2E-Playthroughs.
+
+- Testlücken aus dem Review (L2, L3, L5, L7, L10, L11, L13):
+  **L10** acht handgerollte Substring-Helfer (`isInfixOfT`, `isInfixT4`–`T6`,
+  `isInfixOfV`, `tailsT*`, `isSubOf`, `isPrefixT2`) durch `Data.List.isInfixOf`
+  bzw. `isPrefixOf` ersetzt — alle acht waren semantisch „infix", einer davon in
+  Wahrheit ein Präfix-Test.
+  **L7** `GameWorld`-JSON-Round-Trip (ItemDef/NPCDef/VehicleDef/Room/Predicate/
+  CondText plus die Verbundschlüssel-Maps) und je ein Round-Trip pro
+  `CombatProfile`.
+  **L3** `resolveCombat` wird jetzt direkt getestet — die *Effektlisten* statt
+  nur der Meldungen: Spieler allein inkl. Vergeltung, tödlicher Schlag ohne
+  Vergeltung, Reihenfolge Spieler → Begleiter → Schiff. Dazu `shipAbsorb` in
+  allen vier `(shields, hull)`-Kombinationen und für `dmg <= 0`; `(Nothing,
+  Nothing)` war komplett ungetestet. Dafür sind `ShipSystems`/`shipAbsorb`
+  exportiert.
+  **L5** `commandEvents` pro Befehl als Tabelle festgeschrieben (Look, blockierte
+  Bewegung, Bewegung mit Raumwechsel, Suche, Take, Drop, fehlgeschlagenes Take,
+  informationslose Befehle) und durch die Loop geprüft, dass `on: enter` vor
+  `on: turn` feuert. `commandEvents`, `consumesTurn`, `consumesTurnIn` exportiert.
+  **L13** `consumesTurn`-Vollständigkeit: wildcard-freie Verdict-Tabelle plus
+  `-Werror=incomplete-patterns` in beiden Paketen. Ein neuer
+  `Command`-Konstruktor bricht jetzt den Build, statt still im `_ -> True`-Zweig
+  zu landen — genau so ist P1-16 entstanden.
+  **L2** `SaveLoad` erstmals getestet (129 Zeilen IO ohne Abdeckung):
+  Save/Load-Round-Trip, geänderte Welt (Warnung, lädt trotzdem), Bare-`SaveState`
+  über den Legacy-Zweig, und dass ein Bare-`SaveState` nicht als Wrapper
+  fehlinterpretiert wird.
+  **L11** Zug-Reihenfolge (`incrementTurnCount` → Ticks → `executeCommand`):
+  ein tödlicher Condition-Tick stoppte den Befehl bisher **nicht**, er lief auf
+  einem State mit `gameOver = True`. Verhaltensänderung: der Befehl wird jetzt
+  verworfen, nur der Tick-Text wird ausgegeben — testgesichert inkl. Kontrollfall.
+- Tests: **216** Engine- + **74** Worldbuilder-Tests, **23** E2E-Läufe.
+
+- E2E-Fehlerpfade (L12): jeder Fixture-Lauf prüfte bisher nur *einen* glücklichen
+  Pfad per Endtext-Grep. Neu sind fünf `.in`/`.expect`-Paare und CI-Stufe 5:
+  Kauf ohne Deckung (`trade`, exakte Rabattmeldung), abgelehnter Angriff
+  (`combat-off`), Verhungern (`survival`), unbekannte Station (`starship`),
+  ungültige Dialogwahl (`combo`). `scripts/ci.sh` teilt sich dafür eine
+  `run_e2e`-Funktion zwischen Glücklich- und Fehlerpfad-Stufe.
+  Befund am Rande: `hull_failure` in `starship.yaml` (`ship.kestrel.hull <= 0`)
+  ist mit den Fixture-Zahlen **unerreichbar** — der Korsar stirbt in Runde 4,
+  während die Hülle noch bei 2 steht. Der Todesfall dort ist toter Inhalt
+  (Rebalancing wäre eine Inhaltsentscheidung).
 
 ## [0.9.0.0] — Unreleased
 

@@ -42,12 +42,10 @@ echo "== 4. e2e playthroughs =="
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
-for name in thefog pure-if fantasy cyberpunk space-opera detective horror factions trade encounters survival stealth combat-off combat-narrative combat-classic party starship combo; do
-    case "$name" in
-        thefog)             src=examples/thefog.yaml ;;
-        factions|trade|encounters|survival|stealth|combat-off|combat-narrative|combat-classic|party|starship|combo)     src="examples/modules/$name.yaml" ;;
-        *)                  src="examples/genres/$name.yaml" ;;
-    esac
+# Compile one adventure and drive it through one input file, then check the
+# expected marker. Shared by the happy-path and failure-path stages.
+run_e2e() {
+    local name="$1" src="$2" out expect
     "${WORLDBUILDER[@]}" compile "$src" -o "$tmp/$name" >/dev/null
     out="$("${GAME[@]}" --world "$tmp/$name/world.json" --save "$tmp/$name/save.json" \
             < "ci/e2e/$name.in" 2>&1 || true)"
@@ -60,6 +58,30 @@ for name in thefog pure-if fantasy cyberpunk space-opera detective horror factio
         tail -20 <<<"$out"
         exit 1
     fi
+}
+
+for name in thefog pure-if fantasy cyberpunk space-opera detective horror factions trade encounters survival stealth combat-off combat-narrative combat-classic party starship combo; do
+    case "$name" in
+        thefog)             src=examples/thefog.yaml ;;
+        factions|trade|encounters|survival|stealth|combat-off|combat-narrative|combat-classic|party|starship|combo)     src="examples/modules/$name.yaml" ;;
+        *)                  src="examples/genres/$name.yaml" ;;
+    esac
+    run_e2e "$name" "$src"
+done
+
+echo "== 5. e2e failure paths =="
+# Review L12: stage 4 only covers one happy path per fixture. Each entry here
+# drives the same compiled world into a failure path — no funds, refused attack,
+# starvation, unknown station, invalid dialogue choice.
+for name in trade-fail combat-off-fail survival-fail starship-fail combo-fail; do
+    case "$name" in
+        trade-fail)       src=examples/modules/trade.yaml ;;
+        combat-off-fail)  src=examples/modules/combat-off.yaml ;;
+        survival-fail)    src=examples/modules/survival.yaml ;;
+        starship-fail)    src=examples/modules/starship.yaml ;;
+        combo-fail)       src=examples/modules/combo.yaml ;;
+    esac
+    run_e2e "$name" "$src"
 done
 
 echo
