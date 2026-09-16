@@ -156,7 +156,12 @@ parseSimpleCommandWith defs tokens input = case tokens of
     ["journal"]            -> JournalCmd
     ["quests"]             -> JournalCmd
     ["undo"]               -> Undo
-    -- Dialogue choice (Phase 4.6)
+    -- Dialogue choice (Phase 4.6).
+    -- `pick` is also a `take` alias (src/Verbs.hs) and `pick up <item>` is the
+    -- take verb below (:206). A *numeric* `pick` therefore means "choose" and
+    -- can never mean "take item <n>" — the keyword list is matched before
+    -- `parseVerbWith`. Intended, and pinned by
+    -- `testDialoguePickKeywordAlias` in test/Tests.hs.
     ["choose", nStr] | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
     ["pick", nStr]   | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
     ["option", nStr] | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)

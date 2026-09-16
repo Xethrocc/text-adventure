@@ -2536,6 +2536,29 @@ testStrictFoldKeepsEffectOrder = do
               (msgViaList == "first\nsecond\nthird")
     pure (r1 && r2)
 
+-- | P2-22: `pick` is both a dialogue keyword (`pick 3` = choose option 3) and a
+--   `take` alias (`src/Verbs.hs`). The numeric keyword list is matched before
+--   `parseVerbWith`, so a numeric `pick <n>` can *never* mean "take item <n>".
+--   That is intended, but it was untested for `pick` (only the bare number and
+--   `choose` were covered) — pin all four keyword forms, the bare number, and
+--   the still-working verb reading of a non-numeric `pick <item>`.
+testDialoguePickKeywordAlias :: IO Bool
+testDialoguePickKeywordAlias = do
+    let (st1, _) = executeCommand (Interact VTalk "old man") initSampleGame
+        keywords = ["choose", "pick", "option", "select"]
+    r1 <- expectTrue "every dialogue keyword parses as a choice"
+              (all (\w -> parseCommand (w ++ " 3") == ChooseCmd 3) keywords)
+    r2 <- expectTrue "bare number still parses as a choice"
+              (parseCommand "1" == ChooseCmd 1)
+    let (_, msgPick) = executeCommand (parseCommand "pick 1") st1
+    r3 <- expectTrue "`pick 1` selects the dialogue option"
+              ("old hermit" `isInfixOf` msgPick)
+    r4 <- expectTrue "non-numeric `pick <item>` is still the take verb"
+              (case parseCommand "pick lantern" of
+                   Interact VTake _ -> True
+                   _                -> False)
+    pure (r1 && r2 && r3 && r4)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -2725,6 +2748,7 @@ main = do
         , runTest "compound map key round-trip incl. legacy (P2-9)" testCompoundKeyRoundTrip
         , runTest "save list entry compatibility (P2-10)" testSaveListEntryCompat
         , runTest "strict fold keeps effect order (P2-11)" testStrictFoldKeepsEffectOrder
+        , runTest "dialogue `pick` keyword alias (P2-22)" testDialoguePickKeywordAlias
         -- Narratives (Phase 4.4)
         , runTest "narrative returns lines" testNarrativeReturnsLines
         , runTest "narrative stores pending (no side effects)" testNarrativeStoresPending

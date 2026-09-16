@@ -95,7 +95,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `ShipActor` (7h) erweitern sie ohne Signaturänderung.
 - `evalPredicate (Location "player" r)` prüft jetzt auch den Spielerraum
   (vorher nur NPC-/Item-Locations).
-- Tests: **204** Engine- + **74** Worldbuilder-Tests, **18** E2E-Playthroughs
+- Tests: **205** Engine- + **74** Worldbuilder-Tests, **18** E2E-Playthroughs
   (`scripts/ci.sh`).
 
 ### Fixed
@@ -309,6 +309,28 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   heutigen Verhaltens bei TheFog-Größe (50 Items / 50 Trigger): **12 ns** pro
   Befehl; bei 100× Größe (5000/5000) 130 ns. Die Begründung samt Messwerten
   steht als Kommentar an `getItemsInLocation` und `fireTriggerList`.
+
+- Build-Hygiene-Cluster aus dem Review-P2-Block (Cluster D):
+  **P2-4** ist bereits durch den P0-Warnungs-Cleanup behoben
+  (`Worldbuilder.Compile` importiert `Types hiding (…)` plus `qualified Types
+  as E`, kein Schatten der Feldselektoren mehr). Zusätzlich ist
+  `-Werror=name-shadowing` jetzt in beiden Paketen gesetzt — genau die Klasse,
+  unter der die `-Wmissing-fields`-Befunde (P0-1/P0-3) untergegangen waren.
+  `scripts/ci.sh` prüft das Build-Log zusätzlich auf `warning:` und bricht ab.
+  **P2-5** ebenfalls verifiziert: mit `-fforce-recomp -Werror=unused-imports
+  -Werror=unused-top-binds` bauen beide Pakete warnungsfrei, es gibt also keine
+  ungenutzten Imports oder Bindungen mehr.
+- **P2-22**: `pick` ist gleichzeitig Dialog-Keyword (`pick 3` = Option wählen)
+  und `take`-Alias; ein numerisches `pick` kann daher nie „nimm Item 3"
+  bedeuten. Das war für `pick` ungetestet — jetzt festgeschrieben
+  (`testDialoguePickKeywordAlias`: alle vier Keywords, nackte Zahl,
+  `pick up <item>` weiterhin als `Interact VTake`) plus Kommentar an der
+  Keyword-Liste in `src/Parser.hs`.
+- **P2-24 als Entscheidung festgehalten**: IDs, Beschreibungen und Meldungen
+  bleiben `String` statt `Text`. Begründung (JSON-/YAML-Grenze, ~12 ns
+  Zeichenarbeit pro Befehl, querschnittliche Migration ohne Nutzereffekt) steht
+  an den ID-Aliassen in `src/Types.hs`.
+- Tests: **205** Engine- + **74** Worldbuilder-Tests, **18** E2E-Playthroughs.
 
 ## [0.9.0.0] — Unreleased
 

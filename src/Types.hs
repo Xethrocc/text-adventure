@@ -16,6 +16,21 @@ import Data.Char (toLower)
 
 -- ---------------------------------------------------------------------------
 -- ID aliases
+--
+-- All IDs, descriptions and messages are `String`, not `Text`. Review P2-24
+-- raised this ("`computeWorldChecksum` and `resolveCondText` pay for it") and
+-- asked for a conscious decision rather than a silent omission:
+--
+--   * Every value here crosses the `world.json` boundary and the YAML authoring
+--     schema. `String` keeps `Aeson`/`HsYAML` round-trips direct, and the
+--     character-level work (`computeWorldChecksum`, `resolveCondText`) is
+--     measured at ~12 ns per command at TheFog scale.
+--   * Migrating to `Text` touches every module and every type alias at once —
+--     a cross-cutting change with no user-visible effect and a real risk of
+--     half-migrated APIs.
+--
+-- Decision (Cluster E): keep `String`. Revisit only if a profiling run shows
+-- text handling dominating, which the measurement above does not.
 -- ---------------------------------------------------------------------------
 
 type ItemID    = String

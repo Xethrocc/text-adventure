@@ -15,7 +15,16 @@ WORLDBUILDER=(cabal run -v0 worldbuilder --)
 GAME=(cabal run -v0 text-adventure --)
 
 echo "== 1. build =="
-cabal build all
+# Review P2-4/P2-5: warnings used to bury the real `-Wmissing-fields` findings,
+# so the build log is now checked instead of eyeballed. `-Werror=name-shadowing`
+# and `-Werror=missing-fields` (see the .cabal files) cover the specific classes.
+build_log="$(mktemp)"
+cabal build all 2>&1 | tee "$build_log"
+if grep -qi "warning:" "$build_log"; then
+    echo "FAIL: the build produced warnings (see above)"
+    exit 1
+fi
+rm -f "$build_log"
 
 echo "== 2. unit tests =="
 cabal test all
