@@ -11,7 +11,9 @@
 module Combat
     ( CombatActor (..)
     , CombatTarget (..)
+    , ShipSystems (..)
     , resolveCombat
+    , shipAbsorb
     ) where
 
 import Types

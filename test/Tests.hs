@@ -1,7 +1,7 @@
 module Main where
 
 import Control.Monad (when)
-import Data.List (isInfixOf)
+import Data.List (isInfixOf, isPrefixOf)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AesonT
 import qualified Data.ByteString.Lazy.Char8 as BLC
@@ -11,12 +11,17 @@ import Data.Maybe (isJust)
 import System.Timeout (timeout)
 import Control.Exception (evaluate)
 import Game
-import GameLoop (commandCompletion, LoopState (..), initLoopState, applyLoopCommand)
+import GameLoop (commandCompletion, LoopState (..), initLoopState, applyLoopCommand,
+                 commandEvents, consumesTurn, consumesTurnIn)
 import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText)
 import Verbs (verbAliasMap)
+import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), resolveCombat, shipAbsorb)
 import Validate (ValidationError (..), validateWorld, validateGameState)
 import Sample (initSampleGame)
 import SaveLoad (computeWorldChecksum, formatSaveEntry, currentSaveVersion)
+import qualified SaveLoad as SaveLoad
+import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory,
+                         removeFile, withCurrentDirectory)
 import System.Console.Haskeline (Completion (..))
 import System.Exit (exitFailure)
 import Types
@@ -336,14 +341,10 @@ testSearchRevealsHiddenItem = do
     let (_, lookMsg) = executeCommand Look withTorch
         (afterSearch, searchMsg) = executeCommand (parseCommand "search") withTorch
         (_, lookAfter) = executeCommand Look afterSearch
-    r1 <- expectTrue "note not visible before search" (not ("old note" `isInfixOfT` lookMsg))
-    r2 <- expectTrue "search reports the find" ("old note" `isInfixOfT` searchMsg)
-    r3 <- expectTrue "note visible after search" ("old note" `isInfixOfT` lookAfter)
+    r1 <- expectTrue "note not visible before search" (not ("old note" `isInfixOf` lookMsg))
+    r2 <- expectTrue "search reports the find" ("old note" `isInfixOf` searchMsg)
+    r3 <- expectTrue "note visible after search" ("old note" `isInfixOf` lookAfter)
     pure (r1 && r2 && r3)
-  where
-    isInfixOfT needle haystack = any (needle `isSubOf`) (tailsT haystack)
-    isSubOf n h = take (length n) h == n
-    tailsT s = s : case s of { [] -> []; (_:xs) -> tailsT xs }
 
 testSearchSetsFlag :: IO Bool
 testSearchSetsFlag = do
@@ -358,9 +359,7 @@ testAltDescriptionUsed = do
         withTorch = pickupItem "torch" inHallway
         lit = setFlag "torch_lit" "true" withTorch
         (_, msg) = executeCommand Look lit
-    expectTrue "alt description shown" ("sputter to life" `isInfixOfT` msg)
-  where
-    isInfixOfT needle haystack = any (\h -> take (length needle) h == needle) (scanr (:) [] haystack)
+    expectTrue "alt description shown" ("sputter to life" `isInfixOf` msg)
 
 -- ===== RNG salt test (Phase 4.1) =====
 
@@ -886,11 +885,9 @@ testConditionTickExpire = do
         (after2, msgs2) = tickConditions after1
     r1 <- expectTrue "active after 1 tick" (hasCondition "poisoned" after1)
     r2 <- expectTrue "expired after 2 ticks" (not (hasCondition "poisoned" after2))
-    let endMsgs = [m | m <- msgs2, "You feel better." `isPrefixT2` m]
+    let endMsgs = [m | m <- msgs2, "You feel better." `isPrefixOf` m]
     r3 <- expectTrue "end message produced" (not (null endMsgs))
     pure (r1 && r2 && r3)
-  where
-    isPrefixT2 p s = take (length p) s == p
 
 testConditionTickDamage :: IO Bool
 testConditionTickDamage = do
@@ -925,11 +922,7 @@ testStatsShowsConditions :: IO Bool
 testStatsShowsConditions = do
     let applied = applyCondition "poisoned" 4 Nothing Nothing initSampleGame
         (_, msg) = executeCommand StatsCmd applied
-    expectTrue "stats mentions poisoned" ("poisoned" `isInfixT4` msg)
-  where
-    isInfixT4 needle hay = any (needle `isPrefixT4`) (tailsT hay)
-    isPrefixT4 p s = take (length p) s == p
-    tailsT s = s : case s of { [] -> []; (_:xs) -> tailsT xs }
+    expectTrue "stats mentions poisoned" ("poisoned" `isInfixOf` msg)
 
 -- ===== Quests (Phase 2) =====
 
@@ -962,13 +955,9 @@ testJournalShowsQuest :: IO Bool
 testJournalShowsQuest = do
     let started = startQuest "find_treasure" initSampleGame
         (_, msg) = executeCommand JournalCmd started
-    r1 <- expectTrue "journal mentions quest name" ("The Lost Treasure" `isInfixT5` msg)
-    r2 <- expectTrue "journal shows current stage" ("Explore the dark hallway." `isInfixT5` msg)
+    r1 <- expectTrue "journal mentions quest name" ("The Lost Treasure" `isInfixOf` msg)
+    r2 <- expectTrue "journal shows current stage" ("Explore the dark hallway." `isInfixOf` msg)
     pure (r1 && r2)
-  where
-    isInfixT5 needle hay = any (needle `isPrefixT5`) (tailsT5 hay)
-    isPrefixT5 p s = take (length p) s == p
-    tailsT5 s = s : case s of { [] -> []; (_:xs) -> tailsT5 xs }
 
 testQuestRewardFires :: IO Bool
 testQuestRewardFires = do
@@ -976,12 +965,8 @@ testQuestRewardFires = do
     let started = startQuest "find_treasure" initSampleGame
         (completed, msg) = applyOutcome (QuestOp CompleteQuest "find_treasure") "" started
     r1 <- expectTrue "quest completed" (questCompleted "find_treasure" completed)
-    r2 <- expectTrue "reward message present" ("treasure is yours" `isInfixT6` msg)
+    r2 <- expectTrue "reward message present" ("treasure is yours" `isInfixOf` msg)
     pure (r1 && r2)
-  where
-    isInfixT6 needle hay = any (needle `isPrefixT6`) (tailsT6 hay)
-    isPrefixT6 p s = take (length p) s == p
-    tailsT6 s = s : case s of { [] -> []; (_:xs) -> tailsT6 xs }
 
 -- ===== Vehicle tests (Phase 3) =====
 
@@ -1033,22 +1018,15 @@ testDriveToCurrentStop = do
         aboard = fst (executeCommand (EnterVehicleCmd "carriage") inMeadow)
         (_, msg) = executeCommand (DriveToCmd "meadow") aboard
     expectTrue "cannot drive to the stop we are already at"
-        ("can't drive there" `isInfixOfV` msg)
-  where isInfixOfV n h = any (n `isPrefixV`) (tailsV h)
-        isPrefixV p s = take (length p) s == p
-        tailsV s = s : case s of { [] -> []; (_:xs) -> tailsV xs }
+        ("can't drive there" `isInfixOf` msg)
 
 testRefuelViaItem :: IO Bool
 testRefuelViaItem = do
     let withHay = pickupItem "hay" initSampleGame
         (st, msg) = executeCommand (parseCommand "use hay on carriage") withHay
-    r1 <- expectTrue "fuel message shown" (elemV "fuelled" msg)
+    r1 <- expectTrue "fuel message shown" ("fuelled" `isInfixOf` msg)
     r2 <- expectEqual (Just 10) (vsFuel (getVehicleState "carriage" st))
     pure (r1 && r2)
-  where
-    elemV n h = any (n `isPrefixV`) (tailsV h)
-    isPrefixV p s = take (length p) s == p
-    tailsV s = s : case s of { [] -> []; (_:xs) -> tailsV xs }
 
 testVehicleConditionTick :: IO Bool
 testVehicleConditionTick = do
@@ -2609,6 +2587,291 @@ testTriggerNestingGuardReports = do
               (any ("trigger nesting exceeded" `isInfixOf`) (diagnostics st'))
     pure (r1 && r2)
 
+-- ===== Test gaps from the review (L2, L3, L5, L7, L13) =====
+
+-- | L7: `GameWorld` holds most of the hand-written `ToJSON`/`FromJSON` pairs
+--   (ItemDef, NPCDef, VehicleDef, Room, CombatProfile, Predicate, CondText and
+--   the compound-key maps). A hand-written decoder next to a generic encoder
+--   produces a shape that cannot be read back — that class was only covered
+--   indirectly by the E2E loads.
+testGameWorldRoundTrip :: IO Bool
+testGameWorldRoundTrip = do
+    let gw = world initSampleGame
+    r1 <- expectEqual (Just gw) (Aeson.decode (Aeson.encode gw))
+    let profiles =
+            [ CombatClassic
+            , CombatOff Nothing
+            , CombatOff (Just "You cannot fight here.")
+            , CombatNarrative (NarrativeCombat 3 (SendMessage "hit") (SendMessage "miss"))
+            ]
+        rt p = Aeson.decode (Aeson.encode p) :: Maybe CombatProfile
+    r2 <- expectTrue "every combat profile round-trips"
+              (all (\p -> rt p == Just p) profiles)
+    -- the compound-key map specifically (rewritten by P2-9)
+    let item0 = snd (Map.findMin (itemDefs gw))
+        gw2 = gw { itemDefs = Map.insert "custom"
+                     (item0 { itemVerbMap = Map.fromList
+                                [((VCustom "buy", "intact"), SendMessage "ok")] })
+                     (itemDefs gw) }
+    r3 <- expectTrue "itemVerbMap with a VCustom key round-trips"
+              (any (\d -> Map.member (VCustom "buy", "intact") (itemVerbMap d))
+                    (Map.elems (maybe Map.empty itemDefs (Aeson.decode (Aeson.encode gw2)))))
+    pure (r1 && r2 && r3)
+
+-- | L3: `resolveCombat` is pure and is exactly what `executeAttack` forwards.
+--   Calling it directly inspects the *effect list*; every combat test before
+--   this went through `executeCommand`, which is how P0-2 (a bug in that wiring)
+--   stayed hidden.
+testResolveCombatDirect :: IO Bool
+testResolveCombatDirect = do
+    let gw0 = world initSampleGame
+        goblin = maybe (error "sample lost its goblin") id (Map.lookup "goblin" (npcDefs gw0))
+        target = TargetNPC "goblin" "goblin"
+        st0 = initSampleGame
+        pdmg = max 1 (effectiveAttack st0 - npcDefenseBase goblin)
+        retalDmg = max 0 (npcAttackBase goblin - effectiveDefense st0)
+        playerEffect = ModifyValue (VRProperty "goblin" "hp") (-pdmg)
+    -- player alone: exactly one effect, no retaliation when the blow is fatal
+    let (effs, msgs) = resolveCombat CombatClassic [PlayerActor] target st0
+        stKill = st0 { save = (save st0)
+                         { npcStates = Map.adjust (\ns -> ns { npcHealth = Just 1 })
+                                                  "goblin" (npcStates (save st0)) } }
+        (effsKill, msgsKill) = resolveCombat CombatClassic [PlayerActor] target stKill
+        hurtsPlayer e = case e of
+            ModifyValue VRPlayerHealth _ -> True
+            _                            -> False
+    r1 <- expectEqual [playerEffect, ModifyValue VRPlayerHealth (-retalDmg)] effs
+    r2 <- expectTrue "classic message names the damage"
+              (any ("You hit for" `isInfixOf`) msgs)
+    r3 <- expectEqual [playerEffect] effsKill
+    r4 <- expectTrue "a killing blow is reported as such"
+              (any ("kill it" `isInfixOf`) msgsKill)
+    r5 <- expectTrue "a killing blow draws no retaliation" (not (any hurtsPlayer effsKill))
+    -- companion and ship: player first, then the companion, then the ship
+    let ally = goblin { npcId = "ally", npcName = "Ally", npcAttackBase = 3 }
+        stC = st0 { world = gw0 { npcDefs = Map.insert "ally" ally (npcDefs gw0) }
+                  , save  = (save st0)
+                      { npcStates = Map.insert "ally"
+                                      (NPCState (InRoom "hallway") "alive" (Just 20) Map.empty Nothing)
+                                      (npcStates (save st0))
+                      , variables = Map.fromList [ ("ship.carriage.power", VVInt 3)
+                                                 , ("ship.carriage.weapons", VVInt 6) ] } }
+        allyDmg = max 1 (npcAttackBase ally - npcDefenseBase goblin)
+        (effsC, _) = resolveCombat CombatClassic
+                        [PlayerActor, CompanionActor "ally", ShipActor "carriage"] target stC
+    r6 <- expectEqual
+              [ playerEffect
+              , ModifyValue (VRProperty "goblin" "hp") (-allyDmg)
+              , SetValue (VRVariable "ship.carriage.power") (EVInt 2)
+              , ModifyValue (VRProperty "goblin" "hp") (-6) ]
+              (take 4 effsC)
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | L3: `shipAbsorb` decides where return fire lands. Three of the four
+--   `(shields, hull)` combinations were covered indirectly by fixture runs;
+--   `(Nothing, Nothing)` — the "player is exposed" case — was not covered at all.
+testShipAbsorbMatrix :: IO Bool
+testShipAbsorbMatrix = do
+    let ship ss sh = ShipSystems "carriage" "Carriage" (Just 3) (Just 6) ss sh
+        shieldsVar v = SetValue (VRVariable "ship.carriage.shields") (EVInt v)
+        hullVar v    = SetValue (VRVariable "ship.carriage.hull") (EVInt v)
+    -- no shields, no hull: everything reaches the player, no effects at all
+    r1 <- expectEqual ([], 5, []) (shipAbsorb (ship Nothing Nothing) 5)
+    -- shields cover it fully
+    let (e2, taken2, m2) = shipAbsorb (ship (Just 5) (Just 9)) 5
+    r2 <- expectEqual ([shieldsVar 0], 0) (e2, taken2)
+    r3 <- expectTrue "shields-absorb message" (any ("shields absorb 5" `isInfixOf`) m2)
+    -- shields absorb partially, the spill goes into the hull
+    let (e3, taken3, m3) = shipAbsorb (ship (Just 2) (Just 9)) 5
+    r4 <- expectEqual ([shieldsVar 0, hullVar 6], 0) (e3, taken3)
+    r5 <- expectTrue "hull spill message" (any ("hull takes 3" `isInfixOf`) m3)
+    -- shields but no hull: the spill hits the player
+    let (e4, taken4, m4) = shipAbsorb (ship (Just 2) Nothing) 5
+    r6 <- expectEqual ([shieldsVar 0], 3) (e4, taken4)
+    r7 <- expectTrue "no-hull message" (any ("no hull plating" `isInfixOf`) m4)
+    -- hull only, no shields
+    let (e5, taken5, m5) = shipAbsorb (ship Nothing (Just 9)) 5
+    r8 <- expectEqual ([hullVar 4], 0) (e5, taken5)
+    r9 <- expectTrue "hull-only message" (any ("the hull takes 5" `isInfixOf`) m5)
+    -- no damage in, nothing happens
+    r10 <- expectEqual ([], 0, []) (shipAbsorb (ship (Just 5) (Just 9)) 0)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10)
+
+-- | L5: `commandEvents` chooses which triggers a command raises and in which
+--   order — the project note says the *event* order decides for authors, not the
+--   rule order, and only `OnEnter` plus one `OnUse` alias were covered.
+testCommandEventsTable :: IO Bool
+testCommandEventsTable = do
+    let st0 = initSampleGame
+        evs cmd = commandEvents cmd st0 st0
+        -- real state transitions for the take/drop cases
+        stHolding = pickupItem "sword_rusty" st0
+        stDropped = dropItem "sword_rusty" stHolding
+        stMoved   = moveToRoom "hallway" st0
+    r1 <- expectEqual [OnLook "start", OnCommand "look"] (evs Look)
+    -- a blocked move (locked door) raises the command/turn events but no room
+    -- events, because the event list follows the state change, not the intent
+    r2 <- expectEqual [OnCommand "go", OnTurn] (commandEvents (Go East) st0 st0)
+    r3 <- expectEqual [OnLeave "start", OnEnter "hallway", OnCommand "go", OnTurn]
+              (commandEvents (Go North) st0 stMoved)
+    r4 <- expectEqual [OnSearch "start", OnCommand "search", OnTurn]
+              (evs (SearchCmd Nothing))
+    r5 <- expectEqual [OnTake "sword_rusty", OnCommand "take", OnTurn]
+              (commandEvents (Interact VTake "sword") st0 stHolding)
+    r6 <- expectEqual [OnDrop "sword_rusty", OnCommand "drop", OnTurn]
+              (commandEvents (Interact VDrop "sword") stHolding stDropped)
+    -- a failed take (already carried) raises no OnTake — but the command still
+    -- costs a turn, so OnCommand/OnTurn stay (P1-15)
+    r7 <- expectEqual [OnCommand "take", OnTurn]
+              (commandEvents (Interact VTake "sword") stHolding stHolding)
+    -- informational commands raise no turn event
+    r8 <- expectEqual [OnCommand "stats"] (evs StatsCmd)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- | L5: through the loop, an `on: enter` rule must fire before the `on: turn`
+--   rule of the same command (the event order, not the rule order).
+testEnterFiresBeforeTurnThroughLoop :: IO Bool
+testEnterFiresBeforeTurnThroughLoop = do
+    let st0 = initSampleGame
+                { world = (world initSampleGame)
+                    { triggerDefs =
+                        [ TriggerDef "on_turn"  OnTurn Nothing [SendMessage "TURN"]  False 0
+                        , TriggerDef "on_enter" (OnEnter "hallway") Nothing
+                            [SendMessage "ENTER"] False 0 ] } }
+        (_, msg) = applyLoopCommand (Go North) (initLoopState st0)
+        ls = lines msg
+        idxOf needle = length (takeWhile (not . (needle `isInfixOf`)) ls)
+    r1 <- expectTrue "both rules fired" (("ENTER" `isInfixOf` msg) && ("TURN" `isInfixOf` msg))
+    r2 <- expectTrue "the enter event precedes the turn event" (idxOf "ENTER" < idxOf "TURN")
+    pure (r1 && r2)
+
+-- | L13: `consumesTurn` ends in a `_ -> True` catch-all, so a new `Command`
+--   constructor silently becomes turn-consuming — that is how P1-16 happened.
+--   `expectedConsumesTurn` matches every constructor **without** a wildcard and
+--   the suite builds with `-Werror=incomplete-patterns`, so adding a constructor
+--   fails the build until its verdict is written down here.
+expectedConsumesTurn :: Command -> Bool
+expectedConsumesTurn cmd = case cmd of
+    Go _               -> True
+    Look               -> False
+    Inventory          -> False
+    Interact _ _       -> True
+    InteractWith _ _ _ -> True
+    ChooseCmd _        -> True   -- refined by consumesTurnIn: only a valid choice ticks
+    TakeAll            -> True
+    DropAll            -> True
+    CompoundCommand _  -> True
+    EquipCmd _         -> True
+    UnequipCmd _       -> True
+    UnequipAllCmd      -> True
+    StatsCmd           -> False
+    SearchCmd _        -> True
+    JournalCmd         -> False
+    Undo               -> False
+    EnterVehicleCmd _  -> True
+    ExitVehicleCmd     -> True
+    DriveToCmd _       -> True
+    WaitCmd            -> True
+    RefuelCmd _        -> True
+    RepairCmd _        -> True
+    Save _             -> False
+    Load _             -> False
+    ListSaves          -> False
+    Restart            -> False
+    Help               -> False
+    Quit               -> False
+    Unknown _          -> False
+
+-- | One sample per `Command` constructor.
+allCommandSamples :: [Command]
+allCommandSamples =
+    [ Go North, Look, Inventory, Interact VLookAt "x", InteractWith VUse "x" "y"
+    , ChooseCmd 1, TakeAll, DropAll, CompoundCommand [Look]
+    , EquipCmd "x", UnequipCmd "x", UnequipAllCmd, StatsCmd, SearchCmd Nothing
+    , JournalCmd, Undo, EnterVehicleCmd "v", ExitVehicleCmd, DriveToCmd "s"
+    , WaitCmd, RefuelCmd "v", RepairCmd "v", Save "s", Load "s", ListSaves
+    , Restart, Help, Quit, Unknown "z" ]
+
+-- | L13: the verdict table must match `consumesTurn` for every constructor, and
+--   the sample count pins the list so a forgotten sample is noticed.
+testConsumesTurnCompleteness :: IO Bool
+testConsumesTurnCompleteness = do
+    let st0 = initSampleGame
+    r1 <- expectTrue "consumesTurn matches the documented verdict everywhere"
+              (all (\c -> consumesTurn c == expectedConsumesTurn c) allCommandSamples)
+    r2 <- expectEqual 29 (length allCommandSamples)
+    r3 <- expectTrue "an invalid dialogue choice is a typo, not a turn"
+              (not (consumesTurnIn st0 (ChooseCmd 99)))
+    r4 <- expectTrue "a valid dialogue choice consumes the turn"
+              (let st1 = fst (executeCommand (Interact VTalk "old man") st0)
+               in consumesTurnIn st1 (ChooseCmd 1))
+    pure (r1 && r2 && r3 && r4)
+
+-- | L2: `SaveLoad` had zero coverage — 129 lines of IO with two compatibility
+--   fallbacks (wrapper format, bare `SaveState`) and the checksum warning. The
+--   save layout is asymmetric on purpose (`--save` is read-only, `save <slot>`
+--   writes `saves/<slot>.json`), which is exactly what belongs in a test.
+testSaveLoadRoundTrip :: IO Bool
+testSaveLoadRoundTrip = do
+    tmp <- getTemporaryDirectory
+    withCurrentDirectory tmp $ do
+        let st0 = initSampleGame
+        -- save -> load -> identical SaveState
+        SaveLoad.saveGame st0 "l2slot"
+        loaded <- SaveLoad.loadGame st0 "l2slot"
+        r1 <- case loaded of
+            Just st' -> expectEqual (save st0) (save st')
+            Nothing  -> expectTrue "saveGame/loadGame round-trips" False
+        -- a changed world warns but still loads (checksum compatibility path)
+        let otherWorld = st0 { world = (world st0) { worldName = "Different World" } }
+        loaded2 <- SaveLoad.loadGame otherWorld "l2slot"
+        r2 <- case loaded2 of
+            Just st' -> expectEqual (save st0) (save st')
+            Nothing  -> expectTrue "a mismatching world still loads" False
+        -- a bare SaveState is picked up by the legacy branch
+        createDirectoryIfMissing True "saves"
+        BLC.writeFile "saves/l2legacy.json" (Aeson.encode (save st0))
+        legacy <- SaveLoad.loadGame st0 "l2legacy"
+        r3 <- case legacy of
+            Just st' -> expectEqual (save st0) (save st')
+            Nothing  -> expectTrue "a bare SaveState loads via the legacy branch" False
+        -- ... and it must not be mistaken for a wrapper while decoding
+        r4 <- expectEqual (Nothing :: Maybe SaveFile)
+                  (Aeson.decode (Aeson.encode (save st0)))
+        mapM_ (\f -> do
+                  e <- doesFileExist f
+                  when e (removeFile f))
+              ["saves/l2slot.json", "saves/l2legacy.json"]
+        pure (r1 && r2 && r3 && r4)
+
+-- | L11: the turn pipeline is `incrementTurnCount` → `tickConditions` →
+--   `vehicleConditionTick` → `executeCommand` → `fireCommandTriggers`. A
+--   condition tick that kills the player therefore runs *before* the command —
+--   and the command must not run on a finished game. Pinned here, because the
+--   order was previously only implicit (and the command did execute).
+testFatalTickStopsCommand :: IO Bool
+testFatalTickStopsCommand = do
+    let lethal = ModifyValue VRPlayerHealth (-100)
+        st0 = applyCondition "doomed" 3 (Just lethal) Nothing (setPlayerHP 5 initSampleGame)
+        (loop', msg) = applyLoopCommand (Go North) (initLoopState st0)
+        st' = lsCurrent loop'
+        -- control: without the condition the same command moves the player
+        (loopC, msgC) = applyLoopCommand (Go North) (initLoopState (initSampleGame :: GameState))
+    r1 <- expectTrue "the tick ended the game" (gameOver (save st'))
+    r2 <- expectTrue "the player is dead" (isPlayerDead st')
+    r3 <- expectEqual "start" (currentRoom (save st'))
+    r4 <- expectTrue "the command did not run"
+              (not ("You move North" `isInfixOf` msg))
+    r5 <- expectTrue "the tick ended the game with reason Death"
+              (gameOverReason (save st') == Just Death)
+    -- the tick itself is silent: the death text comes from the game-over screen,
+    -- so the dropped command produces no message at all
+    r5b <- expectTrue "no command text is produced" (null msg)
+    r6 <- expectTrue "control: the same command moves without the condition"
+              ("You move North" `isInfixOf` msgC
+               && currentRoom (save (lsCurrent loopC)) == "hallway")
+    pure (r1 && r2 && r3 && r4 && r5 && r5b && r6)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -2802,6 +3065,15 @@ main = do
         , runTest "depth guard reports via diagnostics (P2-23)" testDepthGuardUsesDiagnostics
         , runTest "depth guard stays out of trigger text (P2-23)" testDepthGuardStaysOutOfTriggerText
         , runTest "trigger nesting guard reports (P2-23)" testTriggerNestingGuardReports
+        -- Review test gaps (L2, L3, L5, L7, L13)
+        , runTest "GameWorld JSON round-trip + profiles (L7)" testGameWorldRoundTrip
+        , runTest "resolveCombat effect lists directly (L3)" testResolveCombatDirect
+        , runTest "shipAbsorb matrix incl. no shields/hull (L3)" testShipAbsorbMatrix
+        , runTest "commandEvents table per command (L5)" testCommandEventsTable
+        , runTest "enter event precedes turn event (L5)" testEnterFiresBeforeTurnThroughLoop
+        , runTest "consumesTurn complete for every Command (L13)" testConsumesTurnCompleteness
+        , runTest "SaveLoad round-trip + legacy + checksum (L2)" testSaveLoadRoundTrip
+        , runTest "fatal condition tick stops the command (L11)" testFatalTickStopsCommand
         -- Narratives (Phase 4.4)
         , runTest "narrative returns lines" testNarrativeReturnsLines
         , runTest "narrative stores pending (no side effects)" testNarrativeStoresPending

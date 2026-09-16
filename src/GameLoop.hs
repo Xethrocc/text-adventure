@@ -7,6 +7,9 @@ module GameLoop
   , applyLoopCommand
   , commandCompletion
   , initSampleGame
+  , commandEvents
+  , consumesTurn
+  , consumesTurnIn
   ) where
 
 import Types
@@ -204,13 +207,21 @@ applyLoopCommand command loopState
             stateWithTurn = incrementTurnCount oldState
             (stateAfterTick, tickMsgs) = tickConditions stateWithTurn
             (stateAfterVehicleTick, vehicleTickMsg) = vehicleConditionTick stateAfterTick
-            (newState, message) = executeCommand command stateAfterVehicleTick
-            (stateAfterTriggers, triggerMsg) = fireCommandTriggers command stateAfterVehicleTick newState
             allTickMsgs = tickMsgs ++ (if null vehicleTickMsg then [] else [vehicleTickMsg])
-            fullMessage = if null allTickMsgs then message else unlines allTickMsgs ++ message
-            combined = combineMessages fullMessage triggerMsg
+            tickText = unlines allTickMsgs
             history' = take maxUndoHistory (oldState : lsHistory loopState)
-        in (LoopState stateAfterTriggers history' (lsInitial loopState), combined)
+        in if gameOver (save stateAfterVehicleTick)
+           then
+               -- L11: the condition tick ended the game before the command ran
+               -- (the tick pipeline runs first). The player is already dead, so
+               -- the command is dropped — only the tick messages are reported.
+               (LoopState stateAfterVehicleTick history' (lsInitial loopState), tickText)
+           else
+               let (newState, message) = executeCommand command stateAfterVehicleTick
+                   (stateAfterTriggers, triggerMsg) = fireCommandTriggers command stateAfterVehicleTick newState
+                   fullMessage = if null allTickMsgs then message else tickText ++ message
+               in (LoopState stateAfterTriggers history' (lsInitial loopState),
+                   combineMessages fullMessage triggerMsg)
 
 -- | Combine two message fragments for trigger output. Same rule as
 --   'Game.joinMessages' — empty fragments contribute nothing.
