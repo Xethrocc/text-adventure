@@ -21,6 +21,7 @@ import Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
 
 import System.Console.Haskeline
+import System.IO (hPutStrLn, stderr)
 
 -- ---------------------------------------------------------------------------
 -- Tab completion
@@ -298,6 +299,13 @@ runGame state = do
     putStrLn message
     loopGame (initLoopState newState)
 
+-- | Print engine diagnostics that appeared while handling one command to
+--   stderr (P2-23). They describe a content error the author has to fix, so they
+--   must not be mixed into the game text the player sees.
+emitNewDiagnostics :: GameState -> GameState -> IO ()
+emitNewDiagnostics before after =
+    mapM_ (hPutStrLn stderr) (drop (length (diagnostics before)) (diagnostics after))
+
 -- | Backward-compatible entry point for callers that have a plain GameState.
 gameLoop :: GameState -> IO ()
 gameLoop = loopGame . initLoopState
@@ -339,6 +347,7 @@ loopGame loopState
                         loopGame loopState
                     command -> do
                         let (loopState', message) = applyLoopCommand command loopState
+                        emitNewDiagnostics (lsCurrent loopState) (lsCurrent loopState')
                         case pendingNarrative (lsCurrent loopState') of
                             Nothing -> do
                                 putStrLn message

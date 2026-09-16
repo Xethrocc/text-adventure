@@ -95,7 +95,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `ShipActor` (7h) erweitern sie ohne Signaturänderung.
 - `evalPredicate (Location "player" r)` prüft jetzt auch den Spielerraum
   (vorher nur NPC-/Item-Locations).
-- Tests: **205** Engine- + **74** Worldbuilder-Tests, **18** E2E-Playthroughs
+- Tests: **208** Engine- + **74** Worldbuilder-Tests, **18** E2E-Playthroughs
   (`scripts/ci.sh`).
 
 ### Fixed
@@ -331,6 +331,21 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   Zeichenarbeit pro Befehl, querschnittliche Migration ohne Nutzereffekt) steht
   an den ID-Aliassen in `src/Types.hs`.
 - Tests: **205** Engine- + **74** Worldbuilder-Tests, **18** E2E-Playthroughs.
+
+- **P2-23**: Der Depth-Guard meldete einen Content-Fehler
+  (`"[ERROR] Maximum outcome depth exceeded."`) als *Spieltext*; über
+  `applyTrigEffects` landete er mitten in der Ausgabe, und `executeAttack`
+  verwarf ihn ganz. Es gibt jetzt einen runtime-only Diagnose-Kanal:
+  `GameState.diagnostics` (`GameState` hat bewusst keinen JSON-Instanz, also ist
+  nichts aus dem Save herauszuhalten) und `addDiagnostic` in `src/Game.hs`. Der
+  Effekt-Depth-Guard **und** der Trigger-Nesting-Guard (der bisher *stillschweigend*
+  abbrach) melden dorthin; `GameLoop` schreibt neue Diagnosen nach **stderr**,
+  nie in den Spieltext. End-to-End geprüft: eine Adventure-Fixture mit
+  selbst-auslösender Regel erzeugt auf stdout reinen Spieltext und auf stderr
+  `[engine] maximum outcome depth exceeded (depth 21 > 20) …`.
+- Damit ist der P2-Block aus dem Review abgearbeitet: gefixt (P2-1 bis P2-11,
+  P2-15 bis P2-23), als Entscheidung dokumentiert (P2-12, P2-13, P2-24).
+- Tests: **208** Engine- + **74** Worldbuilder-Tests, **18** E2E-Playthroughs.
 
 ## [0.9.0.0] — Unreleased
 

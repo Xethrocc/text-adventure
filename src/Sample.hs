@@ -215,4 +215,5 @@ initSampleGame = GameState
         , triggerStates = Map.empty
         }
     , pendingNarrative = Nothing
+    , diagnostics = []
     }

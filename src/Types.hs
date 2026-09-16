@@ -1113,7 +1113,15 @@ data GameState = GameState
     { world :: GameWorld
     , save  :: SaveState
     , pendingNarrative :: Maybe ([String], Effect)  -- ^ Narrative lines + follow-up (Phase 4.4)
+    , diagnostics :: [String]                      -- ^ Engine-level findings for the author (P2-23)
     } deriving (Show, Eq)
+
+-- NOTE: `GameState` deliberately has **no** JSON instance — only `SaveState`
+-- and `GameWorld` are serialized. `diagnostics` is therefore runtime-only by
+-- construction: nothing has to be excluded from a save file, and a loaded
+-- session simply starts with an empty list. It carries engine findings that a
+-- *content* error produced (currently the outcome-depth guard), which must reach
+-- the author but never the player's text.
 
 -- ---------------------------------------------------------------------------
 -- Explicit deterministic RNG state (Phase 1f)

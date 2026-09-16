@@ -2559,6 +2559,56 @@ testDialoguePickKeywordAlias = do
                    _                -> False)
     pure (r1 && r2 && r3 && r4)
 
+-- | P2-23: an effect nested past `maxOutcomeDepth` is a *content* error. It has
+--   to reach the author (`diagnostics`) and never the player's text — it used to
+--   be returned as `"[ERROR] Maximum outcome depth exceeded."` and, through
+--   `applyTrigEffects`, landed between game text.
+testDepthGuardUsesDiagnostics :: IO Bool
+testDepthGuardUsesDiagnostics = do
+    let deep = foldr (\_ acc -> Sequence [acc, SendMessage "leaf"])
+                     (SendMessage "leaf") [1 .. (maxOutcomeDepth + 5) :: Int]
+        (st', msg) = applyOutcome deep "" initSampleGame
+    r1 <- expectTrue "over-deep outcome puts no engine text in the message"
+              (not ("[ERROR]" `isInfixOf` msg) && not ("[engine]" `isInfixOf` msg))
+    r2 <- expectTrue "over-deep outcome records a diagnostic"
+              (any ("maximum outcome depth exceeded" `isInfixOf`) (diagnostics st'))
+    let (st2, _) = applyOutcome (Sequence [SendMessage "a", Sequence [SendMessage "b"]]) "" initSampleGame
+    r3 <- expectTrue "a legal sequence records nothing"
+              (null (diagnostics st2))
+    pure (r1 && r2 && r3)
+
+-- | P2-23, trigger path: `applyTrigEffects` concatenates effect messages into
+--   the trigger output, so the guard message used to appear as game text there.
+testDepthGuardStaysOutOfTriggerText :: IO Bool
+testDepthGuardStaysOutOfTriggerText = do
+    let deep = foldr (\_ acc -> Sequence [acc]) (SendMessage "boom")
+                     [1 .. (maxOutcomeDepth + 5) :: Int]
+        st0 = initSampleGame
+                { world = (world initSampleGame)
+                    { triggerDefs = [ TriggerDef "deep" (OnCustomEvent "go")
+                                        Nothing [deep] False 0 ] } }
+        (st', msg) = fireTriggers (OnCustomEvent "go") st0
+    r1 <- expectTrue "trigger output contains no engine error text"
+              (not ("[ERROR]" `isInfixOf` msg) && not ("[engine]" `isInfixOf` msg))
+    r2 <- expectTrue "trigger path recorded the diagnostic"
+              (any ("maximum outcome depth exceeded" `isInfixOf`) (diagnostics st'))
+    pure (r1 && r2)
+
+-- | P2-23: the trigger-nesting guard silently dropped a runaway recursion. It
+--   is defensive (the effect-depth guard normally fires first), so it is
+--   exercised directly here.
+testTriggerNestingGuardReports :: IO Bool
+testTriggerNestingGuardReports = do
+    let st0 = initSampleGame
+                { world = (world initSampleGame)
+                    { triggerDefs = [ TriggerDef "loop" (OnCustomEvent "loop")
+                                        Nothing [SendMessage "never"] False 0 ] } }
+        (st', msg) = fireTriggersWithDepth (maxOutcomeDepth + 1) (OnCustomEvent "loop") st0
+    r1 <- expectTrue "guard emits no game text" (null msg)
+    r2 <- expectTrue "guard records a diagnostic"
+              (any ("trigger nesting exceeded" `isInfixOf`) (diagnostics st'))
+    pure (r1 && r2)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -2749,6 +2799,9 @@ main = do
         , runTest "save list entry compatibility (P2-10)" testSaveListEntryCompat
         , runTest "strict fold keeps effect order (P2-11)" testStrictFoldKeepsEffectOrder
         , runTest "dialogue `pick` keyword alias (P2-22)" testDialoguePickKeywordAlias
+        , runTest "depth guard reports via diagnostics (P2-23)" testDepthGuardUsesDiagnostics
+        , runTest "depth guard stays out of trigger text (P2-23)" testDepthGuardStaysOutOfTriggerText
+        , runTest "trigger nesting guard reports (P2-23)" testTriggerNestingGuardReports
         -- Narratives (Phase 4.4)
         , runTest "narrative returns lines" testNarrativeReturnsLines
         , runTest "narrative stores pending (no side effects)" testNarrativeStoresPending

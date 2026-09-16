@@ -55,6 +55,7 @@ emptyGameState = GameState
         , triggerStates      = Map.empty
         }
     , pendingNarrative = Nothing
+    , diagnostics = []
     }
 
 -- ---------------------------------------------------------------------------
@@ -64,6 +65,13 @@ emptyGameState = GameState
 -- | Helper to get current room from game state
 getCurrentRoom :: GameState -> Maybe Room
 getCurrentRoom state = Map.lookup (currentRoom (save state)) (rooms (world state))
+
+-- | Record an engine-level diagnostic (P2-23). Runtime-only: `GameState` has no
+--   JSON instance, so nothing serializes it. Diagnostics describe a *content*
+--   error the author has to fix (e.g. an effect nested past `maxOutcomeDepth`)
+--   and must never be mixed into the player's text.
+addDiagnostic :: String -> GameState -> GameState
+addDiagnostic msg st = st { diagnostics = diagnostics st ++ [msg] }
 
 -- | Get all visible items in a location.
 --   Hidden items only appear once they have been discovered via `search`.
@@ -670,7 +678,16 @@ maxOutcomeDepth = 20
 --   Returns (state, message, nextSalt, nextDepth).
 applyOutcomeWith :: Int -> Int -> Effect -> ItemID -> GameState -> (GameState, String, Int)
 applyOutcomeWith depth salt outcome targetId state
-    | depth > maxOutcomeDepth = (state, "[ERROR] Maximum outcome depth exceeded.", salt)
+    | depth > maxOutcomeDepth =
+        -- P2-23: this is a content error, not game text. Report it on the
+        -- diagnostic channel so it reaches the author (`GameLoop` prints new
+        -- diagnostics to stderr) instead of appearing in the player's output.
+        ( addDiagnostic
+            ("[engine] maximum outcome depth exceeded (depth " ++ show depth
+             ++ " > " ++ show maxOutcomeDepth
+             ++ "): an effect (or a self-triggering event) is nested too deeply")
+            state
+        , "", salt )
     | otherwise = case outcome of
     SendMessage msg -> (state, msg, salt)
 
@@ -1226,7 +1243,18 @@ fireTriggers = fireTriggersWithDepth 0
 --   recursively raising events (`RaiseEvent`) cannot loop forever.
 fireTriggersWithDepth :: Int -> EventType -> GameState -> (GameState, String)
 fireTriggersWithDepth depth event state
-    | depth > maxOutcomeDepth = (state, "")
+    | depth > maxOutcomeDepth =
+        -- P2-23: a silently dropped recursion is the *authoring* error this
+        -- guard exists for (a rule raising its own event); report it on the
+        -- diagnostic channel instead of discarding it. Defensive: with the
+        -- current call graph the `applyOutcomeWith` guard above fires first,
+        -- because `RaiseEvent` bumps the depth before re-entering here.
+        ( addDiagnostic
+            ("[engine] trigger nesting exceeded " ++ show maxOutcomeDepth
+             ++ " while handling " ++ show event
+             ++ ": a rule probably raises its own event")
+            state
+        , "" )
     | otherwise =
         let triggers = triggerDefs (world state)
             matching = filter (\t -> trEvent t == event) triggers
