@@ -299,6 +299,17 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `joinMessages` mit derselben Regel wie der Trigger-Pfad (`combineMessages`).
 - Tests: **204** Engine- + **74** Worldbuilder-Tests, **18** E2E-Playthroughs.
 
+- **Entschieden und verworfen** (P2-12/P2-13, Cluster E): die im Review
+  vorgeschlagenen Indizes (`Map RoomID [ItemID]` im State, `Map EventType
+  [TriggerDef]` im `GameWorld`) werden **nicht** gebaut. Beides wäre
+  serialisierter State, also eine zweite Quelle der Wahrheit, die bei jedem
+  Item-/Trigger-Update und jedem Save/Load konsistent bleiben müsste; ein
+  veralteter Index fällt still aus (verlorene Items bzw. keine Trigger mehr) —
+  ein deutlich schlechterer Fehler als etwas Scan-Zeit. Gemessene Kosten des
+  heutigen Verhaltens bei TheFog-Größe (50 Items / 50 Trigger): **12 ns** pro
+  Befehl; bei 100× Größe (5000/5000) 130 ns. Die Begründung samt Messwerten
+  steht als Kommentar an `getItemsInLocation` und `fireTriggerList`.
+
 ## [0.9.0.0] — Unreleased
 
 Phase 5 (Worldbuilder + Ports): Worldbuilder YAML/JSON-Compiler und TheFog-Portierung.

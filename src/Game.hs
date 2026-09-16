@@ -67,6 +67,15 @@ getCurrentRoom state = Map.lookup (currentRoom (save state)) (rooms (world state
 
 -- | Get all visible items in a location.
 --   Hidden items only appear once they have been discovered via `search`.
+--
+--   This scans the whole `itemStates` map, and a command calls it 2-3 times
+--   (room + inventory) plus `getNPCsInRoom`. Review P2-12 suggested a
+--   `Map RoomID [ItemID]` index in the state; that was **rejected** (decision,
+--   Cluster E): `GameState` is serialized, so an index is a second source of
+--   truth that has to stay consistent across every item move and every
+--   save/load — a silently wrong index loses items. Measured cost of the
+--   complete per-command scan work at TheFog scale (50 items, 50 triggers):
+--   12 ns; at 100x that size (5000/5000): 130 ns. Not worth that risk.
 getItemsInLocation :: Location -> GameState -> [ItemDef]
 getItemsInLocation loc state =
     [ def
@@ -1224,6 +1233,14 @@ fireTriggersWithDepth depth event state
         in fireTriggerList depth matching state
 
 -- | Fire a specific list of triggers (internal, also used by nested call from effects).
+--
+--   The trigger list is filtered linearly per event, and a command raises up to
+--   five events, so this is O(5 x |triggers|) per command. Review P2-13
+--   suggested a `Map EventType [TriggerDef]` in the `GameWorld`; that was
+--   **rejected** (decision, Cluster E): the map is serialized, and a correctly
+--   compiled but stale/empty index would silently stop every trigger from
+--   firing — a much worse failure than 12 ns of scanning (see the measurement
+--   note on `getItemsInLocation`).
 fireTriggerList :: Int -> [TriggerDef] -> GameState -> (GameState, String)
 fireTriggerList depth triggers state =
     foldl' fireOne (state, "") triggers
