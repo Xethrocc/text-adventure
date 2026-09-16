@@ -16,6 +16,7 @@ import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, hel
 import Verbs (verbAliasMap)
 import Validate (ValidationError (..), validateWorld, validateGameState)
 import Sample (initSampleGame)
+import SaveLoad (computeWorldChecksum, formatSaveEntry, currentSaveVersion)
 import System.Console.Haskeline (Completion (..))
 import System.Exit (exitFailure)
 import Types
@@ -2490,6 +2491,51 @@ testCompoundKeyRoundTrip = do
         Nothing -> expectTrue "legacy tuple map decodes" False
     pure (r1 && r2 && r3)
 
+-- | P2-10: the save-list line reports compatibility of a save against the
+--   *current* world checksum. `listSaves` now computes that checksum once for
+--   all files (it was recomputed inside the per-file loop) — this pins the
+--   behaviour the hoisting must not change.
+testSaveListEntryCompat :: IO Bool
+testSaveListEntryCompat = do
+    let st0  = initSampleGame
+        csum = computeWorldChecksum (world st0)
+        mkSave cs = SaveFile
+            { saveVersion    = currentSaveVersion
+            , saveTimestamp  = "2026-01-16 10:00"
+            , worldChecksum  = cs
+            , saveName       = "slot1"
+            , saveData       = save st0
+            }
+        compatibleEntry = formatSaveEntry csum (mkSave csum)
+        mismatchEntry   = formatSaveEntry csum (mkSave "12345")
+    r1 <- expectTrue "matching world reports compatible"
+              ("(compatible)" `isInfixOf` compatibleEntry)
+    r2 <- expectTrue "different world reports mismatch"
+              ("world mismatch!" `isInfixOf` mismatchEntry)
+    r3 <- expectTrue "entry carries save name and timestamp"
+              ("slot1" `isInfixOf` compatibleEntry
+               && "2026-01-16 10:00" `isInfixOf` compatibleEntry)
+    pure (r1 && r2 && r3)
+
+-- | P2-11: the lazy `foldl` -> strict `foldl'` rewrite must not change the
+--   result of the accumulating sites: effect order and message concatenation
+--   stay exactly in authored order.
+testStrictFoldKeepsEffectOrder :: IO Bool
+testStrictFoldKeepsEffectOrder = do
+    let st0 = initSampleGame
+        (_, msgViaSequence) = applyOutcome
+            (Sequence [ SendMessage "first"
+                      , ModifyValue (VRVariable "credits") 3
+                      , SendMessage "second"
+                      , SendMessage "third" ]) "" st0
+        (_, msgViaList) = applyOutcomes
+            [SendMessage "first", SendMessage "second", SendMessage "third"] "" st0
+    r1 <- expectTrue "Sequence keeps authored order and newline joining"
+              (msgViaSequence == "first\nsecond\nthird")
+    r2 <- expectTrue "effect list keeps authored order"
+              (msgViaList == "first\nsecond\nthird")
+    pure (r1 && r2)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -2677,6 +2723,8 @@ main = do
         , runTest "visited accepts EVBool (P2-7)" testVisitedAcceptsBool
         , runTest "item without ItemState is reported (P2-8)" testItemWithoutStateIsReported
         , runTest "compound map key round-trip incl. legacy (P2-9)" testCompoundKeyRoundTrip
+        , runTest "save list entry compatibility (P2-10)" testSaveListEntryCompat
+        , runTest "strict fold keeps effect order (P2-11)" testStrictFoldKeepsEffectOrder
         -- Narratives (Phase 4.4)
         , runTest "narrative returns lines" testNarrativeReturnsLines
         , runTest "narrative stores pending (no side effects)" testNarrativeStoresPending

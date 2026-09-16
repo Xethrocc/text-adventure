@@ -3,7 +3,7 @@
 module Validate (ValidationError(..), validateWorld, validateGameState, setFlagsInWorld) where
 
 import Types
-import Data.List (nub, stripPrefix)
+import Data.List (nub, stripPrefix, foldl')
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
@@ -242,7 +242,7 @@ checkMissingVehiclesInDefs gw =
 --   but never set (SetFlag outcome) anywhere in the world definitions.
 checkFlags :: GameWorld -> [ValidationError]
 checkFlags gw =
-    let setFlags = foldl scanSetFlags Set.empty (allOutcomes gw)
+    let setFlags = foldl' scanSetFlags Set.empty (allOutcomes gw)
         checked  = Set.fromList (concatMap flagsInPredicate (allPredicates gw))
         missing  = Set.toList (Set.difference checked setFlags)
     in [MissingSetFlag flg "checked but never set in any outcome" | flg <- missing]
@@ -463,7 +463,7 @@ validateGameState gw st = concat
 --   room alt-description keys, light-flag references).
 setFlagsInWorld :: GameWorld -> Set.Set FlagID
 setFlagsInWorld gw =
-    let setFromOutcomes = foldl scanSetFlags Set.empty (allOutcomes gw)
+    let setFromOutcomes = foldl' scanSetFlags Set.empty (allOutcomes gw)
         setFromPredicates = Set.fromList
             [ f | p <- allPredicates gw
                 , f <- flagsInPredicate p
@@ -509,7 +509,7 @@ flagsInCondText ct = concatMap (flagsInPredicate . tvWhen) (ctVariants ct)
 scanSetFlags :: Set.Set FlagID -> Effect -> Set.Set FlagID
 scanSetFlags acc outcome = case outcome of
     SetValue (VRFlag n) _         -> Set.insert n acc
-    Sequence os                   -> foldl scanSetFlags acc os
-    RandomChoice os               -> foldl scanSetFlags acc (map snd os)
+    Sequence os                   -> foldl' scanSetFlags acc os
+    RandomChoice os               -> foldl' scanSetFlags acc (map snd os)
     Conditional _ t e             -> scanSetFlags (scanSetFlags acc t) e
     _                             -> acc

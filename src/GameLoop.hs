@@ -16,7 +16,7 @@ import Verbs (verbCanonicalName)
 import SaveLoad
 import Sample (initSampleGame)
 import Data.Char (toLower)
-import Data.List (isPrefixOf, nub)
+import Data.List (isPrefixOf, nub, foldl')
 import Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
 
@@ -211,19 +211,17 @@ applyLoopCommand command loopState
             history' = take maxUndoHistory (oldState : lsHistory loopState)
         in (LoopState stateAfterTriggers history' (lsInitial loopState), combined)
 
--- | Combine two result messages (command result + trigger messages).
+-- | Combine two message fragments for trigger output. Same rule as
+--   'Game.joinMessages' — empty fragments contribute nothing.
 combineMessages :: String -> String -> String
-combineMessages base extra
-    | null extra = base
-    | null base  = extra
-    | otherwise  = base ++ "\n" ++ extra
+combineMessages = joinMessages
 
 -- | Determine which trigger events apply to a completed command, using the
 --   state before and after the command to detect room changes.
 fireCommandTriggers :: Command -> GameState -> GameState -> (GameState, String)
 fireCommandTriggers cmd before after =
     let events = commandEvents cmd before after
-        (st, msgs) = foldl (\(s, acc) ev -> let (s', m) = fireTriggers ev s
+        (st, msgs) = foldl' (\(s, acc) ev -> let (s', m) = fireTriggers ev s
                                             in (s', combineMessages acc m))
                            (after, "") events
     in (st, msgs)

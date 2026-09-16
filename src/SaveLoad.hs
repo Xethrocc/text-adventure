@@ -4,7 +4,7 @@ module SaveLoad where
 import Types
 import Game (syncInventory)
 import Control.Exception (try, SomeException)
-import Data.List (sortBy)
+import Data.List (foldl', sortBy)
 import Data.Time (getCurrentTime, formatTime, defaultTimeLocale)
 import System.Directory (createDirectoryIfMissing, listDirectory, doesFileExist)
 
@@ -18,13 +18,26 @@ import qualified Data.ByteString.Lazy.Char8 as BLC
 currentSaveVersion :: Int
 currentSaveVersion = 2
 
--- | Compute a simple checksum of the GameWorld for save compatibility detection
+-- | Compute a simple checksum of the GameWorld for save compatibility detection.
+--   The accumulator is strict (P2-10): the lazy `foldl` built one thunk per
+--   character of the encoded world, i.e. per byte of the whole world JSON.
 computeWorldChecksum :: GameWorld -> String
 computeWorldChecksum gw =
     let encoded = BLC.unpack (Aeson.encode gw)
         -- Simple DJB2 hash
-        hashVal = foldl (\acc c -> acc * 33 + fromEnum c) 5381 encoded
+        hashVal = foldl' (\acc c -> acc * 33 + fromEnum c) 5381 encoded
     in show (abs hashVal)
+
+-- | One line of `listSaves` output. The current world checksum is a parameter
+--   (P2-10): it is the same for every save file, so the caller computes it once
+--   instead of once per file.
+formatSaveEntry :: String -> SaveFile -> String
+formatSaveEntry currentChecksum sf =
+    "  " ++ saveName sf ++ " — " ++ saveTimestamp sf
+        ++ " (" ++ compat ++ ")"
+  where
+    compat | worldChecksum sf == currentChecksum = "compatible"
+           | otherwise                           = "world mismatch!"
 
 -- | Save game to a named slot with metadata
 saveGame :: GameState -> String -> IO ()
@@ -108,22 +121,20 @@ listSaves gw = do
     then putStrLn "No saved games found."
     else do
         putStrLn "=== Saved Games ==="
-        entries <- mapM (loadSaveEntry gw) jsonFiles
+        -- P2-10: computed once for all files, not once per file inside the loop.
+        let currentChecksum = computeWorldChecksum gw
+        entries <- mapM (loadSaveEntry currentChecksum) jsonFiles
         let sorted = sortBy (\(_, t1) (_, t2) -> compare t2 t1)
                      [(e, t) | Just (e, t) <- entries]
         mapM_ (\(entry, _) -> putStrLn entry) sorted
   where
-    loadSaveEntry :: GameWorld -> FilePath -> IO (Maybe (String, String))
-    loadSaveEntry gameWorld filename = do
+    loadSaveEntry :: String -> FilePath -> IO (Maybe (String, String))
+    loadSaveEntry currentChecksum filename = do
         result <- try (BL.readFile ("saves/" ++ filename)) :: IO (Either SomeException BL.ByteString)
         case result of
             Left _ -> return Nothing
             Right contents -> case Aeson.decode contents of
                 Just sf ->
-                    let name = saveName sf
-                        ts = saveTimestamp sf
-                        currentChecksum = computeWorldChecksum gameWorld
-                        compat = if worldChecksum sf == currentChecksum then "compatible" else "world mismatch!"
-                        entry = "  " ++ name ++ " — " ++ ts ++ " (" ++ compat ++ ")"
-                    in return (Just (entry, ts))
+                    let ts = saveTimestamp sf
+                    in return (Just (formatSaveEntry currentChecksum sf, ts))
                 Nothing -> return Nothing

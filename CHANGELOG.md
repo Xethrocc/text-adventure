@@ -95,7 +95,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `ShipActor` (7h) erweitern sie ohne Signaturänderung.
 - `evalPredicate (Location "player" r)` prüft jetzt auch den Spielerraum
   (vorher nur NPC-/Item-Locations).
-- Tests: **202** Engine- + **74** Worldbuilder-Tests, **18** E2E-Playthroughs
+- Tests: **204** Engine- + **74** Worldbuilder-Tests, **18** E2E-Playthroughs
   (`scripts/ci.sh`).
 
 ### Fixed
@@ -282,6 +282,22 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   (`BadFactionLevel`) ab. Eine Sortierung der Liste wird bewusst *nicht*
   verlangt — die Fixtures ordnen nach Beziehungsqualität.
 - Tests: **202** Engine- + **74** Worldbuilder-Tests, **18** E2E-Playthroughs.
+
+- Performance-Cluster aus dem Review-P2-Block (Cluster C, Teil 1):
+  `computeWorldChecksum` faltete die **komplette** Welt-JSON mit dem lazy
+  `foldl` — ein Thunk pro Zeichen — und `listSaves` rief es **innerhalb** der
+  Schleife auf, also O(Saves × Weltgröße) statt O(Weltgröße) (P2-10). Die
+  Prüfsumme wird jetzt einmal pro Auflistung berechnet und
+  `formatSaveEntry` bekommt sie als Parameter.
+  Alle 15 Stellen mit lazy `foldl` über `GameState`-Akkumulatoren nutzen jetzt
+  `foldl'` (P2-11) — betroffen waren `Game`, `Parser`, `GameLoop`, `Validate`
+  und `SaveLoad` (u. a. `applyOutcomes`, `tickConditions`, `fireTriggerList`,
+  `TakeAll`/`DropAll`).
+- Beim Testen von P2-11 gefunden und behoben: `Sequence`/`applyOutcomes`
+  hängten Meldungen **bedingungslos** an, ein Effekt ohne Text (z. B.
+  `ModifyValue`) erzeugte damit eine Leerzeile im Spieltext. Beide nutzen jetzt
+  `joinMessages` mit derselben Regel wie der Trigger-Pfad (`combineMessages`).
+- Tests: **204** Engine- + **74** Worldbuilder-Tests, **18** E2E-Playthroughs.
 
 ## [0.9.0.0] — Unreleased
 

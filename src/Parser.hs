@@ -8,7 +8,7 @@ import Game
 import Combat (CombatActor (..), CombatTarget (..), resolveCombat)
 import Control.Applicative ((<|>))
 import Data.Char (toLower, isDigit)
-import Data.List (find, intercalate, nub)
+import Data.List (find, intercalate, nub, foldl')
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Set as Set
@@ -437,7 +437,7 @@ executeCommand TakeAll state =
     let roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
     in if null roomItems
        then (state, "There's nothing here to take.")
-       else let (finalState, msgs) = foldl (\(s, ms) item ->
+       else let (finalState, msgs) = foldl' (\(s, ms) item ->
                     let (s', m) = executeCommand (Interact VTake (itemName item)) s
                     in (s', ms ++ [m])) (state, []) roomItems
             in (finalState, intercalate "\n" msgs)
@@ -446,13 +446,13 @@ executeCommand DropAll state =
     let invItems = getItemsInLocation (CarriedBy "player") state
     in if null invItems
        then (state, "You're not carrying anything to drop.")
-       else let (finalState, msgs) = foldl (\(s, ms) item ->
+       else let (finalState, msgs) = foldl' (\(s, ms) item ->
                     let (s', m) = executeCommand (Interact VDrop (itemName item)) s
                     in (s', ms ++ [m])) (state, []) invItems
             in (finalState, intercalate "\n" msgs)
 
 executeCommand (CompoundCommand cmds) state =
-    foldl (\(s, msgs) cmd ->
+    foldl' (\(s, msgs) cmd ->
         let (s', msg) = executeCommand cmd s
         in (s', if null msgs then msg else msgs ++ "\n" ++ msg)
     ) (state, "") cmds

@@ -3,7 +3,7 @@
 module Game where
 
 import Types
-import Data.List (intercalate, find, elemIndex)
+import Data.List (intercalate, find, elemIndex, foldl')
 import Data.Bits (shiftR)
 import Data.Char (toLower)
 import Data.Maybe (listToMaybe, fromMaybe)
@@ -396,7 +396,7 @@ partyMembersInRoom state =
 --   Dead members stay where they fell.
 followParty :: RoomID -> GameState -> GameState
 followParty room state =
-    foldl (\st nId -> moveNPCToRoom nId room st) state
+    foldl' (\st nId -> moveNPCToRoom nId room st) state
         [ nId
         | (nId, ns) <- Map.toList (npcStates (save state))
         , npcStatus ns /= "dead"
@@ -526,7 +526,7 @@ hasCondition name state = Map.member name (conditions (save state))
 --   ones and fire their end outcomes.
 --   Returns the new state plus all messages produced.
 tickConditions :: GameState -> (GameState, [String])
-tickConditions state = foldl step (state, []) (Map.toList (conditions (save state)))
+tickConditions state = foldl' step (state, []) (Map.toList (conditions (save state)))
   where
     step (st, msgs) (name, cond) =
         let remaining = condRemaining cond - 1
@@ -666,9 +666,9 @@ applyOutcomeWith depth salt outcome targetId state
     SendMessage msg -> (state, msg, salt)
 
     Sequence outcomes ->
-        let (st', msg', salt') = foldl (\(st, acc, s) o ->
+        let (st', msg', salt') = foldl' (\(st, acc, s) o ->
                 let (st2, m2, s2) = applyOutcomeWith (depth + 1) s o targetId st
-                in (st2, if null acc then m2 else acc ++ "\n" ++ m2, s2))
+                in (st2, joinMessages acc m2, s2))
                 (state, "", salt) outcomes
         in (st', msg', salt')
 
@@ -859,12 +859,22 @@ applyOutcome outcome targetId state =
     let (st, msg, _) = applyOutcomeWith 0 0 outcome targetId state
     in (st, msg)
 
+-- | Join two message fragments, dropping the empty ones. The trigger path
+--   (`combineMessages` in GameLoop) always did this; `Sequence`/`applyOutcomes`
+--   appended unconditionally, so an effect without a message inserted a blank
+--   line into the game text.
+joinMessages :: String -> String -> String
+joinMessages acc m
+    | null m    = acc
+    | null acc  = m
+    | otherwise = acc ++ "\n" ++ m
+
 -- | Apply zero or more outcomes in sequence
 applyOutcomes :: [Effect] -> ItemID -> GameState -> CommandResult
 applyOutcomes outcomes targetId state =
-    let (st, msg, _) = foldl (\(s, acc, slt) o ->
+    let (st, msg, _) = foldl' (\(s, acc, slt) o ->
             let (s2, m2, slt2) = applyOutcomeWith 0 slt o targetId s
-            in (s2, if null acc then m2 else acc ++ "\n" ++ m2, slt2))
+            in (s2, joinMessages acc m2, slt2))
             (state, "", 0) outcomes
     in (st, msg)
 
@@ -1164,7 +1174,7 @@ vehicleConditionTick state = case currentVehicle (save state) of
             in if null outcomes
                then (state, "")
                else
-                   let (st', msgs) = foldl (\(s, ms) o ->
+                   let (st', msgs) = foldl' (\(s, ms) o ->
                             let (s2, m2) = applyOutcome o "" s
                             in (s2, if null m2 then ms else ms ++ [m2]))
                             (state, []) outcomes
@@ -1216,7 +1226,7 @@ fireTriggersWithDepth depth event state
 -- | Fire a specific list of triggers (internal, also used by nested call from effects).
 fireTriggerList :: Int -> [TriggerDef] -> GameState -> (GameState, String)
 fireTriggerList depth triggers state =
-    foldl fireOne (state, "") triggers
+    foldl' fireOne (state, "") triggers
   where
     -- Read the trigger state from the CURRENT fold state, not a snapshot
     -- taken at entry: a nested event round fired by an earlier trigger's
@@ -1242,7 +1252,7 @@ fireTriggerList depth triggers state =
         in st { save = (save st) { triggerStates = newTs } }
 
     applyTrigEffects tId tr st acc =
-        let (st', msgs) = foldl (\(s, a) e ->
+        let (st', msgs) = foldl' (\(s, a) e ->
                 let (s', m, _) = applyOutcomeWith (depth + 1) 0 e "" s
                 in (s', a ++ m ++ "\n")) (st { save = (save st) { triggerStates = updatedTs } }, acc) (trEffects tr)
             updatedTs = Map.insert tId (TriggerState True (trCooldown tr)) (triggerStates (save st))
