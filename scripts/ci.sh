@@ -72,14 +72,16 @@ done
 echo "== 5. e2e failure paths =="
 # Review L12: stage 4 only covers one happy path per fixture. Each entry here
 # drives the same compiled world into a failure path — no funds, refused attack,
-# starvation, unknown station, invalid dialogue choice.
-for name in trade-fail combat-off-fail survival-fail starship-fail combo-fail; do
+# starvation, unknown station, invalid dialogue choice, and the ship loss
+# (`hull_failure`, reachable in `starship-loss.yaml` but not in `starship.yaml`).
+for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss-fail combo-fail; do
     case "$name" in
-        trade-fail)       src=examples/modules/trade.yaml ;;
-        combat-off-fail)  src=examples/modules/combat-off.yaml ;;
-        survival-fail)    src=examples/modules/survival.yaml ;;
-        starship-fail)    src=examples/modules/starship.yaml ;;
-        combo-fail)       src=examples/modules/combo.yaml ;;
+        trade-fail)        src=examples/modules/trade.yaml ;;
+        combat-off-fail)   src=examples/modules/combat-off.yaml ;;
+        survival-fail)     src=examples/modules/survival.yaml ;;
+        starship-fail)     src=examples/modules/starship.yaml ;;
+        starship-loss-fail) src=examples/modules/starship-loss.yaml ;;
+        combo-fail)        src=examples/modules/combo.yaml ;;
     esac
     run_e2e "$name" "$src"
 done

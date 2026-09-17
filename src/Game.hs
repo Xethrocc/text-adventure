@@ -592,8 +592,22 @@ evalPredicate (PAll ps) st = all (\p -> evalPredicate p st) ps
 evalPredicate (PAny ps) st = any (\p -> evalPredicate p st) ps
 evalPredicate (PlayerHas iId) st = hasItem iId st
 evalPredicate (HasFlag f) st = getFlag f st == Just "true"
+-- A state predicate checks the entity's state in whichever layer stores it:
+-- `entityStates` (exit locks, doors, `set_state:` targets), an NPC's status
+-- ("alive"/"dead", as `killNPC` and the combat path set it) or an item's status
+-- ("intact"/…). Reading only `entityStates` made `{state: <npc>, is: alive}` —
+-- which `starship.yaml` and `combo.yaml` both use — always false.
 evalPredicate (EntityHasState entity expected) st =
     getEntityState entity st == Just expected
+        || npcStateMatches
+        || itemStateMatches
+  where
+    npcStateMatches = case Map.lookup entity (npcStates (save st)) of
+        Just ns -> npcStatus ns == expected
+        Nothing -> False
+    itemStateMatches = case Map.lookup entity (itemStates (save st)) of
+        Just is -> itemStatus is == expected
+        Nothing -> False
 evalPredicate (RoomHasTag rId tag) st =
     case Map.lookup rId (rooms (world st)) of
         Just room -> tag `Set.member` roomTags room

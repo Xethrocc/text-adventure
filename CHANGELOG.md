@@ -95,7 +95,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `ShipActor` (7h) erweitern sie ohne Signaturänderung.
 - `evalPredicate (Location "player" r)` prüft jetzt auch den Spielerraum
   (vorher nur NPC-/Item-Locations).
-- Tests: **222** Engine- + **74** Worldbuilder-Tests, **23** E2E-Läufe
+- Tests: **223** Engine- + **74** Worldbuilder-Tests, **24** E2E-Läufe
   (`scripts/ci.sh`).
 
 ### Fixed
@@ -412,6 +412,26 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   Fehlerzweige (korrupte Weltdatei, korrupter Save, fehlende Datei) waren
   ungetestet, ebenso der `equipmentSummary`-Text.
 - Tests: **222** Engine- + **74** Worldbuilder-Tests, **23** E2E-Läufe.
+
+- **Verlustpfad des Starship-Moduls ist jetzt erreichbar** (Nebenfund aus L12):
+  `hull_failure` (`ship.kestrel.hull <= 0`) konnte in `starship.yaml` **nie** feuern —
+  doppelt blockiert. Erstens fällt die Hülle in genau der Runde auf 0, in der auch der
+  Korsar stirbt (`max_hp 30` gegen 9 Schaden pro Runde), zweitens war die Regel an
+  `{ state: korsar, is: alive }` gebunden — und dieses Prädikat las **nur**
+  `entityStates`.
+- **Prädikat-Fix (`{state: X, is: Y}`):** Ein Zustands-Prädikat prüft jetzt alle drei
+  Schichten — `entityStates` (Tore/`set_state`), den NPC-Status (`npcStates`, wie ihn
+  `killNPC` und der Kampfpfad setzen) und den Item-Status (`itemStates`). Vorher war
+  `{ state: <npc>, is: alive }` für NPCs **immer falsch**; `starship.yaml` **und**
+  `combo.yaml` verwenden genau diese Form. Reine Leseseite — kein neuer State, kein
+  zweiter Interpreter. Abgesichert für NPC (lebend/tot), Item, Tor und unbekannte ID.
+- Neues Fixture **`examples/modules/starship-loss.yaml`**: derselbe Schiffstyp, aber ein
+  zäher Gegner (`max_hp 100`), damit die Hülle bricht, *bevor* der Gegner stirbt. Die
+  Zahlen und der Grund stehen als Kommentar im Fixture. Neuer E2E-Fehlerpfad
+  `starship-loss-fail` („Die Hülle der Kestrel bricht auf — du verglühst mit dem Schiff.")
+  → **24** E2E-Läufe (18 + 6 Fehlerpfade).
+- `-Werror=overlapping-patterns` ergänzt (§4.3-1 damit vollständig umgesetzt).
+- Tests: **223** Engine- + **74** Worldbuilder-Tests, **24** E2E-Läufe.
 
 ## [0.9.0.0] — Unreleased
 

@@ -2996,6 +2996,28 @@ testEquipmentSummaryText = do
                       (("Weapon" `isInfixOf` summary) && ("rusty sword" `isInfixOf` summary))
             pure (r1 && r2)
 
+-- | Nebenfund aus dem Verlustpfad-Fixture (starship-loss.yaml): `{state: X, is: Y}`
+--   las nur `entityStates`. Der NPC-Status lebt in `npcStates`, der Item-Status in
+--   `itemStates` — die Bedingung war für beide unerreichbar, obwohl
+--   `starship.yaml` und `combo.yaml` sie genau so verwenden (und damit ihren
+--   Verlust- bzw. Kampfpfad stillschweigend unmöglich machten).
+testEntityStatePredicateCoversAllKinds :: IO Bool
+testEntityStatePredicateCoversAllKinds = do
+    let st0 = initSampleGame
+        alive = EntityHasState "goblin" "alive"
+        stDead = st0 { save = (save st0)
+                         { npcStates = Map.adjust (\ns -> ns { npcStatus = "dead" })
+                                                  "goblin" (npcStates (save st0)) } }
+    r1 <- expectTrue "a living NPC matches `state:`" (evalPredicate alive st0)
+    r2 <- expectTrue "a dead NPC stops matching" (not (evalPredicate alive stDead))
+    r3 <- expectTrue "an item's status is visible"
+              (evalPredicate (EntityHasState "sword_rusty" "intact") st0)
+    r4 <- expectTrue "an exit lock's state still matches"
+              (evalPredicate (EntityHasState "treasure_door" "locked") st0)
+    r5 <- expectTrue "an unknown entity never matches"
+              (not (evalPredicate (EntityHasState "ghost" "alive") st0))
+    pure (r1 && r2 && r3 && r4 && r5)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -3206,6 +3228,7 @@ main = do
         -- Review L1 / L8 leftovers
         , runTest "World loaders and their error branches (L1)" testWorldLoadersAndErrors
         , runTest "equipmentSummary text (L8)" testEquipmentSummaryText
+        , runTest "state: predicate covers NPC/item/lock states" testEntityStatePredicateCoversAllKinds
         -- Narratives (Phase 4.4)
         , runTest "narrative returns lines" testNarrativeReturnsLines
         , runTest "narrative stores pending (no side effects)" testNarrativeStoresPending
