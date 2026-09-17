@@ -2872,6 +2872,77 @@ testFatalTickStopsCommand = do
                && currentRoom (save (lsCurrent loopC)) == "hallway")
     pure (r1 && r2 && r3 && r4 && r5 && r5b && r6)
 
+-- ===== L4: one test per ValidationError constructor that had none =====
+
+-- | L4: `MissingRoom` was declared but never produced — a rule moving an entity
+--   into a typo'd room was silently accepted, and the worldbuilder does not check
+--   rule room references at all. Now both `MoveEntity` and the `move:` effect
+--   (player teleport) are checked.
+testValidateMissingRoomInRule :: IO Bool
+testValidateMissingRoomInRule = do
+    let gw0 = world initSampleGame
+        withRule eff = gw0 { triggerDefs = [TriggerDef "t" OnTurn Nothing [eff] False 0] }
+        moveNpc    = withRule (MoveEntity "goblin" (InRoom "ghost_room"))
+        movePlayer = withRule (SetValue (VRProperty "player" "room") (EVString "ghost_room"))
+        legit      = withRule (MoveEntity "goblin" (InRoom "hallway"))
+    r1 <- expectTrue "MoveEntity into a missing room is reported"
+              (MissingRoom "ghost_room" `elem` validateWorld moveNpc)
+    r2 <- expectTrue "`move:` into a missing room is reported"
+              (MissingRoom "ghost_room" `elem` validateWorld movePlayer)
+    r3 <- expectTrue "a move to an existing room is not reported"
+              (MissingRoom "hallway" `notElem` validateWorld legit)
+    r4 <- expectTrue "the sample world has no MissingRoom"
+              (not (any isMissingRoom (validateWorld gw0)))
+    pure (r1 && r2 && r3 && r4)
+  where
+    isMissingRoom (MissingRoom _) = True
+    isMissingRoom _               = False
+
+-- | L4: an NPC referenced by a rule that is declared nowhere.
+testValidateMissingNpcInRule :: IO Bool
+testValidateMissingNpcInRule = do
+    let withTarget t = (world initSampleGame)
+                { triggerDefs = [ TriggerDef "t" OnTurn Nothing
+                                    [MoveEntity t (InRoom "hallway")] False 0 ] }
+    r1 <- expectTrue "an unknown MoveEntity target is reported as MissingNPC"
+              (MissingNPC "ghost_npc" `elem` validateWorld (withTarget "ghost_npc"))
+    r2 <- expectTrue "a declared NPC is not reported"
+              (MissingNPC "goblin" `notElem` validateWorld (withTarget "goblin"))
+    pure (r1 && r2)
+
+-- | L4: a `VRProperty` reference to an entity that is neither an item, an NPC nor
+--   an exit lock key.
+testValidateMissingEntityInRule :: IO Bool
+testValidateMissingEntityInRule = do
+    let withTarget t = (world initSampleGame)
+                { triggerDefs = [ TriggerDef "t" OnTurn Nothing
+                                    [SetValue (VRProperty t "state") (EVString "open")] False 0 ] }
+    r1 <- expectTrue "an unknown VRProperty target is reported"
+              (MissingEntity "ghost_entity" "property" `elem` validateWorld (withTarget "ghost_entity"))
+    -- an exit lock key lives in `entityStates` and is therefore a valid entity
+    r2 <- expectTrue "an exit lock key is not reported"
+              (MissingEntity "treasure_door" "property" `notElem` validateWorld (withTarget "treasure_door"))
+    pure (r1 && r2)
+
+-- | L4: a vehicle whose entry room does not exist. `checkVehicleRefs` runs in
+--   `validateGameState` (it needs the room set of the world plus the save).
+testValidateInvalidVehicleRoom :: IO Bool
+testValidateInvalidVehicleRoom = do
+    let gw0 = world initSampleGame
+        carriage = maybe (error "sample lost its carriage") id
+                        (Map.lookup "carriage" (vehicleDefs gw0))
+        broken = gw0 { vehicleDefs = Map.insert "carriage"
+                          (carriage { vehicleEntryRoom = "ghost_room" }) (vehicleDefs gw0) }
+    r1 <- expectTrue "a vehicle entry into a missing room is reported"
+              (InvalidVehicleRoom "carriage" "entry" "ghost_room"
+                 `elem` validateGameState broken (save initSampleGame))
+    r2 <- expectTrue "the sample's carriage is fine"
+              (not (any isVehicleRoom (validateGameState gw0 (save initSampleGame))))
+    pure (r1 && r2)
+  where
+    isVehicleRoom (InvalidVehicleRoom _ _ _) = True
+    isVehicleRoom _                          = False
+
 main :: IO ()
 main = do
     results <- sequence
@@ -3074,6 +3145,11 @@ main = do
         , runTest "consumesTurn complete for every Command (L13)" testConsumesTurnCompleteness
         , runTest "SaveLoad round-trip + legacy + checksum (L2)" testSaveLoadRoundTrip
         , runTest "fatal condition tick stops the command (L11)" testFatalTickStopsCommand
+        -- Review L4: constructor coverage in Validate
+        , runTest "MissingRoom from a rule room reference (L4)" testValidateMissingRoomInRule
+        , runTest "MissingNPC from a rule reference (L4)" testValidateMissingNpcInRule
+        , runTest "MissingEntity from a VRProperty ref (L4)" testValidateMissingEntityInRule
+        , runTest "InvalidVehicleRoom for a bad entry (L4)" testValidateInvalidVehicleRoom
         -- Narratives (Phase 4.4)
         , runTest "narrative returns lines" testNarrativeReturnsLines
         , runTest "narrative stores pending (no side effects)" testNarrativeStoresPending

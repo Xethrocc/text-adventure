@@ -44,6 +44,7 @@ validateWorld :: GameWorld -> [ValidationError]
 validateWorld gw =
     concat
         [ checkDanglingExits gw
+        , checkMissingRoomRefs gw
         , checkDuplicateIDs gw
         , checkDialogueTrees gw
         , checkMissingItemsInDefs gw
@@ -71,6 +72,28 @@ checkDanglingExits gw =
 exitRoomID :: Exit -> RoomID
 exitRoomID (Open r) = r
 exitRoomID (Locked r _) = r
+
+-- | Room references inside rules and outcomes: `MoveEntity … (InRoom r)` and the
+--   `move:` effect (`SetValue (VRProperty "player" "room") …`).
+--
+--   Review L4 found `MissingRoom` declared but never produced anywhere, while a
+--   typo'd `move: ghost_room` in a rule was silently accepted: the entity ends up
+--   in a room that does not exist and simply disappears. The worldbuilder does
+--   not check rule room references either, so this is the only place that can.
+checkMissingRoomRefs :: GameWorld -> [ValidationError]
+checkMissingRoomRefs gw =
+    let roomKeys = Set.fromList (Map.keys (rooms gw))
+        refs = concatMap idsFromOutcomeRoom (allOutcomes gw)
+    in [MissingRoom r | r <- nub refs, not (Set.member r roomKeys)]
+
+idsFromOutcomeRoom :: Effect -> [String]
+idsFromOutcomeRoom outcome = case outcome of
+    MoveEntity _ (InRoom r)                            -> [r]
+    SetValue (VRProperty "player" "room") (EVString r) -> [r]
+    Sequence os                                        -> concatMap idsFromOutcomeRoom os
+    RandomChoice os                                    -> concatMap (idsFromOutcomeRoom . snd) os
+    Conditional _ t e                                  -> idsFromOutcomeRoom t ++ idsFromOutcomeRoom e
+    _                                                  -> []
 
 -- ---------------------------------------------------------------------------
 -- Reachability

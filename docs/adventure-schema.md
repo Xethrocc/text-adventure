@@ -363,6 +363,13 @@ encounter_tables:
 - `weight` muss eine positive ganze Zahl sein; `cooldown` Default 0 (kein
   Cooldown). Gezogen wird aus dem Save-`rngState` — gleicher Seed →
   identische Zugfolge.
+- **`cooldown` zählt passende Ereignisse, nicht Runden** (P2-14): heruntergezählt
+  wird nur, wenn das Ereignis eintritt, an das die Regel gebunden ist.
+  `cooldown: 5` auf `on: turn` bedeutet daher „fünf Runden", auf
+  `on: enter <raum>` dagegen „die nächsten fünf Betretungen". Für `on: turn`
+  fällt beides zusammen, für raumbezogene Ereignisse nicht. Ein zweites Feld für
+  echte Zeit-Semantik (`cooldown_turns:`) gibt es bewusst **nicht** — es ist
+  nicht implementiert; wer Rundenzählung braucht, bindet die Regel an `on: turn`.
 - **Fehler:** `DuplicateEncounterTable` (doppelte IDs), `EmptyEncounterTable`
   (keine Einträge), `BadEncounterWeight` (Gewicht < 1).
 
@@ -413,7 +420,7 @@ stealth:
   observers:
     - npc: guard
       hears_at: 5
-      cooldown: 3     # optional: N Turns bis Wache wieder hört (Default 0)
+      cooldown: 3     # optional: N passende Ereignisse stumm (Default 0)
       on_hear: [ { set_flag: alarmed, val: "true" } ]
 ```
 

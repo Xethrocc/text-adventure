@@ -95,7 +95,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `ShipActor` (7h) erweitern sie ohne Signaturänderung.
 - `evalPredicate (Location "player" r)` prüft jetzt auch den Spielerraum
   (vorher nur NPC-/Item-Locations).
-- Tests: **216** Engine- + **74** Worldbuilder-Tests, **23** E2E-Läufe
+- Tests: **220** Engine- + **74** Worldbuilder-Tests, **23** E2E-Läufe
   (`scripts/ci.sh`).
 
 ### Fixed
@@ -389,6 +389,26 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   ist mit den Fixture-Zahlen **unerreichbar** — der Korsar stirbt in Runde 4,
   während die Hülle noch bei 2 steht. Der Todesfall dort ist toter Inhalt
   (Rebalancing wäre eine Inhaltsentscheidung).
+
+- Nachtrag nach einem Abgleich der Befund-IDs gegen die Commit-Historie —
+  drei Punkte waren doch offen:
+  **P2-16** `scripts/ci.sh` war laut Review in Git nicht ausführbar (Modus
+  `100644`); in HEAD steht `100755` (das Bit kam mit dem vorigen Commit in den
+  Index, hier nur verifiziert — wer `./scripts/ci.sh` tippt, geht jetzt).
+  **P2-14** Die Cooldown-Semantik ist in `docs/adventure-schema.md` jetzt
+  ausdrücklich benannt: `cooldown` zählt **passende Ereignisse**, nicht Runden —
+  auf `on: turn` also Runden, auf `on: enter <raum>` die nächsten Betretungen.
+  Ein `cooldown_turns:` für echte Zeit-Semantik gibt es bewusst nicht
+  (nicht implementiert); die irreführende Formulierung „N Turns bis die Wache
+  wieder hört" ist korrigiert.
+  **L4** `MissingRoom` war deklariert, aber **nirgends erzeugt** — ein `move:`
+  auf einen falschen Raum blieb unbemerkt, und der Worldbuilder prüft
+  Raum-Referenzen aus Regeln nicht. Jetzt verdrahtet
+  (`checkMissingRoomRefs`: `MoveEntity … (InRoom r)` und das `move:`-Ziel des
+  Spielers). Dazu Tests für die vier Validator-Konstruktoren, die nirgends
+  abgedeckt waren: `MissingRoom`, `MissingNPC`, `MissingEntity`,
+  `InvalidVehicleRoom` — je mit Gegenprobe (bekannte IDs lösen nichts aus).
+- Tests: **220** Engine- + **74** Worldbuilder-Tests, **23** E2E-Läufe.
 
 ## [0.9.0.0] — Unreleased
 
