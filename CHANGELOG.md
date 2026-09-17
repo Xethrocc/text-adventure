@@ -95,7 +95,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `ShipActor` (7h) erweitern sie ohne Signaturänderung.
 - `evalPredicate (Location "player" r)` prüft jetzt auch den Spielerraum
   (vorher nur NPC-/Item-Locations).
-- Tests: **220** Engine- + **74** Worldbuilder-Tests, **23** E2E-Läufe
+- Tests: **222** Engine- + **74** Worldbuilder-Tests, **23** E2E-Läufe
   (`scripts/ci.sh`).
 
 ### Fixed
@@ -408,7 +408,10 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   Spielers). Dazu Tests für die vier Validator-Konstruktoren, die nirgends
   abgedeckt waren: `MissingRoom`, `MissingNPC`, `MissingEntity`,
   `InvalidVehicleRoom` — je mit Gegenprobe (bekannte IDs lösen nichts aus).
-- Tests: **220** Engine- + **74** Worldbuilder-Tests, **23** E2E-Läufe.
+  **L1 / L8** Nachgezogen: `World.loadGameWorld`/`loadSaveState` und sämtliche
+  Fehlerzweige (korrupte Weltdatei, korrupter Save, fehlende Datei) waren
+  ungetestet, ebenso der `equipmentSummary`-Text.
+- Tests: **222** Engine- + **74** Worldbuilder-Tests, **23** E2E-Läufe.
 
 ## [0.9.0.0] — Unreleased
 

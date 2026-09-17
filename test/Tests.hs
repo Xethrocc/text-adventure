@@ -8,6 +8,7 @@ import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Maybe (isJust)
+import Data.Either (isLeft)
 import System.Timeout (timeout)
 import Control.Exception (evaluate)
 import Game
@@ -25,7 +26,7 @@ import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDi
 import System.Console.Haskeline (Completion (..))
 import System.Exit (exitFailure)
 import Types
-import World (loadGame)
+import World (loadGame, loadGameWorld, loadSaveState)
 
 runTest :: String -> IO Bool -> IO Bool
 runTest name testAction = do
@@ -2943,6 +2944,58 @@ testValidateInvalidVehicleRoom = do
     isVehicleRoom (InvalidVehicleRoom _ _ _) = True
     isVehicleRoom _                          = False
 
+-- | L1: `World` had a test only for the `loadGame` happy path — the two loaders
+--   and *every* error branch were uncovered, although those `Left` values are
+--   what the player sees when a world file is corrupt or missing.
+testWorldLoadersAndErrors :: IO Bool
+testWorldLoadersAndErrors = do
+    tmp <- getTemporaryDirectory
+    withCurrentDirectory tmp $ do
+        let w = world initSampleGame
+        BLC.writeFile "l1-world.json" (Aeson.encode w)
+        BLC.writeFile "l1-save.json" (Aeson.encode (save initSampleGame))
+        BLC.writeFile "l1-bogus.json" (BLC.pack "{ not json at all")
+        gwOk <- loadGameWorld "l1-world.json"
+        r1 <- case gwOk of
+            Right gw' -> expectEqual w gw'
+            Left err  -> do putStrLn ("  loadGameWorld failed: " ++ err); pure False
+        gwBad <- loadGameWorld "l1-bogus.json"
+        r2 <- expectTrue "a corrupt world file reports an error" (isLeft gwBad)
+        ssOk <- loadSaveState "l1-save.json"
+        r3 <- case ssOk of
+            Right ss  -> expectEqual (save initSampleGame) ss
+            Left err  -> do putStrLn ("  loadSaveState failed: " ++ err); pure False
+        ssBad <- loadSaveState "l1-bogus.json"
+        r4 <- expectTrue "a corrupt save file reports an error" (isLeft ssBad)
+        gwMissing <- loadGameWorld "l1-nope.json"
+        r5 <- expectTrue "a missing world file reports an error" (isLeft gwMissing)
+        stMissing <- loadGame "l1-nope.json" Nothing
+        r6 <- expectTrue "a missing world file fails loadGame as well" (isLeft stMissing)
+        -- with a save file the positions from that save are used
+        stBoth <- loadGame "l1-world.json" (Just "l1-save.json")
+        r7 <- case stBoth of
+            Right st' -> expectEqual (save initSampleGame) (save st')
+            Left err  -> do putStrLn ("  loadGame (with save) failed: " ++ err); pure False
+        mapM_ (\f -> do
+                  e <- doesFileExist f
+                  when e (removeFile f))
+              ["l1-world.json", "l1-save.json", "l1-bogus.json"]
+        pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | L8: `equipmentSummary` is player-facing text that had no assertion.
+testEquipmentSummaryText :: IO Bool
+testEquipmentSummaryText = do
+    r1 <- expectEqual "You have nothing equipped." (equipmentSummary initSampleGame)
+    case equipItem "sword_rusty" (pickupItem "sword_rusty" initSampleGame) of
+        Left err -> do
+            putStrLn ("  equipItem failed: " ++ err)
+            pure False
+        Right equipped -> do
+            let summary = equipmentSummary equipped
+            r2 <- expectTrue "the equipped item is listed with slot and name"
+                      (("Weapon" `isInfixOf` summary) && ("rusty sword" `isInfixOf` summary))
+            pure (r1 && r2)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -3150,6 +3203,9 @@ main = do
         , runTest "MissingNPC from a rule reference (L4)" testValidateMissingNpcInRule
         , runTest "MissingEntity from a VRProperty ref (L4)" testValidateMissingEntityInRule
         , runTest "InvalidVehicleRoom for a bad entry (L4)" testValidateInvalidVehicleRoom
+        -- Review L1 / L8 leftovers
+        , runTest "World loaders and their error branches (L1)" testWorldLoadersAndErrors
+        , runTest "equipmentSummary text (L8)" testEquipmentSummaryText
         -- Narratives (Phase 4.4)
         , runTest "narrative returns lines" testNarrativeReturnsLines
         , runTest "narrative stores pending (no side effects)" testNarrativeStoresPending
