@@ -828,7 +828,7 @@ executeAttack npc _ targetStr state =
         actors = [PlayerActor]
                  ++ map CompanionActor (partyMembersInRoom state)
                  ++ [ShipActor vId | Just vId <- [currentVehicle (save state)]]
-        (effects, msgs) = resolveCombat profile actors (TargetNPC nId targetStr) state
+        (effects, msgs) = resolveCombat profile actors (TargetNPC nId targetStr) CAAttack state
         -- Apply the whole effect list through the shared interpreter: it
         -- threads the RNG salt and joins every effect message instead of
         -- discarding all but the last (killNPCWithMsg / OnStateChange rules

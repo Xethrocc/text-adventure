@@ -40,8 +40,15 @@ data CombatTarget
 --   Returns (effects, messages): the effects are applied by the caller
 --   through the single outcome interpreter; the messages are added to the
 --   command output. No state is mutated here.
-resolveCombat :: CombatProfile -> [CombatActor] -> CombatTarget -> GameState -> ([Effect], [String])
-resolveCombat profile actors target st = case profile of
+--
+--   The `CombatAction` parameter is what 7f-3 needs (a round-based profile has
+--   to know whether the player attacks, defends, flees or uses an ability).
+--   Step A0 only adds the parameter: `off`, `narrative` and `classic` are
+--   deterministic single-shot profiles and ignore it, and `executeAttack`
+--   always passes `CAAttack`. A2/A3 wire the other constructors.
+resolveCombat :: CombatProfile -> [CombatActor] -> CombatTarget -> CombatAction
+              -> GameState -> ([Effect], [String])
+resolveCombat profile actors target _action st = case profile of
     -- off: attack is refused, no HP is spent by anyone.
     CombatOff mRefused -> ([], [refusedMsg])
       where

@@ -433,6 +433,19 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
 - `-Werror=overlapping-patterns` ergänzt (§4.3-1 damit vollständig umgesetzt).
 - Tests: **223** Engine- + **74** Worldbuilder-Tests, **24** E2E-Läufe.
 
+- **7f-3 (`tactical`), Schritt A0 — Signatur vorbereitet** (Plan
+  `plan-7f3-tactical-7h2-shipduell.md`): neuer Typ `CombatAction`
+  (`CAAttack` / `CADefend` / `CAFlee` / `CAUseItem` / `CAAbility`) und ein
+  zusätzlicher Aktionsparameter an `resolveCombat`; `executeAttack` übergibt
+  `CAAttack`. Reiner Refactor — `off`/`narrative`/`classic` ignorieren die Aktion
+  weiterhin, A2/A3 verdrahten die übrigen Konstruktoren als **Daten**
+  (`on: command`-Regeln, Rundenzustand in der VarMap), nicht als zweiten
+  Interpreter.
+  Verifiziert wurde nicht nur der Endtext-Grep der CI: die **vollen** Ausgaben
+  aller sieben kampfnahen E2E-Läufe (combat-off/-narrative/-classic, party,
+  starship, starship-loss, combo) sind vor und nach dem Schritt byte-identisch.
+- Tests: **223** Engine- + **74** Worldbuilder-Tests, **24** E2E-Läufe.
+
 ## [0.9.0.0] — Unreleased
 
 Phase 5 (Worldbuilder + Ports): Worldbuilder YAML/JSON-Compiler und TheFog-Portierung.

@@ -940,6 +940,25 @@ data NarrativeCombat = NarrativeCombat
     , ncOnLose     :: Effect
     } deriving (Show, Eq, Generic)
 
+-- | What the player does in one combat round.
+--
+--   Phase 7f-3 (`tactical`) step A0: the type and the resolver parameter exist
+--   first, so `resolveCombat` has the shape a round-based profile needs. Only
+--   `CAAttack` is wired today; A2/A3 give the other constructors behaviour — as
+--   data (`on: command` rules, round state in the VarMap), never as a second
+--   interpreter.
+--   See `plan-7f3-tactical-7h2-shipduell.md`.
+data CombatAction
+    = CAAttack
+    | CADefend
+    | CAFlee
+    | CAUseItem ItemID
+    | CAAbility String
+    deriving (Show, Eq, Generic)
+
+instance ToJSON CombatAction
+instance FromJSON CombatAction
+
 instance ToJSON CombatProfile where
     toJSON (CombatOff mRefused) = object
         [ "profile" .= ("off" :: String)
