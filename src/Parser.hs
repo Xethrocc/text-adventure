@@ -212,7 +212,9 @@ parseSimpleCommandWith defs tokens input = case tokens of
     "put"   : "down" : targetParts | not (null targetParts) -> Interact VDrop (unwords (safeStripStopWords targetParts))
     "talk"  : "to"   : targetParts | not (null targetParts) -> Interact VTalk (unwords (safeStripStopWords targetParts))
     "speak" : "with" : targetParts | not (null targetParts) -> Interact VTalk (unwords (safeStripStopWords targetParts))
-    -- Tactical abilities (Phase 7f-3, step A3)
+    -- Tactical combat (Phase 7f-3, steps A2/A3)
+    ["defend"]             -> Interact (VCustom "defend") ""
+    ["flee"]               -> Interact (VCustom "flee") ""
     "use-ability" : abParts | not (null abParts) ->
         Interact (VCustom "use-ability") (unwords (safeStripStopWords abParts))
     "use" : "ability" : abParts | not (null abParts) ->
@@ -556,6 +558,9 @@ executeCommand (Interact verb targetStr) state =
             , vn `elem` ["use-ability", "ability"]
             , CombatTactical _ <- combatProfile (world state)
             -> executeTacticalAction (CAAbility targetStr) state
+            | null targetStr, VCustom vn <- verb
+            , vn `elem` ["defend", "flee"]
+            -> (state, "You are not in combat.")
             | null targetStr -> (state, "")   -- bare verb (e.g. custom command); triggers carry the message
             | otherwise -> (state, "You don't see '" ++ targetStr ++ "' here.")
 

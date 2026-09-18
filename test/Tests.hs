@@ -2606,6 +2606,9 @@ testGameWorldRoundTrip = do
             , CombatOff Nothing
             , CombatOff (Just "You cannot fight here.")
             , CombatNarrative (NarrativeCombat 3 (SendMessage "hit") (SendMessage "miss"))
+            , CombatTactical (TacticalCombat PlayerFirst True 100 "speed")
+            , CombatTactical (TacticalCombat EnemyFirst False 20 "reflexes")
+            , CombatTactical (TacticalCombat BySpeed True 50 "agility")
             ]
         rt p = Aeson.decode (Aeson.encode p) :: Maybe CombatProfile
     r2 <- expectTrue "every combat profile round-trips"
@@ -2619,7 +2622,10 @@ testGameWorldRoundTrip = do
     r3 <- expectTrue "itemVerbMap with a VCustom key round-trips"
               (any (\d -> Map.member (VCustom "buy", "intact") (itemVerbMap d))
                     (Map.elems (maybe Map.empty itemDefs (Aeson.decode (Aeson.encode gw2)))))
-    pure (r1 && r2 && r3)
+    -- GameWorld with abilities round-trips
+    let gw3 = gw { abilities = Map.singleton "strike" (PlayerAbility "strike" "Strike" "stamina" 5 2 [SendMessage "Pow!"]) }
+    r4 <- expectEqual (Just gw3) (Aeson.decode (Aeson.encode gw3))
+    pure (r1 && r2 && r3 && r4)
 
 -- | L3: `resolveCombat` is pure and is exactly what `executeAttack` forwards.
 --   Calling it directly inspects the *effect list*; every combat test before
@@ -3142,7 +3148,11 @@ testCombatTacticalRoundTrip = do
     let prof = CombatTactical (TacticalCombat BySpeed False 50 "speed")
     let encoded = Aeson.encode prof
     r1 <- expectTrue "decode matches" (Aeson.decode encoded == Just prof)
-    pure r1
+    let rawJson = "{\"profile\":\"tactical\",\"initiative\":\"by_speed\",\"flee_allowed\":false,\"max_rounds\":50,\"speed_attribute\":\"speed\"}"
+    r2 <- expectEqual (Just prof) (Aeson.decode (BLC.pack rawJson))
+    let rawJson2 = "{\"profile\":\"tactical\",\"initiative\":\"enemy_first\",\"flee_allowed\":true,\"max_rounds\":30,\"speed_attribute\":\"dexterity\"}"
+    r3 <- expectEqual (Just (CombatTactical (TacticalCombat EnemyFirst True 30 "dexterity"))) (Aeson.decode (BLC.pack rawJson2))
+    pure (r1 && r2 && r3)
 
 -- | Phase 7f-3 A3: Player abilities resource cost
 testAbilityCost :: IO Bool

@@ -108,6 +108,16 @@ compileAdventure adv =
         (initStateErrs, initialFlags, initialQuests) =
             compileInitialState (advActiveQuests adv) (advInitialFlags adv) questDefs
 
+        compileAbility ab = E.PlayerAbility
+            { E.paId = aabId ab
+            , E.paName = fromMaybe (aabId ab) (aabName ab)
+            , E.paCostVar = fromMaybe "" (aabCostVar ab)
+            , E.paCost = fromMaybe 0 (aabCost ab)
+            , E.paCooldown = fromMaybe 0 (aabCooldown ab)
+            , E.paEffects = map compileAActionOutcome (aabEffects ab)
+            }
+        compiledAbilities = Map.fromList [ (E.paId pa, pa) | a <- advAbilities adv, let pa = compileAbility a ]
+
         gw = E.GameWorld
                 { E.rooms = allRooms
                 , E.itemDefs = itemDefs
@@ -121,7 +131,7 @@ compileAdventure adv =
                 , E.triggerDefs = allTriggerDefs
                 , E.combatProfile = combatProfileCompiled
                 , E.worldName = fromMaybe "" (advName adv)
-                , E.abilities = Map.empty
+                , E.abilities = compiledAbilities
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
@@ -676,11 +686,31 @@ compileCombat (Just ac) = case acProfile ac of
                         (acDifficulty ac)
                         (compileOutcomes (acOnWin ac))
                         (compileOutcomes (acOnLose ac))))
-    "tactical"  -> ([ ciError "combat.profile" "CombatProfileNotSupported"
-                        "the 'tactical' combat profile is not implemented yet (Phase 7f-3)" ]
-                    , E.CombatClassic)
+    "tactical"  ->
+        let (initErrs, initRule) = case acInitiative ac of
+                Nothing -> ([], E.PlayerFirst)
+                Just s  -> case map toLower s of
+                    "player_first" -> ([], E.PlayerFirst)
+                    "player-first" -> ([], E.PlayerFirst)
+                    "playerfirst"  -> ([], E.PlayerFirst)
+                    "enemy_first"  -> ([], E.EnemyFirst)
+                    "enemy-first"  -> ([], E.EnemyFirst)
+                    "enemyfirst"   -> ([], E.EnemyFirst)
+                    "npc_first"    -> ([], E.EnemyFirst)
+                    "npc-first"    -> ([], E.EnemyFirst)
+                    "npcfirst"     -> ([], E.EnemyFirst)
+                    "by_speed"     -> ([], E.BySpeed)
+                    "by-speed"     -> ([], E.BySpeed)
+                    "byspeed"      -> ([], E.BySpeed)
+                    other          -> ([ ciError "combat.initiative" "UnknownInitiativeRule"
+                                           ("unknown initiative rule '" ++ other ++ "' (expected player_first | enemy_first | by_speed)") ]
+                                      , E.PlayerFirst)
+            flee = fromMaybe True (acFleeAllowed ac)
+            rounds = fromMaybe 100 (acMaxRounds ac)
+            speedAttr = fromMaybe "speed" (acSpeedAttribute ac)
+        in (initErrs, E.CombatTactical (E.TacticalCombat initRule flee rounds speedAttr))
     other       -> ([ ciError "combat.profile" "UnknownCombatProfile"
-                        ("unknown combat profile '" ++ other ++ "' (expected off | narrative | classic)") ]
+                        ("unknown combat profile '" ++ other ++ "' (expected off | narrative | classic | tactical)") ]
                     , E.CombatClassic)
 
 -- | `combat.` is the engine's namespace for the combat round state (Phase 7f-3,

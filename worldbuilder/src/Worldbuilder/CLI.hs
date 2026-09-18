@@ -18,11 +18,15 @@ import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>))
+import System.IO (hSetEncoding, stdout, stderr, stdin, utf8)
 import qualified Data.Map.Strict as Map
 
 -- | Entry point for the worldbuilder CLI
 runCLI :: IO ()
 runCLI = do
+    hSetEncoding stdout utf8
+    hSetEncoding stderr utf8
+    hSetEncoding stdin utf8
     args <- getArgs
     case args of
         ("validate" : path : _)  -> validate path

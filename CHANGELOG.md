@@ -61,11 +61,17 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
 - **Phase 7f — Kampfprofile**: Kampf verlässt `Parser.executeAttack` und wird
   eine datengetriebene Policy im Kern (neue Datei `src/Combat.hs`):
   `resolveCombat :: CombatProfile -> [CombatActor] -> CombatTarget ->
-  GameState -> ([Effect], [String])` erzeugt Effects, die anschließend durch
+  CombatAction -> GameState -> ([Effect], [String])` erzeugt Effects, die anschließend durch
   `applyOutcomeWith` laufen — kein zweiter Interpreter. Profile: `off`
   (Ablehnung, kein HP-Verbrauch), `narrative` (ein vergleichender Wurf,
-  `on_win`/`on_lose`), `classic` (Default, bit-identisch zum Vorzustand).
-  `tactical` bleibt Teilstopp (`CombatProfileNotSupported`).
+  `on_win`/`on_lose`), `classic` (Default, bit-identisch zum Vorzustand),
+  `tactical` (eine Aktion = eine Runde, Initiative, Flucht, Aktionen `attack`, `defend`, `flee`, `use-ability`).
+- **Phase 7f-3 — Taktischer Runden-Treiber, BySpeed-Initiative & Spieler-Abilities**:
+  - Profil `tactical` im Compiler (`ACombat` mit `initiative`, `flee_allowed`, `max_rounds`, `speed_attribute`) und Engine `CombatTactical`.
+  - Spieler-Abilities (`abilities:`-Segment im Adventure) mit `cost_var`, `cost`, `cooldown`, `effect`.
+  - Parser-Unterstützung für nackte Verben `defend`, `flee` sowie `use-ability <id>` / `ability <id>`.
+  - Fixture `examples/modules/combat-tactical.yaml` mit Gladiator-Arena, Fähigkeiten und reaktivem Gegnersystem (`on: turn` gated auf `combat.engaged >= 1`).
+  - CI-Integration in `scripts/ci.sh` mit Happy Path (`ci/e2e/combat-tactical.*`) und Flee-Fehlerpfad (`ci/e2e/combat-tactical-fail.*`).
 - **Phase 7g — Party/Begleiter**: `party:`-Block am NPC; Mitgliedschaft ist
   der `VarMap`-Eintrag `party.<npcId>` (kein neues Save-Feld). Ein Order-Verb
   toggelt Beitritt/Verlassen; `followParty` zieht lebende Begleiter bei jedem
@@ -95,7 +101,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `ShipActor` (7h) erweitern sie ohne Signaturänderung.
 - `evalPredicate (Location "player" r)` prüft jetzt auch den Spielerraum
   (vorher nur NPC-/Item-Locations).
-- Tests: **224** Engine- + **75** Worldbuilder-Tests, **24** E2E-Läufe
+- Tests: **234** Engine- + **75** Worldbuilder-Tests, **26** E2E-Läufe
   (`scripts/ci.sh`).
 
 ### Fixed

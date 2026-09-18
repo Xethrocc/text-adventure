@@ -151,6 +151,7 @@ minAdventure room = Adventure
     , advEnvironment = Nothing
     , advStealth = Nothing
     , advCombat = Nothing
+    , advAbilities = []
     }
 
 -- ---------------------------------------------------------------------------
@@ -1397,7 +1398,7 @@ testCombatCompiles = do
             Right cr -> expectEqual E.CombatClassic (E.combatProfile (crWorld cr))
     -- off with custom refusal
     let advOff = (minAdventure (minRoom "loc_0"))
-            { advCombat = Just (ACombat "off" (Just "Im Fokus: Gespräch, nicht Gewalt.") 0 [] []) }
+            { advCombat = Just (ACombat "off" (Just "Im Fokus: Gespräch, nicht Gewalt.") 0 [] [] Nothing Nothing Nothing Nothing) }
     r1 <- case compileAdventure advOff of
             Left _   -> expectTrue "off compiles" False
             Right cr -> expectEqual (E.CombatOff (Just "Im Fokus: Gespräch, nicht Gewalt."))
@@ -1406,7 +1407,8 @@ testCombatCompiles = do
     let advNarr = (minAdventure (minRoom "loc_0"))
             { advCombat = Just (ACombat "narrative" Nothing 3
                                     [ AOMessage "Du überzeugst ihn." ]
-                                    [ AODamagePlayer 4 ]) }
+                                    [ AODamagePlayer 4 ]
+                                    Nothing Nothing Nothing Nothing) }
     r2 <- case compileAdventure advNarr of
             Left _   -> expectTrue "narrative compiles" False
             Right cr -> case E.combatProfile (crWorld cr) of
@@ -1416,19 +1418,59 @@ testCombatCompiles = do
                     rC <- expectEqual (E.ModifyValue E.VRPlayerHealth (-4)) (E.ncOnLose nc)
                     pure (rA && rB && rC)
                 _ -> expectTrue "expected narrative profile" False
-    -- tactical: rejected until 7f-3
+    -- tactical: custom options
     let advTac = (minAdventure (minRoom "loc_0"))
-            { advCombat = Just (ACombat "tactical" Nothing 0 [] []) }
+            { advCombat = Just (ACombat "tactical" Nothing 0 [] [] (Just "by_speed") (Just False) (Just 50) (Just "agility")) }
     r3 <- case compileAdventure advTac of
-            Left errs -> expectContains "CombatProfileNotSupported" (issuesText errs)
-            Right _   -> expectTrue "expected tactical rejection" False
+            Left _    -> expectTrue "tactical compiles" False
+            Right cr  -> case E.combatProfile (crWorld cr) of
+                E.CombatTactical tc -> do
+                    rA <- expectEqual E.BySpeed (E.tcInitiative tc)
+                    rB <- expectEqual False (E.tcFleeAllowed tc)
+                    rC <- expectEqual 50 (E.tcMaxRounds tc)
+                    rD <- expectEqual "agility" (E.tcSpeedAttribute tc)
+                    pure (rA && rB && rC && rD)
+                _ -> expectTrue "expected tactical profile" False
+    -- tactical default options:
+    let advTacDef = (minAdventure (minRoom "loc_0"))
+            { advCombat = Just (ACombat "tactical" Nothing 0 [] [] Nothing Nothing Nothing Nothing) }
+    r3Def <- case compileAdventure advTacDef of
+            Left _    -> expectTrue "tactical defaults compile" False
+            Right cr  -> case E.combatProfile (crWorld cr) of
+                E.CombatTactical tc -> do
+                    rA <- expectEqual E.PlayerFirst (E.tcInitiative tc)
+                    rB <- expectEqual True (E.tcFleeAllowed tc)
+                    rC <- expectEqual 100 (E.tcMaxRounds tc)
+                    rD <- expectEqual "speed" (E.tcSpeedAttribute tc)
+                    pure (rA && rB && rC && rD)
+                _ -> expectTrue "expected tactical profile with defaults" False
+    -- tactical unknown initiative
+    let advTacBadInit = (minAdventure (minRoom "loc_0"))
+            { advCombat = Just (ACombat "tactical" Nothing 0 [] [] (Just "random_dice") Nothing Nothing Nothing) }
+    r3Bad <- case compileAdventure advTacBadInit of
+            Left errs -> expectContains "UnknownInitiativeRule" (issuesText errs)
+            Right _   -> expectTrue "expected UnknownInitiativeRule" False
     -- unknown profile
     let advBad = (minAdventure (minRoom "loc_0"))
-            { advCombat = Just (ACombat "quantum" Nothing 0 [] []) }
+            { advCombat = Just (ACombat "quantum" Nothing 0 [] [] Nothing Nothing Nothing Nothing) }
     r4 <- case compileAdventure advBad of
             Left errs -> expectContains "UnknownCombatProfile" (issuesText errs)
             Right _   -> expectTrue "expected unknown profile rejection" False
-    pure (r0 && r1 && r2 && r3 && r4)
+    -- player abilities compile cleanly
+    let advAb = (minAdventure (minRoom "loc_0"))
+            { advAbilities = [ AAbility "slam" (Just "Slam") (Just "player.stamina") (Just 5) (Just 2) [AOMessage "Slam!"] ] }
+    rAb <- case compileAdventure advAb of
+            Left _ -> expectTrue "abilities compile" False
+            Right cr -> case Map.lookup "slam" (E.abilities (crWorld cr)) of
+                Just ab -> do
+                    rA <- expectEqual "Slam" (E.paName ab)
+                    rB <- expectEqual "player.stamina" (E.paCostVar ab)
+                    rC <- expectEqual 5 (E.paCost ab)
+                    rD <- expectEqual 2 (E.paCooldown ab)
+                    rE <- expectEqual [E.SendMessage "Slam!"] (E.paEffects ab)
+                    pure (rA && rB && rC && rD && rE)
+                Nothing -> expectTrue "expected ability 'slam'" False
+    pure (r0 && r1 && r2 && r3 && r3Def && r3Bad && r4 && rAb)
 
 -- | The 7f combat fixture(s) compile and validate clean.
 testCombatFixturesCompile :: IO Bool
@@ -1436,7 +1478,9 @@ testCombatFixturesCompile = do
     r1 <- fixtureOk "combat-off.yaml"
     r2 <- fixtureOk "combat-narrative.yaml"
     r3 <- fixtureOk "combat-classic.yaml"
-    pure (r1 && r2 && r3)
+    r4 <- fixtureOk "combat-tactical.yaml"
+    pure (r1 && r2 && r3 && r4)
+
   where
     fixtureOk fname = do
         mbPath <- findExampleModule fname
@@ -1872,7 +1916,7 @@ tests =
     , ("stealth validation (unknown npc / var clash)", testStealthValidation)
     , ("stealth fixture compiles + validates", testStealthFixtureCompiles)
     -- Phase 7f: combat profiles
-    , ("combat segment compiles (default/off/narrative/tactical-fail)", testCombatCompiles)
+    , ("combat segment compiles (default/off/narrative/tactical)", testCombatCompiles)
     , ("combat fixtures compile + validate", testCombatFixturesCompile)
     -- Phase 7g: party / companions
     , ("party block compiles to follow var + order verb", testPartyCompiles)

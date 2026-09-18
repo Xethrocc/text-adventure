@@ -38,6 +38,7 @@ data Adventure = Adventure
     , advEnvironment      :: Maybe AEnvironment          -- ^ weather + drains (Phase 7d)
     , advStealth          :: Maybe AStealth              -- ^ noise + observers (Phase 7e)
     , advCombat           :: Maybe ACombat               -- ^ combat profile (Phase 7f)
+    , advAbilities        :: [AAbility]                  -- ^ player abilities (Phase 7f-3 A3/A4)
     } deriving (Show, Eq, Generic)
 
 instance FromJSON Adventure where
@@ -62,6 +63,7 @@ instance FromJSON Adventure where
         <*> o .:? "environment"
         <*> o .:? "stealth"
         <*> o .:? "combat"
+        <*> o .:? "abilities"       .!= []
 
 -- | Optional player stats block in YAML (Phase 4d).
 --   `player: { max_hp: 50, attack: 8, defense: 3, skills: { lockpick: 5 } }`
@@ -664,27 +666,57 @@ instance FromJSON AObserver where
 -- Combat (Phase 7f): authored combat profile
 -- ---------------------------------------------------------------------------
 
--- | The `combat:` segment: `profile` is one of off | narrative | classic.
---   `tactical` is declared later (Phase 7f-3) and rejected here until then.
---   - off:      attack is refused (attack_refused message), no HP spent
+-- | The `combat:` segment: `profile` is one of off | narrative | classic | tactical.
+--   - off:       attack is refused (attack_refused message), no HP spent
 --   - narrative: opposed roll (player effective attack vs defense +
 --     difficulty offset); on_win / on_lose effects decide everything
---   - classic:  exactly today's behaviour — and the default without a block
+--   - classic:   exactly today's behaviour — and the default without a block
+--   - tactical:  round-based tactical combat with player actions and enemy reactions (Phase 7f-3)
 data ACombat = ACombat
-    { acProfile       :: String
-    , acAttackRefused :: Maybe String
-    , acDifficulty    :: Int
-    , acOnWin         :: [AActionOutcome]
-    , acOnLose        :: [AActionOutcome]
+    { acProfile        :: String
+    , acAttackRefused  :: Maybe String
+    , acDifficulty     :: Int
+    , acOnWin          :: [AActionOutcome]
+    , acOnLose         :: [AActionOutcome]
+    , acInitiative     :: Maybe String
+    , acFleeAllowed    :: Maybe Bool
+    , acMaxRounds      :: Maybe Int
+    , acSpeedAttribute :: Maybe String
     } deriving (Show, Eq, Generic)
 
 instance FromJSON ACombat where
     parseJSON = withObject "ACombat" $ \o -> ACombat
-        <$> o .:? "profile"       .!= "classic"
+        <$> o .:? "profile"         .!= "classic"
         <*> o .:? "attack_refused"
-        <*> o .:? "difficulty"    .!= 0
-        <*> o .:? "on_win"        .!= []
-        <*> o .:? "on_lose"       .!= []
+        <*> o .:? "difficulty"      .!= 0
+        <*> o .:? "on_win"          .!= []
+        <*> o .:? "on_lose"         .!= []
+        <*> o .:? "initiative"
+        <*> o .:? "flee_allowed"
+        <*> o .:? "max_rounds"
+        <*> o .:? "speed_attribute"
+
+-- ---------------------------------------------------------------------------
+-- Abilities (Phase 7f-3 A3/A4)
+-- ---------------------------------------------------------------------------
+
+data AAbility = AAbility
+    { aabId       :: String
+    , aabName     :: Maybe String
+    , aabCostVar  :: Maybe String
+    , aabCost     :: Maybe Int
+    , aabCooldown :: Maybe Int
+    , aabEffects  :: [AActionOutcome]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AAbility where
+    parseJSON = withObject "AAbility" $ \o -> AAbility
+        <$> o .:  "id"
+        <*> o .:? "name"
+        <*> o .:? "cost_var"
+        <*> o .:? "cost"
+        <*> o .:? "cooldown"
+        <*> o .:? "effects" .!= []
 
 -- ---------------------------------------------------------------------------
 -- Interactions

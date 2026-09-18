@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 -- | Main module for the Haskell text adventure game
 module Main where
 
@@ -8,6 +10,27 @@ import Types (world, save, worldName)
 import Validate (validateWorld, validateGameState)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
+import System.IO (hSetEncoding, stdout, stderr, stdin, utf8)
+
+#if defined(mingw32_HOST_OS)
+import Data.Word (Word32)
+foreign import ccall unsafe "SetConsoleCP" c_SetConsoleCP :: Word32 -> IO Bool
+foreign import ccall unsafe "SetConsoleOutputCP" c_SetConsoleOutputCP :: Word32 -> IO Bool
+
+initConsole :: IO ()
+initConsole = do
+    _ <- c_SetConsoleCP 65001
+    _ <- c_SetConsoleOutputCP 65001
+    hSetEncoding stdout utf8
+    hSetEncoding stderr utf8
+    hSetEncoding stdin utf8
+#else
+initConsole :: IO ()
+initConsole = do
+    hSetEncoding stdout utf8
+    hSetEncoding stderr utf8
+    hSetEncoding stdin utf8
+#endif
 
 usage :: String
 usage = unlines
@@ -40,6 +63,7 @@ bannerFor n
 
 main :: IO ()
 main = do
+    initConsole
     args <- getArgs
     case parseArgs args of
         Nothing -> putStr usage

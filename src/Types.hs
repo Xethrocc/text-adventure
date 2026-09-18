@@ -1004,7 +1004,19 @@ data InitiativeRule = PlayerFirst | EnemyFirst | BySpeed
     deriving (Show, Eq, Generic)
 
 instance ToJSON InitiativeRule
-instance FromJSON InitiativeRule
+
+instance FromJSON InitiativeRule where
+    parseJSON = withText "InitiativeRule" $ \t -> case T.toLower (T.replace "-" "_" t) of
+        "player_first" -> pure PlayerFirst
+        "playerfirst"  -> pure PlayerFirst
+        "enemy_first"  -> pure EnemyFirst
+        "enemyfirst"   -> pure EnemyFirst
+        "npc_first"    -> pure EnemyFirst
+        "npcfirst"     -> pure EnemyFirst
+        "by_speed"     -> pure BySpeed
+        "byspeed"      -> pure BySpeed
+        _              -> fail ("unknown initiative rule '" ++ T.unpack t ++ "'")
+
 
 -- | What the player does in one combat round.
 --

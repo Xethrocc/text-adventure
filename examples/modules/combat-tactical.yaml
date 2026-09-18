@@ -1,0 +1,180 @@
+name: "Die Arena der Schatten (Combat: tactical)"
+start_room: ct_entry
+
+# Module 7f-3 — Kampfprofil `tactical` (Step A4)
+# Rundenbasierter taktischer Kampf mit Spieler-Aktionen (attack, defend, flee, use-ability),
+# by_speed-Initiative, Status-Condition-Cooldowns und reaktiver Gegner-Logik via on: turn.
+
+combat:
+  profile: tactical
+  initiative: by_speed
+  flee_allowed: true
+  max_rounds: 50
+  speed_attribute: speed
+
+player:
+  max_hp: 40
+  attack: 8
+  defense: 2
+  skills:
+    speed: 12
+
+variables:
+  - name: player.stamina
+    type: int
+    initial: 20
+
+abilities:
+  - id: power_strike
+    name: "Mächtiger Hieb"
+    cost_var: player.stamina
+    cost: 5
+    cooldown: 2
+    effects:
+      - damage_npc:
+          npc: gladiator
+          amount: 14
+      - msg: "Du entfesselst einen mächtigen Hieb gegen den Gladiator!"
+
+npcs:
+  - id: gladiator
+    name: Arena-Champion
+    desc: "Ein erfahrener Gladiator mit bronzenem Helm und geschliffenem Gladius."
+    keys: [gladiator, champion, krieger]
+    location: ct_arena
+    state: alive
+    max_hp: 25
+    attack: 5
+    defense: 2
+    props:
+      speed: 8
+    dialogue:
+      alive:
+        entry: greet
+        nodes:
+          greet:
+            text: "„Beweise deinen Wert im Sand der Arena!“"
+            choices:
+              - { text: "Ich bin bereit.", next: null }
+              - { text: "Noch nicht.", next: null }
+
+rules:
+  - id: gladiator_counter
+    on: turn
+    when:
+      all:
+        - compare_var: { name: combat.engaged, op: gte, value: 1 }
+        - state: gladiator
+          is: alive
+        - at: player
+          room: ct_arena
+    effects:
+      - damage: 2
+      - msg: "Der Arena-Champion kontert und trifft dich für 2 Schaden!"
+
+rooms:
+  - id: ct_entry
+    name: Arenator
+    desc: "Das massive Eichentor führt in die Katakomben der Kampfarena."
+    exits:
+      north: {to: ct_colonnade}
+      east: {to: ct_armory}
+      west: {to: ct_stables}
+  - id: ct_colonnade
+    name: Säulengang
+    desc: "Marmorsäulen säumen den Weg. Von Norden dröhnt der Jubel der Menge."
+    exits:
+      north: {to: ct_hall}
+      south: {to: ct_entry}
+  - id: ct_hall
+    name: Vorhalle der Kämpfer
+    desc: "Hier bereiten sich die Kämpfer vor. Sand bedeckt die Steinplatten."
+    exits:
+      north: {to: ct_arena}
+      south: {to: ct_colonnade}
+      west: {to: ct_barracks}
+      east: {to: ct_infirmary}
+    search:
+      - { give: arena_token }
+      - { msg: "Im Sand findest du eine vergessene Arena-Marke." }
+  - id: ct_arena
+    name: Arena-Sand
+    desc: "Das Herz der Arena. Der Sand ist rot getränkt. Der Champion bewacht den Durchgang."
+    exits:
+      north: {to: ct_vault, locked_by: gladiator}
+      south: {to: ct_hall}
+      west: {to: ct_stands}
+      east: {to: ct_cage}
+  - id: ct_vault
+    name: Siegerkammer
+    desc: "Trophäen und Schätze der Arena glänzen im Fackellicht."
+    exits:
+      south: {to: ct_arena}
+    on_enter:
+      - { game_end: victory, msg: "VICTORY — Du hast den Champion der Arena im taktischen Kampf bezwungen!" }
+  - id: ct_armory
+    name: Waffenkammer
+    desc: "Schwerter, Schilde und Rüstungsteile hängen an Eisenhaken."
+    exits:
+      west: {to: ct_entry}
+      north: {to: ct_infirmary}
+    search:
+      - { msg: "Die Waffen sind fest verankert und nicht mitnehmbar." }
+  - id: ct_stables
+    name: Stallungen
+    desc: "Geruch nach Stroh und wilden Raubtieren erfüllt die Luft."
+    exits:
+      east: {to: ct_entry}
+      north: {to: ct_barracks}
+  - id: ct_barracks
+    name: Gladiatoren-Unterkunft
+    desc: "Einfache Pritschen und Holzschemel zeugen vom harten Leben der Krieger."
+    exits:
+      south: {to: ct_stables}
+      east: {to: ct_hall}
+      north: {to: ct_stands}
+  - id: ct_infirmary
+    name: Lazarett
+    desc: "Verbände und Kräutertränke stehen auf hölzernen Regalen bereit."
+    exits:
+      south: {to: ct_armory}
+      west: {to: ct_hall}
+      north: {to: ct_cage}
+  - id: ct_stands
+    name: Zuschauerränge
+    desc: "Steinerne Sitzreihen überblicken das Geschehen im Sand."
+    exits:
+      south: {to: ct_barracks}
+      east: {to: ct_arena}
+  - id: ct_cage
+    name: Bestienkäfig
+    desc: "Schwere Eisenstäbe sichern diesen finsteren Zwischenbereich."
+    exits:
+      south: {to: ct_infirmary}
+      west: {to: ct_arena}
+      north: {to: ct_catacombs}
+  - id: ct_catacombs
+    name: Unterirdische Gänge
+    desc: "Enge, feuchte Gänge verlaufen tief unter dem Arenafundament."
+    exits:
+      south: {to: ct_cage}
+      west: {to: ct_shrine}
+  - id: ct_shrine
+    name: Schrein der Kriegsgöttin
+    desc: "Eine kleine Statue blickt stumm auf die Opfergaben herab."
+    exits:
+      east: {to: ct_catacombs}
+    search:
+      - { msg: "Die Flamme am Altar brennt stetig und ruhig." }
+
+items:
+  - id: arena_token
+    name: Arena-Marke
+    desc: "Eine geprägte Marke aus Messing, Zeichen eines anerkannten Kämpfers."
+    keys: [marke, token, muenze]
+    location: ct_hall
+    hidden: true
+
+interactions:
+  entity: []
+  item: []
