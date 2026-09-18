@@ -443,11 +443,15 @@ Kampf ist eine über Daten gewählte Policy; ohne `combat:`-Block gilt
 
 ```yaml
 combat:
-  profile: classic            # off | narrative | classic
+  profile: tactical           # off | narrative | classic | tactical
   attack_refused: "..."       # off: Abgelehnt-Meldung (Default generisch)
   difficulty: 3               # narrative: Bonus auf die NPC-Verteidigung
   on_win:  [ ... ]            # narrative: Effekte bei Sieg
   on_lose: [ ... ]            # narrative: Effekte bei Niederlage
+  initiative: by_speed        # tactical: player_first | enemy_first | by_speed
+  flee_allowed: true          # tactical: Flucht per 'flee' erlaubt
+  max_rounds: 10              # tactical: optionales Rundenlimit
+  speed_attribute: agility    # tactical: Attribut für Initiative-Wurf
 ```
 
 - `off`: `attack` wird abgelehnt (`attack_refused`, Default-Text), keine
@@ -457,10 +461,12 @@ combat:
   passiert — keine automatische HP-Attrition.
 - `classic`: bit-identisch zur Vor-7f-Logik (Schaden `attack − defense`,
   Konter im selben Befehl, Tod via HP ≤ 0). Default ohne `combat:`-Block.
-- `tactical` ist bis Phase 7f-3 deaktiviert (`CombatProfileNotSupported`).
+- `tactical` (Phase 7f-3): rundenbasierter Taktikkampf. Befehle: `attack`,
+  `defend`, `flee`, `use-ability <id>` / `ability <id>`. Rundenbegrenzung,
+  Initiative-Wurf über `speed_attribute` und konfigurierbare Flucht.
 - **Fehler:** `UnknownCombatProfile` (unbekannter Name),
-  `CombatProfileNotSupported` (tactical).
-- **Reserviert: der `combat.`-Namespace** (Phase 7f-3, Schritt A1). Der
+  `UnknownInitiativeRule` (ungültige Initiativregel).
+- **Reserviert: der `combat.`-Namespace** (Phase 7f-3). Der
   Rundenzustand eines taktischen Kampfes lebt in der VarMap (`combat.round`,
   `combat.engaged`, `combat.initiative.<actorId>`) — wie `faction.`/`party.`/
   `ship.`, also kein neues Save-Feld und Save/Load gratis. Eine selbst
@@ -474,9 +480,33 @@ Umsetzung: `src/Combat.hs` — `resolveCombat :: CombatProfile -> [CombatActor] 
 CombatTarget -> CombatAction -> GameState -> ([Effect], [String])`, pure
 Effekt-Erzeugung durch den einen Interpreter. `CombatAction` sagt, was der Spieler
 in der Runde tut (`CAAttack`/`CADefend`/`CAFlee`/`CAUseItem`/`CAAbility`);
-`off`/`narrative`/`classic` ignorieren den Parameter, `executeAttack` übergibt
-`CAAttack` (7f-3, Schritt A0). Mit einem Begleiter in der
-Gruppe enthält die Aktor-Liste zusätzlich `CompanionActor <npc>` (Module 7g).
+`CombatTarget` unterstützt sowohl NPCs (`TargetNPC`) als auch feindliche
+Schiffe (`TargetShip`, Phase 7h-2). Mit einem Begleiter in der
+Gruppe enthält die Aktor-Liste zusätzlich `CompanionActor <npc>` (Module 7g),
+an Bord eines Schiffs mit Systemen `ShipActor <ship>` (Module 7h).
+
+---
+
+## Abilities: Spieler-Fähigkeiten (Phase 7f-3)
+
+Im taktischen Kampf (`profile: tactical`) kann der Spieler spezielle Fähigkeiten einsetzen:
+
+```yaml
+abilities:
+  - id: power_strike
+    name: Kraftschlag
+    cost_var: stamina         # Ressourcen-Variable in der VarMap
+    cost: 15                  # Benötigte Mindestmenge
+    cooldown: 2               # Runden Abklingzeit
+    effect:
+      - { damage_npc: { npc: gladiator, amount: 20 } }
+      - { msg: "Dein wuchtiger Hieb trifft den Champion!" }
+```
+
+In-game Aufruf: `use-ability power_strike` oder `ability power_strike`. Bei
+Erfolg wird `cost` von `cost_var` abgezogen, der Cooldown gesetzt und die
+Effektliste ausgeführt. Fehlen Ressourcen oder ist der Cooldown aktiv, wird die
+Aktion abgelehnt.
 
 ---
 

@@ -211,21 +211,31 @@ Regelkern. Neue Datei: `src/Combat.hs`.
 
 ```yaml
 combat:
-  profile: classic            # off | narrative | classic
-  # off:        attack wird abgelehnt (attack_refused), kein HP-Verbrauch
-  # narrative:  vergleichender Wurf (Spieler-Angriff vs. Verteidigung +
-  #             difficulty) -> on_win / on_lose-Effects, keine HP-Attrition
-  # classic:    exakt das Verhalten vor 7f — Default ohne combat:-Block
+  profile: tactical           # off | narrative | classic | tactical
+  initiative: by_speed        # player_first | enemy_first | by_speed (nur tactical)
+  flee_allowed: true          # Flucht per 'flee' erlaubt (nur tactical)
+  max_rounds: 10              # optionales Rundenlimit (nur tactical)
+  speed_attribute: agility    # Attribut/Skill für Initiative-Vergleich (nur tactical)
+
+abilities:
+  - id: power_strike
+    name: Power-Schlag
+    cost_var: stamina
+    cost: 15
+    cooldown: 2
+    effect:
+      - { damage_npc: { npc: gladiator, amount: 20 } }
+      - { msg: "Dein wuchtiger Hieb erschüttert den Champion!" }
 ```
 
 **Architektur-Regel (umgesetzt):** `resolveCombat :: CombatProfile ->
-[CombatActor] -> CombatTarget -> GameState -> ([Effect], [String])` — eine
+[CombatActor] -> CombatTarget -> CombatAction -> GameState -> ([Effect], [String])` — eine
 reine Funktion, die Effects erzeugt, die anschließend durch
 `applyOutcomeWith` laufen. Kein zweiter Interpreter, kein zweiter
 `applyLoopCommand`-Pfad. `Parser.executeAttack` ist ein dünner Wrapper
-(Profil + `[PlayerActor]` + `TargetNPC` verdrahten, Effekte anwenden,
+(Profil + `[PlayerActor]` + `TargetNPC` / `TargetShip` verdrahten, Effekte anwenden,
 Meldungen durchreichen). `CombatActor` ist von Anfang an eine Liste —
-Begleiter (7g) erweitern sie, ohne die Signatur zu ändern.
+Begleiter (7g) und Schiffe (7h) erweitern sie, ohne die Signatur zu ändern.
 
 - **classic bleibt bit-identisch:** keine `combat:`-Block-Variante ist ein
   eigener Test (Engine: `testCombatDamageUsesDefense` u. a.), und die
@@ -235,21 +245,28 @@ Begleiter (7g) erweitern sie, ohne die Signatur zu ändern.
 - **narrative:** `effectiveAttack >= npcDefenseBase + difficulty` gewinnt.
   Die `on_win`-/`on_lose`-Effects entscheiden alles; die klassische
   HP-Attrition entfällt komplett (Fixture: Kampf öffnet ein Tor, statt den
-  gegner zu zerhauen).
+  Gegner zu zerhauen).
 - **off:** `attack` wird mit `attack_refused`-Text abgelehnt; niemand
   verliert HP (Fixture: „Der Verhandlungsweg").
-- **7f-3 (`tactical`)** bleibt Teilstopp: im Worldbuilder mit
-  `CombatProfileNotSupported` abgelehnt, bis ein Referenzspiel es verlangt
-  (Entscheidung im Plan ✅). `CombatProfile`-JSON kennt den Konstruktor noch
-  nicht — er kommt mit 7f-3.
-- **Validierung:** `UnknownCombatProfile` (unbekannter Name),
-  `CombatProfileNotSupported` (tactical bis 7f-3).
+- **tactical (7f-3):** Rundenbasierter Taktikkampf mit Runden-Treiber:
+  - Aktionen: `attack` / `hit`, `defend` (Verteidigungsbonus für eine Runde),
+    `flee` (Fluchtversuch, falls `flee_allowed: true`), `use-ability <id>` /
+    `ability <id>` (Spieler-Fähigkeiten mit Ressourcenkosten und Cooldown).
+  - Initiative: `player_first`, `enemy_first` oder `by_speed` (dynamischer
+    Wurf basierend auf `speed_attribute` vs. Gegner-Geschwindigkeit).
+  - Rundenzustand in der VarMap: `combat.round`, `combat.engaged`,
+    `combat.initiative.<actorId>`. Geschützt gegen Autorenkollisionen über
+    `CombatVariableClash`.
+  - Gegnerreaktion: gewöhnliche `on: turn`-Regel mit
+    `when: { compare_var: { name: combat.engaged, op: gte, value: 1 } }`.
+- **Validierung:** `UnknownCombatProfile` (unbekannter Profilname),
+  `UnknownInitiativeRule` (ungültige Initiativ-Regel).
 
-Fixtures: `examples/modules/combat-off.yaml` („Der Verhandlungsweg" —
-Wächterin, Umhang-Quest, Sieg ohne einen Schlag), `combat-narrative.yaml`
-(„Der Duellplatz" — ein Wurf entscheidet, Tor öffnet sich),
-`combat-classic.yaml` („Der Kerkerkopf" — expliziter Classic-Block,
-6 Treffer, Tod per `killNPC` öffnet den Schatzraum via `locked_by`).
+Fixtures:
+- `examples/modules/combat-off.yaml` („Der Verhandlungsweg" — Wächterin, Umhang-Quest, Sieg ohne einen Schlag).
+- `examples/modules/combat-narrative.yaml` („Der Duellplatz" — ein Wurf entscheidet, Tor öffnet sich).
+- `examples/modules/combat-classic.yaml` („Der Kerkerkopf" — expliziter Classic-Block, 6 Treffer, Tod per `killNPC` öffnet den Schatzraum via `locked_by`).
+- `examples/modules/combat-tactical.yaml` („Die Gladiatoren-Arena" — Taktikprofil, Fähigkeiten, Gegnerreaktion; E2E Happy Path `combat-tactical` und Flucht-Pfad `combat-tactical-fail`).
 
 ---
 
@@ -372,14 +389,18 @@ vehicles:
   - ohne Schilde **und** Hülle nimmt weiter der Spieler den Schaden (7f).
   - `hull <= 0` ist kein Kern-Sonderpfad: die Fixture beendet das Spiel mit
     einer `on: turn`-Rule.
-- **Grenze der Ausbaustufe:** Ein *gegnerisches* Schiff ist in dieser Stufe
-  ein NPC mit `max_hp`/`attack` (die Türme treffen dein Schiff). Duell
-  Schiff-gegen-Schiff als zwei Fahrzeuge wäre ein eigener Schritt (7h-2) —
-  `CombatTarget` kennt nur NPC-Ziele.
-- **Fixtures:** `examples/modules/starship.yaml` („Der Kestrel-Lauf",
-  14 Räume, E2E `ci/e2e/starship.in/.expect`): Stationen nutzen (Energie
-  umleiten, Läufe aufladen), fliegen, Batterie anstöpseln (Clamp sichtbar),
-  Korsar beschießen — Schilde fangen ab, brechen, die Hülle nimmt Schaden.
+- **Schiff-gegen-Schiff-Duelle (7h-2):**
+  - `CombatTarget = TargetNPC String String | TargetShip VehicleID String` in `Combat.hs`.
+  - Zielauflösung: `attack <ship>` / `fire <ship>` im Parser zielt auf Schiffe am selben Halt (`outsideStop`), wenn der Spieler sich nicht selbst im Zielschiff befindet.
+  - Gewöhnliche Fahrzeuge ohne Systeme werden abgewiesen (`"You can't attack the <name>."`).
+  - Schadensberechnung via `shipAbsorb`: Schüsse treffen zuerst Schilde, der Durchschlag geht auf die Hülle.
+  - Zerstörung bei Hülle 0: setzt `ship.<id>.hull` auf 0, gibt eine Zerstörungsmeldung aus und unterdrückt Gegenfeuer.
+  - Überlebende Schiffe feuern zurück (kostet 1 Energie), Schaden trifft Spielerschilde und -hülle.
+  - Validierung: `ActorShip vId` in Regeln wird gegen `vehicleDefs` geprüft (`MissingVehicle`).
+- **Fixtures:**
+  - `examples/modules/starship.yaml` („Der Kestrel-Lauf", 14 Räume, E2E `ci/e2e/starship.in/.expect`): Stationen nutzen, fliegen, Batterie anstöpseln, NPC-Korsar beschießen.
+  - `examples/modules/starship-loss.yaml`: Hüllenbruch-Verlustpfad (`ci/e2e/starship-loss-fail.*`).
+  - `examples/modules/ship-duel.yaml` („Das Asteroiden-Duell", 14 Räume): echtes Duell Kestrel vs. Korsaren-Fregatte (`TargetShip`). E2E Happy Path `ci/e2e/ship-duel.*` (`VICTORY`) und Failure Path `ci/e2e/ship-duel-fail.*` (`hull_failure` Zerstörung).
 
 ---
 
@@ -402,5 +423,63 @@ Die Verkettung: Kanister kaufen (7b) → Atemluft sichern (7d) → Vela anwerben
 (7g) → Gildenauftrag annehmen (7a) → Stationen bedienen und zum Gürtel fliegen
 (7h) → Kaperer besiegen (7h + 7g) → Schwarzbox bergen → beim Gildenbüro abgeben
 (7a) → das Siegel öffnet den Tresorraum → Sieg. E2E:
-`ci/e2e/combo.in/.expect`, registriert in `scripts/ci.sh` (jetzt 18
-Playthroughs).
+`ci/e2e/combo.in/.expect`, registriert in `scripts/ci.sh` (28
+Playthroughs: 20 Happy Paths + 8 Failure Paths).
+
+---
+
+## Neues Modul anlegen (Entwicklerleitfaden)
+
+Die Modul-Architektur folgt einem strikten Schema: **YAML-Segment + Compiler-Pass auf bestehende Core-Konzepte**. Ein neues Modul erzeugt keinen eigenen Interpreter, kein eigenes `SaveState`-Feld und kein zweites State-Silo. Ohne das YAML-Segment bleibt jede bestehende Welt bit-identisch.
+
+### 1. Compiler-Signatur
+
+Jede Modul-Kompilierung in `worldbuilder/src/Worldbuilder/Compile.hs` folgt dem Schema:
+
+```haskell
+compileMyModule :: Adventure -> ([CompileIssue], [TriggerDef], Map String VarDef, Map String VariableValue)
+```
+
+Sie liefert vier Dinge:
+1. `[CompileIssue]`: Diagnosefehler und Warnungen bei fehlerhaftem Schema oder Referenzen.
+2. `[TriggerDef]`: generierte Trigger (z. B. `OnCommand`, `OnTurn`, `OnStateChange`).
+3. `Map String VarDef`: Variablendefinitionen für die Welt (`varDefs`), inklusive Typ und Clamping-Grenzen (`VTInt (Just min) (Just max)`).
+4. `Map String VariableValue`: Anfangswerte im `SaveState` (`variables`).
+
+### 2. Die fünf Eintragungsstellen im Worldbuilder (`Compile.hs`)
+
+Wenn ein neues YAML-Segment `mymodule:` eingeführt wird:
+
+1. **AST-Erweiterung (`Worldbuilder/Types.hs`)**:
+   - Feld `advMyModule :: Maybe AMyModule` im `Adventure`-Record ergänzen.
+   - YAML-Dekodierer (`FromJSON Adventure`) um `.:? "mymodule"` erweitern.
+2. **Aufruf in `compileAdventure` (`Compile.hs`)**:
+   - `let (myIssues, myTriggers, myVarDefs, myInitVars) = compileMyModule adv`
+3. **Namespace-Kollisionsprüfung (`mergeMyModuleVars`)**:
+   - Autoren-Variablen dürfen den reservierten Modul-Präfix (z. B. `mymodule.`) nicht deklarieren:
+   ```haskell
+   [ ciError ("variables." ++ name) "MyModuleVariableClash"
+       ("variable '" ++ name ++ "' uses reserved module prefix 'mymodule.'")
+   | (name, _) <- Map.toList (advVariables adv), "mymodule." `isPrefixOf` name ]
+   ```
+4. **Zusammenführung**:
+   - `allTriggerDefs = ... ++ myTriggers`
+   - `allVarDefs = ... ` (Map.union mit `myVarDefs`)
+   - `allInitialVars = ... ` (Map.union mit `myInitVars`)
+   - `allErrors = ... ++ myIssues`
+5. **Validierung (`Compile.hs` und `src/Validate.hs`)**:
+   - Referenzprüfungen gegen unbekannte IDs (Räume, NPCs, Items, Verben) durchführen.
+   - Falls Trigger generiert werden: sicherstellen, dass deren IDs den reservierten Präfix tragen und keine Kollisionen erzeugen.
+
+### 3. CI- und Test-Integration
+
+Zu jedem Modul gehört:
+1. **Unit-Tests (`worldbuilder/test/Tests.hs` & `test/Tests.hs`)**:
+   - Test auf erfolgreiche Kompilierung und Validierung.
+   - Test auf gemeldete Schemafehler / Clashes (`Duplicate...`, `Unknown...`, `...VariableClash`).
+2. **Modul-Fixture (`examples/modules/<modul>.yaml`)**:
+   - Vollständiges, spielbares Mini-Adventure (13–18 Räume).
+3. **CI-Pipeline (`scripts/ci.sh`)**:
+   - **Stufe 3 (Validierung)**: `examples/modules/<modul>.yaml` in die Liste aufnehmen.
+   - **Stufe 4 (Happy Path E2E)**: `ci/e2e/<modul>.in` und `ci/e2e/<modul>.expect`.
+   - **Stufe 5 (Failure Path E2E)**: `ci/e2e/<modul>-fail.in` und `ci/e2e/<modul>-fail.expect`.

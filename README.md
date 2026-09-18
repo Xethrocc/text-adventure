@@ -12,11 +12,11 @@ profiles and gameplay modules are all content.
 - Rooms with exits and locks (`locked_by`), darkness with light sources, optional ASCII-art banners
 - Items: containers, equipment with stat bonuses, portability, hidden items found via `search`
 - NPCs: dialogue trees with conditional choices, per-NPC verb maps, state-dependent behaviour
-- **Rule core:** an effect DSL (`SetValue`, `ModifyValue`, `MoveEntity`, `Conditional`, `RandomChoice`, `GameEnd`, …) plus triggers on events (`enter`, `leave`, `look`, `search`, `take`, `drop`, `use`, `state`, `command`, `turn`, `custom`) with `when` / `once` / `cooldown`
+- **Rule core:** an effect DSL (`SetValue`, `ModifyValue`, `MoveEntity`, `Conditional`, `RandomChoice`, `GameEnd`, `Narrative`, `ApplyCondition`, `RaiseEvent`, …) plus triggers on events (`enter`, `leave`, `look`, `search`, `take`, `drop`, `use`, `state`, `command`, `turn`, `custom`) with `when` / `once` / `cooldown`
 - Variables as a `VarMap` for counters, faction standing and supplies, plus predicates such as `standing`, `compare_var`, `has_item`, `has_flag`, `at: player, room: …`
 - Quests with stages and rewards; conditions with tick and end effects
-- Vehicles: player-steered, automatic routes and paid rides — fuel, interior rooms, stops — and **ships with systems and stations** (power/shields/hull/weapons, station verbs)
-- Combat profiles `off` | `narrative` | `classic` (default), resolved by a pure combat module that also drives companions and the player's ship
+- Vehicles: player-steered, automatic routes and paid rides — fuel, interior rooms, stops — and **ships with systems and stations** (power/shields/hull/weapons, station verbs, ship-to-ship combat)
+- Combat profiles `off` | `narrative` | `classic` | `tactical` (turn-based with initiative, flee, defend, and player abilities), resolved by a pure combat module that also drives companions and spaceship duels
 - Deterministic RNG **in the save**, save/load (`saves/<slot>.json`), undo history, restart, tab completion
 - Validation: `validateWorld` + `validateGameState` (used by the CLI and the tests)
 
@@ -24,7 +24,7 @@ profiles and gameplay modules are all content.
 
 - Authoring schema for everything above, in YAML or JSON, with structured diagnostics
 - CLI: `validate`, `compile`, `check`
-- Optional gameplay modules (Phase 7): factions/standing, trade, encounter tables, survival/weather, stealth, party/companions, starships — see `docs/modules.md`
+- Optional gameplay modules (Phase 7): factions/standing, trade, encounter tables, survival/weather, stealth, tactical combat & abilities, party/companions, starships with duels — see `docs/modules.md`
 
 ## Quick start
 
@@ -46,8 +46,8 @@ Engine flags: `--world FILE` (compiled GameWorld), `--save FILE` (initial
 SaveState, must exist), `--allow-invalid`, `--help`. In-game saves are written
 to `saves/<slot>.json`.
 
-Whole pipeline — build, both test suites, validation of every shipped
-adventure, 18 scripted playthroughs:
+Whole pipeline — build, both test suites, validation of 20 shipped
+adventures, 28 scripted playthroughs (20 happy paths + 8 failure paths):
 
 ```bash
 bash scripts/ci.sh
@@ -60,7 +60,7 @@ bash scripts/ci.sh
 - `take` / `get` / `grab <item>`, `take all`, `take <item> and <item>`, `drop <item>`, `drop all`
 - `use <item>`, `use <item> on <target>`
 - `talk to <npc>`, `choose <n>` (pick a dialogue option)
-- `attack` / `hit <target>`
+- Combat: `attack` / `hit` / `fire <target>` (NPCs and enemy ships at the same stop), `defend`, `flee`, `use-ability <id>` / `ability <id>`
 - `equip` / `wear` / `wield <item>`, `unequip` / `remove`, `unequip all`, `stats`
 - Vehicles: `enter` / `board <vehicle>`, `disembark`, `drive to <station>`, `wait`, `refuel`, `repair <condition>` — note that `exit` quits the game
 - System: `inventory`, `undo`, `save [name]`, `load [name]`, `saves`, `restart`, `help`, `quit`
@@ -143,8 +143,8 @@ no own state file. Their state lives in the existing `VarMap`
 
 ```bash
 cabal build all
-cabal test all --test-show-details=direct    # 192 engine tests, 64 worldbuilder tests
-bash scripts/ci.sh                           # build + tests + validation + 18 E2E playthroughs
+cabal test all --test-show-details=direct    # 241 engine tests, 75 worldbuilder tests
+bash scripts/ci.sh                           # build + tests + validation + 28 E2E playthroughs
 cabal run worldbuilder -- check examples/thefog.yaml   # content statistics
 ```
 
