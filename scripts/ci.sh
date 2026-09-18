@@ -61,10 +61,10 @@ run_e2e() {
     fi
 }
 
-for name in thefog pure-if fantasy cyberpunk space-opera detective horror factions trade encounters survival stealth combat-off combat-narrative combat-classic combat-tactical party starship combo; do
+for name in thefog pure-if fantasy cyberpunk space-opera detective horror factions trade encounters survival stealth combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel; do
     case "$name" in
         thefog)             src=examples/thefog.yaml ;;
-        factions|trade|encounters|survival|stealth|combat-off|combat-narrative|combat-classic|combat-tactical|party|starship|combo)     src="examples/modules/$name.yaml" ;;
+        factions|trade|encounters|survival|stealth|combat-off|combat-narrative|combat-classic|combat-tactical|party|starship|combo|ship-duel)     src="examples/modules/$name.yaml" ;;
         *)                  src="examples/genres/$name.yaml" ;;
     esac
     run_e2e "$name" "$src"
@@ -75,7 +75,7 @@ echo "== 5. e2e failure paths =="
 # drives the same compiled world into a failure path — no funds, refused attack,
 # starvation, unknown station, invalid dialogue choice, and the ship loss
 # (`hull_failure`, reachable in `starship-loss.yaml` but not in `starship.yaml`).
-for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss-fail combo-fail combat-tactical-fail; do
+for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss-fail combo-fail combat-tactical-fail ship-duel-fail; do
     case "$name" in
         trade-fail)        src=examples/modules/trade.yaml ;;
         combat-off-fail)   src=examples/modules/combat-off.yaml ;;
@@ -84,6 +84,7 @@ for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss
         starship-loss-fail) src=examples/modules/starship-loss.yaml ;;
         combo-fail)        src=examples/modules/combo.yaml ;;
         combat-tactical-fail) src=examples/modules/combat-tactical.yaml ;;
+        ship-duel-fail)    src=examples/modules/ship-duel.yaml ;;
     esac
     run_e2e "$name" "$src"
 done

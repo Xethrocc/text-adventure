@@ -87,6 +87,14 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   feuert `weapons` und kostet 1 `power`, der Konter trifft Schilde → Hülle;
   ohne Systeme bleibt alles bit-identisch. Fehler: `ShipVariableClash`,
   `UnknownStationRoom`, `UnknownStationVerb`.
+- **Phase 7h-2 — Schiff-gegen-Schiff-Duell (Teil B: B0–B3)**:
+  - `CombatTarget = TargetNPC String String | TargetShip VehicleID String` in `Combat.hs`.
+  - Trennung von `shipVolley` und `shipStrike`: Schiffsfeuer und Gegenfeuer arbeiten auf Schilden und Hülle über `shipAbsorb`, sowohl bei Spieler- als auch bei feindlichen Schiffen.
+  - Feindliches Schiff wird zerstört, sobald dessen Hülle 0 erreicht (`SetValue (VRActorProp (ActorShip vId) (PCustom "hull")) (VTInt 0)` + Zerstörungsmeldung, kein Gegenfeuer mehr).
+  - Parser-Erweiterung: `attack <ship>` / `fire <ship>` zielt auf Schiffe am selben Halt (`outsideStop`), wenn der Spieler sich nicht selbst im Zielschiff befindet. Ablehnung gewöhnlicher Fahrzeuge ohne Systeme (`You can't attack the <name>.`).
+  - Validation (`Validate.hs`): `ActorShip vId` in `idsFromOutcomeVehicle` und `idsFromPredicateVehicle` gegen deklarierte Fahrzeuge validiert.
+  - Fixture `examples/modules/ship-duel.yaml` (14 Räume, Asteroidenfeld, Kestrel vs. Korsaren-Fregatte).
+  - Dual-Path E2E Tests: Happy Path `ci/e2e/ship-duel.*` (`VICTORY`) und Failure Path `ci/e2e/ship-duel-fail.*` (`hull_failure` Zerstörung).
 - **Kompositionsbeweis** `examples/modules/combo.yaml` („Der Ring von Tarsis"):
   ein Referenzspiel nutzt **fünf Module gleichzeitig** (7a, 7b, 7d, 7g, 7h),
   verbunden ausschließlich über Autoren-Regeln — kein Modul kennt ein anderes.
@@ -107,7 +115,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   - `PropRef = PHealth | PRoom | PVisited | PState | PCustom String`.
   - Migration via handgeschriebenem `FromJSON ValueRef` (unterstützt sowohl neues Schema als auch altes `VRProperty [target, prop]` Format).
   - Save-Version auf 3 erhöht.
-- Tests: **236** Engine- + **75** Worldbuilder-Tests, **26** E2E-Läufe
+- Tests: **241** Engine- + **75** Worldbuilder-Tests, **28** E2E-Läufe
   (`scripts/ci.sh`).
 
 ### Fixed

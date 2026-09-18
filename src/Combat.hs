@@ -14,10 +14,11 @@ module Combat
     , ShipSystems (..)
     , resolveCombat
     , shipAbsorb
+    , targetShipSystems
     ) where
 
 import Types
-import Game (effectiveAttack, effectiveDefense, getVariable,
+import Game (effectiveAttack, effectiveDefense, getVariable, getVehicleState,
             combatRound, combatRoundKey, combatEngagedKey, combatActionKey,
             combatInitiativePlayerKey, combatInitiativeNpcKey, combatAbilityKey,
             hasCondition)
@@ -33,10 +34,11 @@ data CombatActor
     | ShipActor VehicleID
     deriving (Show, Eq)
 
--- | What is attacked. Carries the NPC id plus the display name the player
+-- | What is attacked. Carries the NPC or Vehicle id plus the display name the player
 --   typed, so messages stay identical to the pre-7f parser output.
 data CombatTarget
-    = TargetNPC String String   -- ^ npc id, display label (what the player typed)
+    = TargetNPC String String       -- ^ npc id, display label (what the player typed)
+    | TargetShip VehicleID String   -- ^ vehicle id, display label
     deriving (Show, Eq)
 
 -- | Resolve one attack command against the authored combat profile.
@@ -68,6 +70,7 @@ resolveCombat profile actors target action st = case profile of
     CombatTactical tc -> resolveTactical tc actors target action st
   where
     label (TargetNPC _ disp) = disp
+    label (TargetShip _ disp) = disp
 
 -- | Narrative: `effectiveAttack >= defense + difficulty` wins.
 resolveNarrative :: NarrativeCombat -> [CombatActor] -> CombatTarget -> GameState -> ([Effect], [String])
@@ -79,6 +82,15 @@ resolveNarrative nc _ (TargetNPC nid disp) st =
             in if win
                then ([ncOnWin nc], ["You win the fight against the " ++ disp ++ "! Your attack lands cleanly."])
                else ([ncOnLose nc], ["You lose the fight against the " ++ disp ++ ". Your attack is turned aside."])
+resolveNarrative nc _ (TargetShip vid disp) st =
+    case shipSystemsFor vid st of
+        Nothing -> ([], ["You can't attack the " ++ disp ++ "."])
+        Just targetShip ->
+            let targetDef = fromMaybe 0 (ssShields targetShip)
+                win = effectiveAttack st >= targetDef + ncDifficulty nc
+            in if win
+               then ([ncOnWin nc], ["You win the fight against the " ++ disp ++ "! Your attack lands cleanly."])
+               else ([ncOnLose nc], ["You lose the fight against the " ++ disp ++ ". Your attack is turned aside."])
 
 -- ---------------------------------------------------------------------------
 -- Tactical (Phase 7f-3, step A2)
@@ -86,16 +98,25 @@ resolveNarrative nc _ (TargetNPC nid disp) st =
 
 -- | Build initiative effects when tcInitiative is BySpeed (Phase 7f-3, step A3).
 initiativeEffects :: TacticalCombat -> NPCID -> GameState -> [Effect]
-initiativeEffects tc nid st =
+initiativeEffects tc nid st = initiativeEffectsTarget tc (TargetNPC nid "") st
+
+initiativeEffectsTarget :: TacticalCombat -> CombatTarget -> GameState -> [Effect]
+initiativeEffectsTarget tc target st =
     case tcInitiative tc of
         BySpeed ->
             let speedAttr = tcSpeedAttribute tc
                 playerSpd = fromMaybe 0 (Map.lookup speedAttr (playerSkills (player (save st))))
-                npcSpd = case Map.lookup nid (npcStates (save st)) of
-                    Nothing -> 0
-                    Just ns -> fromMaybe 0 (Map.lookup speedAttr (npcProps ns))
+                (targetKey, targetSpd) = case target of
+                    TargetNPC nid _ ->
+                        let spd = case Map.lookup nid (npcStates (save st)) of
+                                Nothing -> 0
+                                Just ns -> fromMaybe 0 (Map.lookup speedAttr (npcProps ns))
+                        in (combatInitiativeNpcKey nid, spd)
+                    TargetShip vid _ ->
+                        let spd = fromMaybe 0 (shipSystem vid speedAttr st)
+                        in (combatInitiativeNpcKey vid, spd)
             in [ SetValue (VRVariable combatInitiativePlayerKey) (EVInt playerSpd)
-               , SetValue (VRVariable (combatInitiativeNpcKey nid)) (EVInt npcSpd) ]
+               , SetValue (VRVariable targetKey) (EVInt targetSpd) ]
         _ -> []
 
 -- | Tactical: one player action per round, enemy reacts via `on: turn`.
@@ -140,6 +161,34 @@ resolveTactical tc _actors (TargetNPC nid disp) CAAttack st =
                                 , ["Round " ++ show round' ++ ": You hit the "
                                    ++ disp ++ " for " ++ show playerDmg ++ "."] )
 
+resolveTactical tc _actors (TargetShip vid disp) CAAttack st =
+    case shipSystemsFor vid st of
+        Nothing -> ([], ["You can't attack the " ++ disp ++ "."])
+        Just targetShip ->
+            case ssHull targetShip of
+                Just h | h <= 0 -> ([], ["The " ++ disp ++ " is already destroyed."])
+                _ ->
+                    let round'    = combatRound st + 1
+                        playerDmg = max 1 (effectiveAttack st)
+                        stateEffects =
+                            [ SetValue (VRVariable combatRoundKey)   (EVInt round')
+                            , SetValue (VRVariable combatEngagedKey) (EVInt 1)
+                            , SetValue (VRVariable combatActionKey)  (EVString "attack") ]
+                            ++ initiativeEffectsTarget tc (TargetShip vid disp) st
+                        (targetAbsorbEffects, _, targetAbsorbMsgs) = shipAbsorb targetShip playerDmg
+                        targetHullAfter = case ssHull targetShip of
+                            Just h  ->
+                                let s = fromMaybe 0 (ssShields targetShip)
+                                in h - max 0 (playerDmg - s)
+                            Nothing -> 0
+                    in if targetHullAfter <= 0
+                       then ( stateEffects ++ targetAbsorbEffects
+                                ++ [ SetValue (VRVariable combatEngagedKey) (EVInt 0)
+                                   , SetValue (VRVariable combatRoundKey)   (EVInt 0) ]
+                            , [ "Round " ++ show round' ++ ": You attack the " ++ disp ++ " and destroy it!" ] )
+                       else ( stateEffects ++ targetAbsorbEffects
+                            , ("Round " ++ show round' ++ ": You attack the " ++ disp ++ ".") : targetAbsorbMsgs )
+
 -- Defend: no damage, marker for the enemy trigger.
 resolveTactical tc _actors (TargetNPC nid disp) CADefend st =
     let round' = combatRound st + 1
@@ -148,6 +197,15 @@ resolveTactical tc _actors (TargetNPC nid disp) CADefend st =
             , SetValue (VRVariable combatEngagedKey) (EVInt 1)
             , SetValue (VRVariable combatActionKey)  (EVString "defend") ]
             ++ initiativeEffects tc nid st
+    in (stateEffects, ["Round " ++ show round' ++ ": You brace yourself against the " ++ disp ++ "."])
+
+resolveTactical tc _actors (TargetShip vid disp) CADefend st =
+    let round' = combatRound st + 1
+        stateEffects =
+            [ SetValue (VRVariable combatRoundKey)   (EVInt round')
+            , SetValue (VRVariable combatEngagedKey) (EVInt 1)
+            , SetValue (VRVariable combatActionKey)  (EVString "defend") ]
+            ++ initiativeEffectsTarget tc (TargetShip vid disp) st
     in (stateEffects, ["Round " ++ show round' ++ ": You brace yourself against the " ++ disp ++ "."])
 
 -- Flee: end the fight if allowed.
@@ -165,6 +223,22 @@ resolveTactical tc _actors (TargetNPC nid disp) CAFlee st =
                  , SetValue (VRVariable combatEngagedKey) (EVInt 1)
                  , SetValue (VRVariable combatActionKey)  (EVString "flee") ]
                  ++ initiativeEffects tc nid st
+         in (stateEffects, ["You can't flee from the " ++ disp ++ "!"])
+
+resolveTactical tc _actors (TargetShip vid disp) CAFlee st =
+    if tcFleeAllowed tc
+    then let round' = combatRound st + 1
+             stateEffects =
+                 [ SetValue (VRVariable combatRoundKey)   (EVInt 0)
+                 , SetValue (VRVariable combatEngagedKey) (EVInt 0)
+                 , SetValue (VRVariable combatActionKey)  (EVString "flee") ]
+         in (stateEffects, ["Round " ++ show round' ++ ": You flee from the " ++ disp ++ "!"])
+    else let round' = combatRound st + 1
+             stateEffects =
+                 [ SetValue (VRVariable combatRoundKey)   (EVInt round')
+                 , SetValue (VRVariable combatEngagedKey) (EVInt 1)
+                 , SetValue (VRVariable combatActionKey)  (EVString "flee") ]
+                 ++ initiativeEffectsTarget tc (TargetShip vid disp) st
          in (stateEffects, ["You can't flee from the " ++ disp ++ "!"])
 
 -- Ability: player uses an ability (Phase 7f-3, step A3).
@@ -203,8 +277,43 @@ resolveTactical tc _actors (TargetNPC nid _disp) (CAAbility abId) st =
                            allEffects = stateEffects ++ costEffects ++ cooldownEffects ++ paEffects pa
                        in (allEffects, ["Round " ++ show round' ++ ": You use " ++ paName pa ++ "!"])
 
+resolveTactical tc _actors (TargetShip vid _disp) (CAAbility abId) st =
+    case Map.lookup abId (abilities (world st)) of
+        Nothing -> ([], ["Unknown ability '" ++ abId ++ "'."])
+        Just pa ->
+            if hasCondition ("cooldown_" ++ abId) st
+            then ([], ["Ability is on cooldown."])
+            else
+                let costVar = paCostVar pa
+                    cost = paCost pa
+                    curVal = if null costVar
+                             then cost
+                             else case getVariable costVar st of
+                                 Just (VVInt n) -> n
+                                 _              -> 0
+                in if curVal < cost
+                   then ([], ["Not enough resources."])
+                   else
+                       let round' = combatRound st + 1
+                           stateEffects =
+                               [ SetValue (VRVariable combatRoundKey)   (EVInt round')
+                               , SetValue (VRVariable combatEngagedKey) (EVInt 1)
+                               , SetValue (VRVariable combatActionKey)  (EVString "ability")
+                               , SetValue (VRVariable combatAbilityKey) (EVString abId) ]
+                               ++ initiativeEffectsTarget tc (TargetShip vid _disp) st
+                           costEffects =
+                               if not (null costVar) && cost > 0
+                               then [ ModifyValue (VRVariable costVar) (-cost) ]
+                               else []
+                           cooldownEffects =
+                               if paCooldown pa > 0
+                               then [ ApplyCondition ("cooldown_" ++ abId) (paCooldown pa) Nothing Nothing ]
+                               else []
+                           allEffects = stateEffects ++ costEffects ++ cooldownEffects ++ paEffects pa
+                       in (allEffects, ["Round " ++ show round' ++ ": You use " ++ paName pa ++ "!"])
+
 -- CAUseItem: future steps.
-resolveTactical _tc _actors (TargetNPC _nid _disp) _ _st =
+resolveTactical _tc _actors _target _ _st =
     ([], ["You can't do that in combat yet."])
 
 -- | Classic: bit-identical to `Parser.executeAttack` pre-7f when the actor
@@ -272,6 +381,55 @@ resolveClassic actors (TargetNPC nid disp) st =
   where
     cannotAttack = "You can't attack the " ++ disp ++ "."
 
+resolveClassic actors (TargetShip vid disp) st =
+    case shipSystemsFor vid st of
+        Nothing -> ([], [cannotAttack])
+        Just targetShip ->
+            case ssHull targetShip of
+                Just h | h <= 0 -> ([], ["The " ++ disp ++ " is already destroyed."])
+                _ ->
+                    let playerDmg = max 1 (effectiveAttack st)
+                        mPlayerShip = firstShip actors st
+                        (shipPowerEffs, shipFireMsgs, shipDmg) = case mPlayerShip of
+                            Nothing   -> ([], [], 0)
+                            Just ship -> shipVolley ship
+                        targetLoc = vsCurrentStop (getVehicleState vid st)
+                        allies = companionHitsShip targetLoc actors st
+                        allyMsgs = [ npcName allyNpc ++ " strikes for " ++ show d ++ "."
+                                   | (_, allyNpc, d) <- allies ]
+                        allyTotal = sum [ d | (_, _, d) <- allies ]
+                        totalDmg = playerDmg + allyTotal + shipDmg
+                        (targetAbsorbEffects, _, targetAbsorbMsgs) = shipAbsorb targetShip totalDmg
+                        targetHullAfter = case ssHull targetShip of
+                            Just h  ->
+                                let s = fromMaybe 0 (ssShields targetShip)
+                                in h - max 0 (totalDmg - s)
+                            Nothing -> 0
+                        msgsBeforeHit = ("You attack the " ++ disp ++ ".") : (shipFireMsgs ++ allyMsgs ++ targetAbsorbMsgs)
+                    in if targetHullAfter <= 0
+                       then ( shipPowerEffs ++ targetAbsorbEffects
+                            , ("You attack the " ++ disp ++ " and destroy it!") : (shipFireMsgs ++ allyMsgs ++ targetAbsorbMsgs) )
+                       else
+                           let (enemyPowerEffs, enemyFireMsgs, enemyDmg) = shipVolley targetShip
+                           in if enemyDmg <= 0
+                              then ( shipPowerEffs ++ targetAbsorbEffects
+                                   , msgsBeforeHit ++ enemyFireMsgs )
+                              else
+                                  let (playerAbsorbEffects, playerTaken, playerAbsorbMsgs) = case mPlayerShip of
+                                          Nothing   -> ([], enemyDmg, [])
+                                          Just ship -> shipAbsorb ship enemyDmg
+                                      playerTakenEffects = [ ModifyValue VRPlayerHealth (-playerTaken) | playerTaken > 0 ]
+                                      playerHpAfter = playerHealth (player (save st)) - playerTaken
+                                      withRetaliation = shipPowerEffs ++ targetAbsorbEffects ++ enemyPowerEffs ++ playerAbsorbEffects ++ playerTakenEffects
+                                      allMsgs = msgsBeforeHit ++ enemyFireMsgs ++ playerAbsorbMsgs
+                                  in if playerHpAfter <= 0
+                                     then ( withRetaliation
+                                          , ("The " ++ disp ++ " strikes back and kills you!") : allMsgs )
+                                     else ( withRetaliation
+                                          , allMsgs )
+  where
+    cannotAttack = "You can't attack the " ++ disp ++ "."
+
 -- ---------------------------------------------------------------------------
 -- Ship systems (Phase 7h)
 -- ---------------------------------------------------------------------------
@@ -315,26 +473,38 @@ shipSystemsFor vId st
         , ssHull    = shipSystem vId "hull" st
         }
 
+-- | Ship systems of the combat target, if it is a ship and declares systems.
+targetShipSystems :: CombatTarget -> GameState -> Maybe ShipSystems
+targetShipSystems (TargetShip vid _) st = shipSystemsFor vid st
+targetShipSystems (TargetNPC _ _) _     = Nothing
+
 -- | The player's ship among the actors (at most one, and only while aboard).
 firstShip :: [CombatActor] -> GameState -> Maybe ShipSystems
 firstShip actors st = listToMaybe
     [ s | ShipActor vId <- actors, Just s <- [shipSystemsFor vId st] ]
 
--- | The ship's shot: `weapons` damage against the target, costing one unit of
---   `power` per volley. Without power the guns stay silent.
-shipStrike :: NPCID -> ShipSystems -> ([Effect], [String], Int)
-shipStrike nid ship = case ssWeapons ship of
+-- | The ship's shot: power consumption, fire message, and weapons damage.
+--   Without power the guns stay silent.
+shipVolley :: ShipSystems -> ([Effect], [String], Int)
+shipVolley ship = case ssWeapons ship of
     Nothing -> ([], [], 0)
     Just w
         | maybe True (>= 1) (ssPower ship) ->
             let powerEffects = [ SetValue (VRVariable (shipVar (ssShipId ship) "power"))
                                    (EVInt (max 0 (p - 1)))
                                | Just p <- [ssPower ship] ]
-            in ( powerEffects ++ [ ModifyValue (VRActorProp (ActorNPC nid) PHealth) (-w) ]
+            in ( powerEffects
                , [ ssName ship ++ " fires for " ++ show w ++ "." ]
                , w )
         | otherwise ->
             ([], [ssName ship ++ " has no power for its weapons."], 0)
+
+-- | The ship's shot against an NPC target.
+shipStrike :: NPCID -> ShipSystems -> ([Effect], [String], Int)
+shipStrike nid ship =
+    let (powerEffects, msgs, w) = shipVolley ship
+        dmgEffects = [ ModifyValue (VRActorProp (ActorNPC nid) PHealth) (-w) | w > 0 ]
+    in (powerEffects ++ dmgEffects, msgs, w)
 
 -- | Where the target's return fire lands. Shields absorb first, the rest goes
 --   into the hull; only a ship without shields *and* hull leaves the player
@@ -376,5 +546,15 @@ companionHits targetId targetLoc targetDefense actors st =
     , Just cns <- [Map.lookup cid (npcStates (save st))]
     , npcStatus cns /= "dead"
     , npcLocation cns == targetLoc
+    , Just cnpc <- [Map.lookup cid (npcDefs (world st))]
+    ]
+
+-- | Companions that strike alongside the player against a ship: alive and aboard/present.
+companionHitsShip :: RoomID -> [CombatActor] -> GameState -> [(NPCID, NPCDef, Int)]
+companionHitsShip _ actors st =
+    [ (cid, cnpc, max 1 (npcAttackBase cnpc))
+    | CompanionActor cid <- actors
+    , Just cns <- [Map.lookup cid (npcStates (save st))]
+    , npcStatus cns /= "dead"
     , Just cnpc <- [Map.lookup cid (npcDefs (world st))]
     ]

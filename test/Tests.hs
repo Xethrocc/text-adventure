@@ -656,6 +656,103 @@ testShipSystemsSaveLoad = do
             r2 <- expectEqual (Just (VVInt 10)) (Map.lookup "ship.ship.hull" (variables ss))
             pure (r1 && r2)
 
+-- | Helper: Two ships at the same stop ("hallway") with systems.
+shipDuelGame :: (Int, Int, Int, Int) -> (Int, Int, Int, Int) -> GameState
+shipDuelGame (pPow, pWeap, pShield, pHull) (ePow, eWeap, eShield, eHull) =
+    let base = shipGame pPow pWeap pShield pHull
+        pirateDef = VehicleDef "pirate" "Corsair" "A pirate raider."
+            PlayerControlled
+            ["pirate_cabin"] "pirate_cabin" (Just "pirate_cabin")
+            (Map.fromList [("hallway", VehicleStop "hallway" "the dark hallway" Nothing)])
+            [] ["pirate", "corsair", "raider"] Nothing Map.empty
+        pirateVars = Map.fromList
+            [ ("ship.pirate.power",   VVInt ePow)
+            , ("ship.pirate.weapons", VVInt eWeap)
+            , ("ship.pirate.shields", VVInt eShield)
+            , ("ship.pirate.hull",    VVInt eHull) ]
+        allVars = Map.union pirateVars (variables (save base))
+    in base
+        { world = (world base) { vehicleDefs = Map.insert "pirate" pirateDef (vehicleDefs (world base)) }
+        , save = (save base)
+            { vehicleStates = Map.insert "pirate"
+                (VehicleState "hallway" Nothing Set.empty Map.empty)
+                (vehicleStates (save base))
+            , variables = allVars } }
+
+-- | Phase 7h-2 (B0/B1): Attacking an ordinary vehicle without systems is refused.
+testAttackOrdinaryVehicleRefused :: IO Bool
+testAttackOrdinaryVehicleRefused = do
+    let base = initSampleGame
+        st0 = base { save = (save base) { currentRoom = "meadow" } }
+        (st', msg) = executeCommand (Interact VAttack "carriage") st0
+    r1 <- expectEqual "You can't attack the carriage." msg
+    r2 <- expectEqual (playerHealth (player (save base))) (playerHealth (player (save st')))
+    pure (r1 && r2)
+
+-- | Phase 7h-2 (B1): A ship at a different stop cannot be targeted.
+testAttackShipDifferentStopRefused :: IO Bool
+testAttackShipDifferentStopRefused = do
+    let st0 = shipDuelGame (2, 3, 10, 20) (2, 4, 5, 15)
+        stDiffStop = st0 { save = (save st0)
+            { vehicleStates = Map.adjust (\vs -> vs { vsCurrentStop = "treasure" }) "pirate" (vehicleStates (save st0)) } }
+        (st', msg) = executeCommand (Interact VAttack "pirate") stDiffStop
+    r1 <- expectEqual "You don't see 'pirate' here." msg
+    r2 <- expectEqual (getVariable "ship.pirate.hull" st0) (getVariable "ship.pirate.hull" st')
+    pure (r1 && r2)
+
+-- | Phase 7h-2 (B0/B1): Ship-to-ship attack with damage absorption and retaliation.
+testAttackEnemyShipDamageAndRetaliation :: IO Bool
+testAttackEnemyShipDamageAndRetaliation = do
+    let st0 = shipDuelGame (2, 3, 10, 20) (2, 4, 5, 15)
+        (st', msg) = executeCommand (Interact VAttack "pirate") st0
+    -- Corsair takes 10 (player) + 3 (ship weapons) = 13 dmg.
+    -- Corsair shields 5 absorbs 5 -> 0. Spill 8 hits hull: 15 - 8 = 7.
+    r1 <- expectEqual (Just 0) (shipVarOf "ship.pirate.shields" st')
+    r2 <- expectEqual (Just 7) (shipVarOf "ship.pirate.hull" st')
+    r3 <- expectEqual (Just 1) (shipVarOf "ship.ship.power" st')
+    -- Corsair retaliates with weapons 4 (costs 1 power: 2 -> 1).
+    -- Kestrel shields 10 absorbs 4 -> 6. Hull stays 20.
+    r4 <- expectEqual (Just 1) (shipVarOf "ship.pirate.power" st')
+    r5 <- expectEqual (Just 6) (shipVarOf "ship.ship.shields" st')
+    r6 <- expectEqual (Just 20) (shipVarOf "ship.ship.hull" st')
+    r7 <- expectTrue "contains attack messages"
+        (isInfixOf "You attack the pirate." msg
+         && isInfixOf "Kestrel fires for 3." msg
+         && isInfixOf "Corsair: shields absorb 5." msg
+         && isInfixOf "Corsair fires for 4." msg
+         && isInfixOf "Kestrel: shields absorb 4." msg)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | Phase 7h-2 (B0): Destroying an enemy ship reports destruction and draws no return fire.
+testAttackEnemyShipDestroyed :: IO Bool
+testAttackEnemyShipDestroyed = do
+    let st0 = shipDuelGame (2, 3, 10, 20) (2, 4, 0, 5)
+        (st', msg) = executeCommand (Interact VAttack "pirate") st0
+    r1 <- expectEqual (Just 0) (shipVarOf "ship.pirate.hull" st')
+    r2 <- expectEqual (Just 10) (shipVarOf "ship.ship.shields" st')
+    r3 <- expectTrue "destroy message" (isInfixOf "You attack the pirate and destroy it!" msg)
+    r4 <- expectTrue "no enemy retaliation" (not (isInfixOf "Corsair fires" msg))
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 7h-2 (B2): ActorShip reference to an undeclared vehicle in a rule is reported.
+testValidateMissingShipInActorProp :: IO Bool
+testValidateMissingShipInActorProp = do
+    let gw = (world initSampleGame)
+                { triggerDefs =
+                    [ TriggerDef "t_ship" OnTurn Nothing
+                        [ ModifyValue (VRActorProp (ActorShip "ghost_ship") PHealth) (-10) ] False 0
+                    ] }
+        errors = validateWorld gw
+    r1 <- expectTrue "undeclared ActorShip in rule is detected"
+            (MissingVehicle "ghost_ship" `elem` errors)
+    let gwOk = gw { vehicleDefs = Map.insert "ghost_ship"
+                        (VehicleDef "ghost_ship" "Ghost" "A ghost ship." PlayerControlled []
+                            "start" Nothing Map.empty [] ["ghost"] Nothing Map.empty)
+                        (vehicleDefs gw) }
+    r2 <- expectTrue "declared vehicle id is not a false positive"
+            (MissingVehicle "ghost_ship" `notElem` validateWorld gwOk)
+    pure (r1 && r2)
+
 -- | `Location "player" <room>` gates on the player's room (Phase 7h); the
 --   entity form keeps working.
 testLocationPlayerPredicate :: IO Bool
@@ -3378,6 +3475,12 @@ main = do
         , runTest "ship hull takes the hit without shields" testShipHullTakesHit
         , runTest "ordinary vehicle fights exactly like on foot" testOrdinaryVehicleUnchanged
         , runTest "ship systems survive save/load" testShipSystemsSaveLoad
+        -- Phase 7h-2: ship combat (B0, B1, B2)
+        , runTest "ordinary vehicle cannot be attacked as ship (7h-2 B0)" testAttackOrdinaryVehicleRefused
+        , runTest "ship at different stop cannot be targeted (7h-2 B1)" testAttackShipDifferentStopRefused
+        , runTest "ship-to-ship attack with absorption and return fire (7h-2 B0)" testAttackEnemyShipDamageAndRetaliation
+        , runTest "destroying an enemy ship reports destruction without return fire (7h-2 B0)" testAttackEnemyShipDestroyed
+        , runTest "ActorShip in rule is validated against vehicle defs (7h-2 B2)" testValidateMissingShipInActorProp
         , runTest "Location player predicate gates on the player's room" testLocationPlayerPredicate
         , runTest "exit quits, disembark leaves the vehicle" testExitIsNotDisembark
         , runTest "player death sets gameOver + Death reason" testPlayerDeathSetsGameOver

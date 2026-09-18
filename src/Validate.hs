@@ -343,19 +343,18 @@ idsFromOutcomeNPC outcome = case outcome of
 --   generic property writes). These are checked against itemDefs ∪ npcDefs.
 idsFromOutcomeEntity :: Effect -> [String]
 idsFromOutcomeEntity outcome = case outcome of
-    SetValue (VRActorProp actor _) _    -> [actorId actor]
-    ModifyValue (VRActorProp actor _) _ -> [actorId actor]
+    SetValue (VRActorProp actor _) _    -> actorEntity actor
+    ModifyValue (VRActorProp actor _) _ -> actorEntity actor
     Sequence os                         -> concatMap idsFromOutcomeEntity os
     RandomChoice os                     -> concatMap (idsFromOutcomeEntity . snd) os
     Conditional _ t e                   -> idsFromOutcomeEntity t ++ idsFromOutcomeEntity e
     Narrative _ followUp                -> idsFromOutcomeEntity followUp
     _                                   -> []
   where
-    actorId ActorPlayer       = "player"
-    actorId (ActorNPC nId)    = nId
-    actorId (ActorShip vId)   = vId
-    actorId (ActorRoom rId)   = rId
-    actorId (ActorEntity eId) = eId
+    actorEntity ActorPlayer       = ["player"]
+    actorEntity (ActorNPC nId)    = [nId]
+    actorEntity (ActorEntity eId) = [eId]
+    actorEntity _                 = []
 
 idsFromOutcomeQuest :: Effect -> [String]
 idsFromOutcomeQuest outcome = case outcome of
@@ -367,19 +366,21 @@ idsFromOutcomeQuest outcome = case outcome of
     Conditional _ t e            -> idsFromOutcomeQuest t ++ idsFromOutcomeQuest e
     _                            -> []
 
--- | Vehicle IDs referenced via `ship.<id>.<system>` variables in an Effect.
+-- | Vehicle IDs referenced via `ship.<id>.<system>` variables or `ActorShip` in an Effect.
 idsFromOutcomeVehicle :: Effect -> [String]
 idsFromOutcomeVehicle outcome = case outcome of
-    SetValue (VRVariable n) _      -> shipFromVar n
-    ModifyValue (VRVariable n) _   -> shipFromVar n
-    Sequence os                    -> concatMap idsFromOutcomeVehicle os
-    RandomChoice os                -> concatMap (idsFromOutcomeVehicle . snd) os
-    Conditional p t e              -> idsFromPredicateVehicle p
-                                   ++ idsFromOutcomeVehicle t
-                                   ++ idsFromOutcomeVehicle e
-    Narrative _ followUp           -> idsFromOutcomeVehicle followUp
-    ApplyCondition _ _ mt me       -> concatMap idsFromOutcomeVehicle (catMaybes [mt, me])
-    _                              -> []
+    SetValue (VRActorProp (ActorShip vId) _) _    -> [vId]
+    ModifyValue (VRActorProp (ActorShip vId) _) _ -> [vId]
+    SetValue (VRVariable n) _                    -> shipFromVar n
+    ModifyValue (VRVariable n) _                 -> shipFromVar n
+    Sequence os                                  -> concatMap idsFromOutcomeVehicle os
+    RandomChoice os                              -> concatMap (idsFromOutcomeVehicle . snd) os
+    Conditional p t e                            -> idsFromPredicateVehicle p
+                                                 ++ idsFromOutcomeVehicle t
+                                                 ++ idsFromOutcomeVehicle e
+    Narrative _ followUp                         -> idsFromOutcomeVehicle followUp
+    ApplyCondition _ _ mt me                     -> concatMap idsFromOutcomeVehicle (catMaybes [mt, me])
+    _                                            -> []
 
 -- | Vehicle IDs referenced via `ship.<id>.<system>` variables in a Predicate.
 idsFromPredicateVehicle :: Predicate -> [String]
@@ -391,8 +392,9 @@ idsFromPredicateVehicle p = case p of
     Compare lhs _ rhs   -> shipFromRef lhs ++ shipFromRef rhs
     _                   -> []
   where
-    shipFromRef (VRVariable n) = shipFromVar n
-    shipFromRef _              = []
+    shipFromRef (VRVariable n)                  = shipFromVar n
+    shipFromRef (VRActorProp (ActorShip vId) _) = [vId]
+    shipFromRef _                               = []
 
 -- | `"ship.<vehicleId>.<system>"` -> `Just "<vehicleId>"`; anything else ->
 --   Nothing. Requires a non-empty vehicle id and a following ".system" part,

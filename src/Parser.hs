@@ -5,7 +5,7 @@ module Parser where
 
 import Types
 import Game
-import Combat (CombatActor (..), CombatTarget (..), resolveCombat)
+import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), resolveCombat, targetShipSystems)
 import Control.Applicative ((<|>))
 import Data.Char (toLower, isDigit)
 import Data.List (find, intercalate, nub, foldl')
@@ -531,7 +531,9 @@ executeCommand (Interact verb targetStr) state =
                         then (dropItem iId state, "You drop the " ++ itemName item ++ ".")
                         else if verb == VLookAt
                         then (state, resolveCondText (itemDescription item) state)
-                        else (state, "You can't do that to the " ++ itemName item ++ " right now.")
+                        else case if verb == VAttack then tryAttackVehicle targetStr state else Nothing of
+                            Just res -> res
+                            Nothing  -> (state, "You can't do that to the " ++ itemName item ++ " right now.")
 
         (Nothing, Just npc) ->
             let nId = npcId npc
@@ -562,6 +564,7 @@ executeCommand (Interact verb targetStr) state =
             , vn `elem` ["defend", "flee"]
             -> (state, "You are not in combat.")
             | null targetStr -> (state, "")   -- bare verb (e.g. custom command); triggers carry the message
+            | verb == VAttack, Just res <- tryAttackVehicle targetStr state -> res
             | otherwise -> (state, "You don't see '" ++ targetStr ++ "' here.")
 
 -- | Handle "use <item> on <entity>" with weapon→attack fallback
@@ -861,6 +864,37 @@ executeAttack npc _ targetStr state =
         body = combineMsgs (effectMsg : msgs)
     in if null body then (st', "") else (st', body)
 
+-- | Combat logic for attacking a target ship (Phase 7h-2).
+executeAttackShip :: VehicleDef -> String -> GameState -> CommandResult
+executeAttackShip veh targetStr state =
+    let vId = vehicleId veh
+        profile = combatProfile (world state)
+        actors = [PlayerActor]
+                 ++ map CompanionActor (partyMembersInRoom state)
+                 ++ [ShipActor pvId | Just pvId <- [currentVehicle (save state)]]
+        (effects, msgs) = resolveCombat profile actors (TargetShip vId targetStr) CAAttack state
+        (st', effectMsg) = applyOutcomes effects vId state
+        body = combineMsgs (effectMsg : msgs)
+    in if null body then (st', "") else (st', body)
+
+-- | Check if the target names a vehicle at the player's stop, and if so,
+--   refuse attacking an ordinary vehicle or execute ship-to-ship combat.
+tryAttackVehicle :: String -> GameState -> Maybe CommandResult
+tryAttackVehicle targetStr state = case findVehicle targetStr state of
+    Just veh ->
+        let vId = vehicleId veh
+            outsideStop = case currentVehicle (save state) of
+                Just pvId -> vsCurrentStop (getVehicleState pvId state)
+                Nothing   -> currentRoom (save state)
+            vehStop = vsCurrentStop (getVehicleState vId state)
+            isAboardTarget = currentVehicle (save state) == Just vId
+        in if isAboardTarget || vehStop /= outsideStop
+           then Just (state, "You don't see '" ++ targetStr ++ "' here.")
+           else case targetShipSystems (TargetShip vId targetStr) state of
+               Nothing -> Just (state, "You can't attack the " ++ targetStr ++ ".")
+               Just _  -> Just (executeAttackShip veh targetStr state)
+    Nothing -> Nothing
+
 -- | Concatenate non-empty combat messages.
 combineMsgs :: [String] -> String
 combineMsgs = unlines . filter (not . null)
@@ -873,8 +907,9 @@ tacticalVerbAction "flee"   = Just CAFlee
 tacticalVerbAction _        = Nothing
 
 -- | Execute a tactical combat action against the first living NPC in the
---   room (the same heuristic as `attack <target>`). Used for bare verbs
---   like `defend` and `flee` that have no explicit target.
+--   room (the same heuristic as `attack <target>`), or against a ship at
+--   the current stop. Used for bare verbs like `defend` and `flee` that
+--   have no explicit target.
 executeTacticalAction :: CombatAction -> GameState -> CommandResult
 executeTacticalAction action state =
     let roomNPCs = getNPCsInRoom (currentRoom (save state)) state
@@ -882,7 +917,6 @@ executeTacticalAction action state =
                      , let ns = Map.lookup (npcId npc) (npcStates (save state))
                      , maybe True (\s -> npcStatus s /= "dead") ns ]
     in case livingNPCs of
-        [] -> (state, "There's nothing to fight here.")
         (npc : _) ->
             let nId = npcId npc
                 profile = combatProfile (world state)
@@ -893,6 +927,28 @@ executeTacticalAction action state =
                 (st', effectMsg) = applyOutcomes effects nId state
                 body = combineMsgs (effectMsg : msgs)
             in if null body then (st', "") else (st', body)
+        [] ->
+            let outsideStop = case currentVehicle (save state) of
+                    Just pvId -> vsCurrentStop (getVehicleState pvId state)
+                    Nothing   -> currentRoom (save state)
+                targetShips = [ v | v <- Map.elems (vehicleDefs (world state))
+                              , Just (vehicleId v) /= currentVehicle (save state)
+                              , vsCurrentStop (getVehicleState (vehicleId v) state) == outsideStop
+                              , isJust (targetShipSystems (TargetShip (vehicleId v) "") state)
+                              , maybe True (> 0) (targetShipSystems (TargetShip (vehicleId v) "") state >>= ssHull)
+                              ]
+            in case targetShips of
+                (veh : _) ->
+                    let vId = vehicleId veh
+                        profile = combatProfile (world state)
+                        actors = [PlayerActor]
+                                 ++ map CompanionActor (partyMembersInRoom state)
+                                 ++ [ShipActor pvId | Just pvId <- [currentVehicle (save state)]]
+                        (effects, msgs) = resolveCombat profile actors (TargetShip vId (vehicleName veh)) action state
+                        (st', effectMsg) = applyOutcomes effects vId state
+                        body = combineMsgs (effectMsg : msgs)
+                    in if null body then (st', "") else (st', body)
+                [] -> (state, "There's nothing to fight here.")
 
 -- ---------------------------------------------------------------------------
 -- Help text

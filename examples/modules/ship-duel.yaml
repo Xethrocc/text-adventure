@@ -1,0 +1,170 @@
+name: "Schiff-Duell (Ship Combat)"
+start_room: sd_dock
+
+# Phase 7h-2 — Schiff-gegen-Schiff-Duell.
+# Die Kestrel (Spielerschiff) und das Korsarenschiff (Gegnerschiff) haben beide
+# `systems:` (power, shields, hull, weapons). Im Kampf `attack corsair` absorbieren
+# die Schilde und die Hülle des Zielschiffs den Schaden, und das Gegnerschiff feuert
+# mit seinen Bordkanonen zurück auf die Kestrel.
+
+player:
+  attack: 5
+  defense: 3
+  max_hp: 20
+
+verbs:
+  - { name: umleiten, aliases: [reroute] }
+  - { name: aufladen, aliases: [charge] }
+
+vehicles:
+  - id: kestrel
+    name: Kestrel
+    desc: "Ein wendiger Abfangjäger der Flotte, schlank und kampferprobt."
+    type: player
+    entry_room: sd_bridge
+    cockpit: sd_bridge
+    keys: [kestrel, schiff, kurier]
+    interior:
+      - id: sd_bridge
+        name: Brücke der Kestrel
+        desc: "Sichtschirme und Flugkontrollen. Nach Osten liegt die Waffenstation, nach Süden der Maschinenraum."
+        exits:
+          east: {to: sd_guns}
+          south: {to: sd_engine}
+      - id: sd_guns
+        name: Waffenstation der Kestrel
+        desc: "Die Feuerleitkonsole der Zwillingsplasmawerfer. Mit 'aufladen' füllst du die Generatoren."
+        exits:
+          west: {to: sd_bridge}
+      - id: sd_engine
+        name: Maschinenraum der Kestrel
+        desc: "Der Fusionsantrieb summt tief. Mit 'umleiten' kannst du Reserven freisetzen."
+        exits:
+          north: {to: sd_bridge}
+          east: {to: sd_cargo}
+      - id: sd_cargo
+        name: Frachtraum der Kestrel
+        desc: "Verzurrte Kisten und Ersatzteile."
+        exits:
+          west: {to: sd_engine}
+    stops:
+      "Dock 9": sd_dock
+      "Asteroidenfeld": sd_asteroid
+    start_stop: "Dock 9"
+    systems:
+      power:   { initial: 6, max: 6 }
+      shields: { initial: 6, max: 8 }
+      hull:    { initial: 6, max: 10 }
+      weapons: { initial: 2, max: 8 }
+    stations:
+      - room: sd_engine
+        verb: umleiten
+        effects:
+          - { add_var: ship.kestrel.power, delta: 3 }
+          - if: { compare_var: { name: ship.kestrel.power, op: gt, value: 6 } }
+            then: [ { set_var: ship.kestrel.power, value: 6 } ]
+          - { msg: "Der Reaktor summt auf — Energie strömt in die Systeme." }
+      - room: sd_guns
+        verb: aufladen
+        effects:
+          - { add_var: ship.kestrel.weapons, delta: 3 }
+          - if: { compare_var: { name: ship.kestrel.weapons, op: gt, value: 8 } }
+            then: [ { set_var: ship.kestrel.weapons, value: 8 } ]
+          - { msg: "Die Geschütztürme surren — die Plasmawerfer sind voll geladen." }
+
+  - id: corsair
+    name: Korsarenschiff
+    desc: "Ein bedrohlicher Piraten-Raider mit gezackten Panzerplatten und schweren Kanonen."
+    type: auto
+    entry_room: sd_debris
+    keys: [korsarenschiff, corsair, korsar, pirat, raider]
+    stops:
+      "Asteroidenfeld": sd_asteroid
+    start_stop: "Asteroidenfeld"
+    systems:
+      power:   { initial: 6, max: 6 }
+      shields: { initial: 6, max: 6 }
+      hull:    { initial: 12, max: 12 }
+      weapons: { initial: 8, max: 8 }
+
+rooms:
+  - id: sd_dock
+    name: Dock 9
+    desc: "Die Andockbucht der Station. Die Kestrel liegt startbereit an der Rampe."
+    exits:
+      north: {to: sd_hangar}
+      east: {to: sd_corridor}
+  - id: sd_hangar
+    name: Hangarhalle
+    desc: "Eine riesige Halle mit Ladekränen und Treibstoffleitungen."
+    exits:
+      south: {to: sd_dock}
+      east: {to: sd_control}
+  - id: sd_control
+    name: Flugkontrolle
+    desc: "Flackernde Radarschirme zeigen den Sektor und das nahe Asteroidenfeld."
+    exits:
+      west: {to: sd_hangar}
+      south: {to: sd_corridor}
+  - id: sd_corridor
+    name: Stationsring
+    desc: "Ein geschäftiger Gang. Nach Osten liegt die Waffenkammer, nach Süden die Kantine."
+    exits:
+      west: {to: sd_dock}
+      north: {to: sd_control}
+      east: {to: sd_armory}
+      south: {to: sd_cantina}
+  - id: sd_armory
+    name: Stations-Waffenkammer
+    desc: "Stahlschränke mit Warnaufschriften. Die Munitionsbänder sind sauber aufgereiht."
+    exits:
+      west: {to: sd_corridor}
+  - id: sd_cantina
+    name: Raumfahrer-Kantine
+    desc: "Neonröhren flackern über zerkratzten Tischen. Piloten tauschen Gerüchte über Piraten aus."
+    exits:
+      north: {to: sd_corridor}
+
+  - id: sd_asteroid
+    name: Asteroidenfeld
+    desc: "Treibende Felsen und kosmischer Staub. Voraus lauert das Korsarenschiff im Hinterhalt."
+    exits:
+      north: {to: sd_debris}
+      east: {to: sd_outpost}
+  - id: sd_debris
+    name: Trümmerfeld
+    desc: "Zersplitterte Wrackteile zeugen von vergangenen Raumgefechten."
+    exits:
+      south: {to: sd_asteroid}
+      east: {to: sd_salvage}
+  - id: sd_salvage
+    name: Bergungszone
+    desc: "Schwimmende Frachtcontainer treiben zwischen den Asteroiden."
+    exits:
+      west: {to: sd_debris}
+  - id: sd_outpost
+    name: Verlassener Horchposten
+    desc: "Eine verwaiste Antennenstation, deren Sender ins Leere funkt."
+    exits:
+      west: {to: sd_asteroid}
+
+rules:
+  - id: corsair_encounter
+    on: enter sd_asteroid
+    once: true
+    effects:
+      - { msg: "Das Korsarenschiff taucht hinter einem Asteroiden auf und nimmt dich ins Visier!" }
+  - id: corsair_destroyed
+    on: turn
+    when:
+      compare_var: { name: ship.corsair.hull, op: lte, value: 0 }
+    effects:
+      - { game_end: victory, msg: "VICTORY — Das Piratenschiff ist zerstört, der Sektor ist befreit!" }
+  - id: hull_failure
+    on: turn
+    when:
+      all:
+        - compare_var: { name: ship.kestrel.hull, op: lte, value: 0 }
+        - compare_var: { name: ship.corsair.hull, op: gt, value: 0 }
+    effects:
+      - { game_end: death, msg: "Die Hülle der Kestrel bricht auf — du verglühst mit dem Schiff." }
