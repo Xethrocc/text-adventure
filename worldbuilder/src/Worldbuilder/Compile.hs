@@ -121,6 +121,7 @@ compileAdventure adv =
                 , E.triggerDefs = allTriggerDefs
                 , E.combatProfile = combatProfileCompiled
                 , E.worldName = fromMaybe "" (advName adv)
+                , E.abilities = Map.empty
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
@@ -731,6 +732,7 @@ allWorldEffects gw = concat
     , [ e | Just e <- map questReward (Map.elems (E.questDefs gw)) ]
     , concatMap (Map.elems . vehicleConditionEffects) (Map.elems (E.vehicleDefs gw))
     , Map.elems (E.itemInteractions gw)
+    , concatMap E.paEffects (Map.elems (E.abilities gw))
     ]
   where
     roomHooks r = catMaybes [roomOnEnter r, roomOnLook r, roomOnExit r, roomSearchOutcome r]

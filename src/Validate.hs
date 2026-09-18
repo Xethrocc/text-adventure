@@ -289,6 +289,7 @@ allOutcomes gw = concat
     -- validator that ignores them is blind to `give:`, `start_quest:` and flag
     -- references inside `rules:`.
     , concatMap trEffects (triggerDefs gw)
+    , concatMap paEffects (Map.elems (abilities gw))
     ]
 
 -- | Every predicate tree reachable from a GameWorld: trigger conditions,

@@ -702,7 +702,9 @@ testDefaultSaveStateFieldsInitialised = do
                 [ TriggerDef "welcome" (OnEnter "start") Nothing
                     [ SendMessage "Willkommen zurück." ] False 0 ]
             }
-        worldPath = "/tmp/ta-p01-defaultsavestate-world.json"
+        
+    tmpDir <- getTemporaryDirectory
+    let worldPath = tmpDir ++ "/ta-p01-defaultsavestate-world.json"
     BLC.writeFile worldPath (Aeson.encode w)
     loaded <- loadGame worldPath Nothing
     case loaded of
@@ -2976,10 +2978,6 @@ testWorldLoadersAndErrors = do
         r7 <- case stBoth of
             Right st' -> expectEqual (save initSampleGame) (save st')
             Left err  -> do putStrLn ("  loadGame (with save) failed: " ++ err); pure False
-        mapM_ (\f -> do
-                  e <- doesFileExist f
-                  when e (removeFile f))
-              ["l1-world.json", "l1-save.json", "l1-bogus.json"]
         pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
 
 -- | L8: `equipmentSummary` is player-facing text that had no assertion.
@@ -3047,6 +3045,203 @@ testCombatRoundStateVars = do
               (combatVarPrefix `isPrefixOf` combatRoundKey
                && combatVarPrefix `isPrefixOf` combatEngagedKey)
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- | Phase 7f-3: Tactical Combat (A2)
+
+testTacticalAttackDamage :: IO Bool
+testTacticalAttackDamage = do
+    let tactical = CombatTactical (TacticalCombat PlayerFirst True 100 "speed")
+        worldT = (world initSampleGame) { combatProfile = tactical }
+        st = initSampleGame { world = worldT, save = (save initSampleGame) { currentRoom = "hallway" } }
+    -- attack goblin
+    let (newState, msg) = executeCommand (Interact VAttack "goblin") st
+    
+    r1 <- expectEqual 1 (combatRound newState)
+    r2 <- expectTrue "combat engaged" (isCombatEngaged newState)
+    r3 <- expectEqual (Just (VVText "attack")) (getVariable combatActionKey newState)
+    
+    let goblinHp = (Map.lookup "goblin" (npcStates (save newState))) >>= npcHealth
+    -- Base HP = 30, Player attack = 10, Goblin defense = 2 -> 8 damage -> 22
+    r4 <- expectEqual (Just 22) goblinHp
+    r5 <- expectTrue "damage message" (isInfixOf "hit the goblin for 8" msg)
+    pure (r1 && r2 && r3 && r4 && r5)
+
+testTacticalDefend :: IO Bool
+testTacticalDefend = do
+    let tactical = CombatTactical (TacticalCombat PlayerFirst True 100 "speed")
+        worldT = (world initSampleGame) { combatProfile = tactical }
+        st = initSampleGame { world = worldT, save = (save initSampleGame) { currentRoom = "hallway" } }
+        stEngaged = setCombatEngaged True st
+    
+    -- Custom verb routing via Interaction
+    let (newState, msg) = executeCommand (Interact (VCustom "defend") "") stEngaged
+    
+    r1 <- expectEqual 1 (combatRound newState)
+    r2 <- expectTrue "combat engaged" (isCombatEngaged newState)
+    r3 <- expectEqual (Just (VVText "defend")) (getVariable combatActionKey newState)
+    
+    let goblinHp = (Map.lookup "goblin" (npcStates (save newState))) >>= npcHealth
+    r4 <- expectEqual (Just 30) goblinHp -- no damage
+    r5 <- expectTrue "defend message" (isInfixOf "brace yourself" msg)
+    pure (r1 && r2 && r3 && r4 && r5)
+
+testTacticalFlee :: IO Bool
+testTacticalFlee = do
+    let tactical = CombatTactical (TacticalCombat PlayerFirst True 100 "speed")
+        worldT = (world initSampleGame) { combatProfile = tactical }
+        st = initSampleGame { world = worldT, save = (save initSampleGame) { currentRoom = "hallway" } }
+        stEngaged = setCombatEngaged True st
+    
+    let (newState, msg) = executeCommand (Interact (VCustom "flee") "") stEngaged
+    
+    r1 <- expectEqual 0 (combatRound newState)
+    r2 <- expectTrue "combat disengaged" (not (isCombatEngaged newState))
+    r3 <- expectEqual (Just (VVText "flee")) (getVariable combatActionKey newState)
+    r4 <- expectTrue "flee message" (isInfixOf "flee from the goblin" msg)
+    pure (r1 && r2 && r3 && r4)
+
+testTacticalFleeBlocked :: IO Bool
+testTacticalFleeBlocked = do
+    let tactical = CombatTactical (TacticalCombat PlayerFirst False 100 "speed")
+        worldT = (world initSampleGame) { combatProfile = tactical }
+        st = initSampleGame { world = worldT, save = (save initSampleGame) { currentRoom = "hallway" } }
+        stEngaged = setCombatEngaged True st
+    
+    let (newState, msg) = executeCommand (Interact (VCustom "flee") "") stEngaged
+    
+    r1 <- expectEqual 1 (combatRound newState)
+    r2 <- expectTrue "combat engaged" (isCombatEngaged newState)
+    r3 <- expectEqual (Just (VVText "flee")) (getVariable combatActionKey newState)
+    r4 <- expectTrue "blocked message" (isInfixOf "can't flee" msg)
+    pure (r1 && r2 && r3 && r4)
+
+testTacticalMultiRound :: IO Bool
+testTacticalMultiRound = do
+    let tactical = CombatTactical (TacticalCombat PlayerFirst True 100 "speed")
+        worldT = (world initSampleGame) { combatProfile = tactical }
+        st = initSampleGame { world = worldT, save = (save initSampleGame) { currentRoom = "hallway" } }
+        st0 = setCombatEngaged True st
+        
+    -- Round 1: Defend
+    let (st1, _) = executeCommand (Interact (VCustom "defend") "") st0
+    r1 <- expectEqual 1 (combatRound st1)
+    
+    -- Round 2: Attack
+    let (st2, _) = executeCommand (Interact VAttack "goblin") st1
+    r2 <- expectEqual 2 (combatRound st2)
+    r3 <- expectEqual (Just 22) ((Map.lookup "goblin" (npcStates (save st2))) >>= npcHealth)
+    
+    -- Round 3: Flee
+    let (st3, _) = executeCommand (Interact (VCustom "flee") "") st2
+    r4 <- expectEqual 0 (combatRound st3)
+    r5 <- expectTrue "disengaged" (not (isCombatEngaged st3))
+    pure (r1 && r2 && r3 && r4 && r5)
+
+testCombatTacticalRoundTrip :: IO Bool
+testCombatTacticalRoundTrip = do
+    let prof = CombatTactical (TacticalCombat BySpeed False 50 "speed")
+    let encoded = Aeson.encode prof
+    r1 <- expectTrue "decode matches" (Aeson.decode encoded == Just prof)
+    pure r1
+
+-- | Phase 7f-3 A3: Player abilities resource cost
+testAbilityCost :: IO Bool
+testAbilityCost = do
+    let fireball = PlayerAbility "fireball" "Fireball" "player.mana" 10 0
+            [ModifyValue (VRProperty "goblin" "hp") (-15)]
+        tactical = CombatTactical (TacticalCombat PlayerFirst True 100 "speed")
+        worldT = (world initSampleGame)
+            { combatProfile = tactical
+            , abilities = Map.singleton "fireball" fireball }
+        stBase = initSampleGame { world = worldT, save = (save initSampleGame) { currentRoom = "hallway" } }
+        stEngaged = setCombatEngaged True stBase
+
+    -- Case 1: Insufficient mana (5 < 10)
+    let stLowMana = setVariable "player.mana" (VVInt 5) stEngaged
+        (stFail, msgFail) = executeCommand (Interact (VCustom "use-ability") "fireball") stLowMana
+
+    r1 <- expectTrue "error message for insufficient resource" (isInfixOf "Not enough resources" msgFail)
+    r2 <- expectEqual (Just (VVInt 5)) (getVariable "player.mana" stFail)
+    r3 <- expectEqual 0 (combatRound stFail)
+    let goblinHpAfterFail = (Map.lookup "goblin" (npcStates (save stFail))) >>= npcHealth
+    r4 <- expectEqual (Just 30) goblinHpAfterFail
+
+    -- Case 2: Sufficient mana (20 >= 10)
+    let stHighMana = setVariable "player.mana" (VVInt 20) stEngaged
+        (stSuccess, msgSuccess) = executeCommand (Interact (VCustom "use-ability") "fireball") stHighMana
+
+    r5 <- expectTrue "success message names ability" (isInfixOf "You use Fireball!" msgSuccess)
+    r6 <- expectEqual (Just (VVInt 10)) (getVariable "player.mana" stSuccess)
+    r7 <- expectEqual 1 (combatRound stSuccess)
+    r8 <- expectEqual (Just (VVText "ability")) (getVariable combatActionKey stSuccess)
+    r9 <- expectEqual (Just (VVText "fireball")) (getVariable combatAbilityKey stSuccess)
+    let goblinHpAfterSuccess = (Map.lookup "goblin" (npcStates (save stSuccess))) >>= npcHealth
+    r10 <- expectEqual (Just 15) goblinHpAfterSuccess
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10)
+
+-- | Phase 7f-3 A3: Player abilities cooldown gating
+testAbilityCooldown :: IO Bool
+testAbilityCooldown = do
+    let slash = PlayerAbility "slash" "Power Slash" "player.stamina" 5 3
+            [ModifyValue (VRProperty "goblin" "hp") (-10)]
+        tactical = CombatTactical (TacticalCombat PlayerFirst True 100 "speed")
+        worldT = (world initSampleGame)
+            { combatProfile = tactical
+            , abilities = Map.singleton "slash" slash }
+        stBase = initSampleGame { world = worldT, save = (save initSampleGame) { currentRoom = "hallway" } }
+        st0 = setVariable "player.stamina" (VVInt 20) (setCombatEngaged True stBase)
+
+    -- First use: succeeds and applies cooldown condition
+    let (st1, msg1) = executeCommand (Interact (VCustom "use-ability") "slash") st0
+    r1 <- expectTrue "first use succeeds" (isInfixOf "You use Power Slash!" msg1)
+    r2 <- expectTrue "cooldown condition applied" (hasCondition "cooldown_slash" st1)
+    r3 <- expectEqual (Just (VVInt 15)) (getVariable "player.stamina" st1)
+    let goblinHp1 = (Map.lookup "goblin" (npcStates (save st1))) >>= npcHealth
+    r4 <- expectEqual (Just 20) goblinHp1
+
+    -- Immediate second use: blocked by cooldown
+    let (st2, msg2) = executeCommand (Interact (VCustom "use-ability") "slash") st1
+    r5 <- expectTrue "blocked by cooldown message" (isInfixOf "Ability is on cooldown" msg2)
+    r6 <- expectEqual (Just (VVInt 15)) (getVariable "player.stamina" st2)
+    r7 <- expectEqual 1 (combatRound st2)
+    let goblinHp2 = (Map.lookup "goblin" (npcStates (save st2))) >>= npcHealth
+    r8 <- expectEqual (Just 20) goblinHp2
+
+    -- Parser test: "use-ability slash", "use ability slash", and "ability slash"
+    let cmd1 = parseCommand "use-ability slash"
+        cmd2 = parseCommand "use ability slash"
+        cmd3 = parseCommand "ability slash"
+    r9 <- expectEqual (Interact (VCustom "use-ability") "slash") cmd1
+    r10 <- expectEqual (Interact (VCustom "use-ability") "slash") cmd2
+    r11 <- expectEqual (Interact (VCustom "use-ability") "slash") cmd3
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11)
+
+-- | Phase 7f-3 A3: BySpeed initiative populating VarMap
+testBySpeedInitiative :: IO Bool
+testBySpeedInitiative = do
+    let tactical = CombatTactical (TacticalCombat BySpeed True 100 "agility")
+        worldT = (world initSampleGame) { combatProfile = tactical }
+        stBase = initSampleGame { world = worldT, save = (save initSampleGame) { currentRoom = "hallway" } }
+        -- Set player agility skill to 18
+        stPlayer = modifySkill "agility" 18 stBase
+        -- Set goblin agility prop to 12
+        stBoth = stPlayer { save = (save stPlayer)
+            { npcStates = Map.adjust (\ns -> ns { npcProps = Map.singleton "agility" 12 })
+                                     "goblin" (npcStates (save stPlayer)) } }
+        stEngaged = setCombatEngaged True stBoth
+
+    -- Resolve a tactical action (e.g. attack)
+    let (stAfter, _) = executeCommand (Interact VAttack "goblin") stEngaged
+    r1 <- expectEqual (Just (VVInt 18)) (getVariable combatInitiativePlayerKey stAfter)
+    r2 <- expectEqual (Just (VVInt 12)) (getVariable (combatInitiativeNpcKey "goblin") stAfter)
+
+    -- Defend also populates/refreshes initiative
+    let (stDefend, _) = executeCommand (Interact (VCustom "defend") "") stEngaged
+    r3 <- expectEqual (Just (VVInt 18)) (getVariable combatInitiativePlayerKey stDefend)
+    r4 <- expectEqual (Just (VVInt 12)) (getVariable (combatInitiativeNpcKey "goblin") stDefend)
+
+    pure (r1 && r2 && r3 && r4)
 
 main :: IO ()
 main = do
@@ -3260,6 +3455,15 @@ main = do
         , runTest "equipmentSummary text (L8)" testEquipmentSummaryText
         , runTest "state: predicate covers NPC/item/lock states" testEntityStatePredicateCoversAllKinds
         , runTest "combat round state lives in the VarMap (7f-3 A1)" testCombatRoundStateVars
+        , runTest "tactical CAAttack damage and state (7f-3 A2)" testTacticalAttackDamage
+        , runTest "tactical CADefend state updates (7f-3 A2)" testTacticalDefend
+        , runTest "tactical CAFlee resolves (7f-3 A2)" testTacticalFlee
+        , runTest "tactical CAFlee blocked if disallowed (7f-3 A2)" testTacticalFleeBlocked
+        , runTest "tactical multi-round combat (7f-3 A2)" testTacticalMultiRound
+        , runTest "tactical profile JSON round-trip (7f-3 A2)" testCombatTacticalRoundTrip
+        , runTest "tactical abilities resource cost (7f-3 A3)" testAbilityCost
+        , runTest "tactical abilities cooldown gating (7f-3 A3)" testAbilityCooldown
+        , runTest "tactical BySpeed initiative (7f-3 A3)" testBySpeedInitiative
         -- Narratives (Phase 4.4)
         , runTest "narrative returns lines" testNarrativeReturnsLines
         , runTest "narrative stores pending (no side effects)" testNarrativeStoresPending

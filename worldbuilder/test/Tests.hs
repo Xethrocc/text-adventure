@@ -12,6 +12,7 @@ import qualified Data.Set as Set
 import System.Exit (exitFailure)
 import System.Directory (doesFileExist, getTemporaryDirectory, removeFile)
 import System.FilePath ((</>))
+import System.IO (hSetEncoding, stdout, utf8)
 import Worldbuilder.Types
 import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome)
 import Worldbuilder.ParseFile (parseAdventureFile)
@@ -35,6 +36,7 @@ minWorld = E.GameWorld
     , triggerDefs = []
     , combatProfile = E.CombatClassic
     , worldName = ""
+    , abilities = Map.empty
     }
 
 -- | Helper: a minimal valid SaveState referencing room_0
@@ -808,7 +810,7 @@ testParseErrorIsReported = do
     let badPath = tmp </> "text-adventure-parse-error.yaml"
     writeFile badPath "rooms: [\n"
     result <- parseAdventureFile badPath
-    removeFile badPath
+    -- removeFile badPath omitted on Windows to avoid file lock conflict
     r1 <- case result of
         Left err -> expectTrue ("mentions the YAML parse error: " ++ err)
                                  ("YAML parse error" `isInfixOf` err)
@@ -1800,7 +1802,7 @@ tests =
     , ("unknown direction is a compile error", testUnknownDirectionFails)
     , ("'activate' verb maps to VUse", testActivateVerbMapsToUse)
     , ("unknown verb is a compile error", testUnknownVerbFails)
-    , ("verb aliases (examine→VLookAt) work", testRepeatedVerbAliases)
+    , ("verb aliases (examine->VLookAt) work", testRepeatedVerbAliases)
     , ("on_take is merged into verb map", testOnTakeMergedIntoVerbMap)
     , ("on_take conflict with verb_map merges outcomes", testOnTakeConflictMerges)
     , ("unknown equip slot is a compile error", testInvalidSlotFails)
@@ -1909,6 +1911,7 @@ testCombatVariableClash = do
 
 main :: IO ()
 main = do
+    hSetEncoding stdout utf8
     results <- mapM (\(name, test) -> runTest name test) tests
     let failed = length (filter not results)
     putStrLn ""

@@ -920,7 +920,37 @@ data GameWorld = GameWorld
     , triggerDefs        :: [TriggerDef]                              -- ^ Trigger rules (Phase 3f)
     , combatProfile      :: CombatProfile                            -- ^ combat policy (Phase 7f)
     , worldName          :: String                                   -- ^ adventure title (`name:`), shown as the game banner
+    , abilities          :: Map.Map String PlayerAbility             -- ^ Player abilities (Phase 7f-3, step A3)
     } deriving (Show, Eq)
+
+-- | Player ability definition for tactical combat (Phase 7f-3, step A3).
+data PlayerAbility = PlayerAbility
+    { paId       :: String
+    , paName     :: String
+    , paCostVar  :: String   -- ^ variable to deduct cost from, e.g. "player.mana"
+    , paCost     :: Int      -- ^ amount to deduct
+    , paCooldown :: Int      -- ^ cooldown duration in turns
+    , paEffects  :: [Effect] -- ^ effects executed on use
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON PlayerAbility where
+    toJSON pa = object
+        [ "id"        .= paId pa
+        , "name"      .= paName pa
+        , "cost_var"  .= paCostVar pa
+        , "cost"      .= paCost pa
+        , "cooldown"  .= paCooldown pa
+        , "effects"   .= paEffects pa
+        ]
+
+instance FromJSON PlayerAbility where
+    parseJSON = withObject "PlayerAbility" $ \o -> PlayerAbility
+        <$> (o .: "id" <|> o .: "paId")
+        <*> (o .: "name" <|> o .: "paName")
+        <*> (o .:? "cost_var" >>= maybe (o .:? "paCostVar" .!= "") pure)
+        <*> (o .:? "cost" >>= maybe (o .:? "paCost" .!= 0) pure)
+        <*> (o .:? "cooldown" >>= maybe (o .:? "paCooldown" .!= 0) pure)
+        <*> (o .:? "effects" >>= maybe (o .:? "paEffects" .!= []) pure)
 
 -- | Combat policy, chosen by authored data (Phase 7f). `CombatClassic` is
 --   the exact pre-7f behaviour and the default when no `combat:` block is
@@ -929,6 +959,7 @@ data CombatProfile
     = CombatOff (Maybe String)                 -- ^ attack refused; optional custom message
     | CombatNarrative NarrativeCombat          -- ^ opposed roll -> on_win/on_lose effects
     | CombatClassic                            -- ^ today's behaviour: attack vs defense, retaliation
+    | CombatTactical TacticalCombat            -- ^ round-based: one action per round (Phase 7f-3)
     deriving (Show, Eq, Generic)
 
 -- | Narrative combat: the player's effective attack is rolled against the
@@ -940,13 +971,46 @@ data NarrativeCombat = NarrativeCombat
     , ncOnLose     :: Effect
     } deriving (Show, Eq, Generic)
 
+-- | Tactical combat configuration (Phase 7f-3, step A2/A3).
+--
+--   One player action = one round. The enemy reacts via an `on: turn` rule
+--   gated on `combat.engaged >= 1` — no second interpreter.
+data TacticalCombat = TacticalCombat
+    { tcInitiative     :: InitiativeRule  -- ^ who strikes first
+    , tcFleeAllowed    :: Bool            -- ^ can the player flee?
+    , tcMaxRounds      :: Int             -- ^ hard limit on rounds (safety net)
+    , tcSpeedAttribute :: String          -- ^ skill/prop name for BySpeed initiative (default "speed")
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON TacticalCombat where
+    toJSON tc = object
+        [ "initiative"      .= tcInitiative tc
+        , "flee_allowed"    .= tcFleeAllowed tc
+        , "max_rounds"      .= tcMaxRounds tc
+        , "speed_attribute" .= tcSpeedAttribute tc
+        ]
+
+instance FromJSON TacticalCombat where
+    parseJSON = withObject "TacticalCombat" $ \o -> TacticalCombat
+        <$> (o .:? "initiative"      <|> o .:? "tcInitiative")      .!= PlayerFirst
+        <*> (o .:? "flee_allowed"    <|> o .:? "tcFleeAllowed")     .!= True
+        <*> (o .:? "max_rounds"      <|> o .:? "tcMaxRounds")       .!= 100
+        <*> (o .:? "speed_attribute" <|> o .:? "tcSpeedAttribute")  .!= "speed"
+
+-- | Initiative order within a tactical round.
+--   `BySpeed` is defined for forward-compatibility (A3) but falls back to
+--   `PlayerFirst` at runtime until A3 wires it.
+data InitiativeRule = PlayerFirst | EnemyFirst | BySpeed
+    deriving (Show, Eq, Generic)
+
+instance ToJSON InitiativeRule
+instance FromJSON InitiativeRule
+
 -- | What the player does in one combat round.
 --
---   Phase 7f-3 (`tactical`) step A0: the type and the resolver parameter exist
---   first, so `resolveCombat` has the shape a round-based profile needs. Only
---   `CAAttack` is wired today; A2/A3 give the other constructors behaviour — as
---   data (`on: command` rules, round state in the VarMap), never as a second
---   interpreter.
+--   Phase 7f-3 (`tactical`) step A2: every constructor is wired. `CAAttack`
+--   deals damage; `CADefend` sets `combat.action` for the enemy trigger;
+--   `CAFlee` ends the fight if allowed. `CAUseItem`/`CAAbility` are A3.
 --   See `plan-7f3-tactical-7h2-shipduell.md`.
 data CombatAction
     = CAAttack
@@ -969,6 +1033,12 @@ instance ToJSON CombatProfile where
         , "on_win"  .= ncOnWin nc
         , "on_lose" .= ncOnLose nc ]
     toJSON CombatClassic = object [ "profile" .= ("classic" :: String) ]
+    toJSON (CombatTactical tc) = object
+        [ "profile"         .= ("tactical" :: String)
+        , "initiative"      .= tcInitiative tc
+        , "flee_allowed"    .= tcFleeAllowed tc
+        , "max_rounds"      .= tcMaxRounds tc
+        , "speed_attribute" .= tcSpeedAttribute tc ]
 
 instance FromJSON CombatProfile where
     parseJSON v = withObject "CombatProfile" (\o -> do
@@ -981,6 +1051,12 @@ instance FromJSON CombatProfile where
                     <*> o .:? "on_win"  .!= Noop
                     <*> o .:? "on_lose" .!= Noop)
             "classic"   -> pure CombatClassic
+            "tactical"  -> CombatTactical <$>
+                (TacticalCombat
+                    <$> o .:? "initiative"      .!= PlayerFirst
+                    <*> o .:? "flee_allowed"     .!= True
+                    <*> o .:? "max_rounds"       .!= 100
+                    <*> o .:? "speed_attribute"  .!= "speed")
             other       -> fail ("unknown combat profile '" ++ other ++ "'")) v
 
 instance ToJSON GameWorld where
@@ -997,6 +1073,7 @@ instance ToJSON GameWorld where
         , "triggerDefs"       .= triggerDefs gw
         , "combatProfile"      .= combatProfile gw
         , "worldName"          .= worldName gw
+        , "abilities"          .= abilities gw
         ]
 
 instance FromJSON GameWorld where
@@ -1013,6 +1090,7 @@ instance FromJSON GameWorld where
         <*> o .:? "triggerDefs" .!= []
         <*> o .:? "combatProfile" .!= CombatClassic
         <*> o .:? "worldName" .!= ""
+        <*> o .:? "abilities" .!= Map.empty
 
 -- | Encode item-on-item outcomes as objects (P2-9).
 itemInteractionsToJSON :: Map.Map (String, String) Effect -> Value

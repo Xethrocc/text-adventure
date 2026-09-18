@@ -212,6 +212,13 @@ parseSimpleCommandWith defs tokens input = case tokens of
     "put"   : "down" : targetParts | not (null targetParts) -> Interact VDrop (unwords (safeStripStopWords targetParts))
     "talk"  : "to"   : targetParts | not (null targetParts) -> Interact VTalk (unwords (safeStripStopWords targetParts))
     "speak" : "with" : targetParts | not (null targetParts) -> Interact VTalk (unwords (safeStripStopWords targetParts))
+    -- Tactical abilities (Phase 7f-3, step A3)
+    "use-ability" : abParts | not (null abParts) ->
+        Interact (VCustom "use-ability") (unwords (safeStripStopWords abParts))
+    "use" : "ability" : abParts | not (null abParts) ->
+        Interact (VCustom "use-ability") (unwords (safeStripStopWords abParts))
+    "ability" : abParts | not (null abParts) ->
+        Interact (VCustom "use-ability") (unwords (safeStripStopWords abParts))
     "use"   : useParts -> parseUse useParts input
     -- Generic verb-noun parsing: resolve against registry (core + custom)
     v : targetParts | not (null targetParts) -> case parseVerbWith defs v of
@@ -537,6 +544,18 @@ executeCommand (Interact verb targetStr) state =
                     | otherwise -> (state, "You can't do that to " ++ npcName npc ++ ".")
 
         (Nothing, Nothing)
+            -- Phase 7f-3, A2: bare `defend` / `flee` during a tactical fight
+            -- route through the combat resolver with the corresponding action.
+            | null targetStr, VCustom vn <- verb
+            , CombatTactical _ <- combatProfile (world state)
+            , isCombatEngaged state
+            , Just ca <- tacticalVerbAction vn
+            -> executeTacticalAction ca state
+            -- Phase 7f-3, A3: `use-ability <id>` during a tactical fight
+            | not (null targetStr), VCustom vn <- verb
+            , vn `elem` ["use-ability", "ability"]
+            , CombatTactical _ <- combatProfile (world state)
+            -> executeTacticalAction (CAAbility targetStr) state
             | null targetStr -> (state, "")   -- bare verb (e.g. custom command); triggers carry the message
             | otherwise -> (state, "You don't see '" ++ targetStr ++ "' here.")
 
@@ -840,6 +859,35 @@ executeAttack npc _ targetStr state =
 -- | Concatenate non-empty combat messages.
 combineMsgs :: [String] -> String
 combineMsgs = unlines . filter (not . null)
+
+-- | Map a custom verb name to the tactical combat action it represents.
+--   Returns Nothing for verbs that are not tactical combat verbs.
+tacticalVerbAction :: String -> Maybe CombatAction
+tacticalVerbAction "defend" = Just CADefend
+tacticalVerbAction "flee"   = Just CAFlee
+tacticalVerbAction _        = Nothing
+
+-- | Execute a tactical combat action against the first living NPC in the
+--   room (the same heuristic as `attack <target>`). Used for bare verbs
+--   like `defend` and `flee` that have no explicit target.
+executeTacticalAction :: CombatAction -> GameState -> CommandResult
+executeTacticalAction action state =
+    let roomNPCs = getNPCsInRoom (currentRoom (save state)) state
+        livingNPCs = [ npc | npc <- roomNPCs
+                     , let ns = Map.lookup (npcId npc) (npcStates (save state))
+                     , maybe True (\s -> npcStatus s /= "dead") ns ]
+    in case livingNPCs of
+        [] -> (state, "There's nothing to fight here.")
+        (npc : _) ->
+            let nId = npcId npc
+                profile = combatProfile (world state)
+                actors = [PlayerActor]
+                         ++ map CompanionActor (partyMembersInRoom state)
+                         ++ [ShipActor vId | Just vId <- [currentVehicle (save state)]]
+                (effects, msgs) = resolveCombat profile actors (TargetNPC nId (npcName npc)) action state
+                (st', effectMsg) = applyOutcomes effects nId state
+                body = combineMsgs (effectMsg : msgs)
+            in if null body then (st', "") else (st', body)
 
 -- ---------------------------------------------------------------------------
 -- Help text

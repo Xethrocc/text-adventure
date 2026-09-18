@@ -17,10 +17,13 @@ module Combat
     ) where
 
 import Types
-import Game (effectiveAttack, effectiveDefense, getVariable)
+import Game (effectiveAttack, effectiveDefense, getVariable,
+            combatRound, combatRoundKey, combatEngagedKey, combatActionKey,
+            combatInitiativePlayerKey, combatInitiativeNpcKey, combatAbilityKey,
+            hasCondition)
 import qualified Data.Map.Strict as Map
 import Data.List (isPrefixOf)
-import Data.Maybe (listToMaybe)
+import Data.Maybe (listToMaybe, fromMaybe)
 
 -- | Who attacks. Phase 7f only ever fires `PlayerActor`; 7g adds companions,
 --   7h the player's own ship (when the vehicle declares `systems:`).
@@ -41,14 +44,12 @@ data CombatTarget
 --   through the single outcome interpreter; the messages are added to the
 --   command output. No state is mutated here.
 --
---   The `CombatAction` parameter is what 7f-3 needs (a round-based profile has
---   to know whether the player attacks, defends, flees or uses an ability).
---   Step A0 only adds the parameter: `off`, `narrative` and `classic` are
---   deterministic single-shot profiles and ignore it, and `executeAttack`
---   always passes `CAAttack`. A2/A3 wire the other constructors.
+--   The `CombatAction` parameter selects the player's action within a round.
+--   `off`, `narrative` and `classic` profiles ignore it (single-shot
+--   resolution); `tactical` dispatches on it.
 resolveCombat :: CombatProfile -> [CombatActor] -> CombatTarget -> CombatAction
               -> GameState -> ([Effect], [String])
-resolveCombat profile actors target _action st = case profile of
+resolveCombat profile actors target action st = case profile of
     -- off: attack is refused, no HP is spent by anyone.
     CombatOff mRefused -> ([], [refusedMsg])
       where
@@ -62,6 +63,9 @@ resolveCombat profile actors target _action st = case profile of
     --   strikes first, the target retaliates in the same command,
     --   damage = attack - defense (min 1 / min 0), death via HP <= 0.
     CombatClassic -> resolveClassic actors target st
+    -- tactical (Phase 7f-3, A2): one action = one round. The enemy reacts
+    --   via an on: turn trigger, not in this function.
+    CombatTactical tc -> resolveTactical tc actors target action st
   where
     label (TargetNPC _ disp) = disp
 
@@ -75,6 +79,133 @@ resolveNarrative nc _ (TargetNPC nid disp) st =
             in if win
                then ([ncOnWin nc], ["You win the fight against the " ++ disp ++ "! Your attack lands cleanly."])
                else ([ncOnLose nc], ["You lose the fight against the " ++ disp ++ ". Your attack is turned aside."])
+
+-- ---------------------------------------------------------------------------
+-- Tactical (Phase 7f-3, step A2)
+-- ---------------------------------------------------------------------------
+
+-- | Build initiative effects when tcInitiative is BySpeed (Phase 7f-3, step A3).
+initiativeEffects :: TacticalCombat -> NPCID -> GameState -> [Effect]
+initiativeEffects tc nid st =
+    case tcInitiative tc of
+        BySpeed ->
+            let speedAttr = tcSpeedAttribute tc
+                playerSpd = fromMaybe 0 (Map.lookup speedAttr (playerSkills (player (save st))))
+                npcSpd = case Map.lookup nid (npcStates (save st)) of
+                    Nothing -> 0
+                    Just ns -> fromMaybe 0 (Map.lookup speedAttr (npcProps ns))
+            in [ SetValue (VRVariable combatInitiativePlayerKey) (EVInt playerSpd)
+               , SetValue (VRVariable (combatInitiativeNpcKey nid)) (EVInt npcSpd) ]
+        _ -> []
+
+-- | Tactical: one player action per round, enemy reacts via `on: turn`.
+--   The resolver:
+--   (1) increments `combat.round`
+--   (2) sets `combat.engaged = 1`
+--   (3) sets `combat.action` to the action name
+--   (4) computes damage effects (for CAAttack) or none (CADefend)
+--   (5) for CAFlee: clears combat.engaged and combat.round if allowed
+--   (6) for CAAbility: validates cooldown and resource cost, executes effects
+--
+--   The enemy's retaliation is an `on: turn` trigger authored in the
+--   adventure YAML — not a second code path.
+resolveTactical :: TacticalCombat -> [CombatActor] -> CombatTarget
+               -> CombatAction -> GameState -> ([Effect], [String])
+
+-- Attack: player strikes, no retaliation (the trigger does that).
+resolveTactical tc _actors (TargetNPC nid disp) CAAttack st =
+    case Map.lookup nid (npcDefs (world st)) of
+        Nothing  -> ([], ["You can't attack the " ++ disp ++ "."])
+        Just npc ->
+            case Map.lookup nid (npcStates (save st)) of
+                Nothing -> ([], ["You can't attack the " ++ disp ++ "."])
+                Just ns -> case npcHealth ns of
+                    Nothing -> ([], ["You can't attack the " ++ disp ++ "."])
+                    Just hp ->
+                        let round'    = combatRound st + 1
+                            playerDmg = max 1 (effectiveAttack st - npcDefenseBase npc)
+                            stateEffects =
+                                [ SetValue (VRVariable combatRoundKey)   (EVInt round')
+                                , SetValue (VRVariable combatEngagedKey) (EVInt 1)
+                                , SetValue (VRVariable combatActionKey)  (EVString "attack") ]
+                                ++ initiativeEffects tc nid st
+                            dmgEffects = [ ModifyValue (VRProperty nid "hp") (-playerDmg) ]
+                        in if hp - playerDmg <= 0
+                           then ( stateEffects ++ dmgEffects
+                                    ++ [ SetValue (VRVariable combatEngagedKey) (EVInt 0)
+                                       , SetValue (VRVariable combatRoundKey)   (EVInt 0) ]
+                                , ["Round " ++ show round' ++ ": You attack the "
+                                   ++ disp ++ " and kill it!"] )
+                           else ( stateEffects ++ dmgEffects
+                                , ["Round " ++ show round' ++ ": You hit the "
+                                   ++ disp ++ " for " ++ show playerDmg ++ "."] )
+
+-- Defend: no damage, marker for the enemy trigger.
+resolveTactical tc _actors (TargetNPC nid disp) CADefend st =
+    let round' = combatRound st + 1
+        stateEffects =
+            [ SetValue (VRVariable combatRoundKey)   (EVInt round')
+            , SetValue (VRVariable combatEngagedKey) (EVInt 1)
+            , SetValue (VRVariable combatActionKey)  (EVString "defend") ]
+            ++ initiativeEffects tc nid st
+    in (stateEffects, ["Round " ++ show round' ++ ": You brace yourself against the " ++ disp ++ "."])
+
+-- Flee: end the fight if allowed.
+resolveTactical tc _actors (TargetNPC nid disp) CAFlee st =
+    if tcFleeAllowed tc
+    then let round' = combatRound st + 1
+             stateEffects =
+                 [ SetValue (VRVariable combatRoundKey)   (EVInt 0)
+                 , SetValue (VRVariable combatEngagedKey) (EVInt 0)
+                 , SetValue (VRVariable combatActionKey)  (EVString "flee") ]
+         in (stateEffects, ["Round " ++ show round' ++ ": You flee from the " ++ disp ++ "!"])
+    else let round' = combatRound st + 1
+             stateEffects =
+                 [ SetValue (VRVariable combatRoundKey)   (EVInt round')
+                 , SetValue (VRVariable combatEngagedKey) (EVInt 1)
+                 , SetValue (VRVariable combatActionKey)  (EVString "flee") ]
+                 ++ initiativeEffects tc nid st
+         in (stateEffects, ["You can't flee from the " ++ disp ++ "!"])
+
+-- Ability: player uses an ability (Phase 7f-3, step A3).
+resolveTactical tc _actors (TargetNPC nid _disp) (CAAbility abId) st =
+    case Map.lookup abId (abilities (world st)) of
+        Nothing -> ([], ["Unknown ability '" ++ abId ++ "'."])
+        Just pa ->
+            if hasCondition ("cooldown_" ++ abId) st
+            then ([], ["Ability is on cooldown."])
+            else
+                let costVar = paCostVar pa
+                    cost = paCost pa
+                    curVal = if null costVar
+                             then cost
+                             else case getVariable costVar st of
+                                 Just (VVInt n) -> n
+                                 _              -> 0
+                in if curVal < cost
+                   then ([], ["Not enough resources."])
+                   else
+                       let round' = combatRound st + 1
+                           stateEffects =
+                               [ SetValue (VRVariable combatRoundKey)   (EVInt round')
+                               , SetValue (VRVariable combatEngagedKey) (EVInt 1)
+                               , SetValue (VRVariable combatActionKey)  (EVString "ability")
+                               , SetValue (VRVariable combatAbilityKey) (EVString abId) ]
+                               ++ initiativeEffects tc nid st
+                           costEffects =
+                               if not (null costVar) && cost > 0
+                               then [ ModifyValue (VRVariable costVar) (-cost) ]
+                               else []
+                           cooldownEffects =
+                               if paCooldown pa > 0
+                               then [ ApplyCondition ("cooldown_" ++ abId) (paCooldown pa) Nothing Nothing ]
+                               else []
+                           allEffects = stateEffects ++ costEffects ++ cooldownEffects ++ paEffects pa
+                       in (allEffects, ["Round " ++ show round' ++ ": You use " ++ paName pa ++ "!"])
+
+-- CAUseItem: future steps.
+resolveTactical _tc _actors (TargetNPC _nid _disp) _ _st =
+    ([], ["You can't do that in combat yet."])
 
 -- | Classic: bit-identical to `Parser.executeAttack` pre-7f when the actor
 --   list is just the player. Phase 7g adds companions: every living

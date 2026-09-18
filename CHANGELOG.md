@@ -461,7 +461,25 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   (kein Zugriff auf Vorrat).
   Nebenbei korrigiert: die Doku zeigte noch die alte `resolveCombat`-Signatur
   ohne `CombatAction`.
-- Tests: **224** Engine- + **75** Worldbuilder-Tests, **24** E2E-Läufe.
+- **7f-3 (`tactical`), Schritt A2 — Runden-Treiber (`resolveTactical`):**
+  - Eine Spieleraktion = eine Runde. Der Gegner reagiert über `on: turn`-Trigger.
+  - `CombatTactical TacticalCombat` verdrahtet in `resolveCombat`.
+  - Aktionen: `CAAttack` (Schaden an NPC), `CADefend` (Markierung `combat.action = defend`),
+    `CAFlee` (Flucht, `combat.engaged = 0`, falls `tcFleeAllowed`).
+  - Verben `defend` und `flee` im Parser geroutet.
+
+- **7f-3 (`tactical`), Schritt A3 — Player Abilities & BySpeed Initiative:**
+  - `PlayerAbility`: `paId`, `paName`, `paCostVar`, `paCost`, `paCooldown`, `paEffects`.
+  - `abilities :: Map.Map String PlayerAbility` in `GameWorld`.
+  - `tcSpeedAttribute :: String` (Default `"speed"`) in `TacticalCombat`.
+  - `resolveTactical` für `CAAbility abId`: Cooldown-Gating via Condition-System (`cooldown_<abId>`),
+    Ressourcenkosten-Prüfung und -Abzug via `paCostVar`, Ausführen der `paEffects`.
+  - `BySpeed` Initiative: Auswertung von `tcSpeedAttribute` bei Spieler (`playerSkills`) und
+    Gegner (`npcProps`), automatische VarMap-Einträge `combat.initiative.player` und
+    `combat.initiative.<npcId>`.
+  - Parser-Unterstützung für `use-ability <id>`, `use ability <id>`, `ability <id>`.
+  - 3 neue Tests in `test/Tests.hs`: `testAbilityCost`, `testAbilityCooldown`, `testBySpeedInitiative`.
+- Tests: **233** Engine- + **75** Worldbuilder-Tests, **24** E2E-Läufe.
 
 ## [0.9.0.0] — Unreleased
 

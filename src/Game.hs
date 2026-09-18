@@ -25,6 +25,7 @@ emptyGameWorld = GameWorld
     , triggerDefs        = []
     , combatProfile      = CombatClassic
     , worldName          = ""
+    , abilities          = Map.empty
     }
 
 -- | Default empty game state
@@ -627,6 +628,28 @@ isCombatEngaged :: GameState -> Bool
 isCombatEngaged st = case getVariable combatEngagedKey st of
     Just (VVInt n) -> n >= 1
     _              -> False
+
+setCombatEngaged :: Bool -> GameState -> GameState
+setCombatEngaged True  = setVariable combatEngagedKey (VVInt 1)
+setCombatEngaged False = setVariable combatEngagedKey (VVInt 0)
+
+-- | The last player action inside a tactical fight ("attack", "defend",
+--   "flee", "ability"). The enemy's `on: turn` rule can gate on this via
+--   `compare_var: { name: combat.action, … }`.
+combatActionKey :: String
+combatActionKey = combatVarPrefix ++ "action"
+
+-- | VarMap key for the player's initiative value (Phase 7f-3, step A3).
+combatInitiativePlayerKey :: String
+combatInitiativePlayerKey = combatVarPrefix ++ "initiative.player"
+
+-- | VarMap key for an NPC's initiative value (Phase 7f-3, step A3).
+combatInitiativeNpcKey :: NPCID -> String
+combatInitiativeNpcKey nid = combatVarPrefix ++ "initiative." ++ nid
+
+-- | VarMap key for the last used ability (Phase 7f-3, step A3).
+combatAbilityKey :: String
+combatAbilityKey = combatVarPrefix ++ "ability"
 
 -- | Evaluate a Predicate against the current game state.
 evalPredicate :: Predicate -> GameState -> Bool
