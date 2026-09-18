@@ -249,16 +249,28 @@ Begleiter (7g) und Schiffe (7h) erweitern sie, ohne die Signatur zu ändern.
 - **off:** `attack` wird mit `attack_refused`-Text abgelehnt; niemand
   verliert HP (Fixture: „Der Verhandlungsweg").
 - **tactical (7f-3):** Rundenbasierter Taktikkampf mit Runden-Treiber:
-  - Aktionen: `attack` / `hit`, `defend` (Verteidigungsbonus für eine Runde),
-    `flee` (Fluchtversuch, falls `flee_allowed: true`), `use-ability <id>` /
-    `ability <id>` (Spieler-Fähigkeiten mit Ressourcenkosten und Cooldown).
+  - Aktionen: `attack` / `hit`, `defend`, `flee` (Fluchtversuch, falls
+    `flee_allowed: true`), `use-ability <id>` / `ability <id>`
+    (Spieler-Fähigkeiten mit Ressourcenkosten und Cooldown).
+  - **Was `defend` bewirkt:** der Resolver erklärt den Angriff nicht selbst für
+    ungültig, sondern setzt `combat.action = "defend"` und legt den Zug damit in
+    die Hand der Gegner-Regel — dieselbe Linie wie die Reaktion selbst (kein
+    Engine-Sonderpfad). Ein Verteidigungsbonus ist deshalb **Autoren-Daten**,
+    nicht Engine-Verhalten; ohne eine Regel, die `combat.action` auswertet, hat
+    `defend` keine mechanische Wirkung.
   - Initiative: `player_first`, `enemy_first` oder `by_speed` (dynamischer
     Wurf basierend auf `speed_attribute` vs. Gegner-Geschwindigkeit).
   - Rundenzustand in der VarMap: `combat.round`, `combat.engaged`,
-    `combat.initiative.<actorId>`. Geschützt gegen Autorenkollisionen über
-    `CombatVariableClash`.
+    `combat.initiative.<actorId>`, `combat.action` (Name der letzten Aktion:
+    `attack` / `defend` / `flee` / `ability`) und `combat.ability`
+    (ID der zuletzt benutzten Fähigkeit). Geschützt gegen Autorenkollisionen
+    über `CombatVariableClash`.
   - Gegnerreaktion: gewöhnliche `on: turn`-Regel mit
     `when: { compare_var: { name: combat.engaged, op: gte, value: 1 } }`.
+  - ⚠️ `combat.action` und `combat.ability` sind **Text**; die Prädikat-Sprache
+    kann Text derzeit nicht vergleichen (`compare_var` verlangt einen Int). Eine
+    Regel kann also heute nicht auf `defend` reagieren — siehe die Notiz zu
+    Text-Variablen in `adventure-schema.md`.
 - **Validierung:** `UnknownCombatProfile` (unbekannter Profilname),
   `UnknownInitiativeRule` (ungültige Initiativ-Regel).
 

@@ -115,7 +115,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   - `PropRef = PHealth | PRoom | PVisited | PState | PCustom String`.
   - Migration via handgeschriebenem `FromJSON ValueRef` (unterstützt sowohl neues Schema als auch altes `VRProperty [target, prop]` Format).
   - Save-Version auf 3 erhöht.
-- Tests: **241** Engine- + **75** Worldbuilder-Tests, **28** E2E-Läufe
+- Tests: **240** Engine- + **75** Worldbuilder-Tests, **28** E2E-Läufe
   (`scripts/ci.sh`).
 
 ### Fixed
@@ -499,7 +499,20 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
     `combat.initiative.<npcId>`.
   - Parser-Unterstützung für `use-ability <id>`, `use ability <id>`, `ability <id>`.
   - 3 neue Tests in `test/Tests.hs`: `testAbilityCost`, `testAbilityCooldown`, `testBySpeedInitiative`.
-- Tests: **233** Engine- + **75** Worldbuilder-Tests, **24** E2E-Läufe.
+- Tests: **240** Engine- + **75** Worldbuilder-Tests, **28** E2E-Läufe.
+  (Zahlen nach dem Code-Check korrigiert: hier standen 233 und 24 — gemessen sind
+  es 240 registrierte Tests und 28 Läufe in `scripts/ci.sh`.)
+
+- **Doku-Korrekturen aus dem Code-Check nach dem Pull:** `docs/modules.md`
+  behauptete für `defend` im taktischen Profil einen „Verteidigungsbonus für eine
+  Runde" — den gibt es nicht. Der Resolver erklärt den Zug nicht selbst für
+  ungültig, sondern setzt `combat.action = "defend"` und legt ihn in die Hand der
+  Gegner-Regel; ein Bonus ist Autoren-Daten. Ebenso versprach
+  `docs/adventure-schema.md` Autoren, Text-Variablen mit `compare_var`
+  vergleichen zu können: die Prädikat-Sprache kann Text **nicht** lesen
+  (`compare_var` verlangt Int, `compare` löst Text zu `0` auf). Beides ist jetzt
+  korrekt beschrieben, samt der bisher undokumentierten Schlüssel
+  `combat.action` (Werte `attack`/`defend`/`flee`/`ability`) und `combat.ability`.
 
 ## [0.9.0.0] — Unreleased
 

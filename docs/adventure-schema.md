@@ -104,8 +104,14 @@ description:
 
 Flags sind für Prädikate faktisch boolesch: `has_flag` prüft, ob ein Flag gesetzt
 ist (`"true"`). Ein Vergleich gegen einen *anderen* String-Wert ist nicht
-ausdrückbar — für solche Zustände `variables:` mit `type: text` verwenden
-(`set_var` / `compare_var`). Das frühere `check_flag`-Kürzel wurde entfernt
+ausdrückbar.
+
+Text-Variablen (`variables:` mit `type: text`) lassen sich mit `set_var` setzen;
+**lesen kann die Prädikat-Sprache sie derzeit nicht**: `compare_var` vergleicht
+ausschließlich Int-Werte, und `compare` löst Text zu `0` auf. Für Zustände, die
+Regeln abfragen müssen, ist deshalb ein Int-Code (`compare_var`) oder ein Flag
+(`has_flag`) zu verwenden. Betroffen ist u. a. `combat.action` im taktischen
+Kampf. Das frühere `check_flag`-Kürzel wurde entfernt
 (P1-18), weil es nie dekodierbar war und den Erwartungswert still verwarf.
 
 Item-Felder für Container:
