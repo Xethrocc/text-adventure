@@ -1,6 +1,6 @@
 # Changelog
 
-## [0.10.0.0] — Unreleased
+## [0.10.0.0] — 2026-09-18
 
 Phase 6 (Genre-Fixtures + CI) und Phase 7 (optionale Gameplay-Module 7a–7h).
 Leitprinzip der Phase 7: ein Modul ist **YAML-Segment + Compiler-Pass** auf

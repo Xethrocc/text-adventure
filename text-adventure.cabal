@@ -1,6 +1,6 @@
 cabal-version:       3.0
 name:                text-adventure
-version:             0.8.1.0
+version:             0.10.0.0
 synopsis:            A simple text-based adventure game engine written in Haskell
 description:         A simple text-based adventure game engine written in Haskell. This package provides a flexible framework for creating interactive text adventures with rooms, items, NPCs, and player commands.
 homepage:            https://github.com/Xethrocc/text-adventure
