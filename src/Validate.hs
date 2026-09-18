@@ -74,7 +74,7 @@ exitRoomID (Open r) = r
 exitRoomID (Locked r _) = r
 
 -- | Room references inside rules and outcomes: `MoveEntity … (InRoom r)` and the
---   `move:` effect (`SetValue (VRProperty "player" "room") …`).
+--   `move:` effect (`SetValue (VRActorProp APlayer PRoom) …`).
 --
 --   Review L4 found `MissingRoom` declared but never produced anywhere, while a
 --   typo'd `move: ghost_room` in a rule was silently accepted: the entity ends up
@@ -88,12 +88,12 @@ checkMissingRoomRefs gw =
 
 idsFromOutcomeRoom :: Effect -> [String]
 idsFromOutcomeRoom outcome = case outcome of
-    MoveEntity _ (InRoom r)                            -> [r]
-    SetValue (VRProperty "player" "room") (EVString r) -> [r]
-    Sequence os                                        -> concatMap idsFromOutcomeRoom os
-    RandomChoice os                                    -> concatMap (idsFromOutcomeRoom . snd) os
-    Conditional _ t e                                  -> idsFromOutcomeRoom t ++ idsFromOutcomeRoom e
-    _                                                  -> []
+    MoveEntity _ (InRoom r)                                     -> [r]
+    SetValue (VRActorProp ActorPlayer PRoom) (EVString r)       -> [r]
+    Sequence os                                              -> concatMap idsFromOutcomeRoom os
+    RandomChoice os                                          -> concatMap (idsFromOutcomeRoom . snd) os
+    Conditional _ t e                                        -> idsFromOutcomeRoom t ++ idsFromOutcomeRoom e
+    _                                                        -> []
 
 -- ---------------------------------------------------------------------------
 -- Reachability
@@ -339,17 +339,23 @@ idsFromOutcomeNPC outcome = case outcome of
     Conditional _ t e            -> idsFromOutcomeNPC t ++ idsFromOutcomeNPC e
     _                            -> []
 
--- | Collect entity IDs referenced via VRProperty (item state / NPC state /
+-- | Collect entity IDs referenced via VRActorProp (item state / NPC state /
 --   generic property writes). These are checked against itemDefs ∪ npcDefs.
 idsFromOutcomeEntity :: Effect -> [String]
 idsFromOutcomeEntity outcome = case outcome of
-    SetValue (VRProperty eId _) _   -> [eId]
-    ModifyValue (VRProperty eId _) _ -> [eId]
-    Sequence os                     -> concatMap idsFromOutcomeEntity os
-    RandomChoice os                 -> concatMap (idsFromOutcomeEntity . snd) os
-    Conditional _ t e               -> idsFromOutcomeEntity t ++ idsFromOutcomeEntity e
-    Narrative _ followUp            -> idsFromOutcomeEntity followUp
-    _                               -> []
+    SetValue (VRActorProp actor _) _    -> [actorId actor]
+    ModifyValue (VRActorProp actor _) _ -> [actorId actor]
+    Sequence os                         -> concatMap idsFromOutcomeEntity os
+    RandomChoice os                     -> concatMap (idsFromOutcomeEntity . snd) os
+    Conditional _ t e                   -> idsFromOutcomeEntity t ++ idsFromOutcomeEntity e
+    Narrative _ followUp                -> idsFromOutcomeEntity followUp
+    _                                   -> []
+  where
+    actorId ActorPlayer       = "player"
+    actorId (ActorNPC nId)    = nId
+    actorId (ActorShip vId)   = vId
+    actorId (ActorRoom rId)   = rId
+    actorId (ActorEntity eId) = eId
 
 idsFromOutcomeQuest :: Effect -> [String]
 idsFromOutcomeQuest outcome = case outcome of

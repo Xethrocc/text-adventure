@@ -713,12 +713,23 @@ resolveValueRef (VRItemProp iId prop) st =
     case Map.lookup iId (itemStates (save st)) of
         Just is -> Map.findWithDefault 0 prop (itemProps is)
         Nothing -> 0
-resolveValueRef (VRProperty eId prop) st =
+resolveValueRef (VRActorProp ActorPlayer PHealth) st =
+    playerHealth (player (save st))
+resolveValueRef (VRActorProp (ActorNPC eId) PHealth) st =
     case Map.lookup eId (npcStates (save st)) of
-        Just ns -> case prop of
-            "hp" -> fromMaybe 0 (npcHealth ns)
-            _    -> Map.findWithDefault 0 prop (npcProps ns)
+        Just ns -> fromMaybe 0 (npcHealth ns)
         Nothing -> 0
+resolveValueRef (VRActorProp (ActorNPC nId) (PCustom prop)) st =
+    case Map.lookup nId (npcStates (save st)) of
+        Just ns -> Map.findWithDefault 0 prop (npcProps ns)
+        Nothing -> 0
+resolveValueRef (VRActorProp (ActorRoom rId) PVisited) st =
+    if Set.member rId (visitedRooms (save st)) then 1 else 0
+resolveValueRef (VRActorProp (ActorShip vId) PHealth) st =
+    case getVariable ("ship." ++ vId ++ ".hull") st of
+        Just (VVInt n) -> n
+        _              -> 0
+resolveValueRef (VRActorProp _ _) _ = 0
 resolveValueRef VRPlayerHealth st =
     playerHealth (player (save st))
 
@@ -882,13 +893,19 @@ applySetValue (VRFlag name) val state =
     (setFlag name (effectValueToString val) state, "")
 applySetValue (VRVariable name) val state =
     (setVariableChecked name (effectValToVarVal val) state, "")
-applySetValue (VRProperty eId "state") val state =
+applySetValue (VRActorProp (ActorEntity eId) PState) val state =
     setEntityStateWithEvents eId (effectValueToString val) state
-applySetValue (VRProperty "player" "room") val state =
+applySetValue (VRActorProp ActorPlayer PRoom) val state =
     (fst (transitionToRoom (effectValueToString val) (clearActiveDialogue state)), "")
-applySetValue (VRProperty rId "visited") val state =
+applySetValue (VRActorProp (ActorRoom rId) PVisited) val state =
     let b = case val of { EVInt n -> n /= 0; EVBool v -> v; _ -> False }
     in (setRoomVisited rId b state, "")
+applySetValue (VRActorProp ActorPlayer PHealth) val state =
+    let n = case val of { EVInt m -> m; _ -> 0 }
+    in if n <= 0 then (endGame Death (setPlayerHP n state), "") else (setPlayerHP n state, "")
+applySetValue (VRActorProp (ActorShip vId) PHealth) val state =
+    let n = case val of { EVInt m -> m; _ -> 0 }
+    in (setVariableChecked ("ship." ++ vId ++ ".hull") (VVInt n) state, "")
 applySetValue VRPlayerHealth val state =
     let n = case val of { EVInt m -> m; _ -> 0 }
     in if n <= 0 then (endGame Death (setPlayerHP n state), "") else (setPlayerHP n state, "")
@@ -913,10 +930,21 @@ modifyValueProp (VRVariable name) delta state =
     in (setVariableChecked name (VVInt (cur + delta)) state, "")
 modifyValueProp (VRItemProp iId prop) delta state =
     (modifyItemProp iId prop delta state, "")
-modifyValueProp (VRProperty eId "hp") delta state =
+modifyValueProp (VRActorProp (ActorNPC eId) PHealth) delta state =
     modifyNPCHealth eId delta state
-modifyValueProp (VRProperty nId prop) delta state =
+modifyValueProp (VRActorProp (ActorNPC nId) (PCustom prop)) delta state =
     (modifyNPCProp nId prop delta state, "")
+modifyValueProp (VRActorProp ActorPlayer PHealth) delta state =
+    let cur = playerHealth (player (save state))
+        newHP = cur + delta
+    in if newHP <= 0
+       then (endGame Death (setPlayerHP newHP state), "")
+       else (setPlayerHP newHP state, "")
+modifyValueProp (VRActorProp (ActorShip vId) PHealth) delta state =
+    let cur = case getVariable ("ship." ++ vId ++ ".hull") state of
+            Just (VVInt n) -> n
+            _              -> 0
+    in (setVariableChecked ("ship." ++ vId ++ ".hull") (VVInt (cur + delta)) state, "")
 modifyValueProp _ _ state = (state, "")
 
 -- | Convert EffectValue to VariableValue

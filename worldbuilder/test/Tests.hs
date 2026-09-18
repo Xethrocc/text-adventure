@@ -1000,8 +1000,8 @@ testSetEntityStateCompiles = do
             pure False
         Right cr -> do
             let tr = head (E.triggerDefs (crWorld cr))
-            expectTrue "set_state compiles to SetValue (VRProperty e \"state\")"
-                (E.SetValue (E.VRProperty "guild_gate" "state") (E.EVString "unlocked")
+            expectTrue "set_state compiles to SetValue (VRActorProp (ActorEntity e) PState)"
+                (E.SetValue (E.VRActorProp (E.ActorEntity "guild_gate") E.PState) (E.EVString "unlocked")
                     `elem` E.trEffects tr)
 
 -- | P1-6: two `rules:` with the same `id` would share one runtime
@@ -1615,7 +1615,7 @@ testDamageNpcCompiles = do
                 putStrLn $ "  compile errors: " ++ show errs
                 pure False
             Right cr -> expectEqual
-                (Just (E.ModifyValue (E.VRProperty "squire" "hp") (-25)))
+                (Just (E.ModifyValue (E.VRActorProp (E.ActorNPC "squire") E.PHealth) (-25)))
                 (Map.lookup "trapper" (E.npcDefs (crWorld cr))
                     >>= Map.lookup (E.VCustom "stab", "alive") . E.npcVerbMap)
     r2 <- case compileAdventure advBad of

@@ -834,12 +834,12 @@ checkDamageNpcRefs gw =
             ("damage_npc targets '" ++ nid ++ "', which is not declared under 'npcs:'")
        | nid <- refs, nid `Set.notMember` declared ]
 
--- | `VRProperty <entity> "hp"` references inside an Effect tree — what
+-- | `VRActorProp (ActorNPC <entity>) PHealth` references inside an Effect tree — what
 --   `damage_npc` compiles to.
 hpTargetsInEffect :: E.Effect -> [String]
 hpTargetsInEffect e = case e of
-    E.ModifyValue (E.VRProperty eid "hp") _ -> [eid]
-    E.SetValue (E.VRProperty eid "hp") _    -> [eid]
+    E.ModifyValue (E.VRActorProp (E.ActorNPC eid) E.PHealth) _ -> [eid]
+    E.SetValue (E.VRActorProp (E.ActorNPC eid) E.PHealth) _    -> [eid]
     E.Sequence es                           -> concatMap hpTargetsInEffect es
     E.RandomChoice cs                       -> concatMap (hpTargetsInEffect . snd) cs
     E.Conditional _ t el                    -> hpTargetsInEffect t ++ hpTargetsInEffect el
@@ -1203,9 +1203,9 @@ compileAActionOutcome ao = case ao of
     AOAdvanceQuest q -> E.QuestOp E.AdvanceQuest q
     AOCompleteQuest q -> E.QuestOp E.CompleteQuest q
     AOEquipItem i -> E.MoveEntity i (E.EquippedBy "player")
-    AORoomTransition r -> E.SetValue (E.VRProperty "player" "room") (E.EVString r)
+    AORoomTransition r -> E.SetValue (E.VRActorProp E.ActorPlayer E.PRoom) (E.EVString r)
     AOMoveNPC n r -> E.MoveEntity n (E.InRoom r)
-    AODamageNPC n amount -> E.ModifyValue (E.VRProperty n "hp") (-amount)
+    AODamageNPC n amount -> E.ModifyValue (E.VRActorProp (E.ActorNPC n) E.PHealth) (-amount)
     AOGameEnd r m -> E.GameEnd (parseGameOverReason r) (fromMaybe "" m)
     AOConditional p ts es ->
         E.Conditional p (compileOutcomes ts) (compileOutcomes es)
@@ -1214,7 +1214,7 @@ compileAActionOutcome ao = case ao of
     AONarrative ls follow -> E.Narrative ls (compileOutcomes follow)
     AOStandingAdd fid n -> E.ModifyValue (E.VRVariable ("faction." ++ fid)) n
     AOStandingSet fid n -> E.SetValue (E.VRVariable ("faction." ++ fid)) (E.EVInt n)
-    AOSetEntityState e s -> E.SetValue (E.VRProperty e "state") (E.EVString s)
+    AOSetEntityState e s -> E.SetValue (E.VRActorProp (E.ActorEntity e) E.PState) (E.EVString s)
     -- P1-17: previously unreachable engine effects, now authorable.
     AOApplyCondition name turns tick end ->
         E.ApplyCondition name turns (outcomesMaybe tick) (outcomesMaybe end)

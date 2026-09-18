@@ -84,7 +84,7 @@ initSampleGame = GameState
                     (Sequence
                         [ ModifyValue VRPlayerHealth 50
                         , SetValue (VRItemProp "potion_healing" "uses") (EVInt (-1))
-                        , SetValue (VRProperty "potion_healing" "state") (EVString "empty") ])))
+                        , SetValue (VRActorProp (ActorEntity "potion_healing") PState) (EVString "empty") ])))
             -- Equipment examples
             , ("sword_rusty", ItemDef "sword_rusty" "rusty sword" (plainText "A pitted blade, but it will do.")
                 ["sword", "rusty sword", "blade"] (Set.fromList ["weapon"])

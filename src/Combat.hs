@@ -129,7 +129,7 @@ resolveTactical tc _actors (TargetNPC nid disp) CAAttack st =
                                 , SetValue (VRVariable combatEngagedKey) (EVInt 1)
                                 , SetValue (VRVariable combatActionKey)  (EVString "attack") ]
                                 ++ initiativeEffects tc nid st
-                            dmgEffects = [ ModifyValue (VRProperty nid "hp") (-playerDmg) ]
+                            dmgEffects = [ ModifyValue (VRActorProp (ActorNPC nid) PHealth) (-playerDmg) ]
                         in if hp - playerDmg <= 0
                            then ( stateEffects ++ dmgEffects
                                     ++ [ SetValue (VRVariable combatEngagedKey) (EVInt 0)
@@ -232,14 +232,14 @@ resolveClassic actors (TargetNPC nid disp) st =
                     Nothing -> ([], [cannotAttack])
                     Just hp ->
                         let playerDmg = max 1 (effectiveAttack st - npcDefenseBase npc)
-                            playerEffects = [ ModifyValue (VRProperty nid "hp") (-playerDmg) ]
+                            playerEffects = [ ModifyValue (VRActorProp (ActorNPC nid) PHealth) (-playerDmg) ]
                             mShip = firstShip actors st
                         in if hp - playerDmg <= 0
                            then ( playerEffects
                                 , [ "You attack the " ++ disp ++ " and kill it!" ] )
                            else
                                let allies = companionHits nid (npcLocation ns) (npcDefenseBase npc) actors st
-                                   allyEffects = [ ModifyValue (VRProperty nid "hp") (-d)
+                                   allyEffects = [ ModifyValue (VRActorProp (ActorNPC nid) PHealth) (-d)
                                                  | (_, _, d) <- allies ]
                                    allyMsgs = [ npcName allyNpc ++ " strikes for " ++ show d ++ "."
                                               | (_, allyNpc, d) <- allies ]
@@ -330,7 +330,7 @@ shipStrike nid ship = case ssWeapons ship of
             let powerEffects = [ SetValue (VRVariable (shipVar (ssShipId ship) "power"))
                                    (EVInt (max 0 (p - 1)))
                                | Just p <- [ssPower ship] ]
-            in ( powerEffects ++ [ ModifyValue (VRProperty nid "hp") (-w) ]
+            in ( powerEffects ++ [ ModifyValue (VRActorProp (ActorNPC nid) PHealth) (-w) ]
                , [ ssName ship ++ " fires for " ++ show w ++ "." ]
                , w )
         | otherwise ->

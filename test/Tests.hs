@@ -317,7 +317,7 @@ testMoveMarksRoomVisited = do
 
 testSetRoomVisitedOutcome :: IO Bool
 testSetRoomVisitedOutcome = do
-    let (newState, _) = applyOutcome (SetValue (VRProperty "treasure" "visited") (EVInt 1)) "" initSampleGame
+    let (newState, _) = applyOutcome (SetValue (VRActorProp (ActorRoom "treasure") PVisited) (EVInt 1)) "" initSampleGame
     expectTrue "treasure marked visited" (isRoomVisited "treasure" newState)
 
 testDarkRoomHidesContents :: IO Bool
@@ -485,7 +485,7 @@ testPartyNonMemberStays = do
 -- | The party follows teleports too (same shared room-transition helper).
 testPartyFollowsOnTeleport :: IO Bool
 testPartyFollowsOnTeleport = do
-    let teleport = SetValue (VRProperty "player" "room") (EVString "treasure")
+    let teleport = SetValue (VRActorProp ActorPlayer PRoom) (EVString "treasure")
         (st', _) = applyOutcome teleport "" (partyGame True)
     expectEqual (Just (InRoom "treasure")) (npcLocation <$> Map.lookup "squire" (npcStates (save st')))
 
@@ -551,7 +551,7 @@ testNPCDeathEventMessageShown = do
                                 [ SendMessage "Der Goblin fällt und lässt die Keule fallen."
                                 , SetValue (VRFlag "goblin_down") (EVString "true") ] False 0 ] }
         st = sample { world = w }
-        (st', msg) = applyOutcome (ModifyValue (VRProperty "goblin" "hp") (-100)) "" st
+        (st', msg) = applyOutcome (ModifyValue (VRActorProp (ActorNPC "goblin") PHealth) (-100)) "" st
     r1 <- expectTrue "death event message threaded" (isInfixOf "Der Goblin fällt" msg)
     r2 <- expectEqual (Just "true") (getFlag "goblin_down" st')
     pure (r1 && r2)
@@ -1203,7 +1203,7 @@ testTransitionRoomRunsHooks = do
         withHook = initSampleGame
             { world = (world initSampleGame)
                 { rooms = Map.insert "treasure" treasureWithHook (rooms (world initSampleGame)) } }
-        (st, _) = applyOutcome (SetValue (VRProperty "player" "room") (EVString "treasure")) "" withHook
+        (st, _) = applyOutcome (SetValue (VRActorProp ActorPlayer PRoom) (EVString "treasure")) "" withHook
     r1 <- expectEqual (Just "true") (getFlag "entered_treasure" st)
     r2 <- expectTrue "treasure marked visited" ("treasure" `Set.member` visitedRooms (save st))
     pure (r1 && r2)
@@ -1213,7 +1213,7 @@ testTransitionRoomClearsDialogue :: IO Bool
 testTransitionRoomClearsDialogue = do
     let inDialogue = initSampleGame
             { save = (save initSampleGame) { activeDialogue = Just "oldman" } }
-        (st, _) = applyOutcome (SetValue (VRProperty "player" "room") (EVString "treasure")) "" inDialogue
+        (st, _) = applyOutcome (SetValue (VRActorProp ActorPlayer PRoom) (EVString "treasure")) "" inDialogue
     expectEqual Nothing (activeDialogue (save st))
 
 -- ===== Phase 1: Restart (1d) =====
@@ -1581,7 +1581,7 @@ testTriggerOnceNoDoubleFireAcrossNestedRound :: IO Bool
 testTriggerOnceNoDoubleFireAcrossNestedRound = do
     let sample = initSampleGame
         killWolf = TriggerDef "a_kill" (OnStateChange "wolf") Nothing
-                        [ ModifyValue (VRProperty "wolf" "hp") (-100) ] True 0
+                        [ ModifyValue (VRActorProp (ActorNPC "wolf") PHealth) (-100) ] True 0
         counter  = TriggerDef "b_count" (OnStateChange "wolf") Nothing
                         [ ModifyValue (VRVariable "fired") 1 ] True 0
         st = sample
@@ -1603,7 +1603,7 @@ testSetStateFiresStateChange = do
     let rule = TriggerDef "gate_opens" (OnStateChange "gate") Nothing
                     [ SendMessage "The gate rumbles open." ] False 0
         st = initSampleGame { world = (world initSampleGame) { triggerDefs = [rule] } }
-        (st', msg) = applyOutcome (SetValue (VRProperty "gate" "state") (EVString "unlocked")) "" st
+        (st', msg) = applyOutcome (SetValue (VRActorProp (ActorEntity "gate") PState) (EVString "unlocked")) "" st
     r1 <- expectTrue "OnStateChange fired on set_state" (isInfixOf "rumbles" msg)
     r2 <- expectEqual (Just "unlocked") (getEntityState "gate" st')
     pure (r1 && r2)
@@ -1613,9 +1613,9 @@ testSetStateFiresStateChange = do
 testSetStateIdempotentNoRecursion :: IO Bool
 testSetStateIdempotentNoRecursion = do
     let rule = TriggerDef "gate_loop" (OnStateChange "gate") Nothing
-                    [ SetValue (VRProperty "gate" "state") (EVString "unlocked") ] False 0
+                    [ SetValue (VRActorProp (ActorEntity "gate") PState) (EVString "unlocked") ] False 0
         st = initSampleGame { world = (world initSampleGame) { triggerDefs = [rule] } }
-        run = fst (applyOutcome (SetValue (VRProperty "gate" "state") (EVString "unlocked")) "" st)
+        run = fst (applyOutcome (SetValue (VRActorProp (ActorEntity "gate") PState) (EVString "unlocked")) "" st)
     result <- timeout 3000000 (evaluate (length (show run)))
     case result of
         Nothing -> do putStrLn "  set_state recursion did not terminate"; pure False
@@ -2051,7 +2051,7 @@ testSaveStateRoundTripInvariant = do
 testTriggerRecursionBounded :: IO Bool
 testTriggerRecursionBounded = do
     let sample = initSampleGame
-        loopEff = ModifyValue (VRProperty "wolf" "hp") (-100)
+        loopEff = ModifyValue (VRActorProp (ActorNPC "wolf") PHealth) (-100)
         w = (world sample)
             { triggerDefs = [ TriggerDef "cascade" (OnStateChange "wolf") Nothing [loopEff] False 0 ] }
         st = sample { world = w
@@ -2417,12 +2417,12 @@ testRestartKeepsWorld = do
     r2 <- expectTrue "world is not empty" (not (Map.null (rooms (world st))))
     pure (r1 && r2)
 
--- | P2-7: `visited` via `SetValue (VRProperty room "visited")` must accept
+-- | P2-7: `visited` via `SetValue (VRActorProp (ActorRoom room) PVisited)` must accept
 --   `EVBool`, not silently treat it as `False`.
 testVisitedAcceptsBool :: IO Bool
 testVisitedAcceptsBool = do
-    let (stT, _) = applyOutcome (SetValue (VRProperty "treasure" "visited") (EVBool True)) "" initSampleGame
-        (stF, _) = applyOutcome (SetValue (VRProperty "treasure" "visited") (EVBool False)) "" initSampleGame
+    let (stT, _) = applyOutcome (SetValue (VRActorProp (ActorRoom "treasure") PVisited) (EVBool True)) "" initSampleGame
+        (stF, _) = applyOutcome (SetValue (VRActorProp (ActorRoom "treasure") PVisited) (EVBool False)) "" initSampleGame
     r1 <- expectTrue "EVBool True marks the room visited" (isRoomVisited "treasure" stT)
     r2 <- expectTrue "EVBool False clears it" (not (isRoomVisited "treasure" stF))
     pure (r1 && r2)
@@ -2639,7 +2639,7 @@ testResolveCombatDirect = do
         st0 = initSampleGame
         pdmg = max 1 (effectiveAttack st0 - npcDefenseBase goblin)
         retalDmg = max 0 (npcAttackBase goblin - effectiveDefense st0)
-        playerEffect = ModifyValue (VRProperty "goblin" "hp") (-pdmg)
+        playerEffect = ModifyValue (VRActorProp (ActorNPC "goblin") PHealth) (-pdmg)
     -- player alone: exactly one effect, no retaliation when the blow is fatal
     let (effs, msgs) = resolveCombat CombatClassic [PlayerActor] target CAAttack st0
         stKill = st0 { save = (save st0)
@@ -2670,9 +2670,9 @@ testResolveCombatDirect = do
                         [PlayerActor, CompanionActor "ally", ShipActor "carriage"] target CAAttack stC
     r6 <- expectEqual
               [ playerEffect
-              , ModifyValue (VRProperty "goblin" "hp") (-allyDmg)
+              , ModifyValue (VRActorProp (ActorNPC "goblin") PHealth) (-allyDmg)
               , SetValue (VRVariable "ship.carriage.power") (EVInt 2)
-              , ModifyValue (VRProperty "goblin" "hp") (-6) ]
+              , ModifyValue (VRActorProp (ActorNPC "goblin") PHealth) (-6) ]
               (take 4 effsC)
     pure (r1 && r2 && r3 && r4 && r5 && r6)
 
@@ -2892,7 +2892,7 @@ testValidateMissingRoomInRule = do
     let gw0 = world initSampleGame
         withRule eff = gw0 { triggerDefs = [TriggerDef "t" OnTurn Nothing [eff] False 0] }
         moveNpc    = withRule (MoveEntity "goblin" (InRoom "ghost_room"))
-        movePlayer = withRule (SetValue (VRProperty "player" "room") (EVString "ghost_room"))
+        movePlayer = withRule (SetValue (VRActorProp ActorPlayer PRoom) (EVString "ghost_room"))
         legit      = withRule (MoveEntity "goblin" (InRoom "hallway"))
     r1 <- expectTrue "MoveEntity into a missing room is reported"
               (MissingRoom "ghost_room" `elem` validateWorld moveNpc)
@@ -2912,21 +2912,21 @@ testValidateMissingNpcInRule :: IO Bool
 testValidateMissingNpcInRule = do
     let withTarget t = (world initSampleGame)
                 { triggerDefs = [ TriggerDef "t" OnTurn Nothing
-                                    [MoveEntity t (InRoom "hallway")] False 0 ] }
+                                     [MoveEntity t (InRoom "hallway")] False 0 ] }
     r1 <- expectTrue "an unknown MoveEntity target is reported as MissingNPC"
               (MissingNPC "ghost_npc" `elem` validateWorld (withTarget "ghost_npc"))
     r2 <- expectTrue "a declared NPC is not reported"
               (MissingNPC "goblin" `notElem` validateWorld (withTarget "goblin"))
     pure (r1 && r2)
 
--- | L4: a `VRProperty` reference to an entity that is neither an item, an NPC nor
+-- | L4: a `VRActorProp` reference to an entity that is neither an item, an NPC nor
 --   an exit lock key.
 testValidateMissingEntityInRule :: IO Bool
 testValidateMissingEntityInRule = do
     let withTarget t = (world initSampleGame)
                 { triggerDefs = [ TriggerDef "t" OnTurn Nothing
-                                    [SetValue (VRProperty t "state") (EVString "open")] False 0 ] }
-    r1 <- expectTrue "an unknown VRProperty target is reported"
+                                    [SetValue (VRActorProp (ActorEntity t) PState) (EVString "open")] False 0 ] }
+    r1 <- expectTrue "an unknown VRActorProp target is reported"
               (MissingEntity "ghost_entity" "property" `elem` validateWorld (withTarget "ghost_entity"))
     -- an exit lock key lives in `entityStates` and is therefore a valid entity
     r2 <- expectTrue "an exit lock key is not reported"
@@ -3158,7 +3158,7 @@ testCombatTacticalRoundTrip = do
 testAbilityCost :: IO Bool
 testAbilityCost = do
     let fireball = PlayerAbility "fireball" "Fireball" "player.mana" 10 0
-            [ModifyValue (VRProperty "goblin" "hp") (-15)]
+            [ModifyValue (VRActorProp (ActorNPC "goblin") PHealth) (-15)]
         tactical = CombatTactical (TacticalCombat PlayerFirst True 100 "speed")
         worldT = (world initSampleGame)
             { combatProfile = tactical
@@ -3193,7 +3193,7 @@ testAbilityCost = do
 testAbilityCooldown :: IO Bool
 testAbilityCooldown = do
     let slash = PlayerAbility "slash" "Power Slash" "player.stamina" 5 3
-            [ModifyValue (VRProperty "goblin" "hp") (-10)]
+            [ModifyValue (VRActorProp (ActorNPC "goblin") PHealth) (-10)]
         tactical = CombatTactical (TacticalCombat PlayerFirst True 100 "speed")
         worldT = (world initSampleGame)
             { combatProfile = tactical
@@ -3252,6 +3252,47 @@ testBySpeedInitiative = do
     r4 <- expectEqual (Just (VVInt 12)) (getVariable (combatInitiativeNpcKey "goblin") stDefend)
 
     pure (r1 && r2 && r3 && r4)
+
+-- | Phase 7f-3 / 7h-2 V1: ValueRef / VRActorProp JSON round-trip
+testValueRefRoundTrip :: IO Bool
+testValueRefRoundTrip = do
+    let samples =
+            [ VRFlag "flag1"
+            , VRVariable "var1"
+            , VRItemProp "key" "weight"
+            , VRActorProp ActorPlayer PRoom
+            , VRActorProp ActorPlayer PHealth
+            , VRActorProp (ActorNPC "goblin") PHealth
+            , VRActorProp (ActorNPC "goblin") (PCustom "speed")
+            , VRActorProp (ActorRoom "hallway") PVisited
+            , VRActorProp (ActorEntity "gate") PState
+            , VRActorProp (ActorShip "kestrel") PHealth
+            , VRPlayerHealth
+            ]
+        check v = Aeson.decode (Aeson.encode v) == Just v
+    expectTrue "all ValueRef constructors round-trip cleanly via JSON" (all check samples)
+
+-- | Phase 7f-3 / 7h-2 V1: Legacy VRProperty JSON decodes into VRActorProp
+testLegacyVRPropertyDecoding :: IO Bool
+testLegacyVRPropertyDecoding = do
+    let dec raw = Aeson.decode (BLC.pack raw) :: Maybe ValueRef
+    r1 <- expectEqual (Just (VRActorProp ActorPlayer PRoom))
+              (dec "{\"tag\":\"VRProperty\",\"contents\":[\"player\",\"room\"]}")
+    r2 <- expectEqual (Just (VRActorProp ActorPlayer PHealth))
+              (dec "{\"tag\":\"VRProperty\",\"contents\":[\"player\",\"hp\"]}")
+    r3 <- expectEqual (Just (VRActorProp (ActorRoom "treasure") PVisited))
+              (dec "{\"tag\":\"VRProperty\",\"contents\":[\"treasure\",\"visited\"]}")
+    r4 <- expectEqual (Just (VRActorProp (ActorEntity "gate") PState))
+              (dec "{\"tag\":\"VRProperty\",\"contents\":[\"gate\",\"state\"]}")
+    r5 <- expectEqual (Just (VRActorProp (ActorNPC "goblin") PHealth))
+              (dec "{\"tag\":\"VRProperty\",\"contents\":[\"goblin\",\"hp\"]}")
+    r6 <- expectEqual (Just (VRActorProp ActorPlayer (PCustom "luck")))
+              (dec "{\"tag\":\"VRProperty\",\"contents\":[\"player\",\"luck\"]}")
+    r7 <- expectEqual (Just (VRActorProp (ActorNPC "goblin") (PCustom "agility")))
+              (dec "{\"tag\":\"VRProperty\",\"contents\":[\"goblin\",\"agility\"]}")
+    r8 <- expectEqual (Just VRPlayerHealth)
+              (dec "{\"tag\":\"VRPlayerHealth\"}")
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
 
 main :: IO ()
 main = do
@@ -3458,7 +3499,7 @@ main = do
         -- Review L4: constructor coverage in Validate
         , runTest "MissingRoom from a rule room reference (L4)" testValidateMissingRoomInRule
         , runTest "MissingNPC from a rule reference (L4)" testValidateMissingNpcInRule
-        , runTest "MissingEntity from a VRProperty ref (L4)" testValidateMissingEntityInRule
+        , runTest "MissingEntity from a VRActorProp ref (L4)" testValidateMissingEntityInRule
         , runTest "InvalidVehicleRoom for a bad entry (L4)" testValidateInvalidVehicleRoom
         -- Review L1 / L8 leftovers
         , runTest "World loaders and their error branches (L1)" testWorldLoadersAndErrors
@@ -3474,6 +3515,9 @@ main = do
         , runTest "tactical abilities resource cost (7f-3 A3)" testAbilityCost
         , runTest "tactical abilities cooldown gating (7f-3 A3)" testAbilityCooldown
         , runTest "tactical BySpeed initiative (7f-3 A3)" testBySpeedInitiative
+        -- Phase 7f-3 / 7h-2 V1: ValueRef ADT & Legacy JSON
+        , runTest "ValueRef JSON round-trip (V1)" testValueRefRoundTrip
+        , runTest "Legacy VRProperty JSON decoding (V1)" testLegacyVRPropertyDecoding
         -- Narratives (Phase 4.4)
         , runTest "narrative returns lines" testNarrativeReturnsLines
         , runTest "narrative stores pending (no side effects)" testNarrativeStoresPending

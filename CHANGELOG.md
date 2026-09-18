@@ -101,7 +101,13 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `ShipActor` (7h) erweitern sie ohne Signaturänderung.
 - `evalPredicate (Location "player" r)` prüft jetzt auch den Spielerraum
   (vorher nur NPC-/Item-Locations).
-- Tests: **234** Engine- + **75** Worldbuilder-Tests, **26** E2E-Läufe
+- **Phase V1 — Typsichere `ActorRef`- und `PropRef`-ADTs für `ValueRef`**:
+  - `VRProperty String String` abgelöst durch `VRActorProp ActorRef PropRef`.
+  - `ActorRef = ActorPlayer | ActorNPC NPCID | ActorShip VehicleID | ActorRoom RoomID | ActorEntity EntityID`.
+  - `PropRef = PHealth | PRoom | PVisited | PState | PCustom String`.
+  - Migration via handgeschriebenem `FromJSON ValueRef` (unterstützt sowohl neues Schema als auch altes `VRProperty [target, prop]` Format).
+  - Save-Version auf 3 erhöht.
+- Tests: **236** Engine- + **75** Worldbuilder-Tests, **26** E2E-Läufe
   (`scripts/ci.sh`).
 
 ### Fixed

@@ -14,9 +14,9 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as BLC
 
 -- | Current save schema version.
---   Bumped to 2 with the Phase 0/1 changes (visitedRooms, equipment, room hooks).
+--   Bumped to 3 with Phase 7f-3 / 7h-2 (V1: ActorRef/PropRef ADT).
 currentSaveVersion :: Int
-currentSaveVersion = 2
+currentSaveVersion = 3
 
 -- | Compute a simple checksum of the GameWorld for save compatibility detection.
 --   The accumulator is strict (P2-10): the lazy `foldl` built one thunk per

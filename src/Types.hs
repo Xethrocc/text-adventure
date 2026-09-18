@@ -180,17 +180,79 @@ data Comparator = CEq | CNeq | CLt | CLte | CGt | CGte
 instance ToJSON Comparator
 instance FromJSON Comparator
 
+-- | Reference to an entity/actor whose property is inspected or modified.
+data ActorRef
+    = ActorPlayer
+    | ActorNPC NPCID
+    | ActorShip VehicleID
+    | ActorRoom RoomID
+    | ActorEntity EntityID
+    deriving (Show, Eq, Generic)
+
+instance ToJSON ActorRef
+instance FromJSON ActorRef
+
+-- | Reference to a specific property of an actor or entity.
+data PropRef
+    = PHealth
+    | PRoom
+    | PVisited
+    | PState
+    | PCustom String
+    deriving (Show, Eq, Generic)
+
+instance ToJSON PropRef
+instance FromJSON PropRef
+
 -- | Reference to a value that can be compared in a predicate or modified in an effect.
 data ValueRef
     = VRFlag    FlagID                -- ^ flag value as string
     | VRVariable String                -- ^ adventure variable name (float/int)
     | VRItemProp ItemID String         -- ^ (item name, property name)
-    | VRProperty String String         -- ^ (entity name, property name)
+    | VRActorProp ActorRef PropRef      -- ^ (actor, property) typed reference
     | VRPlayerHealth                   -- ^ player hit points
     deriving (Show, Eq, Generic)
 
-instance ToJSON ValueRef
-instance FromJSON ValueRef
+instance ToJSON ValueRef where
+    toJSON (VRFlag f)        = object [ "tag" .= ("VRFlag" :: T.Text), "contents" .= f ]
+    toJSON (VRVariable v)    = object [ "tag" .= ("VRVariable" :: T.Text), "contents" .= v ]
+    toJSON (VRItemProp i p)  = object [ "tag" .= ("VRItemProp" :: T.Text), "contents" .= [i, p] ]
+    toJSON (VRActorProp a p) = object [ "tag" .= ("VRActorProp" :: T.Text), "contents" .= [toJSON a, toJSON p] ]
+    toJSON VRPlayerHealth    = object [ "tag" .= ("VRPlayerHealth" :: T.Text) ]
+
+instance FromJSON ValueRef where
+    parseJSON = withObject "ValueRef" $ \o -> do
+        tag <- o .: "tag" :: Parser T.Text
+        case tag of
+            "VRFlag"         -> VRFlag <$> o .: "contents"
+            "VRVariable"     -> VRVariable <$> o .: "contents"
+            "VRItemProp"     -> do
+                contents <- o .: "contents"
+                case contents of
+                    [i, p] -> pure (VRItemProp i p)
+                    _      -> fail "VRItemProp: expected [itemId, prop]"
+            "VRActorProp"    -> do
+                contents <- o .: "contents"
+                case contents of
+                    [aVal, pVal] -> VRActorProp <$> parseJSON aVal <*> parseJSON pVal
+                    _            -> fail "VRActorProp: expected [actor, prop]"
+            "VRPlayerHealth" -> pure VRPlayerHealth
+            "VRProperty"     -> do
+                contents <- o .: "contents"
+                case contents of
+                    (targetStr : propStr : _) -> pure (legacyVRProperty targetStr propStr)
+                    _                         -> fail "VRProperty: expected [target, prop]"
+            _                -> fail ("Unknown ValueRef tag: " ++ T.unpack tag)
+
+-- | Map legacy stringly-typed `VRProperty target prop` into `VRActorProp`
+legacyVRProperty :: String -> String -> ValueRef
+legacyVRProperty "player" "room"    = VRActorProp ActorPlayer PRoom
+legacyVRProperty "player" "hp"      = VRActorProp ActorPlayer PHealth
+legacyVRProperty target   "visited" = VRActorProp (ActorRoom target) PVisited
+legacyVRProperty target   "state"   = VRActorProp (ActorEntity target) PState
+legacyVRProperty target   "hp"      = VRActorProp (ActorNPC target) PHealth
+legacyVRProperty "player" prop      = VRActorProp ActorPlayer (PCustom prop)
+legacyVRProperty target   prop      = VRActorProp (ActorNPC target) (PCustom prop)
 
 -- | Predicate: composable condition language for the generic rule system (Phase 3c).
 --   A single outcome `Conditional Predicate a a` replaces CheckFlag, HasCondition,
