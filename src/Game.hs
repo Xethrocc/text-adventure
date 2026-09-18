@@ -584,6 +584,50 @@ setVariableChecked name val state =
         VVInt n -> setVariable name (VVInt (clampToVarDef name n state)) state
         _       -> setVariable name val state
 
+-- ---------------------------------------------------------------------------
+-- Combat round state (Phase 7f-3, step A1)
+-- ---------------------------------------------------------------------------
+--
+-- The round state lives in the adventure VarMap under the reserved `combat.`
+-- prefix — like `faction.`, `party.` and `ship.` — instead of a new `SaveState`
+-- field: no migration, and save/load works like for any other variable. The
+-- worldbuilder rejects an author-declared variable in this namespace
+-- (`CombatVariableClash`), because the engine owns these entries.
+--
+-- The state is written by the tactical resolver (A2) and read by the enemy
+-- reaction, which is an ordinary `on: turn` rule gated on `combat.engaged` — an
+-- engine special case would be a second code path, and 7f must not have one.
+-- See `plan-7f3-tactical-7h2-shipduell.md`.
+
+-- | VarMap prefix of the combat round state.
+combatVarPrefix :: String
+combatVarPrefix = "combat."
+
+-- | Rounds fought since the current fight started (0 = not in a fight).
+combatRoundKey :: String
+combatRoundKey = combatVarPrefix ++ "round"
+
+-- | 1 while a fight is being resolved, 0 otherwise. A reaction rule reads it via
+--   `compare_var: { name: combat.engaged, op: gte, value: 1 }`.
+combatEngagedKey :: String
+combatEngagedKey = combatVarPrefix ++ "engaged"
+
+-- | Current round of the fight (0 when absent — no declaration needed, the
+--   VarMap entry is created on demand).
+combatRound :: GameState -> Int
+combatRound st = case getVariable combatRoundKey st of
+    Just (VVInt n) -> n
+    _              -> 0
+
+setCombatRound :: Int -> GameState -> GameState
+setCombatRound n = setVariable combatRoundKey (VVInt n)
+
+-- | Whether a fight is being resolved.
+isCombatEngaged :: GameState -> Bool
+isCombatEngaged st = case getVariable combatEngagedKey st of
+    Just (VVInt n) -> n >= 1
+    _              -> False
+
 -- | Evaluate a Predicate against the current game state.
 evalPredicate :: Predicate -> GameState -> Bool
 evalPredicate PTrue _ = True

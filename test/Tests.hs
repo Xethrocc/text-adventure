@@ -3018,6 +3018,36 @@ testEntityStatePredicateCoversAllKinds = do
               (not (evalPredicate (EntityHasState "ghost" "alive") st0))
     pure (r1 && r2 && r3 && r4 && r5)
 
+-- | 7f-3 A1: the combat round state lives in the VarMap under the reserved
+--   `combat.` prefix — no new `SaveState` field, so save/load works like for any
+--   other variable, and the enemy reaction can read it with a plain
+--   `compare_var` rule instead of an engine special case.
+testCombatRoundStateVars :: IO Bool
+testCombatRoundStateVars = do
+    let st0 = initSampleGame
+    r1 <- expectEqual 0 (combatRound st0)
+    r2 <- expectTrue "no fight by default" (not (isCombatEngaged st0))
+    let st1 = setCombatRound 3 st0
+    r3 <- expectEqual 3 (combatRound st1)
+    r4 <- expectTrue "the round is a plain VarMap value"
+              (getVariable combatRoundKey st1 == Just (VVInt 3))
+    -- the reaction rule reads the state through the normal predicate language
+    let engaged = setVariable combatEngagedKey (VVInt 1) st1
+    r5 <- expectTrue "an engaged fight is visible to compare_var"
+              (evalPredicate (CompareVar combatEngagedKey CGte 1) engaged)
+    r6 <- expectTrue "a disengaged fight is not"
+              (not (evalPredicate (CompareVar combatEngagedKey CGte 1) st1))
+    -- and it survives the save round-trip without any migration
+    r7 <- expectTrue "combat state survives the save round-trip"
+              (case Aeson.decode (Aeson.encode (save engaged)) :: Maybe SaveState of
+                   Just ss -> Map.lookup combatRoundKey (variables ss) == Just (VVInt 3)
+                              && Map.lookup combatEngagedKey (variables ss) == Just (VVInt 1)
+                   Nothing -> False)
+    r8 <- expectTrue "both keys use the reserved prefix"
+              (combatVarPrefix `isPrefixOf` combatRoundKey
+               && combatVarPrefix `isPrefixOf` combatEngagedKey)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -3229,6 +3259,7 @@ main = do
         , runTest "World loaders and their error branches (L1)" testWorldLoadersAndErrors
         , runTest "equipmentSummary text (L8)" testEquipmentSummaryText
         , runTest "state: predicate covers NPC/item/lock states" testEntityStatePredicateCoversAllKinds
+        , runTest "combat round state lives in the VarMap (7f-3 A1)" testCombatRoundStateVars
         -- Narratives (Phase 4.4)
         , runTest "narrative returns lines" testNarrativeReturnsLines
         , runTest "narrative stores pending (no side effects)" testNarrativeStoresPending

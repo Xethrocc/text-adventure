@@ -460,10 +460,22 @@ combat:
 - `tactical` ist bis Phase 7f-3 deaktiviert (`CombatProfileNotSupported`).
 - **Fehler:** `UnknownCombatProfile` (unbekannter Name),
   `CombatProfileNotSupported` (tactical).
+- **Reserviert: der `combat.`-Namespace** (Phase 7f-3, Schritt A1). Der
+  Rundenzustand eines taktischen Kampfes lebt in der VarMap (`combat.round`,
+  `combat.engaged`, `combat.initiative.<actorId>`) — wie `faction.`/`party.`/
+  `ship.`, also kein neues Save-Feld und Save/Load gratis. Eine selbst
+  deklarierte Variable mit diesem Prefix wird abgelehnt (`CombatVariableClash`).
+  `combat.*` darf in Regeln frei per `compare_var`/`set_var` verwendet werden;
+  die Gegnerreaktion ist eine gewöhnliche `on: turn`-Regel mit
+  `when: { compare_var: { name: combat.engaged, op: gte, value: 1 } }` — kein
+  Engine-Sonderpfad.
 
-Umsetzung: `src/Combat.hs` — `resolveCombat :: CombatProfile ->
-[CombatActor] -> CombatTarget -> GameState -> ([Effect], [String])`,
-pure Effekt-Erzeugung durch den einen Interpreter. Mit einem Begleiter in der
+Umsetzung: `src/Combat.hs` — `resolveCombat :: CombatProfile -> [CombatActor] ->
+CombatTarget -> CombatAction -> GameState -> ([Effect], [String])`, pure
+Effekt-Erzeugung durch den einen Interpreter. `CombatAction` sagt, was der Spieler
+in der Runde tut (`CAAttack`/`CADefend`/`CAFlee`/`CAUseItem`/`CAAbility`);
+`off`/`narrative`/`classic` ignorieren den Parameter, `executeAttack` übergibt
+`CAAttack` (7f-3, Schritt A0). Mit einem Begleiter in der
 Gruppe enthält die Aktor-Liste zusätzlich `CompanionActor <npc>` (Module 7g).
 
 ---

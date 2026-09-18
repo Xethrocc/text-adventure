@@ -1884,7 +1884,28 @@ tests =
     , ("starship fixture compiles + validates", testStarshipFixtureCompiles)
     -- Phase 7 acceptance: composition proof
     , ("combo fixture (5 modules) compiles + validates", testComboFixtureCompiles)
+    , ("combat. namespace is reserved (7f-3 A1)", testCombatVariableClash)
     ]
+
+-- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
+--   author-declared variable in it is rejected, the same rule that guards the
+--   `ship.` systems (and for the same reason: the engine owns those entries).
+testCombatVariableClash :: IO Bool
+testCombatVariableClash = do
+    let withVar n = (minAdventure (minRoom "loc_0"))
+            { advVariables = [AVariable n "int" (Just (Aeson.Number 0)) Nothing Nothing] }
+    r1 <- case compileAdventure (withVar "combat.round") of
+            Left errs -> expectContains "CombatVariableClash" (issuesText errs)
+            Right _   -> expectTrue "expected CombatVariableClash for combat.round" False
+    r2 <- case compileAdventure (withVar "combat.engaged") of
+            Left errs -> expectContains "CombatVariableClash" (issuesText errs)
+            Right _   -> expectTrue "expected CombatVariableClash for combat.engaged" False
+    -- an ordinary variable is unaffected
+    r3 <- case compileAdventure (withVar "hunger") of
+            Left errs -> expectTrue "an ordinary variable is not a combat clash"
+                            (not ("CombatVariableClash" `isInfixOf` issuesText errs))
+            Right _   -> pure True
+    pure (r1 && r2 && r3)
 
 main :: IO ()
 main = do

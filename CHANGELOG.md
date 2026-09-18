@@ -95,7 +95,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `ShipActor` (7h) erweitern sie ohne Signaturänderung.
 - `evalPredicate (Location "player" r)` prüft jetzt auch den Spielerraum
   (vorher nur NPC-/Item-Locations).
-- Tests: **223** Engine- + **74** Worldbuilder-Tests, **24** E2E-Läufe
+- Tests: **224** Engine- + **75** Worldbuilder-Tests, **24** E2E-Läufe
   (`scripts/ci.sh`).
 
 ### Fixed
@@ -445,6 +445,23 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   aller sieben kampfnahen E2E-Läufe (combat-off/-narrative/-classic, party,
   starship, starship-loss, combo) sind vor und nach dem Schritt byte-identisch.
 - Tests: **223** Engine- + **74** Worldbuilder-Tests, **24** E2E-Läufe.
+
+- **7f-3 (`tactical`), Schritt A1 — Rundenzustand in der VarMap:** Der Kampf-
+  Rundenzustand lebt unter dem reservierten Prefix `combat.` in der VarMap
+  (`combat.round`, `combat.engaged`) — wie `faction.`/`party.`/`ship.`, also
+  **kein neues `SaveState`-Feld** und Save/Load ohne Migration.
+  `src/Game.hs` bekommt `combatVarPrefix`/`combatRoundKey`/`combatEngagedKey`
+  plus `combatRound`/`setCombatRound`/`isCombatEngaged`; der Worldbuilder lehnt
+  eine autor-deklarierte Variable in diesem Namespace ab
+  (`CombatVariableClash`) — geprüft gegen die **autor-deklarierten** Variablen,
+  damit die Regel noch hält, wenn A4 die Engine-Einträge selbst emittiert.
+  Nachgeprüft: es gibt keinen allgemeinen „unbekannte Variable"-Check, `combat.*`
+  ist in Regeln also frei per `compare_var`/`set_var` nutzbar — A2 hängt nicht an
+  A4. `combat.initiative.<actorId>` folgt in A2, sobald der Treiber es braucht
+  (kein Zugriff auf Vorrat).
+  Nebenbei korrigiert: die Doku zeigte noch die alte `resolveCombat`-Signatur
+  ohne `CombatAction`.
+- Tests: **224** Engine- + **75** Worldbuilder-Tests, **24** E2E-Läufe.
 
 ## [0.9.0.0] — Unreleased
 

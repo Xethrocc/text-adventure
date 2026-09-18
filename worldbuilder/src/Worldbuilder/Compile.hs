@@ -128,6 +128,7 @@ compileAdventure adv =
         trigIdErrs = checkTriggerIds (advTriggers adv)
         cmdVerbErrs = checkCommandVerbRefs verbRegistry (advTriggers adv)
         stopCostErrs = checkStopCostItems (advVehicles adv) gw
+        combatVarErrs = checkCombatVarReserved varDefs
 
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
                     ++ varErrs ++ facErrs ++ facConflictErrs ++ trigErrs ++ encErrs
@@ -140,6 +141,7 @@ compileAdventure adv =
                     ++ trigIdErrs
                     ++ cmdVerbErrs
                     ++ stopCostErrs
+                    ++ combatVarErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -679,6 +681,22 @@ compileCombat (Just ac) = case acProfile ac of
     other       -> ([ ciError "combat.profile" "UnknownCombatProfile"
                         ("unknown combat profile '" ++ other ++ "' (expected off | narrative | classic)") ]
                     , E.CombatClassic)
+
+-- | `combat.` is the engine's namespace for the combat round state (Phase 7f-3,
+--   step A1): the engine owns `combat.round` and `combat.engaged`, so an
+--   author-declared variable in that namespace would silently collide with them.
+--
+--   Checked against the **author-declared** variables (`variables:`) rather than
+--   the merged set, so the rule keeps holding once 7f-3 emits the engine's own
+--   entries — a "clash table" against the merged set would then flag the
+--   engine's own definitions.
+checkCombatVarReserved :: Map.Map String E.VarDef -> [CompileIssue]
+checkCombatVarReserved varDefs =
+    [ ciError ("variables." ++ name) "CombatVariableClash"
+        ("'" ++ name ++ "' is in the reserved 'combat.' namespace; "
+         ++ "the engine owns the combat round state (7f-3)")
+    | name <- Map.keys varDefs
+    , "combat." `isPrefixOf` name ]
 
 -- | Verify every `faction.<id>` reference in the compiled world resolves to a
 --   declared faction. Only runs when the `factions:` segment is present
