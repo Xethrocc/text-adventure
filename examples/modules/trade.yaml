@@ -1,0 +1,290 @@
+name: The Grey Mooring (Trade)
+start_room: plaza
+
+# Module 7b — Handel/Ökonomie: Kein Kern-Eingriff. `buy`/`sell` sind
+# Custom-Verben; die Transaktionen laufen über Item-verb_map-Effekte
+# (Conditional + CompareVar). Bestand und Währung leben als VarMap-Einträge
+# (`shop.merchant.<item>`, `credits`) und überstehen Save/Load. Der
+# `standing`-Rabatt (Faktion mercantile, Modul 7a) senkt den Seepreis.
+
+verbs:
+  - name: buy
+    aliases: [purchase, kaufen]
+  - name: sell
+    aliases: [pawn, verkaufen]
+
+variables:
+  - name: credits
+    type: int
+    initial: 60
+    min: 0
+
+initial_variables:
+  shop.merchant.rope: 2
+  shop.merchant.lantern: 1
+  shop.merchant.brass_key: 1
+
+factions:
+  - id: mercantile
+    name: Händlergilde
+    initial: 0
+    levels:
+      - { at: 10,  name: member }
+      - { at: -10, name: banned }
+
+rooms:
+  - id: plaza
+    name: Hafenplatz
+    desc: Kopfsteinpflaster und Möwengeschrei. Nördlich liegt der Markt, östlich die Docks, südlich die Gasse.
+    exits:
+      north: {to: market}
+      east: {to: dock}
+      south: {to: alley}
+  - id: market
+    name: Marktplatz
+    desc: Stände mit Tuch und Obst. Westlich liegt der Brunnen, östlich der Krämer, nördlich das Lagerhaus.
+    exits:
+      south: {to: plaza}
+      west: {to: well}
+      east: {to: merchant_stall}
+      north: {to: warehouse}
+  - id: well
+    name: Brunnen
+    desc: Ein alter Steinkranz. Das Wasser steht tief und dunkel. Nach Westen führt ein Pfad zur Taverne.
+    exits:
+      east: {to: market}
+      west: {to: tavern}
+    search:
+      - {give: silver_cup}
+      - {msg: "Du tastest im Wasser und findest einen versilberten Becher."}
+  - id: merchant_stall
+    name: Krämerstand
+    desc: Der Krämer wägt Münzen und beäugt deine Börse. Seile, Laternen und… ein Siegel mit gildischem Wappen.
+    exits:
+      west: {to: market}
+  - id: warehouse
+    name: Lagerhaus
+    desc: Kistenstapel bis zur Decke. Nach Norden führt eine Rampe zur Schmiede.
+    exits:
+      south: {to: market}
+      north: {to: smithy}
+  - id: smithy
+    name: Schmiede
+    desc: Es riecht nach Kohle und heißem Eisen. Östlich liegt die Gildenhalle.
+    exits:
+      south: {to: warehouse}
+      east: {to: guild_hall}
+  - id: guild_hall
+    name: Gildenhalle
+    desc: Hohe Fenster, lange Tische, das Wappen der Kaufleute über dem Kamin.
+    exits:
+      west: {to: smithy}
+  - id: dock
+    name: Anleger
+    desc: Der Steg schwankt. Nördlich sitzt der Hafenmeister, westlich führt es zurück zum Platz.
+    exits:
+      west: {to: plaza}
+      north: {to: harbor_master}
+  - id: harbor_master
+    name: Hafenmeisterbüro
+    desc: Karten und Logbücher. Nördlich liegt das Hafenbretttor zur Werft.
+    exits:
+      south: {to: dock}
+      north: {to: gate}
+  - id: gate
+    name: Werfttor
+    desc: Zwei Wachen in gildischem Blau. Nur wer das Siegel vorweist, kommt auf die Werft.
+    exits:
+      south: {to: harbor_master}
+  - id: alley
+    name: Seitengasse
+    desc: Feucht, eng. Östlich öffnet sich ein Tempelhof, nördlich liegt der Hafenplatz.
+    exits:
+      north: {to: plaza}
+      east: {to: temple}
+  - id: temple
+    name: Tempelhof
+    desc: Moos zwischen den Steinen. Die Priester handeln mit Kerzen und Schweigen.
+    exits:
+      west: {to: alley}
+  - id: tavern
+    name: Tau und Anker
+    desc: Die Stammkneipe der Schiffer. Nach Osten führt der Pfad zum Brunnen.
+    exits:
+      east: {to: well}
+
+items:
+  - id: rope
+    name: Seil
+    desc: Ein gutes, geteertes Seil.
+    keys: [rope, seil]
+    location: merchant_stall
+    verb_map:
+      buy,intact:
+        - if: {compare_var: {name: shop.merchant.rope, op: gte, value: 1}}
+          then:
+            - if: {compare_var: {name: credits, op: gte, value: 12}}
+              then:
+                - {add_var: credits, delta: -12}
+                - {add_var: shop.merchant.rope, delta: -1}
+                - {give: rope}
+                - {msg: "Du kaufst das Seil für 12 Münzen."}
+              else:
+                - {msg: "Dafür reicht dein Geld nicht. (12 Münzen)"}
+          else:
+            - {msg: "Der Krämer hat keine Seile mehr."}
+      sell,intact:
+        - {add_var: credits, delta: 5}
+        - {consume: rope}
+        - {msg: "Du verkaufst das Seil für 5 Münzen."}
+  - id: lantern
+    name: Laterne
+    desc: Eine Sturmlaterne mit dickem Glas.
+    keys: [lantern, laterne]
+    location: merchant_stall
+    verb_map:
+      buy,intact:
+        - if: {compare_var: {name: shop.merchant.lantern, op: gte, value: 1}}
+          then:
+            - if: {compare_var: {name: credits, op: gte, value: 25}}
+              then:
+                - {add_var: credits, delta: -25}
+                - {add_var: shop.merchant.lantern, delta: -1}
+                - {give: lantern}
+                - {msg: "Du kaufst die Laterne für 25 Münzen."}
+              else:
+                - {msg: "Dafür reicht dein Geld nicht. (25 Münzen)"}
+          else:
+            - {msg: "Der Krämer hat keine Laternen mehr."}
+      sell,intact:
+        - {add_var: credits, delta: 10}
+        - {consume: lantern}
+        - {msg: "Du verkaufst die Laterne für 10 Münzen."}
+  - id: brass_key
+    name: Gildensiegel
+    desc: Ein Schweres Siegel aus Messing — der Schlüssel zur Werft.
+    keys: [seal, siegel, key]
+    location: merchant_stall
+    verb_map:
+      buy,intact:
+        - if: {compare_var: {name: shop.merchant.brass_key, op: gte, value: 1}}
+          then:
+            - if: {has_flag: guild_discount}
+              then:
+                - if: {compare_var: {name: credits, op: gte, value: 40}}
+                  then:
+                    - {add_var: credits, delta: -40}
+                    - {add_var: shop.merchant.brass_key, delta: -1}
+                    - {give: brass_key}
+                    - {msg: "Gildensiegel zum Mitgliedspreis: 40 Münzen."}
+                  else:
+                    - {msg: "Auch mit Rabatt reicht dein Geld nicht. (40 Münzen)"}
+              else:
+                - if: {compare_var: {name: credits, op: gte, value: 60}}
+                  then:
+                    - {add_var: credits, delta: -60}
+                    - {add_var: shop.merchant.brass_key, delta: -1}
+                    - {give: brass_key}
+                    - {msg: "Du kaufst das Gildensiegel für 60 Münzen."}
+                  else:
+                    - {msg: "Dafür reicht dein Geld nicht. (60 Münzen)"}
+          else:
+            - {msg: "Der Krämer hat kein Siegel mehr."}
+  - id: silver_cup
+    name: versilberter Becher
+    desc: Ein Becher aus dem Brunnen, Rand angelaufen.
+    keys: [cup, becher, silver]
+    location: well
+    hidden: true
+    on_take:
+      - {msg: "Der Becher glänzt matt in deiner Hand."}
+    verb_map:
+      sell,intact:
+        - {add_var: credits, delta: 40}
+        - {consume: silver_cup}
+        - {msg: "Der Krämer zahlt dir 40 Münzen für den Becher."}
+
+npcs:
+  - id: merchant
+    name: Krämer
+    desc: Ein dünner Mann mit ruhigen Augen und schnellen Fingern.
+    keys: [merchant, krämer, haendler]
+    location: merchant_stall
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "Seile, Laternen, Siegel. Was immer der Hafen braucht — ich hab's."
+            choices:
+              - text: "Was kostet das Gildensiegel?"
+                next: seal_price
+              - text: "Ich will der Gilde beitreten."
+                next: join
+                visible_when: {not: {has_flag: guild_member}}
+              - {text: "Später.", next: null}
+          seal_price:
+            text: "Sechzig Münzen. Wer das Siegel der Gilde trägt, bekommt die Werft zu sehen."
+            choices:
+              - text: "Und für Mitglieder?"
+                next: member_price
+                visible_when: {standing: {faction: mercantile, at_least: 10}}
+              - {text: "Verstanden.", next: null}
+          member_price:
+            text: "Vierzig. Ein fairer Preis für ein Mitglied der Gilde."
+            choices:
+              - text: "Dann nimm mich als Mitglied."
+                next: join
+                visible_when: {not: {has_flag: guild_member}}
+              - {text: "Danke.", next: null}
+          join:
+            text: "Unterzeichnet das Register. Die Gilde hält diesen Hafen ehrlich."
+            choices:
+              - text: "Ich unterschreibe."
+                next: null
+                outcomes:
+                  - {standing: {faction: mercantile, add: 15}}
+                  - {set_flag: guild_member, val: "true"}
+                  - {set_flag: guild_discount, val: "true"}
+                  - {msg: "Du unterschreibst. Von nun an giltst du als Mitglied der Gilde."}
+
+quests:
+  - id: harbor_seal
+    name: Das Hafenbretttor
+    desc: Erwirb das Gildensiegel und verschaffe dir Zugang zur Werft.
+    stages:
+      - {id: earn, desc: Bring 60 Münzen zusammen (oder tritt der Gilde bei).}
+      - {id: seal, desc: Kaufe das Gildensiegel.}
+      - {id: gate, desc: Zeige das Siegel am Werfttor.}
+    reward:
+      - {msg: "Der Hafendurchbruch ist offen."}
+
+rules:
+  - id: start_seal_quest
+    on: enter merchant_stall
+    once: true
+    effects:
+      - {start_quest: harbor_seal}
+  - id: guild_takes_notice
+    on: command buy
+    when: {has_item: brass_key}
+    effects:
+      - {standing: {faction: mercantile, add: 5}}
+      - {msg: "Der Krämer nickt anerkennend. Die Gilde schätzt deinen Handel."}
+  - id: open_werft
+    on: enter gate
+    when: {has_item: brass_key}
+    effects:
+      - {msg: "Du zeigst das Gildensiegel. Die Wachen lassen dich durch."}
+      - {game_end: victory, msg: "VICTORY — Die Werft liegt vor dir. Der Handel hat sich gelohnt."}
+  - id: bar_werft
+    on: enter gate
+    when: {not: {has_item: brass_key}}
+    once: true
+    effects:
+      - {msg: "Die Wachen versperren dir den Weg. 'Nur mit dem Siegel der Gilde.'"}
+      - {move: harbor_master}
+
+interactions:
+  entity: []
+  item: []

@@ -1,0 +1,81 @@
+name: "Hüllenbruch (Starship-Verlustpfad)"
+start_room: lv_dock
+
+# Warum diese Fixture existiert (Review-Befund zu L12/starship.yaml):
+#
+# In `starship.yaml` ist `hull_failure` mit den dortigen Zahlen *unerreichbar*:
+# Der Korsar (max_hp 30) stirbt in Runde 4 (Spieler 7 + Schiffs-`weapons` 2 =
+# 9 Schaden pro Runde), und in genau derselben Runde fällt die Hülle der Kestrel
+# auf 0. Da die Regel zusätzlich an `state: korsar is alive` gebunden ist, kann
+# sie nie feuern — der Verlustpfad des Moduls war toter Inhalt.
+#
+# Diese Fixture macht ihn erreichbar: derselbe Schiffstyp, aber ein deutlich
+# zäherer Gegner, damit die Hülle bricht, *bevor* der Gegner stirbt.
+#
+# Zahlen (Kampf ist deterministisch, kein RNG):
+#   Spieler  attack 10, Gegner-Defense 3      -> 7 Schaden pro Angriff
+#   Schiff   weapons 2                        -> 2 Schaden pro Runde (kostet 1 power)
+#   Gegner   attack 11, Spieler-Defense 5     -> 6 Konter pro Runde
+#   Puffer   shields 8 + hull 12 = 20 / 6     -> Hüllenbruch in Runde 4
+#   Gegner   100 HP / 9 pro Runde             -> hält 15 Runden, überlebt den Bruch
+
+vehicles:
+  - id: kestrel
+    name: Kestrel
+    desc: "Ein Kurier der Randwacht, vier Decks, eine Narbe im Lack."
+    type: player
+    entry_room: lv_bridge
+    cockpit: lv_bridge
+    keys: [kestrel, schiff]
+    interior:
+      - id: lv_bridge
+        name: Brücke
+        desc: "Sichtschirme, drei Sessel. Nach achtern liegt der Maschinenraum."
+        exits:
+          south: {to: lv_engine}
+      - id: lv_engine
+        name: Maschinenraum
+        desc: "Ein Reaktorherz in Kupferwicklungen, ruhig und gleichmäßig."
+        exits:
+          north: {to: lv_bridge}
+    stops:
+      "Dock": lv_dock
+      "Wrackfeld": lv_wreck
+    start_stop: "Dock"
+    systems:
+      power:   { initial: 6, max: 6 }
+      shields: { initial: 8, max: 8 }
+      hull:    { initial: 12, max: 12 }
+      weapons: { initial: 2, max: 5 }
+
+rooms:
+  - id: lv_dock
+    name: Dock
+    desc: "Ein verlassenes Dock. Die Kestrel liegt an der Rampe, niemand sonst hier."
+    exits:
+      north: {to: lv_wreck}
+  - id: lv_wreck
+    name: Wrackfeld
+    desc: "Geröll treibt im Leerlauf. Voraus wartet ein dunkler, plump vertäuter Rumpf."
+
+npcs:
+  - id: panzerkreuzer
+    name: Panzerkreuzer
+    desc: "Ein schwerer, langsamer Rumpf mit doppelt gepanzerter Bordwand — kein Korsar, sondern ein Schwergewicht."
+    keys: [panzerkreuzer, kreuzer, schiff]
+    location: lv_wreck
+    state: alive
+    max_hp: 100
+    attack: 11
+    defense: 3
+
+rules:
+  # Der Verlustpfad: die Hülle ist durch, während der Gegner noch da ist.
+  - id: hull_failure
+    on: turn
+    when:
+      all:
+        - compare_var: { name: ship.kestrel.hull, op: lte, value: 0 }
+        - { state: panzerkreuzer, is: alive }
+    effects:
+      - { game_end: death, msg: "Die Hülle der Kestrel bricht auf — du verglühst mit dem Schiff." }

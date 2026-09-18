@@ -1,0 +1,158 @@
+name: "Der Verhandlungsweg (Combat: off)"
+start_room: co_plaza
+
+# Module 7f — Kampfprofil `off`.
+# Kein Kampf: `attack` wird abgelehnt (attack_refused-Text), keine Seite
+# verliert HP. Der Weg zum Tor führt über Dialog, nicht über Gewalt.
+
+combat:
+  profile: off
+  attack_refused: "„Waffen nieder, Fremder.“ Die Torwächterin schüttelt den Kopf. Hier wird nicht gekämpft."
+
+npcs:
+  - id: gatekeeper
+    name: Torwächterin
+    desc: "Eine grauhaarige Frau mit einem Schlüsselbund am Gürtel. Sie wirkt abweisend, aber nicht feindselig."
+    keys: [wächterin, gatekeeper, frau]
+    location: co_gate
+    state: alive
+    attack: 2
+    defense: 6
+    dialogue:
+      alive:
+        entry: greet
+        nodes:
+          greet:
+            text: "„Die Stadt braucht einen Beweis des guten Willens, kein Schwert.“"
+            choices:
+              - text: "Ich bringe den gestohlenen Kurierumhang."
+                visible_when: { has_item: cloak }
+                outcomes:
+                  - { consume: cloak }
+                  - { set_flag: gate_free, val: "true" }
+                  - { msg: "Sie prüft das Silbernest — und nickt. „Ehrlich zurückgebracht. Das Tor gehört dir.“" }
+                next: null
+              - text: "Wie komme ich hindurch?"
+                next: hint
+              - { text: "Tschüss.", next: null }
+          hint:
+            text: "„Im Kerkerhäuschen im Süden wurde der Umhang des Kuriers gestohlen. Bring ihn zurück — dann ist das Tor offen.“"
+            choices:
+              - { text: "Ich schaue nach.", next: null }
+
+rooms:
+  - id: co_plaza
+    name: Stadtplatz
+    desc: "Kopfsteinpflaster, Tauben, ein Brunnen. Das Tor liegt im Norden, Gassen führen nach Westen und Osten."
+    exits:
+      north: {to: co_gate}
+      west: {to: co_market}
+      east: {to: co_alley}
+      south: {to: co_well}
+  - id: co_gate
+    name: Westtor
+    desc: "Ein schweres Holztor, mit Eisenbändern beschlagen. Die Torwächterin lehnt am Pfosten."
+    exits:
+      south: {to: co_plaza}
+      north: {to: co_road, locked_by: city_gate}
+      west: {to: co_well}
+    on_enter:
+      - { msg: "Die Wächterin mustert dich prüfend." }
+  - id: co_road
+    name: Landstraße
+    desc: "Die Straße windet sich zwischen Feldern. Nördlich liegt das Dorf Grasthal."
+    exits:
+      south: {to: co_gate}
+      north: {to: co_village}
+  - id: co_village
+    name: Dorfanger
+    desc: "Weiden, Glocken, der Markt von Grasthal. Du hast es geschafft."
+    exits:
+      south: {to: co_road}
+    on_enter:
+      - { game_end: victory, msg: "VICTORY — Das Tor hat sich ohne einen einzigen Schlag geöffnet: Grasthal ist erreicht." }
+  - id: co_market
+    name: Markthalle
+    desc: "Stände mit Tuch, Käse und Töpfen. Eine Tür im Süden führt zum Warenhaus."
+    exits:
+      east: {to: co_plaza}
+      south: {to: co_warehouse}
+  - id: co_warehouse
+    name: Warenhaus
+    desc: "Kisten und Ballen stapeln sich bis zur Decke. Ein Stauraum liegt im Süden."
+    exits:
+      north: {to: co_market}
+      south: {to: co_backroom}
+  - id: co_backroom
+    name: Stauraum
+    desc: "Eine Pritsche, ein Tisch, ein Haken an der Wand. Hier lagerte man den gestohlenen Umhang."
+    exits:
+      north: {to: co_warehouse}
+    search:
+      - { give: cloak }
+      - { msg: "Unter der Pritsche: der gestohlene Kurierumhang!" }
+  - id: co_alley
+    name: Krämergasse
+    desc: "Eng, feucht, nach Fisch riechend. Im Süden steht das Kerkerhäuschen, im Norden die Schmiede."
+    exits:
+      west: {to: co_plaza}
+      south: {to: co_dungeon}
+      north: {to: co_smithy}
+  - id: co_dungeon
+    name: Kerkerhäuschen
+    desc: "Eine leere Zelle mit vergittertem Fenster. Ein Schlüssel hängt verkehrt herum am Haken."
+    exits:
+      north: {to: co_alley}
+    search:
+      - { give: cell_key }
+      - { msg: "Du nimmst den Schlüssel vom Haken." }
+  - id: co_well
+    name: Brunnenplatz
+    desc: "Der Brunnen plätschert. Ein Pfad führt weiter nach Süden zu den Ställen."
+    exits:
+      north: {to: co_plaza}
+      south: {to: co_stables}
+      west: {to: co_gate}
+  - id: co_smithy
+    name: Schmiede
+    desc: "Feuer glüht, Amboss dampft. Hier wird Werkzeug geschmiedet, kein Streit."
+    exits:
+      south: {to: co_alley}
+      west: {to: co_plaza}
+  - id: co_tavern
+    name: Taverne
+    desc: "Laut, voll, es riecht nach Bier. Kein Platz für Duelle."
+    exits:
+      north: {to: co_stables}
+  - id: co_stables
+    name: Ställe
+    desc: "Pferde schnauben. Heu rieselt von der Decke."
+    exits:
+      north: {to: co_well}
+      south: {to: co_tavern}
+
+items:
+  - id: cloak
+    name: Kurierumhang
+    desc: "Ein blauer Umhang mit Silberstickerei — der gestohlene Beweis."
+    keys: [umhang, cloak, mantel]
+    location: co_backroom
+    hidden: true
+  - id: cell_key
+    name: Zellenschlüssel
+    desc: "Ein verrosteter Schlüssel, zu nichts Nützlichem mehr."
+    keys: [schlüssel, key]
+    location: co_dungeon
+    hidden: true
+
+rules:
+  - id: open_gate
+    on: turn
+    when: { has_flag: gate_free }
+    once: true
+    effects:
+      - { set_state: city_gate, to: unlocked }
+
+interactions:
+  entity: []
+  item: []

@@ -1,0 +1,28 @@
+north
+east
+take candle stub
+east
+take brown bottle
+west
+use candle stub
+north
+north
+east
+north
+take rusted iron key
+use rusted iron key
+south
+west
+south
+south
+west
+north
+up
+east
+take administrator's diary
+west
+down
+south
+west
+south
+quit

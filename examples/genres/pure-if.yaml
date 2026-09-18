@@ -1,0 +1,255 @@
+name: The Silent Observatory (Pure IF)
+start_room: cliff_top
+
+# Genre: Pure Interactive Fiction — no combat at all.
+# Exercises: exploration, search, hidden items, container, dialogue with
+# visible_when, custom verb, predicate chains, puzzle via triggers.
+
+verbs:
+  - name: align
+    aliases: [adjust, focus]
+
+variables:
+  - name: lenses_found
+    type: int
+    initial: 0
+    min: 0
+    max: 3
+
+rooms:
+  - id: cliff_top
+    name: Cliff Top
+    desc: Wind-blasted grass at the edge of the world. A path leads down toward a village, and a lonely lighthouse stands against the grey sea.
+    exits:
+      south: {to: path_down}
+  - id: path_down
+    name: Winding Path
+    desc: A stony path descends between gorse bushes. The village roofs appear below.
+    exits:
+      north: {to: cliff_top}
+      south: {to: village_gate}
+  - id: village_gate
+    name: Village Gate
+    desc: A weathered gate stands open. Beyond it the square, and to the west a pier juts into the water. The lighthouse rises to the north-west.
+    exits:
+      north: {to: path_down}
+      east: {to: village_square}
+      west: {to: pier}
+      northwest: {to: lighthouse_base}
+  - id: village_square
+    name: Village Square
+    desc: A cobbled square with a dry fountain. An inn stands to the north, a workshop to the east.
+    exits:
+      west: {to: village_gate}
+      north: {to: inn}
+      east: {to: workshop}
+  - id: inn
+    name: The Salted Gull (Common Room)
+    desc: A warm common room smelling of peat smoke. The innkeeper nods at you. A stair leads up.
+    exits:
+      south: {to: village_square}
+      up: {to: inn_room}
+  - id: inn_room
+    name: Guest Room
+    desc: A narrow room with a straw bed. Something is tucked under the pillow.
+    exits:
+      down: {to: inn}
+    search:
+      - {msg: "You find a folded note under the pillow."}
+  - id: workshop
+    name: Lensmaker's Workshop
+    desc: Dust and glass. The lensmaker squints at you over a bench of half-ground lenses.
+    exits:
+      west: {to: village_square}
+  - id: pier
+    name: Old Pier
+    desc: Rotting planks stretch into green water. A boathouse leans at the far end.
+    exits:
+      east: {to: village_gate}
+      west: {to: boathouse}
+  - id: boathouse
+    name: Boathouse
+    desc: A tar-smelling shed. An oil can sits on a shelf beside coiled rope.
+    exits:
+      east: {to: pier}
+  - id: lighthouse_base
+    name: Lighthouse Base
+    desc: The lighthouse door hangs open. A spiral stair climbs into darkness. A cellar hatch is set in the floor.
+    exits:
+      southeast: {to: village_gate}
+      up: {to: lighthouse_stairs}
+      down: {to: cellar}
+  - id: cellar
+    name: Lighthouse Cellar
+    desc: Damp stone. Crates are stacked against the wall.
+    exits:
+      up: {to: lighthouse_base}
+  - id: lighthouse_stairs
+    name: Spiral Stair
+    desc: The stair winds upward. Through a slit you can see the sea.
+    exits:
+      down: {to: lighthouse_base}
+      up: {to: lantern_room}
+  - id: lantern_room
+    name: Lantern Room
+    desc: A great brass lantern stands cold and dark in the centre. From here a wall-ladder leads to the observatory dome above.
+    exits:
+      down: {to: lighthouse_stairs}
+      up: {to: observatory}
+  - id: observatory
+    name: Observatory
+    desc: A domed chamber open to the sky. A long telescope points at nothing in particular. A hatch in the floor is sealed tight. A star chart is pinned to the wall.
+    exits:
+      down: {to: lantern_room}
+      north: {to: dome_walk}
+      northeast: {to: vault}
+  - id: dome_walk
+    name: Dome Walk
+    desc: A narrow balcony ringing the dome. You can see the whole coast.
+    exits:
+      south: {to: observatory}
+    tags: [dark]
+  - id: vault
+    name: The Vault
+    desc: A small stone vault beneath the observatory. On a plinth rests a brass astrolabe, gleaming as if new.
+    exits:
+      southwest: {to: observatory}
+
+items:
+  - id: note
+    name: folded note
+    desc: A note in a careful hand.
+    keys: [note, paper]
+    location: inn_room
+    hidden: true
+    discover: "You find a folded note under the pillow."
+    verb_map:
+      read,intact:
+        - {msg: "The note reads: 'The lensmaker owes me. Mention the gull and he will trade. — K.'"}
+  - id: oil_can
+    name: oil can
+    desc: A dented oil can, still half full.
+    keys: [oil, can, oilcan]
+    location: boathouse
+  - id: lens
+    name: ground lens
+    desc: A heavy ground lens, flawless.
+    keys: [lens]
+    location: workshop
+    hidden: true
+    discover: "The lensmaker sets the ground lens on the bench before you."
+  - id: star_chart
+    name: star chart
+    desc: A chart of the northern stars.
+    keys: [chart, star chart, map]
+    location: observatory
+  - id: astrolabe
+    name: brass astrolabe
+    desc: An ancient astrolabe. It hums faintly.
+    keys: [astrolabe, brass]
+    location: vault
+
+npcs:
+  - id: lensmaker
+    name: lensmaker
+    desc: A stooped woman with glass-dust in her hair.
+    keys: [lensmaker, woman]
+    location: workshop
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "You'll not be getting that lens for nothing."
+            choices:
+              - {text: "I heard about the gull.", next: trade, visible_when: {has_item: "note"}}
+              - {text: "What lens?", next: what}
+              - {text: "Never mind.", next: null}
+          what:
+            text: "The ground lens. Ground it myself. Flawless."
+            choices:
+              - {text: "I'll come back.", next: null}
+          trade:
+            text: "...So you did. Fine. Take the lens. Tell no one."
+            choices:
+              - text: "Thank you."
+                next: null
+                outcomes:
+                  - {set_flag: lens_bought, val: "true"}
+                  - {give: lens}
+                  - {msg: "He sets the ground lens in your hands."}
+  - id: keeper
+    name: keeper
+    desc: An old lighthouse keeper, wrapped in a grey coat.
+    keys: [keeper, old man]
+    location: observatory
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "The light's gone out. The lens cracked, and the vault sealed itself."
+            choices:
+              - {text: "How do I open the vault?", next: how}
+              - {text: "Can I light the lantern?", next: lantern, visible_when: {has_item: "oil_can"}}
+              - {text: "Leave him be.", next: null}
+          how:
+            text: "Align the glass with the northern stars. The old engine does the rest."
+            choices:
+              - {text: "Understood.", next: null}
+          lantern:
+            text: "Aye — pour the oil and it will burn. Then you can see the chart properly."
+            choices:
+              - {text: "I'll do it.", next: null}
+
+quests:
+  - id: observatory_secret
+    name: The Silent Observatory
+    desc: Restore the light and open the sealed vault.
+    stages:
+      - {id: explore, desc: Explore the village and lighthouse.}
+      - {id: gather, desc: Gather oil, lens and the star chart.}
+      - {id: align, desc: Align the telescope with the northern stars.}
+      - {id: vault, desc: Descend into the vault.}
+    reward:
+      - {msg: "The astrolabe hums and the light of the observatory returns."}
+
+rules:
+  - id: start_secret
+    on: enter village_square
+    once: true
+    effects:
+      - {start_quest: observatory_secret}
+  - id: buy_lens
+    on: enter workshop
+    once: true
+    when: {has_flag: lens_bought}
+    effects:
+      - {msg: "The lensmaker nods: take the lens from the bench."}
+  - id: light_lantern
+    on: use oil_can
+    when: {not: {has_flag: lantern_lit}}
+    effects:
+      - {set_flag: lantern_lit, val: "true"}
+      - {msg: "You pour the oil. The great lantern catches and floods the room with warm light."}
+  - id: align_telescope
+    on: command align
+    when: {all: [{has_flag: lantern_lit}, {has_item: "lens"}, {has_item: "star_chart"}]}
+    effects:
+      - {set_flag: aligned, val: "true"}
+      - {msg: "You set the lens, and turn the telescope to the northern stars. Gears grind far below."}
+      - {advance_quest: observatory_secret}
+  - id: align_fails
+    on: command align
+    when: {not: {has_flag: aligned}}
+    effects:
+      - {msg: "Nothing happens. You lack the right glass — or the light to read by."}
+  - id: open_vault
+    on: enter observatory
+    when: {has_flag: aligned}
+    effects:
+      - {msg: "The hatch in the floor stands open."}
+
+interactions:
+  entity: []
+  item: []

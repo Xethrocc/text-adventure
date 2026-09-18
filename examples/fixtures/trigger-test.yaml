@@ -1,0 +1,35 @@
+name: Trigger Test
+start_room: entrance
+
+rooms:
+  - id: entrance
+    name: Entrance Hall
+    description: A cold stone hall with a passage east.
+    connections:
+      east: pit
+  - id: pit
+    name: Spike Pit
+    description: A dark pit lined with spikes.
+    connections:
+      west: entrance
+
+items:
+  - id: crystal
+    name: crystal
+    description: A glowing crystal.
+    location: entrance
+
+rules:
+  - id: pit_falls
+    on: enter pit
+    when: { not: { has_flag: bridge_built } }
+    effects:
+      - damage: 5
+      - msg: The floor gives way! You fall into a spike pit.
+    once: true
+  - id: bridge_built
+    on: use crystal
+    effects:
+      - set_flag: bridge_built
+      - msg: A stone bridge rises across the pit.
+    once: true

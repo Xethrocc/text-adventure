@@ -1,0 +1,395 @@
+name: "Der Ring von Tarsis (Komposition: 7a+7b+7d+7g+7h)"
+start_room: tr_dock
+
+# Kompositionsbeweis der Phase 7 (Abnahmepunkt 2): EIN Referenzspiel nutzt fünf
+# Module gleichzeitig, ohne dass ein Modul vom anderen weiß.
+#
+#   7a Fraktionen  — Gildenstand (gilde/freibeuter) öffnet per standing-Rule das
+#                    Siegel zum Tresorraum; zwei Auftraggeber, Gegenläufer-Stand.
+#   7b Handel      — buy/sell als Custom-Verben, credits + shop.haendler.*-Bestand
+#                    als VarMap; der Kanister ist die Sauerstoff-Reserve.
+#   7d Survival    — oxygen-Drain pro Zug (at_zero = Tod), Strahlungssturm
+#                    verdoppelt den Verbrauch über env.weather.
+#   7g Party       — Schrauberin Vela wird per `folgen vela` Begleiterin, folgt
+#                    und kämpft im Kampf mit.
+#   7h Raumschiff  — Tarsis VII mit systems/stations; im Kampf feuert das Schiff
+#                    `weapons` und fängt den Konter über shields/hull ab.
+#
+# Alle Verknüpfungen sind Autoren-Regeln (Flags, standing, Bedingungen) — kein
+# Modul kennt ein anderes, kein Modul hat ein eigenes State-Feld.
+
+verbs:
+  - { name: folgen, aliases: [follow] }
+  - { name: umleiten, aliases: [reroute] }
+  - { name: aufladen, aliases: [charge] }
+  - { name: buy, aliases: [kaufen] }
+  - { name: sell, aliases: [verkaufen] }
+
+variables:
+  - { name: credits, type: int, initial: 60, min: 0 }
+  - { name: oxygen, type: int, initial: 60, min: 0 }
+
+initial_variables:
+  shop.haendler.kanister: 2
+  shop.haendler.zelle: 1
+
+factions:
+  - id: gilde
+    name: Gilde von Tarsis
+    initial: 0
+    levels:
+      - { at: 12,  name: beauftragt }
+      - { at: -10, name: geaechtet }
+  - id: freibeuter
+    name: Freibeuter
+    initial: 0
+    levels:
+      - { at: 10,  name: eingeweiht }
+      - { at: -10, name: verraten }
+
+environment:
+  weather:
+    states: [clear, strahlung]
+    initial: clear
+    transitions:
+      - when: { all: [ { has_flag: belt_reached }, { not: { has_flag: storm_blown } } ] }
+        to: strahlung
+        effects:
+          - { set_flag: storm_blown, val: "true" }
+          - { msg: "Der Ring meldet Strahlungssturm. Die Aussenwand glüht, jeder Zug kostet mehr Sauerstoff." }
+  drains:
+    - var: oxygen
+      per_turn: -1
+      at_zero:
+        - { game_end: death, msg: "Deine Lungen brennen leer — die Luft im Ring ist aufgebraucht." }
+    - var: oxygen
+      per_turn: -1
+      when: { compare_var: { name: env.weather, op: gte, value: 1 } }
+
+vehicles:
+  - id: tarsis
+    name: Tarsis VII
+    desc: "Ein Küstenschlepper der Gilde, vier Decks, ein nervöser Reaktor."
+    type: player
+    entry_room: tv_bridge
+    cockpit: tv_bridge
+    keys: [tarsis, schlepper, schiff]
+    interior:
+      - id: tv_bridge
+        name: Brücke der Tarsis
+        desc: "Zwei Sessel, ein Sichtschirm voller Ringdaten. Nordöstlich liegen Maschine und Geschütze."
+        exits:
+          north: {to: tv_engine}
+          east: {to: tv_guns}
+          south: {to: tv_cargo}
+      - id: tv_engine
+        name: Maschinenraum
+        desc: "Kupferwicklungen, ein surrendes Umleitpult."
+        exits:
+          south: {to: tv_bridge}
+      - id: tv_guns
+        name: Geschützstand
+        desc: "Ein Zwillingsgeschütz unter dem Schirm, die Zuführung wartet."
+        exits:
+          west: {to: tv_bridge}
+      - id: tv_cargo
+        name: Lastraum
+        desc: "Leere Gurte, Ölgeruch, ein umgestürzter Werkzeugwagen."
+        exits:
+          north: {to: tv_bridge}
+    stops:
+      "Dock 12": tr_dock
+      "Trümmergürtel": tr_belt
+    start_stop: "Dock 12"
+    systems:
+      power:   { initial: 6, max: 6 }
+      shields: { initial: 6, max: 6 }
+      hull:    { initial: 10, max: 10 }
+      weapons: { initial: 2, max: 5 }
+    stations:
+      - room: tv_engine
+        verb: umleiten
+        effects:
+          - { add_var: ship.tarsis.power, delta: 3 }
+          - if: { compare_var: { name: ship.tarsis.power, op: gt, value: 6 } }
+            then: [ { set_var: ship.tarsis.power, value: 6 } ]
+          - { msg: "Vela zieht die Umleitschiene durch — die Energieanzeige steht am Anschlag." }
+      - room: tv_guns
+        verb: aufladen
+        effects:
+          - { add_var: ship.tarsis.weapons, delta: 1 }
+          - if: { compare_var: { name: ship.tarsis.weapons, op: gt, value: 5 } }
+            then: [ { set_var: ship.tarsis.weapons, value: 5 } ]
+          - { msg: "Die Läufe laden nach. Ein grünes Band läuft über die Konsole." }
+
+rooms:
+  - id: tr_dock
+    name: Dock 12
+    description:
+      default: "Kabel wie Ranken, Frachtgurte, das Knistern der Heizungen. Die Tarsis liegt backbord."
+      variants:
+        - when: { compare_var: { name: env.weather, op: gte, value: 1 } }
+          text: "Die Dockschotte sind verriegelt. Draussen glüht die Ringwand im Strahlungssturm."
+    exits:
+      north: {to: tr_hall}
+      east: {to: tr_market}
+  - id: tr_hall
+    name: Ringgang
+    desc: "Ein gebogener Gang, alle zwanzig Schritte steht eine Schleuse."
+    exits:
+      south: {to: tr_dock}
+      east: {to: tr_bar}
+      north: {to: tr_office}
+      west: {to: tr_reactor}
+      northeast: {to: tr_catwalk}
+  - id: tr_market
+    name: Handelszeile
+    desc: "Stände mit Ersatzteilen und Konserven. Der Händler kennt dich schon."
+    exits:
+      west: {to: tr_dock}
+  - id: tr_bar
+    name: Zum Kalten Ring
+    desc: "Aufgewärmtes Bier, laute Geschichten, und eine Schrauberin mit zu vielen Werkzeugen."
+    exits:
+      west: {to: tr_hall}
+  - id: tr_office
+    name: Gildenbüro
+    desc: "Eine Aufseherin über Karten und einem Stapel Frachtpapiere."
+    exits:
+      south: {to: tr_hall}
+  - id: tr_reactor
+    name: Reaktorwartung
+    desc: "Warm, laut, und niemand sieht dir zu. Nördlich endet der Gang an einem versiegelten Schott."
+    exits:
+      east: {to: tr_hall}
+      north: {to: tr_vault, locked_by: tr_seal}
+    search:
+      - { give: zelle }
+      - { msg: "Hinter einem losen Blech liegt eine Ersatzzelle." }
+  - id: tr_catwalk
+    name: Ausserkatwalk
+    desc: "Ein Gittersteg an der Ringwand. Durch das Visier siehst du Sterne und Trümmer."
+    exits:
+      southwest: {to: tr_hall}
+  - id: tr_belt
+    name: Trümmergürtel
+    desc: "Zerbrochene Frachter treiben im Leerlauf. Einer davon hat noch Licht."
+    exits:
+      north: {to: tr_hulk}
+  - id: tr_hulk
+    name: Wrackrumpf
+    desc: "Aufgeschlitzte Planken, verkohlte Kabel, und in der Ecke ein Kasten mit Aufzeichnung."
+    exits:
+      south: {to: tr_belt}
+    search:
+      - { msg: "Im Kabelknäuel steckt nichts mehr." }
+  - id: tr_vault
+    name: Tresorraum der Gilde
+    desc: "Kisten, ein Tisch, ein schwerer Kasten mit dem Siegel der Gilde — offen."
+    exits:
+      south: {to: tr_reactor}
+    on_enter:
+      - { game_end: victory, msg: "VICTORY — Stand, Fracht und Schiff: der Ring von Tarsis liegt dir zu Fuessen." }
+
+npcs:
+  - id: aufseher
+    name: Aufseherin Sarn
+    desc: "Eine hagere Frau mit einem Stapel Frachtpapiere und müden Augen."
+    keys: [aufseherin, sarn, gildefrau]
+    location: tr_office
+    state: alive
+    dialogue:
+      alive:
+        entry: greet
+        nodes:
+          greet:
+            text: "„Du bist der Schlepper, der den Kaperern davongekommen ist? Dann brauchst du Arbeit.“"
+            choices:
+              - text: "Ich bringe die Schwarzbox zurück."
+                next: deal
+              - { text: "Später.", next: null }
+          deal:
+            text: "„Die Box aus dem Wrack, ja. Bring sie mir, und die Gilde kennt deinen Namen.“"
+            choices:
+              - text: "Gemacht."
+                next: null
+                outcomes:
+                  - { set_flag: gilde_auftrag, val: "true" }
+                  - { msg: "Sarn notiert deinen Namen in ihren Papieren." }
+              - { text: "Erst später.", next: null }
+  - id: schmuggler
+    name: Kater Bolz
+    desc: "Ein Freibeuter mit zu guter Laune und zu sauberen Stiefeln."
+    keys: [bolz, kater, freibeuter]
+    location: tr_bar
+    state: alive
+    dialogue:
+      alive:
+        entry: greet
+        nodes:
+          greet:
+            text: "„Gilde zahlt schlecht. Ich zahle besser — wenn du Fracht vergisst.“"
+            choices:
+              - text: "Ich höre zu."
+                next: deal
+              - { text: "Nichts für mich.", next: null }
+          deal:
+            text: "„Lass eine Kiste an der Katwalk stehen. Die Gilde merkt nichts. Meistens.“"
+            choices:
+              - text: "Abgemacht."
+                next: null
+                outcomes:
+                  - { standing: { faction: freibeuter, add: 10 } }
+                  - { standing: { faction: gilde, add: -10 } }
+                  - { set_flag: bolz_deal, val: "true" }
+                  - { msg: "Bolz drückt dir ein Zeichen in die Hand." }
+              - { text: "Doch nicht.", next: null }
+  - id: vela
+    name: Schrauberin Vela
+    desc: "Eine Schrauberin in ölverschmiertem Overall, die Werkzeuge nach Gewicht sortiert."
+    keys: [vela, schrauberin, mechanikerin]
+    location: tr_bar
+    state: alive
+    max_hp: 16
+    attack: 4
+    defense: 2
+    party:
+      can_join: true
+      order_verb: folgen
+      hp_tracked: true
+      follow_msg: "Vela hängt sich den Werkzeuggurt um und folgt dir."
+      stay_msg: "Vela bleibt an der Theke und schüttelt den Kopf."
+    dialogue:
+      alive:
+        entry: greet
+        nodes:
+          greet:
+            text: "„Wenn du da draussen fliegst, brauchst du jemanden, der den Reaktor kennt.“"
+            choices:
+              - { text: "Komm mit.", next: null }
+              - { text: "Bleib hier.", next: null }
+  - id: haendler
+    name: Händler Onn
+    desc: "Ein kleiner Mann hinter zu vielen Kisten."
+    keys: [onn, haendler, krämer]
+    location: tr_market
+    state: alive
+    dialogue:
+      alive:
+        entry: greet
+        nodes:
+          greet:
+            text: "„Konserven, Zellen, Kanister. Alles frisch, alles teuer.“"
+            choices:
+              - { text: "Zeig her.", next: null }
+  - id: kaperer
+    name: Kaperer Skarn
+    desc: "Ein Piratenschiff mit aufgeschweissten Panzerplatten."
+    keys: [kaperer, skarn, pirat]
+    location: tr_belt
+    state: alive
+    max_hp: 24
+    attack: 10
+    defense: 3
+    dialogue:
+      alive:
+        entry: hail
+        nodes:
+          hail:
+            text: "„Lass die Kiste fallen, Schlepper, dann bleibt dein Rumpf heil.“"
+            choices:
+              - { text: "Versuch es.", next: null }
+
+items:
+  - id: kanister
+    name: Sauerstoffkanister
+    desc: "Ein gelber Kanister mit vollem Anschluss."
+    keys: [kanister, sauerstoff, luft]
+    location: tr_market
+    verb_map:
+      buy,intact:
+        - if: { compare_var: { name: shop.haendler.kanister, op: gte, value: 1 } }
+          then:
+            - if: { compare_var: { name: credits, op: gte, value: 12 } }
+              then:
+                - { add_var: credits, delta: -12 }
+                - { add_var: shop.haendler.kanister, delta: -1 }
+                - { give: kanister }
+                - { msg: "Du zahlst 12 Credits für einen Kanister." }
+              else:
+                - { msg: "12 Credits — so viel hast du nicht mehr." }
+          else:
+            - { msg: "Onn hat keine Kanister mehr." }
+      use,intact:
+        - { add_var: oxygen, delta: 8 }
+        - { consume: kanister }
+        - { msg: "Du öffnest den Kanister. Die Luft schmeckt nach Metall, aber sie kommt." }
+  - id: zelle
+    name: Ersatzzelle
+    desc: "Ein schwerer Zellblock für Schiffsreaktoren."
+    keys: [zelle, batterie, ersatzzelle]
+    location: tr_reactor
+    hidden: true
+    verb_map:
+      buy,intact:
+        - if: { compare_var: { name: shop.haendler.zelle, op: gte, value: 1 } }
+          then:
+            - if: { compare_var: { name: credits, op: gte, value: 25 } }
+              then:
+                - { add_var: credits, delta: -25 }
+                - { add_var: shop.haendler.zelle, delta: -1 }
+                - { give: zelle }
+                - { msg: "Du kaufst die Zelle für 25 Credits." }
+              else:
+                - { msg: "25 Credits — dafür reicht es nicht." }
+          else:
+            - { msg: "Onn hat keine Zellen mehr." }
+      use,intact:
+        - { add_var: ship.tarsis.power, delta: 4 }
+        - if: { compare_var: { name: ship.tarsis.power, op: gt, value: 6 } }
+          then: [ { set_var: ship.tarsis.power, value: 6 } ]
+        - { consume: zelle }
+        - { msg: "Du stöpselst die Zelle an die Umleitpult-Buchse — die Anzeige springt und hängt am Anschlag." }
+  - id: schwarzbox
+    name: Schwarzbox
+    desc: "Ein hitzeverkohltes Aufzeichnungsgerät, schwerer als es aussieht."
+    keys: [schwarzbox, box, rekorder]
+    location: tr_hulk
+
+rules:
+  # 7a: der Gildenstand oeffnet das Siegel (Torgewalt per Flag + once-Rule).
+  - id: seal_opens
+    on: turn
+    when: { standing: { faction: gilde, at_least: 12 } }
+    once: true
+    effects:
+      - { msg: "Die Gilde schaltet dein Siegel frei. Das Schott zum Tresorraum faehrt auf." }
+      - { set_state: tr_seal, to: unlocked }
+  # Die Schwarzbox beim Gildenbuerau abgeben -> Standing (7a trifft Fracht).
+  - id: hand_in_box
+    on: enter tr_office
+    once: true
+    when: { has_item: schwarzbox }
+    effects:
+      - { standing: { faction: gilde, add: 12 } }
+      - { standing: { faction: freibeuter, add: -5 } }
+      - { consume: schwarzbox }
+      - { msg: "Sarn wiegt die Schwarzbox in der Hand und nickt. Dein Stand in der Gilde steigt." }
+  - id: kaperer_appears
+    on: enter tr_belt
+    once: true
+    effects:
+      - { set_flag: belt_reached, val: "true" }
+      - { msg: "Panzerplatten schieben sich ins Licht. Der Kaperer Skarn dreht bei." }
+  - id: hull_failure
+    on: turn
+    when:
+      all:
+        - { compare_var: { name: ship.tarsis.hull, op: lte, value: 0 } }
+        - { state: kaperer, is: alive }
+    effects:
+      - { game_end: death, msg: "Die Huelle der Tarsis reisst auf — der Ring nimmt dich auf." }
+
+interactions:
+  entity: []
+  item: []

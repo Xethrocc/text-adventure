@@ -1,6 +1,6 @@
 cabal-version:       3.0
 name:                text-adventure
-version:             0.2.0.0
+version:             0.8.1.0
 synopsis:            A simple text-based adventure game engine written in Haskell
 description:         A simple text-based adventure game engine written in Haskell. This package provides a flexible framework for creating interactive text adventures with rooms, items, NPCs, and player commands.
 homepage:            https://github.com/Xethrocc/text-adventure
@@ -13,9 +13,16 @@ category:            Game
 extra-source-files:
     README.md
     CHANGELOG.md
+    docs/adventure-schema.md
+    docs/genres.md
+    docs/modules.md
+    docs/thefog-playthrough.md
+    scripts/ci.sh
+    ci/e2e/*.in
+    ci/e2e/*.expect
 
 library
-  exposed-modules:     Types, Game, GameLoop, Parser
+  exposed-modules:     Types, Verbs, Game, GameLoop, Combat, Parser, SaveLoad, World, Sample, Validate
   hs-source-dirs:      src
   build-depends:       base >=4.12 && <5,
                        containers >=0.6 && <0.8,
@@ -27,7 +34,7 @@ library
                        time >=1.9 && <2,
                        directory >=1.3 && <2
   default-language:    Haskell2010
-  ghc-options:         -Wall
+  ghc-options:         -Wall -Werror=missing-fields -Werror=name-shadowing -Werror=incomplete-patterns -Werror=overlapping-patterns
 
 executable text-adventure
   main-is:             Main.hs
@@ -35,7 +42,7 @@ executable text-adventure
   build-depends:       base >=4.12 && <5,
                        text-adventure
   default-language:    Haskell2010
-  ghc-options:         -Wall
+  ghc-options:         -Wall -Werror=missing-fields -Werror=name-shadowing -Werror=incomplete-patterns -Werror=overlapping-patterns
 
 test-suite text-adventure-tests
   type:                exitcode-stdio-1.0
@@ -46,6 +53,7 @@ test-suite text-adventure-tests
                        aeson >=2.0 && <3,
                        bytestring >=0.10 && <1,
                        containers >=0.6 && <0.8,
-                       haskeline >=0.8 && <1
+                       haskeline >=0.8 && <1,
+                       directory >=1.3 && <2
   default-language:    Haskell2010
-  ghc-options:         -Wall
+  ghc-options:         -Wall -Werror=missing-fields -Werror=name-shadowing -Werror=incomplete-patterns -Werror=overlapping-patterns

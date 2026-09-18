@@ -1,36 +1,49 @@
 -- | Main game loop and user interaction for the text adventure engine
-module GameLoop where
+module GameLoop
+  ( runGame
+  , gameLoop
+  , LoopState (..)
+  , initLoopState
+  , applyLoopCommand
+  , commandCompletion
+  , initSampleGame
+  , commandEvents
+  , consumesTurn
+  , consumesTurnIn
+  ) where
 
 import Types
 import Game
 import Parser hiding (reachableExitEntities)
-import Control.Exception (try, SomeException)
+import Verbs (verbCanonicalName)
+import SaveLoad
+import Sample (initSampleGame)
 import Data.Char (toLower)
-import Data.List (isPrefixOf, nub, sortBy)
-
-import qualified Data.Map as Map
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Encode.Pretty as Aeson
-import qualified Data.ByteString.Lazy as BL
-import qualified Data.ByteString.Lazy.Char8 as BLC
-import System.Console.Haskeline
-import System.Directory (createDirectoryIfMissing, listDirectory, doesFileExist)
-import Data.Time (getCurrentTime, formatTime, defaultTimeLocale)
+import Data.List (isPrefixOf, nub, foldl')
 import Data.Maybe (fromMaybe)
+import qualified Data.Map.Strict as Map
 
--- | Current save schema version
-currentSaveVersion :: Int
-currentSaveVersion = 1
+import System.Console.Haskeline
+import System.IO (hPutStrLn, stderr)
+
+-- ---------------------------------------------------------------------------
+-- Tab completion
+-- ---------------------------------------------------------------------------
 
 commandWords :: [String]
 commandWords =
     [ "go", "move", "walk", "look", "examine", "inspect", "read", "take", "pick", "drop", "put"
-    , "inventory", "inv", "i", "use", "talk", "speak", "attack", "hit", "kill"
-    , "save", "load", "saves", "restart", "help", "quit", "exit", "q"
+    , "search", "inventory", "inv", "i", "use", "talk", "speak", "choose", "option", "attack", "hit", "kill"
+    , "equip", "wear", "wield", "unequip", "remove", "stats"
+    , "enter", "board", "disembark", "drive", "wait", "refuel", "repair"
+    , "undo", "save", "load", "saves", "restart", "help", "quit", "exit", "q"
+    , "activate"
     ]
 
 directionWords :: [String]
-directionWords = ["north", "south", "east", "west", "up", "down"]
+directionWords = ["north", "south", "east", "west", "up", "down"
+    , "northeast", "northwest", "southeast", "southwest"
+    , "ne", "nw", "se", "sw"]
 
 completionItems :: [String] -> String -> [Completion]
 completionItems options prefix =
@@ -46,12 +59,12 @@ npcCompletionTerms npcs = nub (concatMap (\n -> npcName n : npcKeywords n) npcs)
 roomTargets :: GameState -> [String]
 roomTargets state =
     let currentRoomId = currentRoom (save state)
-        roomItems = getItemsInLocation currentRoomId state
+        roomItems = getItemsInLocation (InRoom currentRoomId) state
         roomNpcs = getNPCsInRoom currentRoomId state
     in nub (itemCompletionTerms roomItems ++ npcCompletionTerms roomNpcs)
 
 inventoryTargets :: GameState -> [String]
-inventoryTargets state = itemCompletionTerms (getItemsInLocation "inventory" state)
+inventoryTargets state = itemCompletionTerms (getItemsInLocation (CarriedBy "player") state)
 
 reachableExitEntities :: GameState -> [String]
 reachableExitEntities state = case getCurrentRoom state of
@@ -64,9 +77,15 @@ entityTargets state =
         doorAliases = if null exits then [] else ["door", "locked door"]
     in nub (roomTargets state ++ exits ++ doorAliases)
 
+-- | Words for adventure-declared custom verbs (canonical names + aliases)
+customVerbWords :: GameState -> [String]
+customVerbWords state =
+    concatMap (\def -> vdName def : vdAliases def)
+        (Map.elems (verbDefs (world state)))
+
 contextualSuggestions :: GameState -> [String] -> [String]
 contextualSuggestions state prevWords = case prevWords of
-    [] -> commandWords ++ directionWords
+    [] -> commandWords ++ customVerbWords state ++ directionWords
     ("go" : _) -> directionWords
     ("move" : _) -> directionWords
     ("walk" : _) -> directionWords
@@ -75,13 +94,27 @@ contextualSuggestions state prevWords = case prevWords of
     ("speak" : "with" : _) -> npcCompletionTerms (getNPCsInRoom (currentRoom (save state)) state)
     ("pick" : "up" : _) -> roomTargets state
     ("put" : "down" : _) -> inventoryTargets state
+    ("equip" : _) -> inventoryTargets state
+    ("wear" : _) -> inventoryTargets state
+    ("wield" : _) -> inventoryTargets state
+    ("unequip" : _) -> itemCompletionTerms (getEquippedItems state)
+    ("remove" : _) -> itemCompletionTerms (getEquippedItems state)
     ("use" : _)
         | "on" `elem` prevWords || "with" `elem` prevWords -> entityTargets state
         | otherwise -> inventoryTargets state
     (verb : _)
         | verb `elem` ["take", "drop", "attack", "hit", "kill", "examine", "inspect", "read"] ->
             roomTargets state ++ inventoryTargets state
-        | otherwise -> commandWords ++ directionWords ++ roomTargets state ++ entityTargets state ++ inventoryTargets state
+        | otherwise -> commandWords ++ customVerbWords state ++ directionWords
+                       ++ roomTargets state ++ entityTargets state ++ inventoryTargets state
+
+-- | ItemDefs currently worn/wielded
+getEquippedItems :: GameState -> [ItemDef]
+getEquippedItems state =
+    [ def
+    | iId <- Map.elems (equipment (save state))
+    , Just def <- [Map.lookup iId (itemDefs (world state))]
+    ]
 
 commandCompletion :: GameState -> CompletionFunc IO
 commandCompletion state (left, _) = do
@@ -101,171 +134,259 @@ haskelineSettings state =
         , complete = commandCompletion state
         }
 
--- | Compute a simple checksum of the GameWorld for save compatibility detection
-computeWorldChecksum :: GameWorld -> String
-computeWorldChecksum gw =
-    let encoded = BLC.unpack (Aeson.encode gw)
-        -- Simple DJB2 hash
-        hashVal = foldl (\acc c -> acc * 33 + fromEnum c) 5381 encoded
-    in show (abs hashVal)
+-- ---------------------------------------------------------------------------
+-- Game loop
+-- ---------------------------------------------------------------------------
 
--- | Save game to a named slot with metadata
-saveGame :: GameState -> String -> IO ()
-saveGame state slotName = do
-    createDirectoryIfMissing True "saves"
-    now <- getCurrentTime
-    let timestamp = formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S" now
-        checksum = computeWorldChecksum (world state)
-        saveFile = SaveFile
-            { saveVersion   = currentSaveVersion
-            , saveTimestamp  = timestamp
-            , worldChecksum = checksum
-            , saveName      = slotName
-            , saveData      = save state
-            }
-        filepath = "saves/" ++ slotName ++ ".json"
-    BL.writeFile filepath (Aeson.encodePretty saveFile)
-    putStrLn $ "Game saved to " ++ filepath ++ " (" ++ timestamp ++ ")."
+-- | Runtime state for undo. History is newest-first and capped at 50 states.
+data LoopState = LoopState
+    { lsCurrent :: GameState
+    , lsHistory :: [GameState]
+    , lsInitial :: GameState   -- ^ pristine initial state, used by Restart
+    } deriving (Show, Eq)
 
--- | Load game from a named slot, with checksum validation
-loadGame :: GameState -> String -> IO (Maybe GameState)
-loadGame state slotName = do
-    let filepath = "saves/" ++ slotName ++ ".json"
-    exists <- doesFileExist filepath
-    if not exists
-    then do
-        -- Try legacy path (bare SaveState without wrapper)
-        let legacyPath = slotName ++ ".json"
-        legacyExists <- doesFileExist legacyPath
-        if legacyExists
-        then loadLegacySave state legacyPath
-        else do
-            putStrLn $ "Error: Save file '" ++ filepath ++ "' not found."
-            return Nothing
-    else do
-        result <- try (BL.readFile filepath) :: IO (Either SomeException BL.ByteString)
-        case result of
-            Left _ -> do
-                putStrLn $ "Error: Could not read file '" ++ filepath ++ "'."
-                return Nothing
-            Right contents -> case Aeson.decode contents of
-                Just sf -> do
-                    let currentChecksum = computeWorldChecksum (world state)
-                    if worldChecksum sf /= currentChecksum
-                    then putStrLn "Warning: This save was made with a different world version. Results may be unpredictable."
-                    else return ()
-                    let loadedState = state { save = syncInventory (saveData sf) }
-                    putStrLn $ "Game loaded from " ++ filepath ++ " (saved: " ++ saveTimestamp sf ++ ")."
-                    return (Just loadedState)
-                Nothing -> do
-                    -- Try loading as legacy bare SaveState
-                    case Aeson.decode contents of
-                        Just loadedSave -> do
-                            putStrLn $ "Game loaded from " ++ filepath ++ " (legacy format)."
-                            let loadedState = state { save = syncInventory loadedSave }
-                            return (Just loadedState)
-                        Nothing -> do
-                            putStrLn "Error: Save file is corrupted or incompatible."
-                            return Nothing
+initLoopState :: GameState -> LoopState
+initLoopState state = LoopState state [] state
 
--- | Load a legacy save file (bare SaveState, no wrapper)
-loadLegacySave :: GameState -> FilePath -> IO (Maybe GameState)
-loadLegacySave state filepath = do
-    result <- try (BL.readFile filepath) :: IO (Either SomeException BL.ByteString)
-    case result of
-        Left _ -> do
-            putStrLn $ "Error: Could not read file '" ++ filepath ++ "'."
-            return Nothing
-        Right contents -> case Aeson.decode contents of
-            Just loadedSave -> do
-                putStrLn $ "Game loaded from " ++ filepath ++ " (legacy format)."
-                let loadedState = state { save = syncInventory loadedSave }
-                return (Just loadedState)
-            Nothing -> do
-                putStrLn "Error: Save file is corrupted or incompatible."
-                return Nothing
+maxUndoHistory :: Int
+maxUndoHistory = 50
 
--- | List all saves in the saves/ directory
-listSaves :: GameWorld -> IO ()
-listSaves gw = do
-    createDirectoryIfMissing True "saves"
-    files <- listDirectory "saves"
-    let jsonFiles = filter (\f -> length f > 5 && drop (length f - 5) f == ".json") files
-    if null jsonFiles
-    then putStrLn "No saved games found."
-    else do
-        putStrLn "=== Saved Games ==="
-        entries <- mapM (loadSaveEntry gw) jsonFiles
-        let sorted = sortBy (\(_, t1) (_, t2) -> compare t2 t1)
-                     [(e, t) | Just (e, t) <- entries]
-        mapM_ (\(entry, _) -> putStrLn entry) sorted
+-- | Whether a command advances the game clock.  Pure informational commands
+--   (look, inventory, stats, journal, help, …) and failed/unknown input cost
+--   no turn and therefore do not tick conditions or pollute undo history.
+consumesTurn :: Command -> Bool
+consumesTurn cmd = case cmd of
+    Look           -> False
+    Inventory      -> False
+    StatsCmd       -> False
+    JournalCmd     -> False
+    Help           -> False
+    Quit           -> False
+    Undo           -> False
+    Save _         -> False
+    Load _         -> False
+    ListSaves      -> False
+    Restart        -> False
+    Unknown _      -> False
+    _              -> True
+
+-- | Whether a command advances the game clock, evaluated against the state the
+--   command runs in. P1-16: an invalid dialogue choice (`99` in a 3-option
+--   prompt, or a bare number outside a conversation) is a typo, not an action,
+--   so it must not tick conditions, fire `on: turn` or grow the undo history.
+consumesTurnIn :: GameState -> Command -> Bool
+consumesTurnIn st cmd = case cmd of
+    ChooseCmd i -> isValidChoice i st
+    _           -> consumesTurn cmd
+
+-- | Pure command transition used by both the interactive loop and tests.
+--   Undo itself does not consume a turn. Other commands run the normal turn
+--   ticks and save the exact pre-command state for restoration.
+applyLoopCommand :: Command -> LoopState -> (LoopState, String)
+applyLoopCommand Undo loopState = case lsHistory loopState of
+    [] -> (loopState, "Nothing to undo.")
+    previous : rest -> (LoopState previous rest (lsInitial loopState), "Undone.")
+applyLoopCommand Quit loopState =
+    let (newState, message) = executeCommand Quit (lsCurrent loopState)
+    in (loopState { lsCurrent = newState }, message)
+applyLoopCommand Restart loopState =
+    let (newState, message) = executeCommand Look (lsInitial loopState)
+    in (initLoopState newState, message)
+applyLoopCommand Help loopState = (loopState, helpText)
+applyLoopCommand (Save _) loopState = (loopState, "")
+applyLoopCommand (Load _) loopState = (loopState, "")
+applyLoopCommand ListSaves loopState = (loopState, "")
+applyLoopCommand command loopState
+    | not (consumesTurnIn (lsCurrent loopState) command) =
+        let (newState, message) = executeCommand command (lsCurrent loopState)
+            (stateAfterTriggers, triggerMsg) = fireCommandTriggers command (lsCurrent loopState) newState
+            combined = combineMessages message triggerMsg
+        in (loopState { lsCurrent = stateAfterTriggers }, combined)
+    | otherwise =
+        let oldState = lsCurrent loopState
+            stateWithTurn = incrementTurnCount oldState
+            (stateAfterTick, tickMsgs) = tickConditions stateWithTurn
+            (stateAfterVehicleTick, vehicleTickMsg) = vehicleConditionTick stateAfterTick
+            allTickMsgs = tickMsgs ++ (if null vehicleTickMsg then [] else [vehicleTickMsg])
+            tickText = unlines allTickMsgs
+            history' = take maxUndoHistory (oldState : lsHistory loopState)
+        in if gameOver (save stateAfterVehicleTick)
+           then
+               -- L11: the condition tick ended the game before the command ran
+               -- (the tick pipeline runs first). The player is already dead, so
+               -- the command is dropped — only the tick messages are reported.
+               (LoopState stateAfterVehicleTick history' (lsInitial loopState), tickText)
+           else
+               let (newState, message) = executeCommand command stateAfterVehicleTick
+                   (stateAfterTriggers, triggerMsg) = fireCommandTriggers command stateAfterVehicleTick newState
+                   fullMessage = if null allTickMsgs then message else tickText ++ message
+               in (LoopState stateAfterTriggers history' (lsInitial loopState),
+                   combineMessages fullMessage triggerMsg)
+
+-- | Combine two message fragments for trigger output. Same rule as
+--   'Game.joinMessages' — empty fragments contribute nothing.
+combineMessages :: String -> String -> String
+combineMessages = joinMessages
+
+-- | Determine which trigger events apply to a completed command, using the
+--   state before and after the command to detect room changes.
+fireCommandTriggers :: Command -> GameState -> GameState -> (GameState, String)
+fireCommandTriggers cmd before after =
+    let events = commandEvents cmd before after
+        (st, msgs) = foldl' (\(s, acc) ev -> let (s', m) = fireTriggers ev s
+                                            in (s', combineMessages acc m))
+                           (after, "") events
+    in (st, msgs)
+
+-- | Compute the list of events raised by a command.
+commandEvents :: Command -> GameState -> GameState -> [EventType]
+commandEvents cmd before after = concat
+    [ roomEvents
+    , takeDropUseEvents
+    , lookSearchEvents
+    , [OnCommand (commandVerbName cmd)]
+    , [OnTurn | consumesTurnIn before cmd]
+    ]
   where
-    loadSaveEntry :: GameWorld -> FilePath -> IO (Maybe (String, String))
-    loadSaveEntry gameWorld filename = do
-        result <- try (BL.readFile ("saves/" ++ filename)) :: IO (Either SomeException BL.ByteString)
-        case result of
-            Left _ -> return Nothing
-            Right contents -> case Aeson.decode contents of
-                Just sf ->
-                    let name = saveName sf
-                        ts = saveTimestamp sf
-                        currentChecksum = computeWorldChecksum gameWorld
-                        compat = if worldChecksum sf == currentChecksum then "compatible" else "world mismatch!"
-                        entry = "  " ++ name ++ " — " ++ ts ++ " (" ++ compat ++ ")"
-                    in return (Just (entry, ts))
-                Nothing -> return Nothing
+    roomEvents =
+        let oldRoom = currentRoom (save before)
+            newRoom = currentRoom (save after)
+        in if oldRoom /= newRoom
+           then [OnLeave oldRoom, OnEnter newRoom]
+           else []
+    takeDropUseEvents = case cmd of
+        -- P1-15: derive take/drop events from the actual state change, not from
+        -- the command. A failed `take` (not portable / already carried) or a
+        -- `drop` of something not held must not fire `OnTake`/`OnDrop`.
+        Interact VTake t ->
+            [ OnTake iid | Just iid <- [findItemIdByAlias t after]
+                         , itemLoc iid before /= Just (CarriedBy "player")
+                         , itemLoc iid after  == Just (CarriedBy "player") ]
+        Interact VDrop t ->
+            [ OnDrop iid | Just iid <- [findItemIdByAlias t after]
+                         , itemLoc iid before == Just (CarriedBy "player")
+                         , itemLoc iid after  /= Just (CarriedBy "player") ]
+        -- `use` has no state criterion (its effect is up to the author).
+        Interact VUse t  -> [OnUse iid | Just iid <- [findItemIdByAlias t after]]
+        _ -> []
+    itemLoc i st = itemLocation <$> Map.lookup i (itemStates (save st))
+    lookSearchEvents = case cmd of
+        Look            -> [OnLook (currentRoom (save after)) | currentRoom (save after) `elem` Map.keys (rooms (world after))]
+        SearchCmd _     -> [OnSearch (currentRoom (save after)) | currentRoom (save after) `elem` Map.keys (rooms (world after))]
+        _               -> []
+
+-- | Look up an item ID by alias. Returns `Nothing` when no declared item matches
+--   (P1-15: the old fallback to the raw input invented events for item IDs that
+--   do not exist, e.g. `take blubb` -> `OnTake "blubb"`).
+findItemIdByAlias :: String -> GameState -> Maybe String
+findItemIdByAlias alias state =
+    let allItems = Map.elems (itemDefs (world state))
+    in case [itemId i | i <- allItems, normalizeText alias `elem` itemAliases i] of
+        (iId:_) -> Just iId
+        []      -> Nothing
+
+-- | Extract a canonical verb name for OnCommand triggers.
+commandVerbName :: Command -> String
+commandVerbName cmd = case cmd of
+    Go _          -> "go"
+    Look          -> "look"
+    Inventory     -> "inventory"
+    StatsCmd      -> "stats"
+    JournalCmd    -> "journal"
+    SearchCmd _   -> "search"
+    TakeAll       -> "take"
+    DropAll       -> "drop"
+    EquipCmd _    -> "equip"
+    UnequipCmd _  -> "unequip"
+    UnequipAllCmd -> "unequip"
+    Interact v _        -> verbCanonicalName v
+    InteractWith v _ _  -> verbCanonicalName v
+    _             -> "unknown"
 
 -- | Main game loop function
 runGame :: GameState -> IO ()
 runGame state = do
     let (newState, message) = executeCommand Look state
     putStrLn message
-    gameLoop newState
-    
--- | Interactive game loop
+    loopGame (initLoopState newState)
+
+-- | Print engine diagnostics that appeared while handling one command to
+--   stderr (P2-23). They describe a content error the author has to fix, so they
+--   must not be mixed into the game text the player sees.
+emitNewDiagnostics :: GameState -> GameState -> IO ()
+emitNewDiagnostics before after =
+    mapM_ (hPutStrLn stderr) (drop (length (diagnostics before)) (diagnostics after))
+
+-- | Backward-compatible entry point for callers that have a plain GameState.
 gameLoop :: GameState -> IO ()
-gameLoop state
-    | gameOver (save state) = handleGameOver state
-    | otherwise      = do
+gameLoop = loopGame . initLoopState
+
+-- | Interactive game loop with an in-memory undo history.
+loopGame :: LoopState -> IO ()
+loopGame loopState
+    | gameOver (save state) = handleGameOver loopState
+    | otherwise = do
         inputResult <- runInputT (haskelineSettings state) (getInputLine "> ")
         case inputResult of
             Nothing -> do
                 let (newState, message) = executeCommand Quit state
                 putStrLn message
-                gameLoop newState
-            Just input -> do
-                let command = parseCommand input
-                    -- Increment turn count for every command
-                    stateWithTurn = incrementTurnCount state
-                case command of
+                loopGame loopState { lsCurrent = newState }
+            Just input ->
+                case parseCommandWith (verbDefs (world state)) input of
                     Save name -> do
-                        saveGame stateWithTurn name
-                        gameLoop stateWithTurn
+                        saveGame state name
+                        loopGame loopState
                     Load name -> do
-                        result <- loadGame stateWithTurn name
+                        result <- loadGame state name
                         case result of
                             Just loadedState -> do
-                                let (s', msg) = executeCommand Look loadedState
+                                let (loadedState', msg) = executeCommand Look loadedState
                                 putStrLn msg
-                                gameLoop s'
-                            Nothing -> gameLoop stateWithTurn
+                                loopGame (initLoopState loadedState')
+                            Nothing -> loopGame loopState
                     ListSaves -> do
-                        listSaves (world stateWithTurn)
-                        gameLoop stateWithTurn
+                        listSaves (world state)
+                        loopGame loopState
                     Restart -> do
                         putStrLn "Starting a new game...\n"
-                        putStrLn "=== Text Adventure Game ==="
-                        putStrLn "Type 'help' for available commands."
-                        putStrLn "----------------------------"
-                        runGame initSampleGame
-                    _ -> do
-                        let (newState, message) = executeCommand command stateWithTurn
-                        putStrLn message
-                        gameLoop newState
+                        let (restarted, msg) = applyLoopCommand Restart loopState
+                        putStrLn msg
+                        loopGame restarted
+                    Help -> do
+                        putStrLn helpText
+                        loopGame loopState
+                    command -> do
+                        let (loopState', message) = applyLoopCommand command loopState
+                        emitNewDiagnostics (lsCurrent loopState) (lsCurrent loopState')
+                        case pendingNarrative (lsCurrent loopState') of
+                            Nothing -> do
+                                putStrLn message
+                                loopGame loopState'
+                            Just (nls, followUp) -> do
+                                case nls of
+                                    [] -> return ()
+                                    [single] -> putStrLn single
+                                    _ -> do
+                                        mapM_ (\l -> putStrLn l >> putStr "  [Press Enter to continue]" >> getLine >> return ())
+                                            (init nls)
+                                        putStrLn (last nls)
+                                let (finalState, followMsg) = applyOutcome followUp "" (lsCurrent loopState')
+                                    clearedState = finalState { pendingNarrative = Nothing }
+                                if null followMsg
+                                    then loopGame (loopState' { lsCurrent = clearedState })
+                                    else do putStrLn followMsg
+                                            loopGame (loopState' { lsCurrent = clearedState })
+  where
+    state = lsCurrent loopState
+
+-- ---------------------------------------------------------------------------
+-- Game over screens
+-- ---------------------------------------------------------------------------
 
 -- | Handle game-over screen based on reason
-handleGameOver :: GameState -> IO ()
-handleGameOver state = do
+handleGameOver :: LoopState -> IO ()
+handleGameOver loopState = do
     case gameOverReason (save state) of
         Just Death -> do
             putStrLn ""
@@ -273,8 +394,8 @@ handleGameOver state = do
             putStrLn "  YOU HAVE DIED"
             putStrLn "========================================="
             putStrLn ""
-            putStrLn "  [L]oad last save  |  [R]estart  |  [Q]uit"
-            deathLoop state
+            putStrLn "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
+            deathLoop loopState
         Just Victory -> do
             putStrLn ""
             putStrLn "========================================="
@@ -282,20 +403,31 @@ handleGameOver state = do
             putStrLn "========================================="
             putStrLn ""
             putStrLn "  [R]estart  |  [Q]uit"
-            victoryLoop
+            victoryLoop loopState
         Just (Custom msg) -> do
             putStrLn ""
             putStrLn $ "Game Over: " ++ msg
             putStrLn ""
             putStrLn "  [R]estart  |  [Q]uit"
-            victoryLoop
+            victoryLoop loopState
         Nothing -> return ()  -- Quit without reason
+  where
+    state = lsCurrent loopState
 
 -- | Death screen input loop
-deathLoop :: GameState -> IO ()
-deathLoop state = do
+deathLoop :: LoopState -> IO ()
+deathLoop loopState = do
     inputResult <- runInputT defaultSettings (getInputLine "> ")
     case map toLower . fromMaybe "q" <$> pure inputResult of
+        Just "u" ->
+            case lsHistory loopState of
+                [] -> do
+                    putStrLn "Nothing to undo."
+                    deathLoop loopState
+                _ -> do
+                    let (restored, msg) = applyLoopCommand Undo loopState
+                    putStrLn msg
+                    loopGame restored
         Just "l" -> do
             putStrLn "Enter save name to load (or press Enter for 'savegame'):"
             nameResult <- runInputT defaultSettings (getInputLine "> ")
@@ -307,90 +439,31 @@ deathLoop state = do
                 Just loadedState -> do
                     let (s', msg) = executeCommand Look loadedState
                     putStrLn msg
-                    gameLoop s'
-                Nothing -> deathLoop state
+                    loopGame (initLoopState s')
+                Nothing -> deathLoop loopState
         Just "r" -> do
             putStrLn "Starting a new game...\n"
-            putStrLn "=== Text Adventure Game ==="
-            putStrLn "Type 'help' for available commands."
-            putStrLn "----------------------------"
-            runGame initSampleGame
+            let (restarted, msg) = applyLoopCommand Restart loopState
+            putStrLn msg
+            loopGame restarted
         Just "q" -> putStrLn "Thanks for playing!"
         _ -> do
-            putStrLn "  [L]oad last save  |  [R]estart  |  [Q]uit"
-            deathLoop state
+            putStrLn "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
+            deathLoop loopState
+  where
+    state = lsCurrent loopState
 
 -- | Victory/custom game-over input loop
-victoryLoop :: IO ()
-victoryLoop = do
+victoryLoop :: LoopState -> IO ()
+victoryLoop loopState = do
     inputResult <- runInputT defaultSettings (getInputLine "> ")
     case map toLower . fromMaybe "q" <$> pure inputResult of
         Just "r" -> do
             putStrLn "Starting a new game...\n"
-            putStrLn "=== Text Adventure Game ==="
-            putStrLn "Type 'help' for available commands."
-            putStrLn "----------------------------"
-            runGame initSampleGame
+            let (restarted, msg) = applyLoopCommand Restart loopState
+            putStrLn msg
+            loopGame restarted
         Just "q" -> putStrLn "Thanks for playing!"
         _ -> do
             putStrLn "  [R]estart  |  [Q]uit"
-            victoryLoop
-
--- | Initialize a sample game with rooms and items
-initSampleGame :: GameState
-initSampleGame = GameState
-    { world = GameWorld
-        { rooms = Map.fromList
-            [ ("start", Room "start" "Starting Room" "You are in a small stone chamber with torches on the walls. There are exits to the north and east. The east door looks sturdy and has a keyhole."
-                (Map.fromList [(North, Open "hallway"), (East, Locked "treasure" "treasure_door")]) True)
-            , ("hallway", Room "hallway" "Dark Hallway" "A long, dark hallway stretches before you. The air is damp and cold. There's an exit to the south."
-                (Map.fromList [(South, Open "start")]) False)
-            , ("treasure", Room "treasure" "Treasure Room" "You've entered a magnificent treasure room! Gold coins and jewels are scattered everywhere. There's an exit to the west."
-                (Map.fromList [(West, Open "start")]) False)
-            ]
-        , itemDefs = Map.fromList
-            [ ("torch", ItemDef "torch" "torch" "A burning torch that provides light." ["torch", "burning torch"] Map.empty)
-            , ("key", ItemDef "key" "key" "A small brass key." ["key", "brass key"] Map.empty)
-            , ("gold", ItemDef "gold" "gold" "A pile of shiny gold coins." ["gold", "coins", "gold coins"] Map.empty)
-            , ("jewel", ItemDef "jewel" "jewel" "A sparkling ruby that catches the light." ["jewel", "ruby", "sparkling ruby"] Map.empty)
-            , ("potion_healing", ItemDef "potion_healing" "healing potion" "A small vial filled with a bubbling red liquid." ["potion", "red potion", "healing potion"] (Map.singleton (VUse, "intact") (MultipleOutcomes [HealPlayer 50 "You drink the potion and feel your wounds closing!", ModifyItemProp "potion_healing" "uses" (-1) "The potion has less liquid now.", ChangeItemState "empty" "The vial is now empty."])))
-            ]
-        , npcDefs = Map.fromList
-            [ ("oldman", NPCDef "oldman" "old man" "A withered old man in robes." (Map.singleton "alive" "It's dangerous to go alone! Take... well, I don't have anything actually.") ["man", "old man"] Nothing 0 0 Map.empty)
-            , ("goblin", NPCDef "goblin" "goblin" "A nasty little green goblin." (Map.singleton "alive" "Grrr!! I will eat you!") ["goblin", "monster"] (Just 30) 8 2 Map.empty)
-            ]
-        , entityInteractions = Map.fromList 
-            [ (("key", "door"), ("unlocked", "You insert the brass key into the door. It clicks open!"))
-            , (("key", "treasure_door"), ("unlocked", "You insert the brass key into the door. It clicks open!"))
-            ]
-        }
-    , save = SaveState
-        { player = Player 100 100 10 5
-        , currentRoom = "start"
-        , inventory = []
-        , itemStates = Map.fromList 
-            [ ("torch", ItemState "start" "burning" Map.empty)
-            , ("key", ItemState "hallway" "intact" Map.empty)
-            , ("gold", ItemState "treasure" "intact" Map.empty)
-            , ("jewel", ItemState "treasure" "intact" Map.empty)
-            , ("potion_healing", ItemState "start" "intact" (Map.singleton "uses" 3))
-            ]
-        , npcStates = Map.fromList
-            [ ("oldman", NPCState "start" "alive" Nothing Map.empty)
-            , ("goblin", NPCState "hallway" "alive" (Just 30) Map.empty)
-            ]
-        , entityStates = Map.singleton "treasure_door" "locked"
-        , flags = Map.empty
-        , turnCount = 0
-        , gameOver = False
-        , gameOverReason = Nothing
-        }
-    }
-
--- | Main entry point for the game
-main :: IO ()
-main = do
-    putStrLn "=== Text Adventure Game ==="
-    putStrLn "Type 'help' for available commands."
-    putStrLn "----------------------------"
-    runGame initSampleGame
+            victoryLoop loopState

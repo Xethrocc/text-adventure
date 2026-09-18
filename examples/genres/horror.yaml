@@ -1,0 +1,266 @@
+name: The Ash Grove Sanatorium (Horror)
+start_room: cell
+
+# Genre: Horror — draining `sanity` variable, turn-based scheduler events with
+# cooldowns, a pursuer driven by cooldown ticks, conditional room text as sanity
+# falls, and multiple distinct game endings (madness, caught, escape, fire).
+
+verbs:
+  - name: pray
+    aliases: [beg, beseech]
+
+variables:
+  - name: sanity
+    type: int
+    initial: 30
+    min: 0
+    max: 30
+  - name: stalker_step
+    type: int
+    initial: 0
+    min: 0
+    max: 5
+
+rooms:
+  - id: cell
+    name: Padded Cell
+    desc: A padded cell, door hanging open. Scratches cover every inch of the walls.
+    exits:
+      north: {to: corridor_west}
+  - id: corridor_west
+    name: West Corridor
+    desc: Peeling green paint and a gurney with no patient. The ward is east, a stairwell climbs north, and the front hall lies west.
+    exits:
+      south: {to: cell}
+      east: {to: day_room}
+      north: {to: stairs}
+      west: {to: front_hall}
+  - id: day_room
+    name: Day Room
+    desc: Chairs arranged in a broken circle, all facing inward. A radio hisses static.
+    exits:
+      west: {to: corridor_west}
+      east: {to: infirmary}
+      north: {to: corridor_east}
+  - id: infirmary
+    name: Infirmary
+    desc: Rusted cots and a medicine cabinet, its glass long gone. A brown bottle survived.
+    exits:
+      west: {to: day_room}
+  - id: corridor_east
+    name: East Corridor
+    desc: The lights here have all failed. Something drags, far off.
+    exits:
+      south: {to: day_room}
+      east: {to: chapel}
+      north: {to: morgue}
+    tags: [dark]
+    light_flag: candle_lit
+  - id: chapel
+    name: Chapel
+    desc: Rows of overturned pews and a cracked altar. A heavy ledger of names lies open.
+    exits:
+      west: {to: corridor_east}
+  - id: morgue
+    name: Morgue
+    desc: Steel drawers, most hanging open. One is closed, and warm to the touch.
+    exits:
+      south: {to: corridor_east}
+      east: {to: kitchen}
+    tags: [dark]
+    light_flag: candle_lit
+  - id: kitchen
+    name: Institutional Kitchen
+    desc: A floor drain, a block for chopping, and a pantry door.
+    exits:
+      west: {to: morgue}
+      north: {to: pantry}
+  - id: pantry
+    name: Pantry
+    desc: Shelves of rotted tins. On the top shelf, a rusted iron key.
+    exits:
+      south: {to: kitchen}
+  - id: stairs
+    name: Stairwell
+    desc: The stair turns twice before the upper floor. Something breathes on the landing above.
+    exits:
+      south: {to: corridor_west}
+      up: {to: upper_hall}
+  - id: upper_hall
+    name: Upper Hall
+    desc: Doors the length of the hall, all numbered. The office is east, the attic stair north.
+    exits:
+      down: {to: stairs}
+      west: {to: ward_a}
+      east: {to: office}
+      north: {to: attic}
+    tags: [dark]
+    light_flag: candle_lit
+  - id: ward_a
+    name: Ward A
+    desc: Beds stripped to the frames. A child's drawing is pinned above one.
+    exits:
+      east: {to: upper_hall}
+      north: {to: ward_b}
+  - id: ward_b
+    name: Ward B
+    desc: Every bed is occupied. Every occupant is very still, and facing the door.
+    exits:
+      south: {to: ward_a}
+  - id: office
+    name: Administrator's Office
+    desc: A desk, a wall of keys, and a diary left open as if abandoned mid-sentence.
+    exits:
+      west: {to: upper_hall}
+  - id: attic
+    name: Attic
+    desc: Trunks and a child's cot. The roof gapes where slates have fallen away.
+    exits:
+      south: {to: upper_hall}
+  - id: front_hall
+    name: Front Hall
+    desc: A grand entrance gone to ruin. The main doors stand barred and chained.
+    exits:
+      north: {to: corridor_west}
+      south: {to: front_door}
+  - id: front_door
+    name: Front Doors
+    desc: The barred front doors, held by a heavy chain and a rusted padlock.
+    exits:
+      north: {to: front_hall}
+
+items:
+  - id: candle
+    name: candle stub
+    desc: A candle stub and a box of damp matches.
+    keys: [candle, matches]
+    location: day_room
+    tags: [lightsource]
+  - id: sedative
+    name: brown bottle
+    desc: A bottle of bitter sedative, half full.
+    keys: [bottle, sedative, medicine]
+    location: infirmary
+    verb_map:
+      use,intact:
+        - {add_var: sanity, delta: 4}
+        - {consume: sedative}
+        - {msg: "You swallow the bitterness. The walls stop breathing, for now."}
+  - id: iron_key
+    name: rusted iron key
+    desc: A rusted iron key on the pantry shelf.
+    keys: [key, iron]
+    location: pantry
+    verb_map:
+      use,intact:
+        - {set_flag: door_unlocked, val: "true"}
+        - {msg: "You turn the rusted key in the chain lock. The padlock falls, and the chain pools on the floor."}
+  - id: diary
+    name: administrator's diary
+    desc: The administrator's diary, its last page unfinished.
+    keys: [diary, book, journal]
+    location: office
+    on_take:
+      - {set_flag: has_diary, val: "true"}
+      - {msg: "The last entry: 'Week nine. The doors must stay barred. Whatever it is, it learns.'"}
+
+npcs:
+  - id: matron
+    name: matron
+    desc: A nurse in a starched cap, standing very still at the end of the ward.
+    keys: [matron, nurse]
+    location: ward_a
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "...You are not on my list. Nobody has been on my list for a very long time."
+            choices:
+              - text: "What happened here?"
+                next: happened
+              - text: "How do I get out?"
+                next: out
+              - {text: "Back away.", next: null,
+                 outcomes: [{add_var: stalker_step, delta: 1}]}
+          happened:
+            text: "The doors were barred to keep the fever in. But something else came in through the drains."
+            choices:
+              - {text: "And the staff?", next: staff}
+          staff:
+            text: "We are all still here. That is rather the trouble."
+            choices:
+              - {text: "Step away.", next: null,
+                 outcomes: [{add_var: stalker_step, delta: 1}]}
+          out:
+            text: "The front doors are chained. The administrator kept a key. He also kept a diary — read it, if you can bear to."
+            choices:
+              - {text: "Thank you.", next: null}
+
+quests:
+  - id: ash_grove
+    name: Ash Grove
+    desc: Keep your mind, keep ahead of the thing in the drains, and get out.
+    stages:
+      - {id: awake, desc: Get out of the cell.}
+      - {id: key, desc: Find a way through the barred front doors.}
+      - {id: escape, desc: Escape the Ash Grove Sanatorium.}
+    reward:
+      - {msg: "Ash Grove falls behind you, silent in the dark."}
+
+rules:
+  - id: start_ash_grove
+    on: enter corridor_west
+    once: true
+    effects:
+      - {start_quest: ash_grove}
+  - id: light_candle
+    on: use candle
+    when: {not: {has_flag: candle_lit}}
+    effects:
+      - {set_flag: candle_lit, val: "true"}
+      - {msg: "The candle catches. Its circle of light is small, and it will not last."}
+  # --- Scheduler: sanity bleeds every turn ---
+  - id: sanity_drain
+    on: turn
+    effects:
+      - {add_var: sanity, delta: -1}
+  # --- Scheduler: hallucination tick every 4 turns ---
+  - id: hallucination
+    on: turn
+    cooldown: 4
+    when: {compare_var: {name: sanity, op: lte, value: 15}}
+    effects:
+      - {msg: "The corridor stretches and folds. You hear your own name, spoken kindly, from behind."}
+  # --- Scheduler: the stalker closes in every 3 turns ---
+  - id: stalker_advance
+    on: turn
+    cooldown: 8
+    effects:
+      - {add_var: stalker_step, delta: 1}
+      - {msg: "Somewhere behind you, a door closes that you did not touch. It is closer now."}
+  # --- Endings ---
+  - id: ending_madness
+    on: turn
+    when: {compare_var: {name: sanity, op: lte, value: 0}}
+    effects:
+      - {game_end: death, msg: "ENDING: MADNESS — The walls close in, and you stop being able to tell which side is which. You never leave Ash Grove."}
+  - id: ending_caught
+    on: turn
+    when: {compare_var: {name: stalker_step, op: gte, value: 5}}
+    effects:
+      - {game_end: death, msg: "ENDING: CAUGHT — It reaches you in the dark. The drains take back what they lent."}
+  - id: ending_escape
+    on: enter front_door
+    when: {has_flag: door_unlocked}
+    effects:
+      - {game_end: victory, msg: "ENDING: ESCAPE — The chain falls away and the night air is the sweetest thing you have ever breathed."}
+  - id: ending_fire
+    on: command pray
+    when: {has_item: candle}
+    effects:
+      - {game_end: custom, msg: "ENDING: ASHES — You set flame to the day room chairs and let the whole rotten place burn with you standing in the doorway. Nobody follows you out."}
+
+interactions:
+  entity: []
+  item: []

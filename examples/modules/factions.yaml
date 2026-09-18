@@ -1,0 +1,223 @@
+name: The Two Guilds (Factions)
+start_room: pier
+
+# Module 7a — Fraktionen/Reputation: Standing lebt als VarMap-Eintrag
+# `faction.<id>`. Zwei Fraktionen (Wache, Schmuggler). Der Auftrag für die
+# Wache hebt deren Standing und senkt das der Schmuggler; das Tor zur
+# Schmugglerhöhle öffnet erst ab Standing >= 20 (Rule mit standing-Predicate
+# + set_state auf dem locked_by-Exit). Dialog-Optionen via visible_when.
+
+factions:
+  - id: watch
+    name: Stadtwache
+    initial: 0
+    levels:
+      - {at: 15, name: trusted}
+      - {at: 40, name: captain}
+  - id: smugglers
+    name: Schmuggler-Gilde
+    initial: 0
+    levels:
+      - {at: 20,  name: ally}
+      - {at: -20, name: hunted}
+
+rooms:
+  - id: pier
+    name: Pier
+    desc: Möwen über den Planken. Der Kai führt nach Norden zum Lagerhaus, nach Süden zum Markt, nach Osten zu den Docks.
+    exits:
+      north: {to: warehouse}
+      south: {to: market}
+      east: {to: docks}
+  - id: market
+    name: Marktplatz
+    desc: Händler rufen ihre Waren aus. Westlich liegt die Taverne, nördlich führt der Weg zum Kai, östlich zur Wachstube.
+    exits:
+      north: {to: pier}
+      east: {to: watch_house}
+      west: {to: tavern}
+  - id: tavern
+    name: Taverne
+    desc: Voll, laut, verräuchert. Hinter der Theke führt eine schmale Treppe nach Norden.
+    exits:
+      east: {to: market}
+      north: {to: smuggle_door}
+  - id: watch_house
+    name: Wachstube
+    desc: Eine Wand voll Haftbefehle, ein müder Wachmann am Fenster. Nördlich liegt das Hafenmeisterbüro.
+    exits:
+      west: {to: market}
+      north: {to: harbour_master}
+  - id: harbour_master
+    name: Hafenmeisterbüro
+    desc: Der Hafenmeister sitzt vor einem Berg Zollpapiere. Ein Stapel Durchsuchungsbefehle ragt daneben hervor.
+    exits:
+      south: {to: watch_house}
+  - id: warehouse
+    name: Lagerhaus
+    desc: Kisten bis zur Decke, dämmriges Licht. Ein loses Brett in der Ecke gibt den Blick auf etwas frei.
+    exits:
+      south: {to: pier}
+      west: {to: secret_dock}
+    search:
+      - {give: cargo_manifest}
+      - {msg: "Hinter dem losen Brett findest du das Frachtmanifest."}
+  - id: secret_dock
+    name: Geheimsteg
+    desc: Ein halb verfallener Steg hinter dem Lagerhaus. Ein Mann in dunklem Ölhautmantel wartet schweigend.
+    exits:
+      east: {to: warehouse}
+  - id: docks
+    name: Docks
+    desc: Kräne, Tauwerk, Schiffsbauch. Die Kiste mit dem Wachstempel fällt dir ins Auge.
+    exits:
+      west: {to: pier}
+    search:
+      - {give: contraband_crate}
+      - {msg: "In der gestempelten Kiste findest du die Schmuggelware."}
+  - id: smuggle_door
+    name: Eiserne Tür
+    desc: Eine massive Eisentür im Kellergewölbe. Ein schwerer Riegel. Dahinter müssen die Höhlen liegen.
+    exits:
+      south: {to: tavern}
+      north: {to: smuggle_tunnel, locked_by: smuggle_gate}
+  - id: smuggle_tunnel
+    name: Schmuggeltunnel
+    desc: Feuchter Gang, Tropfgeräusche, der Geruch von Salz. Nach Norden liegt die Höhle.
+    exits:
+      south: {to: smuggle_door}
+      north: {to: smuggle_cave}
+  - id: smuggle_cave
+    name: Schmugglerhöhle
+    desc: Die Höhle der Gilde. Fässer mit Schmuggelware, und in der Mitte ein Schrein aus verstecktem Gold.
+    exits:
+      south: {to: smuggle_tunnel}
+    on_enter:
+      - {msg: "Die Gilde nimmt dich auf. Das Gold der Höhle gehört nun zu deinem Weg."}
+      - {game_end: victory, msg: "VICTORY — Die Schmuggler-Gilde öffnet dir ihre Höhle. Der Hafen gehört denen, die Vertrauen gewinnen."}
+
+items:
+  - id: cargo_manifest
+    name: Frachtmanifest
+    desc: Das Frachtmanifest der Stadtwache — belastend für jeden Schmuggler.
+    keys: [manifest, Frachtmanifest]
+    location: warehouse
+    hidden: true
+    on_take:
+      - {set_flag: manifest_found, val: "true"}
+      - {msg: "Du steckst das Frachtmanifest ein."}
+  - id: contraband_crate
+    name: Schmuggelware
+    desc: Eine Kiste mit unverzollten Waren — der Beweis, dass die Gilde dich braucht.
+    keys: [crate, ware, Schmuggelware]
+    location: docks
+    hidden: true
+    on_take:
+      - {set_flag: crate_found, val: "true"}
+      - {msg: "Du hebst die Kiste auf die Schulter."}
+
+npcs:
+  - id: captain
+    name: Hafenmeister
+    desc: Der Hafenmeister, hinter Zollpapieren vergraben, aber wachsam.
+    keys: [captain, master]
+    location: harbour_master
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "Die Stadtwache sucht nach Schmugglern. Wer Beweise bringt, dem sind Tür und Tor offen."
+            choices:
+              - text: "Ich habe das Frachtmanifest."
+                next: manifest
+                visible_when: {has_item: cargo_manifest}
+              - text: "Die Schmuggler scheinen euch zu überholen."
+                next: rival
+              - {text: "Das war es.", next: null}
+          manifest:
+            text: "Das ist genau das, was wir brauchen. Die Wache wird dir das danken — die Gilde weniger."
+            choices:
+              - text: "Nimm es."
+                next: null
+                outcomes:
+                  - {standing: {faction: watch, add: 20}}
+                  - {standing: {faction: smugglers, add: -10}}
+                  - {set_flag: manifest_delivered, val: "true"}
+                  - {msg: "Der Hafenmeister notiert das Manifest. Die Wache schätzt dich."}
+          rival:
+            text: "Sie sind schneller als wir. Aber wer uns die Gilde von innen öffnet, wird es nie bereuen."
+            choices:
+              - {text: "Ich behalte das im Sinn.", next: null}
+  - id: gangster
+    name: Dunkler Händler
+    desc: Ein Mann im Ölhautmantel, der am Geheimsteg wartet.
+    keys: [gangster, seller, händler]
+    location: secret_dock
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "Die Gilde hört, dass du Kisten trägst. Wir zahlen gut für Waren, die nicht verzollt sind."
+            choices:
+              - text: "Ich habe eine Kiste dabei."
+                next: crate
+                visible_when: {has_item: contraband_crate}
+              - text: "Die Wache jagt euch."
+                next: hunted
+              - {text: "Ich gehe.", next: null}
+          crate:
+            text: "Ausgezeichnet. Die Gilde öffnet dir dafür ihre Türen — die Wache wird dich dafür hassen."
+            choices:
+              - text: "Geschäft ist Geschäft."
+                next: null
+                outcomes:
+                  - {standing: {faction: smugglers, add: 20}}
+                  - {standing: {faction: watch, add: -10}}
+                  - {set_flag: crate_delivered, val: "true"}
+                  - {msg: "Der Händler verschwindet mit der Kiste. Die Gilde vertraut dir."}
+          hunted:
+            text: "Mag sein. Aber wer uns dient, steht nie allein."
+            choices:
+              - {text: "Notiert.", next: null}
+
+quests:
+  - id: watch_favor
+    name: Der Gefallen der Wache
+    desc: Bringe der Wache Beweise gegen die Gilde.
+    stages:
+      - {id: find, desc: Finde das Frachtmanifest im Lagerhaus.}
+      - {id: deliver, desc: Übergib es dem Hafenmeister.}
+    reward:
+      - {msg: "Der Gefallen der Wache ist getan."}
+  - id: smuggle_favor
+    name: Der Gefallen der Gilde
+    desc: Liefere der Gilde unverzollte Waren.
+    stages:
+      - {id: find, desc: Hole die Kiste an den Docks.}
+      - {id: deliver, desc: Gib sie dem Händler am Geheimsteg.}
+    reward:
+      - {msg: "Der Gefallen der Gilde ist getan."}
+
+rules:
+  - id: start_watch_favor
+    on: enter harbour_master
+    once: true
+    effects:
+      - {start_quest: watch_favor}
+  - id: start_smuggle_favor
+    on: enter docks
+    once: true
+    effects:
+      - {start_quest: smuggle_favor}
+  - id: open_smuggle_gate
+    on: turn
+    when: {standing: {faction: smugglers, at_least: 20}}
+    effects:
+      - {set_state: smuggle_gate, to: unlocked}
+      - {msg: "Die eiserne Tür zur Schmugglerhöhle schwingt auf."}
+
+interactions:
+  entity: []
+  item: []

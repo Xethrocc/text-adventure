@@ -1,0 +1,137 @@
+name: Deep Wilds (Encounters)
+start_room: trailhead
+
+# Module 7c — Encounter-Tabellen: gewichtete Zufallsereignisse beim Reisen.
+# Kein Kern-Eingriff: jede Tabelle kompiliert zu einem Trigger, dessen Effekt
+# ein `RandomChoice [(Gewicht, Effect)]` ist; `on`/`when`/`cooldown` sind die
+# gewöhnliche Trigger-Mechanik, pro Eintrag gibt es optional ein eigenes Gate.
+
+encounter_tables:
+  - id: wilds
+    on: turn
+    cooldown: 2
+    when: { not: { has_flag: camp_cleared } }
+    entries:
+      - { weight: 3, effects: [ { msg: "Ein Wolf springt aus dem Gebüsch!" }, { damage: 1 } ] }
+      - { weight: 2, effects: [ { msg: "Nur Wind in den Blättern." } ] }
+      - weight: 1
+        when: { has_item: torch }
+        effects:
+          - { msg: "Glühwürmchen schweben um deine Fackel. Du merkst dir den Weg besser." }
+          - { set_flag: path_remembered, val: "true" }
+  - id: calm
+    on: turn
+    cooldown: 3
+    when: { has_flag: camp_cleared }
+    entries:
+      - { weight: 1, effects: [ { msg: "Der Wald ist ruhig. Kein Sabber, keine Zähne." } ] }
+
+rooms:
+  - id: trailhead
+    name: Pfadende
+    desc: Hier beginnt die Wildnis. Der Pfad führt nach Norden in den dichten Wald.
+    exits:
+      north: {to: dark_forest}
+  - id: dark_forest
+    name: Dunkler Wald
+    desc: Es riecht nach Moder. Etwas ist zwischen den Bäumen. Westlich führt ein Karrenweg zum Lagerplatz.
+    exits:
+      south: {to: trailhead}
+      west: {to: camp_site}
+    search:
+      - {give: torch}
+      - {msg: "Unter Moos findest du eine abgebrochene Fackel."}
+  - id: camp_site
+    name: Alter Lagerplatz
+    desc: Verkohlte Feuerstelle. Die Spur der Wölfe führt nach Norden; eine Lichtung liegt westlich.
+    exits:
+      east: {to: dark_forest}
+      north: {to: wolf_den}
+      west: {to: meadow}
+    search:
+      - {set_flag: camp_cleared, val: "true"}
+      - {msg: "Du räumst das Lager auf und zündest ein Feuer an. Die Wölfe bleiben fern."}
+  - id: wolf_den
+    name: Wolfsbau
+    desc: Knochen am Höhleneingang. Der Pfad führt weiter nach Norden, ins Flusstal.
+    exits:
+      south: {to: camp_site}
+      north: {to: river_ford}
+  - id: river_ford
+    name: Flussbiegung
+    desc: Das Wasser rauscht flach über Kiesel. Östlich führt ein Steig zur Höhle, westlich zur Lichtung.
+    exits:
+      south: {to: wolf_den}
+      east: {to: cave_mouth}
+      west: {to: meadow}
+  - id: meadow
+    name: Mooslichtung
+    desc: Ein sonniger Fleck zwischen den Fichten. Heilkräuter sprießen am Rand.
+    exits:
+      east: {to: river_ford}
+      north: {to: camp_site}
+    search:
+      - {msg: "Du pflückst wilde Heilwurz."}
+      - {heal: 10}
+  - id: cave_mouth
+    name: Höhleneingang
+    desc: Ein dunkler Spalt im Fels. Aus der Tiefe glitzert etwas.
+    exits:
+      west: {to: river_ford}
+      north: {to: crystal_cave}
+  - id: crystal_cave
+    name: Kristallhöhle
+    desc: Stalaktiten glitzern im Schein deiner Fackel. Ein schmaler Gang führt zum Grat.
+    exits:
+      south: {to: cave_mouth}
+      north: {to: ridge}
+  - id: ridge
+    name: Felsgrat
+    desc: Über den Baumkronen. Der Grat zieht sich zum See, ein Steinpfad hinunter zum Lager.
+    exits:
+      south: {to: crystal_cave}
+      north: {to: lake}
+      east: {to: camp_site}
+  - id: lake
+    name: Ruhiger See
+    desc: Nebel liegt über dem Wasser. Auf einer Insel erhebt sich ein alter Steinschrein.
+    exits:
+      south: {to: ridge}
+      north: {to: shrine}
+  - id: shrine
+    name: Der Schrein
+    desc: Alter Stein, von Ranken umschlungen. Der Wald scheint zu warten, was du tust.
+    exits:
+      south: {to: lake}
+
+items:
+  - id: torch
+    name: abgebrochene Fackel
+    desc: Ein Harzknüppel, der lange brennt.
+    keys: [torch, fackel]
+    location: dark_forest
+    hidden: true
+
+quests:
+  - id: reach_shrine
+    name: Der Schrein im Nebel
+    desc: Finde den alten Schrein am See.
+    stages:
+      - {id: travel, desc: Kämpfe dich durch die Wildnis zum See.}
+      - {id: shrine, desc: Erreiche den Schrein.}
+
+rules:
+  - id: start_journey
+    on: enter cave_mouth
+    once: true
+    effects:
+      - {start_quest: reach_shrine}
+  - id: shrine_finale
+    on: enter shrine
+    effects:
+      - {msg: "Du legst die Hand auf den Stein. Die Ranken lösen sich, und der Wald verstummt."}
+      - {game_end: victory, msg: "VICTORY — Der Schrein ist erreicht. Die Wildnis hast du überquert."}
+
+interactions:
+  entity: []
+  item: []

@@ -1,0 +1,34 @@
+name: Fantasy Magic Test
+start_room: room_start
+verbs:
+  - name: cast
+    aliases: [magic, spell]
+rooms:
+  - id: room_start
+    name: Tower Chamber
+    desc: A stone chamber with arcane symbols on the floor.
+    exits:
+      north: room_hall
+  - id: room_hall
+    name: Hallway
+    desc: A narrow hallway. A goblin blocks the path!
+items:
+  - id: scroll_of_lightning
+    name: scroll of lightning
+    desc: A scroll crackling with energy.
+    keys: [scroll, lightning]
+    location: room_start
+    verb_map:
+      cast,intact:
+        - set_flag: spell_cast
+          val: "true"
+        - msg: A bolt of lightning erupts from the scroll!
+npcs:
+  - id: goblin2
+    name: goblin
+    desc: A crude goblin with a rusty blade.
+    keys: [goblin, monster]
+    location: room_hall
+    max_hp: 15
+    attack: 4
+    defense: 1

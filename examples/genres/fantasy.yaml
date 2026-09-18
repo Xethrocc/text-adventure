@@ -1,0 +1,224 @@
+name: The Emberhold (Fantasy)
+start_room: ford_crossing
+
+# Genre: Fantasy — custom verb `cast`, variable `mana`, crafting (item-on-item),
+# loot, combat, quest with staged progress and a resource-gated finale.
+
+verbs:
+  - name: cast
+    aliases: [invoke, zap]
+
+variables:
+  - name: mana
+    type: int
+    initial: 10
+    min: 0
+    max: 20
+
+rooms:
+  - id: ford_crossing
+    name: Ford Crossing
+    desc: A shallow ford where the river runs quick over white stones. North the road climbs to a village gate.
+    exits:
+      north: {to: village_gate}
+  - id: village_gate
+    name: Village Gate
+    desc: A timber gate. Beyond it the market square; the ford lies south.
+    exits:
+      south: {to: ford_crossing}
+      north: {to: market_square}
+  - id: market_square
+    name: Market Square
+    desc: Stalls stand shuttered. A smithy glows to the west, a temple's steps rise east, and the north road leaves the village.
+    exits:
+      south: {to: village_gate}
+      west: {to: smithy}
+      east: {to: temple_steps}
+      north: {to: north_road}
+  - id: smithy
+    name: Smithy
+    desc: Cold forges and a rack of tools. A rusty blade leans in the corner.
+    exits:
+      east: {to: market_square}
+  - id: temple_steps
+    name: Temple Steps
+    desc: Worn steps climb to a roofless shrine. A hatch leads down into the dark.
+    exits:
+      west: {to: market_square}
+      down: {to: crypt}
+  - id: crypt
+    name: Temple Crypt
+    desc: Sarcophagi line the walls. On one lid rests a vial of blue liquid.
+    exits:
+      up: {to: temple_steps}
+  - id: north_road
+    name: North Road
+    desc: The road dwindles into grass. The forest begins ahead.
+    exits:
+      south: {to: market_square}
+      north: {to: forest_edge}
+  - id: forest_edge
+    name: Forest Edge
+    desc: The first pines stand like spears. A hermit's hut leans east; a path winds north into the trees.
+    exits:
+      south: {to: north_road}
+      east: {to: hermit_hut}
+      north: {to: deep_forest}
+  - id: hermit_hut
+    name: Hermit's Hut
+    desc: Bundles of drying herbs hang from the rafters. A stone mortar sits on the bench.
+    exits:
+      west: {to: forest_edge}
+  - id: deep_forest
+    name: Deep Forest
+    desc: Light falls in green coins. Something snarls between the roots.
+    exits:
+      south: {to: forest_edge}
+      north: {to: clearing}
+  - id: clearing
+    name: Clearing
+    desc: A ring of standing stones. A path runs east toward the sound of water.
+    exits:
+      south: {to: deep_forest}
+      east: {to: river_bank}
+  - id: river_bank
+    name: River Bank
+    desc: The river runs black and fast. A cave mouth opens in the rock to the north.
+    exits:
+      west: {to: clearing}
+      north: {to: cave_mouth}
+  - id: cave_mouth
+    name: Cave Mouth
+    desc: Cold air breathes out of the rock. Steps descend into the dark.
+    exits:
+      south: {to: river_bank}
+      down: {to: cave_depths}
+  - id: cave_depths
+    name: Cave Depths
+    desc: Water drips somewhere. A red glow seeps from a chamber to the east.
+    exits:
+      up: {to: cave_mouth}
+      east: {to: ritual_chamber}
+  - id: ritual_chamber
+    name: Ritual Chamber
+    desc: An ember-lit hall. A figure in black robes stands over a brazier, and a stair climbs north.
+    exits:
+      west: {to: cave_depths}
+      north: {to: tower_base}
+  - id: tower_base
+    name: Tower Base
+    desc: The foot of a broken tower. A stair spirals up into the dark.
+    exits:
+      south: {to: ritual_chamber}
+      up: {to: tower_stairs}
+  - id: tower_stairs
+    name: Tower Stairs
+    desc: The stair turns and turns in the dark.
+    exits:
+      down: {to: tower_base}
+      up: {to: tower_top}
+  - id: tower_top
+    name: Tower Top
+    desc: Wind and open sky. On a stone altar rests the Ember Crown, still warm.
+    exits:
+      down: {to: tower_stairs}
+
+items:
+  - id: herb
+    name: moonwort herb
+    desc: A silvery herb, still damp.
+    keys: [herb, moonwort]
+    location: forest_edge
+  - id: mortar
+    name: stone mortar
+    desc: A heavy stone mortar.
+    keys: [mortar, bowl]
+    location: hermit_hut
+    portable: false
+  - id: mana_potion
+    name: blue vial
+    desc: A vial of blue liquid that hums faintly.
+    keys: [vial, potion, blue]
+    location: crypt
+    verb_map:
+      use,intact:
+        - {add_var: mana, delta: 10}
+        - {consume: mana_potion}
+        - {msg: "You drink the blue liquid. Power floods back into you."}
+  - id: rusty_sword
+    name: rusty sword
+    desc: A blade gone to orange rust, but it will cut.
+    keys: [sword, blade]
+    location: smithy
+    slot: weapon
+    effects: ["attack+2"]
+  - id: ember_crown
+    name: Ember Crown
+    desc: A circlet of dull metal, warm as a coal.
+    keys: [crown, ember]
+    location: tower_top
+    verb_map:
+      take,intact:
+        - {msg: "You lift the Ember Crown. The tower shudders once, and is still."}
+        - {set_flag: crown_taken, val: "true"}
+        - {game_end: victory, msg: "VICTORY — The Ember Crown rests on your brow. The Emberhold is cleansed."}
+
+npcs:
+  - id: scavenger
+    name: scavenger
+    desc: A gaunt creature in rags, all teeth.
+    keys: [scavenger, creature]
+    location: deep_forest
+    max_hp: 12
+    attack: 4
+    defense: 1
+  - id: warden
+    name: warden
+    desc: A figure in black robes, eyes like coals.
+    keys: [warden, figure]
+    location: ritual_chamber
+    max_hp: 30
+    attack: 8
+    defense: 3
+    verb_map:
+      cast,alive:
+        - if:
+            all:
+              - {compare_var: {name: mana, op: gte, value: 5}}
+              - {has_flag: salve_made}
+          then:
+            - {add_var: mana, delta: -5}
+            - {msg: "You fling a bolt of ember-light. The warden's robes catch and he flees up the stair!"}
+            - {set_flag: warden_fled, val: "true"}
+            - {move_npc: warden, to: tower_base}
+          else:
+            - {msg: "Your magic gutters out. You have not the mana — nor the hermit's salve to focus it."}
+
+quests:
+  - id: cleanse_emberhold
+    name: Cleanse the Emberhold
+    desc: Drive the warden from the tower and take the Ember Crown.
+    stages:
+      - {id: village, desc: Prepare in the village.}
+      - {id: craft, desc: Grind the moonwort into a salve.}
+      - {id: warden, desc: Face the warden in the ritual chamber.}
+      - {id: crown, desc: Take the Ember Crown.}
+    reward:
+      - {msg: "The Ember Crown is yours; the Emberhold is cleansed."}
+
+rules:
+  - id: start_quest
+    on: enter market_square
+    once: true
+    effects:
+      - {start_quest: cleanse_emberhold}
+
+interactions:
+  entity: []
+  item:
+    - item1: herb
+      item2: mortar
+      effects:
+        - {set_flag: salve_made, val: "true"}
+        - {msg: "You grind the moonwort in the stone mortar into a bright paste."}
+        - {advance_quest: cleanse_emberhold}

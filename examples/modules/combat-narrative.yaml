@@ -1,0 +1,153 @@
+name: "Der Duellplatz (Combat: narrative)"
+start_room: cn_alley
+
+# Module 7f — Kampfprofil `narrative`.
+# Keine HP-Attrition: ein vergleichender Wurf (Spieler-Angriff vs.
+# Verteidigung + Schwierigkeit) entscheidet über on_win / on_lose-Effects.
+# `attack` ist ein einzelner, abschließender Ausgang — kein Schlagabtausch.
+
+combat:
+  profile: narrative
+  difficulty: 0
+  on_win:
+    - { set_state: duel_gate, to: unlocked }
+    - { msg: "Dein Hieb findet die Lücke in seiner Deckung — der Duellant tritt zurück und öffnet das Tor." }
+  on_lose:
+    - { damage: 4 }
+    - { msg: "Er pariert deinen Angriff mühelos und du bekommst die flache Klinge zu spüren." }
+
+npcs:
+  - id: duelist
+    name: Duellant
+    desc: "Ein schlanker Mann mit Rapier, der das Tor zum Turnierplatz bewacht."
+    keys: [duellant, fencer, kämpfer]
+    location: cn_gate
+    state: alive
+    attack: 9
+    defense: 8
+    dialogue:
+      alive:
+        entry: greet
+        nodes:
+          greet:
+            text: "„Niemand betritt den Turnierplatz ohne zu fechten.“"
+            choices:
+              - { text: "Dann fechten wir.", next: null }
+              - { text: "Ich gehe noch üben.", next: null }
+
+rooms:
+  - id: cn_alley
+    name: Turniergasse
+    desc: "Fahnen und Wappen schmücken die Gasse. Das Tor zum Turnierplatz liegt im Norden."
+    exits:
+      north: {to: cn_gate}
+      south: {to: cn_plaza}
+  - id: cn_gate
+    name: Tor zum Turnierplatz
+    desc: "Ein verschlossenes Gittertor. Der Duellant zieht das Rapier."
+    exits:
+      south: {to: cn_alley}
+      north: {to: cn_arena, locked_by: duel_gate}
+    on_enter:
+      - { msg: "„Zeig mir, was du kannst — du oder das Gitter.“" }
+  - id: cn_arena
+    name: Turnierplatz
+    desc: "Sand, Banner, Trompeten. Der Kampfrichter wartet in der Mitte."
+    exits:
+      south: {to: cn_gate}
+      north: {to: cn_pavilion}
+  - id: cn_pavilion
+    name: Siegerpavillon
+    desc: "Der Pokal blitzt in der Sonne. Du hast den Turnierplatz bezwungen."
+    exits:
+      south: {to: cn_arena}
+    on_enter:
+      - { game_end: victory, msg: "VICTORY — Du hast das Turnier gewonnen: in einem einzigen, sauberen Gefecht." }
+  - id: cn_plaza
+    name: Vorplatz
+    desc: "Bänke und Buden säumen den Vorplatz. Eine Trainingspuppe steht im Westen."
+    exits:
+      north: {to: cn_alley}
+      west: {to: cn_dummy}
+      east: {to: cn_smith}
+      south: {to: cn_tent}
+  - id: cn_judge
+    name: Richterstand
+    desc: "Leere Stühle, ein Notizbuch. Der Kampfrichter ist schon in der Arena."
+    exits:
+      north: {to: cn_well}
+      south: {to: cn_stable}
+  - id: cn_dummy
+    name: Trainingspuppe
+    desc: "Eine strohgefüllte Puppe an einem Pfahl. Perfekt zum Üben."
+    exits:
+      east: {to: cn_plaza}
+    search:
+      - { give: practice_sword }
+      - { msg: "Zwischen den Strohhalmen steckt ein Übungsschwert." }
+  - id: cn_smith
+    name: Waffenschmied
+    desc: "Ein Büfett von Klingen liegt auf dem Ladentisch."
+    exits:
+      west: {to: cn_plaza}
+    search:
+      - { give: whetstone }
+      - { msg: "Ein Wetzstein liegt lose herum — immer nützlich." }
+  - id: cn_well
+    name: Tränkebrunnen
+    desc: "Kühles Wasser, frische Luft. Ein Pfad führt zum Vorplatz."
+    exits:
+      north: {to: cn_tent}
+      south: {to: cn_judge}
+  - id: cn_tent
+    name: Zelte der Knappen
+    desc: "Bunte Zelte, frischer Tee. Hier warten junge Knappen auf ihre Ritter."
+    exits:
+      north: {to: cn_plaza}
+      south: {to: cn_well}
+  - id: cn_stable
+    name: Turnierpferde
+    desc: "Decken und Sättel hängen in den Boxen."
+    exits:
+      north: {to: cn_judge}
+      south: {to: cn_armory}
+  - id: cn_armory
+    name: Rüstkammer
+    desc: "Helme und Schilde hängen in Reihen an den Wänden."
+    exits:
+      north: {to: cn_stable}
+      south: {to: cn_herald}
+    search:
+      - { give: shield_buckle }
+      - { msg: "Eine einzelne Schnalle fällt dir in die Hand." }
+  - id: cn_herald
+    name: Heroldsstand
+    desc: "Ein Herold bläst in sein Horn und winkt zum Tor."
+    exits:
+      north: {to: cn_armory}
+    search:
+      - { msg: "Der Herold grinst: „Glück bringt, wer zuerst grüßt.“" }
+
+items:
+  - id: practice_sword
+    name: Übungsschwert
+    desc: "Stumpf, aber zuverlässig — gut, die Haltung zu prüfen."
+    keys: [übungsschwert, schwert, sword]
+    location: cn_dummy
+    hidden: true
+  - id: whetstone
+    name: Wetzstein
+    desc: "Ein rauer Stein, um Klingen zu schärfen."
+    keys: [wetzstein, stone]
+    location: cn_smith
+    hidden: true
+  - id: shield_buckle
+    name: Schildschnalle
+    desc: "Verziert mit dem Turnierwappen."
+    keys: [schnalle, buckle]
+    location: cn_armory
+    hidden: true
+
+interactions:
+  entity: []
+  item: []
