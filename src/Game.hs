@@ -26,6 +26,8 @@ emptyGameWorld = GameWorld
     , combatProfile      = CombatClassic
     , worldName          = ""
     , abilities          = Map.empty
+    , worldEndArt        = Map.empty
+    , worldTitleArt      = emptyAscii
     }
 
 -- | Default empty game state
@@ -797,6 +799,19 @@ asciiFrames :: AsciiArt -> GameState -> [String]
 asciiFrames art state
     | null (aaFrames art) = [t | let t = resolveCondText (aaStatic art) state, not (null t)]
     | otherwise           = map (\f -> resolveCondText f state) (aaFrames art)
+
+-- | The end banner a world defines for a game-over reason, if any. Keys are
+--   @"death"@, @"victory"@ or the custom reason string (Phase G).
+endArtFor :: GameOverReason -> GameState -> Maybe AsciiArt
+endArtFor reason state =
+    case Map.lookup key (worldEndArt (world state)) of
+        Just art | not (isEmptyAscii art) -> Just art
+        _                                 -> Nothing
+  where
+    key = case reason of
+        Death    -> "death"
+        Victory  -> "victory"
+        Custom s -> s
 
 -- ---------------------------------------------------------------------------
 -- Outcome interpreter (single, shared implementation)

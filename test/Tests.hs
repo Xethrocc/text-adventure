@@ -2348,6 +2348,37 @@ testWatchCommand = do
     r4 <- expectTrue "watch does not consume a turn" (not (consumesTurn cmd))
     pure (r1 && r2 && r3 && r4)
 
+-- ===== End/title banners (Phase G) =====
+
+-- | `end_art` resolves by game-over reason; absent art yields `Nothing` so the
+--   built-in frame stays (backwards compatible).
+testEndArtFor :: IO Bool
+testEndArtFor = do
+    let death = staticArt (plainText "DEATH-BANNER")
+        victory = staticArt (plainText "VICTORY-BANNER")
+        custom = staticArt (plainText "CUSTOM-BANNER")
+        gw = (world initSampleGame)
+                { worldEndArt = Map.fromList
+                    [ ("death", death), ("victory", victory), ("the end", custom) ] }
+        g = initSampleGame { world = gw }
+        render r = fmap (\a -> resolveAsciiArt a g) (endArtFor r g)
+    r1 <- expectEqual (Just "DEATH-BANNER") (render Death)
+    r2 <- expectEqual (Just "VICTORY-BANNER") (render Victory)
+    r3 <- expectEqual (Just "CUSTOM-BANNER") (render (Custom "the end"))
+    r4 <- expectEqual Nothing (render (Custom "unknown ending"))
+    r5 <- expectEqual Nothing (endArtFor Death initSampleGame)
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | A title banner resolves against the world state; the empty default stays
+--   empty so the caller falls back to `bannerFor`.
+testTitleArtResolves :: IO Bool
+testTitleArtResolves = do
+    let art = staticArt (plainText "TITLE-BANNER")
+        g = initSampleGame { world = (world initSampleGame) { worldTitleArt = art } }
+    r1 <- expectEqual "TITLE-BANNER" (resolveAsciiArt (worldTitleArt (world g)) g)
+    r2 <- expectEqual "" (resolveAsciiArt (worldTitleArt (world initSampleGame)) initSampleGame)
+    pure (r1 && r2)
+
 -- | String shorthand, object form and full-room round-trip for `ascii`.
 testAsciiJsonRoundTrip :: IO Bool
 testAsciiJsonRoundTrip = do
@@ -3907,6 +3938,8 @@ main = do
         , runTest "passive animation frame from turn count (D)" testPassiveFrame
         , runTest "asciiFrames lists all frames (D)" testAsciiFramesList
         , runTest "watch command queues frames (D)" testWatchCommand
+        , runTest "end_art resolves per reason (G)" testEndArtFor
+        , runTest "title_art resolves against state (G)" testTitleArtResolves
         , runTest "ascii CondText json round-trip" testAsciiJsonRoundTrip
         , runTest "stripAnsi removes SGR sequences (C)" testStripAnsi
         , runTest "ansiFilter policy (C)" testAnsiFilter

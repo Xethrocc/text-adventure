@@ -37,6 +37,8 @@ minWorld = E.GameWorld
     , combatProfile = E.CombatClassic
     , worldName = ""
     , abilities = Map.empty
+    , worldEndArt = Map.empty
+    , worldTitleArt = E.AsciiArt (E.CondText "" []) [] 1
     }
 
 -- | Helper: a minimal valid SaveState referencing room_0
@@ -152,6 +154,8 @@ minAdventure room = Adventure
     , advStealth = Nothing
     , advCombat = Nothing
     , advAbilities = []
+    , advEndArt = Map.empty
+    , advTitleArt = AAscii (ACondText "" []) [] 1
     }
 
 -- ---------------------------------------------------------------------------
@@ -1885,6 +1889,56 @@ testAnimatedAsciiCompiles = do
             r2 <- expectEqual 2 (E.aaEvery (E.roomAscii rm))
             pure (r1 && r2)
 
+-- | `end_art` and `title_art` compile into the GameWorld (Phase G).
+testEndTitleArtCompiles :: IO Bool
+testEndTitleArtCompiles = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advEndArt = Map.fromList
+                [ ("death", AAscii (ACondText "D" []) [] 1)
+                , ("victory", AAscii (ACondText "V" []) [] 1) ]
+            , advTitleArt = AAscii (ACondText "T" []) [] 1 }
+        plainAdv = minAdventure (minRoom "loc_0")
+    case (compileAdventure adv, compileAdventure plainAdv) of
+        (Right cr, Right crPlain) -> do
+            let gw = crWorld cr
+            r1 <- expectEqual (Just (E.AsciiArt (E.CondText "D" []) [] 1))
+                      (Map.lookup "death" (E.worldEndArt gw))
+            r2 <- expectEqual (E.AsciiArt (E.CondText "T" []) [] 1) (E.worldTitleArt gw)
+            r3 <- expectEqual (E.AsciiArt (E.CondText "" []) [] 1) (E.worldTitleArt (crWorld crPlain))
+            r4 <- expectEqual Map.empty (E.worldEndArt (crWorld crPlain))
+            pure (r1 && r2 && r3 && r4)
+        _ -> expectTrue "end/title art compile failed" False
+
+-- | The shipped banner fixture compiles, validates and carries both banners.
+testBannerArtFixtureCompiles :: IO Bool
+testBannerArtFixtureCompiles = do
+    mbPath <- findExample "banner-art.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  banner-art.yaml not found"
+            pure False
+        Just path -> do
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  parse error: " ++ err
+                    pure False
+                Right adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  compile errors: " ++ show errs
+                        pure False
+                    Right cr -> do
+                        let gw = crWorld cr
+                            verrs = validateWorld gw
+                            victory = Map.lookup "victory" (E.worldEndArt gw)
+                            title = E.worldTitleArt gw
+                        r1 <- expectTrue "banner-art fixture validates" (null verrs)
+                        r2 <- expectTrue "victory end_art compiled"
+                                  (maybe False (isInfixOf "*** YOU WIN ***" . E.ctDefault . E.aaStatic) victory)
+                        r3 <- expectTrue "title_art compiled"
+                                  (not (E.isEmptyAscii title))
+                        pure (r1 && r2 && r3)
+
 -- | The shipped state-dependent ASCII fixture compiles and validates clean.
 testAsciiFixtureCompiles :: IO Bool
 testAsciiFixtureCompiles = do
@@ -1920,6 +1974,8 @@ tests :: [(String, IO Bool)]
 tests =
     [ ("ascii: string/object compiles to AsciiArt (B)", testAsciiCondTextCompiles)
     , ("animated ascii compiles frames + every (D)", testAnimatedAsciiCompiles)
+    , ("end_art/title_art compile (G)", testEndTitleArtCompiles)
+    , ("banner-art fixture compiles + validates (G)", testBannerArtFixtureCompiles)
     , ("ascii-state fixture compiles + validates (B)", testAsciiFixtureCompiles)
     , ("all 10 directions compile to engine Direction", testAllDirectionsCompile)
     , ("direction aliases ne/nw/se/sw work", testDirectionAliases)

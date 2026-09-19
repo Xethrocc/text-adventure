@@ -5,9 +5,10 @@ module Main where
 
 import GameLoop (runGameWith)
 import Ansi (ansiFilter)
+import Game (resolveAsciiArt)
 import Sample (initSampleGame)
 import World (loadGame)
-import Types (world, save, worldName)
+import Types (GameState, world, save, worldName, worldTitleArt, isEmptyAscii)
 import Validate (validateWorld, validateGameState)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
@@ -75,6 +76,15 @@ bannerFor n
     | null n    = "=== Text Adventure Game ==="
     | otherwise = "=== " ++ n ++ " ==="
 
+-- | Title banner: the authored `title_art` when present, otherwise the
+--   one-line `bannerFor` default (backwards compatible, Phase G).
+titleBanner :: GameState -> String
+titleBanner st =
+    let art = worldTitleArt (world st)
+    in if isEmptyAscii art
+       then bannerFor (worldName (world st))
+       else resolveAsciiArt art st
+
 main :: IO ()
 main = do
     initConsole
@@ -86,7 +96,7 @@ main = do
             let outFilter = ansiFilter tty (coNoColor opts)
             case coWorld opts of
                 Nothing -> do
-                    putStrLn (bannerFor (worldName (world initSampleGame)))
+                    putStrLn (outFilter (titleBanner initSampleGame))
                     putStrLn "Type 'help' for available commands."
                     putStrLn "----------------------------"
                     runGameWith outFilter initSampleGame
@@ -109,7 +119,7 @@ main = do
                                     putStrLn "Use --allow-invalid to start with these issues."
                                     exitFailure
                             else return ()
-                            putStrLn (bannerFor (worldName (world state)))
+                            putStrLn (outFilter (titleBanner state))
                             putStrLn ("Loaded world: " ++ worldPath)
                             putStrLn "Type 'help' for available commands."
                             putStrLn "----------------------------"

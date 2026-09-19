@@ -1,0 +1,32 @@
+name: Banner Art Test
+start_room: start
+
+# Generated with: cabal run text2ascii -- "BANNER TEST"
+title_art: |
+  ####   ###  #   # #   # ##### ####      ##### #####  #### #####
+  #   # #   # ##  # ##  # #     #   #       #   #     #       #
+  ####  ##### # # # # # # ####  ####        #   ####   ###    #
+  #   # #   # #  ## #  ## #     #  #        #   #         #   #
+  ####  #   # #   # #   # ##### #   #       #   ##### ####    #
+
+end_art:
+  victory: |
+    *** YOU WIN ***
+  death: |
+    *** YOU DIED ***
+
+rooms:
+  - id: start
+    name: Start
+    desc: A small room with a big red button on the wall.
+    exits: {}
+
+items:
+  - id: button
+    name: button
+    desc: A big red button.
+    keys: [button]
+    location: start
+    verb_map:
+      use,intact:
+        - game_end: victory

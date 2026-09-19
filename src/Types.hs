@@ -1051,6 +1051,8 @@ data GameWorld = GameWorld
     , combatProfile      :: CombatProfile                            -- ^ combat policy (Phase 7f)
     , worldName          :: String                                   -- ^ adventure title (`name:`), shown as the game banner
     , abilities          :: Map.Map String PlayerAbility             -- ^ Player abilities (Phase 7f-3, step A3)
+    , worldEndArt        :: Map.Map String AsciiArt                  -- ^ "death"/"victory"/custom reason -> banner (Phase G)
+    , worldTitleArt      :: AsciiArt                                 -- ^ Optional title banner replacing the `bannerFor` default (Phase G)
     } deriving (Show, Eq)
 
 -- | Player ability definition for tactical combat (Phase 7f-3, step A3).
@@ -1211,7 +1213,7 @@ instance FromJSON CombatProfile where
             other       -> fail ("unknown combat profile '" ++ other ++ "'")) v
 
 instance ToJSON GameWorld where
-    toJSON gw = object
+    toJSON gw = object $
         [ "rooms"              .= rooms gw
         , "itemDefs"           .= itemDefs gw
         , "npcDefs"            .= npcDefs gw
@@ -1225,7 +1227,12 @@ instance ToJSON GameWorld where
         , "combatProfile"      .= combatProfile gw
         , "worldName"          .= worldName gw
         , "abilities"          .= abilities gw
-        ]
+        ] ++ endArtPair ++ titleArtPair
+      where
+        endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
+        titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
+        endArt = Map.filter (not . isEmptyAscii) (worldEndArt gw)
+        titleArt = worldTitleArt gw
 
 instance FromJSON GameWorld where
     parseJSON = withObject "GameWorld" $ \o -> GameWorld
@@ -1242,6 +1249,8 @@ instance FromJSON GameWorld where
         <*> o .:? "combatProfile" .!= CombatClassic
         <*> o .:? "worldName" .!= ""
         <*> o .:? "abilities" .!= Map.empty
+        <*> o .:? "endArt" .!= Map.empty
+        <*> o .:? "titleArt" .!= emptyAscii
 
 -- | Encode item-on-item outcomes as objects (P2-9).
 itemInteractionsToJSON :: Map.Map (String, String) Effect -> Value

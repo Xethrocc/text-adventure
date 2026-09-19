@@ -749,3 +749,49 @@ Fixture: `examples/modules/party.yaml` („Der Knappenzug") — anwerben mit
 sein Tod öffnet das Runentor.
 
 Siehe `docs/modules.md` (7f/7g) für Details und die Referenz-Fixtures.
+---
+
+## Banner: `title_art` und `end_art` (Phase G)
+
+Zwei optionale Top-Level-Felder ersetzen die fest eingebauten Textrahmen der
+Engine. Beide nehmen dieselbe Kunstform wie `ascii` (String, CondText oder
+animiert) und werden mit `text2ascii` erzeugt, dem Werkzeug für
+Text→Banner-Kunst.
+
+```yaml
+name: Mein Abenteuer
+
+# Titelbildschirm. Fehlt das Feld, erscheint wie bisher "=== <name> ===".
+title_art: |
+  ####   ###  #   # #   # ##### ####
+  #   # #   # ##  # ##  # #     #   #
+  ####  ##### # # # # # # ####  ####
+  #   # #   # #  ## #  ## #     #  #
+  ####  #   # #   # #   # ##### #   #
+
+# Endbildschirme je Grund: "death", "victory" oder ein eigener
+# `game_end:`-Text. Fehlt der Eintrag, erscheint der bisherige Rahmen.
+end_art:
+  victory: |
+    *** YOU WIN ***
+  death: |
+    *** YOU DIED ***
+```
+
+Erzeugen lässt sich die Kunst mit dem eigenen Paket `text2ascii`:
+
+```
+cabal run text2ascii -- "MEIN ABENTEUER"            # Block-Font (Standard)
+cabal run text2ascii -- -f slant "SIEG"             # Schräge
+cabal run text2ascii -- -f outline "GAME OVER"      # Outline
+cabal run text2ascii -- --color "Titel"             # 24-Bit-Verlauf
+```
+
+Die eingebauten Fonts (Block/Slant/Outline) brauchen keine Datenfiles und
+keine Lizenzklärung. `--color` färbt mit einem vertikalen 24-Bit-Verlauf und
+setzt am Zeilenende zurück; die Engine entfernt die Sequenzen automatisch,
+wenn stdout kein Terminal ist oder `--no-color` gesetzt wurde (siehe
+`ascii`-Abschnitt).
+
+Ohne `end_art` bleiben `YOU HAVE DIED` / `VICTORY!` / `Game Over: <msg>` und
+die Steuerhinweise unverändert — reine Rückwärtskompatibilität.

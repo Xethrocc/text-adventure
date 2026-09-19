@@ -427,36 +427,39 @@ handleGameOver :: OutputFilter -> LoopState -> IO ()
 handleGameOver f loopState = do
     case gameOverReason (save state) of
         Just Death -> do
-            mapM_ (emitLine f)
-                [ ""
-                , "========================================="
+            emitEndArt f state Death
+                [ "========================================="
                 , "  YOU HAVE DIED"
                 , "========================================="
-                , ""
-                , "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
                 ]
+            emitLine f "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
             deathLoop f loopState
         Just Victory -> do
-            mapM_ (emitLine f)
-                [ ""
-                , "========================================="
+            emitEndArt f state Victory
+                [ "========================================="
                 , "  VICTORY!"
                 , "========================================="
-                , ""
-                , "  [R]estart  |  [Q]uit"
                 ]
+            emitLine f "  [R]estart  |  [Q]uit"
             victoryLoop f loopState
         Just (Custom msg) -> do
-            mapM_ (emitLine f)
-                [ ""
-                , "Game Over: " ++ msg
-                , ""
-                , "  [R]estart  |  [Q]uit"
-                ]
+            emitEndArt f state (Custom msg) [ "Game Over: " ++ msg ]
+            emitLine f "  [R]estart  |  [Q]uit"
             victoryLoop f loopState
         Nothing -> return ()  -- Quit without reason
   where
     state = lsCurrent loopState
+
+-- | Print the end screen: a blank line, the world's `end_art` for this reason
+--   when present, otherwise the built-in frame, then a blank line. The control
+--   hints are printed by the caller so the input loop stays reachable either way.
+emitEndArt :: OutputFilter -> GameState -> GameOverReason -> [String] -> IO ()
+emitEndArt f st reason fallback = do
+    emitLine f ""
+    case endArtFor reason st of
+        Just art -> emitLine f (resolveAsciiArt art st)
+        Nothing  -> mapM_ (emitLine f) fallback
+    emitLine f ""
 
 -- | Death screen input loop
 deathLoop :: OutputFilter -> LoopState -> IO ()

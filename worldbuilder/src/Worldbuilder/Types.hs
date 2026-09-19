@@ -39,6 +39,8 @@ data Adventure = Adventure
     , advStealth          :: Maybe AStealth              -- ^ noise + observers (Phase 7e)
     , advCombat           :: Maybe ACombat               -- ^ combat profile (Phase 7f)
     , advAbilities        :: [AAbility]                  -- ^ player abilities (Phase 7f-3 A3/A4)
+    , advEndArt           :: Map.Map String AAscii       -- ^ end banners per reason (Phase G)
+    , advTitleArt         :: AAscii                      -- ^ optional title banner (Phase G)
     } deriving (Show, Eq, Generic)
 
 instance FromJSON Adventure where
@@ -64,6 +66,8 @@ instance FromJSON Adventure where
         <*> o .:? "stealth"
         <*> o .:? "combat"
         <*> o .:? "abilities"       .!= []
+        <*> o .:? "end_art"         .!= Map.empty
+        <*> o .:? "title_art"       .!= AAscii (ACondText "" []) [] 1
 
 -- | Optional player stats block in YAML (Phase 4d).
 --   `player: { max_hp: 50, attack: 8, defense: 3, skills: { lockpick: 5 } }`

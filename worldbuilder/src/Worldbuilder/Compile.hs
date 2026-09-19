@@ -132,6 +132,8 @@ compileAdventure adv =
                 , E.combatProfile = combatProfileCompiled
                 , E.worldName = fromMaybe "" (advName adv)
                 , E.abilities = compiledAbilities
+                , E.worldEndArt = Map.map compileAscii (advEndArt adv)
+                , E.worldTitleArt = compileAscii (advTitleArt adv)
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw

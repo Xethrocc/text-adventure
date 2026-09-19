@@ -74,6 +74,7 @@ bash scripts/ci.sh
 | `app/` | CLI entry point (flags, validation gate, game loop) |
 | `worldbuilder/` | authoring schema, compiler, validator, CLI |
 | `img2ascii/` | helper tool: images → ASCII art for room banners |
+| `text2ascii/` | helper tool: text → banner art (block/slant/outline fonts) for title and end screens |
 | `examples/` | `thefog.yaml` (reference game), `demo.yaml`, `genres/` (6 genre fixtures), `modules/` (7a–7h fixtures + `combo.yaml` composition proof), `fixtures/` (small feature fixtures) |
 | `ci/e2e/` | scripted playthroughs: `<name>.in` plus the expected marker in `<name>.expect` |
 | `docs/` | `adventure-schema.md`, `modules.md`, `genres.md`, `thefog-playthrough.md` |

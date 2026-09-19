@@ -1,0 +1,40 @@
+cabal-version:      3.0
+name:               text2ascii
+version:            0.1.0.0
+synopsis:           Render text as ASCII/ANSI banner art
+description:        Turns a short text into a banner using built-in bitmap
+                    fonts (block, slant, outline) with an optional 24-bit ANSI
+                    gradient. The output is plain ASCII art that can be pasted
+                    into a world file as an end or title banner.
+homepage:           https://github.com/Xethrocc/text-adventure
+license:            MIT
+license-file:       LICENSE
+author:             Xethrocc
+maintainer:         Xethrocc
+copyright:          2026 Xethrocc
+category:           Game
+build-type:         Simple
+
+library
+  exposed-modules:     TextToAscii
+  hs-source-dirs:      src
+  build-depends:       base >=4.12 && <5
+  default-language:    Haskell2010
+  ghc-options:         -Wall -Werror=missing-fields
+
+executable text2ascii
+  main-is:             Main.hs
+  hs-source-dirs:      app
+  build-depends:       base >=4.12 && <5,
+                       text2ascii
+  default-language:    Haskell2010
+  ghc-options:         -Wall -Werror=missing-fields
+
+test-suite text2ascii-tests
+  type:                exitcode-stdio-1.0
+  main-is:             Tests.hs
+  hs-source-dirs:      test
+  build-depends:       base >=4.12 && <5,
+                       text2ascii
+  default-language:    Haskell2010
+  ghc-options:         -Wall -Werror=missing-fields

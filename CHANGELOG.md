@@ -656,6 +656,31 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   Worldbuilder-Test (frames + every).
 - **Doku:** `adventure-schema.md` beschreibt `frames`/`every` und `watch`.
 
+### Banner aus Text (Phase G)
+
+- **Neues Paket `text2ascii` (D9):** Text→Banner-Kunst mit drei eingebauten
+  Fonts (Block, Slant, Outline) ohne Datenfiles (D7). Block ist ein
+  handgezeichnetes 5-Zeilen-Bitmap; Slant und Outline werden daraus abgeleitet
+  (Neigung bzw. dilatiert + Rand). CLI wie `img2ascii`: `-f/--font`,
+  `-g/--gap`, `--color`/`--no-color`, Text als Argumente oder stdin. Eigenes
+  Test-Suite (Glyphenabdeckung, Fallback, Breite, Fonts, Farbe, Mehrzeiler),
+  läuft über `cabal test all` im CI.
+- **Engine – Endbildschirme (D8):** `GameWorld.worldEndArt :: Map String
+  AsciiArt` mit Schlüsseln `"death"`, `"victory"` und eigenen
+  `game_end`-Texten. `handleGameOver` zeigt das Banner statt des festen
+  Rahmens; **ohne** Eintrag bleibt der bisherige Rahmen (rückwärtskompatibel).
+  Die Steuerhinweise bleiben erhalten.
+- **Engine – Titel:** `GameWorld.worldTitleArt :: AsciiArt` ersetzt bei
+  gesetztem Feld das einzeilige `bannerFor`; leerer Default = altes Verhalten.
+  `app/Main` rendert ihn durch denselben ANSI-Filter wie alles andere.
+- **Worldbuilder:** Top-Level `title_art` und `end_art` (String/CondText/
+  animated) kompilieren in das `GameWorld`.
+- **Fixture + Tests:** `examples/fixtures/banner-art.yaml` (generierter
+  Titel + `end_art` für victory/death, per Knopfdruck erreichbar);
+  Engine-Tests (`endArtFor` je Grund, Titelauflösung) und zwei Worldbuilder-
+  Tests (Kompilierung, Fixture). Neuer E2E-Lauf `banner-art` prüft, dass das
+  Ende tatsächlich das `end_art` zeigt.
+
 ## [0.9.0.0] — Unreleased
 
 Phase 5 (Worldbuilder + Ports): Worldbuilder YAML/JSON-Compiler und TheFog-Portierung.
