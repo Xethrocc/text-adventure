@@ -75,6 +75,10 @@ data AsciiConfig = AsciiConfig
   , asciiSet    :: !CharSet      -- ^ Character set (only used by `CharRamp`)
   , asciiInvert :: !Bool         -- ^ Invert brightness
   , asciiMode   :: !RenderMode   -- ^ How each cell is filled
+  , asciiColor  :: !(Maybe Bool) -- ^ Emit 24-bit ANSI colour. @Nothing@ = auto
+                                 --   (colour only for `HalfBlock`, where it is
+                                 --   structural); @Just True@ forces colour for
+                                 --   the character ramp too.
   } deriving (Show, Eq)
 
 defaultConfig :: AsciiConfig
@@ -83,6 +87,7 @@ defaultConfig = AsciiConfig
   , asciiSet    = Standard
   , asciiInvert = False
   , asciiMode   = CharRamp
+  , asciiColor  = Nothing
   }
 
 -- | Output rows for a character width, given the source pixel size. The factor
@@ -135,14 +140,23 @@ scaleToGrid outW outH dyn
 --   read in pairs of rows (top/bottom); an odd last row is dropped.
 imageToAscii :: AsciiConfig -> Image PixelRGB8 -> String
 imageToAscii cfg img = case asciiMode cfg of
-  CharRamp  -> unlines [ [ rampChar (pixelAt img x y) | x <- [0 .. w - 1] ] | y <- [0 .. h - 1] ]
-  HalfBlock -> unlines [ halfBlockRow y | y <- [0, 2 .. h - 2] ]
+  CharRamp
+    | colorOn   -> unlines [ coloredRampRow y | y <- [0 .. h - 1] ]
+    | otherwise -> unlines [ [ rampChar (pixelAt img x y) | x <- [0 .. w - 1] ] | y <- [0 .. h - 1] ]
+  HalfBlock
+    | colorOn   -> unlines [ halfBlockRow y | y <- [0, 2 .. h - 2] ]
+    | otherwise -> unlines [ replicate w '\x2580' | _ <- [0, 2 .. h - 2] ]
   where
     w = imageWidth img
     h = imageHeight img
     rampChars = charsForSet (asciiSet cfg)
     n = V.length rampChars - 1
     invert = asciiInvert cfg
+
+    -- Auto: colour is structural for half blocks and opt-in for the ramp.
+    colorOn = case asciiColor cfg of
+      Just b  -> b
+      Nothing -> asciiMode cfg == HalfBlock
 
     -- BT.601 luma, normalised to the ramp index.
     rampChar p =
@@ -153,6 +167,18 @@ imageToAscii cfg img = case asciiMode cfg of
 
     sgrFg (PixelRGB8 r g b) = "\ESC[38;2;" ++ show r ++ ";" ++ show g ++ ";" ++ show b ++ "m"
     sgrBg (PixelRGB8 r g b) = "\ESC[48;2;" ++ show r ++ ";" ++ show g ++ ";" ++ show b ++ "m"
+
+    -- One ramp row with the pixel colour as foreground. Like the half-block
+    -- row, colour is emitted only when it changes and the row ends with a
+    -- reset so no colour leaks into the following line.
+    coloredRampRow y = concat (reverse (ansiReset : go 0 Nothing []))
+      where
+        go x !lastFg acc
+          | x >= w = acc
+          | otherwise =
+              let p = pixelAt img x y
+                  fgCode = if lastFg == Just p then "" else sgrFg p
+              in go (x + 1) (Just p) ((fgCode ++ [rampChar p]) : acc)
 
     -- One row of half blocks. Colour codes are emitted only when they change,
     -- which keeps flat areas compact; the row ends with a reset so no colour

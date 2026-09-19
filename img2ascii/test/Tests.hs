@@ -203,6 +203,37 @@ testEdgeCases = do
   r6 <- expectEqual "odd source height: floor(3/2) rows" 1 (length (lines oddArt))
   pure (and [r1, r2, r3, r4, r5, r6])
 
+-- Opt-in colour for the character ramp: escape codes are added, the visible
+-- text is unchanged, and the run ends with a reset (no leak into the next line).
+testColorRamp :: IO Bool
+testColorRamp =
+  case scaleToGrid 4 1 (ImageRGB8 (generateImage (\x _ -> if x < 2 then grey 0 else grey 255) 4 1)) of
+    Left err -> expectTrue ("scaleToGrid failed: " ++ err) False
+    Right grid -> do
+      let plainCfg = defaultConfig { asciiWidth = 4 }
+          colorCfg = plainCfg { asciiColor = Just True }
+          plain = imageToAscii plainCfg grid
+          colored = imageToAscii colorCfg grid
+      r1 <- expectTrue "coloured ramp emits escapes" ("\ESC" `isInfixOf` colored)
+      r2 <- expectEqual "stripped colour equals plain text" plain (stripAnsi colored)
+      r3 <- expectTrue "the coloured line ends with a reset"
+                ("\ESC[0m" `isInfixOf` colored)
+      pure (r1 && r2 && r3)
+
+-- `--no-color` strips half-block colour: plain output is just the block
+-- character, with no escape sequences and no trailing reset.
+testNoColorHalfBlock :: IO Bool
+testNoColorHalfBlock = do
+  let cfg = defaultConfig { asciiWidth = 4, asciiMode = HalfBlock, asciiColor = Just False }
+      art = imageToAscii cfg (twoBands 4)
+      l = case lines art of
+            (x:_) -> x
+            []    -> ""
+  r1 <- expectTrue "plain half-block has no escapes" (not ("\ESC" `isInfixOf` l))
+  r2 <- expectEqual "plain half-block is just one cell per column" 4 (countOccurrences "\x2580" l)
+  r3 <- expectEqual "plain half-block row width" 4 (length l)
+  pure (r1 && r2 && r3)
+
 tests :: [(String, IO Bool)]
 tests =
   [ ("cell geometry (B1)", testGeometry)
@@ -212,6 +243,8 @@ tests =
   , ("every character set is a usable ramp", testCharSets)
   , ("half-block cells carry two pixels", testHalfBlock)
   , ("half-block geometry follows the same rule", testHalfBlockGeometry)
+  , ("opt-in colour for the character ramp (C)", testColorRamp)
+  , ("--no-color strips half-block colour (C)", testNoColorHalfBlock)
   , ("degenerate inputs report instead of crashing", testEdgeCases)
   ]
 

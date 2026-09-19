@@ -118,7 +118,16 @@ Erzeugt wird die Kunst mit dem Werkzeug `img2ascii` (eigenes Paket im Repo):
 cabal run img2ascii -- -w 60 bild.png          # Zeichen-Rampe, 60 Zeichen breit
 cabal run img2ascii -- -H 20 bild.png          # 20 Zeilen, Breite abgeleitet
 cabal run img2ascii -- -w 60 -m half bild.png  # Halbblock, zwei Pixel pro Zelle
+cabal run img2ascii -- --color -w 60 bild.png  # Zeichen-Rampe in 24-Bit-Farbe
 ```
+
+`--color` färbt die Zeichenrampe mit 24-Bit-ANSI-Farben (opt-in), `--no-color`
+schaltet sie wieder ab. Im Halbblock-Modus ist Farbe strukturell und daher
+standardmäßig an; `--no-color -m half` erzeugt reine `▀`-Zeichen ohne Schattierung.
+Die Kunst wird **mit** den ANSI-Sequenzen als String in die Welt geschrieben.
+Die Engine gibt sie wörtlich aus und entfernt die Sequenzen, wenn stdout kein
+Terminal ist oder `text-adventure --no-color` gesetzt wurde — der Kern kennt
+keine Farbe.
 
 Die Zeichenzelle eines Terminals ist etwa doppelt so hoch wie breit; das
 Werkzeug leitet die Zeilenzahl daraus ab, damit ein quadratisches Bild

@@ -27,6 +27,7 @@ import System.Console.Haskeline (Completion (..))
 import System.Exit (exitFailure)
 import Types
 import World (loadGame, loadGameWorld, loadSaveState)
+import Ansi (stripAnsi, ansiFilter)
 
 runTest :: String -> IO Bool -> IO Bool
 runTest name testAction = do
@@ -2319,6 +2320,44 @@ testAsciiJsonRoundTrip = do
                       (not ("roomAscii" `isInfixOf` encodedEmpty))
             pure (r1 && r2 && r3 && r4)
 
+-- ===== ANSI colour handling (Phase C) =====
+
+-- | The pure stripper removes SGR sequences and leaves plain text untouched.
+testStripAnsi :: IO Bool
+testStripAnsi = do
+    r1 <- expectEqual "red" (stripAnsi "\ESC[31mred\ESC[0m")
+    r2 <- expectEqual "plain text" (stripAnsi "plain text")
+    r3 <- expectEqual "a\nb" (stripAnsi "\ESC[38;2;1;2;3ma\ESC[0m\n\ESC[48;2;4;5;6mb\ESC[0m")
+    -- the reset at the end of a coloured art line must be gone too
+    r4 <- expectTrue "no escape survives stripping"
+              (not ('\ESC' `elem` stripAnsi "\ESC[38;2;9;9;9mX\ESC[0m\n\ESC[38;2;8;8;8mY\ESC[0m"))
+    pure (r1 && r2 && r3 && r4)
+
+-- | The output policy: identity only on a TTY with colour enabled.
+testAnsiFilter :: IO Bool
+testAnsiFilter = do
+    let colored = "\ESC[31mX\ESC[0m"
+    r1 <- expectEqual colored (ansiFilter True False colored)
+    r2 <- expectEqual "X" (ansiFilter False False colored)
+    r3 <- expectEqual "X" (ansiFilter True True colored)
+    r4 <- expectEqual "X" (ansiFilter False True colored)
+    pure (r1 && r2 && r3 && r4)
+
+-- | End to end: a coloured room art is plain text after the engine filter.
+testColoredRoomArtFiltered :: IO Bool
+testColoredRoomArtFiltered = do
+    let art = "\ESC[38;2;255;0;0mRED-ART\ESC[0m"
+        r = (rooms (world initSampleGame) Map.! "start") { roomAscii = plainText art }
+        g = initSampleGame
+                { world = (world initSampleGame)
+                    { rooms = Map.insert "start" r (rooms (world initSampleGame)) } }
+        (_, msg) = executeCommand Look g
+        plain = stripAnsi msg
+    r1 <- expectTrue "coloured art reaches the message" ('\ESC' `elem` msg)
+    r2 <- expectTrue "stripped output keeps the art" ("RED-ART" `isInfixOf` plain)
+    r3 <- expectTrue "stripped output has no escapes" (not ('\ESC' `elem` plain))
+    pure (r1 && r2 && r3)
+
 -- ===== Dialogue validation tests (Phase 4.6) =====
 
 testMissingDialogueNodeDetected :: IO Bool
@@ -3814,6 +3853,9 @@ main = do
         , runTest "state-dependent npc ascii (alive/dead)" testNpcAsciiStateDependent
         , runTest "state-dependent item ascii" testItemAsciiStateDependent
         , runTest "ascii CondText json round-trip" testAsciiJsonRoundTrip
+        , runTest "stripAnsi removes SGR sequences (C)" testStripAnsi
+        , runTest "ansiFilter policy (C)" testAnsiFilter
+        , runTest "coloured room art is filtered at output (C)" testColoredRoomArtFiltered
         , runTest "missing dialogue node detected" testMissingDialogueNodeDetected
         , runTest "dangling dialogue choice detected" testDanglingDialogueChoiceDetected
         -- Phase 7a: standing predicate sugar

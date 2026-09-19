@@ -1,6 +1,7 @@
 -- | Main game loop and user interaction for the text adventure engine
 module GameLoop
   ( runGame
+  , runGameWith
   , gameLoop
   , LoopState (..)
   , initLoopState
@@ -303,12 +304,30 @@ commandVerbName cmd = case cmd of
     InteractWith v _ _  -> verbCanonicalName v
     _             -> "unknown"
 
--- | Main game loop function
+-- | Mapping applied to every player-facing line at the I/O boundary. The pure
+--   core never inspects it: `app/Main` passes `id` on a colour TTY and
+--   `stripAnsi` when colour is off or stdout is redirected.
+type OutputFilter = String -> String
+
+-- | Print a line through the output filter.
+emitLine :: OutputFilter -> String -> IO ()
+emitLine f = putStrLn . f
+
+-- | Print without a trailing newline through the output filter.
+emitRaw :: OutputFilter -> String -> IO ()
+emitRaw f = putStr . f
+
+-- | Main game loop function (colour allowed).
 runGame :: GameState -> IO ()
-runGame state = do
+runGame = runGameWith id
+
+-- | Entry point with an explicit output filter, used by the CLI to strip ANSI
+--   when stdout is not a terminal or `--no-color` is set.
+runGameWith :: OutputFilter -> GameState -> IO ()
+runGameWith f state = do
     let (newState, message) = executeCommand Look state
-    putStrLn message
-    loopGame (initLoopState newState)
+    emitLine f message
+    loopGame f (initLoopState newState)
 
 -- | Print engine diagnostics that appeared while handling one command to
 --   stderr (P2-23). They describe a content error the author has to fix, so they
@@ -319,64 +338,64 @@ emitNewDiagnostics before after =
 
 -- | Backward-compatible entry point for callers that have a plain GameState.
 gameLoop :: GameState -> IO ()
-gameLoop = loopGame . initLoopState
+gameLoop = loopGame id . initLoopState
 
 -- | Interactive game loop with an in-memory undo history.
-loopGame :: LoopState -> IO ()
-loopGame loopState
-    | gameOver (save state) = handleGameOver loopState
+loopGame :: OutputFilter -> LoopState -> IO ()
+loopGame f loopState
+    | gameOver (save state) = handleGameOver f loopState
     | otherwise = do
         inputResult <- runInputT (haskelineSettings state) (getInputLine "> ")
         case inputResult of
             Nothing -> do
                 let (newState, message) = executeCommand Quit state
-                putStrLn message
-                loopGame loopState { lsCurrent = newState }
+                emitLine f message
+                loopGame f loopState { lsCurrent = newState }
             Just input ->
                 case parseCommandWith (verbDefs (world state)) input of
                     Save name -> do
                         saveGame state name
-                        loopGame loopState
+                        loopGame f loopState
                     Load name -> do
                         result <- loadGame state name
                         case result of
                             Just loadedState -> do
                                 let (loadedState', msg) = executeCommand Look loadedState
-                                putStrLn msg
-                                loopGame (initLoopState loadedState')
-                            Nothing -> loopGame loopState
+                                emitLine f msg
+                                loopGame f (initLoopState loadedState')
+                            Nothing -> loopGame f loopState
                     ListSaves -> do
                         listSaves (world state)
-                        loopGame loopState
+                        loopGame f loopState
                     Restart -> do
-                        putStrLn "Starting a new game...\n"
+                        emitLine f "Starting a new game...\n"
                         let (restarted, msg) = applyLoopCommand Restart loopState
-                        putStrLn msg
-                        loopGame restarted
+                        emitLine f msg
+                        loopGame f restarted
                     Help -> do
-                        putStrLn helpText
-                        loopGame loopState
+                        emitLine f helpText
+                        loopGame f loopState
                     command -> do
                         let (loopState', message) = applyLoopCommand command loopState
                         emitNewDiagnostics (lsCurrent loopState) (lsCurrent loopState')
                         case pendingNarrative (lsCurrent loopState') of
                             Nothing -> do
-                                putStrLn message
-                                loopGame loopState'
+                                emitLine f message
+                                loopGame f loopState'
                             Just (nls, followUp) -> do
                                 case nls of
                                     [] -> return ()
-                                    [single] -> putStrLn single
+                                    [single] -> emitLine f single
                                     _ -> do
-                                        mapM_ (\l -> putStrLn l >> putStr "  [Press Enter to continue]" >> getLine >> return ())
+                                        mapM_ (\l -> emitLine f l >> emitRaw f "  [Press Enter to continue]" >> getLine >> return ())
                                             (init nls)
-                                        putStrLn (last nls)
+                                        emitLine f (last nls)
                                 let (finalState, followMsg) = applyOutcome followUp "" (lsCurrent loopState')
                                     clearedState = finalState { pendingNarrative = Nothing }
                                 if null followMsg
-                                    then loopGame (loopState' { lsCurrent = clearedState })
-                                    else do putStrLn followMsg
-                                            loopGame (loopState' { lsCurrent = clearedState })
+                                    then loopGame f (loopState' { lsCurrent = clearedState })
+                                    else do emitLine f followMsg
+                                            loopGame f (loopState' { lsCurrent = clearedState })
   where
     state = lsCurrent loopState
 
@@ -385,51 +404,57 @@ loopGame loopState
 -- ---------------------------------------------------------------------------
 
 -- | Handle game-over screen based on reason
-handleGameOver :: LoopState -> IO ()
-handleGameOver loopState = do
+handleGameOver :: OutputFilter -> LoopState -> IO ()
+handleGameOver f loopState = do
     case gameOverReason (save state) of
         Just Death -> do
-            putStrLn ""
-            putStrLn "========================================="
-            putStrLn "  YOU HAVE DIED"
-            putStrLn "========================================="
-            putStrLn ""
-            putStrLn "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
-            deathLoop loopState
+            mapM_ (emitLine f)
+                [ ""
+                , "========================================="
+                , "  YOU HAVE DIED"
+                , "========================================="
+                , ""
+                , "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
+                ]
+            deathLoop f loopState
         Just Victory -> do
-            putStrLn ""
-            putStrLn "========================================="
-            putStrLn "  VICTORY!"
-            putStrLn "========================================="
-            putStrLn ""
-            putStrLn "  [R]estart  |  [Q]uit"
-            victoryLoop loopState
+            mapM_ (emitLine f)
+                [ ""
+                , "========================================="
+                , "  VICTORY!"
+                , "========================================="
+                , ""
+                , "  [R]estart  |  [Q]uit"
+                ]
+            victoryLoop f loopState
         Just (Custom msg) -> do
-            putStrLn ""
-            putStrLn $ "Game Over: " ++ msg
-            putStrLn ""
-            putStrLn "  [R]estart  |  [Q]uit"
-            victoryLoop loopState
+            mapM_ (emitLine f)
+                [ ""
+                , "Game Over: " ++ msg
+                , ""
+                , "  [R]estart  |  [Q]uit"
+                ]
+            victoryLoop f loopState
         Nothing -> return ()  -- Quit without reason
   where
     state = lsCurrent loopState
 
 -- | Death screen input loop
-deathLoop :: LoopState -> IO ()
-deathLoop loopState = do
+deathLoop :: OutputFilter -> LoopState -> IO ()
+deathLoop f loopState = do
     inputResult <- runInputT defaultSettings (getInputLine "> ")
     case map toLower . fromMaybe "q" <$> pure inputResult of
         Just "u" ->
             case lsHistory loopState of
                 [] -> do
-                    putStrLn "Nothing to undo."
-                    deathLoop loopState
+                    emitLine f "Nothing to undo."
+                    deathLoop f loopState
                 _ -> do
                     let (restored, msg) = applyLoopCommand Undo loopState
-                    putStrLn msg
-                    loopGame restored
+                    emitLine f msg
+                    loopGame f restored
         Just "l" -> do
-            putStrLn "Enter save name to load (or press Enter for 'savegame'):"
+            emitLine f "Enter save name to load (or press Enter for 'savegame'):"
             nameResult <- runInputT defaultSettings (getInputLine "> ")
             let name = case nameResult of
                     Just n | not (null n) -> n
@@ -438,32 +463,32 @@ deathLoop loopState = do
             case result of
                 Just loadedState -> do
                     let (s', msg) = executeCommand Look loadedState
-                    putStrLn msg
-                    loopGame (initLoopState s')
-                Nothing -> deathLoop loopState
+                    emitLine f msg
+                    loopGame f (initLoopState s')
+                Nothing -> deathLoop f loopState
         Just "r" -> do
-            putStrLn "Starting a new game...\n"
+            emitLine f "Starting a new game...\n"
             let (restarted, msg) = applyLoopCommand Restart loopState
-            putStrLn msg
-            loopGame restarted
-        Just "q" -> putStrLn "Thanks for playing!"
+            emitLine f msg
+            loopGame f restarted
+        Just "q" -> emitLine f "Thanks for playing!"
         _ -> do
-            putStrLn "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
-            deathLoop loopState
+            emitLine f "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
+            deathLoop f loopState
   where
     state = lsCurrent loopState
 
 -- | Victory/custom game-over input loop
-victoryLoop :: LoopState -> IO ()
-victoryLoop loopState = do
+victoryLoop :: OutputFilter -> LoopState -> IO ()
+victoryLoop f loopState = do
     inputResult <- runInputT defaultSettings (getInputLine "> ")
     case map toLower . fromMaybe "q" <$> pure inputResult of
         Just "r" -> do
-            putStrLn "Starting a new game...\n"
+            emitLine f "Starting a new game...\n"
             let (restarted, msg) = applyLoopCommand Restart loopState
-            putStrLn msg
-            loopGame restarted
-        Just "q" -> putStrLn "Thanks for playing!"
+            emitLine f msg
+            loopGame f restarted
+        Just "q" -> emitLine f "Thanks for playing!"
         _ -> do
-            putStrLn "  [R]estart  |  [Q]uit"
-            victoryLoop loopState
+            emitLine f "  [R]estart  |  [Q]uit"
+            victoryLoop f loopState

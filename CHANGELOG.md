@@ -615,6 +615,25 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
 - **Doku:** `docs/adventure-schema.md` beschreibt die zustandsabhängige Form mit
   Beispielen für Räume, Items und NPCs.
 
+### ASCII-Kunst: Farbe (Phase C)
+
+- **Konverter (Entscheidung D2):** `img2ascii --color` färbt die Zeichenrampe
+  mit 24-Bit-ANSI (opt-in), `--no-color` schaltet jede ANSI-Ausgabe ab. Im
+  Halbblock-Modus ist Farbe strukturell (Standard an); `--no-color -m half`
+  liefert reine `▀`-Zeichen. Farbcodes werden nur bei Änderung emittiert, jede
+  Zeile endet mit `ESC[0m` (kein Leck in die Folgezeile).
+- **Engine:** neue reine Funktion `Ansi.stripAnsi` entfernt CSI-Sequenzen;
+  `Ansi.ansiFilter` wählt `id` nur bei TTY **und** ohne `--no-color`, sonst
+  `stripAnsi`. `app/Main` prüft `hIsTerminalDevice stdout` und reicht den
+  Filter über `GameLoop.runGameWith` an alle spielerseitigen Ausgaben durch —
+  der Kern bleibt farbblind. `--no-color` ist ein neues CLI-Flag.
+- **Tests:** sechs neue Fälle — `stripAnsi` (SGR, Reset, mehrzeilig),
+  `ansiFilter`-Policy (TTY × Flag), farbige Raumkunst → gefiltert, sowie im
+  Konverter farbige Rampe (Escape vorhanden, sichtbarer Text gleich, Reset am
+  Zeilenende) und `--no-color`-Halbblock (nur `▀`, kein Escape).
+- **Doku:** `adventure-schema.md` beschreibt `--color`/`--no-color` und die
+  automatische Bereinigung bei umgeleitetem stdout.
+
 ## [0.9.0.0] — Unreleased
 
 Phase 5 (Worldbuilder + Ports): Worldbuilder YAML/JSON-Compiler und TheFog-Portierung.

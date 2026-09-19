@@ -21,6 +21,7 @@ data Options = Options
   { optConfig :: AsciiConfig
   , optHeight :: Maybe Int        -- ^ `--height`: rows; the width is derived
   , optFile   :: FilePath
+  , optColor  :: Maybe Bool       -- ^ `--color` / `--no-color`; Nothing = auto
   }
 
 -- | Parser state: the config plus what was said on the command line. Tracking
@@ -30,6 +31,7 @@ data PState = PState
   , psWidth  :: Maybe Int
   , psHeight :: Maybe Int
   , psFile   :: Maybe FilePath
+  , psColor  :: Maybe Bool
   }
 
 parseCharSet :: String -> Maybe CharSet
@@ -60,6 +62,8 @@ printUsage = do
   putStrLn "  -c, --charset S   Character set: block, line, fine, standard, simple"
   putStrLn "  -m, --mode M      char (default, works without colour) or half"
   putStrLn "                    (two pixels per cell, needs a colour terminal)"
+  putStrLn "      --color       Colour the character ramp with 24-bit ANSI (opt-in)"
+  putStrLn "      --no-color    Never emit ANSI; half-block output loses its shading"
   putStrLn "  -i, --invert      Invert brightness"
   putStrLn "  -h, --help        Show this help"
   putStrLn ""
@@ -73,12 +77,12 @@ parsePos value = case reads value of
   _ -> Left $ "invalid number '" ++ value ++ "' (expected a positive integer)"
 
 parseArgs :: [String] -> Either String Options
-parseArgs argv = finish =<< go (PState defaultConfig Nothing Nothing Nothing) argv
+parseArgs argv = finish =<< go (PState defaultConfig Nothing Nothing Nothing Nothing) argv
   where
-    finish (PState cfg w h (Just path))
+    finish (PState cfg w h (Just path) color)
       | Just _ <- w, Just _ <- h = Left "use either --width or --height, not both"
-      | otherwise = Right (Options cfg h path)
-    finish (PState _ _ _ Nothing) = Left "no input file given"
+      | otherwise = Right (Options cfg h path color)
+    finish (PState _ _ _ Nothing _) = Left "no input file given"
 
     -- options that need a value
     withValue flag rest k = case rest of
@@ -91,6 +95,8 @@ parseArgs argv = finish =<< go (PState defaultConfig Nothing Nothing Nothing) ar
       "--help"    -> go st rest
       "-i"        -> go st { psConfig = (psConfig st) { asciiInvert = True } } rest
       "--invert"  -> go st { psConfig = (psConfig st) { asciiInvert = True } } rest
+      "--color"   -> go st { psColor = Just True } rest
+      "--no-color" -> go st { psColor = Just False } rest
       "-w"        -> withValue arg rest (setWidth st)
       "--width"   -> withValue arg rest (setWidth st)
       "-H"        -> withValue arg rest (setHeight st)
@@ -144,16 +150,21 @@ main = do
       case result of
         Left err -> hPutStrLn stderr ("Error reading image: " ++ err) >> exitFailure
         Right dyn -> do
-          -- Resolve --height into a width using the image's own aspect.
+          -- Resolve --height into a width using the image's own aspect, and
+          -- apply the colour choice (Nothing keeps the auto default).
           let rgb8 = convertRGB8 dyn
+              cfg0 = (optConfig opts) { asciiColor = optColor opts }
               cfg = case optHeight opts of
-                Nothing -> optConfig opts
-                Just rows -> (optConfig opts)
+                Nothing -> cfg0
+                Just rows -> cfg0
                   { asciiWidth = widthForRows rows (imageWidth rgb8) (imageHeight rgb8) }
+              colorOn = case asciiColor cfg of
+                Just b  -> b
+                Nothing -> asciiMode cfg == HalfBlock
           when (asciiMode cfg == HalfBlock) $ do
             tty <- hIsTerminalDevice stdout
-            when (not tty) $
-              hPutStrLn stderr "Warning: --mode half needs a colour terminal; with redirected output the blocks carry no information."
+            when (not colorOn || not tty) $
+              hPutStrLn stderr "Warning: --mode half needs a colour terminal; without 24-bit colour the blocks carry no information."
           case imageToAsciiFrom cfg dyn of
             Left err -> hPutStrLn stderr ("Error scaling image: " ++ err) >> exitFailure
             Right art -> putStr art
