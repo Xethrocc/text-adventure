@@ -50,7 +50,7 @@ SaveState, must exist), `--allow-invalid`, `--no-color` / `--color`
 In-game saves are written to `saves/<slot>.json`.
 
 Whole pipeline — build, all four test suites, validation of 22 shipped
-adventures, 31 scripted playthroughs (22 happy paths + 9 failure paths):
+adventures, 32 scripted playthroughs (23 happy paths + 9 non-victory runs):
 
 ```bash
 bash scripts/ci.sh
@@ -149,7 +149,7 @@ no own state file. Their state lives in the existing `VarMap`
 ```bash
 cabal build all
 cabal test all --test-show-details=direct    # 259 engine tests, 83 worldbuilder tests, plus the img2ascii/text2ascii tool suites
-bash scripts/ci.sh                           # build + tests + validation + 31 E2E playthroughs
+bash scripts/ci.sh                           # build + tests + validation + 32 E2E playthroughs
 cabal run worldbuilder -- check examples/thefog.yaml   # content statistics
 ```
 

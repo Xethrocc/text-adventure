@@ -4,6 +4,7 @@ start_room: cave
 verbs:
   - name: pull
     aliases: [yank]
+  - name: light
 
 rooms:
   - id: cave
@@ -59,6 +60,10 @@ items:
     desc: A guttering torch.
     keys: [torch]
     location: cave
+    verb_map:
+      light,intact:
+        - { set_state: torch, to: burned }
+        - msg: The torch flares up, then burns down to a stub.
     ascii:
       default: |
         ( * )

@@ -61,12 +61,13 @@ run_e2e() {
     fi
 }
 
-for name in thefog pure-if fantasy cyberpunk space-opera detective horror factions trade encounters survival stealth combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot; do
+for name in thefog pure-if fantasy cyberpunk space-opera detective horror factions trade encounters survival stealth combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state; do
     case "$name" in
         thefog)             src=examples/thefog.yaml ;;
         factions|trade|encounters|survival|stealth|combat-off|combat-narrative|combat-classic|combat-tactical|party|starship|combo|ship-duel)     src="examples/modules/$name.yaml" ;;
         banner-art)         src="examples/fixtures/banner-art.yaml" ;;
         hotspot)            src="examples/fixtures/hotspot.yaml" ;;
+        ascii-state)        src="examples/fixtures/ascii-state.yaml" ;;
         *)                  src="examples/genres/$name.yaml" ;;
     esac
     run_e2e "$name" "$src"

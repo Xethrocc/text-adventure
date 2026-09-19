@@ -97,6 +97,14 @@ items:
           text: "( x )\n \\|/"
 ```
 
+Lebend/tot ist damit auch **im Spiel** sichtbar: jede Kampfrunde gibt die Kunst
+des Gegners aus, und zwar *nach* dem Anwenden der Runde — der tödliche Treffer
+zeigt also bereits die `dead`-Variante. Ein getöteter NPC bleibt als Leiche im
+Raum: `look at <name>` und `watch <name>` finden ihn weiter, gemeldet wird er aber
+nicht mehr als anwesend — `look` schreibt *„The body of X lies here."*, `attack`
+antwortet *„X is already dead."*, `talk` *„X is dead and says nothing."*.
+Autoren-Verben aus `verb_map:` wirken weiterhin auf eine Leiche (z. B. `search`).
+
 Ist `ascii` leer oder fehlt, wird nichts ausgegeben (rückwärtskompatibel zum
 früheren `ascii: <string>`).
 

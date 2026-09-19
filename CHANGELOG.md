@@ -701,6 +701,39 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   Hervorhebung, `map`) und zwei Worldbuilder-Tests (Fehlerpfade, Fixture).
   Neuer E2E-Lauf `hotspot`.
 
+### ASCII-Kunst: Leichen bleiben liegen, Kampfrunden zeigen den Gegner
+
+Nacharbeit zum Code-Check der Phasen B–E. Zwei Lücken, die zusammen die
+Gegner-Kunst („lebend/tot") im Spiel unerreichbar machten:
+
+- **Der Tod versetzt den NPC nicht mehr ins Nichts.** `killNPC` setzte
+  `npcLocation = Removed`, also fiel jede ortsbasierte Suche aus — `look at
+  <name>` meldete „You don't see … here", und die `dead`-Variante der NPC-Kunst
+  konnte **nie** erscheinen. Der NPC hat jetzt nur noch den Status `dead`, die
+  Leiche bleibt im Raum. Damit sie niemand für einen Gesprächspartner hält,
+  filtert die Regel „ein Körper ist kein Partner" an genau einer Stelle
+  (`isDeadNPC`, genutzt von Kampf-Zielsuche, Begleiterliste und Raumliste):
+  - die Raumliste meldet sie getrennt: *„The body of X lies here."* statt unter
+    „Also here",
+  - `attack` antwortet *„X is already dead."*, `talk` *„X is dead and says
+    nothing."*,
+  - `look at`/`watch` und Autoren-Verben (`verb_map`) funktionieren weiter.
+- **Jede Kampfrunde rendert die Kunst des Gegners** — und zwar *nach* dem
+  Anwenden der Effekte, damit die tödliche Runde bereits den toten Zustand
+  zeigt. Das ist der Weg, auf dem „Gegner lebend/tot" sichtbar wird; der alte
+  Test prüfte nur den Mechanismus mit von Hand gesetztem Status.
+- **Fixture ehrlich gemacht:** `ascii-state.yaml` hat einen Weg zur
+  `burned`-Variante der Fackel (`light torch`) und einen neuen E2E-Lauf
+  `ascii-state` (31 → **32** Läufe), der die tote Kunst `( x_x )` nachweist.
+- **Tests:** `corpse stays findable through the kill path` fährt den *echten*
+  Todesweg (Angriff mit 1 HP) und prüft Kunst in der tödlichen Runde, Fundort,
+  Ansprechbarkeit und die beiden Verweigerungen.
+- **Kleinkram:** Schlusszeilenumbrüche in `img2ascii/app/Main.hs`,
+  `img2ascii/src/ImgToAscii.hs` und `text2ascii/app/Main.hs`; der Phase-A-Eintrag
+  unten sagt zwar „`asciiColor` entfernt", Phase C führt es aber als lebendiges
+  Feld (`Maybe Bool`, auto) wieder ein — beides richtig, in dieser Reihenfolge
+  nur missverständlich.
+
 ## [0.9.0.0] — Unreleased
 
 Phase 5 (Worldbuilder + Ports): Worldbuilder YAML/JSON-Compiler und TheFog-Portierung.

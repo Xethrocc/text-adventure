@@ -336,12 +336,27 @@ getNPCsInRoom rId state =
     let npcIds = Map.keys $ Map.filter (\s -> npcLocation s == InRoom rId) (npcStates (save state))
     in [def | nId <- npcIds, Just def <- [Map.lookup nId (npcDefs (world state))]]
 
+-- | An NPC's status, when it has state at all (`Nothing` = no state recorded).
+npcStatusOf :: NPCID -> GameState -> Maybe String
+npcStatusOf nId state = npcStatus <$> Map.lookup nId (npcStates (save state))
+
+-- | Is this NPC a body? The single rule for "a corpse is not a partner":
+--   combat targeting, party membership and the room listing all ask this one
+--   predicate, so the definition lives in exactly one place.
+isDeadNPC :: NPCID -> GameState -> Bool
+isDeadNPC nId state = npcStatusOf nId state == Just "dead"
+
 -- | Update NPC state (health, status, etc)
 updateNPCState :: String -> NPCState -> GameState -> GameState
 updateNPCState targetNpcId newNpcState state = state
     { save = (save state) { npcStates = Map.insert targetNpcId newNpcState (npcStates (save state)) } }
 
--- | Move NPC to void (dead) and fire state-change triggers.
+-- | Mark an NPC dead and fire state-change triggers. The **corpse stays where it
+--   fell**: `npcLocation` is untouched, so `look at <name>` and `watch` still
+--   find it and the body's art can show its dead variant. Everything that must
+--   not involve a body (combat targeting, party membership, the room's "Also
+--   here" list) filters on the status instead — see `isDeadNPC`. `Removed` is
+--   for consumed items, not for bodies.
 --   Also unlocks any exit locked by this entity (entityStates -> "unlocked").
 --   Killing an already-dead NPC is a no-op, which bounds event recursion:
 --   a trigger that re-kills the same NPC cannot loop.
@@ -358,7 +373,7 @@ killNPCWithMsg targetNpcId state =
         _ ->
             let state' = state
                     { save = (save state)
-                        { npcStates = Map.adjust (\s -> s { npcLocation = Removed, npcStatus = "dead" }) targetNpcId (npcStates (save state))
+                        { npcStates = Map.adjust (\s -> s { npcStatus = "dead" }) targetNpcId (npcStates (save state))
                         , entityStates = Map.insert targetNpcId "unlocked" (entityStates (save state))
                         } }
             in fireTriggers (OnStateChange targetNpcId) state'
@@ -498,9 +513,8 @@ isLivingNPCInRoom target state =
     let currentRoomId = currentRoom (save state)
         roomNPCs = getNPCsInRoom currentRoomId state
         matchTarget npc = any (\kw -> lower target == lower kw) (npcId npc : npcName npc : npcKeywords npc)
-        npcIsAlive npc = case Map.lookup (npcId npc) (npcStates (save state)) of
-            Just ns -> npcStatus ns /= "dead"
-            Nothing -> False
+        -- An NPC without recorded state is not living either (unchanged rule).
+        npcIsAlive npc = maybe False (/= "dead") (npcStatusOf (npcId npc) state)
     in any (\npc -> matchTarget npc && npcIsAlive npc) roomNPCs
   where
     lower = map (\c -> if c >= 'A' && c <= 'Z' then toEnum (fromEnum c + 32) else c)

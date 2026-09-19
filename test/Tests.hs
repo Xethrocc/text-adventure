@@ -2283,6 +2283,42 @@ testNpcAsciiStateDependent = do
     r3 <- expectTrue "dead npc drops the living art" (not ("ALIVE-ART" `isInfixOf` deadMsg))
     pure (r1 && r2 && r3)
 
+-- | A corpse stays where it fell, and that is the only way the dead variant of an
+--   NPC's art is reachable in play. Before this, `killNPC` moved the NPC to
+--   `Removed`, so `look at <name>` failed and the body's art could never be
+--   shown; the older test passed because it set the status by hand while leaving
+--   the NPC in the room, which is not what the engine does on a kill.
+testCorpseStaysFindable :: IO Bool
+testCorpseStaysFindable = do
+    let art = CondText "ALIVE-ART" [ TextVariant (EntityHasState "oldman" "dead") "DEAD-ART" ]
+        oldman = (npcDefs (world initSampleGame) Map.! "oldman") { npcAscii = staticArt art }
+        g = initSampleGame
+                { world = (world initSampleGame)
+                    { npcDefs = Map.insert "oldman" oldman (npcDefs (world initSampleGame)) } }
+        -- one hit has to be lethal for the real kill path to run
+        wounded = g { save = (save g)
+                        { npcStates = Map.adjust (\ns -> ns { npcHealth = Just 1 })
+                                                 "oldman" (npcStates (save g)) } }
+        (stKill, killMsg) = executeCommand (Interact VAttack "old man") wounded
+        (_, lookMsg) = executeCommand (Interact VLookAt "old man") stKill
+        (_, attackMsg) = executeCommand (Interact VAttack "old man") stKill
+        (_, talkMsg) = executeCommand (Interact VTalk "old man") stKill
+        (_, roomMsg) = executeCommand Look stKill
+        alsoHereLine = unlines [ l | l <- lines roomMsg, "Also here:" `isInfixOf` l ]
+    r1 <- expectTrue "the attack reports the kill" ("kill it" `isInfixOf` killMsg)
+    r2 <- expectTrue "the killing round renders the body's art" ("DEAD-ART" `isInfixOf` killMsg)
+    r3 <- expectTrue "the body keeps its location"
+              (case npcLocation <$> Map.lookup "oldman" (npcStates (save stKill)) of
+                   Just loc -> loc == InRoom (currentRoom (save stKill))
+                   Nothing  -> False)
+    r4 <- expectTrue "looking at the corpse shows the dead art" ("DEAD-ART" `isInfixOf` lookMsg)
+    r5 <- expectTrue "attacking a corpse is refused" ("already dead" `isInfixOf` attackMsg)
+    r6 <- expectTrue "talking to a corpse is refused" ("says nothing" `isInfixOf` talkMsg)
+    r7 <- expectTrue "looking around mentions the body" ("The body of " `isInfixOf` roomMsg)
+    r8 <- expectTrue "the body is not announced as a living presence"
+              (not (npcName oldman `isInfixOf` alsoHereLine))
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8])
+
 -- | `ascii:` on an item switches with the item status.
 testItemAsciiStateDependent :: IO Bool
 testItemAsciiStateDependent = do
@@ -3983,6 +4019,7 @@ main = do
         , runTest "state-dependent room ascii: variant" testCondRoomAsciiVariant
         , runTest "state-dependent room ascii: first variant wins" testCondRoomAsciiOrder
         , runTest "state-dependent npc ascii (alive/dead)" testNpcAsciiStateDependent
+        , runTest "corpse stays findable through the kill path" testCorpseStaysFindable
         , runTest "state-dependent item ascii" testItemAsciiStateDependent
         , runTest "passive animation frame from turn count (D)" testPassiveFrame
         , runTest "asciiFrames lists all frames (D)" testAsciiFramesList

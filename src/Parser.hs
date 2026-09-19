@@ -8,7 +8,7 @@ import Game
 import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), resolveCombat, targetShipSystems)
 import Control.Applicative ((<|>))
 import Data.Char (toLower, isDigit)
-import Data.List (find, intercalate, nub, foldl')
+import Data.List (find, intercalate, nub, foldl', dropWhileEnd)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Set as Set
@@ -352,18 +352,26 @@ executeCommand Look state = case getCurrentRoom state of
                     (Just override, Just _) -> override
                     _ -> maybe "" (\r -> resolveDescription r state) baseRoom
                 itemsInRoom = getItemsInLocation (InRoom (currentRoom (save state))) state
-                npcsInRoom = getNPCsInRoom (currentRoom (save state)) state
+                npcsHere = getNPCsInRoom (currentRoom (save state)) state
+                livingHere = [ n | n <- npcsHere, not (isDeadNPC (npcId n) state) ]
+                corpsesHere = [ n | n <- npcsHere, isDeadNPC (npcId n) state ]
                 itemDesc = if null itemsInRoom
                            then "\nYou see nothing of interest."
                            else "\nYou see: " ++ intercalate ", " (map itemName itemsInRoom) ++ "."
-                npcDesc = if null npcsInRoom
+                npcDesc = if null livingHere
                           then ""
-                          else "\nAlso here: " ++ intercalate ", " (map npcName npcsInRoom) ++ "."
+                          else "\nAlso here: " ++ intercalate ", " (map npcName livingHere) ++ "."
+                -- A body is nobody to talk to, but it is still lying there: it
+                -- gets its own line, so `look at <name>` has something to point at.
+                corpseDesc = case map npcName corpsesHere of
+                    []  -> ""
+                    [c] -> "\nThe body of " ++ c ++ " lies here."
+                    cs  -> "\nBodies lie here: " ++ intercalate ", " cs ++ "."
                 (state', hookMsg) = runRoomHook roomOnLook (currentRoom (save state)) state
                 vehicleMsg = vehicleLookAddon state'
                 asciiArt = renderArtForLook (roomAscii room) state
                 full = intercalate "\n" (filter (not . null)
-                        [asciiArt, desc, itemDesc, npcDesc, hookMsg, fromMaybe "" vehicleMsg])
+                        [asciiArt, desc, itemDesc, npcDesc, corpseDesc, hookMsg, fromMaybe "" vehicleMsg])
             in (state', full)
 
 executeCommand Inventory state =
@@ -584,9 +592,16 @@ executeCommand (Interact verb targetStr) state =
             let nId = npcId npc
                 maybeNpcState = Map.lookup nId (npcStates (save state))
                 currentStatus = maybe "unknown" npcStatus maybeNpcState
+                isCorpse = isDeadNPC nId state
             in case Map.lookup (verb, currentStatus) (npcVerbMap npc) of
                 Just outcome -> applyOutcome outcome nId state
                 Nothing
+                    -- A body can be looked at, searched and targeted by authored
+                    -- verbs, but it neither fights nor talks.
+                    | isCorpse, verb == VAttack ->
+                        (state, "The " ++ npcName npc ++ " is already dead.")
+                    | isCorpse, verb == VTalk ->
+                        (state, "The " ++ npcName npc ++ " is dead and says nothing.")
                     | verb == VTalk -> talkTo npc maybeNpcState state
                     | verb == VAttack -> executeAttack npc maybeNpcState targetStr state
                     | verb == VLookAt -> (state, withAscii (renderArtForLook (npcAscii npc) state)
@@ -797,6 +812,17 @@ withAscii art msg
     | null art  = msg
     | otherwise = art ++ "\n" ++ msg
 
+-- | An enemy's art as a message, empty when it has none. It is rendered *after*
+--   the round's effects have been applied on purpose: a lethal hit has already
+--   set the status by then, so the killing round shows the body's variant.
+--   Trailing newlines are dropped so the art does not add a blank line to the
+--   round's message.
+combatArtMsg :: NPCID -> GameState -> String
+combatArtMsg nId st = case Map.lookup nId (npcDefs (world st)) of
+    Just npc | not (isEmptyAscii (npcAscii npc)) ->
+        dropWhileEnd (== '\n') (resolveAsciiArt (npcAscii npc) st)
+    _ -> ""
+
 -- | `search` — reveal hidden items and run the room's search outcome
 searchRoom :: GameState -> CommandResult
 searchRoom state =
@@ -922,7 +948,10 @@ executeAttack npc _ targetStr state =
         -- produce text that must survive trailing companion/ship effects).
         (st', effectMsg) = applyOutcomes effects nId state
         body = combineMsgs (effectMsg : msgs)
-    in if null body then (st', "") else (st', body)
+        -- The enemy is rendered every round (after the effects, so the killing
+        -- round shows the body — see `combatArtMsg`).
+        body' = combineMsgs [combatArtMsg nId st', body]
+    in if null body' then (st', "") else (st', body')
 
 -- | Combat logic for attacking a target ship (Phase 7h-2).
 executeAttackShip :: VehicleDef -> String -> GameState -> CommandResult
@@ -986,7 +1015,8 @@ executeTacticalAction action state =
                 (effects, msgs) = resolveCombat profile actors (TargetNPC nId (npcName npc)) action state
                 (st', effectMsg) = applyOutcomes effects nId state
                 body = combineMsgs (effectMsg : msgs)
-            in if null body then (st', "") else (st', body)
+                body' = combineMsgs [combatArtMsg nId st', body]
+            in if null body' then (st', "") else (st', body')
         [] ->
             let outsideStop = case currentVehicle (save state) of
                     Just pvId -> vsCurrentStop (getVehicleState pvId state)
