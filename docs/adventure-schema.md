@@ -103,15 +103,28 @@ description:
 | `{ raise: name }` | RaiseEvent — feuert alle Regeln `on: custom <name>` (P1-20) |
 
 Flags sind für Prädikate faktisch boolesch: `has_flag` prüft, ob ein Flag gesetzt
-ist (`"true"`). Ein Vergleich gegen einen *anderen* String-Wert ist nicht
-ausdrückbar.
+ist (`"true"`). Ein Vergleich gegen einen *anderen* String-Wert ist über Flags
+nicht ausdrückbar — dafür gibt es Text-Variablen.
 
-Text-Variablen (`variables:` mit `type: text`) lassen sich mit `set_var` setzen;
-**lesen kann die Prädikat-Sprache sie derzeit nicht**: `compare_var` vergleicht
-ausschließlich Int-Werte, und `compare` löst Text zu `0` auf. Für Zustände, die
-Regeln abfragen müssen, ist deshalb ein Int-Code (`compare_var`) oder ein Flag
-(`has_flag`) zu verwenden. Betroffen ist u. a. `combat.action` im taktischen
-Kampf. Das frühere `check_flag`-Kürzel wurde entfernt
+**Text-Variablen** (`variables:` mit `type: text`) werden mit `set_var` gesetzt
+und mit `{ var: <name>, is: <text> }` abgefragt:
+
+```yaml
+variables:
+  - { name: weather, type: text, initial: "klar" }
+rules:
+  - id: storm_check
+    on: turn
+    when: { var: weather, is: "sturm" }
+    effects: [ { msg: "Der Sturm peitscht über den Pass." } ]
+```
+
+Der Vergleich ist exakt und verlangt eine **Text**-Variable: ein Int-Wert `1`
+matcht *nicht* gegen `is: "1"`. `not` und die übrigen Verknüpfungen funktionieren
+wie bei jedem Prädikat. Die Engine selbst nutzt genau diese Form für
+`combat.action` / `combat.ability` (taktischer Kampf).
+
+Das frühere `check_flag`-Kürzel wurde entfernt
 (P1-18), weil es nie dekodierbar war und den Erwartungswert still verwarf.
 
 Item-Felder für Container:
@@ -470,15 +483,39 @@ combat:
 - `tactical` (Phase 7f-3): rundenbasierter Taktikkampf. Befehle: `attack`,
   `defend`, `flee`, `use-ability <id>` / `ability <id>`. Rundenbegrenzung,
   Initiative-Wurf über `speed_attribute` und konfigurierbare Flucht.
+  **Ein Kampf beginnt mit `attack`**: `defend` und `flee` greifen nur, solange
+  `combat.engaged` gesetzt ist (sonst „You are not in combat.").
+  **Was `defend` bewirkt** ist Autoren-Daten — der Resolver setzt nur
+  `combat.action`; die Gegnerregel entscheidet. Beispiel (so macht es
+  `combat-tactical.yaml`):
+
+```yaml
+rules:
+  - id: counter            # Konter nur, wenn NICHT verteidigt wurde
+    on: turn
+    when:
+      all:
+        - compare_var: { name: combat.engaged, op: gte, value: 1 }
+        - not: { var: combat.action, is: defend }
+    effects:
+      - { damage: 2 }
+      - { msg: "Der Champion kontert und trifft dich für 2 Schaden!" }
+  - id: counter_blocked    # Gegenstück: verteidigt → kein Schaden
+    on: turn
+    when: { all: [ { compare_var: { name: combat.engaged, op: gte, value: 1 } },
+                   { var: combat.action, is: defend } ] }
+    effects: [ { msg: "Du fängst den Hieb auf der Deckung ab — kein Schaden." } ]
+```
 - **Fehler:** `UnknownCombatProfile` (unbekannter Name),
   `UnknownInitiativeRule` (ungültige Initiativregel).
 - **Reserviert: der `combat.`-Namespace** (Phase 7f-3). Der
   Rundenzustand eines taktischen Kampfes lebt in der VarMap (`combat.round`,
-  `combat.engaged`, `combat.initiative.<actorId>`) — wie `faction.`/`party.`/
+  `combat.engaged`, `combat.initiative.<actorId>`, `combat.action`,
+  `combat.ability`) — wie `faction.`/`party.`/
   `ship.`, also kein neues Save-Feld und Save/Load gratis. Eine selbst
   deklarierte Variable mit diesem Prefix wird abgelehnt (`CombatVariableClash`).
-  `combat.*` darf in Regeln frei per `compare_var`/`set_var` verwendet werden;
-  die Gegnerreaktion ist eine gewöhnliche `on: turn`-Regel mit
+  `combat.*` darf in Regeln frei per `compare_var`/`set_var`/`{ var: …, is: … }`
+  verwendet werden; die Gegnerreaktion ist eine gewöhnliche `on: turn`-Regel mit
   `when: { compare_var: { name: combat.engaged, op: gte, value: 1 } }` — kein
   Engine-Sonderpfad.
 

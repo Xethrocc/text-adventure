@@ -269,6 +269,7 @@ data Predicate
     | RoomHasTag RoomID String               -- ^ room has a given tag
     | Location String String   -- ^ entity ID, room ID (is entity in this room?)
     | CompareVar String Comparator Int  -- ^ variable vs integer literal (mana >= 5)
+    | VarIs String String               -- ^ text variable equals a literal (`{ var: X, is: Y }`)
     deriving (Show, Eq, Generic)
 
 -- | Serialize to the same compact object shape that FromJSON accepts
@@ -287,6 +288,7 @@ instance ToJSON Predicate where
         Location e r       -> object [ "at"       .= e, "room" .= r ]
         CompareVar n op v  -> object [ "compare_var" .= object
                                         [ "name" .= n, "op" .= comparatorName op, "value" .= v ] ]
+        VarIs n v          -> object [ "var" .= n, "is" .= v ]
 
 -- | Stable string form of a comparator, used in YAML/JSON predicates.
 comparatorName :: Comparator -> String
@@ -323,6 +325,10 @@ instance FromJSON Predicate where
         <|> (PlayerHas <$> o .: "has_item")
         <|> (HasFlag   <$> o .: "has_flag")
         <|> (EntityHasState <$> o .: "state" <*> o .: "is")
+        -- Text comparison for variables holding text (`type: text`), e.g. the
+        -- engine's own `combat.action`. Distinct from `state`/`is`, which tests
+        -- an entity's state layer.
+        <|> (VarIs <$> o .: "var" <*> o .: "is")
         <|> (RoomHasTag     <$> o .: "room"  <*> o .: "has_tag")
         <|> (Location       <$> o .: "at"    <*> o .: "room")
         <|> (Compare <$> o .: "lhs" <*> o .: "op" <*> o .: "rhs")

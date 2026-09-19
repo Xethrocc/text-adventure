@@ -70,12 +70,15 @@ for name in thefog pure-if fantasy cyberpunk space-opera detective horror factio
     run_e2e "$name" "$src"
 done
 
-echo "== 5. e2e failure paths =="
+echo "== 5. e2e non-victory paths =="
 # Review L12: stage 4 only covers one happy path per fixture. Each entry here
 # drives the same compiled world into a failure path — no funds, refused attack,
 # starvation, unknown station, invalid dialogue choice, and the ship loss
 # (`hull_failure`, reachable in `starship-loss.yaml` but not in `starship.yaml`).
-for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss-fail combo-fail combat-tactical-fail ship-duel-fail; do
+# `combat-tactical-defend` is not a failure but a *behaviour* path: it pins that
+# `defend` actually prevents the enemy counter (via the `combat.action` text
+# comparison), which no other stage would catch.
+for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss-fail combo-fail combat-tactical-fail ship-duel-fail combat-tactical-defend; do
     case "$name" in
         trade-fail)        src=examples/modules/trade.yaml ;;
         combat-off-fail)   src=examples/modules/combat-off.yaml ;;
@@ -85,6 +88,7 @@ for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss
         combo-fail)        src=examples/modules/combo.yaml ;;
         combat-tactical-fail) src=examples/modules/combat-tactical.yaml ;;
         ship-duel-fail)    src=examples/modules/ship-duel.yaml ;;
+        combat-tactical-defend) src=examples/modules/combat-tactical.yaml ;;
     esac
     run_e2e "$name" "$src"
 done

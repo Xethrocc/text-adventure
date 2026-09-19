@@ -3391,6 +3391,38 @@ testLegacyVRPropertyDecoding = do
               (dec "{\"tag\":\"VRPlayerHealth\"}")
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
 
+-- | F1/F2: `{ var: X, is: Y }` ist die **Leseseite** von Text-Variablen
+--   (`variables:` mit `type: text`). Ohne sie war der Engine-Schlüssel
+--   `combat.action` write-only — keine Regel konnte auf `defend` reagieren, und
+--   `defend` im taktischen Kampf hatte damit keine mechanische Wirkung.
+testVarIsPredicate :: IO Bool
+testVarIsPredicate = do
+    let st0 = initSampleGame
+        withAction a = setVariable combatActionKey (VVText a) st0
+        matches expected = evalPredicate (VarIs combatActionKey expected)
+    r1 <- expectTrue "a matching text value is true"
+              (matches "defend" (withAction "defend"))
+    r2 <- expectTrue "a different text value is false"
+              (not (matches "attack" (withAction "defend")))
+    r3 <- expectTrue "an unset variable is false" (not (matches "defend" st0))
+    -- strict: text only, an int variable does not match a text literal
+    r4 <- expectTrue "an int variable does not match a text literal"
+              (not (matches "1" (setVariable combatActionKey (VVInt 1) st0)))
+    -- not limited to the engine's own keys
+    r5 <- expectTrue "any text variable can be compared"
+              (evalPredicate (VarIs "weather" "sturm") (setVariable "weather" (VVText "sturm") st0))
+    -- JSON round-trip, in the same shorthand the YAML uses
+    r6 <- expectEqual (Just (VarIs "combat.action" "defend"))
+              (Aeson.decode (Aeson.encode (VarIs "combat.action" "defend")))
+    r7 <- expectTrue "the encoding uses the var/is shorthand"
+              (let enc = BLC.unpack (Aeson.encode (VarIs "combat.action" "defend"))
+               in "\"var\"" `isInfixOf` enc && "\"is\"" `isInfixOf` enc)
+    -- the negation form the fixture uses
+    r8 <- expectTrue "`not` composes with the text comparison"
+              (not (evalPredicate (PNot (VarIs combatActionKey "defend"))
+                                  (withAction "defend")))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -3609,6 +3641,7 @@ main = do
         , runTest "equipmentSummary text (L8)" testEquipmentSummaryText
         , runTest "state: predicate covers NPC/item/lock states" testEntityStatePredicateCoversAllKinds
         , runTest "combat round state lives in the VarMap (7f-3 A1)" testCombatRoundStateVars
+        , runTest "text predicate `{ var: X, is: Y }` (F1/F2)" testVarIsPredicate
         , runTest "tactical CAAttack damage and state (7f-3 A2)" testTacticalAttackDamage
         , runTest "tactical CADefend state updates (7f-3 A2)" testTacticalDefend
         , runTest "tactical CAFlee resolves (7f-3 A2)" testTacticalFlee

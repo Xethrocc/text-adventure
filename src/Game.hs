@@ -691,6 +691,15 @@ evalPredicate (CompareVar name op n) st =
     case Map.lookup name (variables (save st)) of
         Just (VVInt v) -> fromMaybe False (compareValues op v n)
         _              -> False
+-- A text variable equals a literal. This is the read side of `variables:` with
+-- `type: text`: `set_var` stores a `VVText`, and no other predicate can inspect
+-- it (`compare_var` only compares numbers, `compare` resolves text to 0).
+-- The engine's own `combat.action` / `combat.ability` are text for exactly this
+-- form — without it they would be write-only.
+evalPredicate (VarIs name expected) st =
+    case Map.lookup name (variables (save st)) of
+        Just (VVText v) -> v == expected
+        _               -> False
 evalPredicate (Compare lhs op rhs) st =
     let lval = resolveValueRef lhs st
         rval = resolveValueRef rhs st

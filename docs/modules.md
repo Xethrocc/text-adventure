@@ -267,10 +267,13 @@ Begleiter (7g) und Schiffe (7h) erweitern sie, ohne die Signatur zu ändern.
     über `CombatVariableClash`.
   - Gegnerreaktion: gewöhnliche `on: turn`-Regel mit
     `when: { compare_var: { name: combat.engaged, op: gte, value: 1 } }`.
-  - ⚠️ `combat.action` und `combat.ability` sind **Text**; die Prädikat-Sprache
-    kann Text derzeit nicht vergleichen (`compare_var` verlangt einen Int). Eine
-    Regel kann also heute nicht auf `defend` reagieren — siehe die Notiz zu
-    Text-Variablen in `adventure-schema.md`.
+  - `combat.action` und `combat.ability` sind **Text**; abgefragt werden sie mit
+    dem Text-Prädikat `{ var: combat.action, is: defend }` (siehe
+    `adventure-schema.md`, Abschnitt zu Text-Variablen). Genau so macht
+    `combat-tactical.yaml` `defend` wirksam: die Konterregel ist per
+    `not: { var: combat.action, is: defend }` gegated.
+  - **Ein Kampf beginnt mit `attack`** — `defend`/`flee` greifen nur, solange
+    `combat.engaged` gesetzt ist.
 - **Validierung:** `UnknownCombatProfile` (unbekannter Profilname),
   `UnknownInitiativeRule` (ungültige Initiativ-Regel).
 

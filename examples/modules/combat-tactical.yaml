@@ -68,9 +68,29 @@ rules:
           is: alive
         - at: player
           room: ct_arena
+        # 7f-3/F1: `defend` wirkt ueber `combat.action` — der Text-Vergleich
+        # `{ var: X, is: Y }` ist die Leseseite dafuer. Wer verteidigt, bekommt
+        # keinen Konter; die Regel unten liefert stattdessen eine Meldung.
+        - not: { var: combat.action, is: defend }
     effects:
       - damage: 2
       - msg: "Der Arena-Champion kontert und trifft dich für 2 Schaden!"
+  # Die Gegenprobe zum Konter oben: derselbe Auslöser, aber nur wenn der Spieler
+  # in dieser Runde verteidigt hat. Damit ist `defend` mechanisch wirksam und
+  # zugleich belegt, dass Content `combat.action` abfragen kann.
+  - id: gladiator_counter_defended
+    on: turn
+    when:
+      all:
+        - compare_var: { name: combat.engaged, op: gte, value: 1 }
+        - state: gladiator
+          is: alive
+        - at: player
+          room: ct_arena
+        - var: combat.action
+          is: defend
+    effects:
+      - msg: "Du fängst den Hieb auf der Deckung ab — kein Schaden."
 
 rooms:
   - id: ct_entry

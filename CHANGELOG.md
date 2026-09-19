@@ -115,7 +115,7 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   - `PropRef = PHealth | PRoom | PVisited | PState | PCustom String`.
   - Migration via handgeschriebenem `FromJSON ValueRef` (unterstützt sowohl neues Schema als auch altes `VRProperty [target, prop]` Format).
   - Save-Version auf 3 erhöht.
-- Tests: **240** Engine- + **75** Worldbuilder-Tests, **28** E2E-Läufe
+- Tests: **241** Engine- + **75** Worldbuilder-Tests, **29** E2E-Läufe
   (`scripts/ci.sh`).
 
 ### Fixed
@@ -499,9 +499,9 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
     `combat.initiative.<npcId>`.
   - Parser-Unterstützung für `use-ability <id>`, `use ability <id>`, `ability <id>`.
   - 3 neue Tests in `test/Tests.hs`: `testAbilityCost`, `testAbilityCooldown`, `testBySpeedInitiative`.
-- Tests: **240** Engine- + **75** Worldbuilder-Tests, **28** E2E-Läufe.
+- Tests: **241** Engine- + **75** Worldbuilder-Tests, **29** E2E-Läufe.
   (Zahlen nach dem Code-Check korrigiert: hier standen 233 und 24 — gemessen sind
-  es 240 registrierte Tests und 28 Läufe in `scripts/ci.sh`.)
+  es 241 registrierte Tests und 29 Läufe in `scripts/ci.sh`.)
 
 - **Doku-Korrekturen aus dem Code-Check nach dem Pull:** `docs/modules.md`
   behauptete für `defend` im taktischen Profil einen „Verteidigungsbonus für eine
@@ -513,6 +513,21 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   (`compare_var` verlangt Int, `compare` löst Text zu `0` auf). Beides ist jetzt
   korrekt beschrieben, samt der bisher undokumentierten Schlüssel
   `combat.action` (Werte `attack`/`defend`/`flee`/`ability`) und `combat.ability`.
+
+- **F1/F2 abgeschlossen: Text-Prädikat `{ var: X, is: Y }`** (Befund aus dem
+  Code-Check). `combat.action`/`combat.ability` sind Text, und die Prädikat-Sprache
+  konnte Text **nicht** vergleichen (`compare_var` verlangt Int, `compare` löst
+  Text zu `0` auf) — der Hook war damit write-only, und `defend` im taktischen
+  Kampf hatte keine mechanische Wirkung. Neu: `VarIs String String` mit dem
+  Kürzel `{ var: <name>, is: <text> }` — exakter Vergleich, nur für
+  Text-Variablen (ein Int-Wert `1` matcht nicht gegen `is: "1"`), `not` und die
+  übrigen Verknüpfungen funktionieren wie sonst. Damit ist zugleich die
+  Doku-Anweisung zu `variables: type: text` wieder wahr: sie verwies für das
+  Lesen auf `compare_var`, was für Text nie funktioniert hat.
+  `combat-tactical.yaml` macht `defend` jetzt wirksam — die Konterregel ist per
+  `not: { var: combat.action, is: defend }` gegated, dazu eine Gegenregel, die
+  den geblockten Hieb meldet. Neuer E2E-Lauf `combat-tactical-defend`.
+- Tests: **241** Engine- + **75** Worldbuilder-Tests, **29** E2E-Läufe.
 
 ## [0.9.0.0] — Unreleased
 
