@@ -27,7 +27,19 @@ rooms:
       north: hall
   - id: hall
     name: Hall
-    desc: A narrow hall leading back south.
+    desc: A narrow hall leading back south. A torch flickers on the wall.
+    ascii:
+      frames:
+        - |
+          |~|
+          | |
+        - |
+          |=|
+          | |
+        - |
+          |~|
+          | |
+      every: 2
     exits:
       south: cave
 

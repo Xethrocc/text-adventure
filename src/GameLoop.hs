@@ -26,6 +26,7 @@ import qualified Data.Map.Strict as Map
 
 import System.Console.Haskeline
 import System.IO (hPutStrLn, stderr)
+import Control.Concurrent (threadDelay)
 
 -- ---------------------------------------------------------------------------
 -- Tab completion
@@ -34,7 +35,7 @@ import System.IO (hPutStrLn, stderr)
 commandWords :: [String]
 commandWords =
     [ "go", "move", "walk", "look", "examine", "inspect", "read", "take", "pick", "drop", "put"
-    , "search", "inventory", "inv", "i", "use", "talk", "speak", "choose", "option", "attack", "hit", "kill"
+    , "search", "watch", "inventory", "inv", "i", "use", "talk", "speak", "choose", "option", "attack", "hit", "kill"
     , "equip", "wear", "wield", "unequip", "remove", "stats"
     , "enter", "board", "disembark", "drive", "wait", "refuel", "repair"
     , "undo", "save", "load", "saves", "restart", "help", "quit", "exit", "q"
@@ -168,6 +169,7 @@ consumesTurn cmd = case cmd of
     Load _         -> False
     ListSaves      -> False
     Restart        -> False
+    WatchCmd _     -> False
     Unknown _      -> False
     _              -> True
 
@@ -295,6 +297,7 @@ commandVerbName cmd = case cmd of
     StatsCmd      -> "stats"
     JournalCmd    -> "journal"
     SearchCmd _   -> "search"
+    WatchCmd _    -> "watch"
     TakeAll       -> "take"
     DropAll       -> "drop"
     EquipCmd _    -> "equip"
@@ -378,26 +381,42 @@ loopGame f loopState
                     command -> do
                         let (loopState', message) = applyLoopCommand command loopState
                         emitNewDiagnostics (lsCurrent loopState) (lsCurrent loopState')
-                        case pendingNarrative (lsCurrent loopState') of
-                            Nothing -> do
+                        case pendingAnimation (lsCurrent loopState') of
+                            Just frames -> do
                                 emitLine f message
-                                loopGame f loopState'
-                            Just (nls, followUp) -> do
-                                case nls of
-                                    [] -> return ()
-                                    [single] -> emitLine f single
-                                    _ -> do
-                                        mapM_ (\l -> emitLine f l >> emitRaw f "  [Press Enter to continue]" >> getLine >> return ())
-                                            (init nls)
-                                        emitLine f (last nls)
-                                let (finalState, followMsg) = applyOutcome followUp "" (lsCurrent loopState')
-                                    clearedState = finalState { pendingNarrative = Nothing }
-                                if null followMsg
-                                    then loopGame f (loopState' { lsCurrent = clearedState })
-                                    else do emitLine f followMsg
-                                            loopGame f (loopState' { lsCurrent = clearedState })
+                                playFrames f frames
+                                let cleared = (lsCurrent loopState') { pendingAnimation = Nothing }
+                                loopGame f (loopState' { lsCurrent = cleared })
+                            Nothing ->
+                                case pendingNarrative (lsCurrent loopState') of
+                                    Nothing -> do
+                                        emitLine f message
+                                        loopGame f loopState'
+                                    Just (nls, followUp) -> do
+                                        case nls of
+                                            [] -> return ()
+                                            [single] -> emitLine f single
+                                            _ -> do
+                                                mapM_ (\l -> emitLine f l >> emitRaw f "  [Press Enter to continue]" >> getLine >> return ())
+                                                    (init nls)
+                                                emitLine f (last nls)
+                                        let (finalState, followMsg) = applyOutcome followUp "" (lsCurrent loopState')
+                                            clearedState = finalState { pendingNarrative = Nothing }
+                                        if null followMsg
+                                            then loopGame f (loopState' { lsCurrent = clearedState })
+                                            else do emitLine f followMsg
+                                                    loopGame f (loopState' { lsCurrent = clearedState })
   where
     state = lsCurrent loopState
+
+-- | Milliseconds between animation frames in `watch`. The delay lives only
+--   here in the IO loop; the pure core produced the plain frame list.
+frameDelayMicros :: Int
+frameDelayMicros = 350000
+
+-- | Play ASCII animation frames in order, one per delay interval.
+playFrames :: OutputFilter -> [String] -> IO ()
+playFrames f = mapM_ (\fr -> emitLine f fr >> threadDelay frameDelayMicros)
 
 -- ---------------------------------------------------------------------------
 -- Game over screens

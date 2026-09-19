@@ -23,7 +23,7 @@ import Validate (validateWorld, validateGameState, ValidationError (..))
 minWorld :: E.GameWorld
 minWorld = E.GameWorld
     { rooms = Map.fromList
-        [ ("room_0", E.Room "room_0" "Room 0" (E.CondText "test" []) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing (E.CondText "" []))
+        [ ("room_0", E.Room "room_0" "Room 0" (E.CondText "test" []) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing (E.AsciiArt (E.CondText "" []) [] 0))
         ]
     , itemDefs = Map.empty
     , npcDefs = Map.empty
@@ -125,7 +125,7 @@ minRoom rid = ARoom
     , arOnLook = Nothing
     , arOnExit = Nothing
     , arSearch = Nothing
-    , arAscii = ACondText "" []
+    , arAscii = AAscii (ACondText "" []) [] 0
     }
 
 -- | Build a minimal adventure with one room
@@ -221,7 +221,7 @@ minItem iid = AItem
     { aiId = iid
     , aiName = iid
     , aiTexts = ACondText "test item" []
-    , aiAscii = ACondText "" []
+    , aiAscii = AAscii (ACondText "" []) [] 0
     , aiKeywords = []
     , aiTags = []
     , aiLocation = "loc_0"
@@ -1319,7 +1319,7 @@ testStealthCompiles = do
                     [ AOSetFlag "alarmed" "true", AOMessage "The guard heard you!" ]
         adv = (minAdventure (minRoom "loc_0"))
             { advStealth = Just (AStealth noise [guard])
-            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) (ACondText "" []) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing ] }
+            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) (AAscii (ACondText "" []) [] 0) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing ] }
     case compileAdventure adv of
         Left errs -> do
             putStrLn $ "  compile errors: " ++ show errs
@@ -1513,7 +1513,7 @@ testCombatFixturesCompile = do
 -- | A party-capable NPC with an explicit state, for the party tests.
 partySquire :: Maybe AParty -> ANPC
 partySquire party
-    = ANPC "squire" "Knappe" (ACondText "Knappe" []) (ACondText "" []) [] "loc_0" "alive"
+    = ANPC "squire" "Knappe" (ACondText "Knappe" []) (AAscii (ACondText "" []) [] 0) [] "loc_0" "alive"
         (Just 20) 3 1 Map.empty Map.empty party
 
 followVerb :: AVerb
@@ -1852,10 +1852,10 @@ testAsciiCondTextCompiles = do
             :: Maybe ACondText
     r0a <- expectEqual (Just (ACondText "just a string" [])) shorthand
     r0b <- expectEqual (Just (ACondText "D" [ATextVariant (E.HasFlag "lit") "L"])) objectForm
-    -- Compilation maps them 1:1 onto the engine CondText.
-    let room = (minRoom "loc_0") { arAscii = ACondText "DARK" [ATextVariant (E.HasFlag "lit") "LIT"] }
-        item = (minItem "lamp") { aiAscii = ACondText "LAMP" [] }
-        npc  = (partySquire Nothing) { anAscii = ACondText "NPC" [] }
+    -- Compilation maps them 1:1 onto the engine AsciiArt.
+    let room = (minRoom "loc_0") { arAscii = AAscii (ACondText "DARK" [ATextVariant (E.HasFlag "lit") "LIT"]) [] 0 }
+        item = (minItem "lamp") { aiAscii = AAscii (ACondText "LAMP" []) [] 0 }
+        npc  = (partySquire Nothing) { anAscii = AAscii (ACondText "NPC" []) [] 0 }
         adv  = (minAdventure room) { advItems = [item], advNPCs = [npc] }
     case compileAdventure adv of
         Left errs -> do
@@ -1865,10 +1865,25 @@ testAsciiCondTextCompiles = do
             let rm = Map.findWithDefault (error "room") "loc_0" (E.rooms (crWorld cr))
                 it = Map.findWithDefault (error "item") "lamp" (E.itemDefs (crWorld cr))
                 np = Map.findWithDefault (error "npc") "squire" (E.npcDefs (crWorld cr))
-            r1 <- expectEqual (E.CondText "DARK" [E.TextVariant (E.HasFlag "lit") "LIT"]) (E.roomAscii rm)
-            r2 <- expectEqual (E.CondText "LAMP" []) (E.itemAscii it)
-            r3 <- expectEqual (E.CondText "NPC" []) (E.npcAscii np)
+            r1 <- expectEqual (E.AsciiArt (E.CondText "DARK" [E.TextVariant (E.HasFlag "lit") "LIT"]) [] 0) (E.roomAscii rm)
+            r2 <- expectEqual (E.AsciiArt (E.CondText "LAMP" []) [] 0) (E.itemAscii it)
+            r3 <- expectEqual (E.AsciiArt (E.CondText "NPC" []) [] 0) (E.npcAscii np)
             pure (r0a && r0b && r1 && r2 && r3)
+
+-- | Animated `ascii:` compiles frames + `every` (Phase D).
+testAnimatedAsciiCompiles :: IO Bool
+testAnimatedAsciiCompiles = do
+    let art = AAscii (ACondText "" []) [ACondText "F0" [], ACondText "F1" []] 2
+        room = (minRoom "loc_0") { arAscii = art }
+    case compileAdventure (minAdventure room) of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let rm = Map.findWithDefault (error "room") "loc_0" (E.rooms (crWorld cr))
+            r1 <- expectEqual [E.CondText "F0" [], E.CondText "F1" []] (E.aaFrames (E.roomAscii rm))
+            r2 <- expectEqual 2 (E.aaEvery (E.roomAscii rm))
+            pure (r1 && r2)
 
 -- | The shipped state-dependent ASCII fixture compiles and validates clean.
 testAsciiFixtureCompiles :: IO Bool
@@ -1890,14 +1905,21 @@ testAsciiFixtureCompiles = do
                         pure False
                     Right cr -> do
                         let verrs = validateWorld (crWorld cr)
-                        expectTrue "ascii-state fixture validates" (null verrs)
+                            hall = Map.lookup "hall" (E.rooms (crWorld cr))
+                            animated = maybe False (not . null . E.aaFrames . E.roomAscii) hall
+                            every = maybe 0 (E.aaEvery . E.roomAscii) hall
+                        r1 <- expectTrue "ascii-state fixture validates" (null verrs)
+                        r2 <- expectTrue "the hall carries animation frames" animated
+                        r3 <- expectEqual 2 every
+                        pure (r1 && r2 && r3)
 
 -- ---------------------------------------------------------------------------
 -- Main
 -- ---------------------------------------------------------------------------
 tests :: [(String, IO Bool)]
 tests =
-    [ ("ascii: string/object compiles to CondText (B)", testAsciiCondTextCompiles)
+    [ ("ascii: string/object compiles to AsciiArt (B)", testAsciiCondTextCompiles)
+    , ("animated ascii compiles frames + every (D)", testAnimatedAsciiCompiles)
     , ("ascii-state fixture compiles + validates (B)", testAsciiFixtureCompiles)
     , ("all 10 directions compile to engine Direction", testAllDirectionsCompile)
     , ("direction aliases ne/nw/se/sw work", testDirectionAliases)

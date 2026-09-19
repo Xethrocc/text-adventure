@@ -23,7 +23,7 @@ initSampleGame = GameState
                 , roomOnLook = Nothing
                 , roomOnExit = Nothing
                 , roomSearchOutcome = Nothing
-                , roomAscii = plainText ""
+                , roomAscii = emptyAscii
                 })
             , ("hallway", Room
                 { roomId = "hallway"
@@ -39,7 +39,7 @@ initSampleGame = GameState
                 , roomSearchOutcome = Just (Sequence
                     [ SetValue (VRFlag "torch_lit") (EVString "true")
                     , SendMessage "Faded runes cover the eastern wall." ])
-                , roomAscii = plainText ""
+                , roomAscii = emptyAscii
                 })
             , ("treasure", Room
                 { roomId = "treasure"
@@ -52,7 +52,7 @@ initSampleGame = GameState
                 , roomOnLook = Nothing
                 , roomOnExit = Nothing
                 , roomSearchOutcome = Nothing
-                , roomAscii = plainText ""
+                , roomAscii = emptyAscii
                 })
             -- Vehicle demo (Phase 3): a horse-drawn carriage
             , ("meadow", Room
@@ -70,7 +70,7 @@ initSampleGame = GameState
                 , roomOnLook = Nothing
                 , roomOnExit = Nothing
                 , roomSearchOutcome = Nothing
-                , roomAscii = plainText ""
+                , roomAscii = emptyAscii
                 })
             , ("carriage_cabin", Room
                 { roomId = "carriage_cabin"
@@ -83,7 +83,7 @@ initSampleGame = GameState
                 , roomOnLook = Nothing
                 , roomOnExit = Nothing
                 , roomSearchOutcome = Nothing
-                , roomAscii = plainText ""
+                , roomAscii = emptyAscii
                 })
             ]
         , itemDefs = Map.fromList
@@ -100,7 +100,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = plainText ""
+                , itemAscii = emptyAscii
                 })
             , ("key", ItemDef
                 { itemId = "key"
@@ -118,7 +118,7 @@ initSampleGame = GameState
                     (Sequence
                         [ QuestOp StartQuest "find_treasure"
                         , SetValue (VRFlag "quest_started") (EVString "true") ])
-                , itemAscii = plainText ""
+                , itemAscii = emptyAscii
                 })
             , ("gold", ItemDef
                 { itemId = "gold"
@@ -133,7 +133,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = plainText ""
+                , itemAscii = emptyAscii
                 })
             , ("jewel", ItemDef
                 { itemId = "jewel"
@@ -148,7 +148,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = plainText ""
+                , itemAscii = emptyAscii
                 })
             , ("potion_healing", ItemDef
                 { itemId = "potion_healing"
@@ -167,7 +167,7 @@ initSampleGame = GameState
                         [ ModifyValue VRPlayerHealth 50
                         , SetValue (VRItemProp "potion_healing" "uses") (EVInt (-1))
                         , SetValue (VRActorProp (ActorEntity "potion_healing") PState) (EVString "empty") ])
-                , itemAscii = plainText ""
+                , itemAscii = emptyAscii
                 })
             -- Equipment examples
             , ("sword_rusty", ItemDef
@@ -183,7 +183,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = plainText ""
+                , itemAscii = emptyAscii
                 })
             , ("leather_armor", ItemDef
                 { itemId = "leather_armor"
@@ -198,7 +198,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = plainText ""
+                , itemAscii = emptyAscii
                 })
             , ("ring_vigor", ItemDef
                 { itemId = "ring_vigor"
@@ -213,7 +213,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = plainText ""
+                , itemAscii = emptyAscii
                 })
             -- Hidden item, found via `search`
             , ("note_old", ItemDef
@@ -229,7 +229,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = plainText ""
+                , itemAscii = emptyAscii
                 })
             -- Vehicle demo (Phase 3)
             , ("carriage", ItemDef
@@ -245,7 +245,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = plainText ""
+                , itemAscii = emptyAscii
                 })
             , ("hay", ItemDef
                 { itemId = "hay"
@@ -260,7 +260,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = plainText ""
+                , itemAscii = emptyAscii
                 })
             ]
         , npcDefs = Map.fromList
@@ -287,7 +287,7 @@ initSampleGame = GameState
                 , npcAttackBase = 0
                 , npcDefenseBase = 0
                 , npcVerbMap = Map.empty
-                , npcAscii = plainText ""
+                , npcAscii = emptyAscii
                 })
             , ("goblin", NPCDef
                 { npcId = "goblin"
@@ -299,7 +299,7 @@ initSampleGame = GameState
                 , npcAttackBase = 8
                 , npcDefenseBase = 2
                 , npcVerbMap = Map.empty
-                , npcAscii = plainText ""
+                , npcAscii = emptyAscii
                 })
             ]
         , entityInteractions = Map.fromList
@@ -392,5 +392,6 @@ initSampleGame = GameState
         , triggerStates = Map.empty
         }
     , pendingNarrative = Nothing
+    , pendingAnimation = Nothing
     , diagnostics = []
     }

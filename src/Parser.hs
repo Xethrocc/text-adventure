@@ -30,6 +30,7 @@ data Command
     | UnequipAllCmd
     | StatsCmd
     | SearchCmd (Maybe String)   -- ^ `search` or `search <target>`
+    | WatchCmd (Maybe String)    -- ^ `watch [target]`: play animation frames (Phase D)
     | JournalCmd                 -- ^ show active/completed quests
     | Undo                       -- ^ restore the previous game state
     | EnterVehicleCmd String     -- ^ enter a vehicle
@@ -183,6 +184,10 @@ parseSimpleCommandWith defs tokens input = case tokens of
         in if t `elem` ["room", "area", "here", "around"]
            then SearchCmd Nothing
            else SearchCmd (Just t)
+    ["watch"]             -> WatchCmd Nothing
+    "watch" : targetParts | not (null targetParts) ->
+        let t = unwords (safeStripStopWords targetParts)
+        in WatchCmd (if t `elem` ["room", "area", "here", "around"] then Nothing else Just t)
     ["help"]               -> Help
     ["quit"]               -> Quit
     ["exit"]               -> Quit
@@ -353,7 +358,7 @@ executeCommand Look state = case getCurrentRoom state of
                           else "\nAlso here: " ++ intercalate ", " (map npcName npcsInRoom) ++ "."
                 (state', hookMsg) = runRoomHook roomOnLook (currentRoom (save state)) state
                 vehicleMsg = vehicleLookAddon state'
-                asciiArt = resolveCondText (roomAscii room) state
+                asciiArt = resolveAsciiArt (roomAscii room) state
                 full = intercalate "\n" (filter (not . null)
                         [asciiArt, desc, itemDesc, npcDesc, hookMsg, fromMaybe "" vehicleMsg])
             in (state', full)
@@ -492,6 +497,27 @@ executeCommand (SearchCmd maybeTarget) state =
                             Nothing -> (state, "You find nothing on " ++ npcName npc ++ ".")
                     Nothing -> (state, "You don't see '" ++ targetStr ++ "' here.")
 
+executeCommand (WatchCmd maybeTarget) state = case getCurrentRoom state of
+    Nothing -> (state, "You're in a void. There's nothing to watch.")
+    Just room
+        | isDark room state -> (state, "It's pitch black. You can't watch anything.")
+        | otherwise -> case maybeTarget of
+            Nothing -> watchArt (roomAscii room) "the room"
+            Just targetStr ->
+                case find (matchesItemTarget targetStr) allReachableItems of
+                    Just item -> watchArt (itemAscii item) (itemName item)
+                    Nothing -> case find (matchesNPCTarget targetStr) roomNPCs of
+                        Just npc -> watchArt (npcAscii npc) (npcName npc)
+                        Nothing  -> (state, "You don't see '" ++ targetStr ++ "' here.")
+  where
+    allReachableItems = getItemsInLocation (InRoom (currentRoom (save state))) state
+                        ++ getItemsInLocation (CarriedBy "player") state
+    roomNPCs = getNPCsInRoom (currentRoom (save state)) state
+    watchArt art label = case asciiFrames art state of
+        []     -> (state, "There is nothing to watch about " ++ label ++ ".")
+        frames -> (state { pendingAnimation = Just frames },
+                   "Watching " ++ label ++ "...")
+
 executeCommand (Interact verb targetStr) state =
     let roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
         invItems = getItemsInLocation (CarriedBy "player") state
@@ -528,7 +554,7 @@ executeCommand (Interact verb targetStr) state =
                         if verb == VDrop && hasItem iId state
                         then (dropItem iId state, "You drop the " ++ itemName item ++ ".")
                         else if verb == VLookAt
-                        then (state, withAscii (resolveCondText (itemAscii item) state)
+                        then (state, withAscii (resolveAsciiArt (itemAscii item) state)
                                               (resolveCondText (itemDescription item) state))
                         else case if verb == VAttack then tryAttackVehicle targetStr state else Nothing of
                             Just res -> res
@@ -543,7 +569,7 @@ executeCommand (Interact verb targetStr) state =
                 Nothing
                     | verb == VTalk -> talkTo npc maybeNpcState state
                     | verb == VAttack -> executeAttack npc maybeNpcState targetStr state
-                    | verb == VLookAt -> (state, withAscii (resolveCondText (npcAscii npc) state)
+                    | verb == VLookAt -> (state, withAscii (resolveAsciiArt (npcAscii npc) state)
                                                           (resolveCondText (npcDescription npc) state))
                     | otherwise -> (state, "You can't do that to " ++ npcName npc ++ ".")
 
@@ -972,6 +998,7 @@ helpText = intercalate "\n"
     , "Interaction:"
     , "  look                       - Examine current room"
     , "  look at / examine <target> - Examine an item or NPC"
+    , "  watch [target]             - Play an item's/NPC's animation frames"
     , "  search                     - Search the room for hidden things"
     , "  take / get / grab <item>   - Pick up an item"
     , "  take all                   - Pick up all items in the room"

@@ -634,6 +634,28 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
 - **Doku:** `adventure-schema.md` beschreibt `--color`/`--no-color` und die
   automatische Bereinigung bei umgeleitetem stdout.
 
+### ASCII-Kunst: Bewegte Kunst (Phase D)
+
+- **Datenmodell:** `ascii` ist jetzt ein `AsciiArt` mit `aaStatic :: CondText`
+  (Phase-B-Zustandskunst), `aaFrames :: [CondText]` (Animation, jeder Frame
+  selbst zustandsabhängig) und `aaEvery :: Int` (Takt in Zügen; 0 = passiv aus).
+  String- und CondText-Kurzform bleiben gültig; eine frame-lose Kunst wird
+  weiterhin als CondText-Objekt serialisiert (kein Checksummenbruch).
+- **Passiv (Entscheidung D3):** `look` zeigt den Frame `turnCount div every mod
+  len(frames)` — eine reine Funktion des Spielzustands, kein Timer. Gilt für
+  Räume, Items und NPCs.
+- **Aktiv:** neuer Befehl `watch [ziel]`. Die Engine liefert über
+  `asciiFrames` die fertige Frame-Liste (reines `GameState`), der IO-Loop spielt
+  sie mit Verzögerung ab (`pendingAnimation`, nur zur Laufzeit, nicht im Save).
+  `watch` kostet keinen Zug. `watch` ist reserviertes Verb.
+- **Worldbuilder:** `AAscii` (String/CondText/frames-Objekt) kompiliert auf
+  `AsciiArt`.
+- **Fixture + Tests:** `ascii-state.yaml` enthält nun einen animierten Raum
+  (flackernde Fackel, `every: 2`); dazu fünf neue Engine-Tests (passiver Frame
+  über `turnCount`, Frame-Liste, `watch`-Befehl inkl. „kein Zug“) und ein
+  Worldbuilder-Test (frames + every).
+- **Doku:** `adventure-schema.md` beschreibt `frames`/`every` und `watch`.
+
 ## [0.9.0.0] — Unreleased
 
 Phase 5 (Worldbuilder + Ports): Worldbuilder YAML/JSON-Compiler und TheFog-Portierung.

@@ -136,6 +136,23 @@ instance FromJSON ACondText where
                 <$> o .:? "default"  .!= ""
                 <*> o .:? "variants" .!= []) v
 
+-- | YAML form of the engine's `AsciiArt` (Phase B/D): a plain string, a
+--   `{default, variants}` CondText, or an animated `{frames, every, ...}` object.
+data AAscii = AAscii
+    { asaStatic :: ACondText
+    , asaFrames :: [ACondText]
+    , asaEvery  :: Int
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AAscii where
+    parseJSON v = case v of
+        String s -> pure (AAscii (ACondText (T.unpack s) []) [] 0)
+        _ -> withObject "AAscii" (\o -> do
+                stat <- ACondText <$> o .:? "default" .!= "" <*> o .:? "variants" .!= []
+                frames <- o .:? "frames" .!= []
+                every <- o .:? "every" .!= 1
+                pure (AAscii stat frames every)) v
+
 -- | Parse a `description` field: prefers the new CondText object, falls back
 --   to legacy `desc:` string.
 textField :: Object -> Parser ACondText
@@ -160,7 +177,7 @@ data ARoom = ARoom
     , arOnLook      :: Maybe [AActionOutcome]
     , arOnExit      :: Maybe [AActionOutcome]
     , arSearch      :: Maybe [AActionOutcome]
-    , arAscii       :: ACondText
+    , arAscii       :: AAscii
     } deriving (Show, Eq, Generic)
 
 instance FromJSON ARoom where
@@ -175,7 +192,7 @@ instance FromJSON ARoom where
         <*> o .:? "on_look"
         <*> o .:? "on_exit"
         <*> o .:? "search"
-        <*> o .:? "ascii"     .!= ACondText "" []
+        <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0
 
 -- | Exit reference: target room + optional lock entity
 data AExitRef = AExitRef
@@ -199,7 +216,7 @@ data AItem = AItem
     { aiId         :: String
     , aiName       :: String
     , aiTexts      :: ACondText
-    , aiAscii      :: ACondText
+    , aiAscii      :: AAscii
     , aiKeywords   :: [String]
     , aiTags       :: [String]
     , aiLocation   :: String           -- room id or "inventory"
@@ -221,7 +238,7 @@ instance FromJSON AItem where
         <$> o .:  "id"
         <*> o .:  "name"
         <*> textField o
-        <*> o .:? "ascii"     .!= ACondText "" []
+        <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0
         <*> o .:? "keys"      .!= []
         <*> o .:? "tags"      .!= []
         <*> o .:? "location"  .!= "start"
@@ -245,7 +262,7 @@ data ANPC = ANPC
     { anId          :: String
     , anName        :: String
     , anTexts       :: ACondText
-    , anAscii       :: ACondText
+    , anAscii       :: AAscii
     , anKeywords    :: [String]
     , anLocation    :: String
     , anState       :: String
@@ -285,7 +302,7 @@ instance FromJSON ANPC where
         <$> o .:  "id"
         <*> o .:  "name"
         <*> textField o
-        <*> o .:? "ascii"     .!= ACondText "" []
+        <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0
         <*> o .:? "keys"      .!= []
         <*> o .:? "location"  .!= "start"
         <*> o .:? "state"     .!= "alive"

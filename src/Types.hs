@@ -440,18 +440,64 @@ instance FromJSON CondText where
 plainText :: String -> CondText
 plainText s = CondText s []
 
--- | Is an ASCII art CondText empty (no default, no variants)?
-isEmptyAscii :: CondText -> Bool
-isEmptyAscii ct = null (ctDefault ct) && null (ctVariants ct)
+-- | Is a CondText empty (no default, no variants)?
+isEmptyCond :: CondText -> Bool
+isEmptyCond ct = null (ctDefault ct) && null (ctVariants ct)
+
+-- | ASCII art: state-dependent base text plus an optional animation (Phase D).
+--
+--   * `aaStatic` is the conditional art of Phase B. It is rendered when there
+--     are no frames (or when passive animation is disabled).
+--   * `aaFrames` are animation frames, each itself a `CondText` so a frame can
+--     depend on the game state as well.
+--   * `aaEvery` is the number of turns per passive frame. `0` (or fewer)
+--     disables the passive tick; the frames are then only shown by `watch`.
+data AsciiArt = AsciiArt
+    { aaStatic :: CondText
+    , aaFrames :: [CondText]
+    , aaEvery  :: Int
+    } deriving (Show, Eq, Generic)
+
+-- | No art at all. `aaEvery = 1` matches the decoder default so a static art
+--   round-trips through JSON unchanged.
+emptyAscii :: AsciiArt
+emptyAscii = AsciiArt (CondText "" []) [] 1
+
+-- | Is the art empty (no static text, no frames)?
+isEmptyAscii :: AsciiArt -> Bool
+isEmptyAscii a = null (aaFrames a) && isEmptyCond (aaStatic a)
+
+-- Accept a plain string (shorthand), a `{default, variants}` CondText (Phase B
+-- shape) or an animated `{default?, variants?, frames, every}` object.
+instance FromJSON AsciiArt where
+    parseJSON v = case v of
+        String s -> pure (AsciiArt (CondText (T.unpack s) []) [] 0)
+        _ -> withObject "AsciiArt" (\o -> do
+                stat <- CondText <$> o .:? "default" .!= "" <*> o .:? "variants" .!= []
+                frames <- o .:? "frames" .!= []
+                every <- o .:? "every" .!= 1
+                pure (AsciiArt stat frames every)) v
+
+-- A frame-less art keeps the exact Phase B JSON (a CondText object), so worlds
+-- without animation keep their historical encoding and checksum.
+instance ToJSON AsciiArt where
+    toJSON a
+        | null (aaFrames a) = toJSON (aaStatic a)
+        | otherwise = object
+            [ "default"  .= ctDefault (aaStatic a)
+            , "variants" .= ctVariants (aaStatic a)
+            , "frames"   .= aaFrames a
+            , "every"    .= aaEvery a
+            ]
 
 -- | Encode an ASCII art field only when it carries something. An empty art is
 --   omitted, so worlds without art keep their historical JSON and therefore
 --   their `computeWorldChecksum` (no spurious "different world version" warning
 --   when loading an old save).
-asciiPair :: Key -> CondText -> [Pair]
-asciiPair k ct
-    | isEmptyAscii ct = []
-    | otherwise       = [k .= ct]
+asciiPair :: Key -> AsciiArt -> [Pair]
+asciiPair k art
+    | isEmptyAscii art = []
+    | otherwise        = [k .= art]
 
 instance ToJSON Effect
 instance FromJSON Effect
@@ -551,7 +597,7 @@ data ItemDef = ItemDef
         , itemPortable      :: Bool                  -- ^ Can the player pick this up?
         , itemTakeFailure   :: Maybe String          -- ^ Message when take fails (non-portable)
         , itemVerbMap       :: Map.Map (Verb, String) Effect
-        , itemAscii         :: CondText              -- ^ Optional state-dependent ASCII art (Phase B)
+        , itemAscii         :: AsciiArt              -- ^ Optional state-dependent, animated ASCII art
         } deriving (Show, Eq)
 
 instance ToJSON ItemDef where
@@ -584,7 +630,7 @@ instance FromJSON ItemDef where
         <*> o .:? "itemPortable"     .!= True
         <*> o .:? "itemTakeFailure"  .!= Nothing
         <*> (o .: "itemVerbMap" >>= verbStateMapFromJSON)
-        <*> o .:? "itemAscii"        .!= CondText "" []
+        <*> o .:? "itemAscii"        .!= emptyAscii
 
 -- | Dynamic item state
 data ItemState = ItemState
@@ -663,7 +709,7 @@ data NPCDef = NPCDef
     , npcAttackBase    :: Int
     , npcDefenseBase   :: Int
     , npcVerbMap       :: Map.Map (Verb, String) Effect
-    , npcAscii         :: CondText              -- ^ Optional state-dependent ASCII art (Phase B)
+    , npcAscii         :: AsciiArt              -- ^ Optional state-dependent, animated ASCII art
     } deriving (Show, Eq)
 
 instance ToJSON NPCDef where
@@ -690,7 +736,7 @@ instance FromJSON NPCDef where
         <*> o .:  "npcAttackBase"
         <*> o .:  "npcDefenseBase"
         <*> (o .: "npcVerbMap" >>= verbStateMapFromJSON)
-        <*> o .:? "npcAscii"         .!= CondText "" []
+        <*> o .:? "npcAscii"         .!= emptyAscii
 
 -- | Dynamic NPC state
 data NPCState = NPCState
@@ -912,7 +958,7 @@ data Room = Room
     , roomOnLook          :: Maybe Effect
     , roomOnExit          :: Maybe Effect
     , roomSearchOutcome   :: Maybe Effect
-    , roomAscii           :: CondText                  -- ^ Optional ASCII art banner (Phase 4.6; state-dependent since Phase B)
+    , roomAscii           :: AsciiArt                  -- ^ Optional ASCII art banner (state-dependent since Phase B, animated since Phase D)
     } deriving (Show, Eq, Generic)
 
 instance ToJSON Room where
@@ -941,7 +987,7 @@ instance FromJSON Room where
         <*> o .:? "roomOnLook"          .!= Nothing
         <*> o .:? "roomOnExit"          .!= Nothing
         <*> o .:? "roomSearchOutcome"   .!= Nothing
-        <*> o .:? "roomAscii"           .!= CondText "" []
+        <*> o .:? "roomAscii"           .!= emptyAscii
 
 -- | Player inventory
 type Inventory = [ItemID]
@@ -1315,6 +1361,7 @@ data GameState = GameState
     { world :: GameWorld
     , save  :: SaveState
     , pendingNarrative :: Maybe ([String], Effect)  -- ^ Narrative lines + follow-up (Phase 4.4)
+    , pendingAnimation :: Maybe [String]            -- ^ Frames to play back with delay (Phase D, runtime only)
     , diagnostics :: [String]                      -- ^ Engine-level findings for the author (P2-23)
     } deriving (Show, Eq)
 

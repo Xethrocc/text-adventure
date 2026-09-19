@@ -56,6 +56,7 @@ emptyGameState = GameState
         , triggerStates      = Map.empty
         }
     , pendingNarrative = Nothing
+    , pendingAnimation = Nothing
     , diagnostics = []
     }
 
@@ -767,6 +768,35 @@ resolveCondText ct state =
     case [tvText tv | tv <- ctVariants ct, evalPredicate (tvWhen tv) state] of
         (s:_) -> s
         []    -> ctDefault ct
+
+-- ---------------------------------------------------------------------------
+-- ASCII art (Phase B/C/D)
+-- ---------------------------------------------------------------------------
+
+-- | Resolve ASCII art for rendering: the passive animation frame when the art
+--   is animated and `every > 0`, otherwise the state-dependent base art. Pure
+--   function of `GameState` (frame index comes from `turnCount`).
+resolveAsciiArt :: AsciiArt -> GameState -> String
+resolveAsciiArt art state =
+    maybe (resolveCondText (aaStatic art) state) (\f -> resolveCondText f state)
+          (passiveFrame art state)
+
+-- | The passive animation frame at the current turn, if any.
+passiveFrame :: AsciiArt -> GameState -> Maybe CondText
+passiveFrame art state
+    | null (aaFrames art) = Nothing
+    | aaEvery art <= 0    = Nothing
+    | otherwise           = Just (aaFrames art !! idx)
+  where
+    n = length (aaFrames art)
+    idx = (turnCount (save state) `div` aaEvery art) `mod` n
+
+-- | Every resolved frame of an art, in order — what `watch` plays back. A
+--   non-animated art yields its single (possibly empty) static text.
+asciiFrames :: AsciiArt -> GameState -> [String]
+asciiFrames art state
+    | null (aaFrames art) = [t | let t = resolveCondText (aaStatic art) state, not (null t)]
+    | otherwise           = map (\f -> resolveCondText f state) (aaFrames art)
 
 -- ---------------------------------------------------------------------------
 -- Outcome interpreter (single, shared implementation)

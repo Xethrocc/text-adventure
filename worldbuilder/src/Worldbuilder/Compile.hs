@@ -269,7 +269,7 @@ compileRoom r =
             , E.roomOnLook = compileMaybeOutcomes (arOnLook r)
             , E.roomOnExit = compileMaybeOutcomes (arOnExit r)
             , E.roomSearchOutcome = compileMaybeOutcomes (arSearch r)
-            , E.roomAscii = compileCondText (arAscii r)
+            , E.roomAscii = compileAscii (arAscii r)
             }
        else Left allErrs
   where
@@ -290,7 +290,7 @@ tagVehicleAr r = r { arTags = "vehicle" : arTags r }
 reservedVerbWords :: [String]
 reservedVerbWords =
     [ "take", "pick", "grab", "get", "drop", "put"
-    , "examine", "inspect", "look", "read"
+    , "examine", "inspect", "look", "read", "watch"
     , "use", "activate"
     , "talk", "speak", "chat"
     , "attack", "hit", "kill", "search"
@@ -953,7 +953,7 @@ compileItemDefSafe registry i =
                 { E.itemId = aiId i
                 , E.itemName = aiName i
                 , E.itemDescription = compileCondText (aiTexts i)
-                , E.itemAscii = compileCondText (aiAscii i)
+                , E.itemAscii = compileAscii (aiAscii i)
                 , E.itemKeywords = aiKeywords i
                 , E.itemTags = Set.fromList (aiTags i)
                 , E.itemEquipSlot = slot
@@ -1029,7 +1029,7 @@ compileNPCDefSafe registry n =
             { E.npcId = anId n
             , E.npcName = anName n
             , E.npcDescription = compileCondText (anTexts n)
-            , E.npcAscii = compileCondText (anAscii n)
+            , E.npcAscii = compileAscii (anAscii n)
             , E.npcDialogueTrees = compileDialogueTrees (anDialogue n)
             , E.npcKeywords = anKeywords n
             , E.npcMaxHealth = anMaxHealth n
@@ -1276,6 +1276,15 @@ compileCondText :: ACondText -> E.CondText
 compileCondText act = E.CondText
     { E.ctDefault = actDefault act
     , E.ctVariants = [ E.TextVariant (atvWhen tv) (atvText tv) | tv <- actVariants act ]
+    }
+
+-- | Compile authored ASCII art (static CondText plus optional animation frames)
+--   into the engine's `AsciiArt` (Phase B/D).
+compileAscii :: AAscii -> E.AsciiArt
+compileAscii a = E.AsciiArt
+    { E.aaStatic = compileCondText (asaStatic a)
+    , E.aaFrames = map compileCondText (asaFrames a)
+    , E.aaEvery  = asaEvery a
     }
 
 -- ---------------------------------------------------------------------------

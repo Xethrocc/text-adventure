@@ -100,6 +100,36 @@ items:
 Ist `ascii` leer oder fehlt, wird nichts ausgegeben (rückwärtskompatibel zum
 früheren `ascii: <string>`).
 
+#### Bewegte Kunst (Phase D)
+
+Ein `ascii`-Objekt kann `frames` (Liste von Frames) und `every` (Takt in Zügen)
+enthalten. Jeder Frame ist selbst ein CondText, kann also zusätzlich vom
+Spielzustand abhängen:
+
+```yaml
+rooms:
+  - id: halle
+    name: Halle
+    desc: Eine Halle mit flackernder Fackel.
+    ascii:
+      frames:
+        - |
+          |~|
+          | |
+        - |
+          |=|
+          | |
+      every: 2
+```
+
+Bei jedem `look` wird der passive Frame aus der Zugnummer gewählt
+(`turnCount div every mod Anzahl`), rein und deterministisch aus dem
+Spielzustand — kein Timer im Kern. `watch [ziel]` spielt **alle** Frames
+nacheinander ab; die Verzögerung zwischen den Frames liegt nur im IO-Loop, die
+Engine liefert die fertige Frame-Liste. `watch` ohne Ziel zeigt die Kunst des
+Raums, `watch <item>`/`watch <npc>` die des Ziels. Ein `every: 0` schaltet den
+passiven Takt ab (nur noch `watch`).
+
 Zwei Format-Fallen bei Block-Skalaren:
 
 - Die **erste** Zeile muss die am geringsten eingerückte sein. YAML nimmt ihre
