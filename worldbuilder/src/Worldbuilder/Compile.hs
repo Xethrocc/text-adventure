@@ -15,7 +15,7 @@ import Types hiding
 import qualified Types as E
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.Char (toLower)
+import Data.Char (toLower, isDigit, isSpace)
 import Data.List (nub, stripPrefix, isPrefixOf)
 import Data.Maybe (mapMaybe, fromMaybe, catMaybes)
 import Data.Either (partitionEithers)
@@ -143,6 +143,7 @@ compileAdventure adv =
         stopCostErrs = checkStopCostItems (advVehicles adv) gw
         combatVarErrs = checkCombatVarReserved varDefs
         cooldownCondErrs = checkCooldownConditionReserved gw
+        hotspotErrs = checkHotspotRefs gw
 
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
                     ++ varErrs ++ facErrs ++ facConflictErrs ++ trigErrs ++ encErrs
@@ -157,6 +158,7 @@ compileAdventure adv =
                     ++ stopCostErrs
                     ++ combatVarErrs
                     ++ cooldownCondErrs
+                    ++ hotspotErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -759,6 +761,43 @@ conditionNamesInEffect eff = case eff of
     E.Narrative _ e            -> conditionNamesInEffect e
     _                          -> []
 
+-- | Phase E: validate hotspot bindings on every art in the world. Each marker
+--   must be a non-reserved glyph that actually occurs in the art, be unique
+--   within its art, and point at a declared item or NPC.
+checkHotspotRefs :: E.GameWorld -> [CompileIssue]
+checkHotspotRefs gw =
+    concat
+      [ checkArt ("rooms." ++ rId) (E.roomAscii r) | (rId, r) <- Map.toList (E.rooms gw) ]
+      ++ concat [ checkArt ("items." ++ iId) (E.itemAscii i) | (iId, i) <- Map.toList (E.itemDefs gw) ]
+      ++ concat [ checkArt ("npcs." ++ nId) (E.npcAscii n) | (nId, n) <- Map.toList (E.npcDefs gw) ]
+  where
+    known = Set.fromList (Map.keys (E.itemDefs gw) ++ Map.keys (E.npcDefs gw))
+    checkArt path art =
+        let spots = E.aaHotspots art
+            glyphs = map E.hsGlyph spots
+            texts = artTexts art
+            dupErrs =
+                [ ciError (path ++ ".ascii.hotspots") "DuplicateHotspotGlyph"
+                    ("marker '" ++ [g] ++ "' is used by more than one hotspot")
+                | (g, n) <- Map.toList (Map.fromListWith (+) [(g, 1 :: Int) | g <- glyphs]), n > 1 ]
+            reservedErrs =
+                [ ciError (path ++ ".ascii.hotspots") "ReservedHotspotGlyph"
+                    ("marker '" ++ [g] ++ "' is reserved (digits and whitespace cannot be markers)")
+                | g <- glyphs, isDigit g || isSpace g ]
+            missingErrs =
+                [ ciError (path ++ ".ascii.hotspots") "HotspotGlyphMissing"
+                    ("marker '" ++ [g] ++ "' does not occur in the art")
+                | g <- glyphs, not (any (elem g) texts) ]
+            unknownErrs =
+                [ ciError (path ++ ".ascii.hotspots") "UnknownHotspotTarget"
+                    ("hotspot target '" ++ t ++ "' is not a declared item or NPC")
+                | t <- map E.hsTarget spots, t `Set.notMember` known ]
+        in dupErrs ++ reservedErrs ++ missingErrs ++ unknownErrs
+    artTexts art = concat
+        [ E.ctDefault (E.aaStatic art) : map E.tvText (E.ctVariants (E.aaStatic art))
+        , concatMap (\f -> E.ctDefault f : map E.tvText (E.ctVariants f)) (E.aaFrames art)
+        ]
+
 -- | Verify every `faction.<id>` reference in the compiled world resolves to a
 --   declared faction. Only runs when the `factions:` segment is present
 --   (default-invariant: without it, `faction.*` strings are plain variables).
@@ -1287,6 +1326,7 @@ compileAscii a = E.AsciiArt
     { E.aaStatic = compileCondText (asaStatic a)
     , E.aaFrames = map compileCondText (asaFrames a)
     , E.aaEvery  = asaEvery a
+    , E.aaHotspots = asaHotspots a
     }
 
 -- ---------------------------------------------------------------------------

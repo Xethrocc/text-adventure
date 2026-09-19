@@ -2379,6 +2379,54 @@ testTitleArtResolves = do
     r2 <- expectEqual "" (resolveAsciiArt (worldTitleArt (world initSampleGame)) initSampleGame)
     pure (r1 && r2)
 
+-- ===== Hotspots (Phase E) =====
+
+-- | The starter room with an art that marks the torch with `*` and the old man
+--   with `T`.
+hotspotRoom :: GameState
+hotspotRoom =
+    let base = staticArt (plainText "  *\n  T")
+        art = base { aaHotspots = [ Hotspot '*' "torch", Hotspot 'T' "oldman" ] }
+        r = (rooms (world initSampleGame) Map.! "start") { roomAscii = art }
+    in initSampleGame
+        { world = (world initSampleGame)
+            { rooms = Map.insert "start" r (rooms (world initSampleGame)) } }
+
+-- | `look at <n>` resolves the n-th hotspot to its target (name binding still
+--   works too).
+testHotspotNumberLook :: IO Bool
+testHotspotNumberLook = do
+    let (_, byNumber) = executeCommand (Interact VLookAt "1") hotspotRoom
+        (_, byName) = executeCommand (Interact VLookAt "torch") hotspotRoom
+        (_, second) = executeCommand (Interact VLookAt "2") hotspotRoom
+        (_, absent) = executeCommand (Interact VLookAt "9") hotspotRoom
+    r1 <- expectTrue "number 1 shows the torch" ("A burning torch" `isInfixOf` byNumber)
+    r2 <- expectTrue "name still works" ("A burning torch" `isInfixOf` byName)
+    r3 <- expectTrue "number 2 shows the old man" ("withered old man" `isInfixOf` second)
+    r4 <- expectTrue "an unknown number is not an object" ("9" `isInfixOf` absent)
+    pure (r1 && r2 && r3 && r4)
+
+-- | Markers are highlighted in `look`, and stripping yields the plain art.
+testHotspotHighlight :: IO Bool
+testHotspotHighlight = do
+    let art = roomAscii (rooms (world hotspotRoom) Map.! "start")
+        highlighted = renderArtForLook art hotspotRoom
+        plain = resolveAsciiArt art hotspotRoom
+    r1 <- expectTrue "marker is wrapped in ANSI" ('\ESC' `elem` highlighted)
+    r2 <- expectTrue "the marker character is still there" ('*' `elem` stripAnsi highlighted)
+    r3 <- expectEqual plain (stripAnsi highlighted)
+    pure (r1 && r2 && r3)
+
+-- | `map` numbers the markers and lists the legend.
+testMapCommand :: IO Bool
+testMapCommand = do
+    let (_, msg) = executeCommand MapCmd hotspotRoom
+    r1 <- expectTrue "map replaces the marker with its number" ("1" `isInfixOf` msg && "2" `isInfixOf` msg)
+    r2 <- expectTrue "map lists the torch in the legend" ("1: torch" `isInfixOf` msg)
+    r3 <- expectTrue "map lists the old man in the legend" ("2: old man" `isInfixOf` msg)
+    r4 <- expectTrue "map does not consume a turn" (not (consumesTurn MapCmd))
+    pure (r1 && r2 && r3 && r4)
+
 -- | String shorthand, object form and full-room round-trip for `ascii`.
 testAsciiJsonRoundTrip :: IO Bool
 testAsciiJsonRoundTrip = do
@@ -3098,6 +3146,7 @@ expectedConsumesTurn cmd = case cmd of
     StatsCmd           -> False
     SearchCmd _        -> True
     WatchCmd _         -> False
+    MapCmd             -> False
     JournalCmd         -> False
     Undo               -> False
     EnterVehicleCmd _  -> True
@@ -3940,6 +3989,9 @@ main = do
         , runTest "watch command queues frames (D)" testWatchCommand
         , runTest "end_art resolves per reason (G)" testEndArtFor
         , runTest "title_art resolves against state (G)" testTitleArtResolves
+        , runTest "look at <n> resolves hotspots (E)" testHotspotNumberLook
+        , runTest "hotspot markers are highlighted (E)" testHotspotHighlight
+        , runTest "map numbers hotspots + legend (E)" testMapCommand
         , runTest "ascii CondText json round-trip" testAsciiJsonRoundTrip
         , runTest "stripAnsi removes SGR sequences (C)" testStripAnsi
         , runTest "ansiFilter policy (C)" testAnsiFilter

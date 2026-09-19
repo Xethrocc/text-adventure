@@ -35,7 +35,7 @@ import Control.Concurrent (threadDelay)
 commandWords :: [String]
 commandWords =
     [ "go", "move", "walk", "look", "examine", "inspect", "read", "take", "pick", "drop", "put"
-    , "search", "watch", "inventory", "inv", "i", "use", "talk", "speak", "choose", "option", "attack", "hit", "kill"
+    , "search", "watch", "map", "legend", "inventory", "inv", "i", "use", "talk", "speak", "choose", "option", "attack", "hit", "kill"
     , "equip", "wear", "wield", "unequip", "remove", "stats"
     , "enter", "board", "disembark", "drive", "wait", "refuel", "repair"
     , "undo", "save", "load", "saves", "restart", "help", "quit", "exit", "q"
@@ -170,6 +170,7 @@ consumesTurn cmd = case cmd of
     ListSaves      -> False
     Restart        -> False
     WatchCmd _     -> False
+    MapCmd         -> False
     Unknown _      -> False
     _              -> True
 
@@ -298,6 +299,7 @@ commandVerbName cmd = case cmd of
     JournalCmd    -> "journal"
     SearchCmd _   -> "search"
     WatchCmd _    -> "watch"
+    MapCmd        -> "map"
     TakeAll       -> "take"
     DropAll       -> "drop"
     EquipCmd _    -> "equip"

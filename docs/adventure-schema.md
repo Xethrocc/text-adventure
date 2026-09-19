@@ -130,6 +130,53 @@ Engine liefert die fertige Frame-Liste. `watch` ohne Ziel zeigt die Kunst des
 Raums, `watch <item>`/`watch <npc>` die des Ziels. Ein `every: 0` schaltet den
 passiven Takt ab (nur noch `watch`).
 
+#### Anfassbare Kunst: Hotspots (Phase E)
+
+Ein `ascii`-Objekt kann `hotspots` enthalten: Marker-Glyphen, die an ein Ziel
+(Item- oder NPC-ID) gebunden sind. Der Marker wird bei `look` **hervorgehoben**
+(farbig, wird bei `--no-color`/Pipe automatisch entfernt); `map` (Alias
+`legend`) gibt dieselbe Kunst mit **Nummern** statt Markern plus Legende aus.
+Über die Nummer adressiert `look at <n>` das Ziel, der normale Name
+funktioniert weiter:
+
+```yaml
+rooms:
+  - id: hoehle
+    name: Höhle
+    desc: Eine Höhle mit Hebel und schlafendem Troll.
+    ascii:
+      default: |
+        +----------+
+        |   *  T   |
+        +----------+
+      hotspots:
+        - { glyph: "*", target: lever }
+        - { glyph: "T", target: troll }
+```
+
+```
+> map
++----------+
+|   1  2   |
++----------+
+
+Legend:
+  1: lever
+  2: troll
+> look at 1
+A rusty lever, warm to the touch.
+> pull lever
+You pull the lever. Somewhere a chain rattles.
+```
+
+Regeln, die der Worldbuilder beim Kompilieren prüft:
+
+- Das Ziel muss ein deklariertes Item oder NPC sein (`UnknownHotspotTarget`).
+- Der Marker muss in der Kunst vorkommen (`HotspotGlyphMissing`).
+- Marker sind innerhalb einer Kunst eindeutig (`DuplicateHotspotGlyph`).
+- Ziffern und Leerraum sind reserviert (`ReservedHotspotGlyph`) — Ziffern
+  werden für die Nummerierung gebraucht.
+
 Zwei Format-Fallen bei Block-Skalaren:
 
 - Die **erste** Zeile muss die am geringsten eingerückte sein. YAML nimmt ihre

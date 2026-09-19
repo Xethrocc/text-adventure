@@ -681,6 +681,26 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   Tests (Kompilierung, Fixture). Neuer E2E-Lauf `banner-art` prüft, dass das
   Ende tatsächlich das `end_art` zeigt.
 
+### Anfassbare Kunst: Hotspots (Phase E)
+
+- **Datenmodell:** `AsciiArt.aaHotspots :: [Hotspot]` mit `hsGlyph` (Marker im
+  Bild) und `hsTarget` (Item-/NPC-ID). YAML: `hotspots: [{glyph, target}]`.
+  Serialisierung nur, wenn Hotspots vorhanden — kein Checksummenbruch.
+- **Hervorhebung (D4):** `look` zeigt die Marker farbig hervorgehoben (SGR wird
+  vom Output-Filter bei Pipe/`--no-color` entfernt, der Kern bleibt
+  farbblind).
+- **Adressierung:** `map`/`legend` gibt die Kunst mit **Nummern** statt Markern
+  und eine Legende aus. `look at <n>` löst die n-te Marke auf ihr Ziel auf; der
+  normale Name (`pull lever`) funktioniert unverändert. `map` kostet keinen Zug.
+- **Parser:** Nummern werden nur als Interaktionsziel aufgelöst (kein Konflikt
+  mit Dialogzahlen).
+- **Validierung (Compiler):** `UnknownHotspotTarget`, `HotspotGlyphMissing`,
+  `DuplicateHotspotGlyph`, `ReservedHotspotGlyph` (Ziffern/Leerraum).
+- **Fixture + Tests:** `examples/fixtures/hotspot.yaml` (Hebel + Troll, per
+  Nummer und Name erreichbar); drei Engine-Tests (Nummernauflösung,
+  Hervorhebung, `map`) und zwei Worldbuilder-Tests (Fehlerpfade, Fixture).
+  Neuer E2E-Lauf `hotspot`.
+
 ## [0.9.0.0] — Unreleased
 
 Phase 5 (Worldbuilder + Ports): Worldbuilder YAML/JSON-Compiler und TheFog-Portierung.

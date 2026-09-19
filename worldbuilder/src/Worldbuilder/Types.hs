@@ -67,7 +67,7 @@ instance FromJSON Adventure where
         <*> o .:? "combat"
         <*> o .:? "abilities"       .!= []
         <*> o .:? "end_art"         .!= Map.empty
-        <*> o .:? "title_art"       .!= AAscii (ACondText "" []) [] 1
+        <*> o .:? "title_art"       .!= AAscii (ACondText "" []) [] 1 []
 
 -- | Optional player stats block in YAML (Phase 4d).
 --   `player: { max_hp: 50, attack: 8, defense: 3, skills: { lockpick: 5 } }`
@@ -143,19 +143,21 @@ instance FromJSON ACondText where
 -- | YAML form of the engine's `AsciiArt` (Phase B/D): a plain string, a
 --   `{default, variants}` CondText, or an animated `{frames, every, ...}` object.
 data AAscii = AAscii
-    { asaStatic :: ACondText
-    , asaFrames :: [ACondText]
-    , asaEvery  :: Int
+    { asaStatic   :: ACondText
+    , asaFrames   :: [ACondText]
+    , asaEvery    :: Int
+    , asaHotspots :: [E.Hotspot]
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AAscii where
     parseJSON v = case v of
-        String s -> pure (AAscii (ACondText (T.unpack s) []) [] 0)
+        String s -> pure (AAscii (ACondText (T.unpack s) []) [] 0 [])
         _ -> withObject "AAscii" (\o -> do
                 stat <- ACondText <$> o .:? "default" .!= "" <*> o .:? "variants" .!= []
                 frames <- o .:? "frames" .!= []
                 every <- o .:? "every" .!= 1
-                pure (AAscii stat frames every)) v
+                spots <- o .:? "hotspots" .!= []
+                pure (AAscii stat frames every spots)) v
 
 -- | Parse a `description` field: prefers the new CondText object, falls back
 --   to legacy `desc:` string.
@@ -196,7 +198,7 @@ instance FromJSON ARoom where
         <*> o .:? "on_look"
         <*> o .:? "on_exit"
         <*> o .:? "search"
-        <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0
+        <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0 []
 
 -- | Exit reference: target room + optional lock entity
 data AExitRef = AExitRef
@@ -242,7 +244,7 @@ instance FromJSON AItem where
         <$> o .:  "id"
         <*> o .:  "name"
         <*> textField o
-        <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0
+        <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0 []
         <*> o .:? "keys"      .!= []
         <*> o .:? "tags"      .!= []
         <*> o .:? "location"  .!= "start"
@@ -306,7 +308,7 @@ instance FromJSON ANPC where
         <$> o .:  "id"
         <*> o .:  "name"
         <*> textField o
-        <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0
+        <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0 []
         <*> o .:? "keys"      .!= []
         <*> o .:? "location"  .!= "start"
         <*> o .:? "state"     .!= "alive"

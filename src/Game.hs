@@ -5,7 +5,7 @@ module Game where
 import Types
 import Data.List (intercalate, find, elemIndex, foldl')
 import Data.Bits (shiftR)
-import Data.Char (toLower)
+import Data.Char (toLower, isDigit, isSpace)
 import Data.Maybe (listToMaybe, fromMaybe)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -812,6 +812,46 @@ endArtFor reason state =
         Death    -> "death"
         Victory  -> "victory"
         Custom s -> s
+
+-- ---------------------------------------------------------------------------
+-- Hotspots (Phase E)
+-- ---------------------------------------------------------------------------
+
+-- | The n-th hotspot (1-based) of an art, if any.
+hotspotAt :: AsciiArt -> Int -> Maybe Hotspot
+hotspotAt art n
+    | n >= 1 && n <= length (aaHotspots art) = Just (aaHotspots art !! (n - 1))
+    | otherwise = Nothing
+
+-- | If the target is a bare number, resolve it to the target of the matching
+--   hotspot in the current room's art. Otherwise the target is unchanged. This
+--   is what makes `look at 3` select the third marked object.
+resolveHotspotTarget :: String -> GameState -> String
+resolveHotspotTarget targetStr state
+    | not (null targetStr) && all isDigit targetStr =
+        case getCurrentRoom state >>= \r -> hotspotAt (roomAscii r) (read targetStr) of
+            Just hs -> hsTarget hs
+            Nothing -> targetStr
+    | otherwise = targetStr
+
+-- | Highlight the hotspot markers in resolved art. The SGR codes are stripped
+--   by the output filter when colour is off, so the core stays colour-blind.
+--   Whitespace glyphs are ignored (they cannot be a marker).
+highlightHotspots :: AsciiArt -> String -> String
+highlightHotspots art s0 = foldl' mark s0 (aaHotspots art)
+  where
+    mark s h
+      | isSpace (hsGlyph h) = s
+      | otherwise = replaceChar (hsGlyph h) (marker (hsGlyph h)) s
+    marker c = "\ESC[1;33m" ++ [c] ++ "\ESC[0m"
+
+-- | Resolved art with marker highlighting, as printed by `look`.
+renderArtForLook :: AsciiArt -> GameState -> String
+renderArtForLook art state = highlightHotspots art (resolveAsciiArt art state)
+
+-- | Replace every occurrence of a character.
+replaceChar :: Char -> String -> String -> String
+replaceChar from to = concatMap (\c -> if c == from then to else [c])
 
 -- ---------------------------------------------------------------------------
 -- Outcome interpreter (single, shared implementation)

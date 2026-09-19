@@ -31,6 +31,7 @@ data Command
     | StatsCmd
     | SearchCmd (Maybe String)   -- ^ `search` or `search <target>`
     | WatchCmd (Maybe String)    -- ^ `watch [target]`: play animation frames (Phase D)
+    | MapCmd                    -- ^ `map`/`legend`: art with numbered hotspots (Phase E)
     | JournalCmd                 -- ^ show active/completed quests
     | Undo                       -- ^ restore the previous game state
     | EnterVehicleCmd String     -- ^ enter a vehicle
@@ -188,6 +189,8 @@ parseSimpleCommandWith defs tokens input = case tokens of
     "watch" : targetParts | not (null targetParts) ->
         let t = unwords (safeStripStopWords targetParts)
         in WatchCmd (if t `elem` ["room", "area", "here", "around"] then Nothing else Just t)
+    ["map"]               -> MapCmd
+    ["legend"]            -> MapCmd
     ["help"]               -> Help
     ["quit"]               -> Quit
     ["exit"]               -> Quit
@@ -358,7 +361,7 @@ executeCommand Look state = case getCurrentRoom state of
                           else "\nAlso here: " ++ intercalate ", " (map npcName npcsInRoom) ++ "."
                 (state', hookMsg) = runRoomHook roomOnLook (currentRoom (save state)) state
                 vehicleMsg = vehicleLookAddon state'
-                asciiArt = resolveAsciiArt (roomAscii room) state
+                asciiArt = renderArtForLook (roomAscii room) state
                 full = intercalate "\n" (filter (not . null)
                         [asciiArt, desc, itemDesc, npcDesc, hookMsg, fromMaybe "" vehicleMsg])
             in (state', full)
@@ -518,13 +521,30 @@ executeCommand (WatchCmd maybeTarget) state = case getCurrentRoom state of
         frames -> (state { pendingAnimation = Just frames },
                    "Watching " ++ label ++ "...")
 
+executeCommand MapCmd state = case getCurrentRoom state of
+    Nothing -> (state, "You're in a void. There's nothing to map.")
+    Just room
+        | isDark room state -> (state, "It's pitch black. You can't see a map.")
+        | otherwise ->
+            let art = roomAscii room
+                spots = aaHotspots art
+            in if null spots
+               then (state, "There is nothing marked on the map.")
+               else
+                   let numbered = foldl' (\s (i, h) -> replaceChar (hsGlyph h) (show i) s)
+                                          (resolveAsciiArt art state) (zip [1 :: Int ..] spots)
+                       legend = [ "  " ++ show i ++ ": " ++ hotspotLabel state h
+                                | (i, h) <- zip [1 :: Int ..] spots ]
+                   in (state, numbered ++ "\n\nLegend:\n" ++ unlines legend)
+
 executeCommand (Interact verb targetStr) state =
-    let roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
+    let resolvedTarget = resolveHotspotTarget targetStr state
+        roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
         invItems = getItemsInLocation (CarriedBy "player") state
         allReachableItems = roomItems ++ invItems
         roomNPCs = getNPCsInRoom (currentRoom (save state)) state
-        targetItem = find (matchesItemTarget targetStr) allReachableItems
-        targetNPC = find (matchesNPCTarget targetStr) roomNPCs
+        targetItem = find (matchesItemTarget resolvedTarget) allReachableItems
+        targetNPC = find (matchesNPCTarget resolvedTarget) roomNPCs
     in case (targetItem, targetNPC) of
         (Just item, _) ->
             let iId = itemId item
@@ -554,7 +574,7 @@ executeCommand (Interact verb targetStr) state =
                         if verb == VDrop && hasItem iId state
                         then (dropItem iId state, "You drop the " ++ itemName item ++ ".")
                         else if verb == VLookAt
-                        then (state, withAscii (resolveAsciiArt (itemAscii item) state)
+                        then (state, withAscii (renderArtForLook (itemAscii item) state)
                                               (resolveCondText (itemDescription item) state))
                         else case if verb == VAttack then tryAttackVehicle targetStr state else Nothing of
                             Just res -> res
@@ -569,7 +589,7 @@ executeCommand (Interact verb targetStr) state =
                 Nothing
                     | verb == VTalk -> talkTo npc maybeNpcState state
                     | verb == VAttack -> executeAttack npc maybeNpcState targetStr state
-                    | verb == VLookAt -> (state, withAscii (resolveAsciiArt (npcAscii npc) state)
+                    | verb == VLookAt -> (state, withAscii (renderArtForLook (npcAscii npc) state)
                                                           (resolveCondText (npcDescription npc) state))
                     | otherwise -> (state, "You can't do that to " ++ npcName npc ++ ".")
 
@@ -738,6 +758,14 @@ findVehicle targetStr state =
 -- ---------------------------------------------------------------------------
 -- Helpers used by executeCommand
 -- ---------------------------------------------------------------------------
+
+-- | Display name of a hotspot target (item first, then NPC, else the id).
+hotspotLabel :: GameState -> Hotspot -> String
+hotspotLabel state h = case Map.lookup (hsTarget h) (itemDefs (world state)) of
+    Just it -> itemName it
+    Nothing -> case Map.lookup (hsTarget h) (npcDefs (world state)) of
+        Just np -> npcName np
+        Nothing -> hsTarget h
 
 -- | Look up an item by target string in inventory or current room
 findMatchingItem :: String -> GameState -> Maybe ItemDef
@@ -998,7 +1026,9 @@ helpText = intercalate "\n"
     , "Interaction:"
     , "  look                       - Examine current room"
     , "  look at / examine <target> - Examine an item or NPC"
+    , "  look at <n>                - Examine the n-th marked object (`map`)"
     , "  watch [target]             - Play an item's/NPC's animation frames"
+    , "  map / legend               - Show the art with numbered marked objects"
     , "  search                     - Search the room for hidden things"
     , "  take / get / grab <item>   - Pick up an item"
     , "  take all                   - Pick up all items in the room"

@@ -1,0 +1,41 @@
+name: Hotspot Test
+start_room: cave
+
+verbs:
+  - name: pull
+    aliases: [yank]
+
+rooms:
+  - id: cave
+    name: Cave
+    desc: A cold cave. A lever juts from the wall and a troll dozes nearby.
+    ascii:
+      default: |
+        +----------+
+        |   *  T   |
+        |  /|\\     |
+        +----------+
+      hotspots:
+        - { glyph: "*", target: lever }
+        - { glyph: "T", target: troll }
+    exits: {}
+
+items:
+  - id: lever
+    name: lever
+    desc: A rusty lever, warm to the touch.
+    keys: [lever, handle]
+    location: cave
+    verb_map:
+      pull,intact:
+        - msg: You pull the lever. Somewhere a chain rattles.
+
+npcs:
+  - id: troll
+    name: troll
+    desc: A snoring troll.
+    keys: [troll]
+    location: cave
+    max_hp: 10
+    attack: 2
+    defense: 1

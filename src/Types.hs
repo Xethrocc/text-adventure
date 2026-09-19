@@ -444,7 +444,28 @@ plainText s = CondText s []
 isEmptyCond :: CondText -> Bool
 isEmptyCond ct = null (ctDefault ct) && null (ctVariants ct)
 
--- | ASCII art: state-dependent base text plus an optional animation (Phase D).
+-- | A marker in ASCII art that binds to a target entity (Phase E). The glyph
+--   is what the player sees; the target is an item or NPC id. Numbers (the
+--   index in `aaHotspots`, 1-based) address the marker, so a glyph must not be
+--   a digit (see the worldbuilder validation).
+data Hotspot = Hotspot
+    { hsGlyph  :: Char      -- ^ marker character in the art
+    , hsTarget :: String    -- ^ item or NPC id
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON Hotspot where
+    toJSON h = object
+        [ "glyph"  .= hsGlyph h
+        , "target" .= hsTarget h
+        ]
+
+instance FromJSON Hotspot where
+    parseJSON = withObject "Hotspot" $ \o -> Hotspot
+        <$> o .: "glyph"
+        <*> o .: "target"
+
+-- | ASCII art: state-dependent base text plus an optional animation (Phase D)
+--   and optional hotspots (Phase E).
 --
 --   * `aaStatic` is the conditional art of Phase B. It is rendered when there
 --     are no frames (or when passive animation is disabled).
@@ -452,16 +473,18 @@ isEmptyCond ct = null (ctDefault ct) && null (ctVariants ct)
 --     depend on the game state as well.
 --   * `aaEvery` is the number of turns per passive frame. `0` (or fewer)
 --     disables the passive tick; the frames are then only shown by `watch`.
+--   * `aaHotspots` are marker glyphs bound to targets, addressed by number.
 data AsciiArt = AsciiArt
-    { aaStatic :: CondText
-    , aaFrames :: [CondText]
-    , aaEvery  :: Int
+    { aaStatic   :: CondText
+    , aaFrames   :: [CondText]
+    , aaEvery    :: Int
+    , aaHotspots :: [Hotspot]
     } deriving (Show, Eq, Generic)
 
 -- | No art at all. `aaEvery = 1` matches the decoder default so a static art
 --   round-trips through JSON unchanged.
 emptyAscii :: AsciiArt
-emptyAscii = AsciiArt (CondText "" []) [] 1
+emptyAscii = AsciiArt (CondText "" []) [] 1 []
 
 -- | Is the art empty (no static text, no frames)?
 isEmptyAscii :: AsciiArt -> Bool
@@ -471,24 +494,26 @@ isEmptyAscii a = null (aaFrames a) && isEmptyCond (aaStatic a)
 -- shape) or an animated `{default?, variants?, frames, every}` object.
 instance FromJSON AsciiArt where
     parseJSON v = case v of
-        String s -> pure (AsciiArt (CondText (T.unpack s) []) [] 0)
+        String s -> pure (AsciiArt (CondText (T.unpack s) []) [] 0 [])
         _ -> withObject "AsciiArt" (\o -> do
                 stat <- CondText <$> o .:? "default" .!= "" <*> o .:? "variants" .!= []
                 frames <- o .:? "frames" .!= []
                 every <- o .:? "every" .!= 1
-                pure (AsciiArt stat frames every)) v
+                spots <- o .:? "hotspots" .!= []
+                pure (AsciiArt stat frames every spots)) v
 
--- A frame-less art keeps the exact Phase B JSON (a CondText object), so worlds
--- without animation keep their historical encoding and checksum.
+-- A frame- and hotspot-less art keeps the exact Phase B JSON (a CondText
+-- object), so worlds without animation/hotspots keep their historical encoding
+-- and checksum.
 instance ToJSON AsciiArt where
     toJSON a
-        | null (aaFrames a) = toJSON (aaStatic a)
-        | otherwise = object
+        | null (aaFrames a), null (aaHotspots a) = toJSON (aaStatic a)
+        | otherwise = object $
             [ "default"  .= ctDefault (aaStatic a)
             , "variants" .= ctVariants (aaStatic a)
             , "frames"   .= aaFrames a
             , "every"    .= aaEvery a
-            ]
+            ] ++ [ "hotspots" .= aaHotspots a | not (null (aaHotspots a)) ]
 
 -- | Encode an ASCII art field only when it carries something. An empty art is
 --   omitted, so worlds without art keep their historical JSON and therefore
