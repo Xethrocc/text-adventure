@@ -551,6 +551,12 @@ Erfolg wird `cost` von `cost_var` abgezogen, der Cooldown gesetzt und die
 Effektliste ausgeführt. Fehlen Ressourcen oder ist der Cooldown aktiv, wird die
 Aktion abgelehnt.
 
+Der Cooldown wird als **Condition** `cooldown_<abilityId>` geführt (also
+`cooldown_power_strike`, mit `cooldown:` als Turn-Zahl). Das Präfix `cooldown_`
+ist damit reserviert: eine eigene `apply_condition`/`clear_condition` mit diesem
+Namen wird beim Kompilieren als `CooldownConditionClash` abgelehnt, sonst würden
+Engine-Cooldown und Autoren-Condition stillschweigend dieselbe Markierung teilen.
+
 ---
 
 ## Party: Begleiter (Module 7g)

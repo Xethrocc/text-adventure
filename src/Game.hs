@@ -634,8 +634,9 @@ setCombatEngaged True  = setVariable combatEngagedKey (VVInt 1)
 setCombatEngaged False = setVariable combatEngagedKey (VVInt 0)
 
 -- | The last player action inside a tactical fight ("attack", "defend",
---   "flee", "ability"). The enemy's `on: turn` rule can gate on this via
---   `compare_var: { name: combat.action, … }`.
+--   "flee", "ability"). The enemy's `on: turn` rule can gate on this with the
+--   text predicate `{ var: combat.action, is: defend }` — `compare_var` only
+--   compares integers, so it cannot read this key.
 combatActionKey :: String
 combatActionKey = combatVarPrefix ++ "action"
 
@@ -643,9 +644,12 @@ combatActionKey = combatVarPrefix ++ "action"
 combatInitiativePlayerKey :: String
 combatInitiativePlayerKey = combatVarPrefix ++ "initiative.player"
 
--- | VarMap key for an NPC's initiative value (Phase 7f-3, step A3).
-combatInitiativeNpcKey :: NPCID -> String
-combatInitiativeNpcKey nid = combatVarPrefix ++ "initiative." ++ nid
+-- | VarMap key for the engaged target's initiative value (Phase 7f-3, step A3).
+--   One key per target id — NPCs and ships share this space, which is safe
+--   because only one target is engaged at a time and the value is rewritten
+--   every round. (The former name said "Npc" while the emitted key never did.)
+combatInitiativeKey :: NPCID -> String
+combatInitiativeKey tid = combatVarPrefix ++ "initiative." ++ tid
 
 -- | VarMap key for the last used ability (Phase 7f-3, step A3).
 combatAbilityKey :: String

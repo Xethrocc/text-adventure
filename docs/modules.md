@@ -261,10 +261,15 @@ Begleiter (7g) und Schiffe (7h) erweitern sie, ohne die Signatur zu ändern.
   - Initiative: `player_first`, `enemy_first` oder `by_speed` (dynamischer
     Wurf basierend auf `speed_attribute` vs. Gegner-Geschwindigkeit).
   - Rundenzustand in der VarMap: `combat.round`, `combat.engaged`,
-    `combat.initiative.<actorId>`, `combat.action` (Name der letzten Aktion:
+    `combat.initiative.<targetId>`, `combat.action` (Name der letzten Aktion:
     `attack` / `defend` / `flee` / `ability`) und `combat.ability`
     (ID der zuletzt benutzten Fähigkeit). Geschützt gegen Autorenkollisionen
     über `CombatVariableClash`.
+  - Fähigkeits-Cooldowns sind **Conditions**: die Engine legt beim Einsatz die
+    Condition `cooldown_<abilityId>` an (Turns = `cooldown:`). Das Präfix
+    `cooldown_` gehört der Engine — eine Autoren-Condition dieses Namens wird
+    beim Kompilieren mit `CooldownConditionClash` abgelehnt (Condition-Pendant
+    zu `CombatVariableClash`).
   - Gegnerreaktion: gewöhnliche `on: turn`-Regel mit
     `when: { compare_var: { name: combat.engaged, op: gte, value: 1 } }`.
   - `combat.action` und `combat.ability` sind **Text**; abgefragt werden sie mit

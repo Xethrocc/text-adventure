@@ -140,6 +140,7 @@ compileAdventure adv =
         cmdVerbErrs = checkCommandVerbRefs verbRegistry (advTriggers adv)
         stopCostErrs = checkStopCostItems (advVehicles adv) gw
         combatVarErrs = checkCombatVarReserved varDefs
+        cooldownCondErrs = checkCooldownConditionReserved gw
 
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
                     ++ varErrs ++ facErrs ++ facConflictErrs ++ trigErrs ++ encErrs
@@ -153,6 +154,7 @@ compileAdventure adv =
                     ++ cmdVerbErrs
                     ++ stopCostErrs
                     ++ combatVarErrs
+                    ++ cooldownCondErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -728,6 +730,32 @@ checkCombatVarReserved varDefs =
          ++ "the engine owns the combat round state (7f-3)")
     | name <- Map.keys varDefs
     , "combat." `isPrefixOf` name ]
+
+-- | Phase 7f-3 (A3): the engine marks an ability's cooldown as a **condition**
+--   named `cooldown_<abilityId>`. That prefix belongs to the engine — an author
+--   condition of the same name would silently share the marker with a cooldown,
+--   and the effect DSL cannot tell the two apart. Condition-side twin of
+--   `checkCombatVarReserved` (variables have had that guard since A1).
+checkCooldownConditionReserved :: E.GameWorld -> [CompileIssue]
+checkCooldownConditionReserved gw =
+    [ ciError ("conditions." ++ name) "CooldownConditionClash"
+        ("'" ++ name ++ "' is in the reserved 'cooldown_' namespace; "
+         ++ "the engine marks ability cooldowns there (7f-3)")
+    | name <- nub (concatMap conditionNamesInEffect (allWorldEffects gw))
+    , "cooldown_" `isPrefixOf` name ]
+
+-- | Every condition name an effect tree mentions, including nested effects
+--   (`ApplyCondition` carries tick/end effects, `Sequence`/`Conditional`/
+--   `RandomChoice`/`Narrative` nest further effects).
+conditionNamesInEffect :: E.Effect -> [String]
+conditionNamesInEffect eff = case eff of
+    E.ApplyCondition n _ mt me -> n : concatMap conditionNamesInEffect (catMaybes [mt, me])
+    E.ClearCondition n         -> [n]
+    E.Sequence es              -> concatMap conditionNamesInEffect es
+    E.Conditional _ a b        -> conditionNamesInEffect a ++ conditionNamesInEffect b
+    E.RandomChoice cs          -> concatMap (conditionNamesInEffect . snd) cs
+    E.Narrative _ e            -> conditionNamesInEffect e
+    _                          -> []
 
 -- | Verify every `faction.<id>` reference in the compiled world resolves to a
 --   declared faction. Only runs when the `factions:` segment is present

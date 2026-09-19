@@ -1088,9 +1088,16 @@ instance FromJSON InitiativeRule where
 
 -- | What the player does in one combat round.
 --
---   Phase 7f-3 (`tactical`) step A2: every constructor is wired. `CAAttack`
---   deals damage; `CADefend` sets `combat.action` for the enemy trigger;
---   `CAFlee` ends the fight if allowed. `CAUseItem`/`CAAbility` are A3.
+--   Phase 7f-3 (`tactical`): `CAAttack` deals damage, `CADefend` sets
+--   `combat.action` for the enemy trigger, `CAFlee` ends the fight if allowed,
+--   `CAAbility` spends resources and cooldown and applies the ability effects
+--   (step A3).
+--
+--   `CAUseItem` is a **reserved placeholder, not wired**: the parser never
+--   produces it (there is no `use <item>` combat verb), `resolveTactical` answers
+--   it with the "can't do that in combat yet" fallback, and nothing constructs it
+--   — so it is deliberately kept instead of half-implemented, and a test pins the
+--   fallback so the gap stays visible.
 --   See `plan-7f3-tactical-7h2-shipduell.md`.
 data CombatAction
     = CAAttack
@@ -1100,8 +1107,10 @@ data CombatAction
     | CAAbility String
     deriving (Show, Eq, Generic)
 
-instance ToJSON CombatAction
-instance FromJSON CombatAction
+-- Deliberately no ToJSON/FromJSON for `CombatAction`: the type is only ever a
+-- resolver argument, never a field of a persisted type, so instances would be
+-- dead code (they were, until the code check noticed). Add them back together
+-- with the first serialized use.
 
 instance ToJSON CombatProfile where
     toJSON (CombatOff mRefused) = object

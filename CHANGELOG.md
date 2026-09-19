@@ -539,7 +539,25 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   **Verhaltensneutral belegt:** die Ausgaben von sieben E2E-Läufen
   (`combat-tactical`, `-fail`, `-defend`, `ship-duel`, `-fail`, `combat-classic`,
   `combat-narrative`) sind vor und nach dem Umbau byteweise identisch.
-- Tests: **241** Engine- + **75** Worldbuilder-Tests, **29** E2E-Läufe.
+- **F4: `CAUseItem` bleibt Platzhalter — aber ehrlich** (Befund aus dem
+  Code-Check). Der Konstruktor wurde nie erzeugt (kein `use <item>`-Kampfverb),
+  der Fallback war damit unerreichbar, und die `ToJSON`/`FromJSON`-Instanzen von
+  `CombatAction` wurden nirgends benutzt — der Typ ist nie ein Feld eines
+  persistierten Typs. Die Instanzen sind entfernt, der Konstruktor bleibt als
+  reservierter Platz bewusst stehen und ist als solcher dokumentiert; der Test
+  `CAUseItem is a pinned placeholder` nagelt den Fallback fest, damit die Lücke
+  sichtbar bleibt statt still halb verdrahtet zu werden.
+- **F5: `combatInitiativeNpcKey` → `combatInitiativeKey`** — der ausgegebene
+  VarMap-Schlüssel war schon immer neutral (`combat.initiative.<id>`), nur der
+  Haskell-Name sagte „Npc", obwohl Schiffe ihn mitbenutzen. Reine Umbenennung
+  (Schlüssel unverändert), dazu ein Kommentar zum geteilten ID-Raum.
+- **F6: `cooldown_`-Condition-Namespace geschützt** — Fähigkeits-Cooldowns legt
+  die Engine als Condition `cooldown_<abilityId>` an; das Präfix war ungeschützt,
+  während `combat.`-Variablen seit A1 per `CombatVariableClash` geschützt sind.
+  Neuer Compile-Check `checkCooldownConditionReserved` (scannt alle Effektbäume
+  inklusive verschachtelter) meldet `CooldownConditionClash`; dokumentiert in
+  `adventure-schema.md` (Fähigkeiten) und `modules.md` (Rundenzustand).
+- Tests: **242** Engine- + **76** Worldbuilder-Tests, **29** E2E-Läufe.
 
 ## [0.9.0.0] — Unreleased
 

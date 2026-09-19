@@ -1931,6 +1931,7 @@ tests =
     -- Phase 7 acceptance: composition proof
     , ("combo fixture (5 modules) compiles + validates", testComboFixtureCompiles)
     , ("combat. namespace is reserved (7f-3 A1)", testCombatVariableClash)
+    , ("cooldown_ condition namespace is reserved (F6)", testCooldownConditionClash)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -1950,6 +1951,27 @@ testCombatVariableClash = do
     r3 <- case compileAdventure (withVar "hunger") of
             Left errs -> expectTrue "an ordinary variable is not a combat clash"
                             (not ("CombatVariableClash" `isInfixOf` issuesText errs))
+            Right _   -> pure True
+    pure (r1 && r2 && r3)
+
+-- | F6: the engine marks an ability cooldown as a condition named
+--   `cooldown_<abilityId>` (7f-3, A3). That prefix belongs to the engine — an
+--   author condition of the same name would silently share the marker. Variables
+--   have the same guard (`CombatVariableClash`); this is the condition-side twin.
+testCooldownConditionClash :: IO Bool
+testCooldownConditionClash = do
+    let withHook outcomes = (minAdventure (minRoom "loc_0"))
+            { advRooms = [ (minRoom "loc_0") { arOnEnter = Just outcomes } ] }
+    r1 <- case compileAdventure (withHook [AOApplyCondition "cooldown_slash" 2 [] []]) of
+            Left errs -> expectContains "CooldownConditionClash" (issuesText errs)
+            Right _   -> expectTrue "expected CooldownConditionClash for apply_condition" False
+    r2 <- case compileAdventure (withHook [AOClearCondition "cooldown_slash"]) of
+            Left errs -> expectContains "CooldownConditionClash" (issuesText errs)
+            Right _   -> expectTrue "expected CooldownConditionClash for clear_condition" False
+    -- an ordinary condition name is unaffected (control case)
+    r3 <- case compileAdventure (withHook [AOApplyCondition "poisoned" 3 [] []]) of
+            Left errs -> expectTrue "an ordinary condition is not a cooldown clash"
+                            (not ("CooldownConditionClash" `isInfixOf` issuesText errs))
             Right _   -> pure True
     pure (r1 && r2 && r3)
 

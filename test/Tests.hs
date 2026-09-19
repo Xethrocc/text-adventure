@@ -3341,12 +3341,12 @@ testBySpeedInitiative = do
     -- Resolve a tactical action (e.g. attack)
     let (stAfter, _) = executeCommand (Interact VAttack "goblin") stEngaged
     r1 <- expectEqual (Just (VVInt 18)) (getVariable combatInitiativePlayerKey stAfter)
-    r2 <- expectEqual (Just (VVInt 12)) (getVariable (combatInitiativeNpcKey "goblin") stAfter)
+    r2 <- expectEqual (Just (VVInt 12)) (getVariable (combatInitiativeKey "goblin") stAfter)
 
     -- Defend also populates/refreshes initiative
     let (stDefend, _) = executeCommand (Interact (VCustom "defend") "") stEngaged
     r3 <- expectEqual (Just (VVInt 18)) (getVariable combatInitiativePlayerKey stDefend)
-    r4 <- expectEqual (Just (VVInt 12)) (getVariable (combatInitiativeNpcKey "goblin") stDefend)
+    r4 <- expectEqual (Just (VVInt 12)) (getVariable (combatInitiativeKey "goblin") stDefend)
 
     pure (r1 && r2 && r3 && r4)
 
@@ -3422,6 +3422,25 @@ testVarIsPredicate = do
               (not (evalPredicate (PNot (VarIs combatActionKey "defend"))
                                   (withAction "defend")))
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- | F4: `CAUseItem` is a **reserved placeholder** — the parser never produces it
+--   (there is no `use <item>` combat verb), so its only behaviour is the
+--   resolver's fallback. Pinning that fallback keeps the gap visible: a silent
+--   "half wired" change would show up here instead of shipping.
+testUseItemPlaceholder :: IO Bool
+testUseItemPlaceholder = do
+    let tactical = CombatTactical (TacticalCombat PlayerFirst True 100 "speed")
+        st = initSampleGame { world = (world initSampleGame) { combatProfile = tactical }
+                            , save = (save initSampleGame) { currentRoom = "hallway" } }
+        stEngaged = setCombatEngaged True st
+        target = TargetNPC "goblin" "goblin"
+        (effs, msgs) = resolveCombat tactical [PlayerActor] target (CAUseItem "torch") stEngaged
+    r1 <- expectEqual [] effs
+    r2 <- expectEqual ["You can't do that in combat yet."] msgs
+    -- control case: a wired action is unaffected by the placeholder path
+    let (effs2, _) = resolveCombat tactical [PlayerActor] target CADefend stEngaged
+    r3 <- expectTrue "a wired action still resolves" (not (null effs2))
+    pure (r1 && r2 && r3)
 
 main :: IO ()
 main = do
@@ -3642,6 +3661,7 @@ main = do
         , runTest "state: predicate covers NPC/item/lock states" testEntityStatePredicateCoversAllKinds
         , runTest "combat round state lives in the VarMap (7f-3 A1)" testCombatRoundStateVars
         , runTest "text predicate `{ var: X, is: Y }` (F1/F2)" testVarIsPredicate
+        , runTest "CAUseItem is a pinned placeholder (F4)" testUseItemPlaceholder
         , runTest "tactical CAAttack damage and state (7f-3 A2)" testTacticalAttackDamage
         , runTest "tactical CADefend state updates (7f-3 A2)" testTacticalDefend
         , runTest "tactical CAFlee resolves (7f-3 A2)" testTacticalFlee

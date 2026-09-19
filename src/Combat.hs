@@ -20,7 +20,7 @@ module Combat
 import Types
 import Game (effectiveAttack, effectiveDefense, getVariable, getVehicleState,
             combatRound, combatRoundKey, combatEngagedKey, combatActionKey,
-            combatInitiativePlayerKey, combatInitiativeNpcKey, combatAbilityKey,
+            combatInitiativePlayerKey, combatInitiativeKey, combatAbilityKey,
             hasCondition)
 import qualified Data.Map.Strict as Map
 import Data.List (isPrefixOf)
@@ -111,10 +111,10 @@ initiativeEffectsTarget tc target st =
                         let spd = case Map.lookup nid (npcStates (save st)) of
                                 Nothing -> 0
                                 Just ns -> fromMaybe 0 (Map.lookup speedAttr (npcProps ns))
-                        in (combatInitiativeNpcKey nid, spd)
+                        in (combatInitiativeKey nid, spd)
                     TargetShip vid _ ->
                         let spd = fromMaybe 0 (shipSystem vid speedAttr st)
-                        in (combatInitiativeNpcKey vid, spd)
+                        in (combatInitiativeKey vid, spd)
             in [ SetValue (VRVariable combatInitiativePlayerKey) (EVInt playerSpd)
                , SetValue (VRVariable targetKey) (EVInt targetSpd) ]
         _ -> []
