@@ -23,7 +23,7 @@ import Validate (validateWorld, validateGameState, ValidationError (..))
 minWorld :: E.GameWorld
 minWorld = E.GameWorld
     { rooms = Map.fromList
-        [ ("room_0", E.Room "room_0" "Room 0" (E.CondText "test" []) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing Nothing)
+        [ ("room_0", E.Room "room_0" "Room 0" (E.CondText "test" []) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing (E.CondText "" []))
         ]
     , itemDefs = Map.empty
     , npcDefs = Map.empty
@@ -125,7 +125,7 @@ minRoom rid = ARoom
     , arOnLook = Nothing
     , arOnExit = Nothing
     , arSearch = Nothing
-    , arAscii = Nothing
+    , arAscii = ACondText "" []
     }
 
 -- | Build a minimal adventure with one room
@@ -221,6 +221,7 @@ minItem iid = AItem
     { aiId = iid
     , aiName = iid
     , aiTexts = ACondText "test item" []
+    , aiAscii = ACondText "" []
     , aiKeywords = []
     , aiTags = []
     , aiLocation = "loc_0"
@@ -1318,7 +1319,7 @@ testStealthCompiles = do
                     [ AOSetFlag "alarmed" "true", AOMessage "The guard heard you!" ]
         adv = (minAdventure (minRoom "loc_0"))
             { advStealth = Just (AStealth noise [guard])
-            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing ] }
+            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) (ACondText "" []) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing ] }
     case compileAdventure adv of
         Left errs -> do
             putStrLn $ "  compile errors: " ++ show errs
@@ -1512,7 +1513,7 @@ testCombatFixturesCompile = do
 -- | A party-capable NPC with an explicit state, for the party tests.
 partySquire :: Maybe AParty -> ANPC
 partySquire party
-    = ANPC "squire" "Knappe" (ACondText "Knappe" []) [] "loc_0" "alive"
+    = ANPC "squire" "Knappe" (ACondText "Knappe" []) (ACondText "" []) [] "loc_0" "alive"
         (Just 20) 3 1 Map.empty Map.empty party
 
 followVerb :: AVerb
@@ -1837,11 +1838,68 @@ findExampleModule fname = firstExisting
         if ok then pure (Just p) else firstExisting rest
 
 -- ---------------------------------------------------------------------------
+-- Phase B: state-dependent ASCII art
+-- ---------------------------------------------------------------------------
+
+-- | `ascii:` on rooms, items and NPCs accepts the plain string shorthand and
+--   the object form, and compiles to the engine's CondText.
+testAsciiCondTextCompiles :: IO Bool
+testAsciiCondTextCompiles = do
+    -- JSON shorthand and object form both decode to ACondText.
+    let shorthand = Aeson.decode (BLC.pack "\"just a string\"") :: Maybe ACondText
+        objectForm = Aeson.decode (BLC.pack
+            "{\"default\":\"D\",\"variants\":[{\"when\":{\"has_flag\":\"lit\"},\"text\":\"L\"}]}")
+            :: Maybe ACondText
+    r0a <- expectEqual (Just (ACondText "just a string" [])) shorthand
+    r0b <- expectEqual (Just (ACondText "D" [ATextVariant (E.HasFlag "lit") "L"])) objectForm
+    -- Compilation maps them 1:1 onto the engine CondText.
+    let room = (minRoom "loc_0") { arAscii = ACondText "DARK" [ATextVariant (E.HasFlag "lit") "LIT"] }
+        item = (minItem "lamp") { aiAscii = ACondText "LAMP" [] }
+        npc  = (partySquire Nothing) { anAscii = ACondText "NPC" [] }
+        adv  = (minAdventure room) { advItems = [item], advNPCs = [npc] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let rm = Map.findWithDefault (error "room") "loc_0" (E.rooms (crWorld cr))
+                it = Map.findWithDefault (error "item") "lamp" (E.itemDefs (crWorld cr))
+                np = Map.findWithDefault (error "npc") "squire" (E.npcDefs (crWorld cr))
+            r1 <- expectEqual (E.CondText "DARK" [E.TextVariant (E.HasFlag "lit") "LIT"]) (E.roomAscii rm)
+            r2 <- expectEqual (E.CondText "LAMP" []) (E.itemAscii it)
+            r3 <- expectEqual (E.CondText "NPC" []) (E.npcAscii np)
+            pure (r0a && r0b && r1 && r2 && r3)
+
+-- | The shipped state-dependent ASCII fixture compiles and validates clean.
+testAsciiFixtureCompiles :: IO Bool
+testAsciiFixtureCompiles = do
+    mbPath <- findExample "ascii-state.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  ascii-state.yaml not found"
+            pure False
+        Just path -> do
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  parse error: " ++ err
+                    pure False
+                Right adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  compile errors: " ++ show errs
+                        pure False
+                    Right cr -> do
+                        let verrs = validateWorld (crWorld cr)
+                        expectTrue "ascii-state fixture validates" (null verrs)
+
+-- ---------------------------------------------------------------------------
 -- Main
 -- ---------------------------------------------------------------------------
 tests :: [(String, IO Bool)]
 tests =
-    [ ("all 10 directions compile to engine Direction", testAllDirectionsCompile)
+    [ ("ascii: string/object compiles to CondText (B)", testAsciiCondTextCompiles)
+    , ("ascii-state fixture compiles + validates (B)", testAsciiFixtureCompiles)
+    , ("all 10 directions compile to engine Direction", testAllDirectionsCompile)
     , ("direction aliases ne/nw/se/sw work", testDirectionAliases)
     , ("unknown direction is a compile error", testUnknownDirectionFails)
     , ("'activate' verb maps to VUse", testActivateVerbMapsToUse)

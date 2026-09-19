@@ -13,101 +13,262 @@ initSampleGame = GameState
     { world = GameWorld
         { rooms = Map.fromList
             [ ("start", Room
-                "start"
-                "Starting Room"
-                (plainText "You are in a small stone chamber with torches on the walls. There are exits to the north and east. The east door looks sturdy and has a keyhole.")
-                (Map.fromList [(North, Open "hallway"), (East, Locked "treasure" "treasure_door"), (South, Open "meadow")])
-                Set.empty
-                Nothing
-                Nothing Nothing Nothing Nothing Nothing)
+                { roomId = "start"
+                , roomName = "Starting Room"
+                , roomDescription = plainText "You are in a small stone chamber with torches on the walls. There are exits to the north and east. The east door looks sturdy and has a keyhole."
+                , roomConnections = Map.fromList [(North, Open "hallway"), (East, Locked "treasure" "treasure_door"), (South, Open "meadow")]
+                , roomTags = Set.empty
+                , roomLightFlag = Nothing
+                , roomOnEnter = Nothing
+                , roomOnLook = Nothing
+                , roomOnExit = Nothing
+                , roomSearchOutcome = Nothing
+                , roomAscii = plainText ""
+                })
             , ("hallway", Room
-                "hallway"
-                "Dark Hallway"
-                (CondText "A long, dark hallway stretches before you. The air is damp and cold. There's an exit to the south."
-                [TextVariant (HasFlag "torch_lit") "The torches along the wall sputter to life, pushing the darkness back."])
-                (Map.fromList [(South, Open "start")])
-                (Set.fromList ["dark"])
-                (Just "torch_lit")
-                Nothing Nothing Nothing
-                (Just (Sequence
+                { roomId = "hallway"
+                , roomName = "Dark Hallway"
+                , roomDescription = CondText "A long, dark hallway stretches before you. The air is damp and cold. There's an exit to the south."
+                    [TextVariant (HasFlag "torch_lit") "The torches along the wall sputter to life, pushing the darkness back."]
+                , roomConnections = Map.fromList [(South, Open "start")]
+                , roomTags = Set.fromList ["dark"]
+                , roomLightFlag = Just "torch_lit"
+                , roomOnEnter = Nothing
+                , roomOnLook = Nothing
+                , roomOnExit = Nothing
+                , roomSearchOutcome = Just (Sequence
                     [ SetValue (VRFlag "torch_lit") (EVString "true")
-                    , SendMessage "Faded runes cover the eastern wall." ]))
-                Nothing)
+                    , SendMessage "Faded runes cover the eastern wall." ])
+                , roomAscii = plainText ""
+                })
             , ("treasure", Room
-                "treasure"
-                "Treasure Room"
-                (plainText "You've entered a magnificent treasure room! Gold coins and jewels are scattered everywhere. There's an exit to the west.")
-                (Map.fromList [(West, Open "start")])
-                Set.empty
-                Nothing
-                Nothing Nothing Nothing Nothing Nothing)
+                { roomId = "treasure"
+                , roomName = "Treasure Room"
+                , roomDescription = plainText "You've entered a magnificent treasure room! Gold coins and jewels are scattered everywhere. There's an exit to the west."
+                , roomConnections = Map.fromList [(West, Open "start")]
+                , roomTags = Set.empty
+                , roomLightFlag = Nothing
+                , roomOnEnter = Nothing
+                , roomOnLook = Nothing
+                , roomOnExit = Nothing
+                , roomSearchOutcome = Nothing
+                , roomAscii = plainText ""
+                })
             -- Vehicle demo (Phase 3): a horse-drawn carriage
             , ("meadow", Room
-                "meadow"
-                "Sunny Meadow"
-                (plainText "A wide meadow stretches to the horizon. Wildflowers sway in the breeze. Your carriage is parked here.")
-                (Map.fromList [(North, Open "start")])
-                Set.empty
-                Nothing
-                (Just (Sequence
+                { roomId = "meadow"
+                , roomName = "Sunny Meadow"
+                , roomDescription = plainText "A wide meadow stretches to the horizon. Wildflowers sway in the breeze. Your carriage is parked here."
+                , roomConnections = Map.fromList [(North, Open "start")]
+                , roomTags = Set.empty
+                , roomLightFlag = Nothing
+                , roomOnEnter = Just (Sequence
                     (map SendMessage ["A gentle breeze rustles the grass.",
                      "Somewhere in the distance, birds sing.",
                      "The carriage horse stamps its foot impatiently."]
-                     ++ [SendMessage "You feel at peace here."])))
-                Nothing Nothing Nothing Nothing)
+                     ++ [SendMessage "You feel at peace here."]))
+                , roomOnLook = Nothing
+                , roomOnExit = Nothing
+                , roomSearchOutcome = Nothing
+                , roomAscii = plainText ""
+                })
             , ("carriage_cabin", Room
-                "carriage_cabin"
-                "Carriage Cabin"
-                (plainText "You sit inside a comfortably worn carriage. A small window lets you watch the road. The reins are within reach.")
-                Map.empty
-                (Set.fromList ["vehicle"])
-                Nothing
-                Nothing Nothing Nothing Nothing Nothing)
+                { roomId = "carriage_cabin"
+                , roomName = "Carriage Cabin"
+                , roomDescription = plainText "You sit inside a comfortably worn carriage. A small window lets you watch the road. The reins are within reach."
+                , roomConnections = Map.empty
+                , roomTags = Set.fromList ["vehicle"]
+                , roomLightFlag = Nothing
+                , roomOnEnter = Nothing
+                , roomOnLook = Nothing
+                , roomOnExit = Nothing
+                , roomSearchOutcome = Nothing
+                , roomAscii = plainText ""
+                })
             ]
         , itemDefs = Map.fromList
-            [ ("torch", ItemDef "torch" "torch" (plainText "A burning torch that provides light.")
-                ["torch", "burning torch"] (Set.fromList ["lightsource"])
-                Nothing [] False Nothing True Nothing Map.empty)
-            , ("key", ItemDef "key" "key" (plainText "A small brass key.")
-                ["key", "brass key"] Set.empty Nothing [] False Nothing True Nothing
-                (Map.singleton (VTake, "intact")
+            [ ("torch", ItemDef
+                { itemId = "torch"
+                , itemName = "torch"
+                , itemDescription = plainText "A burning torch that provides light."
+                , itemKeywords = ["torch", "burning torch"]
+                , itemTags = Set.fromList ["lightsource"]
+                , itemEquipSlot = Nothing
+                , itemEquipEffects = []
+                , itemHidden = False
+                , itemDiscoverText = Nothing
+                , itemPortable = True
+                , itemTakeFailure = Nothing
+                , itemVerbMap = Map.empty
+                , itemAscii = plainText ""
+                })
+            , ("key", ItemDef
+                { itemId = "key"
+                , itemName = "key"
+                , itemDescription = plainText "A small brass key."
+                , itemKeywords = ["key", "brass key"]
+                , itemTags = Set.empty
+                , itemEquipSlot = Nothing
+                , itemEquipEffects = []
+                , itemHidden = False
+                , itemDiscoverText = Nothing
+                , itemPortable = True
+                , itemTakeFailure = Nothing
+                , itemVerbMap = Map.singleton (VTake, "intact")
                     (Sequence
                         [ QuestOp StartQuest "find_treasure"
-                        , SetValue (VRFlag "quest_started") (EVString "true") ])))
-            , ("gold", ItemDef "gold" "gold" (plainText "A pile of shiny gold coins.")
-                ["gold", "coins", "gold coins"] Set.empty Nothing [] False Nothing True Nothing Map.empty)
-            , ("jewel", ItemDef "jewel" "jewel" (plainText "A sparkling ruby that catches the light.")
-                ["jewel", "ruby", "sparkling ruby"] Set.empty Nothing [] False Nothing True Nothing Map.empty)
-            , ("potion_healing", ItemDef "potion_healing" "healing potion" (plainText "A small vial filled with a bubbling red liquid.")
-                ["potion", "red potion", "healing potion"] Set.empty Nothing [] False Nothing True Nothing
-                (Map.singleton (VUse, "intact")
+                        , SetValue (VRFlag "quest_started") (EVString "true") ])
+                , itemAscii = plainText ""
+                })
+            , ("gold", ItemDef
+                { itemId = "gold"
+                , itemName = "gold"
+                , itemDescription = plainText "A pile of shiny gold coins."
+                , itemKeywords = ["gold", "coins", "gold coins"]
+                , itemTags = Set.empty
+                , itemEquipSlot = Nothing
+                , itemEquipEffects = []
+                , itemHidden = False
+                , itemDiscoverText = Nothing
+                , itemPortable = True
+                , itemTakeFailure = Nothing
+                , itemVerbMap = Map.empty
+                , itemAscii = plainText ""
+                })
+            , ("jewel", ItemDef
+                { itemId = "jewel"
+                , itemName = "jewel"
+                , itemDescription = plainText "A sparkling ruby that catches the light."
+                , itemKeywords = ["jewel", "ruby", "sparkling ruby"]
+                , itemTags = Set.empty
+                , itemEquipSlot = Nothing
+                , itemEquipEffects = []
+                , itemHidden = False
+                , itemDiscoverText = Nothing
+                , itemPortable = True
+                , itemTakeFailure = Nothing
+                , itemVerbMap = Map.empty
+                , itemAscii = plainText ""
+                })
+            , ("potion_healing", ItemDef
+                { itemId = "potion_healing"
+                , itemName = "healing potion"
+                , itemDescription = plainText "A small vial filled with a bubbling red liquid."
+                , itemKeywords = ["potion", "red potion", "healing potion"]
+                , itemTags = Set.empty
+                , itemEquipSlot = Nothing
+                , itemEquipEffects = []
+                , itemHidden = False
+                , itemDiscoverText = Nothing
+                , itemPortable = True
+                , itemTakeFailure = Nothing
+                , itemVerbMap = Map.singleton (VUse, "intact")
                     (Sequence
                         [ ModifyValue VRPlayerHealth 50
                         , SetValue (VRItemProp "potion_healing" "uses") (EVInt (-1))
-                        , SetValue (VRActorProp (ActorEntity "potion_healing") PState) (EVString "empty") ])))
+                        , SetValue (VRActorProp (ActorEntity "potion_healing") PState) (EVString "empty") ])
+                , itemAscii = plainText ""
+                })
             -- Equipment examples
-            , ("sword_rusty", ItemDef "sword_rusty" "rusty sword" (plainText "A pitted blade, but it will do.")
-                ["sword", "rusty sword", "blade"] (Set.fromList ["weapon"])
-                (Just Weapon) [AttackBonus 5] False Nothing True Nothing Map.empty)
-            , ("leather_armor", ItemDef "leather_armor" "leather armor" (plainText "Supple boiled leather, well worn.")
-                ["armor", "leather armor"] Set.empty
-                (Just Body) [DefenseBonus 3] False Nothing True Nothing Map.empty)
-            , ("ring_vigor", ItemDef "ring_vigor" "ring of vigor" (plainText "A plain bronze band that feels warm.")
-                ["ring", "ring of vigor"] Set.empty
-                (Just Accessory) [MaxHealthBonus 20] False Nothing True Nothing Map.empty)
+            , ("sword_rusty", ItemDef
+                { itemId = "sword_rusty"
+                , itemName = "rusty sword"
+                , itemDescription = plainText "A pitted blade, but it will do."
+                , itemKeywords = ["sword", "rusty sword", "blade"]
+                , itemTags = Set.fromList ["weapon"]
+                , itemEquipSlot = Just Weapon
+                , itemEquipEffects = [AttackBonus 5]
+                , itemHidden = False
+                , itemDiscoverText = Nothing
+                , itemPortable = True
+                , itemTakeFailure = Nothing
+                , itemVerbMap = Map.empty
+                , itemAscii = plainText ""
+                })
+            , ("leather_armor", ItemDef
+                { itemId = "leather_armor"
+                , itemName = "leather armor"
+                , itemDescription = plainText "Supple boiled leather, well worn."
+                , itemKeywords = ["armor", "leather armor"]
+                , itemTags = Set.empty
+                , itemEquipSlot = Just Body
+                , itemEquipEffects = [DefenseBonus 3]
+                , itemHidden = False
+                , itemDiscoverText = Nothing
+                , itemPortable = True
+                , itemTakeFailure = Nothing
+                , itemVerbMap = Map.empty
+                , itemAscii = plainText ""
+                })
+            , ("ring_vigor", ItemDef
+                { itemId = "ring_vigor"
+                , itemName = "ring of vigor"
+                , itemDescription = plainText "A plain bronze band that feels warm."
+                , itemKeywords = ["ring", "ring of vigor"]
+                , itemTags = Set.empty
+                , itemEquipSlot = Just Accessory
+                , itemEquipEffects = [MaxHealthBonus 20]
+                , itemHidden = False
+                , itemDiscoverText = Nothing
+                , itemPortable = True
+                , itemTakeFailure = Nothing
+                , itemVerbMap = Map.empty
+                , itemAscii = plainText ""
+                })
             -- Hidden item, found via `search`
-            , ("note_old", ItemDef "note_old" "old note" (plainText "A folded scrap of parchment, brittle with age.")
-                ["note", "old note"] Set.empty Nothing []
-                True (Just "Wedged behind a loose brick you find an old note.") True Nothing Map.empty)
+            , ("note_old", ItemDef
+                { itemId = "note_old"
+                , itemName = "old note"
+                , itemDescription = plainText "A folded scrap of parchment, brittle with age."
+                , itemKeywords = ["note", "old note"]
+                , itemTags = Set.empty
+                , itemEquipSlot = Nothing
+                , itemEquipEffects = []
+                , itemHidden = True
+                , itemDiscoverText = Just "Wedged behind a loose brick you find an old note."
+                , itemPortable = True
+                , itemTakeFailure = Nothing
+                , itemVerbMap = Map.empty
+                , itemAscii = plainText ""
+                })
             -- Vehicle demo (Phase 3)
-            , ("carriage", ItemDef "carriage" "carriage" (plainText "A sturdy horse-drawn carriage with polished wood panels.")
-                ["carriage", "wagon", "coach"] (Set.fromList ["vehicle"]) Nothing [] False Nothing True Nothing Map.empty)
-            , ("hay", ItemDef "hay" "bale of hay" (plainText "A fragrant bale of hay — prime horse fuel.")
-                ["hay", "bale", "bale of hay"] Set.empty Nothing [] False Nothing True Nothing Map.empty)
+            , ("carriage", ItemDef
+                { itemId = "carriage"
+                , itemName = "carriage"
+                , itemDescription = plainText "A sturdy horse-drawn carriage with polished wood panels."
+                , itemKeywords = ["carriage", "wagon", "coach"]
+                , itemTags = Set.fromList ["vehicle"]
+                , itemEquipSlot = Nothing
+                , itemEquipEffects = []
+                , itemHidden = False
+                , itemDiscoverText = Nothing
+                , itemPortable = True
+                , itemTakeFailure = Nothing
+                , itemVerbMap = Map.empty
+                , itemAscii = plainText ""
+                })
+            , ("hay", ItemDef
+                { itemId = "hay"
+                , itemName = "bale of hay"
+                , itemDescription = plainText "A fragrant bale of hay — prime horse fuel."
+                , itemKeywords = ["hay", "bale", "bale of hay"]
+                , itemTags = Set.empty
+                , itemEquipSlot = Nothing
+                , itemEquipEffects = []
+                , itemHidden = False
+                , itemDiscoverText = Nothing
+                , itemPortable = True
+                , itemTakeFailure = Nothing
+                , itemVerbMap = Map.empty
+                , itemAscii = plainText ""
+                })
             ]
         , npcDefs = Map.fromList
-            [ ("oldman", NPCDef "oldman" "old man" (plainText "A withered old man in robes.")
-                (Map.singleton "alive" (DialogueTree "greeting" (Map.fromList
+            [ ("oldman", NPCDef
+                { npcId = "oldman"
+                , npcName = "old man"
+                , npcDescription = plainText "A withered old man in robes."
+                , npcDialogueTrees = Map.singleton "alive" (DialogueTree "greeting" (Map.fromList
                     [ ("greeting", DialogueNode "greeting" "Greetings, traveler! What brings you into this dark place?"
                         [ DialogueChoice "Who are you?" (Just "who") Nothing (Sequence [])
                         , DialogueChoice "Tell me about the treasure." (Just "rumor") Nothing (Sequence [])
@@ -120,11 +281,26 @@ initSampleGame = GameState
                     , ("rumor", DialogueNode "rumor" "The treasure room lies beyond the eastern door, but it is locked with a brass key lost in the hallway."
                         [ DialogueChoice "Thank you for the advice!" Nothing Nothing (SetValue (VRFlag "met_oldman") (EVString "true"))
                         ])
-                    ])))
-                ["man", "old man"] Nothing 0 0 Map.empty)
-            , ("goblin", NPCDef "goblin" "goblin" (plainText "A nasty little green goblin.")
-                Map.empty
-                ["goblin", "monster"] (Just 30) 8 2 Map.empty)
+                    ]))
+                , npcKeywords = ["man", "old man"]
+                , npcMaxHealth = Nothing
+                , npcAttackBase = 0
+                , npcDefenseBase = 0
+                , npcVerbMap = Map.empty
+                , npcAscii = plainText ""
+                })
+            , ("goblin", NPCDef
+                { npcId = "goblin"
+                , npcName = "goblin"
+                , npcDescription = plainText "A nasty little green goblin."
+                , npcDialogueTrees = Map.empty
+                , npcKeywords = ["goblin", "monster"]
+                , npcMaxHealth = Just 30
+                , npcAttackBase = 8
+                , npcDefenseBase = 2
+                , npcVerbMap = Map.empty
+                , npcAscii = plainText ""
+                })
             ]
         , entityInteractions = Map.fromList
             [ (("key", "door"), ("unlocked", "You insert the brass key into the door. It clicks open!"))

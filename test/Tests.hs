@@ -442,7 +442,7 @@ testCombatNarrativeLose = do
 -- | A minimal companion-capable NPC used by the party tests.
 squireDef :: NPCDef
 squireDef = NPCDef "squire" "squire" (plainText "A loyal squire with a chipped blade.")
-    Map.empty ["squire", "knappe"] (Just 20) 3 1 Map.empty
+    Map.empty ["squire", "knappe"] (Just 20) 3 1 Map.empty (plainText "")
 
 -- | Sample game plus a `squire`. Joining is just the roster convention:
 --   the follow variable `party.squire` set to 1.
@@ -828,7 +828,7 @@ testDefaultSaveStateFieldsInitialised = do
 -- | Second companion used by the P0-2 combat regressions.
 guardDef :: NPCDef
 guardDef = NPCDef "guard" "guard" (plainText "A silent guard.")
-    Map.empty ["guard"] (Just 20) 3 1 Map.empty
+    Map.empty ["guard"] (Just 20) 3 1 Map.empty (plainText "")
 
 -- | P0-2 fixture: sample game in the hallway with two companions (guard,
 --   squire) and a rule that announces the goblin's death. `goblinHp` decides
@@ -1783,7 +1783,7 @@ testTakeEventOnlyOnSuccess = do
     let base = initSampleGame
         nonPortable = ItemDef "statue" "statue" (plainText "A heavy stone statue.")
                           ["statue"] Set.empty Nothing [] False Nothing False
-                          (Just "The statue will not budge.") Map.empty
+                          (Just "The statue will not budge.") Map.empty (plainText "")
         st0 = base { world = (world base)
                          { itemDefs = Map.insert "statue" nonPortable (itemDefs (world base)) }
                    , save  = (save base)
@@ -1864,7 +1864,7 @@ testSampleWorldIsValid = do
 testDanglingExitDetected :: IO Bool
 testDanglingExitDetected = do
     let roomA = Room "roomA" "Room A" (plainText "desc.") (Map.singleton North (Open "roomZ")) Set.empty Nothing
-            Nothing Nothing Nothing Nothing Nothing
+            Nothing Nothing Nothing Nothing (plainText "")
         gw = (world initSampleGame) { rooms = Map.singleton "roomA" roomA }
         errors = validateWorld gw
     expectTrue "dangling exit detected" (DanglingExit "roomA" North "roomZ" `elem` errors)
@@ -1873,7 +1873,7 @@ testDuplicateIDsBetweenItemsAndRooms :: IO Bool
 testDuplicateIDsBetweenItemsAndRooms = do
     let gw = (world initSampleGame)
                 { rooms = Map.insert "key" (Room "key" "Duplicate" (plainText "desc.") Map.empty Set.empty Nothing
-                    Nothing Nothing Nothing Nothing Nothing) (rooms (world initSampleGame)) }
+                    Nothing Nothing Nothing Nothing (plainText "")) (rooms (world initSampleGame)) }
         errors = validateWorld gw
     expectTrue "duplicate key found" (any isDup errors)
   where
@@ -1883,7 +1883,7 @@ testDuplicateIDsBetweenItemsAndRooms = do
 testUnreachableRoomDetected :: IO Bool
 testUnreachableRoomDetected = do
     let roomIsolated = Room "isolated" "Isolated" (plainText "Alone.") Map.empty Set.empty Nothing
-            Nothing Nothing Nothing Nothing Nothing
+            Nothing Nothing Nothing Nothing (plainText "")
         gw = (world initSampleGame)
                 { rooms = Map.insert "isolated" roomIsolated (rooms (world initSampleGame)) }
         -- Reachability is checked where the real start room is known, i.e. in
@@ -2004,7 +2004,7 @@ testOnUseTriggerMultiWordAlias = do
         w = (world sample)
             { itemDefs = Map.insert "oil_can"
                 (ItemDef "oil_can" "oil can" (plainText "A dented oil can.") ["oil", "can"]
-                         Set.empty Nothing [] False Nothing True Nothing Map.empty)
+                         Set.empty Nothing [] False Nothing True Nothing Map.empty (plainText ""))
                 (itemDefs (world sample))
             , triggerDefs =
                 [ TriggerDef "light_lantern" (OnUse "oil_can") Nothing
@@ -2035,7 +2035,7 @@ testTakeWithOnTakePicksUp = do
             { itemDefs = Map.insert "token"
                 (ItemDef "token" "token" (plainText "A token.") ["token"] Set.empty
                          Nothing [] False Nothing True Nothing
-                         (Map.singleton (VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))))
+                         (Map.singleton (VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))) (plainText ""))
                 (itemDefs (world sample)) }
         here = currentRoom (save sample)
         st = sample { world = w
@@ -2056,7 +2056,7 @@ testTakeNonPortableFails = do
             { itemDefs = Map.insert "statue"
                 (ItemDef "statue" "statue" (plainText "A statue.") ["statue"] Set.empty
                          Nothing [] False Nothing False (Just "Too heavy to lift.")
-                         Map.empty)
+                         Map.empty (plainText ""))
                 (itemDefs (world sample)) }
         here = currentRoom (save sample)
         st = sample { world = w
@@ -2074,7 +2074,7 @@ testTakeNonPortableFails = do
 -- Helper: an equippable item placed in the player's inventory.
 invItem :: String -> ItemDef
 invItem iid = ItemDef iid iid (plainText "x") [iid] Set.empty
-    (Just Weapon) [] False Nothing True Nothing Map.empty
+    (Just Weapon) [] False Nothing True Nothing Map.empty (plainText "")
 
 -- | Equipped items are always also carried.
 testEquippedImpliesCarried :: IO Bool
@@ -2210,10 +2210,114 @@ testDialogueEndClearsActive = do
 testRoomAsciiArtDisplay :: IO Bool
 testRoomAsciiArtDisplay = do
     let banner = "=== [CASTLE GATE] ==="
-    let roomWithAscii = (rooms (world initSampleGame) Map.! "start") { roomAscii = Just banner }
+    let roomWithAscii = (rooms (world initSampleGame) Map.! "start") { roomAscii = plainText banner }
     let game = initSampleGame { world = (world initSampleGame) { rooms = Map.insert "start" roomWithAscii (rooms (world initSampleGame)) } }
     let (_, msg) = executeCommand Look game
     expectTrue "ascii banner displayed in look" (banner `isInfixOf` msg)
+
+-- ===== State-dependent ASCII art (Phase B) =====
+
+-- | The starter room with a flagged ASCII art: dark default, lit variant.
+roomWithCondAscii :: GameState
+roomWithCondAscii =
+    let ct = CondText "DARK-ART" [ TextVariant (HasFlag "lit") "LIT-ART" ]
+        r = (rooms (world initSampleGame) Map.! "start") { roomAscii = ct }
+    in initSampleGame
+        { world = (world initSampleGame)
+            { rooms = Map.insert "start" r (rooms (world initSampleGame)) } }
+
+-- | No variant matches -> the default art is shown.
+testCondRoomAsciiDefault :: IO Bool
+testCondRoomAsciiDefault = do
+    let (_, msg) = executeCommand Look roomWithCondAscii
+    expectTrue "default ascii shown when no variant matches" ("DARK-ART" `isInfixOf` msg)
+
+-- | A matching variant replaces the default art.
+testCondRoomAsciiVariant :: IO Bool
+testCondRoomAsciiVariant = do
+    let g = roomWithCondAscii
+        (_, msg) = executeCommand Look
+            (g { save = (save g) { flags = Map.singleton "lit" "true" } })
+    r1 <- expectTrue "variant ascii shown when flag matches" ("LIT-ART" `isInfixOf` msg)
+    r2 <- expectTrue "default ascii hidden when variant matches"
+              (not ("DARK-ART" `isInfixOf` msg))
+    pure (r1 && r2)
+
+-- | First matching variant wins (CondText contract).
+testCondRoomAsciiOrder :: IO Bool
+testCondRoomAsciiOrder = do
+    let ct = CondText "DEFAULT"
+                [ TextVariant (HasFlag "lit") "FIRST"
+                , TextVariant (HasFlag "lit") "SECOND" ]
+        r = (rooms (world initSampleGame) Map.! "start") { roomAscii = ct }
+        g = roomWithCondAscii
+                { world = (world roomWithCondAscii)
+                    { rooms = Map.insert "start" r (rooms (world initSampleGame)) }
+                , save = (save roomWithCondAscii) { flags = Map.singleton "lit" "true" } }
+        (_, msg) = executeCommand Look g
+    r1 <- expectTrue "first matching variant wins" ("FIRST" `isInfixOf` msg)
+    r2 <- expectTrue "later variant is not shown" (not ("SECOND" `isInfixOf` msg))
+    pure (r1 && r2)
+
+-- | `ascii:` on an NPC switches with the NPC status (alive/dead).
+testNpcAsciiStateDependent :: IO Bool
+testNpcAsciiStateDependent = do
+    let art = CondText "ALIVE-ART"
+                  [ TextVariant (EntityHasState "oldman" "dead") "DEAD-ART" ]
+        oldman = (npcDefs (world initSampleGame) Map.! "oldman") { npcAscii = art }
+        g = initSampleGame
+                { world = (world initSampleGame)
+                    { npcDefs = Map.insert "oldman" oldman (npcDefs (world initSampleGame)) } }
+        (_, aliveMsg) = executeCommand (Interact VLookAt "old man") g
+        gDead = g { save = (save g)
+                      { npcStates = Map.adjust (\ns -> ns { npcStatus = "dead" })
+                                               "oldman" (npcStates (save g)) } }
+        (_, deadMsg) = executeCommand (Interact VLookAt "old man") gDead
+    r1 <- expectTrue "living npc shows living art" ("ALIVE-ART" `isInfixOf` aliveMsg)
+    r2 <- expectTrue "dead npc shows dead art" ("DEAD-ART" `isInfixOf` deadMsg)
+    r3 <- expectTrue "dead npc drops the living art" (not ("ALIVE-ART" `isInfixOf` deadMsg))
+    pure (r1 && r2 && r3)
+
+-- | `ascii:` on an item switches with the item status.
+testItemAsciiStateDependent :: IO Bool
+testItemAsciiStateDependent = do
+    let art = CondText "ITEM-ART"
+                  [ TextVariant (EntityHasState "torch" "out") "ITEM-OUT-ART" ]
+        torch = (itemDefs (world initSampleGame) Map.! "torch") { itemAscii = art }
+        g = initSampleGame
+                { world = (world initSampleGame)
+                    { itemDefs = Map.insert "torch" torch (itemDefs (world initSampleGame)) } }
+        (_, burningMsg) = executeCommand (Interact VLookAt "torch") g
+        gOut = g { save = (save g)
+                     { itemStates = Map.adjust (\is -> is { itemStatus = "out" })
+                                               "torch" (itemStates (save g)) } }
+        (_, outMsg) = executeCommand (Interact VLookAt "torch") gOut
+    r1 <- expectTrue "burning item shows default art" ("ITEM-ART" `isInfixOf` burningMsg)
+    r2 <- expectTrue "spent item shows variant art" ("ITEM-OUT-ART" `isInfixOf` outMsg)
+    pure (r1 && r2)
+
+-- | String shorthand, object form and full-room round-trip for `ascii`.
+testAsciiJsonRoundTrip :: IO Bool
+testAsciiJsonRoundTrip = do
+    -- CondText accepts the plain string shorthand and round-trips object form.
+    r1 <- expectEqual (Just (CondText "LEGACY" []))
+              (Aeson.decode (BLC.pack "\"LEGACY\"") :: Maybe CondText)
+    let ctObj = CondText "D" [TextVariant (HasFlag "lit") "L"]
+    r2 <- expectEqual (Just ctObj)
+              (Aeson.decode (Aeson.encode ctObj) :: Maybe CondText)
+    -- A room keeps its conditional ASCII art through a JSON round-trip.
+    let ct = CondText "DEF" [ TextVariant (HasFlag "lit") "LIT" ]
+        room = (rooms (world initSampleGame) Map.! "start") { roomAscii = ct }
+    case Aeson.decode (Aeson.encode room) :: Maybe Room of
+        Nothing -> putStrLn "  room failed to decode" >> pure False
+        Just room' -> do
+            r3 <- expectEqual (Just ct) (Just (roomAscii room'))
+            -- An empty art is omitted, keeping the historical JSON (checksum).
+            let emptyRoom = rooms (world initSampleGame) Map.! "start"
+                encodedEmpty = BLC.unpack (Aeson.encode emptyRoom)
+            r4 <- expectTrue "empty ascii is omitted from JSON"
+                      (not ("roomAscii" `isInfixOf` encodedEmpty))
+            pure (r1 && r2 && r3 && r4)
 
 -- ===== Dialogue validation tests (Phase 4.6) =====
 
@@ -2319,7 +2423,7 @@ testStandingOutcomeViaDialogue = do
                                 (DialogueNode "intro" "Join us."
                                     [ DialogueChoice "I accept." Nothing Nothing
                                         (ModifyValue (VRVariable "faction.smugglers") 20) ]))))
-                    ["recruiter"] Nothing 0 0 Map.empty)
+                    ["recruiter"] Nothing 0 0 Map.empty (plainText ""))
                 (npcDefs (world sample)) }
         st0 = sample { world = w
                      , save = (save sample)
@@ -2356,7 +2460,7 @@ tradeWorld stock credits =
                 (ItemDef "rope" "rope" (plainText "A coil of rope.")
                     ["rope"] Set.empty Nothing [] False Nothing True Nothing
                     (Map.singleton (VCustom "buy", "intact") buyEff
-                        `Map.union` Map.singleton (VCustom "sell", "intact") sellEff))
+                        `Map.union` Map.singleton (VCustom "sell", "intact") sellEff) (plainText ""))
             , verbDefs = Map.singleton "buy" (VerbDef "buy" ["purchase"])
                 `Map.union` Map.singleton "sell" (VerbDef "sell" ["pawn"])
             }
@@ -2530,7 +2634,7 @@ testVisitedAcceptsBool = do
 testItemWithoutStateIsReported :: IO Bool
 testItemWithoutStateIsReported = do
     let lamp = ItemDef "lamp" "lamp" (plainText "A brass lamp.") ["lamp"] Set.empty
-                    Nothing [] False Nothing True Nothing Map.empty
+                    Nothing [] False Nothing True Nothing Map.empty (plainText "")
         gw = (world initSampleGame)
                 { itemDefs = Map.insert "lamp" lamp (itemDefs (world initSampleGame)) }
     r1 <- expectTrue "MissingItemState is reported"
@@ -3704,6 +3808,12 @@ main = do
         , runTest "invalid dialogue choice costs no turn (P1-16)" testInvalidChoiceCostsNoTurn
         , runTest "dialogue end clears active" testDialogueEndClearsActive
         , runTest "room ASCII art display" testRoomAsciiArtDisplay
+        , runTest "state-dependent room ascii: default" testCondRoomAsciiDefault
+        , runTest "state-dependent room ascii: variant" testCondRoomAsciiVariant
+        , runTest "state-dependent room ascii: first variant wins" testCondRoomAsciiOrder
+        , runTest "state-dependent npc ascii (alive/dead)" testNpcAsciiStateDependent
+        , runTest "state-dependent item ascii" testItemAsciiStateDependent
+        , runTest "ascii CondText json round-trip" testAsciiJsonRoundTrip
         , runTest "missing dialogue node detected" testMissingDialogueNodeDetected
         , runTest "dangling dialogue choice detected" testDanglingDialogueChoiceDetected
         -- Phase 7a: standing predicate sugar

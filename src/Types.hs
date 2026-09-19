@@ -10,7 +10,7 @@ import qualified Data.Text as T
 import Data.Word (Word64)
 import GHC.Generics (Generic)
 import Data.Aeson
-import Data.Aeson.Types (Parser, toJSONKeyText)
+import Data.Aeson.Types (Parser, Pair, toJSONKeyText)
 import Control.Applicative ((<|>))
 import Data.Char (toLower)
 
@@ -440,6 +440,19 @@ instance FromJSON CondText where
 plainText :: String -> CondText
 plainText s = CondText s []
 
+-- | Is an ASCII art CondText empty (no default, no variants)?
+isEmptyAscii :: CondText -> Bool
+isEmptyAscii ct = null (ctDefault ct) && null (ctVariants ct)
+
+-- | Encode an ASCII art field only when it carries something. An empty art is
+--   omitted, so worlds without art keep their historical JSON and therefore
+--   their `computeWorldChecksum` (no spurious "different world version" warning
+--   when loading an old save).
+asciiPair :: Key -> CondText -> [Pair]
+asciiPair k ct
+    | isEmptyAscii ct = []
+    | otherwise       = [k .= ct]
+
 instance ToJSON Effect
 instance FromJSON Effect
 
@@ -538,10 +551,11 @@ data ItemDef = ItemDef
         , itemPortable      :: Bool                  -- ^ Can the player pick this up?
         , itemTakeFailure   :: Maybe String          -- ^ Message when take fails (non-portable)
         , itemVerbMap       :: Map.Map (Verb, String) Effect
+        , itemAscii         :: CondText              -- ^ Optional state-dependent ASCII art (Phase B)
         } deriving (Show, Eq)
 
 instance ToJSON ItemDef where
-    toJSON def = object
+    toJSON def = object $
         [ "itemId"           .= itemId def
         , "itemName"         .= itemName def
         , "itemDescription"  .= itemDescription def
@@ -554,7 +568,7 @@ instance ToJSON ItemDef where
         , "itemPortable"     .= itemPortable def
         , "itemTakeFailure"  .= itemTakeFailure def
         , "itemVerbMap"      .= verbStateMapToJSON (itemVerbMap def)
-        ]
+        ] ++ asciiPair "itemAscii" (itemAscii def)
 
 instance FromJSON ItemDef where
     parseJSON = withObject "ItemDef" $ \o -> ItemDef
@@ -570,6 +584,7 @@ instance FromJSON ItemDef where
         <*> o .:? "itemPortable"     .!= True
         <*> o .:? "itemTakeFailure"  .!= Nothing
         <*> (o .: "itemVerbMap" >>= verbStateMapFromJSON)
+        <*> o .:? "itemAscii"        .!= CondText "" []
 
 -- | Dynamic item state
 data ItemState = ItemState
@@ -648,10 +663,11 @@ data NPCDef = NPCDef
     , npcAttackBase    :: Int
     , npcDefenseBase   :: Int
     , npcVerbMap       :: Map.Map (Verb, String) Effect
+    , npcAscii         :: CondText              -- ^ Optional state-dependent ASCII art (Phase B)
     } deriving (Show, Eq)
 
 instance ToJSON NPCDef where
-    toJSON def = object
+    toJSON def = object $
         [ "npcId"            .= npcId def
         , "npcName"          .= npcName def
         , "npcDescription"   .= npcDescription def
@@ -661,7 +677,7 @@ instance ToJSON NPCDef where
         , "npcAttackBase"    .= npcAttackBase def
         , "npcDefenseBase"   .= npcDefenseBase def
         , "npcVerbMap"       .= verbStateMapToJSON (npcVerbMap def)
-        ]
+        ] ++ asciiPair "npcAscii" (npcAscii def)
 
 instance FromJSON NPCDef where
     parseJSON = withObject "NPCDef" $ \o -> NPCDef
@@ -674,6 +690,7 @@ instance FromJSON NPCDef where
         <*> o .:  "npcAttackBase"
         <*> o .:  "npcDefenseBase"
         <*> (o .: "npcVerbMap" >>= verbStateMapFromJSON)
+        <*> o .:? "npcAscii"         .!= CondText "" []
 
 -- | Dynamic NPC state
 data NPCState = NPCState
@@ -895,11 +912,11 @@ data Room = Room
     , roomOnLook          :: Maybe Effect
     , roomOnExit          :: Maybe Effect
     , roomSearchOutcome   :: Maybe Effect
-    , roomAscii           :: Maybe String              -- ^ Optional ASCII art banner (Phase 4.6)
+    , roomAscii           :: CondText                  -- ^ Optional ASCII art banner (Phase 4.6; state-dependent since Phase B)
     } deriving (Show, Eq, Generic)
 
 instance ToJSON Room where
-    toJSON r = object
+    toJSON r = object $
         [ "roomId"              .= roomId r
         , "roomName"            .= roomName r
         , "roomDescription"     .= roomDescription r
@@ -910,8 +927,7 @@ instance ToJSON Room where
         , "roomOnLook"          .= roomOnLook r
         , "roomOnExit"          .= roomOnExit r
         , "roomSearchOutcome"   .= roomSearchOutcome r
-        , "roomAscii"           .= roomAscii r
-        ]
+        ] ++ asciiPair "roomAscii" (roomAscii r)
 
 instance FromJSON Room where
     parseJSON = withObject "Room" $ \o -> Room
@@ -925,7 +941,7 @@ instance FromJSON Room where
         <*> o .:? "roomOnLook"          .!= Nothing
         <*> o .:? "roomOnExit"          .!= Nothing
         <*> o .:? "roomSearchOutcome"   .!= Nothing
-        <*> o .:? "roomAscii"           .!= Nothing
+        <*> o .:? "roomAscii"           .!= CondText "" []
 
 -- | Player inventory
 type Inventory = [ItemID]

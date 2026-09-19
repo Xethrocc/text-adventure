@@ -160,7 +160,7 @@ data ARoom = ARoom
     , arOnLook      :: Maybe [AActionOutcome]
     , arOnExit      :: Maybe [AActionOutcome]
     , arSearch      :: Maybe [AActionOutcome]
-    , arAscii       :: Maybe String
+    , arAscii       :: ACondText
     } deriving (Show, Eq, Generic)
 
 instance FromJSON ARoom where
@@ -175,7 +175,7 @@ instance FromJSON ARoom where
         <*> o .:? "on_look"
         <*> o .:? "on_exit"
         <*> o .:? "search"
-        <*> o .:? "ascii"
+        <*> o .:? "ascii"     .!= ACondText "" []
 
 -- | Exit reference: target room + optional lock entity
 data AExitRef = AExitRef
@@ -199,6 +199,7 @@ data AItem = AItem
     { aiId         :: String
     , aiName       :: String
     , aiTexts      :: ACondText
+    , aiAscii      :: ACondText
     , aiKeywords   :: [String]
     , aiTags       :: [String]
     , aiLocation   :: String           -- room id or "inventory"
@@ -220,6 +221,7 @@ instance FromJSON AItem where
         <$> o .:  "id"
         <*> o .:  "name"
         <*> textField o
+        <*> o .:? "ascii"     .!= ACondText "" []
         <*> o .:? "keys"      .!= []
         <*> o .:? "tags"      .!= []
         <*> o .:? "location"  .!= "start"
@@ -243,6 +245,7 @@ data ANPC = ANPC
     { anId          :: String
     , anName        :: String
     , anTexts       :: ACondText
+    , anAscii       :: ACondText
     , anKeywords    :: [String]
     , anLocation    :: String
     , anState       :: String
@@ -282,6 +285,7 @@ instance FromJSON ANPC where
         <$> o .:  "id"
         <*> o .:  "name"
         <*> textField o
+        <*> o .:? "ascii"     .!= ACondText "" []
         <*> o .:? "keys"      .!= []
         <*> o .:? "location"  .!= "start"
         <*> o .:? "state"     .!= "alive"

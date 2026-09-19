@@ -353,11 +353,9 @@ executeCommand Look state = case getCurrentRoom state of
                           else "\nAlso here: " ++ intercalate ", " (map npcName npcsInRoom) ++ "."
                 (state', hookMsg) = runRoomHook roomOnLook (currentRoom (save state)) state
                 vehicleMsg = vehicleLookAddon state'
-                asciiArt = case roomAscii room of
-                    Just art | not (null art) -> [art]
-                    _                         -> []
-                full = intercalate "\n" (asciiArt ++ filter (not . null)
-                        [desc, itemDesc, npcDesc, hookMsg, fromMaybe "" vehicleMsg])
+                asciiArt = resolveCondText (roomAscii room) state
+                full = intercalate "\n" (filter (not . null)
+                        [asciiArt, desc, itemDesc, npcDesc, hookMsg, fromMaybe "" vehicleMsg])
             in (state', full)
 
 executeCommand Inventory state =
@@ -530,7 +528,8 @@ executeCommand (Interact verb targetStr) state =
                         if verb == VDrop && hasItem iId state
                         then (dropItem iId state, "You drop the " ++ itemName item ++ ".")
                         else if verb == VLookAt
-                        then (state, resolveCondText (itemDescription item) state)
+                        then (state, withAscii (resolveCondText (itemAscii item) state)
+                                              (resolveCondText (itemDescription item) state))
                         else case if verb == VAttack then tryAttackVehicle targetStr state else Nothing of
                             Just res -> res
                             Nothing  -> (state, "You can't do that to the " ++ itemName item ++ " right now.")
@@ -544,7 +543,8 @@ executeCommand (Interact verb targetStr) state =
                 Nothing
                     | verb == VTalk -> talkTo npc maybeNpcState state
                     | verb == VAttack -> executeAttack npc maybeNpcState targetStr state
-                    | verb == VLookAt -> (state, resolveCondText (npcDescription npc) state)
+                    | verb == VLookAt -> (state, withAscii (resolveCondText (npcAscii npc) state)
+                                                          (resolveCondText (npcDescription npc) state))
                     | otherwise -> (state, "You can't do that to " ++ npcName npc ++ ".")
 
         (Nothing, Nothing)
@@ -736,6 +736,12 @@ isDark room state =
 -- | Pick the room description: resolve CondText variants against game state.
 resolveDescription :: Room -> GameState -> String
 resolveDescription room state = resolveCondText (roomDescription room) state
+
+-- | Prepend state-resolved ASCII art (when present) above a message.
+withAscii :: String -> String -> String
+withAscii art msg
+    | null art  = msg
+    | otherwise = art ++ "\n" ++ msg
 
 -- | `search` — reveal hidden items and run the room's search outcome
 searchRoom :: GameState -> CommandResult

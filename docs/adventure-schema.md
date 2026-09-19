@@ -36,13 +36,13 @@ Das war's. Der Worldbuilder füllt den Rest mit Defaults.
 | `on_look` | [AActionOutcome] | — | Effekte beim Anschauen |
 | `on_exit` | [AActionOutcome] | — | Effekte beim Verlassen |
 | `search` | [AActionOutcome] | — | Effekte bei `search` |
-| `ascii` | String | — | ASCII-Art-Banner (optional, mehrzeilig als Block-Skalar; siehe unten) |
+| `ascii` | String / Object | — | Zustandsabhängige ASCII-Kunst (String = fester Banner, Object = CondText; siehe unten) |
 
 ### ASCII-Kunst (`ascii`)
 
-Das Feld nimmt die Kunst wörtlich und gibt sie bei Spielstart und bei `look`
-über der Beschreibung aus. Für mehrzeilige Kunst ist der **Block-Skalar** die
-richtige Form:
+Das Feld nimmt die Kunst als String wörtlich und gibt sie bei Spielstart und bei
+`look` über der Beschreibung aus. Für mehrzeilige Kunst ist der **Block-Skalar**
+die richtige Form:
 
 ```yaml
 rooms:
@@ -55,7 +55,52 @@ rooms:
       > ^ <
 ```
 
-Zwei Fallen dabei:
+#### Zustandsabhängige Kunst (Phase B)
+
+Wie `description` ist `ascii` ein **CondText**. Statt eines Strings kann ein
+Object `{ default, variants }` stehen; die erste Variante, deren `when`-Prädikat
+zutrifft, gewinnt, sonst der `default`. Die Auswertung passiert gegen den
+aktuellen Spielzustand, ohne Engine-Sonderfall:
+
+```yaml
+rooms:
+  - id: hoehle
+    name: Höhle
+    desc: Eine kalte Höhle.
+    ascii:
+      default: |
+        +---------+
+        |  ,---,  |
+        +---------+
+      variants:
+        - when: { has_flag: lamp_lit }
+          text: |
+            *=========*
+            | \o/  !! |
+            *=========*
+```
+
+Dasselbe Feld gibt es auf **Items** (`ascii`) und **NPCs** (`ascii`). Eine
+Item-Kunst wird bei `look at <item>`, eine NPC-Kunst bei `look at <npc>` über
+der Beschreibung ausgegeben. Damit lässt sich z. B. ein Gegner lebend/tot anders
+darstellen (`when: { state: troll, is: dead }`) oder eine Fackel erloschen:
+
+```yaml
+items:
+  - id: fackel
+    name: Fackel
+    desc: Eine flackernde Fackel.
+    ascii:
+      default: "( * )\n \\|/"
+      variants:
+        - when: { state: fackel, is: burned }
+          text: "( x )\n \\|/"
+```
+
+Ist `ascii` leer oder fehlt, wird nichts ausgegeben (rückwärtskompatibel zum
+früheren `ascii: <string>`).
+
+Zwei Format-Fallen bei Block-Skalaren:
 
 - Die **erste** Zeile muss die am geringsten eingerückte sein. YAML nimmt ihre
   Einrückung als Blockeinrückung; eine spätere Zeile mit *weniger* Einrückung
@@ -110,6 +155,7 @@ description:
 | `props` | Object | `{}` | `{ uses: 3 }` — Integer-Eigenschaften |
 | `on_take` | [AActionOutcome] | — | Effekte beim Aufheben (wird in `verb_map` gemerged) |
 | `verb_map` | Object | `{}` | `{ "verb,state": [effects] }` |
+| `ascii` | String / Object | — | Zustandsabhängige ASCII-Kunst (CondText, siehe Room) |
 
 ---
 
@@ -192,6 +238,7 @@ Item-Felder für Container:
 | `defense` | Int | 0 | Verteidigungswert |
 | `dialogue` | Object | `{}` | Dialogbäume (siehe unten) |
 | `verb_map` | Object | `{}` | `{ "verb,state": [effects] }` |
+| `ascii` | String / Object | — | Zustandsabhängige ASCII-Kunst (CondText, siehe Room) |
 | `party` | Object | — | Begleiter-Block (Module 7g, siehe unten) |
 
 ### Dialogue Tree

@@ -1,0 +1,77 @@
+name: ASCII State Test
+start_room: cave
+
+verbs:
+  - name: pull
+    aliases: [yank]
+
+rooms:
+  - id: cave
+    name: Cave
+    desc: A cold cave. A rusted lever juts from the wall.
+    ascii:
+      default: |
+        +---------+
+        |  ,---,  |
+        |  |   |  |
+        |  '---'  |
+        +---------+
+      variants:
+        - when: { has_flag: lamp_lit }
+          text: |
+            *=========*
+            | \o/     |
+            |  |  !!  |
+            *=========*
+    exits:
+      north: hall
+  - id: hall
+    name: Hall
+    desc: A narrow hall leading back south.
+    exits:
+      south: cave
+
+items:
+  - id: lever
+    name: lever
+    desc: A rusted iron lever.
+    keys: [lever, handle]
+    location: cave
+    verb_map:
+      pull,intact:
+        - set_flag: lamp_lit
+        - { set_state: lever, to: pulled }
+        - msg: You pull the lever. Light floods the cave!
+  - id: torch
+    name: torch
+    desc: A guttering torch.
+    keys: [torch]
+    location: cave
+    ascii:
+      default: |
+        ( * )
+         \|/
+      variants:
+        - when: { state: torch, is: burned }
+          text: |
+            ( x )
+             \|/
+
+npcs:
+  - id: troll
+    name: troll
+    desc: A hulking troll guards the hall.
+    keys: [troll]
+    location: cave
+    max_hp: 12
+    attack: 4
+    defense: 1
+    ascii:
+      default: |
+        ( o_o )
+        /|_|\\
+      variants:
+        - when: { state: troll, is: dead }
+          text: |
+            ( x_x )
+            /|_|\\

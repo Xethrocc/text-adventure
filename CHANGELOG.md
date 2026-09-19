@@ -590,6 +590,31 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
 - Laufzeit (gemessen): ein 3-MP-Foto ergibt bei Breite 80 in 0,43 s Kunst — das
   Werkzeug konvertiert offline, nicht im Spiel.
 
+### ASCII-Kunst: Zustandsabhängige Kunst (Phase B)
+
+- **`ascii` ist jetzt ein `CondText` (Entscheidung D1):** Die Kunst eines Raums
+  hängt am Spielzustand. `ascii:` nimmt weiterhin einen String (Kurzform,
+  `{default: ...}`) oder ein Object `{default, variants}`; die erste zutreffende
+  Variante gewinnt, sonst der Default. Kein neuer Interpreter — dieselbe
+  `CondText`/`resolveCondText`-Mechanik wie bei `description`.
+- **Neue Felder `npcAscii` / `itemAscii` (Entscheidung D10):** Dieselbe
+  Objektform auf NPCs und Items. `look at <npc>` bzw. `look at <item>` gibt die
+  zustandsabhängige Kunst über der Beschreibung aus — z. B. ein Gegner
+  lebend/tot (`when: { state: troll, is: dead }`).
+- **Engine:** `roomAscii` von `Maybe String` auf `CondText` gehoben; die
+  Auflösung passiert an der Renderstelle (`Look`), reine Funktion von
+  `GameState`. Alte Welten mit `ascii: "<string>"` laden unverändert; fehlendes
+  `ascii` ergibt leere Kunst.
+- **Worldbuilder:** `ARoom`/`AItem`/`ANPC` kompilieren String- *und* Objektform
+  1:1 auf die Engine-`CondText`.
+- **Fixture + Tests:** `examples/fixtures/ascii-state.yaml` (Raum dunkel/hell
+  über Flag, Item- und NPC-Kunst über Status) wird kompiliert und validiert;
+  dazu sechs Engine-Tests (Default, Variante, Variantenreihenfolge, NPC
+  lebend/tot, Item-Status, JSON-Round-Trip) und zwei Worldbuilder-Tests
+  (String-/Objektform, Fixture).
+- **Doku:** `docs/adventure-schema.md` beschreibt die zustandsabhängige Form mit
+  Beispielen für Räume, Items und NPCs.
+
 ## [0.9.0.0] — Unreleased
 
 Phase 5 (Worldbuilder + Ports): Worldbuilder YAML/JSON-Compiler und TheFog-Portierung.

@@ -269,7 +269,7 @@ compileRoom r =
             , E.roomOnLook = compileMaybeOutcomes (arOnLook r)
             , E.roomOnExit = compileMaybeOutcomes (arOnExit r)
             , E.roomSearchOutcome = compileMaybeOutcomes (arSearch r)
-            , E.roomAscii = arAscii r
+            , E.roomAscii = compileCondText (arAscii r)
             }
        else Left allErrs
   where
@@ -953,6 +953,7 @@ compileItemDefSafe registry i =
                 { E.itemId = aiId i
                 , E.itemName = aiName i
                 , E.itemDescription = compileCondText (aiTexts i)
+                , E.itemAscii = compileCondText (aiAscii i)
                 , E.itemKeywords = aiKeywords i
                 , E.itemTags = Set.fromList (aiTags i)
                 , E.itemEquipSlot = slot
@@ -1028,6 +1029,7 @@ compileNPCDefSafe registry n =
             { E.npcId = anId n
             , E.npcName = anName n
             , E.npcDescription = compileCondText (anTexts n)
+            , E.npcAscii = compileCondText (anAscii n)
             , E.npcDialogueTrees = compileDialogueTrees (anDialogue n)
             , E.npcKeywords = anKeywords n
             , E.npcMaxHealth = anMaxHealth n
