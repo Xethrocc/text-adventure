@@ -3,8 +3,12 @@ name:               img2ascii
 version:            0.1.0.0
 synopsis:           Convert images to ASCII art
 description:        Reads JPEG, PNG, BMP, GIF, TIFF, TGA and HDR images and renders
-                    them as ASCII art in the terminal. Supports adjustable
-                    output width and character sets.
+                    them as ASCII art in the terminal. Adjustable output width or
+                    row count, five character sets, and two render modes: a
+                    monochrome brightness ramp that survives any terminal, and a
+                    half-block mode that packs two pixels per cell in 24-bit
+                    colour. The row count follows the image aspect, because a
+                    terminal character cell is about twice as tall as it is wide.
 homepage:           https://github.com/Xethrocc/text-adventure
 license:            MIT
 license-file:       LICENSE
@@ -26,6 +30,16 @@ library
 executable img2ascii
   main-is:             Main.hs
   hs-source-dirs:      app
+  build-depends:       base >=4.12 && <5,
+                       img2ascii,
+                       JuicyPixels >=3.3 && <4
+  default-language:    Haskell2010
+  ghc-options:         -Wall -Werror=missing-fields
+
+test-suite img2ascii-tests
+  type:                exitcode-stdio-1.0
+  main-is:             Tests.hs
+  hs-source-dirs:      test
   build-depends:       base >=4.12 && <5,
                        img2ascii,
                        JuicyPixels >=3.3 && <4

@@ -1,18 +1,36 @@
 module Main where
 
-import Codec.Picture (readImage)
+import Codec.Picture (convertRGB8, imageHeight, imageWidth, readImage)
 import Control.Monad (when)
 import Data.Char (toLower)
+import Data.List (isPrefixOf)
 import ImgToAscii
   ( AsciiConfig (..)
   , CharSet (..)
+  , RenderMode (..)
   , defaultConfig
-  , imageToAscii
-  , scaleImage
+  , imageToAsciiFrom
+  , widthForRows
   )
 import System.Environment (getArgs, getProgName)
 import System.Exit (exitFailure, exitSuccess)
-import System.IO (hPutStrLn, stderr)
+import System.IO (hIsTerminalDevice, hPutStrLn, stderr, stdout)
+
+-- | Everything the command line can say.
+data Options = Options
+  { optConfig :: AsciiConfig
+  , optHeight :: Maybe Int        -- ^ `--height`: rows; the width is derived
+  , optFile   :: FilePath
+  }
+
+-- | Parser state: the config plus what was said on the command line. Tracking
+--   width/height explicitly is what makes "use either, not both" exact.
+data PState = PState
+  { psConfig :: AsciiConfig
+  , psWidth  :: Maybe Int
+  , psHeight :: Maybe Int
+  , psFile   :: Maybe FilePath
+  }
 
 parseCharSet :: String -> Maybe CharSet
 parseCharSet s = case map toLower s of
@@ -23,6 +41,13 @@ parseCharSet s = case map toLower s of
   "simple"   -> Just Simple
   _          -> Nothing
 
+parseMode :: String -> Maybe RenderMode
+parseMode s = case map toLower s of
+  "char" -> Just CharRamp
+  "ramp" -> Just CharRamp
+  "half" -> Just HalfBlock
+  _      -> Nothing
+
 printUsage :: IO ()
 printUsage = do
   pn <- getProgName
@@ -30,52 +55,75 @@ printUsage = do
   putStrLn ""
   putStrLn "Options:"
   putStrLn "  -w, --width N     Output width in characters (default: 80)"
+  putStrLn "  -H, --height N    Output rows instead; the width is derived from the"
+  putStrLn "                    image so the result keeps its proportions"
   putStrLn "  -c, --charset S   Character set: block, line, fine, standard, simple"
+  putStrLn "  -m, --mode M      char (default, works without colour) or half"
+  putStrLn "                    (two pixels per cell, needs a colour terminal)"
   putStrLn "  -i, --invert      Invert brightness"
   putStrLn "  -h, --help        Show this help"
+  putStrLn ""
+  putStrLn "The character cell is about twice as tall as it is wide, so the row"
+  putStrLn "count is derived from the image aspect: a square image comes out as a"
+  putStrLn "roughly square block of characters instead of a stretched one."
 
-parseWidth :: String -> Either String Int
-parseWidth value = case reads value of
-  [(width, "")] | width > 0 -> Right width
-  _ -> Left $ "invalid width '" ++ value ++ "' (expected a positive integer)"
+parsePos :: String -> Either String Int
+parsePos value = case reads value of
+  [(n, "")] | n > 0 -> Right n
+  _ -> Left $ "invalid number '" ++ value ++ "' (expected a positive integer)"
 
-parseArgs :: [String] -> Either String (AsciiConfig, FilePath)
-parseArgs = go defaultConfig Nothing
+parseArgs :: [String] -> Either String Options
+parseArgs argv = finish =<< go (PState defaultConfig Nothing Nothing Nothing) argv
   where
-    go _ Nothing [] = Left "no input file given"
-    go cfg (Just path) [] = Right (cfg, path)
-    go _ _ ("-w":[]) = Left "option -w requires a value"
-    go _ _ ("--width":[]) = Left "option --width requires a value"
-    go cfg path ("-w":value:rest) = setWidth cfg path value rest
-    go cfg path ("--width":value:rest) = setWidth cfg path value rest
-    go _ _ ("-c":[]) = Left "option -c requires a value"
-    go _ _ ("--charset":[]) = Left "option --charset requires a value"
-    go cfg path ("-c":value:rest) = setCharset cfg path value rest
-    go cfg path ("--charset":value:rest) = setCharset cfg path value rest
-    go cfg path ("-i":rest) = go cfg { asciiInvert = True } path rest
-    go cfg path ("--invert":rest) = go cfg { asciiInvert = True } path rest
-    go cfg Nothing ("--":[file]) = Right (cfg, file)
-    go _ Nothing ("--":[]) = Left "no input file given after --"
-    go _ Nothing ("--":_:extra:_) = Left $ "unexpected extra input file '" ++ extra ++ "'"
-    go cfg path ("--":[]) = go cfg path []
-    go _ (Just _) ("--":file:_) = Left $ "unexpected extra input file '" ++ file ++ "'"
-    go _ _ (arg:_)
-      | "-" `isPrefixOf` arg = Left $ "unknown option '" ++ arg ++ "'"
-    go cfg Nothing (file:rest) = go cfg (Just file) rest
-    go _ (Just _) (file:_) = Left $ "unexpected extra input file '" ++ file ++ "'"
+    finish (PState cfg w h (Just path))
+      | Just _ <- w, Just _ <- h = Left "use either --width or --height, not both"
+      | otherwise = Right (Options cfg h path)
+    finish (PState _ _ _ Nothing) = Left "no input file given"
 
-    setWidth cfg path value rest = do
-      width <- parseWidth value
-      go cfg { asciiWidth = width } path rest
+    -- options that need a value
+    withValue flag rest k = case rest of
+      (value:more) -> k value more
+      []           -> Left $ "option " ++ flag ++ " requires a value"
 
-    setCharset cfg path value rest = case parseCharSet value of
-      Just charset -> go cfg { asciiSet = charset } path rest
+    go st [] = pure st
+    go st (arg:rest) = case arg of
+      "-h"        -> go st rest          -- handled before parsing
+      "--help"    -> go st rest
+      "-i"        -> go st { psConfig = (psConfig st) { asciiInvert = True } } rest
+      "--invert"  -> go st { psConfig = (psConfig st) { asciiInvert = True } } rest
+      "-w"        -> withValue arg rest (setWidth st)
+      "--width"   -> withValue arg rest (setWidth st)
+      "-H"        -> withValue arg rest (setHeight st)
+      "--height"  -> withValue arg rest (setHeight st)
+      "-c"        -> withValue arg rest (setCharset st)
+      "--charset" -> withValue arg rest (setCharset st)
+      "-m"        -> withValue arg rest (setMode st)
+      "--mode"    -> withValue arg rest (setMode st)
+      "--"        -> go st { psFile = Just (unwords rest) } []
+      _ | "-" `isPrefixOf` arg -> Left $ "unknown option '" ++ arg ++ "'"
+        | otherwise -> case psFile st of
+            Nothing -> go st { psFile = Just arg } rest
+            Just _  -> Left $ "unexpected extra input file '" ++ arg ++ "'"
+
+    setWidth st value rest = do
+      n <- parsePos value
+      if psWidth st == Nothing && psHeight st /= Nothing
+        then Left "use either --width or --height, not both"
+        else go st { psConfig = (psConfig st) { asciiWidth = n }, psWidth = Just n } rest
+
+    setHeight st value rest = do
+      n <- parsePos value
+      if psHeight st == Nothing && psWidth st /= Nothing
+        then Left "use either --width or --height, not both"
+        else go st { psHeight = Just n } rest
+
+    setCharset st value rest = case parseCharSet value of
+      Just cs -> go st { psConfig = (psConfig st) { asciiSet = cs } } rest
       Nothing -> Left $ "invalid character set '" ++ value ++ "'"
 
-isPrefixOf :: String -> String -> Bool
-isPrefixOf [] _ = True
-isPrefixOf _ [] = False
-isPrefixOf (p:ps) (x:xs) = p == x && isPrefixOf ps xs
+    setMode st value rest = case parseMode value of
+      Just m  -> go st { psConfig = (psConfig st) { asciiMode = m } } rest
+      Nothing -> Left $ "invalid mode '" ++ value ++ "'"
 
 helpRequested :: [String] -> Bool
 helpRequested [] = False
@@ -91,10 +139,21 @@ main = do
       hPutStrLn stderr $ "Error: " ++ err
       hPutStrLn stderr "Use --help for usage information."
       exitFailure
-    Right (cfg, imgFile) -> do
-      result <- readImage imgFile
+    Right opts -> do
+      result <- readImage (optFile opts)
       case result of
         Left err -> hPutStrLn stderr ("Error reading image: " ++ err) >> exitFailure
-        Right dyn -> case scaleImage (asciiWidth cfg) dyn of
-          Left err -> hPutStrLn stderr ("Error scaling image: " ++ err) >> exitFailure
-          Right scaled -> putStr $ imageToAscii cfg scaled
+        Right dyn -> do
+          -- Resolve --height into a width using the image's own aspect.
+          let rgb8 = convertRGB8 dyn
+              cfg = case optHeight opts of
+                Nothing -> optConfig opts
+                Just rows -> (optConfig opts)
+                  { asciiWidth = widthForRows rows (imageWidth rgb8) (imageHeight rgb8) }
+          when (asciiMode cfg == HalfBlock) $ do
+            tty <- hIsTerminalDevice stdout
+            when (not tty) $
+              hPutStrLn stderr "Warning: --mode half needs a colour terminal; with redirected output the blocks carry no information."
+          case imageToAsciiFrom cfg dyn of
+            Left err -> hPutStrLn stderr ("Error scaling image: " ++ err) >> exitFailure
+            Right art -> putStr art

@@ -559,6 +559,37 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `adventure-schema.md` (Fähigkeiten) und `modules.md` (Rundenzustand).
 - Tests: **242** Engine- + **76** Worldbuilder-Tests, **29** E2E-Läufe.
 
+### ASCII-Kunst: Werkzeug repariert, Werkzeugkette geschlossen (Phase A)
+
+- **Geometrie korrigiert (Befund B1):** Die Ausgabe war rund doppelt so hoch wie
+  sie sein sollte — eine 200×200-Quelle ergab bei Zielbreite 60 *60* Zeilen statt
+  30, weil eine Terminalzelle etwa 2:1 hoch ist. `rowsForWidth`/`widthForRows`
+  leiten die Zeilenzahl jetzt aus dem Bildseitenverhältnis ab, und `--height`
+  erlaubt die Angabe in Zeilen statt Zeichen. Nachgemessen an einem echten
+  512×512-Foto: 40 Zeichen × 20 Zeilen.
+- **Flächenmittelung statt Punktabtastung (Befund B2):** `scaleToGrid` mittelt den
+  Quellbereich jeder Zelle (Box-Filter). Vorher wurde ein einzelnes Pixel
+  gesampelt: ein 1-Pixel-Schachbrett lieferte nur die Extreme `" "` und `"@"`,
+  heute genau einen Mittelgrau-Wert (127,127,127).
+- **Halbblock-Modus (Entscheidung D5):** `-m half` packt zwei Pixel pro Zelle
+  (`▀` mit Vorder-/Hintergrund in 24-Bit-Farbe, Farbcodes nur bei Änderung, jede
+  Zeile endet mit Reset) — doppelte Vertikalauflösung. Braucht einen
+  Farbterminal; bei umgeleiteter Ausgabe warnt das Werkzeug.
+- **Erste Test-Suite für `img2ascii`:** acht Gruppen (Geometrie, Mittelung,
+  Rampe/Invertierung, alle fünf Zeichensätze, Halbblock, Fehlerpfade, 1×1-Bild,
+  ungerade Höhe) mit synthetischen Bildern — läuft über `cabal test all` im CI mit.
+- **Hygiene:** die tote Konfigoption `asciiColor` ist entfernt (sie war als
+  „future" deklariert und wurde nie gelesen), das von Hand ausgerollte
+  `isPrefixOf` in `app/Main.hs` ist durch `Data.List.isPrefixOf` ersetzt, und
+  `--width`/`--height` schließen sich exakt aus (der Parser führt Buch, statt am
+  Standardwert zu raten).
+- **Doku:** `docs/adventure-schema.md` beschreibt die `ascii`-Form jetzt mit
+  Beispiel, Werkzeugaufrufen und den beiden YAML-Fallen (die erste Zeile muss die
+  geringste Einrückung haben; die gemeinsame Einrückung wird entfernt, die
+  relative bleibt).
+- Laufzeit (gemessen): ein 3-MP-Foto ergibt bei Breite 80 in 0,43 s Kunst — das
+  Werkzeug konvertiert offline, nicht im Spiel.
+
 ## [0.9.0.0] — Unreleased
 
 Phase 5 (Worldbuilder + Ports): Worldbuilder YAML/JSON-Compiler und TheFog-Portierung.

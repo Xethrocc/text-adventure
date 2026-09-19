@@ -36,7 +36,49 @@ Das war's. Der Worldbuilder füllt den Rest mit Defaults.
 | `on_look` | [AActionOutcome] | — | Effekte beim Anschauen |
 | `on_exit` | [AActionOutcome] | — | Effekte beim Verlassen |
 | `search` | [AActionOutcome] | — | Effekte bei `search` |
-| `ascii` | String | — | ASCII-Art-Banner (optional) |
+| `ascii` | String | — | ASCII-Art-Banner (optional, mehrzeilig als Block-Skalar; siehe unten) |
+
+### ASCII-Kunst (`ascii`)
+
+Das Feld nimmt die Kunst wörtlich und gibt sie bei Spielstart und bei `look`
+über der Beschreibung aus. Für mehrzeilige Kunst ist der **Block-Skalar** die
+richtige Form:
+
+```yaml
+rooms:
+  - id: halle
+    name: Halle
+    desc: Eine weite Halle.
+    ascii: |
+      /\_/\
+      ( o.o )
+      > ^ <
+```
+
+Zwei Fallen dabei:
+
+- Die **erste** Zeile muss die am geringsten eingerückte sein. YAML nimmt ihre
+  Einrückung als Blockeinrückung; eine spätere Zeile mit *weniger* Einrückung
+  macht die Datei ungültig (der Compiler meldet einen Parse-Fehler). Kunst, die
+  oben schmal und unten breit ist, gehört deshalb so ausgerichtet, dass die
+  oberste Zeile den kleinsten Rand hat.
+- Die gemeinsame Einrückung wird beim Einlesen **entfernt**; die *relative*
+  Einrückung innerhalb der Kunst bleibt erhalten. Kunst also nie mit der
+  absoluten Spalte planen, sondern mit den Leerzeichen, die sie *innerhalb* der
+  Figur braucht.
+
+Erzeugt wird die Kunst mit dem Werkzeug `img2ascii` (eigenes Paket im Repo):
+
+```
+cabal run img2ascii -- -w 60 bild.png          # Zeichen-Rampe, 60 Zeichen breit
+cabal run img2ascii -- -H 20 bild.png          # 20 Zeilen, Breite abgeleitet
+cabal run img2ascii -- -w 60 -m half bild.png  # Halbblock, zwei Pixel pro Zelle
+```
+
+Die Zeichenzelle eines Terminals ist etwa doppelt so hoch wie breit; das
+Werkzeug leitet die Zeilenzahl daraus ab, damit ein quadratisches Bild
+quadratisch bleibt. `-m half` braucht einen Farbterminal und trägt zwei Pixel je
+Zelle (doppelte Vertikalauflösung, dafür keine reine Textausgabe).
 
 ### Beschreibung mit Varianten (CondText)
 
