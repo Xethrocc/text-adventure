@@ -9,7 +9,9 @@ profiles and gameplay modules are all content.
 
 **Engine (`src/`, package `text-adventure`)**
 
-- Rooms with exits and locks (`locked_by`), darkness with light sources, optional ASCII-art banners
+- Rooms with exits and locks (`locked_by`), darkness with light sources
+- **ASCII art as data:** state-dependent (`CondText`), animated (`frames`/`every`, played by `watch`), coloured (24-bit ANSI, automatically stripped when stdout is not a terminal or `--no-color` is set), and interactive — marker glyphs bound to items/NPCs (`hotspots`, numbered by `map`/`legend`, addressed with `look at <n>`)
+- **Title and game-over banners** from `title_art` / `end_art` (generate them with `text2ascii`), falling back to the built-in frames when absent
 - Items: containers, equipment with stat bonuses, portability, hidden items found via `search`
 - NPCs: dialogue trees with conditional choices, per-NPC verb maps, state-dependent behaviour
 - **Rule core:** an effect DSL (`SetValue`, `ModifyValue`, `MoveEntity`, `Conditional`, `RandomChoice`, `GameEnd`, `Narrative`, `ApplyCondition`, `RaiseEvent`, …) plus triggers on events (`enter`, `leave`, `look`, `search`, `take`, `drop`, `use`, `state`, `command`, `turn`, `custom`) with `when` / `once` / `cooldown`
@@ -43,11 +45,12 @@ cabal run text-adventure -- --world /tmp/thefog/world.json --save /tmp/thefog/sa
 ```
 
 Engine flags: `--world FILE` (compiled GameWorld), `--save FILE` (initial
-SaveState, must exist), `--allow-invalid`, `--help`. In-game saves are written
-to `saves/<slot>.json`.
+SaveState, must exist), `--allow-invalid`, `--no-color` / `--color`
+(`--no-color` is the default whenever stdout is not a terminal), `--help`.
+In-game saves are written to `saves/<slot>.json`.
 
-Whole pipeline — build, both test suites, validation of 20 shipped
-adventures, 28 scripted playthroughs (20 happy paths + 8 failure paths):
+Whole pipeline — build, all four test suites, validation of 22 shipped
+adventures, 31 scripted playthroughs (22 happy paths + 9 failure paths):
 
 ```bash
 bash scripts/ci.sh
@@ -57,6 +60,7 @@ bash scripts/ci.sh
 
 - Movement: `go` / `move` / `walk <direction>`, or just the direction
 - `look`, `look at` / `examine <target>`, `search`
+- `look at <n>` (address the n-th object marked in the art; `map` numbers them), `watch [target]` (play animation frames), `map` / `legend` (art with numbered markers + legend)
 - `take` / `get` / `grab <item>`, `take all`, `take <item> and <item>`, `drop <item>`, `drop all`
 - `use <item>`, `use <item> on <target>`
 - `talk to <npc>`, `choose <n>` (pick a dialogue option)
@@ -137,15 +141,15 @@ no own state file. Their state lives in the existing `VarMap`
 - **State lives in the existing `SaveState`**, preferably as `VarMap` entries,
   so no feature needs its own save file or state silo.
 - Main modules: `Types.hs`, `Game.hs`, `GameLoop.hs`, `Parser.hs`, `Combat.hs`,
-  `Validate.hs`, `SaveLoad.hs`, `Verbs.hs`, `World.hs`, `Sample.hs` plus
-  `worldbuilder/src/Worldbuilder/{Types,Compile,CLI,ParseFile}.hs`.
+  `Validate.hs`, `SaveLoad.hs`, `Verbs.hs`, `World.hs`, `Sample.hs`, `Ansi.hs`
+  plus `worldbuilder/src/Worldbuilder/{Types,Compile,CLI,ParseFile}.hs`.
 
 ## Development
 
 ```bash
 cabal build all
-cabal test all --test-show-details=direct    # 241 engine tests, 75 worldbuilder tests
-bash scripts/ci.sh                           # build + tests + validation + 28 E2E playthroughs
+cabal test all --test-show-details=direct    # 259 engine tests, 83 worldbuilder tests, plus the img2ascii/text2ascii tool suites
+bash scripts/ci.sh                           # build + tests + validation + 31 E2E playthroughs
 cabal run worldbuilder -- check examples/thefog.yaml   # content statistics
 ```
 
@@ -159,7 +163,8 @@ an entry in `scripts/ci.sh`, tests in `test/Tests.hs` or
 - GHC 9.6 (developed with 9.6.7) and cabal-install 3.14+
 - Dependencies are resolved by cabal: `aeson`, `aeson-pretty`, `bytestring`,
   `containers`, `text`, `haskeline`, `time`, `directory` (engine);
-  `HsYAML-aeson`, `filepath` (worldbuilder); `JuicyPixels`, `vector` (img2ascii)
+  `HsYAML-aeson`, `filepath` (worldbuilder); `JuicyPixels`, `vector` (img2ascii);
+  `text2ascii` needs only `base`
 
 ## Contributing
 
