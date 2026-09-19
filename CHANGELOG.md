@@ -527,6 +527,18 @@ Modul-Segment bleibt jede bestehende Welt bit-identisch.
   `combat-tactical.yaml` macht `defend` jetzt wirksam — die Konterregel ist per
   `not: { var: combat.action, is: defend }` gegated, dazu eine Gegenregel, die
   den geblockten Hieb meldet. Neuer E2E-Lauf `combat-tactical-defend`.
+- **F3: taktischer Resolver entdoppelt** (Befund aus dem Code-Check). Die
+  `TargetNPC`- und `TargetShip`-Zweige waren Kopien: der Fähigkeiten-Block stand
+  wörtlich doppelt (~34 Zeilen), `defend` und `flee` ebenso. Die gemeinsamen
+  Rümpfe liegen jetzt einmal in `tacticalDefend` / `tacticalFlee` /
+  `tacticalAbility`; die acht Gleichungen sind einzeilige Delegationen, die nur
+  noch Ziel und Aktion wählen. Die beiden `attack`-Zweige bleiben getrennt — dort
+  unterscheiden sich Schadensmathematik (Verteidigungswert vs. `effectiveAttack`)
+  und Meldung („kill" vs. „destroy") echt. Netto −18 Zeilen (110 entfernt,
+  92 neu: Signaturen, Kommentare, die drei gemeinsamen Rümpfe).
+  **Verhaltensneutral belegt:** die Ausgaben von sieben E2E-Läufen
+  (`combat-tactical`, `-fail`, `-defend`, `ship-duel`, `-fail`, `combat-classic`,
+  `combat-narrative`) sind vor und nach dem Umbau byteweise identisch.
 - Tests: **241** Engine- + **75** Worldbuilder-Tests, **29** E2E-Läufe.
 
 ## [0.9.0.0] — Unreleased

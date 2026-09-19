@@ -119,6 +119,90 @@ initiativeEffectsTarget tc target st =
                , SetValue (VRVariable targetKey) (EVInt targetSpd) ]
         _ -> []
 
+-- | The display label of a combat target (what the player typed).
+targetLabel :: CombatTarget -> String
+targetLabel (TargetNPC _ disp)  = disp
+targetLabel (TargetShip _ disp) = disp
+
+-- | Round bookkeeping for a tactical action: which round, that the fight is
+--   running, and what the player did. `extra` is inserted before the initiative
+--   effects so each action keeps its authored effect order.
+tacticalStateEffects :: TacticalCombat -> CombatTarget -> Int -> String -> [Effect]
+                     -> GameState -> [Effect]
+tacticalStateEffects tc target round' actionName extra st =
+    [ SetValue (VRVariable combatRoundKey)   (EVInt round')
+    , SetValue (VRVariable combatEngagedKey) (EVInt 1)
+    , SetValue (VRVariable combatActionKey)  (EVString actionName) ]
+    ++ extra
+    ++ initiativeEffectsTarget tc target st
+
+-- | End-of-fight bookkeeping: the fight is over, the round counter resets.
+--   Deliberately without `combat.action` — a kill follows a state block that
+--   already set it.
+tacticalResetEffects :: [Effect]
+tacticalResetEffects =
+    [ SetValue (VRVariable combatRoundKey)   (EVInt 0)
+    , SetValue (VRVariable combatEngagedKey) (EVInt 0) ]
+
+-- | End-of-fight bookkeeping for an action that never set a state block
+--   (a successful flee): the action name is part of it.
+tacticalEndEffects :: String -> [Effect]
+tacticalEndEffects actionName =
+    tacticalResetEffects ++ [ SetValue (VRVariable combatActionKey) (EVString actionName) ]
+
+-- | Shared implementation of the tactical branches that do not depend on the
+--   target's *kind* — only on its label and on the initiative key. Keeping one
+--   body per action (instead of one per action × target) is what makes
+--   `TargetShip` a data extension rather than a second implementation.
+tacticalDefend :: TacticalCombat -> CombatTarget -> GameState -> ([Effect], [String])
+tacticalDefend tc target st =
+    let round' = combatRound st + 1
+    in ( tacticalStateEffects tc target round' "defend" [] st
+       , ["Round " ++ show round' ++ ": You brace yourself against the "
+          ++ targetLabel target ++ "."] )
+
+tacticalFlee :: TacticalCombat -> CombatTarget -> GameState -> ([Effect], [String])
+tacticalFlee tc target st =
+    let round' = combatRound st + 1
+    in if tcFleeAllowed tc
+       then ( tacticalEndEffects "flee"
+            , ["Round " ++ show round' ++ ": You flee from the "
+               ++ targetLabel target ++ "!"] )
+       else ( tacticalStateEffects tc target round' "flee" [] st
+            , ["You can't flee from the " ++ targetLabel target ++ "!"] )
+
+tacticalAbility :: TacticalCombat -> CombatTarget -> String -> GameState -> ([Effect], [String])
+tacticalAbility tc target abId st =
+    case Map.lookup abId (abilities (world st)) of
+        Nothing -> ([], ["Unknown ability '" ++ abId ++ "'."])
+        Just pa ->
+            if hasCondition ("cooldown_" ++ abId) st
+            then ([], ["Ability is on cooldown."])
+            else
+                let costVar = paCostVar pa
+                    cost = paCost pa
+                    curVal = if null costVar
+                             then cost
+                             else case getVariable costVar st of
+                                 Just (VVInt n) -> n
+                                 _              -> 0
+                in if curVal < cost
+                   then ([], ["Not enough resources."])
+                   else
+                       let round' = combatRound st + 1
+                           abilityMark = [ SetValue (VRVariable combatAbilityKey) (EVString abId) ]
+                           costEffects =
+                               if not (null costVar) && cost > 0
+                               then [ ModifyValue (VRVariable costVar) (-cost) ]
+                               else []
+                           cooldownEffects =
+                               if paCooldown pa > 0
+                               then [ ApplyCondition ("cooldown_" ++ abId) (paCooldown pa) Nothing Nothing ]
+                               else []
+                       in ( tacticalStateEffects tc target round' "ability" abilityMark st
+                              ++ costEffects ++ cooldownEffects ++ paEffects pa
+                          , ["Round " ++ show round' ++ ": You use " ++ paName pa ++ "!"] )
+
 -- | Tactical: one player action per round, enemy reacts via `on: turn`.
 --   The resolver:
 --   (1) increments `combat.round`
@@ -191,126 +275,24 @@ resolveTactical tc _actors (TargetShip vid disp) CAAttack st =
 
 -- Defend: no damage, marker for the enemy trigger.
 resolveTactical tc _actors (TargetNPC nid disp) CADefend st =
-    let round' = combatRound st + 1
-        stateEffects =
-            [ SetValue (VRVariable combatRoundKey)   (EVInt round')
-            , SetValue (VRVariable combatEngagedKey) (EVInt 1)
-            , SetValue (VRVariable combatActionKey)  (EVString "defend") ]
-            ++ initiativeEffects tc nid st
-    in (stateEffects, ["Round " ++ show round' ++ ": You brace yourself against the " ++ disp ++ "."])
+    tacticalDefend tc (TargetNPC nid disp) st
 
 resolveTactical tc _actors (TargetShip vid disp) CADefend st =
-    let round' = combatRound st + 1
-        stateEffects =
-            [ SetValue (VRVariable combatRoundKey)   (EVInt round')
-            , SetValue (VRVariable combatEngagedKey) (EVInt 1)
-            , SetValue (VRVariable combatActionKey)  (EVString "defend") ]
-            ++ initiativeEffectsTarget tc (TargetShip vid disp) st
-    in (stateEffects, ["Round " ++ show round' ++ ": You brace yourself against the " ++ disp ++ "."])
+    tacticalDefend tc (TargetShip vid disp) st
 
 -- Flee: end the fight if allowed.
 resolveTactical tc _actors (TargetNPC nid disp) CAFlee st =
-    if tcFleeAllowed tc
-    then let round' = combatRound st + 1
-             stateEffects =
-                 [ SetValue (VRVariable combatRoundKey)   (EVInt 0)
-                 , SetValue (VRVariable combatEngagedKey) (EVInt 0)
-                 , SetValue (VRVariable combatActionKey)  (EVString "flee") ]
-         in (stateEffects, ["Round " ++ show round' ++ ": You flee from the " ++ disp ++ "!"])
-    else let round' = combatRound st + 1
-             stateEffects =
-                 [ SetValue (VRVariable combatRoundKey)   (EVInt round')
-                 , SetValue (VRVariable combatEngagedKey) (EVInt 1)
-                 , SetValue (VRVariable combatActionKey)  (EVString "flee") ]
-                 ++ initiativeEffects tc nid st
-         in (stateEffects, ["You can't flee from the " ++ disp ++ "!"])
+    tacticalFlee tc (TargetNPC nid disp) st
 
 resolveTactical tc _actors (TargetShip vid disp) CAFlee st =
-    if tcFleeAllowed tc
-    then let round' = combatRound st + 1
-             stateEffects =
-                 [ SetValue (VRVariable combatRoundKey)   (EVInt 0)
-                 , SetValue (VRVariable combatEngagedKey) (EVInt 0)
-                 , SetValue (VRVariable combatActionKey)  (EVString "flee") ]
-         in (stateEffects, ["Round " ++ show round' ++ ": You flee from the " ++ disp ++ "!"])
-    else let round' = combatRound st + 1
-             stateEffects =
-                 [ SetValue (VRVariable combatRoundKey)   (EVInt round')
-                 , SetValue (VRVariable combatEngagedKey) (EVInt 1)
-                 , SetValue (VRVariable combatActionKey)  (EVString "flee") ]
-                 ++ initiativeEffectsTarget tc (TargetShip vid disp) st
-         in (stateEffects, ["You can't flee from the " ++ disp ++ "!"])
+    tacticalFlee tc (TargetShip vid disp) st
 
 -- Ability: player uses an ability (Phase 7f-3, step A3).
-resolveTactical tc _actors (TargetNPC nid _disp) (CAAbility abId) st =
-    case Map.lookup abId (abilities (world st)) of
-        Nothing -> ([], ["Unknown ability '" ++ abId ++ "'."])
-        Just pa ->
-            if hasCondition ("cooldown_" ++ abId) st
-            then ([], ["Ability is on cooldown."])
-            else
-                let costVar = paCostVar pa
-                    cost = paCost pa
-                    curVal = if null costVar
-                             then cost
-                             else case getVariable costVar st of
-                                 Just (VVInt n) -> n
-                                 _              -> 0
-                in if curVal < cost
-                   then ([], ["Not enough resources."])
-                   else
-                       let round' = combatRound st + 1
-                           stateEffects =
-                               [ SetValue (VRVariable combatRoundKey)   (EVInt round')
-                               , SetValue (VRVariable combatEngagedKey) (EVInt 1)
-                               , SetValue (VRVariable combatActionKey)  (EVString "ability")
-                               , SetValue (VRVariable combatAbilityKey) (EVString abId) ]
-                               ++ initiativeEffects tc nid st
-                           costEffects =
-                               if not (null costVar) && cost > 0
-                               then [ ModifyValue (VRVariable costVar) (-cost) ]
-                               else []
-                           cooldownEffects =
-                               if paCooldown pa > 0
-                               then [ ApplyCondition ("cooldown_" ++ abId) (paCooldown pa) Nothing Nothing ]
-                               else []
-                           allEffects = stateEffects ++ costEffects ++ cooldownEffects ++ paEffects pa
-                       in (allEffects, ["Round " ++ show round' ++ ": You use " ++ paName pa ++ "!"])
+resolveTactical tc _actors (TargetNPC nid disp) (CAAbility abId) st =
+    tacticalAbility tc (TargetNPC nid disp) abId st
 
-resolveTactical tc _actors (TargetShip vid _disp) (CAAbility abId) st =
-    case Map.lookup abId (abilities (world st)) of
-        Nothing -> ([], ["Unknown ability '" ++ abId ++ "'."])
-        Just pa ->
-            if hasCondition ("cooldown_" ++ abId) st
-            then ([], ["Ability is on cooldown."])
-            else
-                let costVar = paCostVar pa
-                    cost = paCost pa
-                    curVal = if null costVar
-                             then cost
-                             else case getVariable costVar st of
-                                 Just (VVInt n) -> n
-                                 _              -> 0
-                in if curVal < cost
-                   then ([], ["Not enough resources."])
-                   else
-                       let round' = combatRound st + 1
-                           stateEffects =
-                               [ SetValue (VRVariable combatRoundKey)   (EVInt round')
-                               , SetValue (VRVariable combatEngagedKey) (EVInt 1)
-                               , SetValue (VRVariable combatActionKey)  (EVString "ability")
-                               , SetValue (VRVariable combatAbilityKey) (EVString abId) ]
-                               ++ initiativeEffectsTarget tc (TargetShip vid _disp) st
-                           costEffects =
-                               if not (null costVar) && cost > 0
-                               then [ ModifyValue (VRVariable costVar) (-cost) ]
-                               else []
-                           cooldownEffects =
-                               if paCooldown pa > 0
-                               then [ ApplyCondition ("cooldown_" ++ abId) (paCooldown pa) Nothing Nothing ]
-                               else []
-                           allEffects = stateEffects ++ costEffects ++ cooldownEffects ++ paEffects pa
-                       in (allEffects, ["Round " ++ show round' ++ ": You use " ++ paName pa ++ "!"])
+resolveTactical tc _actors (TargetShip vid disp) (CAAbility abId) st =
+    tacticalAbility tc (TargetShip vid disp) abId st
 
 -- CAUseItem: future steps.
 resolveTactical _tc _actors _target _ _st =
