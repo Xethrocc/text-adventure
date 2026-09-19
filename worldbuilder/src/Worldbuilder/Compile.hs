@@ -487,8 +487,9 @@ mergeEnvironmentVars varDefs varInitials envDefs envInitials =
 
 -- | Compile the `stealth:` segment. Noise becomes a variable; the compiler
 --   emits one `on: enter` trigger per room (gain, clamped to max), one
---   `on: turn` observer trigger per NPC (fires while noise >= hears_at,
---   re-arms after `cooldown` turns), and one final `on: turn` decay trigger.
+--   `on: turn` observer trigger per NPC (fires while noise >= hears_at and the
+--   observer is not dead, re-arms after `cooldown` turns), and one final
+--   `on: turn` decay trigger.
 --   Order matters: observers run BEFORE decay, so a guard hears the full
 --   noise of the same turn before it fades. No core change.
 compileStealth :: [String] -> [String] -> Maybe AStealth
@@ -512,7 +513,14 @@ compileStealth roomIds npcIds (Just st) =
             | rId <- roomIds ]
         observerTriggers =
             [ E.TriggerDef ("stealth.observe." ++ obNPC o) E.OnTurn
-                (Just (E.CompareVar var E.CGte (obHearsAt o)))
+                (Just (E.PAll
+                    [ E.CompareVar var E.CGte (obHearsAt o)
+                    -- A body hears nothing. This is the condition-side twin of
+                    -- the engine's `isDeadNPC` (status == "dead"), written with
+                    -- existing predicates — no core change. Distance keeps being
+                    -- modelled by `hears_at`, so there is deliberately no room
+                    -- check here.
+                    , E.PNot (E.EntityHasState (obNPC o) "dead") ]))
                 [ compileOutcomes (obOnHear o) ] False (obCooldown o)
             | o <- stObservers st ]
         decayTrigger =

@@ -734,6 +734,26 @@ Gegner-Kunst („lebend/tot") im Spiel unerreichbar machten:
   Feld (`Maybe Bool`, auto) wieder ein — beides richtig, in dieser Reihenfolge
   nur missverständlich.
 
+### Stealth: ein toter Beobachter hört nichts mehr
+
+Befund beim Prüfen der Auswirkungen der Leichen-Änderung — vorbestehend und
+latent, weil die Stealth-Fixture die Wache nie tötet:
+
+- Der generierte Beobachtungstrigger (`stealth.observe.<npc>`) hatte als
+  Bedingung **nur** `noise >= hears_at`. Ein getöteter (oder längst
+  verschwundener) Wächter hörte also weiter und rüstete um.
+- Der Trigger verlangt jetzt zusätzlich `PNot (EntityHasState <npc> "dead")` —
+  dasselbe Kriterium wie `isDeadNPC` in der Engine, ausgedrückt mit vorhandenen
+  Prädikaten, kein Kern-Eingriff. Distanz modelliert weiterhin `hears_at`,
+  deshalb gibt es bewusst keine Raumprüfung: ein lebender Wächter hört durch
+  Wände, ein toter hört nie.
+- Der bestehende Test prüfte die Bedingung *formgleich*
+  (`CompareVar noise >= 5`) und ist mitgezogen; dazu kommt ein Verhaltenstest,
+  der die generierte Bedingung mit demselben Auswerter prüft, den die Engine
+  beim Feuern benutzt (`evalPredicate`): bei gleichem Lärm feuert sie für einen
+  lebenden Wächter und nicht für eine Leiche.
+- Doku: `docs/modules.md` beschreibt die Semantik.
+
 ## [0.9.0.0] — Unreleased
 
 Phase 5 (Worldbuilder + Ports): Worldbuilder YAML/JSON-Compiler und TheFog-Portierung.

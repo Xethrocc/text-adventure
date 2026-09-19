@@ -182,6 +182,11 @@ stealth:
 
 - **Reihenfolge:** Beobachter feuern VOR dem Decay-Trigger, damit die Wache
   den vollen Lärm desselben Zuges hört, bevor er abklingt.
+- **Körper hören nichts:** der Beobachtungstrigger verlangt zusätzlich, dass der
+  NPC nicht `dead` ist (`PNot (EntityHasState <npc> "dead")` — dasselbe Kriterium
+  wie `isDeadNPC` in der Engine, mit vorhandenen Prädikaten, kein Kern-Eingriff).
+  Distanz modelliert weiterhin `hears_at`, deshalb gibt es bewusst keine
+  Raumprüfung: ein lebender Wächter hört durch Wände, ein toter hört nie.
 - **Schleichen ist nicht magisch:** ein Custom-Verb (`sneak`) + eine
   `on: command sneak`-Regel, die `noise` senkt — dieselbe Datenmechanik wie
   `buy` in 7b.

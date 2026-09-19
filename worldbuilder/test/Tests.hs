@@ -17,6 +17,7 @@ import Worldbuilder.Types
 import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome)
 import Worldbuilder.ParseFile (parseAdventureFile)
 import Types as E
+import Game (emptyGameState, evalPredicate)
 import Validate (validateWorld, validateGameState, ValidationError (..))
 
 -- | Helper: a minimal room set for validateGameState tests
@@ -1341,13 +1342,28 @@ testStealthCompiles = do
                                     (E.SetValue (E.VRVariable "noise") (E.EVInt 10)) E.Noop ]
                     (concatMap E.trEffects nmove)
             r4 <- expectEqual [E.OnTurn] (map E.trEvent observe)
-            r5 <- expectEqual (Just (E.CompareVar "noise" E.CGte 5)) (E.trCondition (head observe))
+            r5 <- expectEqual (Just (E.PAll
+                                    [ E.CompareVar "noise" E.CGte 5
+                                    -- F6-Nacharbeit: a body hears nothing
+                                    , E.PNot (E.EntityHasState "guard" "dead") ]))
+                    (E.trCondition (head observe))
             r6 <- expectEqual 3 (E.trCooldown (head observe))
             r7 <- expectEqual [E.OnTurn] (map E.trEvent decay)
             -- observer before decay in trigger order
             r8 <- expectTrue "observer precedes decay"
                 (length (takeWhile (/= "stealth.observe.guard") ids) < length (takeWhile (/= "stealth.decay") ids))
-            pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+            -- Behaviour, not just shape: same noise, living guard vs. corpse.
+            let baseState = emptyGameState { world = crWorld cr, save = crSave cr }
+                withNoise st = st { save = (save st)
+                                      { variables = Map.insert "noise" (E.VVInt 9) (variables (save st)) } }
+                asCorpse st = st { save = (save st)
+                                     { npcStates = Map.adjust (\ns -> ns { npcStatus = "dead" })
+                                                              "guard" (npcStates (save st)) } }
+                condFires st = maybe False (\p -> evalPredicate p st) (E.trCondition (head observe))
+            r9 <- expectTrue "a living observer hears the noise" (condFires (withNoise baseState))
+            r10 <- expectTrue "a dead observer hears nothing"
+                     (not (condFires (asCorpse (withNoise baseState))))
+            pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10])
 
 -- | Stealth validation: observer NPC must exist; the noise variable must not
 --   be declared separately.
