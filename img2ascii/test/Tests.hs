@@ -22,7 +22,6 @@ import Data.List (isInfixOf, isPrefixOf, nub)
 import Data.Word (Word8)
 import ImgToAscii
   ( AsciiConfig (..)
-  , CharSet (..)
   , RenderMode (..)
   , defaultConfig
   , imageToAscii

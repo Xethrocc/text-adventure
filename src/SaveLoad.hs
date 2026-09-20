@@ -7,6 +7,7 @@ import Control.Exception (try, SomeException)
 import Data.List (foldl', sortBy)
 import Data.Time (getCurrentTime, formatTime, defaultTimeLocale)
 import System.Directory (createDirectoryIfMissing, listDirectory, doesFileExist)
+import System.FilePath ((</>))
 
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Encode.Pretty as Aeson
@@ -39,10 +40,20 @@ formatSaveEntry currentChecksum sf =
     compat | worldChecksum sf == currentChecksum = "compatible"
            | otherwise                           = "world mismatch!"
 
+-- | The (working-directory relative) directory save slots live in.
+savesDir :: FilePath
+savesDir = "saves"
+
+-- | Path of one save slot. Built with `System.FilePath` so the separator is the
+--   platform's: a literal "/" happens to work on Windows too, but the engine is
+--   meant to run wherever its authors do.
+saveSlotPath :: String -> FilePath
+saveSlotPath slotName = savesDir </> (slotName ++ ".json")
+
 -- | Save game to a named slot with metadata
 saveGame :: GameState -> String -> IO ()
 saveGame state slotName = do
-    createDirectoryIfMissing True "saves"
+    createDirectoryIfMissing True savesDir
     now <- getCurrentTime
     let timestamp = formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S" now
         checksum = computeWorldChecksum (world state)
@@ -53,14 +64,14 @@ saveGame state slotName = do
             , saveName      = slotName
             , saveData      = save state
             }
-        filepath = "saves/" ++ slotName ++ ".json"
+        filepath = saveSlotPath slotName
     BL.writeFile filepath (Aeson.encodePretty saveFile)
     putStrLn $ "Game saved to " ++ filepath ++ " (" ++ timestamp ++ ")."
 
 -- | Load game from a named slot, with checksum validation
 loadGame :: GameState -> String -> IO (Maybe GameState)
 loadGame state slotName = do
-    let filepath = "saves/" ++ slotName ++ ".json"
+    let filepath = saveSlotPath slotName
     exists <- doesFileExist filepath
     if not exists
     then do
@@ -114,8 +125,8 @@ loadLegacySave state filepath = do
 -- | List all saves in the saves/ directory
 listSaves :: GameWorld -> IO ()
 listSaves gw = do
-    createDirectoryIfMissing True "saves"
-    files <- listDirectory "saves"
+    createDirectoryIfMissing True savesDir
+    files <- listDirectory savesDir
     let jsonFiles = filter (\f -> length f > 5 && drop (length f - 5) f == ".json") files
     if null jsonFiles
     then putStrLn "No saved games found."
@@ -130,7 +141,7 @@ listSaves gw = do
   where
     loadSaveEntry :: String -> FilePath -> IO (Maybe (String, String))
     loadSaveEntry currentChecksum filename = do
-        result <- try (BL.readFile ("saves/" ++ filename)) :: IO (Either SomeException BL.ByteString)
+        result <- try (BL.readFile (savesDir </> filename)) :: IO (Either SomeException BL.ByteString)
         case result of
             Left _ -> return Nothing
             Right contents -> case Aeson.decode contents of

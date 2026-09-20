@@ -10,7 +10,7 @@ import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import System.Exit (exitFailure)
-import System.Directory (doesFileExist, getTemporaryDirectory, removeFile)
+import System.Directory (doesFileExist, getTemporaryDirectory)
 import System.FilePath ((</>))
 import System.IO (hSetEncoding, stdout, utf8)
 import Worldbuilder.Types

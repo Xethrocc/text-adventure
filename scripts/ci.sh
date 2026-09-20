@@ -28,7 +28,18 @@ fi
 rm -f "$build_log"
 
 echo "== 2. unit tests =="
-cabal test all
+# The warnings gate above only sees libraries and executables: `cabal build all`
+# does not build test components, they are compiled here. So check this log too —
+# with the compiler's own marker (`warning: [-W…]`), so the runtime message
+# "Warning: This save was made with a different world version" is not mistaken
+# for a compiler warning. `set -e`/`pipefail` already abort on a failing suite.
+test_log="$(mktemp)"
+cabal test all 2>&1 | tee "$test_log"
+if grep -q 'warning: \[-W' "$test_log"; then
+    echo "FAIL: a test component produced compiler warnings (see above)"
+    exit 1
+fi
+rm -f "$test_log"
 
 echo "== 3. validate adventures =="
 adv=(examples/demo.yaml examples/thefog.yaml)

@@ -3246,8 +3246,8 @@ testSaveLoadRoundTrip = do
             Just st' -> expectEqual (save st0) (save st')
             Nothing  -> expectTrue "a mismatching world still loads" False
         -- a bare SaveState is picked up by the legacy branch
-        createDirectoryIfMissing True "saves"
-        BLC.writeFile "saves/l2legacy.json" (Aeson.encode (save st0))
+        createDirectoryIfMissing True SaveLoad.savesDir
+        BLC.writeFile (SaveLoad.saveSlotPath "l2legacy") (Aeson.encode (save st0))
         legacy <- SaveLoad.loadGame st0 "l2legacy"
         r3 <- case legacy of
             Just st' -> expectEqual (save st0) (save st')
@@ -3258,7 +3258,7 @@ testSaveLoadRoundTrip = do
         mapM_ (\f -> do
                   e <- doesFileExist f
                   when e (removeFile f))
-              ["saves/l2slot.json", "saves/l2legacy.json"]
+              [SaveLoad.saveSlotPath "l2slot", SaveLoad.saveSlotPath "l2legacy"]
         pure (r1 && r2 && r3 && r4)
 
 -- | L11: the turn pipeline is `incrementTurnCount` → `tickConditions` →

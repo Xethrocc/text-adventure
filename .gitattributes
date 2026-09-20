@@ -1,0 +1,23 @@
+# Line endings. Everything is normalised to LF in the repository.
+#
+# The scripted playthrough inputs (`ci/e2e/*`) are read line by line by the
+# engine, so they must be LF even in a Windows checkout — with CRLF every command
+# would carry a stray \r. Windows batch helpers are the one exception: cmd.exe is
+# happiest with CRLF.
+#
+# (There are no binary assets in the repository yet. When art, fonts or clips are
+# added, mark them `binary` here so git leaves their bytes alone.)
+
+* text=auto
+
+ci/e2e/* text eol=lf
+*.bat    text eol=crlf
+
+# Sources and docs: LF in the working tree on every platform.
+*.hs    text eol=lf
+*.cabal text eol=lf
+*.sh    text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.md    text eol=lf
+*.json  text eol=lf
