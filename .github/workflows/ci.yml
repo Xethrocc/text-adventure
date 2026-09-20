@@ -32,3 +32,55 @@ jobs:
 
       - name: Run CI pipeline (build, tests, validate, e2e)
         run: bash scripts/ci.sh
+
+  # W2: the same pipeline on Windows. The engine and tools are meant to run
+  # wherever their authors do, so the build must stay green there — and the
+  # W1 line-ending rules are verified on a real Windows checkout.
+  build-and-test-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        # Git Bash: scripts/ci.sh is plain bash + coreutils (mktemp, tee, trap,
+        # PIPESTATUS); it already carries a chcp.com 65001 fallback for Windows.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Haskell
+        uses: haskell-actions/setup@v2
+        with:
+          ghc-version: "9.6.7"
+          cabal-version: "latest"
+
+      # On Windows cabal stores packages under %APPDATA%\cabal.
+      - name: Cache cabal store
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Roaming/cabal/store
+          key: windows-cabal-${{ hashFiles('**/*.cabal', 'cabal.project') }}
+          restore-keys: |
+            windows-cabal-
+
+      - name: Cache build directory
+        uses: actions/cache@v4
+        with:
+          path: dist-newstyle
+          key: windows-dist-${{ hashFiles('**/*.cabal', 'cabal.project') }}
+          restore-keys: |
+            windows-dist-
+
+      - name: Update package index
+        run: cabal update
+
+      # W1 verification: on a runner whose git may use CRLF, the checked-out
+      # e2e inputs must still be LF (the engine reads them line by line).
+      - name: Verify line endings of the e2e inputs
+        run: |
+          if grep -rlq $'\r' ci/e2e/*.in; then
+            echo "FAIL: CRLF in the e2e inputs (the .gitattributes rules did not apply)"
+            exit 1
+          fi
+          echo "OK: all e2e inputs are LF"
+
+      - name: Run CI pipeline (build, tests, validate, e2e)
+        run: bash scripts/ci.sh
