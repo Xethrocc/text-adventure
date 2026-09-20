@@ -56,6 +56,16 @@ adventures, 32 scripted playthroughs (23 happy paths + 9 non-victory runs):
 bash scripts/ci.sh
 ```
 
+### Windows without Haskell
+
+CI runs the same pipeline on `windows-latest` and uploads a ready-to-use
+release ZIP as the artifact `text-adventure-win64` (see the [Actions
+tab](https://github.com/Xethrocc/text-adventure/actions)). Unpack it,
+double-click `play.bat`, type `demo`, press Enter — no Haskell, no WSL, no
+admin rights. Authoring works the same way: put a YAML file into
+`adventures\`, double-click `check.bat`, then `play.bat`. `START-HERE.txt`
+inside the ZIP walks through it step by step.
+
 ## In-game commands
 
 - Movement: `go` / `move` / `walk <direction>`, or just the direction

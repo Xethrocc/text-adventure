@@ -1,0 +1,82 @@
+Text Adventure Engine -- Windows quick start
+=============================================
+
+Welcome! This folder lets you play and build text adventures without
+installing anything. You do NOT need Haskell, WSL or an admin account.
+
+What is in here
+---------------
+  bin\text-adventure.exe    the game engine (plays a compiled world)
+  bin\worldbuilder.exe      the authoring tool (checks and compiles your YAML)
+  bin\img2ascii.exe         converts a picture to ASCII art for your worlds
+  bin\text2ascii.exe        renders big letter banners from text
+  examples\                 ready-made adventures, including a full demo
+  adventures\               YOUR adventures go here (starts with the demo)
+  worlds\                   compiled adventures land here (created by check.bat)
+  check.bat                 validates + compiles an adventure
+  play.bat                  starts a compiled adventure
+
+Play right now (no setup)
+-------------------------
+  1. Double-click play.bat
+  2. Type  demo  and press Enter.
+  3. Type  help  in the game to see all commands. quit  ends the game.
+
+Write your own adventure
+------------------------
+  1. Copy any file from examples\ into adventures\ and rename it,
+     e.g.  mygame.yaml
+  2. Edit it with a plain text editor. It is ordinary YAML: rooms,
+     items, NPCs, exits. Keep the indentation exactly as it is.
+  3. Double-click check.bat  -- it validates every file in adventures\
+     and compiles them into worlds\.
+     If it lists errors, read them, fix the YAML, run check.bat again.
+  4. Double-click play.bat and type the name of your world.
+
+Art for your worlds (optional)
+------------------------------
+  Rooms, items and NPCs accept an  ascii:  field with ASCII art
+  (multi-line art uses the YAML block form):
+
+      ascii: |
+        ( o.o )
+         > ^ <
+
+  Two rules for the block form:
+  - The FIRST line must be the least indented one, or the file will not
+    parse. Widen later lines, never the first.
+  - The shared indentation is removed; spacing INSIDE your figure stays.
+
+  To make art from a picture:
+      bin\img2ascii.exe -w 60 picture.png > art.txt
+  Paste the lines from art.txt into the ascii: field of a room.
+
+Common errors
+-------------
+  "error UnknownDirection at rooms.<id>.exits.<dir>: ..."
+    An exit points to a room id that does not exist. Fix the target.
+
+  "error Duplicate... "
+    Two things share an id. Ids must be unique within their section.
+
+  Nothing compiles, but it looks fine
+    YAML is indentation-sensitive. Use spaces, never tabs, and keep
+    the level of indentation unchanged while editing.
+
+Colour note
+-----------
+  The game uses ANSI colours in modern terminals (Windows Terminal,
+  recent conhost). If your console shows escape codes as text, the game
+  also accepts --no-color to print plain text:
+      bin\text-adventure.exe --world worlds\demo\world.json --no-color
+
+Command line reference
+----------------------
+  check.bat                      validate + compile everything in adventures\
+  check.bat mygame.yaml          validate + compile one file
+  play.bat                       pick a compiled world by name
+  play.bat demo                  start the compiled world  demo
+  bin\worldbuilder.exe --help    all authoring commands
+  bin\text-adventure.exe --help  all engine options
+
+Have fun!

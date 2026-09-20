@@ -84,3 +84,16 @@ jobs:
 
       - name: Run CI pipeline (build, tests, validate, e2e)
         run: bash scripts/ci.sh
+
+      # W4: bundle the release ZIP. The wrapper scripts and START-HERE.txt live
+      # in packaging/windows/ (reviewable, CRLF via .gitattributes); this step
+      # only assembles what the build produced with what the repo carries.
+      - name: Build release ZIP
+        run: packaging/build-release.sh release/text-adventure-win64.zip
+
+      - name: Upload release ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: text-adventure-win64
+          path: release/text-adventure-win64.zip
+          if-no-files-found: error
