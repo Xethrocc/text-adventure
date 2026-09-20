@@ -30,13 +30,26 @@ trap 'rm -rf "$stage"' EXIT
 bundle="$stage/text-adventure"
 mkdir -p "$bundle/bin"
 
-# The four executables, one path per invocation, checked for emptiness.
+# The four executables, one path per invocation. On Windows, `cabal list-bin`
+# prints Windows paths with a CRLF line ending: the `$( )` capture strips the
+# trailing LF but keeps the `\r`, so the path must be cleaned or `cp` fails
+# with "No such file" (this cost one failed CI run — the step died within
+# seconds, far too fast to reach the packaging itself). MSYS tools cope with
+# `C:\…` only sometimes; cygpath turns it into a form cp always understands.
 for exe in text-adventure worldbuilder img2ascii text2ascii; do
-    path="$(cabal list-bin "exe:$exe")"
+    path="$(cabal list-bin "exe:$exe" | tr -d '\r')"
     if [ -z "$path" ]; then
         echo "ERROR: cabal list-bin exe:$exe returned nothing" >&2
         exit 1
     fi
+    if command -v cygpath >/dev/null 2>&1; then
+        path="$(cygpath -u "$path")"
+    fi
+    if [ ! -f "$path" ]; then
+        echo "ERROR: exe:$exe not built or not found at: $path" >&2
+        exit 1
+    fi
+    echo "bundling exe:$exe"
     cp "$path" "$bundle/bin/"
 done
 
