@@ -25,8 +25,14 @@ fi
 
 out="${1:?usage: packaging/build-release.sh <out.zip>  (executables must be built)}"
 
+# Resolve the output path BEFORE anything chdirs elsewhere, and make sure the
+# target directory exists. (A relative $out combined with the `cd "$stage"`
+# further down sent the first CI attempts' zip into the staging directory while
+# `ls` looked in the repo — the archive was written, the step still failed.)
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
+mkdir -p "$(dirname "$out")"
+out="$(realpath "$out")"   # absolute; survives the cd below
 bundle="$stage/text-adventure"
 mkdir -p "$bundle/bin"
 
