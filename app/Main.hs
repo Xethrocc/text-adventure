@@ -15,9 +15,50 @@ import System.Exit (exitFailure)
 import System.IO (hIsTerminalDevice, hSetEncoding, stdout, stderr, stdin, utf8)
 
 #if defined(mingw32_HOST_OS)
+import Data.Bits ((.|.))
 import Data.Word (Word32)
+import Foreign.Marshal.Alloc (alloca)
+import Foreign.Ptr (castPtr, nullPtr)
+import Foreign.Storable (peek, poke)
+
 foreign import ccall unsafe "SetConsoleCP" c_SetConsoleCP :: Word32 -> IO Bool
 foreign import ccall unsafe "SetConsoleOutputCP" c_SetConsoleOutputCP :: Word32 -> IO Bool
+foreign import ccall unsafe "GetStdHandle" c_GetStdHandle :: Word32 -> IO (Ptr ())
+foreign import ccall unsafe "GetConsoleMode" c_GetConsoleMode :: Ptr () -> Ptr Word32 -> IO Bool
+foreign import ccall unsafe "SetConsoleMode" c_SetConsoleMode :: Ptr () -> Word32 -> IO Bool
+
+-- | STD_OUTPUT_HANDLE = (DWORD)(-11); as a HANDLE it is sign-extended.
+stdOutputHandle :: Word32
+stdOutputHandle = 0xFFFFFFF5   -- (-11) truncated to DWORD width
+
+-- | W3: try to enable ANSI escape processing on the classic Windows console
+--   (ENABLE_VIRTUAL_TERMINAL_PROCESSING, 0x0004). Windows Terminal has VT on by
+--   default, so this is a no-op there; on old conhosts it is what makes colour
+--   art readable instead of `[38;5;…m`-mush. Preserves the existing mode bits
+--   and reports failure cleanly, so the caller can fall back to monochrome
+--   output instead of printing raw sequences a terminal cannot render.
+enableVT :: IO Bool
+enableVT = do
+    h <- c_GetStdHandle stdOutputHandle
+    if h == nullPtr || h == castPtr invalidHandle
+        then pure False
+        else
+            alloca $ \buf -> do
+                poke buf 0
+                ok <- c_GetConsoleMode h buf
+                if not ok
+                    then pure False   -- redirected, or not a console at all
+                    else do
+                        old <- peek buf
+                        c_SetConsoleMode h (old .|. vtBit)
+  where
+    vtBit = 0x0004 :: Word32
+    invalidHandle = 0xFFFFFFFFFFFFFFFF :: Word64   -- INVALID_HANDLE_VALUE
+
+-- | W3: initialise the Windows console. Returns whether ANSI escapes are safe
+--   to emit on stdout (VT enabled or already on).
+initConsoleColor :: IO Bool
+initConsoleColor = enableVT
 
 initConsole :: IO ()
 initConsole = do
@@ -27,6 +68,10 @@ initConsole = do
     hSetEncoding stderr utf8
     hSetEncoding stdin utf8
 #else
+-- | Non-Windows: VT escapes always render; the policy is the caller's TTY check.
+initConsoleColor :: IO Bool
+initConsoleColor = pure True
+
 initConsole :: IO ()
 initConsole = do
     hSetEncoding stdout utf8
@@ -93,7 +138,12 @@ main = do
         Nothing -> putStr usage
         Just opts -> do
             tty <- hIsTerminalDevice stdout
-            let outFilter = ansiFilter tty (coNoColor opts)
+            -- W3: on Windows, VT processing must be on for escapes to render.
+            -- It is attempted once here; when it fails (old conhost), colour is
+            -- dropped as if the terminal could not show it — the fallback the
+            -- existing filter already implements.
+            vt <- initConsoleColor
+            let outFilter = ansiFilter (tty && vt) (coNoColor opts)
             case coWorld opts of
                 Nothing -> do
                     putStrLn (outFilter (titleBanner initSampleGame))
