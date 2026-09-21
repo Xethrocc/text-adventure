@@ -16,7 +16,7 @@ import System.IO (hIsTerminalDevice, hSetEncoding, stdout, stderr, stdin, utf8)
 
 #if defined(mingw32_HOST_OS)
 import Data.Bits ((.|.))
-import Data.Word (Word32, Word64)
+import Data.Word (Word32)
 import Foreign.Marshal.Alloc (alloca)
 import Foreign.Ptr (Ptr, nullPtr, wordPtrToPtr)
 import Foreign.Storable (peek, poke)
