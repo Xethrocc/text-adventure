@@ -14,6 +14,7 @@ import System.Directory (doesFileExist, getTemporaryDirectory)
 import System.FilePath ((</>))
 import System.IO (hSetEncoding, stdout, utf8)
 import Worldbuilder.Types
+import Worldbuilder.Locate (lineForPath)
 import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome)
 import Worldbuilder.ParseFile (parseAdventureFile)
 import Types as E
@@ -1058,6 +1059,35 @@ testUnknownCommandVerbFails = do
     case compileAdventure adv of
         Left errs -> expectContains "UnknownCommandVerb" (issuesText errs)
         Right _   -> expectTrue "expected UnknownCommandVerb" False
+
+-- | W5: `lineForPath` finds the source line of a dotted issue path. The matching
+--   rule is nesting-based: first segment at indent 0, each following segment
+--   strictly deeper and after its parent. Duplicate keys are disambiguated by
+--   that rule, and an unmatched tail falls back to the deepest matched prefix.
+testLocateLineForPath :: IO Bool
+testLocateLineForPath = do
+    let yaml = unlines
+            [ "rooms:"
+            , "  - id: hall"
+            , "    ascii:"
+            , "      default: |"
+            , "        XXX"
+            , "      hotspots:"
+            , "        - { glyph: \"*\", target: lever }"
+            , "  - id: cave"
+            , "    ascii:"
+            , "      default: |"
+            , "        YYY"
+            ]
+    r1 <- expectEqual (Just (4, "      default: |")) (lineForPath yaml "rooms.hall.ascii.default")
+    -- two `ascii:` blocks: the deeper-indent rule picks the one under cave
+    r2 <- expectEqual (Just (9, "    ascii:")) (lineForPath yaml "rooms.cave.ascii")
+    r3 <- expectEqual (Just (2, "  - id: hall")) (lineForPath yaml "rooms.hall")
+    -- unknown segment falls back to the deepest matched prefix
+    r4 <- expectEqual (Just (3, "    ascii:")) (lineForPath yaml "rooms.hall.ascii.nope")
+    r5 <- expectTrue "unknown top segment -> Nothing" (isNothing (lineForPath yaml "monsters.x"))
+    pure (and [r1, r2, r3, r4, r5])
+  where isNothing = maybe True (const False)
 
 -- | P1-14: core command names (`examine`) and declared custom verbs both pass
 --   the command-verb check.
@@ -2137,6 +2167,7 @@ tests =
     , ("combo fixture (5 modules) compiles + validates", testComboFixtureCompiles)
     , ("combat. namespace is reserved (7f-3 A1)", testCombatVariableClash)
     , ("cooldown_ condition namespace is reserved (F6)", testCooldownConditionClash)
+    , ("lineForPath finds issue source lines (W5)", testLocateLineForPath)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an

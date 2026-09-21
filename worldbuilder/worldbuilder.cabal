@@ -17,7 +17,8 @@ library
   exposed-modules:     Worldbuilder.Types
                        Worldbuilder.Compile
                        Worldbuilder.CLI
-                       Worldbuilder.ParseFile
+                       Worldbuilder.Locate
+                   Worldbuilder.ParseFile
   hs-source-dirs:      src
   build-depends:       base >=4.12 && <5,
                        text-adventure,
