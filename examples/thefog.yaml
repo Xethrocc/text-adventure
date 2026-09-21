@@ -1,6 +1,9 @@
 {
   "name": "The Fog",
   "start_room": "loc_0",
+  "end_art": {
+    "fog": "=========================================\n  GAME OVER\n=========================================\n  The fog has taken the land."
+  },
   "rooms": [
     {
       "id": "loc_0",
@@ -699,7 +702,7 @@
       "location": "loc_0",
       "verb_map": {
         "read,intact": [
-          { "msg": "The prophecy reads: 'Four shrines shall call, a crystal to wake them all, a wolf shall fall, and a princess saved before the throne.'" }
+          { "msg": "The Prophecy reads: 'It was foretold, that one day, heroes who could wield the sword might reveal themselves.' A fog will set over this land, it will bring evil on the people, it will lure the monsters out of the darkness and bring a century of destruction. The magic crystal can activate the shrines of the four elements." }
         ]
       }
     },
@@ -1101,8 +1104,9 @@
       "effects": [{ "start_quest": "rescue_princess" }]
     },
     {
-      "id": "throne_victory",
-      "on": "enter loc_37",
+      "id": "fog_descends",
+      "on": "turn",
+      "once": true,
       "when": { "all": [
         { "has_flag": "water_shrine_active" },
         { "has_flag": "fire_shrine_active" },
@@ -1110,8 +1114,9 @@
         { "has_flag": "earth_shrine_active" }
       ]},
       "effects": [
-        { "msg": "You have proven your worth. The throne is yours!" },
-        { "game_end": "victory", "msg": "VICTORY — The Fog lifts, and you are crowned ruler of the land." }
+        { "msg": "The fog descends over the land..." },
+        { "msg": "Wolves grow stronger, guards fall, the world becomes hostile..." },
+        { "game_end": "fog" }
       ]
     },
     {
