@@ -51,5 +51,5 @@ use air shrine      <- vierter Schrein: das Spiel endet hier
 - **Wolf blockiert** den Nordausgang von `loc_3` nach `loc_6` (`locked_by: wolf`). Erst sein Tod entriegelt den Weg. (Erfindung des Ports — im Original blockiert der Wolf nichts.)
 - **Hinter dem Wolf** liegt die Earth Shrine (Waldroute) und Schwert/Grabhöhle — ohne Wolf-Tod unerreichbar.
 - **Water/Fire/Air Shrines** sind auch ohne Wolf-Tod erreichbar (West-/Ost-Route ab `loc_2`), aber erst mit Kristall aktivierbar.
-- **Prinzessin** (`use princess` an `loc_33`) ist **optional** und hat keinen Einfluss aufs Ende (im Original ebenfalls nicht).
+- **Prinzessin** (`use princess` an `loc_33`): ⅓ Ertrinken, ⅔ Rettung — via `random`-Effect mit Gewichten 1:2 (Original: `stepCounter mod 3 == 0` ⇒ ertrunken). Beim Ertrinken bleibt sie tot an der Fundstelle (`damage_npc`), ein weiteres `use princess` sagt „already dead. You failed to save her." Rettung ist **optional** und hat keinen Einfluss aufs Ende (im Original ebenfalls nicht).
 - **Quests** starten über Regeln (`on: enter loc_<schrein/wolf/prinzessin>`), `once: true`.

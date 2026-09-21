@@ -927,9 +927,28 @@
       "location": "loc_33",
       "verb_map": {
         "use,alive": [
-          { "move_npc": "princess", "to": "loc_0" },
-          { "msg": "You guide the princess to safety!" },
-          { "complete_quest": "rescue_princess" }
+          {
+            "random": [
+              [
+                1,
+                [
+                  { "damage_npc": { "npc": "princess", "amount": 1 } },
+                  { "msg": "You tried to save the princess but she drowned!" }
+                ]
+              ],
+              [
+                2,
+                [
+                  { "move_npc": "princess", "to": "loc_0" },
+                  { "msg": "You guide the princess to safety!" },
+                  { "complete_quest": "rescue_princess" }
+                ]
+              ]
+            ]
+          }
+        ],
+        "use,dead": [
+          { "msg": "The princess is already dead. You failed to save her." }
         ]
       }
     }
