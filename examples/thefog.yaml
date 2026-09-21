@@ -1,7 +1,13 @@
 {
   "name": "The Fog",
   "start_room": "loc_0",
+  "player": {
+    "max_hp": 10,
+    "attack": 1,
+    "defense": 1
+  },
   "end_art": {
+    "death": "=========================================\\n  YOU HAVE DIED\\n=========================================\\n  The forest keeps what it takes.",
     "fog": "=========================================\n  GAME OVER\n=========================================\n  The fog has taken the land."
   },
   "rooms": [
@@ -900,6 +906,85 @@
       }
     }
   ],
+  "patrol": {
+    "hostiles": [
+      {
+        "npc": "wolf_guardian",
+        "guardian": true,
+        "path": [
+          "loc_28"
+        ],
+        "warn": "WARNING: A wolf is nearby!",
+        "attack": [
+          { "msg": "The guardian wolf bares its teeth - it will not let you near the shrine." },
+          { "damage": 2 }
+        ]
+      },
+      {
+        "npc": "wolf_forest1",
+        "path": [
+          "loc_12",
+          "loc_13",
+          "loc_14",
+          "loc_15",
+          "loc_16",
+          "loc_17",
+          "loc_18",
+          "loc_19",
+          "loc_20",
+          "loc_21"
+        ],
+        "start_index": 1,
+        "warn": "WARNING: A wolf is nearby!",
+        "attack": [
+          { "msg": "A patrolling wolf catches up with you and bites!" },
+          { "damage": 1 }
+        ]
+      },
+      {
+        "npc": "wolf_forest2",
+        "path": [
+          "loc_17",
+          "loc_18",
+          "loc_19",
+          "loc_20",
+          "loc_21",
+          "loc_22",
+          "loc_16",
+          "loc_15",
+          "loc_14",
+          "loc_13"
+        ],
+        "start_index": 0,
+        "warn": "WARNING: A wolf is nearby!",
+        "attack": [
+          { "msg": "A patrolling wolf catches up with you and bites!" },
+          { "damage": 1 }
+        ]
+      },
+      {
+        "npc": "wolf_forest3",
+        "path": [
+          "loc_20",
+          "loc_21",
+          "loc_22",
+          "loc_23",
+          "loc_20",
+          "loc_19",
+          "loc_18",
+          "loc_17",
+          "loc_12",
+          "loc_13"
+        ],
+        "start_index": 2,
+        "warn": "WARNING: A wolf is nearby!",
+        "attack": [
+          { "msg": "A patrolling wolf catches up with you and bites!" },
+          { "damage": 1 }
+        ]
+      }
+    ]
+  },
   "npcs": [
     {
       "id": "wolf",
@@ -909,6 +994,58 @@
         "wolf"
       ],
       "location": "loc_3",
+      "max_hp": 30,
+      "attack": 8,
+      "defense": 2
+    },
+    {
+      "id": "wolf_guardian",
+      "name": "Wolf (Guardian)",
+      "desc": "A huge wolf that guards the shrine, motionless.",
+      "keys": [
+        "guardian wolf",
+        "shrine wolf"
+      ],
+      "location": "loc_28",
+      "max_hp": 30,
+      "attack": 8,
+      "defense": 2
+    },
+    {
+      "id": "wolf_forest1",
+      "name": "Patrolling Wolf",
+      "desc": "A wolf walking its circuit, worn thin by the forest.",
+      "keys": [
+        "patrolling wolf",
+        "forest wolf"
+      ],
+      "location": "loc_13",
+      "max_hp": 30,
+      "attack": 8,
+      "defense": 2
+    },
+    {
+      "id": "wolf_forest2",
+      "name": "Patrolling Wolf",
+      "desc": "A wolf walking its circuit, worn thin by the forest.",
+      "keys": [
+        "patrolling wolf",
+        "forest wolf"
+      ],
+      "location": "loc_17",
+      "max_hp": 30,
+      "attack": 8,
+      "defense": 2
+    },
+    {
+      "id": "wolf_forest3",
+      "name": "Patrolling Wolf",
+      "desc": "A wolf walking its circuit, worn thin by the forest.",
+      "keys": [
+        "patrolling wolf",
+        "forest wolf"
+      ],
+      "location": "loc_20",
       "max_hp": 30,
       "attack": 8,
       "defense": 2
