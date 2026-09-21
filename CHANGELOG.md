@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Phase V: Frontend-Trennung (IO-Politik aus GameLoop ausgelöst)
+
+- Neu `src/Frontend.hs`: das `Frontend`-Record ist die einzige I/O-Fläche des
+  Spielloops — Ausgabezeilen, Eingabe (mit Vervollständigung/Verlauf als
+  Frontend-Sache), Pause bei Erzählfortsetzungen, Animations-Abspielung
+  (inkl. `frameDelayMicros`, jetzt Frontend-Angelegenheit) und der
+  Diagnose-Kanal (heute stderr). `haskelineFrontend` ist die heutige
+  Terminal-Umsetzung, byte-identisch zum bisherigen Verhalten.
+- Neu `src/Completion.hs`: die Vervollständigung ist jetzt eine reine Funktion
+  (`completionFor :: GameState -> String -> (String, [String])`) ohne I/O —
+  die Haskeline-Hülle (`commandCompletion`) lebt in `Frontend`, ein TUI
+  konsumiert `completionFor` direkt.
+- `GameLoop` enthält keinen Haskeline-/stdout-/stderr-Zugriff mehr; neuer
+  Einstieg `runGameWithFrontend :: Frontend -> GameState -> IO ()` (die alten
+  `runGame`/`runGameWith`/`gameLoop` bleiben als Haskeline-Fassaden erhalten).
+  Das ist die Voraussetzung für das TUI-Paket (Phase T, D20) und späteres
+  WebUI-Backend.
+- Neuer Test: ein Canned-Frontend (Skript-Eingaben, Aufzeichnung der Ausgabe)
+  treibt `runGameWithFrontend` durch look/take/EOF-Quit — der Loop läuft also
+  ohne Terminal. Alle bisherigen Tests, E2E-Läufe und die
+  Warnungs-Gates unverändert grün.
+
 ### W6: Autoren-Doku "Writing an adventure on Windows"
 
 - `packaging/windows/WRITING-ADVENTURES.txt` (neu): das komplette Tutorial

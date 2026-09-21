@@ -12,8 +12,9 @@ import Data.Either (isLeft)
 import System.Timeout (timeout)
 import Control.Exception (evaluate)
 import Game
-import GameLoop (commandCompletion, LoopState (..), initLoopState, applyLoopCommand,
-                 commandEvents, consumesTurn, consumesTurnIn)
+import GameLoop (LoopState (..), initLoopState, applyLoopCommand,
+                 commandEvents, consumesTurn, consumesTurnIn, runGameWithFrontend)
+import Frontend (Frontend (..), commandCompletion)
 import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText)
 import Verbs (verbAliasMap)
 import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), resolveCombat, shipAbsorb)
@@ -23,6 +24,7 @@ import SaveLoad (computeWorldChecksum, formatSaveEntry, currentSaveVersion)
 import qualified SaveLoad as SaveLoad
 import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory,
                          removeFile, withCurrentDirectory)
+import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef')
 import System.Console.Haskeline (Completion (..))
 import System.Exit (exitFailure)
 import Types
@@ -905,6 +907,48 @@ testCombatDeathMessageWithShip = do
     r2 <- expectTrue "ship volley still reported" (isInfixOf "Kestrel fires for 3" msg)
     r3 <- expectEqual (Just "dead") (npcStatus <$> Map.lookup "goblin" (npcStates (save st')))
     pure (r1 && r2 && r3)
+
+-- ===== Phase V: frontend abstraction =====
+
+-- | A recording frontend with scripted input. Proves the loop's policy
+--   functions drive any presentation, not just Haskeline/stdout: the same
+--   'runGameWithFrontend' entry point runs to completion without a terminal.
+cannedFrontend :: [Maybe String] -> IO ([String], [String], [Maybe String])
+cannedFrontend script = do
+    outRef <- newIORef []
+    diagRef <- newIORef []
+    inRef <- newIORef script
+    let fe = Frontend
+            { feEmitLine    = \l -> modifyIORef' outRef (l :)
+            , feEmitRaw     = \s -> modifyIORef' outRef (s :)
+            , feReadInput   = \_ _ -> do
+                  queue <- readIORef inRef
+                  case queue of
+                      -- empty queue = end of input, the loop quits
+                      []       -> pure Nothing
+                      (x : xs) -> writeIORef inRef xs >> pure x
+            , feReadPlain   = \_ -> pure Nothing
+            , feReadPause   = pure ()
+            , fePlayFrames  = \_ -> pure ()
+            , feDiagnostics = \ms -> modifyIORef' diagRef (++ ms)
+            }
+    runGameWithFrontend fe initSampleGame
+    out <- reverse <$> readIORef outRef
+    diag <- readIORef diagRef
+    remaining <- readIORef inRef
+    pure (out, diag, remaining)
+
+testLoopRunsOnCannedFrontend :: IO Bool
+testLoopRunsOnCannedFrontend = do
+    (out, diag, remaining) <- cannedFrontend [Just "look", Just "take torch", Nothing]
+    r1 <- expectTrue "look output names the starting room description"
+                     (any ("small stone chamber" `isInfixOf`) out)
+    r2 <- expectTrue "take confirms the torch" (any ("You take the torch." `isInfixOf`) out)
+    r3 <- expectTrue "EOF quits (Goodbye + thanks)"
+                     (any ("Goodbye!" `isInfixOf`) out && any ("Thanks for playing!" `isInfixOf`) out)
+    r4 <- expectTrue "no diagnostics on a healthy game" (null diag)
+    r5 <- expectTrue "script fully consumed" (null remaining)
+    pure (and [r1, r2, r3, r4, r5])
 
 -- ===== Completion Tests =====
 
@@ -4059,5 +4103,7 @@ main = do
         -- P1-13: Genre-Verben nicht mehr im Kern
         , runTest "genre verbs are not core verbs (P1-13)" testGenreVerbsNotCoreVerbs
         , runTest "genre verb comes from the registry (P1-13)" testGenreVerbFromRegistry
+        -- Phase V: frontend abstraction
+        , runTest "loop runs on a canned (non-Haskeline) frontend" testLoopRunsOnCannedFrontend
         ]
     when (not (and results)) exitFailure

@@ -2,11 +2,11 @@
 module GameLoop
   ( runGame
   , runGameWith
+  , runGameWithFrontend
   , gameLoop
   , LoopState (..)
   , initLoopState
   , applyLoopCommand
-  , commandCompletion
   , initSampleGame
   , commandEvents
   , consumesTurn
@@ -15,126 +15,15 @@ module GameLoop
 
 import Types
 import Game
-import Parser hiding (reachableExitEntities)
+import Parser
 import Verbs (verbCanonicalName)
 import SaveLoad
 import Sample (initSampleGame)
+import Frontend
 import Data.Char (toLower)
-import Data.List (isPrefixOf, nub, foldl')
+import Data.List (foldl')
 import Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
-
-import System.Console.Haskeline
-import System.IO (hPutStrLn, stderr)
-import Control.Concurrent (threadDelay)
-
--- ---------------------------------------------------------------------------
--- Tab completion
--- ---------------------------------------------------------------------------
-
-commandWords :: [String]
-commandWords =
-    [ "go", "move", "walk", "look", "examine", "inspect", "read", "take", "pick", "drop", "put"
-    , "search", "watch", "map", "legend", "inventory", "inv", "i", "use", "talk", "speak", "choose", "option", "attack", "hit", "kill"
-    , "equip", "wear", "wield", "unequip", "remove", "stats"
-    , "enter", "board", "disembark", "drive", "wait", "refuel", "repair"
-    , "undo", "save", "load", "saves", "restart", "help", "quit", "exit", "q"
-    , "activate"
-    ]
-
-directionWords :: [String]
-directionWords = ["north", "south", "east", "west", "up", "down"
-    , "northeast", "northwest", "southeast", "southwest"
-    , "ne", "nw", "se", "sw"]
-
-completionItems :: [String] -> String -> [Completion]
-completionItems options prefix =
-    let loweredPrefix = map toLower prefix
-    in map simpleCompletion (filter (\opt -> loweredPrefix `isPrefixOf` map toLower opt) (nub options))
-
-itemCompletionTerms :: [ItemDef] -> [String]
-itemCompletionTerms items = nub (concatMap (\i -> itemName i : itemKeywords i) items)
-
-npcCompletionTerms :: [NPCDef] -> [String]
-npcCompletionTerms npcs = nub (concatMap (\n -> npcName n : npcKeywords n) npcs)
-
-roomTargets :: GameState -> [String]
-roomTargets state =
-    let currentRoomId = currentRoom (save state)
-        roomItems = getItemsInLocation (InRoom currentRoomId) state
-        roomNpcs = getNPCsInRoom currentRoomId state
-    in nub (itemCompletionTerms roomItems ++ npcCompletionTerms roomNpcs)
-
-inventoryTargets :: GameState -> [String]
-inventoryTargets state = itemCompletionTerms (getItemsInLocation (CarriedBy "player") state)
-
-reachableExitEntities :: GameState -> [String]
-reachableExitEntities state = case getCurrentRoom state of
-    Just room -> [entity | Locked _ entity <- Map.elems (roomConnections room)]
-    Nothing   -> []
-
-entityTargets :: GameState -> [String]
-entityTargets state =
-    let exits = reachableExitEntities state
-        doorAliases = if null exits then [] else ["door", "locked door"]
-    in nub (roomTargets state ++ exits ++ doorAliases)
-
--- | Words for adventure-declared custom verbs (canonical names + aliases)
-customVerbWords :: GameState -> [String]
-customVerbWords state =
-    concatMap (\def -> vdName def : vdAliases def)
-        (Map.elems (verbDefs (world state)))
-
-contextualSuggestions :: GameState -> [String] -> [String]
-contextualSuggestions state prevWords = case prevWords of
-    [] -> commandWords ++ customVerbWords state ++ directionWords
-    ("go" : _) -> directionWords
-    ("move" : _) -> directionWords
-    ("walk" : _) -> directionWords
-    ("look" : "at" : _) -> roomTargets state
-    ("talk" : "to" : _) -> npcCompletionTerms (getNPCsInRoom (currentRoom (save state)) state)
-    ("speak" : "with" : _) -> npcCompletionTerms (getNPCsInRoom (currentRoom (save state)) state)
-    ("pick" : "up" : _) -> roomTargets state
-    ("put" : "down" : _) -> inventoryTargets state
-    ("equip" : _) -> inventoryTargets state
-    ("wear" : _) -> inventoryTargets state
-    ("wield" : _) -> inventoryTargets state
-    ("unequip" : _) -> itemCompletionTerms (getEquippedItems state)
-    ("remove" : _) -> itemCompletionTerms (getEquippedItems state)
-    ("use" : _)
-        | "on" `elem` prevWords || "with" `elem` prevWords -> entityTargets state
-        | otherwise -> inventoryTargets state
-    (verb : _)
-        | verb `elem` ["take", "drop", "attack", "hit", "kill", "examine", "inspect", "read"] ->
-            roomTargets state ++ inventoryTargets state
-        | otherwise -> commandWords ++ customVerbWords state ++ directionWords
-                       ++ roomTargets state ++ entityTargets state ++ inventoryTargets state
-
--- | ItemDefs currently worn/wielded
-getEquippedItems :: GameState -> [ItemDef]
-getEquippedItems state =
-    [ def
-    | iId <- Map.elems (equipment (save state))
-    , Just def <- [Map.lookup iId (itemDefs (world state))]
-    ]
-
-commandCompletion :: GameState -> CompletionFunc IO
-commandCompletion state (left, _) = do
-    let loweredLeft = map toLower left
-        tokens = words loweredLeft
-        (prevWords, currentWord)
-            | not (null loweredLeft) && last loweredLeft /= ' ' && not (null tokens) =
-                (init tokens, last tokens)
-            | otherwise = (tokens, "")
-        suggestions = contextualSuggestions state prevWords
-    pure (currentWord, completionItems suggestions currentWord)
-
-haskelineSettings :: GameState -> Settings IO
-haskelineSettings state =
-    (defaultSettings :: Settings IO)
-        { autoAddHistory = True
-        , complete = commandCompletion state
-        }
 
 -- ---------------------------------------------------------------------------
 -- Game loop
@@ -309,145 +198,136 @@ commandVerbName cmd = case cmd of
     InteractWith v _ _  -> verbCanonicalName v
     _             -> "unknown"
 
--- | Mapping applied to every player-facing line at the I/O boundary. The pure
---   core never inspects it: `app/Main` passes `id` on a colour TTY and
---   `stripAnsi` when colour is off or stdout is redirected.
-type OutputFilter = String -> String
-
--- | Print a line through the output filter.
-emitLine :: OutputFilter -> String -> IO ()
-emitLine f = putStrLn . f
-
--- | Print without a trailing newline through the output filter.
-emitRaw :: OutputFilter -> String -> IO ()
-emitRaw f = putStr . f
+-- | Mapping applied to every player-facing line at the I/O boundary is now
+--   part of 'Frontend' ('Frontend.OutputFilter'); the pure core never inspects
+--   it: `app/Main` passes `id` on a colour TTY and `stripAnsi` when colour is
+--   off or stdout is redirected.
 
 -- | Main game loop function (colour allowed).
 runGame :: GameState -> IO ()
-runGame = runGameWith id
+runGame = runGameWithFrontend (haskelineFrontend id)
 
 -- | Entry point with an explicit output filter, used by the CLI to strip ANSI
 --   when stdout is not a terminal or `--no-color` is set.
 runGameWith :: OutputFilter -> GameState -> IO ()
-runGameWith f state = do
+runGameWith f = runGameWithFrontend (haskelineFrontend f)
+
+-- | Entry point for an arbitrary frontend (Phase V). The terminal today, a
+--   TUI or web backend later — the loop logic does not know the difference.
+runGameWithFrontend :: Frontend -> GameState -> IO ()
+runGameWithFrontend fe state = do
     let (newState, message) = executeCommand Look state
-    emitLine f message
-    loopGame f (initLoopState newState)
+    feEmitLine fe message
+    loopGame fe (initLoopState newState)
 
 -- | Print engine diagnostics that appeared while handling one command to
---   stderr (P2-23). They describe a content error the author has to fix, so they
---   must not be mixed into the game text the player sees.
-emitNewDiagnostics :: GameState -> GameState -> IO ()
-emitNewDiagnostics before after =
-    mapM_ (hPutStrLn stderr) (drop (length (diagnostics before)) (diagnostics after))
+--   the frontend's diagnostics channel (P2-23). They describe a content error
+--   the author has to fix, so they must not be mixed into the game text the
+--   player sees.
+emitNewDiagnostics :: Frontend -> GameState -> GameState -> IO ()
+emitNewDiagnostics fe before after =
+    feDiagnostics fe (drop (length (diagnostics before)) (diagnostics after))
 
 -- | Backward-compatible entry point for callers that have a plain GameState.
 gameLoop :: GameState -> IO ()
-gameLoop = loopGame id . initLoopState
+gameLoop = loopGame (haskelineFrontend id) . initLoopState
 
--- | Interactive game loop with an in-memory undo history.
-loopGame :: OutputFilter -> LoopState -> IO ()
-loopGame f loopState
-    | gameOver (save state) = handleGameOver f loopState
+-- | Interactive game loop with an in-memory undo history. All I/O goes
+--   through the frontend record (Phase V): the loop itself is presentation-
+--   agnostic and drives the shared policy functions only.
+loopGame :: Frontend -> LoopState -> IO ()
+loopGame fe loopState
+    | gameOver (save state) = handleGameOver fe loopState
     | otherwise = do
-        inputResult <- runInputT (haskelineSettings state) (getInputLine "> ")
+        inputResult <- feReadInput fe state "> "
         case inputResult of
             Nothing -> do
                 let (newState, message) = executeCommand Quit state
-                emitLine f message
-                loopGame f loopState { lsCurrent = newState }
+                feEmitLine fe message
+                loopGame fe loopState { lsCurrent = newState }
             Just input ->
                 case parseCommandWith (verbDefs (world state)) input of
                     Save name -> do
                         saveGame state name
-                        loopGame f loopState
+                        loopGame fe loopState
                     Load name -> do
                         result <- loadGame state name
                         case result of
                             Just loadedState -> do
                                 let (loadedState', msg) = executeCommand Look loadedState
-                                emitLine f msg
-                                loopGame f (initLoopState loadedState')
-                            Nothing -> loopGame f loopState
+                                feEmitLine fe msg
+                                loopGame fe (initLoopState loadedState')
+                            Nothing -> loopGame fe loopState
                     ListSaves -> do
                         listSaves (world state)
-                        loopGame f loopState
+                        loopGame fe loopState
                     Restart -> do
-                        emitLine f "Starting a new game...\n"
+                        feEmitLine fe "Starting a new game...\n"
                         let (restarted, msg) = applyLoopCommand Restart loopState
-                        emitLine f msg
-                        loopGame f restarted
+                        feEmitLine fe msg
+                        loopGame fe restarted
                     Help -> do
-                        emitLine f helpText
-                        loopGame f loopState
+                        feEmitLine fe helpText
+                        loopGame fe loopState
                     command -> do
                         let (loopState', message) = applyLoopCommand command loopState
-                        emitNewDiagnostics (lsCurrent loopState) (lsCurrent loopState')
+                        emitNewDiagnostics fe (lsCurrent loopState) (lsCurrent loopState')
                         case pendingAnimation (lsCurrent loopState') of
                             Just frames -> do
-                                emitLine f message
-                                playFrames f frames
+                                feEmitLine fe message
+                                fePlayFrames fe frames
                                 let cleared = (lsCurrent loopState') { pendingAnimation = Nothing }
-                                loopGame f (loopState' { lsCurrent = cleared })
+                                loopGame fe (loopState' { lsCurrent = cleared })
                             Nothing ->
                                 case pendingNarrative (lsCurrent loopState') of
                                     Nothing -> do
-                                        emitLine f message
-                                        loopGame f loopState'
+                                        feEmitLine fe message
+                                        loopGame fe loopState'
                                     Just (nls, followUp) -> do
                                         case nls of
                                             [] -> return ()
-                                            [single] -> emitLine f single
+                                            [single] -> feEmitLine fe single
                                             _ -> do
-                                                mapM_ (\l -> emitLine f l >> emitRaw f "  [Press Enter to continue]" >> getLine >> return ())
+                                                mapM_ (\l -> feEmitLine fe l >> feReadPause fe)
                                                     (init nls)
-                                                emitLine f (last nls)
+                                                feEmitLine fe (last nls)
                                         let (finalState, followMsg) = applyOutcome followUp "" (lsCurrent loopState')
                                             clearedState = finalState { pendingNarrative = Nothing }
                                         if null followMsg
-                                            then loopGame f (loopState' { lsCurrent = clearedState })
-                                            else do emitLine f followMsg
-                                                    loopGame f (loopState' { lsCurrent = clearedState })
+                                            then loopGame fe (loopState' { lsCurrent = clearedState })
+                                            else do feEmitLine fe followMsg
+                                                    loopGame fe (loopState' { lsCurrent = clearedState })
   where
     state = lsCurrent loopState
-
--- | Milliseconds between animation frames in `watch`. The delay lives only
---   here in the IO loop; the pure core produced the plain frame list.
-frameDelayMicros :: Int
-frameDelayMicros = 350000
-
--- | Play ASCII animation frames in order, one per delay interval.
-playFrames :: OutputFilter -> [String] -> IO ()
-playFrames f = mapM_ (\fr -> emitLine f fr >> threadDelay frameDelayMicros)
 
 -- ---------------------------------------------------------------------------
 -- Game over screens
 -- ---------------------------------------------------------------------------
 
 -- | Handle game-over screen based on reason
-handleGameOver :: OutputFilter -> LoopState -> IO ()
-handleGameOver f loopState = do
+handleGameOver :: Frontend -> LoopState -> IO ()
+handleGameOver fe loopState = do
     case gameOverReason (save state) of
         Just Death -> do
-            emitEndArt f state Death
+            emitEndArt fe state Death
                 [ "========================================="
                 , "  YOU HAVE DIED"
                 , "========================================="
                 ]
-            emitLine f "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
-            deathLoop f loopState
+            feEmitLine fe "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
+            deathLoop fe loopState
         Just Victory -> do
-            emitEndArt f state Victory
+            emitEndArt fe state Victory
                 [ "========================================="
                 , "  VICTORY!"
                 , "========================================="
                 ]
-            emitLine f "  [R]estart  |  [Q]uit"
-            victoryLoop f loopState
+            feEmitLine fe "  [R]estart  |  [Q]uit"
+            victoryLoop fe loopState
         Just (Custom msg) -> do
-            emitEndArt f state (Custom msg) [ "Game Over: " ++ msg ]
-            emitLine f "  [R]estart  |  [Q]uit"
-            victoryLoop f loopState
+            emitEndArt fe state (Custom msg) [ "Game Over: " ++ msg ]
+            feEmitLine fe "  [R]estart  |  [Q]uit"
+            victoryLoop fe loopState
         Nothing -> return ()  -- Quit without reason
   where
     state = lsCurrent loopState
@@ -455,31 +335,31 @@ handleGameOver f loopState = do
 -- | Print the end screen: a blank line, the world's `end_art` for this reason
 --   when present, otherwise the built-in frame, then a blank line. The control
 --   hints are printed by the caller so the input loop stays reachable either way.
-emitEndArt :: OutputFilter -> GameState -> GameOverReason -> [String] -> IO ()
-emitEndArt f st reason fallback = do
-    emitLine f ""
+emitEndArt :: Frontend -> GameState -> GameOverReason -> [String] -> IO ()
+emitEndArt fe st reason fallback = do
+    feEmitLine fe ""
     case endArtFor reason st of
-        Just art -> emitLine f (resolveAsciiArt art st)
-        Nothing  -> mapM_ (emitLine f) fallback
-    emitLine f ""
+        Just art -> feEmitLine fe (resolveAsciiArt art st)
+        Nothing  -> mapM_ (feEmitLine fe) fallback
+    feEmitLine fe ""
 
 -- | Death screen input loop
-deathLoop :: OutputFilter -> LoopState -> IO ()
-deathLoop f loopState = do
-    inputResult <- runInputT defaultSettings (getInputLine "> ")
+deathLoop :: Frontend -> LoopState -> IO ()
+deathLoop fe loopState = do
+    inputResult <- feReadPlain fe "> "
     case map toLower . fromMaybe "q" <$> pure inputResult of
         Just "u" ->
             case lsHistory loopState of
                 [] -> do
-                    emitLine f "Nothing to undo."
-                    deathLoop f loopState
+                    feEmitLine fe "Nothing to undo."
+                    deathLoop fe loopState
                 _ -> do
                     let (restored, msg) = applyLoopCommand Undo loopState
-                    emitLine f msg
-                    loopGame f restored
+                    feEmitLine fe msg
+                    loopGame fe restored
         Just "l" -> do
-            emitLine f "Enter save name to load (or press Enter for 'savegame'):"
-            nameResult <- runInputT defaultSettings (getInputLine "> ")
+            feEmitLine fe "Enter save name to load (or press Enter for 'savegame'):"
+            nameResult <- feReadPlain fe "> "
             let name = case nameResult of
                     Just n | not (null n) -> n
                     _                     -> "savegame"
@@ -487,32 +367,32 @@ deathLoop f loopState = do
             case result of
                 Just loadedState -> do
                     let (s', msg) = executeCommand Look loadedState
-                    emitLine f msg
-                    loopGame f (initLoopState s')
-                Nothing -> deathLoop f loopState
+                    feEmitLine fe msg
+                    loopGame fe (initLoopState s')
+                Nothing -> deathLoop fe loopState
         Just "r" -> do
-            emitLine f "Starting a new game...\n"
+            feEmitLine fe "Starting a new game...\n"
             let (restarted, msg) = applyLoopCommand Restart loopState
-            emitLine f msg
-            loopGame f restarted
-        Just "q" -> emitLine f "Thanks for playing!"
+            feEmitLine fe msg
+            loopGame fe restarted
+        Just "q" -> feEmitLine fe "Thanks for playing!"
         _ -> do
-            emitLine f "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
-            deathLoop f loopState
+            feEmitLine fe "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
+            deathLoop fe loopState
   where
     state = lsCurrent loopState
 
 -- | Victory/custom game-over input loop
-victoryLoop :: OutputFilter -> LoopState -> IO ()
-victoryLoop f loopState = do
-    inputResult <- runInputT defaultSettings (getInputLine "> ")
+victoryLoop :: Frontend -> LoopState -> IO ()
+victoryLoop fe loopState = do
+    inputResult <- feReadPlain fe "> "
     case map toLower . fromMaybe "q" <$> pure inputResult of
         Just "r" -> do
-            emitLine f "Starting a new game...\n"
+            feEmitLine fe "Starting a new game...\n"
             let (restarted, msg) = applyLoopCommand Restart loopState
-            emitLine f msg
-            loopGame f restarted
-        Just "q" -> emitLine f "Thanks for playing!"
+            feEmitLine fe msg
+            loopGame fe restarted
+        Just "q" -> feEmitLine fe "Thanks for playing!"
         _ -> do
-            emitLine f "  [R]estart  |  [Q]uit"
-            victoryLoop f loopState
+            feEmitLine fe "  [R]estart  |  [Q]uit"
+            victoryLoop fe loopState
