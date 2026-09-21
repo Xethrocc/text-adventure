@@ -789,11 +789,7 @@
       "keys": [
         "sword"
       ],
-      "location": "loc_30",
-      "slot": "weapon",
-      "effects": [
-        "attack+9"
-      ]
+      "location": "loc_30"
     },
     {
       "id": "water_shrine",

@@ -47,6 +47,7 @@ use air shrine      <- vierter Schrein: das Spiel endet hier
 ## Schlüsselmechaniken
 
 - **Kristall** liegt im Basement (`loc_4`) in der Truhe (`in_container: chest`); erst `search chest` gibt ihn frei. Ohne Kristall sagen alle vier Schreine „… is dormant. You need the crystal to awaken it." (`if: { has_item: crystal }`).
+- **Schwert** (`loc_30`, in der Grabkammer): **wirkungslos und nicht ausrüstbar** — wie im Original. Die Prophezeiung verheißt, dass ein Held mit dem Schwert den Nebel bezwingt; der Protagonist ist dieser Held nicht, also kann er es nicht führen. (Im Port gab es `weapon`-Slot + `attack+9`, das widersprach der Erzählabsicht.)
 - **Schild** ebenfalls im Basement (im Original wirkungslos, im Port `defense+4`).
 - **Wolf blockiert** den Nordausgang von `loc_3` nach `loc_6` (`locked_by: wolf`). Erst sein Tod entriegelt den Weg. (Erfindung des Ports — im Original blockiert der Wolf nichts.)
 - **Hinter dem Wolf** liegt die Earth Shrine (Waldroute) und Schwert/Grabhöhle — ohne Wolf-Tod unerreichbar.
