@@ -9,14 +9,15 @@ south
 look               <- Basement: du siehst die Truhe (der Kristall liegt drin)
 search chest       <- gibt dir den Kristall
 take shield
-equip shield
+equip shield       <- Verteidigung 3 → 7: der Wolf kontert nur noch für 1
 north
 north
 north
 north
-attack wolf        (4 mal nötig, bis "You attack the wolf and kill it!")
+attack wolf        (der Wolf fällt im 4. Schlag; jede Runde kontert er für 1)
 north north north east north north west south southeast
-use earth shrine
+                               <- Waldroute: Patrouillenwölfe warnen und beißen
+use earth shrine               <- Schattenwolf (Wächter) steht hier und schlägt für 2 zu
 south north east south south west south south south south east east south southeast
 use water shrine
 north north west west west west west west west west southeast
@@ -26,16 +27,19 @@ use air shrine      <- vierter Schrein: das Spiel endet hier
 -> THE FOG DESCENDS / GAME OVER
 ```
 
+Gemessener Durchlauf dieses Skripts: **7×** „WARNING: A wolf is nearby!", **5** Patrouillenbisse (1 Schaden), **2** Wächterschläge (2 Schaden), **3** Wolfskonter (1 Schaden) — der Spieler verliert 12 seiner 30 KP und **erreicht das Fog-Ende lebend**.
+
 ## Ablauf mit Etappen
 
 | # | Ziel | Weg ab vorherigem Punkt | Aktion |
 |---|------|--------------------------|--------|
 | 1 | Basement (`loc_4`) | `south` | `search chest` (→ Kristall), `take shield`, `equip shield`, zurück `north` |
-| 2 | Wolf (`loc_3`) | `north north north` | `attack wolf` ×4 → Wolf tot, Nordausgang entriegelt |
-| 3 | Earth Shrine (`loc_28`) | `north north north east north north west south southeast` | `use earth shrine` |
-| 4 | Water Shrine (`loc_38`) | `south north east south south west south south south south east east south southeast` | `use water shrine` |
-| 5 | Fire Shrine (`loc_45`) | `north north west west west west west west west west southeast` | `use fire shrine` |
-| 6 | Air Shrine (`loc_52`) | `south east east east east south south southeast southeast south` | `use air shrine` → **FOG / GAME OVER** |
+| 2 | Wolf (`loc_3`) | `north north north` | `attack wolf` → „You hit for 8, it hits you for 1." ×3, im 4. Schlag fällt der Wolf; Nordausgang entriegelt |
+| 3 | Waldroute (`loc_12`…`loc_21`) | `north north north east north north west south southeast` | drei Patrouillenwölfe auf ihren Rundkursen; je Kontakt Warnung + Biss |
+| 4 | Earth Shrine (`loc_28`) | (siehe 3) | `use earth shrine` — der **Schattenwolf** steht hier unbeweglich und schlägt für 2 zu |
+| 5 | Water Shrine (`loc_38`) | `south north east south south west south south south south east east south southeast` | `use water shrine` |
+| 6 | Fire Shrine (`loc_45`) | `north north west west west west west west west west southeast` | `use fire shrine` |
+| 7 | Air Shrine (`loc_52`) | `south east east east east south south southeast southeast south` | `use air shrine` → **FOG / GAME OVER** |
 
 ## Das Ende
 
@@ -43,6 +47,33 @@ use air shrine      <- vierter Schrein: das Spiel endet hier
   „The fog descends over the land... / Wolves grow stronger, guards fall, the world becomes hostile..." + `game_end: fog` → eigener End-Banner (`end_art.fog` → „GAME OVER").
 - **Kein Victory.** Der frühere Thronsaal-Sieg (`enter loc_37` bei vier Schrein-Flags) war eine Erfindung des Ports und wurde entfernt. Der **Thronsaal (`loc_37`) ist reine Kulisse**, wie im Haskell-Original.
 - Der Schrein-Flag-Mechanismus entspricht dem Original: `checkEnding = e && w && f && a` → dort ebenfalls sofortiges Ende („Game Over.").
+- **Niederlage ist möglich:** `end_art.death` → „YOU HAVE DIED / The forest keeps what it takes." Der Tod ist eine **Abweichung vom Original** (dort fügt nichts dem Spieler Schaden zu) und bewusste Entscheidung: die Wölfe sollen tödlich sein.
+
+## Wölfe
+
+Zwei Figuren aus dem Original, die der Port zuerst weggelassen hatte — jetzt über das `patrol:`-Segment (Modul 7i) abgebildet:
+
+| Wolf | Ort | Verhalten |
+|---|---|---|
+| `wolf` (Straßenwolf, als NPC) | `loc_3` | liegt quer über dem Nordausgang (`locked_by: wolf`), `attack wolf` im klassischen Kampf |
+| `wolf_guardian` — „Wolf (Guardian)" | `loc_28` (Earth Shrine) | **steht still** (`guardian: true`), warnt und schlägt für 2 zu |
+| `wolf_forest1/2/3` — „Patrolling Wolf" | Wandernd | Rundkurse `[12…21]`, `[17…13]`, `[20…13]` mit den Original-Indizes 1/0/2, warnen und beißen für 1 |
+
+- **Takt:** Der Rundkurs läuft bei jedem **zugverbrauchenden** Befehl einen Raum weiter. `look`, `watch`, `help`, `inventory` kosten laut `consumesTurn` keinen Zug — die Wölfe ziehen also nur, wenn man wirklich handelt. (Das ist auch der Grund, warum die Waldroute im Durchlauf kontrollierbar bleibt.)
+- **Warnung:** Der Original-Wortlaut „WARNING: A wolf is nearby!" feuert, sobald ein Wolf im selben Raum steht — genau wie das rote Banner in `gameLoop` beim Original. Zusätzlich listet `look` anwesende Wölfe als „Also here: …".
+- **Im Original unblutig:** Dort waren die vier Wölfe reine Kulisse (`checkEncounter` warnte nur, `wolfHp`/`wolfAttack` wurden nie gelesen) und der Kampfschirm fügte dem Spieler **nie** Schaden zu. Dass Wölfe hier beißen und töten können, ist die bewusste Erweiterung.
+
+## Spieler-Werte und warum sie nicht die Original-Zahlen sind
+
+`player: { max_hp: 30, attack: 10, defense: 3 }`.
+
+Das Original nennt in `giveName` `attack 1 / defense 1 / life 10` — diese Werte sind dort aber **Kosmetik**: `fightLoop` kämpft gegen fest `enemyHP = 10` mit `getAtk = 1` (also genau 10 Schläge) und fügt dem Spieler überhaupt keinen Schaden zu; Schwert und Schild sind wirkungslos (`addAng` gibt das Argument unverändert zurück und wird nie aufgerufen). Ein Testlauf mit den Original-Zahlen machte das Spiel **ungewinnbar**: 1 Schaden pro Schlag gegen einen 30-KP-Wolf, während der Wolf (Angriff 8) für 3 konterte und den Spieler mit 10 KP im 4. Schlagwechsel tötete. Der `thefog`-E2E-Pfad fiel damit durch.
+
+Die hier gesetzten Werte stellen die Original-**Mechanik** her statt die Original-**Ziffern**:
+
+- `attack 10` → `max 1 (10 − 2) = 8` Schaden pro Schlag ⇒ der 30-KP-Wolf fällt im 4. Schlag.
+- `defense 3` (+ Schild 4) = 7 ⇒ Wolfskonter `8 − 7 = 1`. **Mindestens 1 Schaden bleibt immer** — auch mit Schild wird der Wolf nicht harmlos; ohne Schild sind es 5. (Eigener Schaden hat eine Untergrenze von 1, Gegnerschaden von 0 — deshalb Verteidigung 3 statt 5, sonst wäre der Konter genau 0.)
+- `max_hp 30` deckt die Summe aus Wolfskonter (3), Patrouillenbissen (5) und Wächterschlägen (4) ab.
 
 ## Schlüsselmechaniken
 

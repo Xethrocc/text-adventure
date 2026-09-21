@@ -2,9 +2,9 @@
   "name": "The Fog",
   "start_room": "loc_0",
   "player": {
-    "max_hp": 10,
-    "attack": 1,
-    "defense": 1
+    "max_hp": 30,
+    "attack": 10,
+    "defense": 3
   },
   "end_art": {
     "death": "=========================================\n  YOU HAVE DIED\n=========================================\n  The forest keeps what it takes.",
