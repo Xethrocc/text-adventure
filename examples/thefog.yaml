@@ -7,7 +7,7 @@
     "defense": 1
   },
   "end_art": {
-    "death": "=========================================\\n  YOU HAVE DIED\\n=========================================\\n  The forest keeps what it takes.",
+    "death": "=========================================\n  YOU HAVE DIED\n=========================================\n  The forest keeps what it takes.",
     "fog": "=========================================\n  GAME OVER\n=========================================\n  The fog has taken the land."
   },
   "rooms": [
