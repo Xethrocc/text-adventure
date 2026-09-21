@@ -638,6 +638,43 @@ stealth:
 
 ---
 
+## Patrol: umherziehende und angreifende NPCs (Modul 7i)
+
+```yaml
+patrol:
+  hostiles:
+    - npc: wolf                 # muss unter `npcs:` deklariert sein
+      path: [loc_1, loc_2]      # Rundkurs; `path !! start_index` ist der Startraum
+      start_index: 0
+      guardian: false           # true = steht still, nur warn/attack
+      warn: "WARNING: A wolf is nearby!"
+      attack:                    # beliebige Effekte, z. B. Schaden
+        - { msg: "The wolf bites!" }
+        - { damage: 3 }
+```
+
+- Der NPC zieht bei jedem **zugverbrauchenden** Befehl einen Raum weiter
+  (`path !! ((i+1) mod n)`). `look`, `watch`, `help`, `inventory`, `stats`,
+  `journal` kosten laut `consumesTurn` keinen Zug und bewegen ihn nicht.
+- `warn` und `attack` feuern, sobald Spieler und NPC im selben Raum stehen.
+  `attack` sind gewöhnliche Effekte — der Schaden kann also töten
+  (`end_art.death`).
+- Ein toter Feind zieht nicht und greift nicht an.
+- `guardian: true` lässt den NPC stehen; `path` listet dann nur die Räume, in
+  denen er warnt/zuschlägt.
+- Der Rundkurs lebt in Variablen: `patrol.<npc>.index` (Position) und
+  `patrol.<npc>.moved` (Zug-Gate). Beide sind **reserviert** und dürfen nicht
+  unter `variables:` deklariert werden (`PatrolVariableClash`). Ein Wächter hat
+  keine dieser Variablen.
+- Der Index ist nicht bloß Kosmetik: Trigger-Bedingungen werden live in *einem*
+  Fold ausgewertet, deshalb gibt es pro Feind eine `moved`-Gate-Variable. Ohne
+  sie würden alle zutreffenden Schritte im selben Zug feuern und der NPC seinen
+  ganzen Rundkurs in einem Zug abreißen.
+- **Fehler:** `UnknownPatrolNPC`, `EmptyPatrolPath`, `UnknownPatrolRoom`,
+  `PatrolVariableClash`.
+
+---
+
 ## Combat: Kampfprofile (Module 7f)
 
 Kampf ist eine über Daten gewählte Policy; ohne `combat:`-Block gilt

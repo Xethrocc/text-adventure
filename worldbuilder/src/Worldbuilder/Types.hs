@@ -37,6 +37,7 @@ data Adventure = Adventure
     , advEncounterTables  :: [AEncounterTable]           -- ^ encounter tables (Phase 7c)
     , advEnvironment      :: Maybe AEnvironment          -- ^ weather + drains (Phase 7d)
     , advStealth          :: Maybe AStealth              -- ^ noise + observers (Phase 7e)
+    , advPatrol           :: Maybe APatrol               -- ^ patrouillierende/angreifende NPCs (Modul 7i)
     , advCombat           :: Maybe ACombat               -- ^ combat profile (Phase 7f)
     , advAbilities        :: [AAbility]                  -- ^ player abilities (Phase 7f-3 A3/A4)
     , advEndArt           :: Map.Map String AAscii       -- ^ end banners per reason (Phase G)
@@ -64,6 +65,7 @@ instance FromJSON Adventure where
         <*> o .:? "encounter_tables"  .!= []
         <*> o .:? "environment"
         <*> o .:? "stealth"
+        <*> o .:? "patrol"
         <*> o .:? "combat"
         <*> o .:? "abilities"       .!= []
         <*> o .:? "end_art"         .!= Map.empty
@@ -688,6 +690,45 @@ instance FromJSON AObserver where
         <*> o .:  "hears_at"
         <*> o .:? "cooldown" .!= 0
         <*> o .:? "on_hear"  .!= []
+
+-- ---------------------------------------------------------------------------
+-- Patrol (Modul 7i): umherziehende und angreifende NPCs
+-- ---------------------------------------------------------------------------
+
+-- | Das `patrol:`-Segment: NPCs, die auf einem Rundkurs umherziehen und
+--   zuschlagen, sobald sie mit dem Spieler im selben Raum stehen. Reiner
+--   Schema-Zucker auf Triggern/Variablen — kein Kern-Eingriff.
+data APatrol = APatrol
+    { ptHostiles :: [AHostile]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON APatrol where
+    parseJSON = withObject "APatrol" $ \o -> APatrol
+        <$> o .:? "hostiles" .!= []
+
+-- | Ein umherziehender oder stehender Feind. `path` ist der Rundkurs in
+--   Raum-IDs, `start_index` zeigt auf den Startraum (`path !! start_index`).
+--   `guardian: true` lässt den NPC stehen (dann listet `path` nur noch die
+--   Räume, in denen er angreift). `warn` ist eine Meldung, die feuert, sobald
+--   der Feind mit dem Spieler im selben Raum steht (Anwesenheits-Warnung);
+--   `attack` sind gewöhnliche Outcome-Effekte für denselben Fall.
+data AHostile = AHostile
+    { ahNPC        :: String
+    , ahPath       :: [String]
+    , ahStartIndex :: Int
+    , ahGuardian   :: Bool
+    , ahWarn       :: Maybe String
+    , ahAttack     :: [AActionOutcome]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AHostile where
+    parseJSON = withObject "AHostile" $ \o -> AHostile
+        <$> o .:  "npc"
+        <*> o .:? "path"        .!= []
+        <*> o .:? "start_index" .!= 0
+        <*> o .:? "guardian"    .!= False
+        <*> o .:? "warn"
+        <*> o .:? "attack"      .!= []
 
 -- ---------------------------------------------------------------------------
 -- Combat (Phase 7f): authored combat profile

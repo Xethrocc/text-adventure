@@ -87,12 +87,18 @@ compileAdventure adv =
         (stealthConflictErrs, stealthAllVarDefs, stealthAllVarInitials) =
             mergeStealthVars envAllVarDefs envAllVarInitials stealthVarDefs stealthVarInitials
 
+        -- Modul 7i: `patrol:` laesst NPCs umherziehen und zuschlagen.
+        (patrolErrs, patrolTriggerDefs, patrolVarDefs, patrolVarInitials) =
+            compilePatrol (Map.keys allRooms) (map anId (advNPCs adv)) (advPatrol adv)
+        (patrolConflictErrs, patrolAllVarDefs, patrolAllVarInitials) =
+            mergePatrolVars stealthAllVarDefs stealthAllVarInitials patrolVarDefs patrolVarInitials
+
         -- Phase 7g: `party:` blocks declare the follow variable party.<npcId>
         -- and one order verb that toggles membership.
         (partyErrs, partyVerbEntries, partyVarDefs, partyVarInitials) =
             compileParty verbRegistry (advNPCs adv)
         (partyConflictErrs, partyAllVarDefs, partyAllVarInitials) =
-            mergePartyVars stealthAllVarDefs stealthAllVarInitials partyVarDefs partyVarInitials
+            mergePartyVars patrolAllVarDefs patrolAllVarInitials partyVarDefs partyVarInitials
         npcDefsWithParty = Map.mapWithKey (addPartyVerbEntry partyVerbEntries) npcDefs
 
         -- Phase 7h: ship systems (VarMap) + station verbs per interior room
@@ -101,7 +107,8 @@ compileAdventure adv =
         (shipConflictErrs, allVarDefs, allVarInitials) =
             mergeShipVars partyAllVarDefs partyAllVarInitials shipVarDefs shipVarInitials
 
-        allTriggerDefs = triggerDefs ++ encounterDefs ++ envTriggerDefs ++ stealthTriggerDefs ++ shipTriggerDefs
+        allTriggerDefs = triggerDefs ++ encounterDefs ++ envTriggerDefs ++ stealthTriggerDefs
+                            ++ patrolTriggerDefs ++ shipTriggerDefs
         (combatErrs, combatProfileCompiled) = compileCombat (advCombat adv)
         (initVarErrs, initialVars) =
             compileInitialVariables allVarDefs allVarInitials (advInitialVariables adv)
@@ -149,6 +156,7 @@ compileAdventure adv =
                     ++ varErrs ++ facErrs ++ facConflictErrs ++ trigErrs ++ encErrs
                     ++ envErrs ++ envConflictErrs
                     ++ stealthErrs ++ stealthConflictErrs
+                    ++ patrolErrs ++ patrolConflictErrs
                     ++ partyErrs ++ partyConflictErrs
                     ++ shipErrs ++ shipConflictErrs
                     ++ combatErrs
@@ -545,6 +553,117 @@ mergeStealthVars varDefs varInitials stealthDefs stealthInitials =
             | name <- Map.keys varDefs
             , name `Map.member` stealthDefs ]
     in (clashErrs, Map.union stealthDefs varDefs, Map.union stealthInitials varInitials)
+
+-- ---------------------------------------------------------------------------
+-- Patrol (Modul 7i)
+-- ---------------------------------------------------------------------------
+
+-- | Compile the `patrol:` segment: per hostile one gate variable, one
+--   `on: turn` step block (a guardian gets none) and one `on: turn` attack
+--   trigger.
+--
+--   Two mechanics matter:
+--
+--   * The path index lives in a variable (`path !! index` is the current room),
+--     so the next room is `path !! ((i+1) mod n)`. Trigger conditions are
+--     evaluated *live* inside one linear fold, so a flat chain of
+--     \"index == k\" triggers would cascade: step k sets k+1, and step k+1
+--     already matches in the same turn — the NPC would teleport along the whole
+--     path. Every hostile therefore gets a `moved` gate: a clearing trigger runs
+--     first, each step trigger is gated on `moved == 0` and sets it, so exactly
+--     one step fires per turn.
+--   * The attack is a single trigger whose effects are one conditional per path
+--     room. Only one can match (an NPC stands in exactly one room), so these
+--     conditionals cannot cascade.
+--
+--   No core change: step blocks are plain MoveEntity/SetValue triggers.
+compilePatrol :: [String] -> [String] -> Maybe APatrol
+              -> ([CompileIssue], [E.TriggerDef], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+compilePatrol _ _ Nothing = ([], [], Map.empty, Map.empty)
+compilePatrol roomIds npcIds (Just p) =
+    let hostiles = ptHostiles p
+        -- Nur ziehende Feinde brauchen Rundkurs-Zustand: ein Wächter hat
+        -- weder Schritt- noch Gate-Trigger, also auch keine Variablen.
+        walkers = [ h | h <- hostiles, not (ahGuardian h) ]
+        movedVar h = "patrol." ++ ahNPC h ++ ".moved"
+        indexVar h = "patrol." ++ ahNPC h ++ ".index"
+        varDefs = Map.union
+            (Map.fromList [ (movedVar h, E.VarDef (movedVar h) (E.VTInt Nothing Nothing) (E.VVInt 0))
+                          | h <- walkers ])
+            (Map.fromList [ (indexVar h, E.VarDef (indexVar h) (E.VTInt Nothing Nothing) (E.VVInt (ahStartIndex h)))
+                          | h <- walkers ])
+        initials = Map.union
+            (Map.fromList [ (movedVar h, E.VVInt 0) | h <- walkers ])
+            (Map.fromList [ (indexVar h, E.VVInt (ahStartIndex h)) | h <- walkers ])
+
+        clearTrig h =
+            E.TriggerDef ("patrol.clear." ++ ahNPC h) E.OnTurn Nothing
+                [ E.SetValue (E.VRVariable (movedVar h)) (E.EVInt 0) ] False 0
+
+        stepTrigs h = [ stepTrig h i | i <- [0 .. length (ahPath h) - 1] ]
+        stepTrig h i =
+            E.TriggerDef ("patrol.step." ++ ahNPC h ++ "." ++ show i) E.OnTurn
+                (Just (E.PAll
+                    [ E.PNot (E.EntityHasState (ahNPC h) "dead")
+                    , E.CompareVar (indexVar h) E.CEq i
+                    , E.CompareVar (movedVar h) E.CEq 0 ]))
+                [ E.MoveEntity (ahNPC h) (E.InRoom (ahPath h !! next))
+                , E.SetValue (E.VRVariable (indexVar h)) (E.EVInt next)
+                , E.SetValue (E.VRVariable (movedVar h)) (E.EVInt 1)
+                ] False 0
+          where next = (i + 1) `mod` length (ahPath h)
+
+        warnTrigs h
+            | Just txt <- ahWarn h = [ sharedTrig "warn" (E.SendMessage txt) h ]
+            | otherwise            = []
+
+        attackTrigs h
+            | null (ahAttack h) = []
+            | otherwise         = [ sharedTrig "attack" (compileOutcomes (ahAttack h)) h ]
+
+        -- Warnung und Angriff teilen sich die Struktur: ein Trigger, dessen
+        -- Effekte je Pfadraum prüfen, ob Spieler und Feind zusammenstehen.
+        -- Nur einer kann zutreffen (ein NPC steht in genau einem Raum), also
+        -- kaskadiert hier nichts.
+        sharedTrig kind payload h =
+            E.TriggerDef ("patrol." ++ kind ++ "." ++ ahNPC h) E.OnTurn
+                (Just (E.PNot (E.EntityHasState (ahNPC h) "dead")))
+                [ E.Conditional
+                    (E.PAll [ E.Location "player" r, E.Location (ahNPC h) r ])
+                    payload E.Noop
+                | r <- ahPath h ] False 0
+
+        trigs h | ahGuardian h = warnTrigs h ++ attackTrigs h
+                | otherwise    = clearTrig h : (stepTrigs h ++ warnTrigs h ++ attackTrigs h)
+
+        unknownNpc =
+            [ ciError ("patrol.hostiles." ++ ahNPC h) "UnknownPatrolNPC"
+                ("patrol npc '" ++ ahNPC h ++ "' is not declared under 'npcs:'")
+            | h <- hostiles, ahNPC h `notElem` npcIds ]
+        emptyPath =
+            [ ciError ("patrol.hostiles." ++ ahNPC h) "EmptyPatrolPath"
+                ("patrol npc '" ++ ahNPC h ++ "' needs a non-empty 'path:'")
+            | h <- hostiles, null (ahPath h) ]
+        unknownRooms =
+            [ ciError ("patrol.hostiles." ++ ahNPC h ++ ".path") "UnknownPatrolRoom"
+                ("patrol room '" ++ r ++ "' is not a declared room")
+            | h <- hostiles, r <- ahPath h, r `notElem` roomIds ]
+    in ( unknownNpc ++ emptyPath ++ unknownRooms
+       , concatMap trigs hostiles
+       , varDefs, initials )
+
+-- | Merge the patrol variables into the declared ones, rejecting a clash
+--   (the author must not declare `patrol.<npc>.*` under `variables:`).
+mergePatrolVars :: Map.Map String E.VarDef -> Map.Map String E.VariableValue
+                -> Map.Map String E.VarDef -> Map.Map String E.VariableValue
+                -> ([CompileIssue], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+mergePatrolVars varDefs varInitials patrolDefs patrolInitials =
+    let clashErrs =
+            [ ciError ("variables." ++ name) "PatrolVariableClash"
+                ("'" ++ name ++ "' is a patrol variable; declare it under 'patrol:' instead")
+            | name <- Map.keys varDefs
+            , name `Map.member` patrolDefs ]
+    in (clashErrs, Map.union patrolDefs varDefs, Map.union patrolInitials varInitials)
 
 -- ---------------------------------------------------------------------------
 -- Party (Phase 7g)

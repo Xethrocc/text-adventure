@@ -154,6 +154,7 @@ minAdventure room = Adventure
     , advEncounterTables = []
     , advEnvironment = Nothing
     , advStealth = Nothing
+    , advPatrol = Nothing
     , advCombat = Nothing
     , advAbilities = []
     , advEndArt = Map.empty
@@ -1438,6 +1439,146 @@ testStealthFixtureCompiles = do
                         r2 <- expectEqual [] sErrs
                         pure (r1 && r2)
 
+-- ---------------------------------------------------------------------------
+-- Modul 7i — Patrol
+-- ---------------------------------------------------------------------------
+
+-- | The `patrol:` segment compiles to a per-hostile gate variable, one
+--   `on: turn` clear trigger, one `on: turn` step trigger per path index, plus
+--   warn/attack triggers. The clear trigger must precede the steps: trigger
+--   conditions are evaluated live inside one linear fold, so without the gate a
+--   single turn would fire every matching step and teleport the NPC along its
+--   whole path.
+testPatrolCompiles :: IO Bool
+testPatrolCompiles = do
+    let hostile = AHostile "wolf" ["loc_1", "loc_2"] 0 False
+                    (Just "A wolf is nearby!")
+                    [ AOMessage "The wolf bites!", AODamagePlayer 2 ]
+        adv = (minAdventure (minRoom "loc_0"))
+            { advRooms = [minRoom "loc_0", minRoom "loc_1", minRoom "loc_2"]
+            , advPatrol = Just (APatrol [hostile])
+            , advNPCs = [ wolfNPC "loc_1" ] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let trs = E.triggerDefs (crWorld cr)
+                byId want = [ t | t <- trs, E.trId t == want ]
+                clear = byId "patrol.clear.wolf"
+                step0 = byId "patrol.step.wolf.0"
+                warn  = byId "patrol.warn.wolf"
+                atk   = byId "patrol.attack.wolf"
+                roomCheck r = E.PAll [ E.Location "player" r, E.Location "wolf" r ]
+            r1 <- expectEqual [ "patrol.clear.wolf"
+                              , "patrol.step.wolf.0"
+                              , "patrol.step.wolf.1"
+                              , "patrol.warn.wolf"
+                              , "patrol.attack.wolf" ]
+                    (map E.trId trs)
+            r2 <- expectEqual [ E.SetValue (E.VRVariable "patrol.wolf.moved") (E.EVInt 0) ]
+                    (concatMap E.trEffects clear)
+            r3 <- expectEqual (Just (E.PAll
+                    [ E.PNot (E.EntityHasState "wolf" "dead")
+                    , E.CompareVar "patrol.wolf.index" E.CEq 0
+                    , E.CompareVar "patrol.wolf.moved" E.CEq 0 ]))
+                    (E.trCondition (head step0))
+            r4 <- expectEqual [ E.MoveEntity "wolf" (E.InRoom "loc_2")
+                              , E.SetValue (E.VRVariable "patrol.wolf.index") (E.EVInt 1)
+                              , E.SetValue (E.VRVariable "patrol.wolf.moved") (E.EVInt 1) ]
+                    (concatMap E.trEffects step0)
+            r5 <- expectEqual (Just (E.VVInt 0)) (Map.lookup "patrol.wolf.index" (variables (crSave cr)))
+            r6 <- expectEqual (Just (E.VVInt 0)) (Map.lookup "patrol.wolf.moved" (variables (crSave cr)))
+            r7 <- expectEqual (Just (E.PNot (E.EntityHasState "wolf" "dead")))
+                    (E.trCondition (head warn))
+            r8 <- expectEqual [ E.Conditional (roomCheck "loc_1") (E.SendMessage "A wolf is nearby!") E.Noop
+                              , E.Conditional (roomCheck "loc_2") (E.SendMessage "A wolf is nearby!") E.Noop ]
+                    (concatMap E.trEffects warn)
+            r9 <- expectEqual [ E.Conditional (roomCheck "loc_1")
+                                    (E.Sequence [ E.SendMessage "The wolf bites!"
+                                                , E.ModifyValue E.VRPlayerHealth (-2) ]) E.Noop
+                              , E.Conditional (roomCheck "loc_2")
+                                    (E.Sequence [ E.SendMessage "The wolf bites!"
+                                                , E.ModifyValue E.VRPlayerHealth (-2) ]) E.Noop ]
+                    (concatMap E.trEffects atk)
+            -- Behaviour, not just shape: the gate closes after one step.
+            let st0 = emptyGameState { world = crWorld cr, save = crSave cr }
+                gated st = st { save = (save st)
+                                  { variables = Map.insert "patrol.wolf.moved" (E.VVInt 1)
+                                                  (variables (save st)) } }
+                condFires st = maybe False (\p -> evalPredicate p st) (E.trCondition (head step0))
+            r10 <- expectTrue "step fires while the gate is open" (condFires st0)
+            r11 <- expectTrue "step is blocked once the gate is set" (not (condFires (gated st0)))
+            pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11])
+
+-- | A guardian stays put: no clear/step triggers, only warn/attack.
+testPatrolGuardian :: IO Bool
+testPatrolGuardian = do
+    let hostile = AHostile "wolf" ["loc_1"] 0 True Nothing [ AOMessage "The guardian strikes!" ]
+        adv = (minAdventure (minRoom "loc_0"))
+            { advRooms = [minRoom "loc_0", minRoom "loc_1"]
+            , advPatrol = Just (APatrol [hostile])
+            , advNPCs = [ wolfNPC "loc_1" ] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            r1 <- expectEqual [ "patrol.attack.wolf" ] (map E.trId (E.triggerDefs (crWorld cr)))
+            r2 <- expectEqual Nothing (Map.lookup "patrol.wolf.index" (variables (crSave cr)))
+            pure (r1 && r2)
+
+-- | Patrol validation: unknown NPC, empty path, unknown room, variable clash.
+testPatrolValidation :: IO Bool
+testPatrolValidation = do
+    let base extraRooms npcList = (minAdventure (minRoom "loc_0"))
+            { advRooms = minRoom "loc_0" : extraRooms
+            , advNPCs = npcList }
+    r1 <- case compileAdventure (base [] []) { advPatrol = Just (APatrol [AHostile "ghost" ["loc_0"] 0 False Nothing []]) } of
+            Left errs -> expectContains "UnknownPatrolNPC" (issuesText errs)
+            Right _   -> expectTrue "expected UnknownPatrolNPC" False
+    r2 <- case compileAdventure (base [] [ wolfNPC "loc_0" ]) { advPatrol = Just (APatrol [AHostile "wolf" [] 0 False Nothing []]) } of
+            Left errs -> expectContains "EmptyPatrolPath" (issuesText errs)
+            Right _   -> expectTrue "expected EmptyPatrolPath" False
+    r3 <- case compileAdventure (base [ minRoom "loc_1" ] [ wolfNPC "loc_1" ])
+                { advPatrol = Just (APatrol [AHostile "wolf" ["loc_1", "nope"] 0 False Nothing []]) } of
+            Left errs -> expectContains "UnknownPatrolRoom" (issuesText errs)
+            Right _   -> expectTrue "expected UnknownPatrolRoom" False
+    r4 <- case compileAdventure (base [ minRoom "loc_1" ] [ wolfNPC "loc_1" ])
+                { advPatrol = Just (APatrol [AHostile "wolf" ["loc_1"] 0 False Nothing []])
+                , advVariables = [ AVariable "patrol.wolf.moved" "int" (Just (Aeson.Number 0)) Nothing Nothing ] } of
+            Left errs -> expectContains "PatrolVariableClash" (issuesText errs)
+            Right _   -> expectTrue "expected PatrolVariableClash" False
+    pure (or [r1, r2, r3, r4] && and [r1, r2, r3, r4])
+
+-- | The 7i mini-fixture compiles and validates clean.
+testPatrolFixtureCompiles :: IO Bool
+testPatrolFixtureCompiles = do
+    mbPath <- findExampleModule "patrol.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  examples/modules/patrol.yaml not found"
+            pure False
+        Just path -> do
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse examples/modules/patrol.yaml: " ++ err
+                    pure False
+                Right adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  compile errors: " ++ show errs
+                        pure False
+                    Right cr -> do
+                        r1 <- expectEqual [] (validateWorld (crWorld cr))
+                        r2 <- expectEqual [] (validateGameState (crWorld cr) (crSave cr))
+                        pure (r1 && r2)
+
+-- | The patrolling wolf the patrol tests declare.
+wolfNPC :: String -> ANPC
+wolfNPC loc = ANPC "wolf" "Wolf" (ACondText "Wolf" []) (AAscii (ACondText "" []) [] 0 [])
+                    [] loc "alive" Nothing 8 3 Map.empty Map.empty Nothing
+
 -- | The 7f combat segment: default without a block is CombatClassic; off /
 --   narrative compile to their profiles; tactical and unknown profiles are
 --   rejected (Phase 7f-3 stays open).
@@ -2150,6 +2291,10 @@ tests =
     , ("stealth compiles to noise/observer/decay triggers", testStealthCompiles)
     , ("stealth validation (unknown npc / var clash)", testStealthValidation)
     , ("stealth fixture compiles + validates", testStealthFixtureCompiles)
+    , ("patrol compiles to gate + steps + warn/attack", testPatrolCompiles)
+    , ("patrol guardian stays put", testPatrolGuardian)
+    , ("patrol validation (npc / path / room / variable clash)", testPatrolValidation)
+    , ("patrol fixture compiles + validates", testPatrolFixtureCompiles)
     -- Phase 7f: combat profiles
     , ("combat segment compiles (default/off/narrative/tactical)", testCombatCompiles)
     , ("combat fixtures compile + validate", testCombatFixturesCompile)

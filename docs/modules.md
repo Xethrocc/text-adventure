@@ -429,6 +429,63 @@ vehicles:
 
 ---
 
+## 7i — Patrouillen und Wächter
+
+**Kernänderung: keine.** Der Rundkurs, die Warnung und der Angriff sind
+vollständig als Trigger + zwei Variablen pro Feind ausdrückbar; das
+`patrol:`-Segment kompiliert sie.
+
+```yaml
+patrol:
+  hostiles:
+    - npc: wolf_forest
+      path: [loc_1, loc_2, loc_3, loc_4]   # Rundkurs, ein Schritt pro Zug
+      start_index: 0                        # path !! start_index = Startraum
+      warn: "WARNING: A wolf is nearby!"    # Anwesenheitsmeldung
+      attack:                                # Effekte, sobald beide im Raum stehen
+        - { msg: "The wolf bites!" }
+        - { damage: 3 }
+    - npc: wolf_guardian
+      guardian: true                         # steht still; path = Räume für warn/attack
+      path: [loc_2]
+      attack: [ { damage: 2 } ]
+```
+
+- **Ein Schritt pro Zug, nicht pro Trigger.** `fireTriggerList` (`Game.hs`)
+  wertet die Bedingungen *live* in einem linearen Fold aus. Flache Regeln
+  „Index == k" würden deshalb kaskadieren: Schritt k setzt k+1, Schritt k+1
+  trifft im selben Zug zu, und der NPC reißt seinen ganzen Rundkurs in einem Zug
+  ab. Deshalb emittiert der Compiler je Feind eine Gate-Variable
+  `patrol.<npc>.moved` und stellt einen Clear-Trigger **vor** die Schrittblöcke.
+- **Nur echte Züge bewegen.** Der Takt hängt an `OnTurn`, und das feuert nur bei
+  zugverbrauchenden Befehlen (`consumesTurn`): `look`, `watch`, `help`,
+  `inventory`, `stats`, `journal` kosten keinen Zug. Ein Wolf lässt sich also
+  nicht durch Anstarren aufhalten, aber auch nicht durch Nachschauen antreiben.
+- **Warnung und Angriff teilen eine Struktur:** je ein Trigger, dessen Effekte
+  pro Pfadraum prüfen, ob Spieler und Feind zusammenstehen
+  (`Location "player" r` + `Location <npc> r`). Nur eine Prüfung kann zutreffen
+  (ein NPC steht in genau einem Raum), also kaskadiert hier nichts. Die Warnung
+  kommt vor dem Angriff.
+- **Körper beißen nicht:** beide Trigger verlangen `PNot (EntityHasState <npc>
+  "dead")` — dasselbe Kriterium wie `isDeadNPC`, mit vorhandenen Prädikaten.
+  Auch die Schrittregeln tragen es, sonst schöbe `move_npc` die Leiche weiter.
+- **Tod ist Autorensache:** `attack` sind gewöhnliche Effekte, `damage` kann
+  also töten (`end_art.death`). Ein Wächter ist nicht unsterblich — er ist nur
+  unbeweglich.
+- **Validierung:** `UnknownPatrolNPC`, `EmptyPatrolPath`, `UnknownPatrolRoom`,
+  `PatrolVariableClash` (Autor deklariert `patrol.<npc>.*` separat).
+- **Engine-Tests:** „patrol compiles to gate + steps + warn/attack" prüft die
+  emittierten Trigger in Form **und** Verhalten (das Gate schließt nach einem
+  Schritt), plus Wächter (keine Lauf-Variablen) und die vier Fehlerfälle.
+
+Fixture: `examples/modules/patrol.yaml` — Der Wolfsforst. Ein stehender
+Schattenwolf bewacht den Hain, ein Hetzwolf läuft einen 4-Raum-Rundkurs und
+holt den Spieler ein. Drei E2E-Pfade pinnen das Verhalten: Sieg
+(`patrol`), Angriff des Patrouillenwolfs (`patrol-attack`) und Tod durch
+Wolfsschaden (`patrol-death`).
+
+---
+
 ## Kompositionsbeweis — `examples/modules/combo.yaml`
 
 Abnahmepunkt 2 der Phase: **ein** Referenzspiel nutzt **fünf** Module

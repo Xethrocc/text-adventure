@@ -1,0 +1,94 @@
+name: Der Wolfsforst (Patrol)
+start_room: pf_0
+
+# Modul 7i — Patrouillen und Wächter.
+# Ein Wächterwolf steht still und schlägt zu, sobald der Spieler seinen Hain
+# betritt; ein Hetzwolf läuft seinen Rundkurs ab und beißt, wenn er den
+# Spieler einholt. `warn` meldet die Anwesenheit, sobald beide im selben Raum
+# stehen. Alles Schema-Zucker: der Compiler emittiert pro Feind eine
+# Gate-Variable, einen `on: turn`-Schrittblock, eine `on: turn`-Warnung und
+# einen `on: turn`-Angriff. Kein Kern-Eingriff.
+#
+# Der Rundkurs läuft bei jedem *zugverbrauchenden* Befehl einen Schritt weiter
+# (`look`, `watch`, `help` kosten keinen Zug — siehe `consumesTurn`).
+
+patrol:
+  hostiles:
+    - npc: wolf_guardian
+      guardian: true          # bleibt stehen; `path` = Räume, in denen er zuschlägt
+      path: [pf_2]
+      warn: "WARNUNG: Der Schattenwolf hat dich im Blick!"
+      attack:
+        - { msg: "Der Schattenwolf fletscht die Zähne — er verteidigt den Hain." }
+        - { damage: 2 }
+    - npc: wolf_forest
+      path: [pf_1, pf_2, pf_3, pf_4]   # Rundkurs, ein Schritt pro Zug
+      start_index: 0
+      warn: "WARNUNG: Ein Wolf ist in der Nähe!"
+      attack:
+        - { msg: "Der Wolf holt dich ein und reißt dir die Schulter auf!" }
+        - { damage: 3 }
+
+player:
+  max_hp: 12
+  attack: 4
+  defense: 1
+
+npcs:
+  - id: wolf_guardian
+    name: Schattenwolf
+    desc: "Ein regloser Wächterwolf, die Schnauze zum Hain gerichtet."
+    keys: [schattenwolf, waechter, wolf]
+    location: pf_2
+    state: alive
+    max_hp: 12
+    attack: 4
+    defense: 1
+  - id: wolf_forest
+    name: Hetzwolf
+    desc: "Ein ausgezehrter Wolf, der den Forst abläuft."
+    keys: [hetzwolf, wolf]
+    location: pf_1
+    state: alive
+    max_hp: 8
+    attack: 3
+    defense: 0
+
+rooms:
+  - id: pf_0
+    name: Waldrand
+    desc: "Nasses Laub, ein schmaler Pfad führt nach Norden in den Forst."
+    exits:
+      north: {to: pf_1}
+  - id: pf_1
+    name: Forstpfad
+    desc: "Der Pfad windet sich zwischen Kiefern. Etwas läuft parallel mit."
+    exits:
+      north: {to: pf_2}
+      south: {to: pf_0}
+  - id: pf_2
+    name: Hain
+    desc: "Ein stiller Hain. Ein großer Wolf steht hier, ohne sich zu rühren."
+    exits:
+      north: {to: pf_3}
+      south: {to: pf_1}
+  - id: pf_3
+    name: Dickicht
+    desc: "Dornen greifen nach dem Mantel. Der Pfad steigt weiter an."
+    exits:
+      north: {to: pf_4}
+      south: {to: pf_2}
+  - id: pf_4
+    name: Felskuppe
+    desc: "Über den Wipfeln. Ein Unterstand liegt im Norden."
+    exits:
+      north: {to: pf_5}
+      south: {to: pf_3}
+  - id: pf_5
+    name: Schutzhütte
+    desc: "Eine Hütte mit trockenem Holz und einer Bank."
+    on_enter:
+      - { msg: "Du ziehst die Tür hinter dir zu. Der Forst kann dir nichts mehr tun." }
+      - { game_end: victory, msg: "VICTORY — Du hast den Wolfsforst hinter dir gelassen." }
+    exits:
+      south: {to: pf_4}
