@@ -24,6 +24,11 @@ Play right now (no setup)
 
 Write your own adventure
 ------------------------
+  The full walkthrough is in WRITING-ADVENTURES.txt (same folder): starting
+  from a copy of the demo, YAML rules that matter, items, NPCs, locked
+  doors, quests, rules, and what to do when check.bat complains.
+
+  Short version:
   1. Copy any file from examples\ into adventures\ and rename it,
      e.g.  mygame.yaml
   2. Edit it with a plain text editor. It is ordinary YAML: rooms,

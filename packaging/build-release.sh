@@ -61,6 +61,7 @@ done
 
 # Author-facing material: flat at the top level of the bundle.
 cp packaging/windows/START-HERE.txt "$bundle/"
+cp packaging/windows/WRITING-ADVENTURES.txt "$bundle/"
 cp packaging/windows/check.bat "$bundle/"
 cp packaging/windows/play.bat "$bundle/"
 cp -r examples "$bundle/examples"

@@ -1,0 +1,189 @@
+# Writing an adventure on Windows
+# ================================
+#
+# This is the full walkthrough: from an empty folder to your own finished
+# adventure. Everything happens on your PC - no Haskell, no WSL, no internet.
+#
+# You will need
+# -------------
+#   - The release ZIP (this folder)
+#   - A plain text editor. Recommended: Notepad (comes with Windows),
+#     Notepad++ (free) or VS Code (free). Do NOT use Word - it does not
+#     write plain text.
+#
+# ================ STEP 1: Understand what you are building =================
+#
+# An adventure is ONE plain-text file in YAML format. It describes:
+#
+#   rooms     where the player can be
+#   exits     how rooms connect (direction -> target room id)
+#   items     things the player can take, use, look at
+#   npcs      characters with dialogue and behaviour
+#   rules     what happens when something occurs ("on: turn", "on: enter", ...)
+#
+# The worldbuilder turns this file into a compiled world that the engine plays.
+#
+# ================ STEP 2: Start from a working example ====================
+#
+# The fastest way is to modify the demo. Open:
+#
+#   adventures\demo.yaml
+#
+# ...with your editor, and save it under a NEW name, e.g.
+#
+#   adventures\mygame.yaml
+#
+# Then double-click check.bat. You should see "Adventure is valid!" for your
+# file, and play.bat now offers "mygame" as a choice. Change one thing at a
+# time and re-run check.bat after each change - this is the whole workflow:
+#
+#   edit -> check.bat -> play.bat
+#
+# ================ STEP 3: The YAML rules that matter ======================
+#
+# YAML cares about indentation. Three rules keep you out of trouble:
+#
+#   1. Indent with SPACES only, never the TAB key.
+#   2. Keep the indentation of the example unchanged while you edit.
+#   3. Multi-line text (like ASCII art) uses the block form:
+#
+#         ascii: |
+#           ( o.o )
+#            > ^ <
+#
+#      The first line after `ascii: |` must be the LEAST indented one.
+#      Widen later lines, never the first.
+#
+# ================ STEP 4: Your first room ==================================
+#
+# A minimal adventure looks like this (this whole file is valid; you can
+# copy it into adventures\ and check.bat will compile it):
+#
+# name: My First Adventure
+# start_room: start
+#
+# rooms:
+#   - id: start
+#     name: A Clearing
+#     description: A quiet clearing in the forest. A path leads north.
+#     exits:
+#       north: hut
+#
+#   - id: hut
+#     name: The Old Hut
+#     description: A dusty hut. The door you came through is to the south.
+#     exits:
+#       south: start
+#
+# That is a complete, playable adventure. Everything below adds to it.
+#
+# ================ STEP 5: Add an item =====================================
+#
+# items:
+#   - id: brass_key
+#     name: brass key
+#     description: A small brass key on a string.
+#     location: hut          # the room the item starts in
+#     portable: true         # the player can take it
+#
+# The player now can: look at brass key / take brass key / inventory.
+#
+# ================ STEP 6: Add an NPC ======================================
+#
+# npcs:
+#   - id: hermit
+#     name: the hermit
+#     description: An old hermit sits by the fire.
+#     location: hut
+#
+# The player can: look at hermit / talk to hermit.
+#
+# ================ STEP 7: A locked door ===================================
+#
+# Exits can require an item:
+#
+#     exits:
+#       north:
+#         to: tower
+#         locked_by: brass_key      # needs the item in the inventory
+#
+# ================ STEP 8: A quest =========================================
+#
+# Quests are a list of stages. The player advances them and sees them in the
+# journal:
+#
+# quests:
+#   - id: find_hermit
+#     name: The Lost Hermit
+#     stages:
+#       - {id: find,    desc: "Find the hermit in the forest."}
+#       - {id: deliver, desc: "Bring the hermit the brass key."}
+#     reward:                        # singular; a list of outcomes
+#       - { set_flag: hermit_thanks, val: "true" }
+#
+# ================ STEP 9: Rules - making things happen ====================
+#
+# Rules are the real engine of your adventure. A rule says: WHEN something
+# happens, IF these conditions hold, THEN do these things:
+#
+# rules:
+#   - id: hermit_intro
+#     on: enter hut               # event: entering the hut
+#     once: true                  # only the first time
+#     effects:
+#       - msg: The hermit looks up from his fire.
+#       - msg: "\"Who disturbs my rest?\" he croaks."
+#
+# Events you can use: enter <room>, leave <room>, look, take, drop,
+# use <item>, turn (every turn), and more (see adventure-schema.md).
+#
+# ================ STEP 10: When check.bat complains =======================
+#
+# The messages name the exact place (this is the "(line N)" part) and most of
+# them carry a hint on the second line (the "->" part). For example:
+#
+#   [error] UnknownRoom at rooms.start.exits.north (line 8): exit points to
+#           undeclared room 'hutt'
+#           -> Check the id for a typo - it must match a room's id exactly
+#              (ids are case-sensitive).
+#
+# Read the line number, open your file there, fix, re-run check.bat.
+# Common mistakes, in order of how often they happen:
+#
+#   - A typo in an id (hutt vs hut)            -> UnknownRoom / UnknownNPC
+#   - Indentation changed while editing        -> "Nothing compiles"
+#   - Two things share an id                   -> Duplicate...
+#   - An exit direction that does not exist    -> UnknownDirection
+#
+# ================ STEP 11: Art, colour, polish (optional) =================
+#
+# Rooms, items and NPCs take an ascii: field - see START-HERE.txt for the
+# block form. To turn a picture into art:
+#
+#   bin\img2ascii.exe -w 60 picture.png > art.txt
+#
+# Big letter banners (title screens, "THE END"):
+#
+#   bin\text2ascii.exe MY GAME
+#
+# Colour is automatic in modern terminals; the engine falls back to plain
+# text on old consoles by itself.
+#
+# ================ STEP 12: Share your adventure ===========================
+#
+# Two files are what matter:
+#
+#   adventures\mygame.yaml     your source (keep this!)
+#   worlds\mygame\world.json   the compiled world (what play.bat runs)
+#
+# Send someone the YAML file and the release ZIP - they put it into
+# adventures\, run check.bat, and play it.
+#
+# ================ Where to go next ========================================
+#
+#   adventure-schema.md    the complete field reference (every key, every default)
+#   modules.md             gameplay modules: factions, trade, stealth, combat
+#                          profiles, starships, ...
+#   START-HERE.txt         the short version of this file
+#
+# Have fun writing!

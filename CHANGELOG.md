@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### W6: Autoren-Doku "Writing an adventure on Windows"
+
+- `packaging/windows/WRITING-ADVENTURES.txt` (neu): das komplette Tutorial
+  (12 Schritte) - von der Kopie der Demo ueber die YAML-Regeln (Tabs verboten,
+  Block-Skalar-Einrueckung), Items, NPCs, verschlossene Tueren, Quests, Regeln
+  bis zu den W5-Fehlermeldungen (Zeile + `->`-Hinweis erklaert) und dem Teilen
+  des YAML. Jedes YAML-Beispiel ist gegen den Compiler verifiziert
+  (Minimal-Adventure aus Schritt 4 und die vollstaendige Probe aus Schritt 5-9
+  validieren beide sauber). START-HERE.txt verweist darauf als Voll-Version;
+  `build-release.sh` buendelt die Datei.
+- Dabei zwei echte Doku-Befunde: Quest-Stufen sind Objekte (`{id, desc}`),
+  keine Strings; und der Quest-Schluessel heisst `reward:` (singular), nicht
+  `rewards:` - letzterer wird vom Worldbuilder **stillschweigend** ignoriert
+  (`.:?`-Defaults), ein Autor verliert also die Belohnung ohne Meldung.
+  Unbekannte YAML-Schluessel warnen: nachgelagerte Verbesserung, im Plan
+  notiert.
+
 ## [0.10.0.0] — 2026-09-18
 
 Phase 6 (Genre-Fixtures + CI) und Phase 7 (optionale Gameplay-Module 7a–7h).
