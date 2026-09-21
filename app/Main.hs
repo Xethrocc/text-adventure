@@ -16,9 +16,9 @@ import System.IO (hIsTerminalDevice, hSetEncoding, stdout, stderr, stdin, utf8)
 
 #if defined(mingw32_HOST_OS)
 import Data.Bits ((.|.))
-import Data.Word (Word32)
+import Data.Word (Word32, Word64)
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Ptr (castPtr, nullPtr)
+import Foreign.Ptr (Ptr, castPtr, nullPtr)
 import Foreign.Storable (peek, poke)
 
 foreign import ccall unsafe "SetConsoleCP" c_SetConsoleCP :: Word32 -> IO Bool
