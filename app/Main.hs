@@ -18,7 +18,7 @@ import System.IO (hIsTerminalDevice, hSetEncoding, stdout, stderr, stdin, utf8)
 import Data.Bits ((.|.))
 import Data.Word (Word32, Word64)
 import Foreign.Marshal.Alloc (alloca)
-import Foreign.Ptr (Ptr, castPtr, nullPtr)
+import Foreign.Ptr (Ptr, nullPtr, wordPtrToPtr)
 import Foreign.Storable (peek, poke)
 
 foreign import ccall unsafe "SetConsoleCP" c_SetConsoleCP :: Word32 -> IO Bool
@@ -40,7 +40,7 @@ stdOutputHandle = 0xFFFFFFF5   -- (-11) truncated to DWORD width
 enableVT :: IO Bool
 enableVT = do
     h <- c_GetStdHandle stdOutputHandle
-    if h == nullPtr || h == castPtr invalidHandle
+    if h == nullPtr || h == invalidHandle
         then pure False
         else
             alloca $ \buf -> do
@@ -53,7 +53,9 @@ enableVT = do
                         c_SetConsoleMode h (old .|. vtBit)
   where
     vtBit = 0x0004 :: Word32
-    invalidHandle = 0xFFFFFFFFFFFFFFFF :: Word64   -- INVALID_HANDLE_VALUE
+    -- INVALID_HANDLE_VALUE (-1) as a HANDLE: the all-ones bit pattern converted
+    -- to a pointer (Foreign.Ptr.wordPtrToPtr takes a `WordPtr`).
+    invalidHandle = wordPtrToPtr maxBound
 
 -- | W3: initialise the Windows console. Returns whether ANSI escapes are safe
 --   to emit on stdout (VT enabled or already on).
