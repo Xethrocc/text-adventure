@@ -4,6 +4,24 @@
 
 ## Unreleased
 
+### Feature: Meta-Progression — `meta.*`-Variablen (Rogue Phase 2)
+
+- `GamePolicy` um `gpMetaSlug` erweitert: `game.meta_slug:` überschreibt den
+  Slug für die Meta-Datei explizit (M8) — Titel-Umbenennungen stranden den
+  Fortschritt nicht mehr; die Engine wendet `slugify` (idempotent) an.
+- Neu in `SaveLoad`: `adventureSlug`, `metaSavePath` (`saves/<slug>_meta.json`),
+  `saveMeta`/`loadMeta` (filtert auf `meta.*`; leere Map schreibt nichts —
+  Adventures ohne Meta-Progression erzeugen keine Datei), korrupte Meta-Datei
+  warnt und startet neu statt zu crashen.
+- GameLoop: `persistMeta` beim Spielende (Sieg/Tod/Custom/Quit);
+  `carryMetaVars` trägt beim Restart die `meta.*`-Werte in den frischen Run;
+  `mergeMetaFromDisk` erzwingt die M5-Vorrangregel (Meta-Datei gewinnt über
+  Slot-Snapshots).
+- Worldbuilder: `AGamePolicy` trägt `meta_slug` (durchgereicht); Meta-Doku in
+  docs/adventure-schema.md.
+- Tests: Restart-Carry (rein), Persistenz beim Tod, Slug-Override.
+
+
 ### Feature: Permadeath, Ironman & Savezones (Rogue Phase 1)
 
 - Neuer optioneller YAML-Block `game:` (Worldbuilder-Schema `AGamePolicy`):

@@ -64,6 +64,7 @@ compileGamePolicy rooms (Just ap) =
             , E.gpAllowUndo  = fromMaybe True (agpAllowUndo ap)
             , E.gpIronman    = ironman
             , E.gpSaveZones  = agpSaveZones ap
+            , E.gpMetaSlug   = agpMetaSlug ap
             }
         zoneErrs =
             [ ciError "game.save_zones" "MissingRoom"

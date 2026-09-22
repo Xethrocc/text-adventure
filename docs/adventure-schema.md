@@ -959,6 +959,66 @@ game:
   (`MissingRoom`, hart); `ironman` ohne `save_zones` ist legal (Hardcore:
   nie speichern) warnt aber (`IronmanWithoutSavezones`).
 
+## Game: Roguelike-Policy (Rogue Phase 1)
+
+Optionaler `game:`-Block für Roguelike-/Roguelite-Adventures. Ohne Block gilt
+`defaultGamePolicy` — das Verhalten aller bestehenden Adventures bleibt
+bit-identisch.
+
+```yaml
+game:
+  permadeath: true        # Tod bietet kein Undo/Load, nur [R]estart | [Q]uit
+  allow_undo: false       # 'undo' generell abweisen
+  ironman: true           # Speichern nur in Savezones; Checkpoint wird bei Tod gelöscht
+  save_zones: [camp, tavern]  # Räume, in denen im Ironman-Modus gespeichert werden darf
+  meta_slug: my_dungeon   # optional: Slug für die Meta-Datei (Rogue Phase 2, M8)
+```
+
+- `permadeath`: beim Tod gibt es kein `[U]ndo`/`[L]oad` mehr — nur
+  `[R]estart` und `[Q]uit`. Eingaben `u`/`l` werden abgewiesen.
+- `allow_undo: false`: der `undo`-Befehl wird generiert abgewiesen
+  ("Undo is disabled in this adventure."); die Undo-Historie wird dann gar
+  nicht erst aufgebaut.
+- `ironman` (Checkpoint-Modell):
+  - Speichern ist nur in `save_zones`-Räumen erlaubt ("You can only rest at
+    a savezone."); es gibt genau **einen** Checkpoint-Slot (`checkpoint`),
+    der bei jedem In-Zone-Save überschrieben wird.
+  - Beim Tod wird der Checkpoint-Slot automatisch von der Festplatte
+    gelöscht; `load` ist im Ironman-Modus gesperrt. Die per `--save`
+    geladene Startdatei bleibt als neutraler Wiedereinstieg erhalten.
+- Validierung: `save_zones` müssen existierende Raum-IDs sein
+  (`MissingRoom`, hart); `ironman` ohne `save_zones` ist legal (Hardcore:
+  nie speichern) warnt aber (`IronmanWithoutSavezones`).
+
+## Meta-Progression: `meta.*`-Variablen (Rogue Phase 2)
+
+Variablen mit dem Präfix `meta.` (z. B. `meta.souls`, `meta.unlocked_class`)
+sind das Roguelite-Fortschrittskonto: Sie überleben Tod, Restart und Neuladen
+in `saves/<slug>_meta.json` — alles andere resettet pro Run.
+
+```yaml
+variables:
+  - var: meta.souls        # dauerhafte Währung (z. B. beim Boss gesammelt)
+    type: int
+    initial: 0
+  - var: meta.unlocked_class
+    type: text
+    initial: ""
+```
+
+- **Persistenz:** beim Spielende (Sieg, Tod, Custom, Quit) schreibt die
+  Engine alle `meta.*`-Variablen automatisch in die Meta-Datei.
+- **Ablageort:** `saves/<slug>_meta.json` pro Adventure. Der Slug wird aus
+  dem Adventure-Titel abgeleitet (lowercase, `[a-z0-9_-]`); ein explizites
+  `game.meta_slug:` gewinnt — dann überlebt ein Titel-Umbenennen den
+  Fortschritt. Der Pfad folgt `TA_SAVES_DIR`/`--saves-dir`.
+- **Restart (R, Rogue-Style):** der neue Run startet aus dem initialen
+  Zustand, aber die `meta.*`-Werte werden in den frischen Run hinübergetragen.
+- **Vorrangregel (M5):** die Meta-Datei ist die fortschrittsautoritative
+  Quelle — auch ein `load <slot>` überschreibt sie nie rückwärts.
+- Tests/E2E: `meta.souls` nach Restart prüfen; die Datei erscheint erst mit
+  der ersten Meta-Variablen.
+
 ## Banner: `title_art` und `end_art` (Phase G)
 
 Zwei optionale Top-Level-Felder ersetzen die fest eingebauten Textrahmen der

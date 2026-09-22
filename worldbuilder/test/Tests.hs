@@ -178,14 +178,16 @@ testGamePolicyCompiles = do
     r0 <- case compileAdventure (minAdventure (minRoom "loc_0")) of
             Left _  -> expectTrue "default compiles" False
             Right cr -> expectEqual E.defaultGamePolicy (E.worldGamePolicy (crWorld cr))
-    -- full block: policy lands in the world, no warnings
+    -- full block incl. explicit meta_slug (Rogue Phase 2, M8): the engine
+    -- applies slugify to the override (idempotent, so "katakombe_vhal"
+    -- stays itself and a raw "Katakomben von Vhal" gets cleaned up).
     let advWithGame = (minAdventure (minRoom "loc_0"))
             { advGame = Just (AGamePolicy (Just True) (Just False) (Just True)
-                                ["loc_0"] Nothing) }
+                                ["loc_0"] (Just "katakombe_vhal")) }
     r1 <- case compileAdventure advWithGame of
             Left errs -> expectTrue ("policy compiles, got: " ++ show errs) False
             Right cr -> do
-                rA <- expectEqual (E.GamePolicy True False True ["loc_0"])
+                rA <- expectEqual (E.GamePolicy True False True ["loc_0"] (Just "katakombe_vhal"))
                                   (E.worldGamePolicy (crWorld cr))
                 rB <- expectTrue "no warnings for a complete ironman setup"
                           (null (crWarnings cr))
