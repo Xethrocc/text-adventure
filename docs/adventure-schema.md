@@ -201,6 +201,28 @@ Validierung: `DuplicateClip` (doppelte id), `UnknownClip` (unbekannte id in
 Verb-Maps), `ClipFpsInvalid` (fps <= 0) und `ClipFramesEmpty` (keine Frames).
 `fps` muss positiv sein, Frames dürfen nicht leer sein.
 
+#### Material erzeugen: das `video2ascii`-Werkzeug (Phase F)
+
+Für echte bewegte Kunst erzeugt `video2ascii` beide Formen oben aus einem
+kurzen Video (ffmpeg/ffprobe laufen **nur** im Werkzeug als externe Prozesse,
+D6 — die Engine und das TUI kennen kein ffmpeg):
+
+```sh
+# Ambient-Loop: 6 Frames gleichmäßig über 0–1,5 s, eigene Rate (~4 fps),
+# Loop-Naht wird gemessen und gemeldet (D15); Ausgabe ist ein einfügbare
+# `ambient:`-YAML-Snippet:
+video2ascii --ambient --frames 6 --from 0 --to 1.5 --width 24 strand.mp4
+
+# Cutscene: das ganze Material bei 6 fps als Clip-Datei (D14-Format,
+# JSON-Array von Frame-Strings) plus das passende `clips:`-Snippet:
+video2ascii --cutscene --fps 6 --width 32 strand.mp4 --out art/pan.json
+```
+
+Ambiente-Loops sind auf 4–30 Frames begrenzt (D11); die Naht-Report warnt,
+wenn der letzte-erste-Frame-Abstand doppelt so sichtbar ist wie ein normaler
+Frameschritt — dann Fenster härter schneiden oder eine Stelle wählen, die
+dort wieder anfängt, wo sie aufhört.
+
 #### Anfassbare Kunst: Hotspots (Phase E)
 
 Ein `ascii`-Objekt kann `hotspots` enthalten: Marker-Glyphen, die an ein Ziel

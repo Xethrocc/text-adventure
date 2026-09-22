@@ -2,7 +2,8 @@
 # Phase 6c: CI pipeline for the text-adventure engine.
 #
 #   1. build all packages
-#   2. run the unit test suites (engine, worldbuilder, img2ascii, text2ascii)
+#   2. run the unit test suites (engine, worldbuilder, img2ascii, text2ascii,
+#      video2ascii)
 #   3. validate every shipped adventure (demo, thefog, 6 genre + 14 module fixtures)
 #   4. E2E: compile each fixture and drive it to a known ending
 #

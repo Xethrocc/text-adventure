@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Phase F: `video2ascii` — Video als Kunst-Material (D6, D14, D15)
+
+- Neues Werkzeug-Paket `video2ascii` (D9: eigener Stilkopie-Weg, keine
+  Engine-Abhängigkeit): ffprobe liest Geometrie/Rate/Dauer, ffmpeg zieht
+  Frames als rohes Graustufenmaterial, das Paket wandelt sie in ASCII
+  (Zellmittelung statt Punktabtastung — Video-Rauschen flackert sonst).
+  ffmpeg/ffprobe sind ausschließlich externe Prozesse **im Werkzeug**;
+  an der Engine-Laufzeit ändert sich nichts (D6).
+- Zwei Modi passend zu den beiden Abspielorten (D11):
+  * `--ambient` — 4–30 Frames gleichmäßig über ein Zeitfenster, abgespielt
+    mit der eigenen Rate des Fensters (periodegenauer Loop, D15); die Naht
+    (letzte vs. erste Frame relativ zur Ø-Frameschritt-Distanz) wird gemessen
+    und gemeldet, Ratio > 2 warnt. Ausgabe: einfügbares `ambient:`-YAML.
+  * `--cutscene` — das ganze Material bei `--fps` als Clip-Datei im
+    D14-Format (JSON-Array von Frame-Strings) plus `clips:`-Snippet;
+    der Worldbuilder bettet sie beim Kompilieren ein.
+- Fertig-wif belegt (Handlauf): ein generiertes 2-s-Testvideo liefert
+  Material, das die Engine als Ambiente-Loop (`watch`) bzw. als Cutscene
+  (`intro:` beim Betreten) in der Pipe abspielt — statisch, sequenzfrei.
+  14 Tests (10 rein: Zeilenverhältnis, Rampe, Distanz, Naht, Zeitwahl,
+  JSON-/YAML-Formate; 4 ffmpeg-Integration mit generiertem Video, skippen
+  sauber ohne ffmpeg im CI).
+- Schema-Doku um das Werkzeug-Kapitel ergänzt.
+
 ### Fix: `--world` ohne `--save` lädt die Geschwister-save.json
 
 - Befund aus der H-Handprobe: eine kompilierte Welt startete ohne `--save`
