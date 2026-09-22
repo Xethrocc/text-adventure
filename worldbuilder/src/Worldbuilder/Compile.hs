@@ -76,8 +76,60 @@ compileGamePolicy rooms (Just ap) =
             | fromMaybe False (agpIronman ap), null (agpSaveZones ap) ]
     in (zoneErrs, ironWarnings, policy)
 
--- | Group source keys that normalize to the same target key (collision detection).
---   Returns [(target, [sourceKeys])] for targets with more than one source.
+-- | Rogue Phase 3: validate `set_exit` / `remove_exit` effects — the
+--   direction string must parse (UnknownDirection) and `from`/`to` rooms must
+--   exist (MissingRoom, same code as the engine's L4 check). Traversed via
+--   'allWorldEffects' so rules, rooms, items and NPCs are all covered.
+-- | Rogue Phase 3: validate `set_exit` / `remove_exit` over the RAW outcome
+--   trees (so the authored direction strings are checkable, unlike after the
+--   compile step where an unknown direction maps to `East`). Traversed via
+--   'allAOutcomes' — the same surface as 'allWorldEffects', but pre-compile.
+--   `from`/`to` rooms must exist (MissingRoom, same code as the engine's L4).
+checkSetExitRefs :: Set.Set String -> Adventure -> [CompileIssue]
+checkSetExitRefs roomKeys adv =
+    concatMap go (allAOutcomes adv)
+  where
+    go (AOSetExit from dir to _mLock) =
+        setExitIssues from dir (Just to)
+            ++ [ ciError "outcomes.set_exit.to" "MissingRoom"
+                    ("room '" ++ to ++ "' does not exist")
+               | to `Set.notMember` roomKeys ]
+    go (AORemoveExit from dir) = setExitIssues from dir Nothing
+    go (AOConditional _ ts es) = go' ts ++ go' es
+    go (AONarrative _ follow)  = go' follow
+    go (AORandomChoice cs)     = concatMap go' (map snd cs)
+    go (AOApplyCondition _ _ t e) = go' (t ++ e)
+    go _                       = []
+    go' = concatMap go
+    setExitIssues from dir mTo =
+        [ ciError ("outcomes." ++ tag) "UnknownDirection"
+            ("set_exit/remove_exit direction '" ++ dir ++ "' is unknown")
+        | either (const True) (const False) (parseDir dir) ]
+        ++ [ ciError ("outcomes." ++ tag) "MissingRoom"
+                ("room '" ++ r ++ "' does not exist")
+           | r <- nub (from : toRooms), r `Set.notMember` roomKeys ]
+      where
+        tag = case mTo of
+            Just _  -> "set_exit"
+            Nothing -> "remove_exit"
+        toRooms = maybe [] (:[]) mTo
+    -- Alle autorenbaren Outcome-Container (Spiegel von 'allWorldEffects',
+    -- aber auf dem Rohtext-Level — wichtig fuer die Richtungs-Pruefung).
+    allAOutcomes :: Adventure -> [AActionOutcome]
+    allAOutcomes a =
+        let roomOutcomes r = concat (catMaybes [ arOnEnter r, arOnLook r, arOnExit r, arSearch r ])
+            itemOutcomes i = maybe [] id (aiOnTake i) ++ concat (Map.elems (aiVerbMap i))
+            interactions = case advInteractions a of
+                Just ai -> concatMap aiiEffects (aiItem ai)
+                Nothing -> []
+        in concat
+            [ concatMap roomOutcomes (advRooms a)
+            , concatMap atEffects (advTriggers a)
+            , concatMap itemOutcomes (advItems a)
+            , concatMap (concat . Map.elems . anVerbMap) (advNPCs a)
+            , interactions
+            , concatMap (maybe [] id . aqReward) (advQuests a)
+            ]
 collisions :: Ord a => [(String, a)] -> [(a, [String])]
 collisions pairs =
     [ (k, keys)
@@ -111,6 +163,7 @@ compileAdventure adv =
             mergeEnvironmentVars facVarDefs facVarInitials envVarDefs envVarInitials
 
         allRooms = Map.union compiledRooms vehicleExtraRooms
+        roomKeys = Set.fromList (Map.keys allRooms)
 
         (stealthErrs, stealthTriggerDefs, stealthVarDefs, stealthVarInitials) =
             compileStealth (Map.keys allRooms) (map anId (advNPCs adv)) (advStealth adv)
@@ -189,6 +242,7 @@ compileAdventure adv =
         combatVarErrs = checkCombatVarReserved varDefs
         cooldownCondErrs = checkCooldownConditionReserved gw
         hotspotErrs = checkHotspotRefs gw
+        setExitErrs = checkSetExitRefs roomKeys adv
         ambientErrs = checkAmbientRates gw
         clipErrs = checkClips (advClips adv) gw
 
@@ -210,6 +264,7 @@ compileAdventure adv =
                     ++ hotspotErrs
                     ++ ambientErrs
                     ++ clipErrs
+                    ++ setExitErrs
                     ++ gameErrs
     in case allErrors of
         (_:_) -> Left allErrors
@@ -252,6 +307,13 @@ compileAdventure adv =
 -- ---------------------------------------------------------------------------
 -- Direction parsing (strict — unknown = compile error)
 -- ---------------------------------------------------------------------------
+
+-- | Rogue Phase 3: total direction parse for the compile step. Invalid
+--   direction strings are reported by 'checkSetExitRefs' (UnknownDirection);
+--   the mapping itself uses East as a harmless placeholder so the effect tree
+--   always type-checks before the check runs.
+dirOf :: String -> E.Direction
+dirOf = either (const E.East) id . parseDir
 
 parseDir :: String -> Either String E.Direction
 parseDir s = case map toLower s of
@@ -1503,6 +1565,16 @@ compileAActionOutcome ao = case ao of
     AOApplyCondition name turns tick end ->
         E.ApplyCondition name turns (outcomesMaybe tick) (outcomesMaybe end)
     AOClearCondition name -> E.ClearCondition name
+    -- Rogue Phase 3: dynamic exits. Direction strings are validated in
+    -- 'checkSetExitRefs' (UnknownDirection) — they must not be silently
+    -- mapped; missing `from`/`to` rooms surface as MissingRoom in the
+    -- engine validate pass (idsFromOutcomeRoom).
+    AOSetExit from dir to mLock ->
+        E.SetExit from (dirOf dir) (case mLock of
+            Nothing -> E.Open to
+            Just e  -> E.Locked to e)
+    AORemoveExit from dir ->
+        E.RemoveExit from (dirOf dir)
     AOModifySkill skillId delta -> E.ModifySkill skillId delta
     AORandomChoice weighted ->
         E.RandomChoice [ (w, compileOutcomes os) | (w, os) <- weighted ]

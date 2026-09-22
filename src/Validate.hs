@@ -104,6 +104,31 @@ idsFromOutcomeRoom outcome = case outcome of
 -- Reachability
 -- ---------------------------------------------------------------------------
 
+-- | Rogue Phase 3: rooms that are reachable only through a dynamic exit
+--   (`set_exit`) — the static reachability walk cannot see them, so they are
+--   exempt from 'checkUnreachableFrom' as long as the authoring is sound
+--   (the worldbuilder validates the referenced rooms themselves).
+dynamicExitTargets :: GameWorld -> Set.Set RoomID
+dynamicExitTargets gw =
+    let direct = Set.fromList [ to | e <- allOutcomes gw, Just to <- [exitTarget e] ]
+        nested = Set.fromList [ to | e <- allOutcomes gw, to <- nestedTargets e ]
+    in Set.union direct nested
+  where
+    exitTarget :: Effect -> Maybe RoomID
+    exitTarget (SetExit _ _ (Open to))     = Just to
+    exitTarget (SetExit _ _ (Locked to _)) = Just to
+    exitTarget _                           = Nothing
+    -- effects inside containers (Conditional/Random/Narrative/ApplyCondition)
+    nestedTargets :: Effect -> [RoomID]
+    nestedTargets (SetExit _ _ (Open to))     = [to]
+    nestedTargets (SetExit _ _ (Locked to _)) = [to]
+    nestedTargets (Sequence os)               = concatMap nestedTargets os
+    nestedTargets (RandomChoice os)           = concatMap (nestedTargets . snd) os
+    nestedTargets (Conditional _ t e)         = nestedTargets t ++ nestedTargets e
+    nestedTargets (Narrative _ f)             = nestedTargets f
+    nestedTargets (ApplyCondition _ _ t e)    = concatMap (maybe [] nestedTargets) [t, e]
+    nestedTargets _                           = []
+
 -- | Rooms unreachable from the given start room via Open/Locked exits, plus the
 --   vehicle stops and interiors (reached by boarding/driving, not by room
 --   exits). The caller supplies the start room: `validateGameState` uses
@@ -132,7 +157,12 @@ checkUnreachableFrom start gw
             allRooms = [ rId | rId <- Map.keys (rooms gw)
                              , let room = rooms gw Map.! rId
                              , not ("vehicle" `Set.member` roomTags room) ]
-        in [UnreachableRoom rId | rId <- allRooms, not (Set.member rId reachable)]
+            -- Rogue Phase 3: rooms that only appear via `set_exit` are not
+            -- statically reachable by design; they are validated for existence
+            -- in checkMissingRoomRefs instead.
+            dyn = dynamicExitTargets gw
+        in [UnreachableRoom rId | rId <- allRooms, not (Set.member rId reachable)
+                                , not (Set.member rId dyn)]
 
 -- | BFS from a starting room, following both open and locked exits.
 reachableRooms :: RoomID -> GameWorld -> [RoomID]

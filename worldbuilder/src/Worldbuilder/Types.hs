@@ -918,6 +918,10 @@ data AActionOutcome
     | AOStandingAdd String Int         -- ^ standing: {faction: X, add: N} (Phase 7a)
     | AOStandingSet String Int         -- ^ standing: {faction: X, set: N} (Phase 7a)
     | AOSetEntityState String String   -- ^ set_state: <entity>, to: <state> (Phase 7a)
+    -- Rogue Phase 3: dynamic exits at runtime.
+    | AOSetExit String String String (Maybe String)
+        -- ^ set_exit: { from: hall, dir: north, to: chamber, locked_by: seal }
+    | AORemoveExit String String       -- ^ remove_exit: { from: hall, dir: south }
     -- P1-17: effects that previously had no YAML form at all.
     | AOApplyCondition String Int [AActionOutcome] [AActionOutcome]
         -- ^ condition: {name, turns, tick, end} — timed status effect
@@ -972,5 +976,12 @@ instance FromJSON AActionOutcome where
                 (   (AOStandingAdd fid <$> st .: "add")
                  <|> (AOStandingSet fid <$> st .: "set") ))
         <|> (AOSetEntityState <$> o .: "set_state" <*> o .: "to")
+        -- Rogue Phase 3: set_exit / remove_exit must be tried before the broad
+        -- `msg` fallback (objects may carry sibling keys).
+        <|> (do se <- o .: "set_exit"
+                AOSetExit <$> se .: "from" <*> se .: "dir"
+                          <*> se .: "to"  <*> se .:? "locked_by")
+        <|> (do re <- o .: "remove_exit"
+                AORemoveExit <$> re .: "from" <*> re .: "dir")
         <|> fail "Unknown outcome type. Use one of: msg, heal, damage, give, consume, set_flag, start_quest, etc."
         ) v
