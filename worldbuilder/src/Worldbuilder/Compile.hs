@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+
 -- | Compile an Adventure (authoring schema) into engine types, or return structured issues
 module Worldbuilder.Compile
     ( CompileResult(..)
@@ -27,8 +28,9 @@ import qualified Verbs
 
 -- | Result of compilation
 data CompileResult = CompileResult
-    { crWorld :: E.GameWorld
-    , crSave  :: E.SaveState
+    { crWorld    :: E.GameWorld
+    , crSave     :: E.SaveState
+    , crWarnings :: [CompileIssue]  -- ^ non-fatal diagnostics (Rogue Phase 1: IronmanWithoutSavezones)
     } deriving (Show, Eq)
 
 -- | Severity of a compiler diagnostic
@@ -46,6 +48,32 @@ data CompileIssue = CompileIssue
 -- | Build an error diagnostic
 ciError :: String -> String -> String -> CompileIssue
 ciError path code msg = CompileIssue path SError code msg
+
+-- | Rogue Phase 1: build an engine GamePolicy from the authored `game:` block.
+--   Absent block (or absent fields) keeps 'E.defaultGamePolicy' — the
+--   Default-Invariante. Validation: savezone rooms must exist (MissingRoom);
+--   `ironman` without savezones is legal (never-save hardcore) but warned
+--   about ('IronmanWithoutSavezones') because it is usually an oversight.
+compileGamePolicy :: Map.Map String E.Room -> Maybe AGamePolicy
+                  -> ([CompileIssue], [CompileIssue], E.GamePolicy)
+compileGamePolicy _ Nothing = ([], [], E.defaultGamePolicy)
+compileGamePolicy rooms (Just ap) =
+    let ironman = fromMaybe False (agpIronman ap)
+        policy = E.GamePolicy
+            { E.gpPermadeath = fromMaybe False (agpPermadeath ap)
+            , E.gpAllowUndo  = fromMaybe True (agpAllowUndo ap)
+            , E.gpIronman    = ironman
+            , E.gpSaveZones  = agpSaveZones ap
+            }
+        zoneErrs =
+            [ ciError "game.save_zones" "MissingRoom"
+                ("save zone references unknown room '" ++ z ++ "'")
+            | z <- agpSaveZones ap, not (Map.member z rooms) ]
+        ironWarnings =
+            [ CompileIssue "game.ironman" SWarning "IronmanWithoutSavezones"
+                "ironman is set but save_zones is empty: the game can never be saved"
+            | fromMaybe False (agpIronman ap), null (agpSaveZones ap) ]
+    in (zoneErrs, ironWarnings, policy)
 
 -- | Group source keys that normalize to the same target key (collision detection).
 --   Returns [(target, [sourceKeys])] for targets with more than one source.
@@ -110,6 +138,12 @@ compileAdventure adv =
 
         allTriggerDefs = triggerDefs ++ encounterDefs ++ envTriggerDefs ++ stealthTriggerDefs
                             ++ patrolTriggerDefs ++ shipTriggerDefs
+
+        -- Rogue Phase 1: the authored `game:` policy. Savezone rooms must
+        -- exist (MissingRoom); ironman without savezones is a warning (legal
+        -- hardcore setting, but usually an oversight). Warnings do not block
+        -- compilation — they travel through 'crWarnings' to the author.
+        (gameErrs, gameWarns, compiledPolicy) = compileGamePolicy allRooms (advGame adv)
         (combatErrs, combatProfileCompiled) = compileCombat (advCombat adv)
         (initVarErrs, initialVars) =
             compileInitialVariables allVarDefs allVarInitials (advInitialVariables adv)
@@ -143,7 +177,7 @@ compileAdventure adv =
                 , E.worldEndArt = Map.map compileAscii (advEndArt adv)
                 , E.worldTitleArt = compileAscii (advTitleArt adv)
                 , E.worldClips = compileClips (advClips adv)
-                , E.worldGamePolicy = E.defaultGamePolicy
+                , E.worldGamePolicy = compiledPolicy
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
@@ -175,6 +209,7 @@ compileAdventure adv =
                     ++ hotspotErrs
                     ++ ambientErrs
                     ++ clipErrs
+                    ++ gameErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -202,7 +237,7 @@ compileAdventure adv =
                         , E.variables = initialVars
                         , E.triggerStates = Map.empty
                         }
-            in Right (CompileResult gw startSave)
+            in Right (CompileResult gw startSave gameWarns)
   where
     -- Every locked exit starts locked in entityStates
     initialEntityStates rooms =

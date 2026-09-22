@@ -19,6 +19,7 @@ import System.Exit (exitFailure, exitSuccess)
 import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>))
 import System.IO (hSetEncoding, stdout, stderr, stdin, utf8)
+import Control.Monad (unless)
 import Worldbuilder.Locate (lineForPath)
 import Control.Exception (try, SomeException)
 import qualified Data.Map.Strict as Map
@@ -178,6 +179,12 @@ compile path rest = do
                 putStrLn $ show (length errs) ++ " hard error(s); output not written."
                 exitFailure
             Right cr -> do
+                -- Rogue Phase 1: non-fatal compiler diagnostics (e.g.
+                -- IronmanWithoutSavezones) are shown, never block.
+                unless (null (crWarnings cr)) $ do
+                    putStrLn "Compiler warnings:"
+                    printCompileIssues path (crWarnings cr)
+                    putStrLn ""
                 let errors = validateWorld (crWorld cr) ++ validateGameState (crWorld cr) (crSave cr)
                 if not (null errors) && not force
                 then do

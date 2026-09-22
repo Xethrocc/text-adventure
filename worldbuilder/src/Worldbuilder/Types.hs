@@ -43,7 +43,27 @@ data Adventure = Adventure
     , advEndArt           :: Map.Map String AAscii       -- ^ end banners per reason (Phase G)
     , advTitleArt         :: AAscii                      -- ^ optional title banner (Phase G)
     , advClips            :: [AClip]                     -- ^ cutscene clips (Phase H/H4)
+    , advGame             :: Maybe AGamePolicy           -- ^ roguelike policy (Rogue Phase 1)
     } deriving (Show, Eq, Generic)
+
+-- | Rogue Phase 1: the authored `game:` block. Every field is optional so
+--   authors opt in field by field; absent fields keep their engine default
+--   (permadeath False, allow_undo True, ironman False, save_zones []).
+data AGamePolicy = AGamePolicy
+    { agpPermadeath :: Maybe Bool
+    , agpAllowUndo  :: Maybe Bool
+    , agpIronman    :: Maybe Bool
+    , agpSaveZones  :: [String]
+    , agpMetaSlug   :: Maybe String               -- ^ explicit slug override (Rogue Phase 2, M8)
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AGamePolicy where
+    parseJSON = withObject "AGamePolicy" $ \o -> AGamePolicy
+        <$> o .:? "permadeath"
+        <*> o .:? "allow_undo"
+        <*> o .:? "ironman"
+        <*> o .:? "save_zones" .!= []
+        <*> o .:? "meta_slug"
 
 -- | A declared cutscene clip (Phase H/H4). Frames are inline (small scenes)
 --   or live in a companion file (`file: art/pan.json`, D14) that the
@@ -89,6 +109,7 @@ instance FromJSON Adventure where
         <*> o .:? "end_art"         .!= Map.empty
         <*> o .:? "title_art"       .!= AAscii (ACondText "" []) [] 1 [] Nothing
         <*> o .:? "clips"           .!= []
+        <*> o .:? "game"
 
 -- | Optional player stats block in YAML (Phase 4d).
 --   `player: { max_hp: 50, attack: 8, defense: 3, skills: { lockpick: 5 } }`

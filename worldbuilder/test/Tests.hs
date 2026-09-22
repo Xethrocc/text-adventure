@@ -164,7 +164,51 @@ minAdventure room = Adventure
     , advEndArt = Map.empty
     , advTitleArt = AAscii (ACondText "" []) [] 1 [] Nothing
     , advClips = []
+    , advGame = Nothing
     }
+
+-- ===== Rogue Phase 1: authored game policy =====
+
+-- | Rogue Phase 1: the authored `game:` block compiles to the engine
+--   GamePolicy. Absent block keeps the default; savezone rooms are validated
+--   (MissingRoom); ironman without savezones is a non-fatal warning.
+testGamePolicyCompiles :: IO Bool
+testGamePolicyCompiles = do
+    -- default: no game block -> defaultGamePolicy
+    r0 <- case compileAdventure (minAdventure (minRoom "loc_0")) of
+            Left _  -> expectTrue "default compiles" False
+            Right cr -> expectEqual E.defaultGamePolicy (E.worldGamePolicy (crWorld cr))
+    -- full block: policy lands in the world, no warnings
+    let advWithGame = (minAdventure (minRoom "loc_0"))
+            { advGame = Just (AGamePolicy (Just True) (Just False) (Just True)
+                                ["loc_0"] Nothing) }
+    r1 <- case compileAdventure advWithGame of
+            Left errs -> expectTrue ("policy compiles, got: " ++ show errs) False
+            Right cr -> do
+                rA <- expectEqual (E.GamePolicy True False True ["loc_0"])
+                                  (E.worldGamePolicy (crWorld cr))
+                rB <- expectTrue "no warnings for a complete ironman setup"
+                          (null (crWarnings cr))
+                pure (rA && rB)
+    -- ironman without savezones compiles, warning attached
+    let advHardcore = (minAdventure (minRoom "loc_0"))
+            { advGame = Just (AGamePolicy (Just True) Nothing (Just True) [] Nothing) }
+    r2 <- case compileAdventure advHardcore of
+            Left _   -> expectTrue "ironman without savezones compiles" False
+            Right cr -> do
+                rA <- expectTrue "ironman flag set"
+                          (E.gpIronman (E.worldGamePolicy (crWorld cr)))
+                rB <- expectEqual ["IronmanWithoutSavezones"]
+                          [ciCode i | i <- crWarnings cr]
+                pure (rA && rB)
+    -- unknown savezone room: MissingRoom, hard error
+    let advBad = (minAdventure (minRoom "loc_0"))
+            { advGame = Just (AGamePolicy Nothing Nothing (Just True) ["nope"] Nothing) }
+    r3 <- case compileAdventure advBad of
+            Left errs -> expectTrue "unknown savezone is MissingRoom"
+                              (any (\i -> ciCode i == "MissingRoom") errs)
+            Right _   -> expectTrue "unknown savezone must fail" False
+    pure (r0 && r1 && r2 && r3)
 
 -- ---------------------------------------------------------------------------
 -- Direction tests
@@ -2408,6 +2452,8 @@ tests =
     -- Phase 7f: combat profiles
     , ("combat segment compiles (default/off/narrative/tactical)", testCombatCompiles)
     , ("combat fixtures compile + validate", testCombatFixturesCompile)
+    -- Rogue Phase 1: authored game policy
+    , ("game policy compiles (default/ironman/warning/missing room)", testGamePolicyCompiles)
     -- Phase 7g: party / companions
     , ("party block compiles to follow var + order verb", testPartyCompiles)
     , ("party block with can_join false is inert", testPartyCanJoinFalseIsInert)
