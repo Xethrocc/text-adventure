@@ -30,7 +30,6 @@ import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, takeMVar,
                                 tryPutMVar, withMVar)
 import Control.Monad (void, when)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.State.Strict (get, put)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intercalate)
 
@@ -71,8 +70,6 @@ data TuiState = TuiState
     }
 
 -- | Help line shown under the command editor.
-helpText :: String
-helpText = "Tab: vervollständigen  ·  ↑/↓: Verlauf  ·  PgUp/PgDn: scrollen  ·  Ctrl-Q: beenden"
 
 -- | Append one (possibly multi-line) chunk of game text to the shared buffer.
 appendShared :: TuiShared -> String -> IO ()
@@ -212,8 +209,7 @@ drawTui st =
         , padLeftRight 1 $ vBox
             [ suggestionLine
             , hCenter (hBox [ str "> "
-                            , vLimit 1 $ viewport CmdEdit Horizontal $
-                                renderEditor (txt . T.concat) True (tsEditor st) ])
+                            , renderEditor (txt . T.concat) True (tsEditor st) ])
             , hCenter (str helpLine)
             ]
         ]
