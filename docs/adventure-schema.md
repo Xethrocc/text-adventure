@@ -169,6 +169,38 @@ der Compiler meldet `AmbientFpsInvalid` bzw. `AmbientFramesEmpty`. Kunst ohne
 früheren festen Konstante entsprechend); `ambient`-Kunst spielt **ihre**
 Rate. In Pipes bleibt die Ausgabe statisch (D22).
 
+#### Cutscenes: `clips`, `intro` und `play_clip` (Phase H, H4)
+
+Cutscenes sind Clips: einmal abgespielte Frame-Folgen mit eigener Rate. Sie
+liegen in einem eigenen `clips:`-Segment — inline (kleine Szenen) oder in einer
+Begleitdatei (`file: art/pan.json`, JSON-Array von Strings), die der Compiler
+beim Kompilieren **einbettet**; die kompilierte Welt braucht zur Laufzeit keine
+weitere Datei (D14):
+
+```yaml
+clips:
+  - id: strand-pan
+    fps: 12
+    file: art/pan.json        # oder inline `frames:` für kleine Szenen
+
+rooms:
+  - id: strand
+    name: Strand
+    desc: ...
+    intro: strand-pan         # einmal beim Betreten
+```
+
+Zwei Auslöser (D19): `intro:` am Raum (beim Betreten) und der Effekt
+`play_clip: <clip-id>` in Regeln/Auslösern — ein `play_clip` in `on_enter`
+gewinnt gegen das `intro` des Raums. Im Haskeline-CLI läuft die Cutscene
+sequenziell ab (blockierend, wie `watch`); im TUI wird sie im Kunst-Panel
+in-place abgespielt und geht in den Ambiente-Loop der Szene über.
+
+Validierung: `DuplicateClip` (doppelte id), `UnknownClip` (unbekannte id in
+`intro:` oder `play_clip:` — geprüft in Regeln, Raum-Hooks, Dialogen und
+Verb-Maps), `ClipFpsInvalid` (fps <= 0) und `ClipFramesEmpty` (keine Frames).
+`fps` muss positiv sein, Frames dürfen nicht leer sein.
+
 #### Anfassbare Kunst: Hotspots (Phase E)
 
 Ein `ascii`-Objekt kann `hotspots` enthalten: Marker-Glyphen, die an ein Ziel

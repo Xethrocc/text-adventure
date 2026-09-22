@@ -913,11 +913,16 @@ testCombatDeathMessageWithShip = do
 -- | A recording frontend with scripted input. Proves the loop's policy
 --   functions drive any presentation, not just Haskeline/stdout: the same
 --   'runGameWithFrontend' entry point runs to completion without a terminal.
-cannedFrontend :: [Maybe String] -> IO ([String], [String], [Maybe String])
-cannedFrontend script = do
+cannedFrontend :: [Maybe String] -> IO ([String], [String], [(Int, [String])], [Maybe String])
+cannedFrontend script = cannedFrontendWith initSampleGame script
+
+-- | Variant with a custom initial state (used by the cutscene test).
+cannedFrontendWith :: GameState -> [Maybe String] -> IO ([String], [String], [(Int, [String])], [Maybe String])
+cannedFrontendWith startState script = do
     outRef <- newIORef []
     diagRef <- newIORef []
     inRef <- newIORef script
+    playRef <- newIORef []
     let fe = Frontend
             { feEmitLine    = \l -> modifyIORef' outRef (l :)
             , feEmitRaw     = \s -> modifyIORef' outRef (s :)
@@ -929,18 +934,19 @@ cannedFrontend script = do
                       (x : xs) -> writeIORef inRef xs >> pure x
             , feReadPlain   = \_ -> pure Nothing
             , feReadPause   = pure ()
-            , fePlayFrames  = \_ _ -> pure ()
+            , fePlayFrames  = \micros frames -> modifyIORef' playRef ((micros, frames) :)
             , feDiagnostics = \ms -> modifyIORef' diagRef (++ ms)
             }
-    runGameWithFrontend fe initSampleGame
+    runGameWithFrontend fe startState
     out <- reverse <$> readIORef outRef
     diag <- readIORef diagRef
     remaining <- readIORef inRef
-    pure (out, diag, remaining)
+    played <- reverse <$> readIORef playRef
+    pure (out, diag, played, remaining)
 
 testLoopRunsOnCannedFrontend :: IO Bool
 testLoopRunsOnCannedFrontend = do
-    (out, diag, remaining) <- cannedFrontend [Just "look", Just "take torch", Nothing]
+    (out, diag, played, remaining) <- cannedFrontend [Just "look", Just "take torch", Nothing]
     r1 <- expectTrue "look output names the starting room description"
                      (any ("small stone chamber" `isInfixOf`) out)
     r2 <- expectTrue "take confirms the torch" (any ("You take the torch." `isInfixOf`) out)
@@ -948,7 +954,8 @@ testLoopRunsOnCannedFrontend = do
                      (any ("Goodbye!" `isInfixOf`) out && any ("Thanks for playing!" `isInfixOf`) out)
     r4 <- expectTrue "no diagnostics on a healthy game" (null diag)
     r5 <- expectTrue "script fully consumed" (null remaining)
-    pure (and [r1, r2, r3, r4, r5])
+    r6 <- expectTrue "nothing played without art" (null played)
+    pure (and [r1, r2, r3, r4, r5, r6])
 
 -- ===== Phase H/H1: playback rate comes from the art =====
 
@@ -994,6 +1001,48 @@ testAmbientRoundTrip = do
     r1 <- expectEqual (Just art) decoded
     r2 <- expectEqual (6, ["w1", "w2"]) rate
     pure (r1 && r2)
+
+-- ===== Phase H/H4: cutscenes (clips, intro, play_clip) =====
+
+-- | A small world: the hall carries an intro clip, the world declares it.
+worldWithHallIntro :: GameState
+worldWithHallIntro =
+    let hall = (rooms (world initSampleGame) Map.! "hallway") { roomIntro = Just "pan" }
+    in initSampleGame
+        { world = (world initSampleGame)
+            { rooms = Map.insert "hallway" hall (rooms (world initSampleGame))
+            , worldClips = Map.fromList [("pan", Clip ["P0", "P1"] 4)]
+            } }
+
+-- | Entering a room with an `intro` queues its clip for one playback (H4):
+--   frames and rate in µs (fps 4 = 250000 µs).
+testIntroQueuesCutscene :: IO Bool
+testIntroQueuesCutscene = do
+    let cmd = parseCommandWith Map.empty "go north"
+        (st', _) = executeCommand cmd worldWithHallIntro
+    r1 <- expectEqual (Just (["P0", "P1"], 250000)) (pendingCutscene st')
+    r2 <- expectEqual "hallway" (currentRoom (save st'))
+    pure (r1 && r2)
+
+-- | The `play_clip` effect queues the declared clip (H4, D19: the effect
+--   wins over a room intro).
+testPlayClipQueuesCutscene :: IO Bool
+testPlayClipQueuesCutscene = do
+    let (st', msg) = applyOutcome (PlayClip "pan") "" worldWithHallIntro
+    r1 <- expectEqual (Just (["P0", "P1"], 250000)) (pendingCutscene st')
+    r2 <- expectTrue "no player-facing message" (null msg)
+    pure (r1 && r2)
+
+-- | The loop plays a queued cutscene once through the frontend and clears it
+--   (H4): the canned frontend records exactly one (rate, frames) playback.
+testLoopPlaysCutscene :: IO Bool
+testLoopPlaysCutscene = do
+    (out, diag, played, remaining) <-
+        cannedFrontendWith worldWithHallIntro [Just "go north", Nothing]
+    r1 <- expectEqual [(250000, ["P0", "P1"])] played
+    r2 <- expectTrue "no diagnostics" (null diag)
+    r3 <- expectTrue "script fully consumed" (null remaining)
+    pure (r1 && r2 && r3)
 
 -- ===== Completion Tests =====
 
@@ -1954,7 +2003,7 @@ testSampleWorldIsValid = do
 testDanglingExitDetected :: IO Bool
 testDanglingExitDetected = do
     let roomA = Room "roomA" "Room A" (plainText "desc.") (Map.singleton North (Open "roomZ")) Set.empty Nothing
-            Nothing Nothing Nothing Nothing (emptyAscii)
+            Nothing Nothing Nothing Nothing (emptyAscii) Nothing
         gw = (world initSampleGame) { rooms = Map.singleton "roomA" roomA }
         errors = validateWorld gw
     expectTrue "dangling exit detected" (DanglingExit "roomA" North "roomZ" `elem` errors)
@@ -1963,7 +2012,7 @@ testDuplicateIDsBetweenItemsAndRooms :: IO Bool
 testDuplicateIDsBetweenItemsAndRooms = do
     let gw = (world initSampleGame)
                 { rooms = Map.insert "key" (Room "key" "Duplicate" (plainText "desc.") Map.empty Set.empty Nothing
-                    Nothing Nothing Nothing Nothing (emptyAscii)) (rooms (world initSampleGame)) }
+                    Nothing Nothing Nothing Nothing (emptyAscii) Nothing) (rooms (world initSampleGame)) }
         errors = validateWorld gw
     expectTrue "duplicate key found" (any isDup errors)
   where
@@ -1973,7 +2022,7 @@ testDuplicateIDsBetweenItemsAndRooms = do
 testUnreachableRoomDetected :: IO Bool
 testUnreachableRoomDetected = do
     let roomIsolated = Room "isolated" "Isolated" (plainText "Alone.") Map.empty Set.empty Nothing
-            Nothing Nothing Nothing Nothing (emptyAscii)
+            Nothing Nothing Nothing Nothing (emptyAscii) Nothing
         gw = (world initSampleGame)
                 { rooms = Map.insert "isolated" roomIsolated (rooms (world initSampleGame)) }
         -- Reachability is checked where the real start room is known, i.e. in
@@ -4116,6 +4165,9 @@ main = do
         , runTest "ambient playback carries frames + rate (H1)" testAsciiPlaybackAmbient
         , runTest "watch plays the ambient loop at its rate (H1)" testWatchCarriesRate
         , runTest "ambient survives the JSON round trip (H1)" testAmbientRoundTrip
+        , runTest "room intro queues a cutscene (H4)" testIntroQueuesCutscene
+        , runTest "play_clip queues a cutscene (H4)" testPlayClipQueuesCutscene
+        , runTest "loop plays the cutscene once (H4)" testLoopPlaysCutscene
         , runTest "end_art resolves per reason (G)" testEndArtFor
         , runTest "title_art resolves against state (G)" testTitleArtResolves
         , runTest "look at <n> resolves hotspots (E)" testHotspotNumberLook

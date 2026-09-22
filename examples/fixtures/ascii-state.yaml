@@ -6,6 +6,29 @@ verbs:
     aliases: [yank]
   - name: light
 
+clips:
+  - id: hall-pan
+    fps: 6
+    frames:
+      - |
+        ~~~~~~~~~~
+        ~~~~~~~~~~
+        ~~~~~~~~~~
+        ~~~~~  ~~~
+        ~~~~
+      - |
+        ~~~~~~~~~
+        ~~~~~~~~~~
+        ~~~~~~~~~
+        ~~~~~  ~~~
+        ~~~~
+      - |
+        ~~~~~~~~~~
+        ~~~~~~~~~~
+        ~~~~~~~~~~
+        ~~~~~  ~~~
+        ~~~~
+
 rooms:
   - id: cave
     name: Cave
@@ -54,6 +77,7 @@ rooms:
              ~~~~
             wall  |
         fps: 4
+    intro: hall-pan
     exits:
       south: cave
 

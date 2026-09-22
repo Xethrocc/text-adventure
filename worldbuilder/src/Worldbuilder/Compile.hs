@@ -142,6 +142,7 @@ compileAdventure adv =
                 , E.abilities = compiledAbilities
                 , E.worldEndArt = Map.map compileAscii (advEndArt adv)
                 , E.worldTitleArt = compileAscii (advTitleArt adv)
+                , E.worldClips = compileClips (advClips adv)
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
@@ -153,6 +154,8 @@ compileAdventure adv =
         cooldownCondErrs = checkCooldownConditionReserved gw
         hotspotErrs = checkHotspotRefs gw
         ambientErrs = checkAmbientRates gw
+        clipErrs = checkClips (advClips adv) gw
+
 
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
                     ++ varErrs ++ facErrs ++ facConflictErrs ++ trigErrs ++ encErrs
@@ -170,6 +173,7 @@ compileAdventure adv =
                     ++ cooldownCondErrs
                     ++ hotspotErrs
                     ++ ambientErrs
+                    ++ clipErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -285,6 +289,7 @@ compileRoom r =
             , E.roomOnExit = compileMaybeOutcomes (arOnExit r)
             , E.roomSearchOutcome = compileMaybeOutcomes (arSearch r)
             , E.roomAscii = compileAscii (arAscii r)
+            , E.roomIntro = arIntro r
             }
        else Left allErrs
   where
@@ -1446,6 +1451,7 @@ compileAActionOutcome ao = case ao of
     AORandomChoice weighted ->
         E.RandomChoice [ (w, compileOutcomes os) | (w, os) <- weighted ]
     AORaiseEvent name -> E.RaiseEvent name
+    AOPlayClip clipId -> E.PlayClip clipId
 
 -- | `Just` the compiled effect for a non-empty outcome list, else `Nothing`
 --   (engine `ApplyCondition` takes optional tick/end effects).
@@ -1470,6 +1476,50 @@ compileCondText act = E.CondText
     { E.ctDefault = actDefault act
     , E.ctVariants = [ E.TextVariant (atvWhen tv) (atvText tv) | tv <- actVariants act ]
     }
+
+-- | Compile declared clips into the engine's clip map (Phase H/H4). Frames
+--   from a companion file were already embedded during parsing (D14), so this
+--   step is pure.
+compileClips :: [AClip] -> Map.Map String E.Clip
+compileClips clips = Map.fromList
+    [ (acId c, E.Clip (acFrames c) (acFps c)) | c <- clips, not (null (acFrames c)) ]
+
+-- | Phase H (H4): validate clip declarations and every reference to them —
+--   `intro:` on a room and `play_clip:` effects. Duplicate ids, unknown ids
+--   and unusable clips (empty frames, non-positive fps) are compile errors.
+--   References are collected from the compiled world (allWorldEffects), so
+--   play_clip in rules, room hooks, dialogue choices and verb maps all count.
+checkClips :: [AClip] -> E.GameWorld -> [CompileIssue]
+checkClips clips gw =
+    dupErrs ++ unusableErrs ++ unknownErrs
+  where
+    declaredIds = map acId clips
+    dupErrs =
+        [ ciError ("clips." ++ cid) "DuplicateClip"
+            ("clip id '" ++ cid ++ "' is declared more than once")
+        | (cid, n) <- Map.toList (Map.fromListWith (+) [(cid, 1 :: Int) | cid <- declaredIds])
+        , n > 1 ]
+    unusableErrs = concat
+        [ [ ciError ("clips." ++ acId c ++ ".fps") "ClipFpsInvalid"
+                ("clip fps must be positive, but is " ++ show (acFps c))
+          | acFps c <= 0 ]
+          ++ [ ciError ("clips." ++ acId c ++ ".frames") "ClipFramesEmpty"
+                "a clip declares no frames (inline `frames:` or `file:`)"
+          | null (acFrames c) ]
+        | c <- clips ]
+    known = Set.fromList declaredIds
+    effectRefs = [ cid | E.PlayClip cid <- allWorldEffects gw ]
+    roomRefs =
+        [ (path, cid)
+        | (rId, r) <- Map.toList (E.rooms gw)
+        , let path = "rooms." ++ rId
+        , Just cid <- [E.roomIntro r] ]
+    unknownErrs =
+        [ ciError (path ++ suffix) "UnknownClip"
+            ("clip '" ++ cid ++ "' is not declared in the clips: segment")
+        | (path, cid) <- roomRefs ++ [ ("play_clip", cid) | cid <- effectRefs ]
+        , let suffix = if path == "play_clip" then "" else ".intro"
+        , cid `Set.notMember` known ]
 
 -- | Compile authored ASCII art (static CondText plus optional animation
 --   frames) into the engine's `AsciiArt` (Phase B/D/H).

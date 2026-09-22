@@ -7,6 +7,7 @@ import Data.List (intercalate, find, elemIndex, foldl')
 import Data.Bits (shiftR)
 import Data.Char (toLower, isDigit, isSpace)
 import Data.Maybe (listToMaybe, fromMaybe)
+import Control.Monad (guard)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
@@ -28,6 +29,7 @@ emptyGameWorld = GameWorld
     , abilities          = Map.empty
     , worldEndArt        = Map.empty
     , worldTitleArt      = emptyAscii
+    , worldClips         = Map.empty
     }
 
 -- | Default empty game state
@@ -59,6 +61,7 @@ emptyGameState = GameState
         }
     , pendingNarrative = Nothing
     , pendingAnimation = Nothing
+    , pendingCutscene = Nothing
     , diagnostics = []
     }
 
@@ -997,6 +1000,18 @@ applyOutcomeWith depth salt outcome targetId state
 
     GameEnd reason msg -> (endGame reason state, msg, salt)
 
+    -- Phase H/H4: queue a cutscene for one playback at the frontend. Unknown
+    -- or unusable clips are compile errors (UnknownClip/ClipFpsInvalid/
+    -- ClipFramesEmpty), so a miss here is a silent no-op, not a player error.
+    PlayClip clipId ->
+        case Map.lookup clipId (worldClips (world state)) of
+            Just clip | not (null (clipFrames clip))
+                     , clipFps clip > 0 ->
+                (state { pendingCutscene =
+                            Just (clipFrames clip, 1000000 `div` clipFps clip) }
+                , "", salt)
+            _ -> (state, "", salt)
+
     ApplyCondition name turns tick end -> (applyCondition name turns tick end state, "", salt)
     ClearCondition name -> (clearCondition name state, "", salt)
 
@@ -1162,8 +1177,26 @@ transitionToRoom dest state =
         visited = markCurrentRoomVisited moved
         (finalState, enterMsg) = runRoomHook roomOnEnter dest visited
         followed = followParty dest finalState
+        -- Phase H/H4: the destination's `intro` clip plays once. An effect
+        -- fired by on_enter (play_clip) wins — never overwrite it.
+        withIntro = case pendingCutscene followed of
+            Just _  -> followed
+            Nothing -> case introCutsceneOf dest followed of
+                Just cs -> followed { pendingCutscene = Just cs }
+                Nothing -> followed
         fullMsg = intercalate "\n" (filter (not . null) [exitMsg, enterMsg])
-    in (followed, fullMsg)
+    in (withIntro, fullMsg)
+
+-- | The cutscene a room's `intro` resolves to (Phase H/H4): frames and rate
+--   from the world's clip map, or Nothing when the room has no intro or the
+--   clip is unusable (compile-time validated, so silent here).
+introCutsceneOf :: RoomID -> GameState -> Maybe ([String], Int)
+introCutsceneOf rId state = do
+    r <- Map.lookup rId (rooms (world state))
+    clip <- Map.lookup (fromMaybe "" (roomIntro r)) (worldClips (world state))
+    guard (not (null (clipFrames clip)))
+    guard (clipFps clip > 0)
+    pure (clipFrames clip, 1000000 `div` clipFps clip)
 
 -- ---------------------------------------------------------------------------
 -- Quests (Phase 2)

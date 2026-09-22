@@ -42,7 +42,25 @@ data Adventure = Adventure
     , advAbilities        :: [AAbility]                  -- ^ player abilities (Phase 7f-3 A3/A4)
     , advEndArt           :: Map.Map String AAscii       -- ^ end banners per reason (Phase G)
     , advTitleArt         :: AAscii                      -- ^ optional title banner (Phase G)
+    , advClips            :: [AClip]                     -- ^ cutscene clips (Phase H/H4)
     } deriving (Show, Eq, Generic)
+
+-- | A declared cutscene clip (Phase H/H4). Frames are inline (small scenes)
+--   or live in a companion file (`file: art/pan.json`, D14) that the
+--   Worldbuilder embeds at compile time — the runtime never reads files.
+data AClip = AClip
+    { acId     :: String
+    , acFile   :: Maybe FilePath
+    , acFrames :: [String]
+    , acFps    :: Int
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AClip where
+    parseJSON = withObject "AClip" $ \o -> AClip
+        <$> o .: "id"
+        <*> o .:? "file"
+        <*> o .:? "frames" .!= []
+        <*> o .: "fps"
 
 instance FromJSON Adventure where
     parseJSON = withObject "Adventure" $ \o -> Adventure
@@ -70,6 +88,7 @@ instance FromJSON Adventure where
         <*> o .:? "abilities"       .!= []
         <*> o .:? "end_art"         .!= Map.empty
         <*> o .:? "title_art"       .!= AAscii (ACondText "" []) [] 1 [] Nothing
+        <*> o .:? "clips"           .!= []
 
 -- | Optional player stats block in YAML (Phase 4d).
 --   `player: { max_hp: 50, attack: 8, defense: 3, skills: { lockpick: 5 } }`
@@ -189,6 +208,7 @@ data ARoom = ARoom
     , arOnExit      :: Maybe [AActionOutcome]
     , arSearch      :: Maybe [AActionOutcome]
     , arAscii       :: AAscii
+    , arIntro       :: Maybe String               -- ^ clip id played once on enter (Phase H/H4)
     } deriving (Show, Eq, Generic)
 
 instance FromJSON ARoom where
@@ -204,6 +224,7 @@ instance FromJSON ARoom where
         <*> o .:? "on_exit"
         <*> o .:? "search"
         <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0 [] Nothing
+        <*> o .:? "intro"     .!= Nothing
 
 -- | Exit reference: target room + optional lock entity
 data AExitRef = AExitRef
@@ -864,6 +885,7 @@ data AActionOutcome
     | AOModifySkill String Int         -- ^ skill: {name, delta}
     | AORandomChoice [(Int, [AActionOutcome])]  -- ^ random: [[weight, [outcomes]], ...]
     | AORaiseEvent String              -- ^ raise: <name> — fires `on: custom <name>` (P1-20)
+    | AOPlayClip String                -- ^ play_clip: <clip-id> — queues a cutscene (Phase H/H4)
     deriving (Show, Eq, Generic)
 
 -- Parse an outcome from an object with a single recognized key
@@ -886,6 +908,7 @@ instance FromJSON AActionOutcome where
                 AOModifySkill <$> sk .: "name" <*> sk .: "delta")
         <|> (AORandomChoice <$> o .: "random")
         <|> (AORaiseEvent <$> o .: "raise")
+        <|> (AOPlayClip <$> o .: "play_clip")
         <|> (AOSetVar <$> o .: "set_var" <*> o .: "value")
         <|> (AOAddVar <$> o .: "add_var" <*> o .: "delta")
         <|> (AOMessage <$> o .: "msg")

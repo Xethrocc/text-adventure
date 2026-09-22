@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Phase H4: Cutscenes — `clips`, `intro`, `play_clip`
+
+- Neu `Clip` (Frames + `fps`) im `GameWorld.worldClips`; YAML `clips:`-Segment
+  mit inline `frames:` oder `file:`-Begleitdatei (D14: beim Kompilieren
+  eingebettet, Runtime liest keine Dateien; Pfaden relativ zum Adventure).
+- `Room.roomIntro` (`intro: <clip-id>`): beim Betreten wird der Clip einmal
+  geparkt (`pendingCutscene`, runtime-only, nicht im Save) — ein `play_clip`
+  aus `on_enter` gewinnt gegen das Raum-`intro` (D19: beide Auslöser).
+- Neu Effect `PlayClip <id>` (YAML `play_clip: <id>`), interpreter queueing
+  the clip; GameLoop spielt queued Cutscenes einmal via `fePlayFrames` mit
+  der Clip-Rate ab, dann Clear. Message zuerst, Cutscene danach.
+- Validierung (stabile Codes): `DuplicateClip`, `UnknownClip` (in `intro:`
+  und `play_clip:` — Referenzen aus der kompilierten Welt gesammelt, also
+  inklusive Regeln/Hooks/Dialoge/Verb-Maps), `ClipFpsInvalid`, `ClipFramesEmpty`.
+- Fixture `ascii-state.yaml`: `hall-pan`-Clip (fps 6) + `intro: hall-pan` an
+  der Halle. Tests: intro beim Betreten parkt, `play_clip` parkt, der Loop
+  spielt einmal ab (Canned-Frontend zeichnet mit); Worldbuilder: Kompilierung,
+  alle vier Validierungscodes, D14-Datei-Einbettung. `adventure-schema.md`
+  dokumentiert das Schema.
+
 ### Phase H1: Rate pro Kunst (`ambient` + `asciiPlayback`)
 
 - Neu `Ambient` (Frames + `fps`) als Feld `aaAmbient` am `AsciiArt`: die Kunst

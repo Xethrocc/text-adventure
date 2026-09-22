@@ -3,14 +3,15 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 module Main where
 
-import Control.Monad (when)
-import Data.List (isInfixOf)
+import Control.Monad (forM, when)
+import Data.List (isInfixOf, nub)
 import qualified Data.Aeson as Aeson
+import Data.Maybe (listToMaybe)
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import System.Exit (exitFailure)
-import System.Directory (doesFileExist, getTemporaryDirectory)
+import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory, removeFile)
 import System.FilePath ((</>))
 import System.IO (hSetEncoding, stdout, utf8)
 import Worldbuilder.Types
@@ -25,7 +26,7 @@ import Validate (validateWorld, validateGameState, ValidationError (..))
 minWorld :: E.GameWorld
 minWorld = E.GameWorld
     { rooms = Map.fromList
-        [ ("room_0", E.Room "room_0" "Room 0" (E.CondText "test" []) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing (E.AsciiArt (E.CondText "" []) [] 0 [] Nothing))
+        [ ("room_0", E.Room "room_0" "Room 0" (E.CondText "test" []) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing (E.AsciiArt (E.CondText "" []) [] 0 [] Nothing) Nothing)
         ]
     , itemDefs = Map.empty
     , npcDefs = Map.empty
@@ -41,6 +42,7 @@ minWorld = E.GameWorld
     , abilities = Map.empty
     , worldEndArt = Map.empty
     , worldTitleArt = E.AsciiArt (E.CondText "" []) [] 1 [] Nothing
+    , worldClips = Map.empty
     }
 
 -- | Helper: a minimal valid SaveState referencing room_0
@@ -130,6 +132,7 @@ minRoom rid = ARoom
     , arOnExit = Nothing
     , arSearch = Nothing
     , arAscii = AAscii (ACondText "" []) [] 0 [] Nothing
+    , arIntro = Nothing
     }
 
 -- | Build a minimal adventure with one room
@@ -159,6 +162,7 @@ minAdventure room = Adventure
     , advAbilities = []
     , advEndArt = Map.empty
     , advTitleArt = AAscii (ACondText "" []) [] 1 [] Nothing
+    , advClips = []
     }
 
 -- ---------------------------------------------------------------------------
@@ -2105,6 +2109,78 @@ testAmbientValidation = do
             putStrLn $ "  unexpected: " ++ show (fmap (const ()) a, fmap (const ()) b)
             pure False
 
+-- | Clips compile into the GameWorld (Phase H/H4).
+testClipsCompile :: IO Bool
+testClipsCompile = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advClips = [ AClip "pan" Nothing ["F0", "F1"] 6 ] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            r1 <- expectEqual (Map.fromList [("pan", E.Clip ["F0", "F1"] 6)]) (E.worldClips (crWorld cr))
+            pure r1
+
+-- | Clip validation (Phase H/H4): duplicate ids, unknown `intro:` targets,
+--   unknown `play_clip` references and unusable clips are compile errors.
+testClipValidation :: IO Bool
+testClipValidation = do
+    let roomUnknown  = (minRoom "loc_0") { arIntro = Just "ghost" }
+        dupAdv       = (minAdventure (minRoom "loc_0"))
+            { advClips = [ AClip "x" Nothing ["F"] 4, AClip "x" Nothing ["F"] 4 ] }
+        emptyAdv     = (minAdventure (minRoom "loc_0"))
+            { advClips = [ AClip "y" Nothing [] 4 ] }
+        fpsAdv       = (minAdventure (minRoom "loc_0"))
+            { advClips = [ AClip "z" Nothing ["F"] 0 ] }
+        playAdv      = (minAdventure (minRoom "loc_0"))
+            { advClips = []
+            , advTriggers = [ ATrigger "t" "turn" Nothing [ AOPlayClip "ghost" ] False 0 ] }
+    results <- forM [(compileAdventure (minAdventure roomUnknown), "unknown intro", "UnknownClip")
+                    ,(compileAdventure dupAdv, "duplicate id", "DuplicateClip")
+                    ,(compileAdventure emptyAdv, "empty frames", "ClipFramesEmpty")
+                    ,(compileAdventure fpsAdv, "bad fps", "ClipFpsInvalid")
+                    ,(compileAdventure playAdv, "unknown play_clip", "UnknownClip")] $ \(r, label, code) ->
+        case r of
+            Left errs -> expectTrue (label ++ " -> " ++ code) (code `isInfixOf` issuesText errs)
+            Right _ -> do
+                putStrLn $ "  expected failure: " ++ label
+                pure False
+    pure (and results)
+
+-- | A clip with `file:` embeds its frames from the companion file (D14):
+--   parseAdventureFile resolves the path relative to the adventure.
+testClipFileEmbedding :: IO Bool
+testClipFileEmbedding = do
+    tmp <- getTemporaryDirectory
+    let dir = tmp ++ "/wbclip-" ++ show (length [()] :: Int)
+        clipJson = dir </> "pan.json"
+        yamlPath = dir </> "adv.yaml"
+        yaml = unlines
+            [ "name: ClipTest"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: R"
+            , "    desc: A room."
+            , "clips:"
+            , "  - id: pan"
+            , "    fps: 5"
+            , "    file: pan.json"
+            ]
+    createDirectoryIfMissing True dir
+    writeFile clipJson "[\"A\", \"B\" ]"
+    writeFile yamlPath yaml
+    r <- parseAdventureFile yamlPath
+    result <- case r of
+        Right adv -> expectEqual (Just (AClip "pan" Nothing ["A", "B"] 5))
+                                 (listToMaybe (advClips adv))
+        Left err -> do
+            putStrLn $ "  parse failed: " ++ err
+            pure False
+    mapM_ removeFile [clipJson, yamlPath]
+    pure result
+
 -- | `end_art` and `title_art` compile into the GameWorld (Phase G).
 testEndTitleArtCompiles :: IO Bool
 testEndTitleArtCompiles = do
@@ -2247,6 +2323,9 @@ tests =
     , ("hotspot fixture compiles + validates (E)", testHotspotFixtureCompiles)
     , ("ascii-state fixture compiles + validates (B)", testAsciiFixtureCompiles)
     , ("ambient compiles into AsciiArt (H1)", testAmbientCompiles)
+    , ("clips compile into worldClips (H4)", testClipsCompile)
+    , ("clip validation: dup/unknown/empty/fps (H4)", testClipValidation)
+    , ("clip file embedding (D14)", testClipFileEmbedding)
     , ("ambient validation: fps and frames (H1)", testAmbientValidation)
     , ("direction aliases ne/nw/se/sw work", testDirectionAliases)
     , ("unknown direction is a compile error", testUnknownDirectionFails)

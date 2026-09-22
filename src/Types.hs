@@ -372,8 +372,12 @@ data Effect
     | QuestOp QuestOp String                      -- ^ Quest lifecycle operation
     | GameEnd GameOverReason String               -- ^ End the game with a reason
     | Narrative [String] Effect                   -- ^ Lines to show, then follow-up (stored as pendingNarrative)
+    | PlayClip ClipID                             -- ^ Phase H/H4: queue a cutscene clip (pendingCutscene)
     | Noop                                        -- ^ Do nothing
     deriving (Show, Eq, Generic)
+
+-- | Clip IDs are plain strings; the compiled world carries the clip map.
+type ClipID = String
 
 -- | Quest operations for the Effect DSL
 data QuestOp = StartQuest | AdvanceQuest | CompleteQuest
@@ -1014,6 +1018,7 @@ data Room = Room
     , roomOnExit          :: Maybe Effect
     , roomSearchOutcome   :: Maybe Effect
     , roomAscii           :: AsciiArt                  -- ^ Optional ASCII art banner (state-dependent since Phase B, animated since Phase D)
+    , roomIntro           :: Maybe String              -- ^ Clip id played once when entering (Phase H/H4)
     } deriving (Show, Eq, Generic)
 
 instance ToJSON Room where
@@ -1029,6 +1034,7 @@ instance ToJSON Room where
         , "roomOnExit"          .= roomOnExit r
         , "roomSearchOutcome"   .= roomSearchOutcome r
         ] ++ asciiPair "roomAscii" (roomAscii r)
+          ++ [ "roomIntro" .= i | Just i <- [roomIntro r] ]
 
 instance FromJSON Room where
     parseJSON = withObject "Room" $ \o -> Room
@@ -1043,6 +1049,7 @@ instance FromJSON Room where
         <*> o .:? "roomOnExit"          .!= Nothing
         <*> o .:? "roomSearchOutcome"   .!= Nothing
         <*> o .:? "roomAscii"           .!= emptyAscii
+        <*> o .:? "roomIntro"           .!= Nothing
 
 -- | Player inventory
 type Inventory = [ItemID]
@@ -1108,7 +1115,26 @@ data GameWorld = GameWorld
     , abilities          :: Map.Map String PlayerAbility             -- ^ Player abilities (Phase 7f-3, step A3)
     , worldEndArt        :: Map.Map String AsciiArt                  -- ^ "death"/"victory"/custom reason -> banner (Phase G)
     , worldTitleArt      :: AsciiArt                                 -- ^ Optional title banner replacing the `bannerFor` default (Phase G)
+    , worldClips         :: Map.Map String Clip                      -- ^ Cutscene clips, embedded at compile time (Phase H/H4, D14)
     } deriving (Show, Eq)
+
+-- | A cutscene clip (Phase H/H4): a frame sequence played once at its own
+--   rate. Clips live in the compiled world (D14: companion files are embedded
+--   by the Worldbuilder, so runtime needs no extra file access).
+data Clip = Clip
+    { clipFrames :: [String]
+    , clipFps    :: Int
+    } deriving (Show, Eq)
+
+instance ToJSON Clip where
+    toJSON (Clip frames fps) = object
+        [ "frames" .= frames
+        , "fps"    .= fps
+        ]
+
+instance FromJSON Clip where
+    parseJSON = withObject "Clip" (\o ->
+        Clip <$> o .: "frames" <*> o .: "fps")
 
 -- | Player ability definition for tactical combat (Phase 7f-3, step A3).
 data PlayerAbility = PlayerAbility
@@ -1282,10 +1308,11 @@ instance ToJSON GameWorld where
         , "combatProfile"      .= combatProfile gw
         , "worldName"          .= worldName gw
         , "abilities"          .= abilities gw
-        ] ++ endArtPair ++ titleArtPair
+        ] ++ endArtPair ++ titleArtPair ++ clipPair
       where
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
+        clipPair = [ "clips" .= worldClips gw | not (Map.null (worldClips gw)) ]
         endArt = Map.filter (not . isEmptyAscii) (worldEndArt gw)
         titleArt = worldTitleArt gw
 
@@ -1306,6 +1333,7 @@ instance FromJSON GameWorld where
         <*> o .:? "abilities" .!= Map.empty
         <*> o .:? "endArt" .!= Map.empty
         <*> o .:? "titleArt" .!= emptyAscii
+        <*> o .:? "clips" .!= Map.empty
 
 -- | Encode item-on-item outcomes as objects (P2-9).
 itemInteractionsToJSON :: Map.Map (String, String) Effect -> Value
@@ -1426,6 +1454,7 @@ data GameState = GameState
     , save  :: SaveState
     , pendingNarrative :: Maybe ([String], Effect)  -- ^ Narrative lines + follow-up (Phase 4.4)
     , pendingAnimation :: Maybe ([String], Int)    -- ^ Frames + rate in µs (Phase D/H1, runtime only)
+    , pendingCutscene :: Maybe ([String], Int)      -- ^ Cutscene frames + rate in µs, played once (Phase H/H4, runtime only)
     , diagnostics :: [String]                      -- ^ Engine-level findings for the author (P2-23)
     } deriving (Show, Eq)
 

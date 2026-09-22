@@ -272,17 +272,25 @@ loopGame fe loopState
                     command -> do
                         let (loopState', message) = applyLoopCommand command loopState
                         emitNewDiagnostics fe (lsCurrent loopState) (lsCurrent loopState')
-                        case pendingAnimation (lsCurrent loopState') of
+                        -- Message first, then any queued cutscene (Phase H/H4:
+                        -- played once at the clip's own rate), then the other
+                        -- pending presentations (animation, narrative).
+                        feEmitLine fe message
+                        curAfterCutscene <- case pendingCutscene (lsCurrent loopState') of
                             Just (frames, micros) -> do
-                                feEmitLine fe message
                                 fePlayFrames fe micros frames
-                                let cleared = (lsCurrent loopState') { pendingAnimation = Nothing }
-                                loopGame fe (loopState' { lsCurrent = cleared })
+                                pure ((lsCurrent loopState') { pendingCutscene = Nothing })
+                            Nothing -> pure (lsCurrent loopState')
+                        let loopState'' = loopState' { lsCurrent = curAfterCutscene }
+                        case pendingAnimation (lsCurrent loopState'') of
+                            Just (frames, micros) -> do
+                                fePlayFrames fe micros frames
+                                let cleared = (lsCurrent loopState'') { pendingAnimation = Nothing }
+                                loopGame fe (loopState'' { lsCurrent = cleared })
                             Nothing ->
-                                case pendingNarrative (lsCurrent loopState') of
-                                    Nothing -> do
-                                        feEmitLine fe message
-                                        loopGame fe loopState'
+                                case pendingNarrative (lsCurrent loopState'') of
+                                    Nothing ->
+                                        loopGame fe loopState''
                                     Just (nls, followUp) -> do
                                         case nls of
                                             [] -> return ()
@@ -291,12 +299,12 @@ loopGame fe loopState
                                                 mapM_ (\l -> feEmitLine fe l >> feReadPause fe)
                                                     (init nls)
                                                 feEmitLine fe (last nls)
-                                        let (finalState, followMsg) = applyOutcome followUp "" (lsCurrent loopState')
+                                        let (finalState, followMsg) = applyOutcome followUp "" (lsCurrent loopState'')
                                             clearedState = finalState { pendingNarrative = Nothing }
                                         if null followMsg
-                                            then loopGame fe (loopState' { lsCurrent = clearedState })
+                                            then loopGame fe (loopState'' { lsCurrent = clearedState })
                                             else do feEmitLine fe followMsg
-                                                    loopGame fe (loopState' { lsCurrent = clearedState })
+                                                    loopGame fe (loopState'' { lsCurrent = clearedState })
   where
     state = lsCurrent loopState
 
