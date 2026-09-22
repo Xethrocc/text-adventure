@@ -6,6 +6,7 @@
 --   text2ascii/                text -> banner art converter (terminal tool)
 --   video2ascii/               video -> ASCII frames converter (terminal tool)
 --   text-adventure-tui/        brick-based terminal UI (opt-in frontend)
+--   text-adventure-cli/        the main CLI executable (--tui hands over to the TUI)
 --
 -- The worldbuilder turns YAML/JSON authored content into the GameWorld +
 -- SaveState JSON files that the engine loads via --world / --save.
@@ -18,6 +19,7 @@ packages:
     text2ascii
     text-adventure-tui
     video2ascii
+    text-adventure-cli
 
 -- Pin the compiler so both packages agree on the same package database.
 -- with-compiler: ghc-9.6.7

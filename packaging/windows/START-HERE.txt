@@ -6,7 +6,8 @@ installing anything. You do NOT need Haskell, WSL or an admin account.
 
 What is in here
 ---------------
-  bin\text-adventure.exe    the game engine (plays a compiled world)
+  bin\text-adventure.exe    the game engine (plays a compiled world;
+                            add --tui for the brick terminal UI)
   bin\worldbuilder.exe      the authoring tool (checks and compiles your YAML)
   bin\img2ascii.exe         converts a picture to ASCII art for your worlds
   bin\text2ascii.exe        renders big letter banners from text

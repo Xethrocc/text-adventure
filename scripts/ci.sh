@@ -14,7 +14,7 @@ chcp.com 65001 >/dev/null 2>&1 || true
 cd "$(dirname "$0")/.."
 
 WORLDBUILDER=(cabal run -v0 worldbuilder --)
-GAME=(cabal run -v0 text-adventure --)
+GAME=(cabal run -v0 text-adventure-cli --)
 
 echo "== 1. build =="
 # Review P2-4/P2-5: warnings used to bury the real `-Wmissing-fields` findings,

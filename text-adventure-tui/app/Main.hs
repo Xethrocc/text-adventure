@@ -1,9 +1,9 @@
 -- | CLI entry point for the brick-based terminal UI (Phase T).
 --
---   Loads the same worlds as the Haskeline CLI (--world / --save, with the
---   same validation gate) and hands the game to 'runTui'. The Haskeline CLI
---   stays the default frontend; this executable is the opt-in `--tui`
---   experience, packaged separately so Brick never enters the engine.
+--   Loads the same worlds as the main CLI (--world / --save, with the same
+--   validation gate) and hands the game to 'runTui'. Since the main CLI
+--   moved to its own package (text-adventure-cli) it offers `--tui` there;
+--   this executable remains the standalone entry for the brick UI alone.
 module Main where
 
 import TextAdventure.Tui (runTui)

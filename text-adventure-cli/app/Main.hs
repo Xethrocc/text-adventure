@@ -5,6 +5,7 @@ module Main where
 
 import GameLoop (runGameWith)
 import Ansi (ansiFilter)
+import TextAdventure.Tui (runTui)
 import Game (resolveAsciiArt)
 import Sample (initSampleGame)
 import World (loadGame, siblingSavePath)
@@ -83,11 +84,14 @@ initConsole = do
 
 usage :: String
 usage = unlines
-    [ "Usage: text-adventure [--world FILE] [--save FILE] [--allow-invalid] [--no-color]"
+    [ "Usage: text-adventure [--world FILE] [--save FILE] [--allow-invalid] [--no-color] [--tui]"
     , ""
     , "  --world FILE      Load a GameWorld from a JSON file (produced by the worldbuilder)."
     , "  --save FILE       Load an initial SaveState from a JSON file."
     , "  --allow-invalid   Start even if the world has validation issues."
+    , "  --tui             Start the brick-based terminal UI instead of the"
+    , "                    Haskeline line editor (opt-in, D20). The TUI shows"
+    , "                    colour regardless of --no-color."
     , "  --no-color        Strip ANSI colour from the output (also done automatically"
     , "                    when stdout is not a terminal)."
     , "  --color           Allow ANSI colour when stdout is a terminal (default)."
@@ -102,11 +106,12 @@ data CliOptions = CliOptions
     , coSave         :: Maybe FilePath
     , coAllowInvalid :: Bool
     , coNoColor      :: Bool
+    , coTui          :: Bool
     }
 
 -- | Minimal flag parser
 parseArgs :: [String] -> Maybe CliOptions
-parseArgs args = go args (CliOptions Nothing Nothing False False)
+parseArgs args = go args (CliOptions Nothing Nothing False False False)
   where
     go [] opts = Just opts
     go ("--help" : _) _ = Nothing
@@ -115,6 +120,7 @@ parseArgs args = go args (CliOptions Nothing Nothing False False)
     go ("--allow-invalid" : rest) opts = go rest opts { coAllowInvalid = True }
     go ("--no-color" : rest) opts = go rest opts { coNoColor = True }
     go ("--color" : rest) opts = go rest opts { coNoColor = False }
+    go ("--tui" : rest) opts = go rest opts { coTui = True }
     go (_ : rest) opts = go rest opts
 
 -- | Banner line: the adventure title when the world carries one (P2-18).
@@ -132,6 +138,20 @@ titleBanner st =
        then bannerFor (worldName (world st))
        else resolveAsciiArt art st
 
+-- | The `--tui` opt-in (D20): run the brick frontend instead of the
+--   Haskeline line editor. The initial lines mirror what the CLI prints on
+--   startup, so both frontends open with the same welcome text. The TUI
+--   renders colour itself; the output filter only applies to the Haskeline
+--   mode.
+startTui :: GameState -> IO ()
+startTui state = runTui initialLines state
+  where
+    initialLines = concatMap lines
+        [ titleBanner state
+        , "Type 'help' for available commands."
+        , "----------------------------"
+        ]
+
 main :: IO ()
 main = do
     initConsole
@@ -147,11 +167,14 @@ main = do
             vt <- initConsoleColor
             let outFilter = ansiFilter (tty && vt) (coNoColor opts)
             case coWorld opts of
-                Nothing -> do
-                    putStrLn (outFilter (titleBanner initSampleGame))
-                    putStrLn "Type 'help' for available commands."
-                    putStrLn "----------------------------"
-                    runGameWith outFilter initSampleGame
+                Nothing ->
+                    if coTui opts
+                        then startTui initSampleGame
+                        else do
+                            putStrLn (outFilter (titleBanner initSampleGame))
+                            putStrLn "Type 'help' for available commands."
+                            putStrLn "----------------------------"
+                            runGameWith outFilter initSampleGame
                 Just worldPath -> do
                     savePath <- case coSave opts of
                         Just s  -> pure (Just s)
@@ -174,8 +197,11 @@ main = do
                                     putStrLn "Use --allow-invalid to start with these issues."
                                     exitFailure
                             else return ()
-                            putStrLn (outFilter (titleBanner state))
-                            putStrLn ("Loaded world: " ++ worldPath)
-                            putStrLn "Type 'help' for available commands."
-                            putStrLn "----------------------------"
-                            runGameWith outFilter state
+                            if coTui opts
+                                then startTui state
+                                else do
+                                    putStrLn (outFilter (titleBanner state))
+                                    putStrLn ("Loaded world: " ++ worldPath)
+                                    putStrLn "Type 'help' for available commands."
+                                    putStrLn "----------------------------"
+                                    runGameWith outFilter state

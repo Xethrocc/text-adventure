@@ -25,7 +25,7 @@ cabal run worldbuilder -- compile examples/genres/<genre>.yaml -o /tmp/out
 cabal run worldbuilder -- validate examples/genres/<genre>.yaml
 
 # spielen
-cabal run text-adventure -- --world /tmp/out/world.json --save /tmp/out/save.json
+cabal run text-adventure-cli -- --world /tmp/out/world.json --save /tmp/out/save.json
 ```
 
 ## Regressionsschutz

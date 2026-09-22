@@ -34,14 +34,14 @@ profiles and gameplay modules are all content.
 cabal build all
 
 # play the bundled sample adventure
-cabal run text-adventure
+cabal run text-adventure-cli   # das Haupt-CLI (Haskeline; `--tui` startet die Brick-Oberflaeche)
 
 # author: check and compile an adventure
 cabal run worldbuilder -- validate examples/thefog.yaml
 cabal run worldbuilder -- compile examples/thefog.yaml -o /tmp/thefog
 
 # play what you compiled
-cabal run text-adventure -- --world /tmp/thefog/world.json --save /tmp/thefog/save.json
+cabal run text-adventure-cli   # das Haupt-CLI (Haskeline; `--tui` startet die Brick-Oberflaeche) -- --world /tmp/thefog/world.json --save /tmp/thefog/save.json
 ```
 
 Engine flags: `--world FILE` (compiled GameWorld), `--save FILE` (initial

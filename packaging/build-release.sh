@@ -16,9 +16,14 @@ set -euo pipefail
 cd "$(dirname "$0")/.."   # repo root, no matter where it is called from
 
 if [ "${1:-}" = "--dry-run" ]; then
-    for exe in text-adventure worldbuilder img2ascii text2ascii; do
+    for exe in text-adventure worldbuilder img2ascii text2ascii text-adventure-tui; do
         printf "%s -> " "$exe"
-        cabal list-bin "exe:$exe" 2>&1 | tail -1
+        # the main CLI now lives in the text-adventure-cli package (Phase T
+        # follow-up: --tui lives there); the other exes keep their package
+        case "$exe" in
+            text-adventure) cabal list-bin "text-adventure-cli:exe:text-adventure" 2>&1 | tail -1 ;;
+            *)              cabal list-bin "exe:$exe" 2>&1 | tail -1 ;;
+        esac
     done
     exit 0
 fi

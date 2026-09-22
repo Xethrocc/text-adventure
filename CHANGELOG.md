@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Feature: `--tui` im Haupt-CLI — neues Paket `text-adventure-cli`
+
+- Das Haupt-CLI ist nun das eigene Paket `text-adventure-cli` (Executable
+  heißt weiter `text-adventure`, `cabal run text-adventure-cli`), mit neuem
+  `--tui`-Flag (D20): es lädt Welt/Save identisch (inkl. `--allow-invalid`
+  und Geschwister-save.json), lässt die Validierung zuerst laufen und startet
+  dann die Brick-Oberfläche statt Haskeline — mit demselben Startbanner als
+  initiale Zeilen. Ohne `--world` startet auch `--tui` das Sample.
+- Warum das Paket? Ein Paket-Exe darf nicht von einem Paket abhängen, das
+  die eigene Lib nutzt (`text-adventure`-Paket → `text-adventure-tui` →
+  `text-adventure`-Lib wäre ein Zyklus). Das CLI-Paket hält die Abhängigkeit
+  sauber: die Engine-Lib bleibt Brick-frei (D20), nur das Executable zieht
+  Brick. Dafür ändert sich der Laufbefehl auf
+  `cabal run text-adventure-cli` (docs/genres.md, README angepasst;
+  `text-adventure-tui` bleibt als eigenständige TUI-Exe).
+- Windows-Konsole-Init (W3, UTF-8/VT) wandert mit dem Exe mit und deckt
+  jetzt beide Frontends ab. `scripts/ci.sh` (GAME) und CI-Job laufen über
+  das neue Paket; `cabal build all` baut es automatisch mit.
+
 ### Feature: Farbe im TUI — SGR nach vty-Attribute (Restposten aus Phase T)
 
 - Neu `TextAdventure.Tui.Color`: parst SGR-Sequenzen in (Text, Zustand)-
