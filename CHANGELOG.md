@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Feature: Farbe im TUI — SGR nach vty-Attribute (Restposten aus Phase T)
+
+- Neu `TextAdventure.Tui.Color`: parst SGR-Sequenzen in (Text, Zustand)-
+  Segmente (`parseSgrLine`) und bildet sie auf vty-Attribute ab
+  (`attrOfSgr`). Abgedeckt: Basis-/helle 16 Farben, `38;5;n`/`48;5;n`
+  (Palette), `38;2;r;g;b`/`48;2;r;g;b` (Truecolor — quantisiert auf die
+  xterm-256-Palette: 6x6x6-Würfel, Graustufenband für r == g == b), Bold,
+  Reset; unbekannte Codes und Nicht-SGR-CSI werden ignoriert.
+- **Attribute sind benannt, nicht anonym:** Brick löst Farben über eine
+  endliche AttrMap auf; der Name kodiert den SGR-Zustand deterministisch
+  (`colorAttrName`), und die App baut die Map pro Render aus den Zuständen,
+  die in den aktuellen Zeilen und im Panel tatsächlich vorkommen. Rein und
+  testbar.
+- Das TUI strippt SGR nicht mehr: Hotspot-Highlights (Phase E, bold gelb)
+  und halbblockige Kunst (img2ascii, 24-bit) erscheinen farbig — im Verlauf
+  als Segment-Zeilen (kein Umbruch, SGR kostet keine Spalten), im Kunst-Panel
+  zeilenweise. Leere Zeilen (nur SGR) bleiben Leerzeilen; Leer-Frames zeichnen
+  weiterhin keinen Rahmen (D21, Leerprüfung jetzt nach ANSI-Strip).
+- Ein Endlosschleifen-Bug im Parser (unbeendetes ESC re-appended) wurde beim
+  ersten Testlauf gefunden und gefixt. 5 neue Tests (SGR-Codes, Quantisierung
+  inkl. xterm-Referenzwerten 196/46/21, Segment-Parsing, Namens-Injektivität,
+  Attribut-Mapping); TUI-Suite jetzt 11 Tests. `scripts/ci.sh` grün,
+  `-fforce-recomp`-Check ohne Warnungen.
+
 ### Phase F: `video2ascii` — Video als Kunst-Material (D6, D14, D15)
 
 - Neues Werkzeug-Paket `video2ascii` (D9: eigener Stilkopie-Weg, keine

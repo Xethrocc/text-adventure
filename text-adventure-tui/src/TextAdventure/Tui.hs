@@ -5,9 +5,9 @@
 --   TUI is just another frontend, the loop logic stays untouched. The worker
 --   appends output lines to a shared buffer and blocks on a signal MVar for
 --   the next input line; the Brick event loop renders the shared buffer and
---   feeds submitted lines back. ANSI colour is stripped for now (the engine's
---   art arrives with SGR sequences; mapping them to vty attributes is later
---   work).
+--   feeds submitted lines back. ANSI colour is kept: SGR sequences in engine
+--   output (hotspot highlights, half-block art) are parsed into attribute
+--   segments and rendered via vty attributes — see TextAdventure.Tui.Color.
 --
 --   Art panel (Phase H/H4b, D21): animated art plays in its own panel —
 --   cutscenes ('fePlayFrames') in-place, once, at the clip's own rate, then
@@ -45,11 +45,12 @@ import Control.Monad (forever, guard, unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Char (isLower, isSpace)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
-import Data.List (intercalate)
+import Data.List (intercalate, nub)
 import qualified Data.Map.Strict as Map
 import qualified Brick.Types as BT
 
 import Ansi (stripAnsi)
+import TextAdventure.Tui.Color (attrOfSgr, colorAttrName, parseSgrLine)
 import Completion (completionFor)
 import Frontend (Frontend (..))
 import GameLoop (runGameWithFrontend)
@@ -98,7 +99,7 @@ panelFrame p = case p of
   where
     atIdx fs i | null fs   = ""
                | otherwise = fs !! min (length fs - 1) (max 0 i)
-    keep f = if all isSpace f then Nothing else Just f
+    keep f = if all isSpace (stripAnsi f) then Nothing else Just f
 
 -- | One tick of the panel: advance a frame, or finish a cutscene. Pure; the
 --   UI applies the effects (update shared panel, signal 'panelDone').
@@ -147,7 +148,7 @@ data TuiState = TuiState
 -- | Append one (possibly multi-line) chunk of game text to the shared buffer.
 appendShared :: TuiShared -> String -> IO ()
 appendShared shared s = do
-    let ls = lines (stripAnsi s)
+    let ls = lines s
     withMVar (shLock shared) $ \_ ->
         modifyIORef' (shLines shared) (++ if null ls then [""] else ls)
     pure ()
@@ -295,6 +296,26 @@ handleHistory shared delta st = do
     liftIO (writeIORef (shHistIdx shared) idx')
     put (setEditorText st entry)
 
+-- | The colour attribute map (Phase T rest post, colour): built from the
+--   SGR states that actually occur in the current lines and panel. Brick
+--   resolves widget colours through 'AttrName's in this finite map; the
+--   encoder in TextAdventure.Tui.Color is injective, so every state the
+--   renderer can produce finds its entry. Rebuilt per render — the state is
+--   small and parsing is cheap.
+colorAttrMap :: TuiState -> AttrMap
+colorAttrMap st = attrMap V.defAttr
+    [ (colorAttrName sgr, attrOfSgr sgr) | sgr <- nub used ]
+  where
+    used = lineStates ++ panelStates
+    lineStates = [ st' | l <- tsLines st
+                       , (seg, st') <- parseSgrLine (T.unpack l)
+                       , not (null seg) ]
+    panelStates = case panelFrame (tsPanel st) of
+        Nothing   -> []
+        Just frame -> [ st' | l <- lines frame
+                            , (seg, st') <- parseSgrLine l
+                            , not (null seg) ]
+
 -- | The Brick application: history viewport on top, command line below.
 tuiApp :: TuiShared -> BChan TuiEvent -> App TuiState TuiEvent TuiName
 tuiApp shared chan = App
@@ -302,7 +323,7 @@ tuiApp shared chan = App
     , appChooseCursor = \_ -> showCursorNamed CmdEdit
     , appHandleEvent  = handleEvent
     , appStartEvent   = pure ()
-    , appAttrMap      = const (attrMap V.defAttr [])
+    , appAttrMap      = colorAttrMap
     }
   where
     handleEvent ev = do
@@ -369,13 +390,33 @@ drawTui st =
             PanelCutscene _ _ _ _    -> [artBox "Szene" frame]
             PanelNone                -> []
     artBox label frame =
-        withBorderStyle unicode $ borderWithLabel (str (" " ++ label ++ " ")) (txt (T.pack frame))
+        withBorderStyle unicode $
+        borderWithLabel (str (" " ++ label ++ " ")) $
+            vBox (map frameLine (lines frame))
+      where
+        -- per frame line: attribute segments (colour art), blank rows as spaces
+        frameLine l
+            | all isSpace (stripAnsi l) = str " "
+            | otherwise                 = styledLine l
     -- Prose reflows to the available width; art lines and empty lines keep
-    -- their exact shape (an empty txt would collapse to zero height).
+    -- their exact shape (an empty txt would collapse to zero height). Lines
+    -- carrying SGR render as attribute segments instead: hotspot highlights
+    -- and coloured art depend on them, and rewrapping or stripping would
+    -- damage layout and information alike. SGR occupies no columns, so the
+    -- segment text is what is measured — the alignment survives.
     renderLine t
-        | T.null t                    = str " "
-        | isArtLine (T.unpack t)      = txt t
-        | otherwise                   = txtWrap t
+        | T.null strippedT           = str " "
+        | isArtLine strippedS        = styledLine rawText
+        | '\ESC' `elem` rawText     = styledLine rawText
+        | otherwise                  = txtWrap t
+      where
+        rawText = T.unpack t
+        strippedS = stripAnsi rawText
+        strippedT = T.pack strippedS
+    styledLine l = hBox
+        [ withAttr (colorAttrName st') (txt (T.pack seg))
+        | (seg, st') <- parseSgrLine l
+        , not (null seg) ]
     suggestionLine
         | null (tsSuggest st) = str ""
         | otherwise           = str ("  " ++ intercalate "   " (tsSuggest st))

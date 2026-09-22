@@ -4,10 +4,15 @@ module Main (main) where
 import TextAdventure.Tui
     ( PanelState (..), PanelStep (..), advancePanel, panelFrame, roomAmbient )
 
+import TextAdventure.Tui.Color
+    ( SgrColor (..), SgrState (..), applySgrSeq, attrOfSgr, colorAttrName
+    , emptySgr, parseSgrLine, rgbToColor240 )
+
 import Sample (initSampleGame)
 import Types
 import qualified Data.Map.Strict as Map
 import System.Exit (exitFailure)
+import qualified Graphics.Vty as V
 import Control.Concurrent.MVar (newEmptyMVar)
 import Data.Maybe (isNothing)
 
@@ -53,6 +58,11 @@ main = do
         , runTest "advancePanel: cutscene finishes and signals" testCutsceneFinishes
         , runTest "roomAmbient: resolves the current room's loop" testRoomAmbientResolves
         , runTest "roomAmbient: nothing without ambient or with bad fps" testRoomAmbientAbsent
+        , runTest "applySgrSeq: SGR codes change the state" testSgrSeq
+        , runTest "rgbToColor240: cube, grayscale band" testQuantize
+        , runTest "parseSgrLine: segments carry the state" testParse
+        , runTest "colorAttrName: injective encoding" testAttrName
+        , runTest "attrOfSgr: maps onto vty attributes" testAttr
         ]
     if and results then pure () else exitFailure
 
@@ -103,6 +113,76 @@ testRoomAmbientResolves = do
     r2 <- expectTrue "start room (no ambient) -> Nothing"
                       (isNothing (roomAmbient (inRoom "start" hallWithAmbient)))
     pure (r1 && r2)
+
+-- ------------------------------------------------------------- colour (new)
+
+testSgrSeq :: IO Bool
+testSgrSeq = do
+    r1 <- expectEqual "31 -> ISO foreground 1" (Just (Iso 1)) (sfFg s1)
+    r2 <- expectTrue "hotspot (bold + yellow)" (sfBold s2 && sfFg s2 == Just (Iso 3))
+    r3 <- expectEqual "0 resets" emptySgr (applySgrSeq [0] s2)
+    r4 <- expectEqual "38;5;196 -> palette 196" (Just (C256 196)) (sfFg (applySgrSeq [38, 5, 196] emptySgr))
+    r5 <- expectEqual "48;2;255;0;0 quantizes the background"
+                      (Just (C256 196)) (sfBg (applySgrSeq [48, 2, 255, 0, 0] emptySgr))
+    r6 <- expectTrue "22 clears bold" (not (sfBold (applySgrSeq [22] s2)))
+    r7 <- expectTrue "unknown code ignored" (applySgrSeq [7] emptySgr == emptySgr)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+  where
+    s1 = applySgrSeq [31] emptySgr
+    s2 = applySgrSeq [1, 33] emptySgr
+
+testQuantize :: IO Bool
+testQuantize = do
+    r1 <- expectEqual "pure red -> cube 196" 196 (rgbToColor240 255 0 0)
+    r2 <- expectEqual "pure green -> 46" 46 (rgbToColor240 0 255 0)
+    r3 <- expectEqual "pure blue -> 21" 21 (rgbToColor240 0 0 255)
+    r4 <- expectEqual "mid gray -> grayscale band" 244 (rgbToColor240 128 128 128)
+    r5 <- expectEqual "black -> cube 16, white -> cube 231"
+                      (16, 231) (rgbToColor240 0 0 0, rgbToColor240 255 255 255)
+    pure (r1 && r2 && r3 && r4 && r5)
+
+testParse :: IO Bool
+testParse = do
+    let segs = parseSgrLine "\ESC[1;33m!\ESC[0m rest"
+    r1 <- expectEqual "two segments" 2 (length segs)
+    r2 <- expectEqual "hotspot state: bold + yellow (33 -> ISO 3)"
+                      (Just (Iso 3), Nothing, True)
+                      (sfFg st, sfBg st, sfBold st)
+    r3 <- expectTrue "after reset: default state" (snd (seg2) == emptySgr)
+    r4 <- expectEqual "plain line: one segment" 1 (length (parseSgrLine "hello"))
+    r5 <- expectTrue "lone escape dropped" (parseSgrLine "\ESC" == [])
+    r6 <- expectTrue "bare ESC[m resets" (parseSgrLine "\ESC[m x" == [(" x", emptySgr)])
+    r7 <- expectTrue "non-SGR CSI skipped" (parseSgrLine "\ESC[2J x" == [(" x", emptySgr)])
+    pure (and [r1, r2, r3, r4, r5, r6, r7])
+  where
+    segs = parseSgrLine "\ESC[1;33m!\ESC[0m rest"
+    st = snd (head segs)
+    seg2 = segs !! 1
+
+testAttrName :: IO Bool
+testAttrName = do
+    let a = SgrState (Just (Iso 1)) Nothing True
+        b = SgrState Nothing (Just (C256 196)) False
+    r1 <- expectTrue "different states, different names"
+                     (colorAttrName a /= colorAttrName b)
+    r2 <- expectTrue "equal states, equal names"
+                     (colorAttrName a == colorAttrName (SgrState (Just (Iso 1)) Nothing True))
+    r3 <- expectTrue "default state has its own name"
+                     (colorAttrName emptySgr /= colorAttrName a)
+    pure (r1 && r2 && r3)
+
+testAttr :: IO Bool
+testAttr = do
+    let a = attrOfSgr (SgrState (Just (Iso 1)) Nothing True)
+    r1 <- expectTrue "foreground mapped" (V.attrForeColor a == V.SetTo (V.ISOColor 1))
+    r2 <- expectTrue "background untouched" (V.attrBackColor a == V.KeepCurrent)
+    r3 <- expectTrue "bold mapped" (V.attrStyle a == V.SetTo V.bold)
+    r4 <- expectTrue "default state -> defAttr"
+                     (attrOfSgr emptySgr == V.defAttr
+                        { V.attrStyle = V.KeepCurrent
+                        , V.attrForeColor = V.KeepCurrent
+                        , V.attrBackColor = V.KeepCurrent })
+    pure (r1 && r2 && r3 && r4)
 
 testRoomAmbientAbsent :: IO Bool
 testRoomAmbientAbsent = do
