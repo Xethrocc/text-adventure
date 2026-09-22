@@ -34,8 +34,10 @@ data Frontend = Frontend
     , feReadInput   :: GameState -> String -> IO (Maybe String)
       -- ^ read a command line for the given game state (completion and
       --   history are the frontend's business); 'Nothing' means end of input
-    , feReadPlain   :: String -> IO (Maybe String)
-      -- ^ read a bare line without completion/history (game-over menus)
+    , feReadPlain   :: GameState -> String -> IO (Maybe String)
+      -- ^ read a bare line without completion/history (game-over menus).
+      --   Carries the state so state-driven frontends (TUI) can refresh their
+      --   HUD on the death/victory screen too (Rogue Phase 5, M10).
     , feReadPause   :: IO ()
       -- ^ narrative continuation: wait until the player confirms
     , fePlayFrames  :: Int -> [String] -> IO ()
@@ -53,7 +55,7 @@ haskelineFrontend f = Frontend
     { feEmitLine    = putStrLn . f
     , feEmitRaw     = putStr . f
     , feReadInput   = \st p -> runInputT (haskelineSettings st) (getInputLine p)
-    , feReadPlain   = \p -> runInputT defaultSettings (getInputLine p)
+    , feReadPlain   = \_st p -> runInputT defaultSettings (getInputLine p)
     , feReadPause   = putStr (f "  [Press Enter to continue]") >> void getLine
     , fePlayFrames  = \micros -> mapM_ (\fr -> putStrLn (f fr) >> threadDelay micros)
     , feDiagnostics = mapM_ (hPutStrLn stderr)

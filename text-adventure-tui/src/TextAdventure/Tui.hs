@@ -182,7 +182,10 @@ tuiFrontend shared chan = Frontend
         writeIORef (shState shared) st
         syncAmbientPanel st
         Just <$> nextLine shared
-    , feReadPlain   = \_prompt -> Just <$> nextLine shared
+    , feReadPlain   = \st _prompt -> do
+        writeIORef (shState shared) st
+        syncAmbientPanel st
+        Just <$> nextLine shared
     , feReadPause   = void (nextLine shared)
     , fePlayFrames  = \micros frames -> do
         -- H4b: in-place playback. Set the panel, let the ticker advance it,

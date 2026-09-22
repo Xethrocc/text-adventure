@@ -473,7 +473,7 @@ emitEndArt fe st reason fallback = do
 --   actually restore, and it needs an unspent history entry).
 deathLoop :: Frontend -> LoopState -> IO ()
 deathLoop fe loopState = do
-    inputResult <- feReadPlain fe "> "
+    inputResult <- feReadPlain fe state "> "
     let policy = worldGamePolicy (world state)
     case map toLower . fromMaybe "q" <$> pure inputResult of
         Just "u"
@@ -504,7 +504,7 @@ deathLoop fe loopState = do
                 deathLoop fe loopState
             | otherwise -> do
                 feEmitLine fe "Enter save name to load (or press Enter for 'savegame'):"
-                nameResult <- feReadPlain fe "> "
+                nameResult <- feReadPlain fe state "> "
                 let name = case nameResult of
                         Just n | not (null n) -> n
                         _                     -> "savegame"
@@ -530,7 +530,7 @@ deathLoop fe loopState = do
 -- | Victory/custom game-over input loop
 victoryLoop :: Frontend -> LoopState -> IO ()
 victoryLoop fe loopState = do
-    inputResult <- feReadPlain fe "> "
+    inputResult <- feReadPlain fe (lsCurrent loopState) "> "
     case map toLower . fromMaybe "q" <$> pure inputResult of
         Just "r" -> do
             feEmitLine fe "Starting a new game...\n"

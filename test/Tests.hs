@@ -963,7 +963,7 @@ cannedFrontendWith startState script = do
                       -- empty queue = end of input, the loop quits
                       []       -> pure Nothing
                       (x : xs) -> writeIORef inRef xs >> pure x
-            , feReadPlain   = \_ -> do
+            , feReadPlain   = \_st _ -> do
                   -- Rogue Phase 1: the death/victory loops read via
                   -- feReadPlain, so they share the scripted queue.
                   queue <- readIORef inRef
@@ -992,7 +992,7 @@ driveDeathScreen startState slot script = do
             { feEmitLine    = \l -> modifyIORef' outRef (l :)
             , feEmitRaw     = \s -> modifyIORef' outRef (s :)
             , feReadInput   = \_ _ -> pure Nothing
-            , feReadPlain   = \_ -> do
+            , feReadPlain   = \_st _ -> do
                   queue <- readIORef inRef
                   case queue of
                       []       -> pure Nothing
