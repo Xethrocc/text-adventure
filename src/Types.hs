@@ -1365,19 +1365,20 @@ data GamePolicy = GamePolicy
     , gpIronman    :: Bool       -- ^ saves only in savezones (one checkpoint slot,
                                  -- ^ deleted on death); load disabled
     , gpSaveZones  :: [RoomID]  -- ^ rooms where ironman saves are allowed
+    , gpMetaSlug   :: Maybe String -- ^ explicit slug for the meta file (Rogue Phase 2, M8)
     } deriving (Show, Eq, Generic)
 
 -- | Today's behaviour: nothing changes unless the author opts in.
 defaultGamePolicy :: GamePolicy
-defaultGamePolicy = GamePolicy False True False []
+defaultGamePolicy = GamePolicy False True False [] Nothing
 
 instance ToJSON GamePolicy where
-    toJSON p = object
+    toJSON p = object $
         [ "permadeath" .= gpPermadeath p
         , "allow_undo" .= gpAllowUndo p
         , "ironman"    .= gpIronman p
         , "save_zones" .= gpSaveZones p
-        ]
+        ] ++ [ "meta_slug" .= s | Just s <- [gpMetaSlug p] ]
 
 instance FromJSON GamePolicy where
     parseJSON = withObject "GamePolicy" $ \o -> GamePolicy
@@ -1385,6 +1386,7 @@ instance FromJSON GamePolicy where
         <*> o .:? "allow_undo" .!= True
         <*> o .:? "ironman"    .!= False
         <*> o .:? "save_zones" .!= []
+        <*> o .:? "meta_slug"
 
 instance FromJSON GameWorld where
     parseJSON = withObject "GameWorld" $ \o -> GameWorld

@@ -1093,6 +1093,55 @@ testIronmanCheckpointDeletedOnDeath = withSavesIsolation $ do
     r4 <- expectTrue "checkpoint deleted with the run" (not gone)
     pure (r1 && r2 && r3 && r4)
 
+-- | Rogue Phase 2 (pure): meta.* survives Restart while normal variables
+--   reset to 'lsInitial'; the checkpoint slot does not leak into the new run.
+testMetaProgressionPreservedOnRestart :: IO Bool
+testMetaProgressionPreservedOnRestart = do
+    -- The pristine initial state (what `lsInitial` holds: no gold, meta.souls
+    -- at 0) plus a mid-run state with earned progress and a checkpoint.
+    let pristine = initSampleGame
+            { world = (world initSampleGame)
+                { worldGamePolicy = defaultGamePolicy { gpIronman = True } }
+            , save = (save initSampleGame)
+                { variables = Map.fromList [("meta.souls", VVInt 0)] } }
+        mid = pristine { save = (save pristine)
+            { variables = Map.fromList
+                [ ("meta.souls", VVInt 7)
+                , ("meta.unlocked_class", VVText "mage")
+                , ("gold", VVInt 9) ] } }
+        loop = LoopState mid [] pristine (Just "checkpoint")
+        (l2, msg) = applyLoopCommand Restart loop
+    -- The fresh run starts from `lsInitial` (gold absent there); meta.souls=7
+    -- and meta.unlocked_class survive, gold does not leak.
+    r1 <- expectEqual (Just (VVInt 7))  (Map.lookup "meta.souls" (variables (save (lsCurrent l2))))
+    r2 <- expectEqual (Just (VVText "mage")) (Map.lookup "meta.unlocked_class" (variables (save (lsCurrent l2))))
+    r3 <- expectTrue "normal variable gold does not leak into the new run"
+                     (Map.notMember "gold" (variables (save (lsCurrent l2))))
+    r4 <- expectTrue "checkpoint slot reset on restart" (lsSaveSlot l2 == Nothing)
+    r5 <- expectTrue "restart lands on the pristine look text"
+                     ("stone chamber" `isInfixOf` msg)
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Rogue Phase 2 (IO): meta.* is written at game over (death) to
+--   `saves/<slug>_meta.json`, with the slug from `game.meta_slug` when given.
+testMetaWrittenOnGameOver :: IO Bool
+testMetaWrittenOnGameOver = withSavesIsolation $ do
+    let withMeta = initSampleGame
+            { world = (world initSampleGame)
+                { worldGamePolicy = defaultGamePolicy
+                    { gpIronman = True, gpSaveZones = ["start"]
+                    , gpMetaSlug = Just "katakombe_test" } }
+            , save = (save initSampleGame)
+                { variables = Map.fromList [("meta.souls", VVInt 3), ("hp_like", VVInt 1)]
+                , gameOver = True, gameOverReason = Just Death } }
+    _ <- driveDeathScreen withMeta (Just SaveLoad.ironmanCheckpointSlot) [Just "q"]
+    metaPath <- SaveLoad.metaSavePath (world withMeta)
+    written <- doesFileExist metaPath
+    r1 <- expectTrue "meta file written on death" written
+    metaOnDisk <- SaveLoad.loadMeta (world withMeta)
+    r2 <- expectEqual (Just (VVInt 3)) (Map.lookup "meta.souls" metaOnDisk)
+    pure (r1 && r2)
+
 testLoopRunsOnCannedFrontend :: IO Bool
 testLoopRunsOnCannedFrontend = do
     (out, diag, played, remaining) <- cannedFrontend [Just "look", Just "take torch", Nothing]
@@ -4326,6 +4375,8 @@ main = do
         , runTest "permadeath death menu without undo/load (Rogue P1)" testPermadeathDeathMenu
         , runTest "ironman: save only in savezones, load disabled (Rogue P1)" testIronmanSaveOnlyInSavezone
         , runTest "ironman: checkpoint deleted on death (Rogue P1)" testIronmanCheckpointDeletedOnDeath
+        , runTest "meta survives restart (Rogue P2)" testMetaProgressionPreservedOnRestart
+        , runTest "meta written on game over (Rogue P2)" testMetaWrittenOnGameOver
         , runTest "TA_SAVES_DIR redirects saves + deleteSaveSlot (Rogue P0)" testSavesDirOverride
         , runTest "savesDir default stays 'saves' (Rogue P0)" testSavesDirDefault
         , runTest "slugify is deterministic and file-safe (Rogue P0)" testSlugify

@@ -16,6 +16,8 @@ module GameLoop
   , saveBlockedMessage
   , loadBlockedMessage
   , deathMenuText
+  , carryMetaVars
+  , persistMeta
   ) where
 
 import Types
@@ -99,8 +101,10 @@ applyLoopCommand Quit loopState =
     let (newState, message) = executeCommand Quit (lsCurrent loopState)
     in (loopState { lsCurrent = newState }, message)
 applyLoopCommand Restart loopState =
+    -- Rogue Phase 2: meta.* travels from the dying/finished run into the fresh
+    -- one (the plan's restart semantics); lsSaveSlot resets (initLoopState).
     let (newState, message) = executeCommand Look (lsInitial loopState)
-    in (initLoopState newState, message)
+    in (initLoopState (carryMetaVars (lsCurrent loopState) newState), message)
 applyLoopCommand Help loopState = (loopState, helpText)
 applyLoopCommand (Save _) loopState = (loopState, "")
 applyLoopCommand (Load _) loopState = (loopState, "")
@@ -172,6 +176,28 @@ deathMenuText :: GamePolicy -> String
 deathMenuText policy
     | gpPermadeath policy || gpIronman policy = "  [R]estart  |  [Q]uit"
     | otherwise = "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
+
+-- | Rogue Phase 2 (pure, testable): carry the old run's meta.* variables into
+--   the fresh state — souls earned survive the restart, everything else
+--   (rooms, HP, normal variables) resets to 'lsInitial'.
+carryMetaVars :: GameState -> GameState -> GameState
+carryMetaVars old fresh = fresh
+    { save = (save fresh)
+        { variables = mergeMetaVars (variables (save old)) (variables (save fresh)) } }
+
+-- | Rogue Phase 2 (M5): overlay the disk meta file over a state — the file
+--   always wins (the VarMap inside a slot save is a snapshot; the meta file
+--   is the authoritative progress store).
+mergeMetaFromDisk :: GameState -> IO GameState
+mergeMetaFromDisk st = do
+    disk <- loadMeta (world st)
+    pure st { save = (save st) { variables = mergeMetaVars disk (variables (save st)) } }
+
+-- | Rogue Phase 2: write the current meta.* variables to the per-adventure
+--   meta file. Called on game over (victory, death, custom, quit) — and
+--   no-op for adventures without meta.* variables.
+persistMeta :: GameState -> IO ()
+persistMeta st = saveMeta (world st) (variables (save st))
 
 -- | Determine which trigger events apply to a completed command, using the
 --   state before and after the command to detect room changes.
@@ -266,8 +292,12 @@ runGameWith f = runGameWithFrontend (haskelineFrontend f)
 
 -- | Entry point for an arbitrary frontend (Phase V). The terminal today, a
 --   TUI or web backend later — the loop logic does not know the difference.
+--   Rogue Phase 2: the per-adventure meta.* variables are loaded from
+--   `saves/<slug>_meta.json` and merged over the initial state before the
+--   first command (M5: the meta file wins over the initial VarMap).
 runGameWithFrontend :: Frontend -> GameState -> IO ()
-runGameWithFrontend fe state = do
+runGameWithFrontend fe state0 = do
+    state <- mergeMetaFromDisk state0
     let (newState, message) = executeCommand Look state
     feEmitLine fe message
     loopGame fe (initLoopState newState)
@@ -322,7 +352,11 @@ loopGame fe loopState
                                 result <- loadGame state name
                                 case result of
                                     Just loadedState -> do
-                                        let (loadedState', msg) = executeCommand Look loadedState
+                                        -- Rogue Phase 2 (M5): the meta file is
+                                        -- the authoritative progress store —
+                                        -- a slot's snapshot never overrides it.
+                                        loadedState' <- mergeMetaFromDisk loadedState
+                                        let (_, msg) = executeCommand Look loadedState'
                                         feEmitLine fe msg
                                         loopGame fe (initLoopState loadedState')
                                     Nothing -> loopGame fe loopState
@@ -383,6 +417,10 @@ loopGame fe loopState
 -- | Handle game-over screen based on reason
 handleGameOver :: Frontend -> LoopState -> IO ()
 handleGameOver fe loopState = do
+    -- Rogue Phase 2: meta.* persists through game over — victory, death,
+    -- custom end and quit alike (a quit mid-run keeps the souls collected so
+    -- far). Written before anything else so the loop below cannot lose it.
+    persistMeta state
     case gameOverReason (save state) of
         Just Death -> do
             emitEndArt fe state Death
