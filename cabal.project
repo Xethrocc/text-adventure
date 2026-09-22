@@ -4,6 +4,7 @@
 --   worldbuilder/              authoring schema, validator and compiler
 --   img2ascii/                 image -> ASCII art converter (terminal tool)
 --   text2ascii/                text -> banner art converter (terminal tool)
+--   text-adventure-tui/        brick-based terminal UI (opt-in frontend)
 --
 -- The worldbuilder turns YAML/JSON authored content into the GameWorld +
 -- SaveState JSON files that the engine loads via --world / --save.
@@ -14,6 +15,7 @@ packages:
     worldbuilder
     img2ascii
     text2ascii
+    text-adventure-tui
 
 -- Pin the compiler so both packages agree on the same package database.
 -- with-compiler: ghc-9.6.7

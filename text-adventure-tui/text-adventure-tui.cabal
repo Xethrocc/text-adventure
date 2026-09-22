@@ -1,0 +1,45 @@
+cabal-version:      3.0
+name:               text-adventure-tui
+version:            0.1.0.0
+synopsis:           A brick-based terminal UI for the text adventure engine
+description:        An alternative frontend for the text-adventure engine:
+                    a scrollable history pane, a command line with history
+                    recall and Tab completion, and (from Phase H) an in-place
+                    animated ASCII-art panel. The engine loop is driven through
+                    the engine's Frontend record (Phase V) from a worker
+                    thread; Brick renders shared state and owns the terminal.
+                    Opt-in: the Haskeline CLI remains the default frontend.
+homepage:           https://github.com/Xethrocc/text-adventure
+license:            MIT
+license-file:       LICENSE
+author:             Xethrocc
+maintainer:         Xethrocc
+copyright:          2026 Xethrocc
+category:           Game
+build-type:         Simple
+
+library
+  exposed-modules:     TextAdventure.Tui
+  hs-source-dirs:      src
+  build-depends:       base >=4.12 && <5,
+                       text-adventure,
+                       brick >=2.0 && <3,
+                       vty >=6.6 && <7,
+                       vty-crossplatform >=0.5,
+                       text >=1.2 && <3,
+                       text-zipper >=0.13,
+                       mtl >=2.2
+  default-language:    Haskell2010
+  ghc-options:         -Wall -Werror=missing-fields
+
+executable text-adventure-tui
+  main-is:             Main.hs
+  hs-source-dirs:      app
+  build-depends:       base >=4.12 && <5,
+                       text-adventure,
+                       text-adventure-tui,
+                       text >=1.2 && <3
+  default-language:    Haskell2010
+  -- -threaded: the ambient/animation timer thread needs the threaded runtime
+  -- (BChan + forkIO); measured in the vty-windows hand probe (Phase T).
+  ghc-options:         -Wall -Werror=missing-fields -threaded

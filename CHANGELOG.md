@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Phase T (Grundgerüst): brick-basiertes TUI-Paket `text-adventure-tui`
+
+- Neues Paket `text-adventure-tui` (lib `TextAdventure.Tui` + exe): das
+  Abbruchkriterium von T ist geprüft — `vty-windows` baut und läuft auf echtem
+  Windows (Handprobe des Autors, 2026-09-22; drei Brick-2.x-API-Anpassungen
+  notiert: `appHandleEvent` ohne State-Argument, `mkVty` aus
+  `Graphics.Vty.CrossPlatform`, `-threaded` für den Timer-Thread).
+- Architektur wie geplant (D20/D22): der Engine-Loop läuft in einem
+  Worker-Thread über das Phase-V-`Frontend`-Record; die TUI ist nur ein
+  weiteres Frontend, die Loop-Logik bleibt unangetastet. Sharing über
+  IORef+MVar: Ausgabezeilen in einen gemeinsamen Puffer, Eingabe über
+  Signal-MVar + Pending-Queue (nicht blockierend für die UI).
+- Grundgerüst funktional: scrollbarer Verlauf (PgUp/PgDn, Auto-Follow),
+  Eingabezeile mit Verlauf (↑/↓) und Tab-Vervollständigung über die reine
+  `completionFor` aus Phase V (ein Treffer ersetzt, mehrere: LCP + Liste),
+  Diagnose-Kanal als `[Diagnose]`-Zeilen, Ctrl-Q/Esc beendet.
+- Brick 2.13-API notiert: `EventM n s a` (State als Parameter),
+  `appHandleEvent` nimmt nur das Event, `appChooseCursor` bekommt den State,
+  Editor-Events via `nestEventM'` einbetten, `renderEditor` mit Fokus-Bool.
+  ANSI wird vorerst gestrippt (SGR→vty-Attrs ist Folgearbeit); Kunst wandert
+  vorerst inline mit dem Raustext mit — das Kunst-Panel (D21) kommt mit H.
+- `cabal.project` um `text-adventure-tui` erweitert; CI baut das Paket auf
+  Linux **und** Windows — die `vty-windows`-Messung läuft damit dauerhaft.
+
 ### Phase V: Frontend-Trennung (IO-Politik aus GameLoop ausgelöst)
 
 - Neu `src/Frontend.hs`: das `Frontend`-Record ist die einzige I/O-Fläche des
