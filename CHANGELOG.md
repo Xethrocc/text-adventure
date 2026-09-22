@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Phase H1: Rate pro Kunst (`ambient` + `asciiPlayback`)
+
+- Neu `Ambient` (Frames + `fps`) als Feld `aaAmbient` am `AsciiArt`: die Kunst
+  trägt ihre Rate; YAML/JSON `ambient: {frames, fps}` (TUI und Haskeline-CLI
+  konsumenten identisch, Rückwärtskompatibel — fehlendes `ambient` ändert
+  nichts am JSON und damit am Welt-Checksum).
+- Neu reine Funktion `asciiPlayback :: AsciiArt -> GameState -> ([String], Int)`
+  (Game.hs): liefert Frames **und** Verzögerung in µs. Ambient-Kunst spielt
+  ihre Rate (`1e6 div fps`); `frames`/`every`-Kunst fällt auf die dokumentierte
+  Standardrate `defaultFrameMicros = 350000` zurück (der früheren festen
+  Konstante entsprechend — jetzt als Default, nicht als Engine-Konstante).
+- `pendingAnimation` trägt `(frames, rate)`; `fePlayFrames :: Int -> [String] ->
+  IO ()` nimmt die Rate als Parameter — die 350-ms-Konstante ist aus dem
+  Frontend entfallen, Haskeline-CLI und TUI warten auf die Kunst-Rate.
+- Worldbuilder kompiliert `ambient:` und validiert: `AmbientFpsInvalid`
+  (fps <= 0) und `AmbientFramesEmpty` (leere Frame-Liste) sind Compile-Fehler
+  mit stabilen Codes. Die D15-Loop-Naht-Prüfung bleibt bewusst bei der
+  Video-Schiene (F).
+- Fixture `ascii-state.yaml`: die Halle trägt neben ihrem Zug-Takt einen
+  Ambient-Loop (Wellen, fps 4). Tests: playback-Rate-Mathematik, `watch`
+  übernimmt die Rate, JSON-Rundlauf; Worldbuilder: Kompilierung + beide
+  Validierungscodes.
+
 ### Phase T (Grundgerüst): brick-basiertes TUI-Paket `text-adventure-tui`
 
 - Neues Paket `text-adventure-tui` (lib `TextAdventure.Tui` + exe): das

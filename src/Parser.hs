@@ -524,10 +524,11 @@ executeCommand (WatchCmd maybeTarget) state = case getCurrentRoom state of
     allReachableItems = getItemsInLocation (InRoom (currentRoom (save state))) state
                         ++ getItemsInLocation (CarriedBy "player") state
     roomNPCs = getNPCsInRoom (currentRoom (save state)) state
-    watchArt art label = case asciiFrames art state of
-        []     -> (state, "There is nothing to watch about " ++ label ++ ".")
-        frames -> (state { pendingAnimation = Just frames },
-                   "Watching " ++ label ++ "...")
+    watchArt art label = case asciiPlayback art state of
+        ([], _)            -> (state, "There is nothing to watch about " ++ label ++ ".")
+        (frames, micros) ->
+            (state { pendingAnimation = Just (frames, micros) },
+             "Watching " ++ label ++ "...")
 
 executeCommand MapCmd state = case getCurrentRoom state of
     Nothing -> (state, "You're in a void. There's nothing to map.")

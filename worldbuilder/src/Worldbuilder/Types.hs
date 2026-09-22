@@ -69,7 +69,7 @@ instance FromJSON Adventure where
         <*> o .:? "combat"
         <*> o .:? "abilities"       .!= []
         <*> o .:? "end_art"         .!= Map.empty
-        <*> o .:? "title_art"       .!= AAscii (ACondText "" []) [] 1 []
+        <*> o .:? "title_art"       .!= AAscii (ACondText "" []) [] 1 [] Nothing
 
 -- | Optional player stats block in YAML (Phase 4d).
 --   `player: { max_hp: 50, attack: 8, defense: 3, skills: { lockpick: 5 } }`
@@ -142,24 +142,27 @@ instance FromJSON ACondText where
                 <$> o .:? "default"  .!= ""
                 <*> o .:? "variants" .!= []) v
 
--- | YAML form of the engine's `AsciiArt` (Phase B/D): a plain string, a
---   `{default, variants}` CondText, or an animated `{frames, every, ...}` object.
+-- | YAML form of the engine's `AsciiArt` (Phase B/D/H): a plain string, a
+--   `{default, variants}` CondText, an animated `{frames, every, ...}` object,
+--   or one carrying an `ambient` loop (Phase H/H1).
 data AAscii = AAscii
     { asaStatic   :: ACondText
     , asaFrames   :: [ACondText]
     , asaEvery    :: Int
     , asaHotspots :: [E.Hotspot]
+    , asaAmbient  :: Maybe E.Ambient
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AAscii where
     parseJSON v = case v of
-        String s -> pure (AAscii (ACondText (T.unpack s) []) [] 0 [])
+        String s -> pure (AAscii (ACondText (T.unpack s) []) [] 0 [] Nothing)
         _ -> withObject "AAscii" (\o -> do
                 stat <- ACondText <$> o .:? "default" .!= "" <*> o .:? "variants" .!= []
                 frames <- o .:? "frames" .!= []
                 every <- o .:? "every" .!= 1
                 spots <- o .:? "hotspots" .!= []
-                pure (AAscii stat frames every spots)) v
+                amb <- o .:? "ambient" .!= Nothing
+                pure (AAscii stat frames every spots amb)) v
 
 -- | Parse a `description` field: prefers the new CondText object, falls back
 --   to legacy `desc:` string.
@@ -200,7 +203,7 @@ instance FromJSON ARoom where
         <*> o .:? "on_look"
         <*> o .:? "on_exit"
         <*> o .:? "search"
-        <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0 []
+        <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0 [] Nothing
 
 -- | Exit reference: target room + optional lock entity
 data AExitRef = AExitRef
@@ -246,7 +249,7 @@ instance FromJSON AItem where
         <$> o .:  "id"
         <*> o .:  "name"
         <*> textField o
-        <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0 []
+        <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0 [] Nothing
         <*> o .:? "keys"      .!= []
         <*> o .:? "tags"      .!= []
         <*> o .:? "location"  .!= "start"
@@ -310,7 +313,7 @@ instance FromJSON ANPC where
         <$> o .:  "id"
         <*> o .:  "name"
         <*> textField o
-        <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0 []
+        <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0 [] Nothing
         <*> o .:? "keys"      .!= []
         <*> o .:? "location"  .!= "start"
         <*> o .:? "state"     .!= "alive"

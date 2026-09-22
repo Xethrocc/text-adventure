@@ -273,9 +273,9 @@ loopGame fe loopState
                         let (loopState', message) = applyLoopCommand command loopState
                         emitNewDiagnostics fe (lsCurrent loopState) (lsCurrent loopState')
                         case pendingAnimation (lsCurrent loopState') of
-                            Just frames -> do
+                            Just (frames, micros) -> do
                                 feEmitLine fe message
-                                fePlayFrames fe frames
+                                fePlayFrames fe micros frames
                                 let cleared = (lsCurrent loopState') { pendingAnimation = Nothing }
                                 loopGame fe (loopState' { lsCurrent = cleared })
                             Nothing ->

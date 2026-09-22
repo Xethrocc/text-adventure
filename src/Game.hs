@@ -814,6 +814,24 @@ asciiFrames art state
     | null (aaFrames art) = [t | let t = resolveCondText (aaStatic art) state, not (null t)]
     | otherwise           = map (\f -> resolveCondText f state) (aaFrames art)
 
+-- | Default playback rate for arts that carry no rate of their own (Phase H,
+--   H1): roughly three frames per second, matching the former fixed constant.
+--   The 350-ms figure is now a documented default for `frames`/`every` arts
+--   without `fps`, not an engine-wide constant.
+defaultFrameMicros :: Int
+defaultFrameMicros = 350000
+
+-- | Pure playback of a piece of art (Phase H, H1): the frames to show and the
+--   delay the frontend should wait between them, in microseconds. Ambient
+--   loops carry their own rate (`fps` in `ambient`); everything else plays at
+--   the default rate. The frontend does all waiting — the core never does.
+asciiPlayback :: AsciiArt -> GameState -> ([String], Int)
+asciiPlayback art state = case aaAmbient art of
+    Just amb
+        | not (null (ambFrames amb))
+        , ambFps amb > 0  -> (ambFrames amb, 1000000 `div` ambFps amb)
+    _ -> (asciiFrames art state, defaultFrameMicros)
+
 -- | The end banner a world defines for a game-over reason, if any. Keys are
 --   @"death"@, @"victory"@ or the custom reason string (Phase G).
 endArtFor :: GameOverReason -> GameState -> Maybe AsciiArt

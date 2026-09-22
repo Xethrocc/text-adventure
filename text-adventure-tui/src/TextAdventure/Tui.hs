@@ -98,8 +98,8 @@ tuiFrontend shared chan = Frontend
     , feReadInput   = \st _prompt -> writeIORef (shState shared) st >> Just <$> nextLine shared
     , feReadPlain   = \_prompt -> Just <$> nextLine shared
     , feReadPause   = void (nextLine shared)
-    , fePlayFrames  = \frames -> mapM_ (\fr -> appendShared shared fr
-                                                  >> threadDelay 350000) frames
+    , fePlayFrames  = \micros frames -> mapM_ (\fr -> appendShared shared fr
+                                                  >> threadDelay micros) frames
     , feDiagnostics = \ms -> mapM_ (\m -> appendShared shared ("[Diagnose] " ++ m)) ms
     }
   where

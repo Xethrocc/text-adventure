@@ -929,7 +929,7 @@ cannedFrontend script = do
                       (x : xs) -> writeIORef inRef xs >> pure x
             , feReadPlain   = \_ -> pure Nothing
             , feReadPause   = pure ()
-            , fePlayFrames  = \_ -> pure ()
+            , fePlayFrames  = \_ _ -> pure ()
             , feDiagnostics = \ms -> modifyIORef' diagRef (++ ms)
             }
     runGameWithFrontend fe initSampleGame
@@ -949,6 +949,51 @@ testLoopRunsOnCannedFrontend = do
     r4 <- expectTrue "no diagnostics on a healthy game" (null diag)
     r5 <- expectTrue "script fully consumed" (null remaining)
     pure (and [r1, r2, r3, r4, r5])
+
+-- ===== Phase H/H1: playback rate comes from the art =====
+
+-- | An ambient loop plays its own frames at its own rate (H1): the pure
+--   `asciiPlayback` returns frames and the delay in microseconds (fps 4 =
+--   250000 µs), while `frames`/`every` arts fall back to the default rate.
+testAsciiPlaybackAmbient :: IO Bool
+testAsciiPlaybackAmbient = do
+    let ambientArt = emptyAscii { aaAmbient = Just (Ambient ["A0", "A1", "A2"] 4) }
+        frameArt   = emptyAscii { aaFrames = [plainText "F0", plainText "F1"], aaEvery = 1 }
+        g = initSampleGame
+    let (framesA, delayA) = asciiPlayback ambientArt g
+        (framesB, delayB) = asciiPlayback frameArt g
+    r1 <- expectEqual ["A0", "A1", "A2"] framesA
+    r2 <- expectEqual 250000 delayA
+    r3 <- expectEqual ["F0", "F1"] framesB
+    r4 <- expectEqual defaultFrameMicros delayB
+    pure (r1 && r2 && r3 && r4)
+
+-- | `watch` on an art with an ambient block plays the ambient loop at its
+--   rate: `pendingAnimation` now carries frames *and* the µs delay (H1).
+testWatchCarriesRate :: IO Bool
+testWatchCarriesRate = do
+    let art = emptyAscii { aaAmbient = Just (Ambient ["W0", "W1"] 8) }
+        torch = (itemDefs (world initSampleGame) Map.! "torch") { itemAscii = art }
+        g = initSampleGame
+                { world = (world initSampleGame)
+                    { itemDefs = Map.insert "torch" torch (itemDefs (world initSampleGame)) } }
+        cmd = parseCommandWith Map.empty "watch torch"
+        (st', _) = executeCommand cmd g
+    r1 <- expectEqual (Just (["W0","W1"], 125000)) (pendingAnimation st')
+    pure r1
+
+-- | Ambient survives the world JSON round trip and renders byte-identically.
+-- | Ambient survives the world JSON round trip byte-identically (H1).
+testAmbientRoundTrip :: IO Bool
+testAmbientRoundTrip = do
+    let art = emptyAscii { aaAmbient = Just (Ambient ["w1", "w2"] 6) }
+        decoded = Aeson.decode (Aeson.encode art) :: Maybe AsciiArt
+        rate = case decoded >>= aaAmbient of
+            Just amb -> (ambFps amb, ambFrames amb)
+            Nothing  -> (0, [])
+    r1 <- expectEqual (Just art) decoded
+    r2 <- expectEqual (6, ["w1", "w2"]) rate
+    pure (r1 && r2)
 
 -- ===== Completion Tests =====
 
@@ -2423,7 +2468,7 @@ testWatchCommand = do
         cmd = parseCommandWith Map.empty "watch torch"
         (st', msg) = executeCommand cmd g
     r1 <- expectEqual (WatchCmd (Just "torch")) cmd
-    r2 <- expectEqual (Just ["T1", "T2"]) (pendingAnimation st')
+    r2 <- expectEqual (Just (["T1", "T2"], defaultFrameMicros)) (pendingAnimation st')
     r3 <- expectTrue "watch announces the target" ("torch" `isInfixOf` msg)
     r4 <- expectTrue "watch does not consume a turn" (not (consumesTurn cmd))
     pure (r1 && r2 && r3 && r4)
@@ -4068,6 +4113,9 @@ main = do
         , runTest "passive animation frame from turn count (D)" testPassiveFrame
         , runTest "asciiFrames lists all frames (D)" testAsciiFramesList
         , runTest "watch command queues frames (D)" testWatchCommand
+        , runTest "ambient playback carries frames + rate (H1)" testAsciiPlaybackAmbient
+        , runTest "watch plays the ambient loop at its rate (H1)" testWatchCarriesRate
+        , runTest "ambient survives the JSON round trip (H1)" testAmbientRoundTrip
         , runTest "end_art resolves per reason (G)" testEndArtFor
         , runTest "title_art resolves against state (G)" testTitleArtResolves
         , runTest "look at <n> resolves hotspots (E)" testHotspotNumberLook

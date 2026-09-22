@@ -138,6 +138,37 @@ Engine liefert die fertige Frame-Liste. `watch` ohne Ziel zeigt die Kunst des
 Raums, `watch <item>`/`watch <npc>` die des Ziels. Ein `every: 0` schaltet den
 passiven Takt ab (nur noch `watch`).
 
+#### Ambiente-Loop mit eigener Rate (Phase H, H1)
+
+Ein `ascii`-Objekt kann daneben einen `ambient`-Block tragen: Inline-Frames
+plus die eigene Rate (`fps`, Frames pro Sekunde). Der Kern liefert Frames
+**und** Rate als reine Funktion (`asciiPlayback`); das Frontend wartet — im
+TUI läuft der Loop zeitgesteuert neben der Eingabe, im Haskeline-CLI spielt
+`watch` ihn sequenziell ab:
+
+```yaml
+ascii:
+  frames:          # Zug-Takt wie oben, bleibt unverändert daneben
+    - |
+      |~|
+    - |
+      |=|
+  every: 2
+  ambient:         # Zeit-Takt: die Kunst trägt ihre Rate
+    frames:
+      - |
+        ~  ~  ~
+      - |
+         ~ ~ ~
+    fps: 4
+```
+
+Regeln: `fps` muss positiv sein und `ambient.frames` darf nicht leer sein —
+der Compiler meldet `AmbientFpsInvalid` bzw. `AmbientFramesEmpty`. Kunst ohne
+`ambient` spielt bei `watch` mit der Standardrate (350 ms je Frame, der
+früheren festen Konstante entsprechend); `ambient`-Kunst spielt **ihre**
+Rate. In Pipes bleibt die Ausgabe statisch (D22).
+
 #### Anfassbare Kunst: Hotspots (Phase E)
 
 Ein `ascii`-Objekt kann `hotspots` enthalten: Marker-Glyphen, die an ein Ziel

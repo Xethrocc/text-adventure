@@ -38,16 +38,12 @@ data Frontend = Frontend
       -- ^ read a bare line without completion/history (game-over menus)
     , feReadPause   :: IO ()
       -- ^ narrative continuation: wait until the player confirms
-    , fePlayFrames  :: [String] -> IO ()
-      -- ^ play animation frames in order, paced by the frontend
+    , fePlayFrames  :: Int -> [String] -> IO ()
+      -- ^ play animation frames in order, waiting `micros` between them
+      --   (the rate comes from the art via the pure core, Phase H/H1)
     , feDiagnostics :: [String] -> IO ()
       -- ^ engine diagnostics channel (stderr today) — never game text
     }
-
--- | Milliseconds between animation frames in @watch@. Pacing is a frontend
---   concern; the pure core produced the plain frame list (Phase D).
-frameDelayMicros :: Int
-frameDelayMicros = 350000
 
 -- | Haskeline/stdout implementation: today's terminal behaviour, byte for
 --   byte. Completion is built from the pure 'completionFor'; history is kept
@@ -59,7 +55,7 @@ haskelineFrontend f = Frontend
     , feReadInput   = \st p -> runInputT (haskelineSettings st) (getInputLine p)
     , feReadPlain   = \p -> runInputT defaultSettings (getInputLine p)
     , feReadPause   = putStr (f "  [Press Enter to continue]") >> void getLine
-    , fePlayFrames  = mapM_ (\fr -> putStrLn (f fr) >> threadDelay frameDelayMicros)
+    , fePlayFrames  = \micros -> mapM_ (\fr -> putStrLn (f fr) >> threadDelay micros)
     , feDiagnostics = mapM_ (hPutStrLn stderr)
     }
 

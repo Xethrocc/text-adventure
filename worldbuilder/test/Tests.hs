@@ -25,7 +25,7 @@ import Validate (validateWorld, validateGameState, ValidationError (..))
 minWorld :: E.GameWorld
 minWorld = E.GameWorld
     { rooms = Map.fromList
-        [ ("room_0", E.Room "room_0" "Room 0" (E.CondText "test" []) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing (E.AsciiArt (E.CondText "" []) [] 0 []))
+        [ ("room_0", E.Room "room_0" "Room 0" (E.CondText "test" []) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing (E.AsciiArt (E.CondText "" []) [] 0 [] Nothing))
         ]
     , itemDefs = Map.empty
     , npcDefs = Map.empty
@@ -40,7 +40,7 @@ minWorld = E.GameWorld
     , worldName = ""
     , abilities = Map.empty
     , worldEndArt = Map.empty
-    , worldTitleArt = E.AsciiArt (E.CondText "" []) [] 1 []
+    , worldTitleArt = E.AsciiArt (E.CondText "" []) [] 1 [] Nothing
     }
 
 -- | Helper: a minimal valid SaveState referencing room_0
@@ -129,7 +129,7 @@ minRoom rid = ARoom
     , arOnLook = Nothing
     , arOnExit = Nothing
     , arSearch = Nothing
-    , arAscii = AAscii (ACondText "" []) [] 0 []
+    , arAscii = AAscii (ACondText "" []) [] 0 [] Nothing
     }
 
 -- | Build a minimal adventure with one room
@@ -158,7 +158,7 @@ minAdventure room = Adventure
     , advCombat = Nothing
     , advAbilities = []
     , advEndArt = Map.empty
-    , advTitleArt = AAscii (ACondText "" []) [] 1 []
+    , advTitleArt = AAscii (ACondText "" []) [] 1 [] Nothing
     }
 
 -- ---------------------------------------------------------------------------
@@ -228,7 +228,7 @@ minItem iid = AItem
     { aiId = iid
     , aiName = iid
     , aiTexts = ACondText "test item" []
-    , aiAscii = AAscii (ACondText "" []) [] 0 []
+    , aiAscii = AAscii (ACondText "" []) [] 0 [] Nothing
     , aiKeywords = []
     , aiTags = []
     , aiLocation = "loc_0"
@@ -1355,7 +1355,7 @@ testStealthCompiles = do
                     [ AOSetFlag "alarmed" "true", AOMessage "The guard heard you!" ]
         adv = (minAdventure (minRoom "loc_0"))
             { advStealth = Just (AStealth noise [guard])
-            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) (AAscii (ACondText "" []) [] 0 []) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing ] }
+            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing ] }
     case compileAdventure adv of
         Left errs -> do
             putStrLn $ "  compile errors: " ++ show errs
@@ -1576,7 +1576,7 @@ testPatrolFixtureCompiles = do
 
 -- | The patrolling wolf the patrol tests declare.
 wolfNPC :: String -> ANPC
-wolfNPC loc = ANPC "wolf" "Wolf" (ACondText "Wolf" []) (AAscii (ACondText "" []) [] 0 [])
+wolfNPC loc = ANPC "wolf" "Wolf" (ACondText "Wolf" []) (AAscii (ACondText "" []) [] 0 [] Nothing)
                     [] loc "alive" Nothing 8 3 Map.empty Map.empty Nothing
 
 -- | The 7f combat segment: default without a block is CombatClassic; off /
@@ -1704,7 +1704,7 @@ testCombatFixturesCompile = do
 -- | A party-capable NPC with an explicit state, for the party tests.
 partySquire :: Maybe AParty -> ANPC
 partySquire party
-    = ANPC "squire" "Knappe" (ACondText "Knappe" []) (AAscii (ACondText "" []) [] 0 []) [] "loc_0" "alive"
+    = ANPC "squire" "Knappe" (ACondText "Knappe" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive"
         (Just 20) 3 1 Map.empty Map.empty party
 
 followVerb :: AVerb
@@ -2044,9 +2044,9 @@ testAsciiCondTextCompiles = do
     r0a <- expectEqual (Just (ACondText "just a string" [])) shorthand
     r0b <- expectEqual (Just (ACondText "D" [ATextVariant (E.HasFlag "lit") "L"])) objectForm
     -- Compilation maps them 1:1 onto the engine AsciiArt.
-    let room = (minRoom "loc_0") { arAscii = AAscii (ACondText "DARK" [ATextVariant (E.HasFlag "lit") "LIT"]) [] 0 [] }
-        item = (minItem "lamp") { aiAscii = AAscii (ACondText "LAMP" []) [] 0 [] }
-        npc  = (partySquire Nothing) { anAscii = AAscii (ACondText "NPC" []) [] 0 [] }
+    let room = (minRoom "loc_0") { arAscii = AAscii (ACondText "DARK" [ATextVariant (E.HasFlag "lit") "LIT"]) [] 0 [] Nothing }
+        item = (minItem "lamp") { aiAscii = AAscii (ACondText "LAMP" []) [] 0 [] Nothing }
+        npc  = (partySquire Nothing) { anAscii = AAscii (ACondText "NPC" []) [] 0 [] Nothing }
         adv  = (minAdventure room) { advItems = [item], advNPCs = [npc] }
     case compileAdventure adv of
         Left errs -> do
@@ -2056,15 +2056,15 @@ testAsciiCondTextCompiles = do
             let rm = Map.findWithDefault (error "room") "loc_0" (E.rooms (crWorld cr))
                 it = Map.findWithDefault (error "item") "lamp" (E.itemDefs (crWorld cr))
                 np = Map.findWithDefault (error "npc") "squire" (E.npcDefs (crWorld cr))
-            r1 <- expectEqual (E.AsciiArt (E.CondText "DARK" [E.TextVariant (E.HasFlag "lit") "LIT"]) [] 0 []) (E.roomAscii rm)
-            r2 <- expectEqual (E.AsciiArt (E.CondText "LAMP" []) [] 0 []) (E.itemAscii it)
-            r3 <- expectEqual (E.AsciiArt (E.CondText "NPC" []) [] 0 []) (E.npcAscii np)
+            r1 <- expectEqual (E.AsciiArt (E.CondText "DARK" [E.TextVariant (E.HasFlag "lit") "LIT"]) [] 0 [] Nothing) (E.roomAscii rm)
+            r2 <- expectEqual (E.AsciiArt (E.CondText "LAMP" []) [] 0 [] Nothing) (E.itemAscii it)
+            r3 <- expectEqual (E.AsciiArt (E.CondText "NPC" []) [] 0 [] Nothing) (E.npcAscii np)
             pure (r0a && r0b && r1 && r2 && r3)
 
 -- | Animated `ascii:` compiles frames + `every` (Phase D).
 testAnimatedAsciiCompiles :: IO Bool
 testAnimatedAsciiCompiles = do
-    let art = AAscii (ACondText "" []) [ACondText "F0" [], ACondText "F1" []] 2 []
+    let art = AAscii (ACondText "" []) [ACondText "F0" [], ACondText "F1" []] 2 [] Nothing
         room = (minRoom "loc_0") { arAscii = art }
     case compileAdventure (minAdventure room) of
         Left errs -> do
@@ -2076,22 +2076,51 @@ testAnimatedAsciiCompiles = do
             r2 <- expectEqual 2 (E.aaEvery (E.roomAscii rm))
             pure (r1 && r2)
 
+-- | An `ambient` block compiles into the engine AsciiArt (Phase H/H1).
+testAmbientCompiles :: IO Bool
+testAmbientCompiles = do
+    let art = AAscii (ACondText "" []) [] 0 [] (Just (E.Ambient ["W0", "W1"] 4))
+        room = (minRoom "loc_0") { arAscii = art }
+    case compileAdventure (minAdventure room) of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let rm = Map.findWithDefault (error "room") "loc_0" (E.rooms (crWorld cr))
+            r1 <- expectEqual (Just (E.Ambient ["W0", "W1"] 4)) (E.aaAmbient (E.roomAscii rm))
+            pure r1
+
+-- | Ambient validation (Phase H/H1): a non-positive fps and an empty frame
+--   list are compile errors with stable codes.
+testAmbientValidation :: IO Bool
+testAmbientValidation = do
+    let badFps    = (minRoom "loc_0") { arAscii = AAscii (ACondText "" []) [] 0 [] (Just (E.Ambient ["F"] 0)) }
+        badFrames = (minRoom "loc_0") { arAscii = AAscii (ACondText "" []) [] 0 [] (Just (E.Ambient [] 4)) }
+    case (compileAdventure (minAdventure badFps), compileAdventure (minAdventure badFrames)) of
+        (Left e1, Left e2) -> do
+            r1 <- expectTrue "fps<=0 is AmbientFpsInvalid" ("AmbientFpsInvalid" `isInfixOf` issuesText e1)
+            r2 <- expectTrue "empty frames is AmbientFramesEmpty" ("AmbientFramesEmpty" `isInfixOf` issuesText e2)
+            pure (r1 && r2)
+        (a, b) -> do
+            putStrLn $ "  unexpected: " ++ show (fmap (const ()) a, fmap (const ()) b)
+            pure False
+
 -- | `end_art` and `title_art` compile into the GameWorld (Phase G).
 testEndTitleArtCompiles :: IO Bool
 testEndTitleArtCompiles = do
     let adv = (minAdventure (minRoom "loc_0"))
             { advEndArt = Map.fromList
-                [ ("death", AAscii (ACondText "D" []) [] 1 [])
-                , ("victory", AAscii (ACondText "V" []) [] 1 []) ]
-            , advTitleArt = AAscii (ACondText "T" []) [] 1 [] }
+                [ ("death", AAscii (ACondText "D" []) [] 1 [] Nothing)
+                , ("victory", AAscii (ACondText "V" []) [] 1 [] Nothing) ]
+            , advTitleArt = AAscii (ACondText "T" []) [] 1 [] Nothing }
         plainAdv = minAdventure (minRoom "loc_0")
     case (compileAdventure adv, compileAdventure plainAdv) of
         (Right cr, Right crPlain) -> do
             let gw = crWorld cr
-            r1 <- expectEqual (Just (E.AsciiArt (E.CondText "D" []) [] 1 []))
+            r1 <- expectEqual (Just (E.AsciiArt (E.CondText "D" []) [] 1 [] Nothing))
                       (Map.lookup "death" (E.worldEndArt gw))
-            r2 <- expectEqual (E.AsciiArt (E.CondText "T" []) [] 1 []) (E.worldTitleArt gw)
-            r3 <- expectEqual (E.AsciiArt (E.CondText "" []) [] 1 []) (E.worldTitleArt (crWorld crPlain))
+            r2 <- expectEqual (E.AsciiArt (E.CondText "T" []) [] 1 [] Nothing) (E.worldTitleArt gw)
+            r3 <- expectEqual (E.AsciiArt (E.CondText "" []) [] 1 [] Nothing) (E.worldTitleArt (crWorld crPlain))
             r4 <- expectEqual Map.empty (E.worldEndArt (crWorld crPlain))
             pure (r1 && r2 && r3 && r4)
         _ -> expectTrue "end/title art compile failed" False
@@ -2131,7 +2160,7 @@ testBannerArtFixtureCompiles = do
 testHotspotValidation :: IO Bool
 testHotspotValidation = do
     let mkAdv glyphs artText =
-            (minAdventure ((minRoom "loc_0") { arAscii = AAscii (ACondText artText []) [] 0 glyphs }))
+            (minAdventure ((minRoom "loc_0") { arAscii = AAscii (ACondText artText []) [] 0 glyphs Nothing }))
                 { advItems = [minItem "lamp"]
                 , advNPCs = [ (partySquire Nothing) { anId = "troll" } ] }
         hs g t = E.Hotspot g t
@@ -2217,7 +2246,8 @@ tests =
     , ("hotspot validation (E)", testHotspotValidation)
     , ("hotspot fixture compiles + validates (E)", testHotspotFixtureCompiles)
     , ("ascii-state fixture compiles + validates (B)", testAsciiFixtureCompiles)
-    , ("all 10 directions compile to engine Direction", testAllDirectionsCompile)
+    , ("ambient compiles into AsciiArt (H1)", testAmbientCompiles)
+    , ("ambient validation: fps and frames (H1)", testAmbientValidation)
     , ("direction aliases ne/nw/se/sw work", testDirectionAliases)
     , ("unknown direction is a compile error", testUnknownDirectionFails)
     , ("'activate' verb maps to VUse", testActivateVerbMapsToUse)

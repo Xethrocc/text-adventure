@@ -41,6 +41,19 @@ rooms:
           |~|
           | |
       every: 2
+      ambient:
+        frames:
+          - |
+            ~  ~  ~
+            ~~~~~~~~
+            ~~~~~~~~~~
+            waves  |
+          - |
+            ~ ~ ~
+            ~~~~~~
+             ~~~~
+            wall  |
+        fps: 4
     exits:
       south: cave
 

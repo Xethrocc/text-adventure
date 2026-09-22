@@ -13,6 +13,7 @@ import Data.Aeson
 import Data.Aeson.Types (Parser, Pair, toJSONKeyText)
 import Control.Applicative ((<|>))
 import Data.Char (toLower)
+import Data.Maybe (isNothing)
 
 -- ---------------------------------------------------------------------------
 -- ID aliases
@@ -473,47 +474,76 @@ instance FromJSON Hotspot where
 --     depend on the game state as well.
 --   * `aaEvery` is the number of turns per passive frame. `0` (or fewer)
 --     disables the passive tick; the frames are then only shown by `watch`.
+--   * `aaAmbient` is the timed loop of Phase H (H1): frames plus the art's own
+--     playback rate (`fps`). The pure core hands both to the frontend; nothing
+--     in the core waits.
 --   * `aaHotspots` are marker glyphs bound to targets, addressed by number.
 data AsciiArt = AsciiArt
     { aaStatic   :: CondText
     , aaFrames   :: [CondText]
     , aaEvery    :: Int
     , aaHotspots :: [Hotspot]
+    , aaAmbient  :: Maybe Ambient
     } deriving (Show, Eq, Generic)
+
+-- | An ambient loop (Phase H, H1): inline frames plus the rate they repeat
+--   at. Frames are plain strings (no condition per frame); 4–30 frames per
+--   the plan.
+data Ambient = Ambient
+    { ambFrames :: [String]
+    , ambFps    :: Int
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON Ambient where
+    toJSON (Ambient frames fps) = object
+        [ "frames" .= frames
+        , "fps"    .= fps
+        ]
+instance FromJSON Ambient where
+    parseJSON = withObject "Ambient" (\o ->
+        Ambient <$> o .: "frames" <*> o .: "fps")
 
 -- | No art at all. `aaEvery = 1` matches the decoder default so a static art
 --   round-trips through JSON unchanged.
 emptyAscii :: AsciiArt
-emptyAscii = AsciiArt (CondText "" []) [] 1 []
+emptyAscii = AsciiArt (CondText "" []) [] 1 [] Nothing
 
--- | Is the art empty (no static text, no frames)?
+-- | Is the art empty (no static text, no frames, no ambient loop)?
 isEmptyAscii :: AsciiArt -> Bool
-isEmptyAscii a = null (aaFrames a) && isEmptyCond (aaStatic a)
+isEmptyAscii a =
+    null (aaFrames a) && isEmptyCond (aaStatic a)
+    && case aaAmbient a of
+        Nothing          -> True
+        Just amb -> null (ambFrames amb)
 
 -- Accept a plain string (shorthand), a `{default, variants}` CondText (Phase B
 -- shape) or an animated `{default?, variants?, frames, every}` object.
 instance FromJSON AsciiArt where
     parseJSON v = case v of
-        String s -> pure (AsciiArt (CondText (T.unpack s) []) [] 0 [])
+        String s -> pure (AsciiArt (CondText (T.unpack s) []) [] 0 [] Nothing)
         _ -> withObject "AsciiArt" (\o -> do
                 stat <- CondText <$> o .:? "default" .!= "" <*> o .:? "variants" .!= []
                 frames <- o .:? "frames" .!= []
                 every <- o .:? "every" .!= 1
                 spots <- o .:? "hotspots" .!= []
-                pure (AsciiArt stat frames every spots)) v
+                amb <- o .:? "ambient" .!= Nothing
+                pure (AsciiArt stat frames every spots amb)) v
 
 -- A frame- and hotspot-less art keeps the exact Phase B JSON (a CondText
 -- object), so worlds without animation/hotspots keep their historical encoding
 -- and checksum.
 instance ToJSON AsciiArt where
     toJSON a
-        | null (aaFrames a), null (aaHotspots a) = toJSON (aaStatic a)
+        | null (aaFrames a), null (aaHotspots a), isNothing (aaAmbient a)
+        = toJSON (aaStatic a)
         | otherwise = object $
             [ "default"  .= ctDefault (aaStatic a)
             , "variants" .= ctVariants (aaStatic a)
             , "frames"   .= aaFrames a
             , "every"    .= aaEvery a
-            ] ++ [ "hotspots" .= aaHotspots a | not (null (aaHotspots a)) ]
+            ]
+            ++ [ "ambient" .= amb | Just amb <- [aaAmbient a] ]
+            ++ [ "hotspots" .= aaHotspots a | not (null (aaHotspots a)) ]
 
 -- | Encode an ASCII art field only when it carries something. An empty art is
 --   omitted, so worlds without art keep their historical JSON and therefore
@@ -1395,7 +1425,7 @@ data GameState = GameState
     { world :: GameWorld
     , save  :: SaveState
     , pendingNarrative :: Maybe ([String], Effect)  -- ^ Narrative lines + follow-up (Phase 4.4)
-    , pendingAnimation :: Maybe [String]            -- ^ Frames to play back with delay (Phase D, runtime only)
+    , pendingAnimation :: Maybe ([String], Int)    -- ^ Frames + rate in µs (Phase D/H1, runtime only)
     , diagnostics :: [String]                      -- ^ Engine-level findings for the author (P2-23)
     } deriving (Show, Eq)
 

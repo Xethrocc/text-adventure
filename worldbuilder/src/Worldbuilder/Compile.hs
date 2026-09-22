@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 -- | Compile an Adventure (authoring schema) into engine types, or return structured issues
 module Worldbuilder.Compile
     ( CompileResult(..)
@@ -151,6 +152,7 @@ compileAdventure adv =
         combatVarErrs = checkCombatVarReserved varDefs
         cooldownCondErrs = checkCooldownConditionReserved gw
         hotspotErrs = checkHotspotRefs gw
+        ambientErrs = checkAmbientRates gw
 
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
                     ++ varErrs ++ facErrs ++ facConflictErrs ++ trigErrs ++ encErrs
@@ -167,6 +169,7 @@ compileAdventure adv =
                     ++ combatVarErrs
                     ++ cooldownCondErrs
                     ++ hotspotErrs
+                    ++ ambientErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -925,6 +928,28 @@ checkHotspotRefs gw =
         , concatMap (\f -> E.ctDefault f : map E.tvText (E.ctVariants f)) (E.aaFrames art)
         ]
 
+-- | Phase H (H1): validate the rate of every ambient loop. An ambient block
+--   must carry at least one frame and a positive rate — otherwise the loop
+--   would either show nothing or freeze the player's terminal. The D15
+--   loop-seam check belongs to the video converter (F) and is deliberately
+--   not attempted here.
+checkAmbientRates :: E.GameWorld -> [CompileIssue]
+checkAmbientRates gw =
+    concat
+      [ checkArt ("rooms." ++ rId) (E.aaAmbient (E.roomAscii r)) | (rId, r) <- Map.toList (E.rooms gw) ]
+      ++ concat [ checkArt ("items." ++ iId) (E.aaAmbient (E.itemAscii i)) | (iId, i) <- Map.toList (E.itemDefs gw) ]
+      ++ concat [ checkArt ("npcs." ++ nId) (E.aaAmbient (E.npcAscii n)) | (nId, n) <- Map.toList (E.npcDefs gw) ]
+  where
+    checkArt path = \case
+        Nothing -> []
+        Just amb -> concat
+            [ [ ciError (path ++ ".fps") "AmbientFpsInvalid"
+                    ("ambient fps must be positive, but is " ++ show (E.ambFps amb))
+              | E.ambFps amb <= 0 ]
+            , [ ciError (path ++ ".frames") "AmbientFramesEmpty"
+                    "an ambient block declares no frames"
+              | null (E.ambFrames amb) ] ]
+
 -- | Verify every `faction.<id>` reference in the compiled world resolves to a
 --   declared faction. Only runs when the `factions:` segment is present
 --   (default-invariant: without it, `faction.*` strings are plain variables).
@@ -1446,13 +1471,14 @@ compileCondText act = E.CondText
     , E.ctVariants = [ E.TextVariant (atvWhen tv) (atvText tv) | tv <- actVariants act ]
     }
 
--- | Compile authored ASCII art (static CondText plus optional animation frames)
---   into the engine's `AsciiArt` (Phase B/D).
+-- | Compile authored ASCII art (static CondText plus optional animation
+--   frames) into the engine's `AsciiArt` (Phase B/D/H).
 compileAscii :: AAscii -> E.AsciiArt
 compileAscii a = E.AsciiArt
     { E.aaStatic = compileCondText (asaStatic a)
     , E.aaFrames = map compileCondText (asaFrames a)
     , E.aaEvery  = asaEvery a
+    , E.aaAmbient = asaAmbient a
     , E.aaHotspots = asaHotspots a
     }
 
