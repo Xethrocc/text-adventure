@@ -24,4 +24,7 @@ executable text-adventure
                        text-adventure,
                        text-adventure-tui
   default-language:    Haskell2010
-  ghc-options:         -Wall -Werror=missing-fields -Werror=name-shadowing -Werror=incomplete-patterns -Werror=overlapping-patterns
+  -- -threaded: --tui runs the Brick frontend with the animation ticker thread
+  -- (H4b); the non-threaded runtime aborts with "RTS doesn't support multiple
+  -- OS threads". Same flag as the text-adventure-tui executable.
+  ghc-options:         -Wall -Werror=missing-fields -Werror=name-shadowing -Werror=incomplete-patterns -Werror=overlapping-patterns -threaded
