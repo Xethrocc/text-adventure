@@ -7,7 +7,7 @@ import qualified Data.Aeson.Types as AesonT
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, isNothing)
 import Data.Either (isLeft)
 import System.Timeout (timeout)
 import Control.Exception (evaluate)
@@ -28,7 +28,7 @@ import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef')
 import System.Console.Haskeline (Completion (..))
 import System.Exit (exitFailure)
 import Types
-import World (loadGame, loadGameWorld, loadSaveState)
+import World (loadGame, loadGameWorld, loadSaveState, siblingSavePath)
 import Ansi (stripAnsi, ansiFilter)
 
 runTest :: String -> IO Bool -> IO Bool
@@ -991,6 +991,24 @@ testWatchCarriesRate = do
 
 -- | Ambient survives the world JSON round trip and renders byte-identically.
 -- | Ambient survives the world JSON round trip byte-identically (H1).
+-- | `siblingSavePath` finds the compiler's save.json next to the world
+--   (H4-Regressionsbegleitung: `--world` ohne `--save` laedt das Paar).
+testSiblingSavePath :: IO Bool
+testSiblingSavePath = do
+    tmp <- getTemporaryDirectory
+    let dir = tmp ++ "/sibsave"
+        worldPath = dir ++ "/world.json"
+    createDirectoryIfMissing True dir
+    writeFile worldPath "{}"
+    noSibling <- siblingSavePath worldPath
+    writeFile (dir ++ "/save.json") "{}"
+    withSibling <- siblingSavePath worldPath
+    removeFile (dir ++ "/save.json")
+    removeFile worldPath
+    r1 <- expectTrue "no sibling -> Nothing" (isNothing noSibling)
+    r2 <- expectTrue "sibling save.json found" (withSibling == Just (dir ++ "/save.json"))
+    pure (r1 && r2)
+
 testAmbientRoundTrip :: IO Bool
 testAmbientRoundTrip = do
     let art = emptyAscii { aaAmbient = Just (Ambient ["w1", "w2"] 6) }
@@ -4168,6 +4186,7 @@ main = do
         , runTest "room intro queues a cutscene (H4)" testIntroQueuesCutscene
         , runTest "play_clip queues a cutscene (H4)" testPlayClipQueuesCutscene
         , runTest "loop plays the cutscene once (H4)" testLoopPlaysCutscene
+        , runTest "sibling save.json auto-discovery" testSiblingSavePath
         , runTest "end_art resolves per reason (G)" testEndArtFor
         , runTest "title_art resolves against state (G)" testTitleArtResolves
         , runTest "look at <n> resolves hotspots (E)" testHotspotNumberLook

@@ -14,6 +14,8 @@ import Game (syncInventory)
 import Control.Exception (try, SomeException)
 import Data.Aeson (eitherDecode)
 import qualified Data.ByteString.Lazy as BL
+import System.Directory (doesFileExist)
+import System.FilePath (takeDirectory, (</>))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
@@ -32,6 +34,17 @@ loadSaveState path = do
     pure $ case result of
         Left err -> Left ("Could not read save file '" ++ path ++ "': " ++ show err)
         Right contents -> fmap syncInventory (eitherDecode contents)
+
+-- | The save state a world should start with: an explicit `--save` wins;
+--   otherwise the compiler's sibling `save.json` next to the world (they are
+--   written as a pair by `worldbuilder compile`) — the compiled world is
+--   then self-contained. Worlds without a sibling (in-code samples) fall
+--   back to the engine default, decided by the caller via 'Nothing'.
+siblingSavePath :: FilePath -> IO (Maybe FilePath)
+siblingSavePath worldPath = do
+    let sib = takeDirectory worldPath </> "save.json"
+    exists <- doesFileExist sib
+    pure (if exists then Just sib else Nothing)
 
 -- | Load a complete GameState: a world plus an optional initial save.
 loadGame :: FilePath -> Maybe FilePath -> IO (Either String GameState)

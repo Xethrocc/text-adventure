@@ -11,7 +11,7 @@ import Game (resolveAsciiArt)
 import Sample (initSampleGame)
 import Types (GameState, world, save, worldName, worldTitleArt, isEmptyAscii)
 import Validate (validateWorld, validateGameState)
-import World (loadGame)
+import World (loadGame, siblingSavePath)
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
 import System.IO (hSetEncoding, stdout, stderr, stdin, utf8)
@@ -64,7 +64,10 @@ main = do
         Just opts -> case coWorld opts of
             Nothing -> start initSampleGame
             Just worldPath -> do
-                result <- loadGame worldPath (coSave opts)
+                savePath <- case coSave opts of
+                    Just s  -> pure (Just s)
+                    Nothing -> siblingSavePath worldPath
+                result <- loadGame worldPath savePath
                 case result of
                     Left err -> do
                         putStrLn ("Failed to load adventure: " ++ err)

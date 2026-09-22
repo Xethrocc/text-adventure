@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Fix: `--world` ohne `--save` lädt die Geschwister-save.json
+
+- Befund aus der H-Handprobe: eine kompilierte Welt startete ohne `--save`
+  mit `MissingItemState` — die E2E-Läufe nutzen immer `--world + --save`
+  (der Compiler schreibt das Paar), der Direktstart war aber der offensichtliche
+  Weg. Neu: `World.siblingSavePath` findet die `save.json` neben der
+  Weltdatei; `--save` gewinnt weiterhin, ohne Geschwister (In-Code-Welten)
+  gilt der Engine-Default wie bisher. Beide CLIs (Haskeline + TUI) nutzen
+  das; eine kompilierte Welt ist damit selbsttragend. Test: Auto-Discovery
+  (mit/ohne Geschwister).
+
 ### Phase H4b: Kunst-Panel im TUI (D21) — in-place-Cutscene + Ambiente-Loop
 
 - Neu `PanelState` (None / Cutscene einmal / Ambient-Loop) mit eigenem
