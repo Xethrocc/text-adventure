@@ -1171,9 +1171,36 @@ instance FromJSON PlayerAbility where
 data CombatProfile
     = CombatOff (Maybe String)                 -- ^ attack refused; optional custom message
     | CombatNarrative NarrativeCombat          -- ^ opposed roll -> on_win/on_lose effects
-    | CombatClassic                            -- ^ today's behaviour: attack vs defense, retaliation
+    | CombatClassic (Maybe CombatScreen)       -- ^ today's behaviour: attack vs defense, retaliation
     | CombatTactical TacticalCombat            -- ^ round-based: one action per round (Phase 7f-3)
     deriving (Show, Eq, Generic)
+
+-- | An authored combat screen for the `classic` profile: the layout the
+--   original TheFog printed before every strike (rules, art, "You are fighting
+--   a X", scene line, attack/defense, both HP bars with the flee hint).
+--
+--   Absent (or `screen` omitted) means no screen at all — the classic output
+--   stays bit-identical to the pre-screen behaviour.
+data CombatScreen = CombatScreen
+    { csArt      :: AsciiArt        -- ^ optional art above the status block (empty = none)
+    , csBarWidth :: Int             -- ^ width of both HP bars in cells (default 10)
+    , csScene    :: Maybe String    -- ^ scene line; `Nothing` = the original wording, `Just ""` hides it
+    , csFooter   :: Maybe String    -- ^ flee hint; `Nothing` = the original wording, `Just ""` hides it
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON CombatScreen where
+    toJSON cs = object $
+        [ "art" .= csArt cs | not (isEmptyAscii (csArt cs)) ]
+        ++ [ "bar_width" .= csBarWidth cs
+           , "scene"     .= csScene cs
+           , "footer"    .= csFooter cs ]
+
+instance FromJSON CombatScreen where
+    parseJSON = withObject "CombatScreen" $ \o -> CombatScreen
+        <$> o .:? "art"       .!= emptyAscii
+        <*> o .:? "bar_width" .!= 10
+        <*> o .:? "scene"
+        <*> o .:? "footer"
 
 -- | Narrative combat: the player's effective attack is rolled against the
 --   target's defense + a difficulty offset. No HP attrition — the on_win /
@@ -1266,7 +1293,9 @@ instance ToJSON CombatProfile where
         , "difficulty" .= ncDifficulty nc
         , "on_win"  .= ncOnWin nc
         , "on_lose" .= ncOnLose nc ]
-    toJSON CombatClassic = object [ "profile" .= ("classic" :: String) ]
+    toJSON (CombatClassic mScreen) = object $
+        [ "profile" .= ("classic" :: String) ]
+        ++ [ "screen" .= s | Just s <- [mScreen] ]
     toJSON (CombatTactical tc) = object
         [ "profile"         .= ("tactical" :: String)
         , "initiative"      .= tcInitiative tc
@@ -1284,7 +1313,7 @@ instance FromJSON CombatProfile where
                     <$> o .:? "difficulty" .!= 0
                     <*> o .:? "on_win"  .!= Noop
                     <*> o .:? "on_lose" .!= Noop)
-            "classic"   -> pure CombatClassic
+            "classic"   -> CombatClassic <$> o .:? "screen"
             "tactical"  -> CombatTactical <$>
                 (TacticalCombat
                     <$> o .:? "initiative"      .!= PlayerFirst
@@ -1328,7 +1357,7 @@ instance FromJSON GameWorld where
         <*> o .:? "verbDefs" .!= Map.empty
         <*> o .:? "varDefs"  .!= Map.empty
         <*> o .:? "triggerDefs" .!= []
-        <*> o .:? "combatProfile" .!= CombatClassic
+        <*> o .:? "combatProfile" .!= CombatClassic Nothing
         <*> o .:? "worldName" .!= ""
         <*> o .:? "abilities" .!= Map.empty
         <*> o .:? "endArt" .!= Map.empty

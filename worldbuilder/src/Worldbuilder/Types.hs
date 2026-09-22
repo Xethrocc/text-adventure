@@ -774,6 +774,7 @@ data ACombat = ACombat
     , acFleeAllowed    :: Maybe Bool
     , acMaxRounds      :: Maybe Int
     , acSpeedAttribute :: Maybe String
+    , acScreen         :: Maybe ACombatScreen
     } deriving (Show, Eq, Generic)
 
 instance FromJSON ACombat where
@@ -787,6 +788,24 @@ instance FromJSON ACombat where
         <*> o .:? "flee_allowed"
         <*> o .:? "max_rounds"
         <*> o .:? "speed_attribute"
+        <*> o .:? "screen"
+
+-- | Das `combat.screen`-Segment (nur Profil `classic`): der Kampfbildschirm,
+--   den das Original vor jedem Schlag ausgab. Ohne Block bleibt die Ausgabe
+--   unverändert.
+data ACombatScreen = ACombatScreen
+    { asArt      :: AAscii          -- ^ optionale Kampfkunst ueber dem Block
+    , asBarWidth :: Int             -- ^ Zellenbreite beider KP-Balken (Default 10)
+    , asScene    :: Maybe String    -- ^ Szenenzeile; Nothing = Original-Wortlaut
+    , asFooter   :: Maybe String    -- ^ Flucht-Hinweis; Nothing = Original-Wortlaut
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ACombatScreen where
+    parseJSON = withObject "ACombatScreen" $ \o -> ACombatScreen
+        <$> o .:? "art"       .!= AAscii (ACondText "" []) [] 0 [] Nothing
+        <*> o .:? "bar_width" .!= 10
+        <*> o .:? "scene"
+        <*> o .:? "footer"
 
 -- ---------------------------------------------------------------------------
 -- Abilities (Phase 7f-3 A3/A4)

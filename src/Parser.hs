@@ -5,7 +5,7 @@ module Parser where
 
 import Types
 import Game
-import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), resolveCombat, targetShipSystems)
+import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombat, targetShipSystems)
 import Control.Applicative ((<|>))
 import Data.Char (toLower, isDigit)
 import Data.List (find, intercalate, nub, foldl', dropWhileEnd)
@@ -934,7 +934,7 @@ renderDialogue npc tree maybeNpcState state =
 --   wires profile + actors + target and applies the returned effects through
 --   the single outcome interpreter. Messages come from the resolver.
 executeAttack :: NPCDef -> Maybe NPCState -> String -> GameState -> CommandResult
-executeAttack npc _ targetStr state =
+executeAttack npc mNpcState targetStr state =
     let nId = npcId npc
         profile = combatProfile (world state)
         -- Phase 7g/7h: party members standing here and the ship the player is
@@ -948,7 +948,13 @@ executeAttack npc _ targetStr state =
         -- discarding all but the last (killNPCWithMsg / OnStateChange rules
         -- produce text that must survive trailing companion/ship effects).
         (st', effectMsg) = applyOutcomes effects nId state
-        body = combineMsgs (effectMsg : msgs)
+        -- The authored combat screen (classic only) is rendered from the state
+        -- *before* the round resolves — screen first, then the strike's
+        -- outcome, exactly like the original fight loop.
+        screenMsgs = case (profile, mNpcState >>= npcHealth) of
+            (CombatClassic (Just scr), Just _) -> combatScreenLines scr nId state
+            _                                  -> []
+        body = combineMsgs (screenMsgs ++ effectMsg : msgs)
         -- The enemy is rendered every round (after the effects, so the killing
         -- round shows the body — see `combatArtMsg`).
         body' = combineMsgs [combatArtMsg nId st', body]

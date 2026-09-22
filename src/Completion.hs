@@ -13,7 +13,6 @@ module Completion
 
 import Types
 import Game (getCurrentRoom, getItemsInLocation, getNPCsInRoom)
-import Verbs (verbCanonicalName)
 import Data.Char (toLower)
 import Data.List (isPrefixOf, nub)
 import qualified Data.Map.Strict as Map

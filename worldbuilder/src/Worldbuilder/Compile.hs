@@ -819,10 +819,10 @@ mergeShipVars varDefs varInitials shipDefs shipInitials =
 --   bit-identical to pre-7f behaviour). Rejects unknown profiles and the
 --   not-yet-implemented `tactical` profile.
 compileCombat :: Maybe ACombat -> ([CompileIssue], E.CombatProfile)
-compileCombat Nothing = ([], E.CombatClassic)
+compileCombat Nothing = ([], E.CombatClassic Nothing)
 compileCombat (Just ac) = case acProfile ac of
     "off"       -> ([], E.CombatOff (acAttackRefused ac))
-    "classic"   -> ([], E.CombatClassic)
+    "classic"   -> (screenErrs, E.CombatClassic (compileCombatScreen (acScreen ac)))
     "narrative" -> ([], E.CombatNarrative (E.NarrativeCombat
                         (acDifficulty ac)
                         (compileOutcomes (acOnWin ac))
@@ -852,7 +852,25 @@ compileCombat (Just ac) = case acProfile ac of
         in (initErrs, E.CombatTactical (E.TacticalCombat initRule flee rounds speedAttr))
     other       -> ([ ciError "combat.profile" "UnknownCombatProfile"
                         ("unknown combat profile '" ++ other ++ "' (expected off | narrative | classic | tactical)") ]
-                    , E.CombatClassic)
+                    , E.CombatClassic Nothing)
+  where
+    -- The screen belongs to the `classic` profile; a width below 1 cell would
+    -- draw a bar that shows nothing.
+    screenErrs =
+        [ ciError "combat.screen.bar_width" "BadScreenBarWidth"
+            ("bar_width must be at least 1 (got " ++ show (asBarWidth s) ++ ")")
+        | Just s <- [acScreen ac], asBarWidth s < 1 ]
+
+-- | Compile the authored `combat.screen` block. `Nothing` keeps the classic
+--   output bit-identical (no screen at all).
+compileCombatScreen :: Maybe ACombatScreen -> Maybe E.CombatScreen
+compileCombatScreen Nothing  = Nothing
+compileCombatScreen (Just s) = Just E.CombatScreen
+    { E.csArt      = compileAscii (asArt s)
+    , E.csBarWidth = asBarWidth s
+    , E.csScene    = asScene s
+    , E.csFooter   = asFooter s
+    }
 
 -- | `combat.` is the engine's namespace for the combat round state (Phase 7f-3,
 --   step A1): the engine owns `combat.round` and `combat.engaged`, so an

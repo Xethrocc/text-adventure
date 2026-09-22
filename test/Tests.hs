@@ -3164,7 +3164,7 @@ testGameWorldRoundTrip = do
     let gw = world initSampleGame
     r1 <- expectEqual (Just gw) (Aeson.decode (Aeson.encode gw))
     let profiles =
-            [ CombatClassic
+            [ CombatClassic Nothing
             , CombatOff Nothing
             , CombatOff (Just "You cannot fight here.")
             , CombatNarrative (NarrativeCombat 3 (SendMessage "hit") (SendMessage "miss"))
@@ -3203,11 +3203,11 @@ testResolveCombatDirect = do
         retalDmg = max 0 (npcAttackBase goblin - effectiveDefense st0)
         playerEffect = ModifyValue (VRActorProp (ActorNPC "goblin") PHealth) (-pdmg)
     -- player alone: exactly one effect, no retaliation when the blow is fatal
-    let (effs, msgs) = resolveCombat CombatClassic [PlayerActor] target CAAttack st0
+    let (effs, msgs) = resolveCombat (CombatClassic Nothing) [PlayerActor] target CAAttack st0
         stKill = st0 { save = (save st0)
                          { npcStates = Map.adjust (\ns -> ns { npcHealth = Just 1 })
                                                   "goblin" (npcStates (save st0)) } }
-        (effsKill, msgsKill) = resolveCombat CombatClassic [PlayerActor] target CAAttack stKill
+        (effsKill, msgsKill) = resolveCombat (CombatClassic Nothing) [PlayerActor] target CAAttack stKill
         hurtsPlayer e = case e of
             ModifyValue VRPlayerHealth _ -> True
             _                            -> False
@@ -3228,7 +3228,7 @@ testResolveCombatDirect = do
                       , variables = Map.fromList [ ("ship.carriage.power", VVInt 3)
                                                  , ("ship.carriage.weapons", VVInt 6) ] } }
         allyDmg = max 1 (npcAttackBase ally - npcDefenseBase goblin)
-        (effsC, _) = resolveCombat CombatClassic
+        (effsC, _) = resolveCombat (CombatClassic Nothing)
                         [PlayerActor, CompanionActor "ally", ShipActor "carriage"] target CAAttack stC
     r6 <- expectEqual
               [ playerEffect

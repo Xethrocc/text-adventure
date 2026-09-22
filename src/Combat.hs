@@ -15,10 +15,14 @@ module Combat
     , resolveCombat
     , shipAbsorb
     , targetShipSystems
+    , combatScreenLines
+    , combatScreenDefaultScene
+    , combatScreenDefaultFooter
     ) where
 
 import Types
 import Game (effectiveAttack, effectiveDefense, getVariable, getVehicleState,
+            resolveAsciiArt,
             combatRound, combatRoundKey, combatEngagedKey, combatActionKey,
             combatInitiativePlayerKey, combatInitiativeKey, combatAbilityKey,
             hasCondition)
@@ -64,7 +68,7 @@ resolveCombat profile actors target action st = case profile of
     -- classic: exactly the behaviour that predates Phase 7f: the player
     --   strikes first, the target retaliates in the same command,
     --   damage = attack - defense (min 1 / min 0), death via HP <= 0.
-    CombatClassic -> resolveClassic actors target st
+    CombatClassic _ -> resolveClassic actors target st
     -- tactical (Phase 7f-3, A2): one action = one round. The enemy reacts
     --   via an on: turn trigger, not in this function.
     CombatTactical tc -> resolveTactical tc actors target action st
@@ -411,6 +415,70 @@ resolveClassic actors (TargetShip vid disp) st =
                                           , allMsgs )
   where
     cannotAttack = "You can't attack the " ++ disp ++ "."
+
+-- ---------------------------------------------------------------------------
+-- Combat screen (classic profile)
+-- ---------------------------------------------------------------------------
+
+-- | The scene line and the flee hint of the original fight screen. Used when
+--   the authored screen leaves `scene`/`footer` unset (`Nothing`); `Just ""`
+--   hides the line instead.
+combatScreenDefaultScene :: String
+combatScreenDefaultScene = ">>You are in a Fight!<<"
+
+combatScreenDefaultFooter :: String
+combatScreenDefaultFooter = "You can 'attack' or try to 'flee'..\n What will u do?"
+
+-- | The original screen's rule line (80 underscores).
+combatScreenRule :: String
+combatScreenRule = replicate 80 '_'
+
+-- | The original `drawBar`: always `w` cells, filled proportionally to
+--   `cur / mx`. Two deviations from the original are deliberate: a negative
+--   fill is clamped to 0 (the original could overfill via a negative
+--   `empty`), and a degenerate maximum (<= 0) draws an empty bar instead of
+--   the original's stray @]@.
+combatScreenBar :: Int -> Int -> Int -> String
+combatScreenBar w cur mx
+    | mx <= 0   = replicate w ' '
+    | otherwise = replicate filled '█' ++ replicate (w - filled) ' '
+  where
+    filled = max 0 (min w (cur * w `div` mx))
+
+-- | The authored combat screen as lines, rendered from the state *before* the
+--   round resolves — exactly like the original, which printed the screen and
+--   then applied the strike. Pure formatting: no IO, no state change, nothing
+--   here decides damage.
+--
+--   Only the `classic` profile uses it (one `attack` command = one round).
+combatScreenLines :: CombatScreen -> NPCID -> GameState -> [String]
+combatScreenLines cs nId st = case Map.lookup nId (npcDefs (world st)) of
+    Nothing  -> []
+    Just npc ->
+        let p      = player (save st)
+            name   = npcName npc
+            eHp    = fromMaybe 0 (Map.lookup nId (npcStates (save st)) >>= npcHealth)
+            eMax   = fromMaybe eHp (npcMaxHealth npc)
+            w      = max 1 (csBarWidth cs)
+            scene  = fromMaybe combatScreenDefaultScene (csScene cs)
+            footer = fromMaybe combatScreenDefaultFooter (csFooter cs)
+            art    = resolveAsciiArt (csArt cs) st
+            playerBar = combatScreenBar w (playerHealth p) (playerMaxHealth p)
+            enemyBar  = combatScreenBar w eHp eMax
+        in [ combatScreenRule, combatScreenRule ]
+           ++ [ art | not (null art) ]
+           ++ [ "                    You are fighting a " ++ name
+              , "                    " ++ scene
+              , ""
+              , "Your Atk: " ++ show (effectiveAttack st)
+              , "Your Def: " ++ show (effectiveDefense st)
+              , ""
+              , "Your HP:  " ++ show (playerHealth p) ++ " [" ++ playerBar ++ "]"
+              , "Your Steps:   " ++ show (turnCount (save st))
+              , ""
+              , "HP of the " ++ name ++ ": " ++ show eHp ++ " [" ++ enemyBar ++ "]"
+              , "" ]
+           ++ [ footer | not (null footer) ]
 
 -- ---------------------------------------------------------------------------
 -- Ship systems (Phase 7h)
