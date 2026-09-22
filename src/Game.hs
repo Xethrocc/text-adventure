@@ -59,6 +59,7 @@ emptyGameState = GameState
         , rngState           = initialRngState
         , variables          = Map.empty
         , triggerStates      = Map.empty
+        , exitOverrides      = Map.empty
         }
     , pendingNarrative = Nothing
     , pendingAnimation = Nothing
@@ -156,16 +157,35 @@ markCurrentRoomVisited state = setRoomVisited (currentRoom (save state)) True st
 moveToRoom :: RoomID -> GameState -> GameState
 moveToRoom destinationRoom state = state { save = (save state) { currentRoom = destinationRoom } }
 
--- | Check if a direction is valid from current room
+-- | Rogue Phase 3 (M4): the single runtime lookup for a room's exits — the
+--   static 'roomConnections' overlaid by 'exitOverrides'. Every consumer of
+--   dynamic exits (movement, door aliases in the parser, tab completion)
+--   goes through this function, so `SetExit`/`RemoveExit` are visible
+--   everywhere at once. `Just exit` replaces, `Nothing` removes — even a
+--   statically present connection.
+effectiveConnections :: GameState -> RoomID -> Map.Map Direction Exit
+effectiveConnections state rId =
+    case Map.lookup rId (rooms (world state)) of
+        Nothing   -> Map.empty
+        Just room ->
+            let overrides = Map.filterWithKey
+                                (\(r, _) _ -> r == rId)
+                                (exitOverrides (save state))
+            in Map.foldlWithKey step (roomConnections room) overrides
+  where
+    step acc (_, dir) (Just exit) = Map.insert dir exit acc
+    step acc (_, dir) Nothing     = Map.delete dir acc
+
+-- | Check if a direction is valid from current room (static + dynamic exits)
 canMove :: Direction -> GameState -> Bool
 canMove dir state = case getCurrentRoom state of
-    Just room -> dir `Map.member` roomConnections room
+    Just room -> dir `Map.member` effectiveConnections state (roomId room)
     Nothing   -> False
 
--- | Get exit in a given direction
+-- | Get exit in a given direction (static + dynamic exits)
 getExitInDirection :: Direction -> GameState -> Maybe Exit
 getExitInDirection dir state = case getCurrentRoom state of
-    Just room -> Map.lookup dir (roomConnections room)
+    Just room -> Map.lookup dir (effectiveConnections state (roomId room))
     Nothing   -> Nothing
 
 -- ---------------------------------------------------------------------------
@@ -1024,6 +1044,27 @@ applyOutcomeWith depth salt outcome targetId state
         in (st', m, salt)
 
     ModifySkill skillId delta -> (modifySkill skillId delta state, "", salt)
+
+    -- Rogue Phase 3: dynamic exits. `SetExit` writes an override (replacing
+    -- the static connection for that (room, direction)); a runtime `Locked`
+    -- exit seeds its entity state as "locked" lazily (M4: 'initialEntityStates'
+    -- only knows static exits, so a fresh `locked_by` entity would otherwise
+    -- have no state at all). `RemoveExit` marks the connection as gone — even
+    -- a statically present exit disappears. Silent by design: the author adds
+    -- a message effect alongside.
+    SetExit from dir exit ->
+        let ss = save state
+            withEntity = case exit of
+                Locked _ e | Map.notMember e (entityStates ss) ->
+                    ss { entityStates = Map.insert e "locked" (entityStates ss) }
+                _ -> ss
+        in (state { save = withEntity
+            { exitOverrides = Map.insert (from, dir) (Just exit) (exitOverrides withEntity) } }
+        , "", salt)
+    RemoveExit from dir ->
+        (state { save = (save state)
+            { exitOverrides = Map.insert (from, dir) Nothing (exitOverrides (save state)) } }
+        , "", salt)
 
     -- Narrative: store lines + follow-up for interactive display
     Narrative nls followUp ->

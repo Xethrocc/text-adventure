@@ -286,9 +286,12 @@ matchesItemTarget target item = normalizeText target `elem` itemAliases item
 matchesNPCTarget :: String -> NPCDef -> Bool
 matchesNPCTarget target npc = normalizeText target `elem` npcAliases npc
 
+-- | Rogue Phase 3: locked doors reachable from the current room — via the
+--   central 'effectiveConnections', so a dynamically set (`set_exit` with
+--   `locked_by`) door is unlockable exactly like a static one.
 reachableExitEntities :: GameState -> [String]
 reachableExitEntities state = case getCurrentRoom state of
-    Just room -> [normalizeText entity | Locked _ entity <- Map.elems (roomConnections room)]
+    Just room -> [normalizeText entity | Locked _ entity <- Map.elems (effectiveConnections state (roomId room))]
     Nothing   -> []
 
 reachableEntityAliases :: GameState -> [String]

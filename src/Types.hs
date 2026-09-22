@@ -374,6 +374,8 @@ data Effect
     | GameEnd GameOverReason String               -- ^ End the game with a reason
     | Narrative [String] Effect                   -- ^ Lines to show, then follow-up (stored as pendingNarrative)
     | PlayClip ClipID                             -- ^ Phase H/H4: queue a cutscene clip (pendingCutscene)
+    | SetExit RoomID Direction Exit               -- ^ Rogue Phase 3: open/rewire a dynamic exit
+    | RemoveExit RoomID Direction                 -- ^ Rogue Phase 3: close a dynamic exit
     | Noop                                        -- ^ Do nothing
     deriving (Show, Eq, Generic)
 
@@ -1458,10 +1460,16 @@ data SaveState = SaveState
     , rngState           :: Word64                            -- ^ Explicit RNG state for deterministic random outcomes (Phase 1)
     , variables          :: Map.Map String VariableValue       -- ^ Adventure-declared variables (Phase 3b)
     , triggerStates      :: Map.Map String TriggerState      -- ^ Runtime state of trigger rules (fired/cooldown)
+    , exitOverrides      :: Map.Map (RoomID, Direction) (Maybe Exit)
+        -- ^ Rogue Phase 3: dynamic exits written by `SetExit`/`RemoveExit`
+        -- ^ effects. `Just exit` = replacement connection, `Nothing` = exit
+        -- ^ removed (even if statically present). Empty = static world (M2:
+        -- ^ the ToJSON instance omits it entirely, keeping every existing
+        -- ^ save's encoding bit-identical).
     } deriving (Show, Eq, Generic)
 
 instance ToJSON SaveState where
-    toJSON ss = object
+    toJSON ss = object $
         [ "player"          .= player ss
         , "currentRoom"     .= currentRoom ss
         , "inventory"       .= inventory ss
@@ -1483,7 +1491,13 @@ instance ToJSON SaveState where
         , "rngState"        .= rngState ss
         , "variables"       .= variables ss
         , "triggerStates"   .= triggerStates ss
-        ]
+        ] ++ exitOverridePair
+      where
+        -- Rogue Phase 3 (M2): only emitted when non-empty — the encoding of
+        -- untouched adventures stays bit-identical.
+        exitOverridePair =
+            [ "exitOverrides" .= exitOverridesToJSON (exitOverrides ss)
+            | not (Map.null (exitOverrides ss)) ]
 
 instance FromJSON SaveState where
     parseJSON = withObject "SaveState" $ \o -> SaveState
@@ -1508,6 +1522,27 @@ instance FromJSON SaveState where
         <*> o .:? "rngState"        .!= 0
         <*> o .:? "variables"       .!= Map.empty
         <*> o .:? "triggerStates"   .!= Map.empty
+        <*> (o .:? "exitOverrides" >>= maybe (pure Map.empty) parseExitOverrides)
+
+-- | Encode exit overrides as a list of {room, dir, exit} objects — the same
+--   shape as 'itemInteractionsToJSON': tuple-keyed maps have no JSON object
+--   form, so we write (and read) an object list instead. `exit: null` encodes
+--   a removed exit ('Nothing').
+exitOverridesToJSON :: Map.Map (RoomID, Direction) (Maybe Exit) -> Value
+exitOverridesToJSON m =
+    toJSON [ object [ "room" .= r, "dir" .= d, "exit" .= me ]
+           | ((r, d), me) <- Map.toList m ]
+
+parseExitOverrides :: Value -> Parser (Map.Map (RoomID, Direction) (Maybe Exit))
+parseExitOverrides v = do
+    xs <- parseJSON v :: Parser [Value]
+    Map.fromList <$> mapM entry xs
+  where
+    entry = withObject "exit override" $ \o -> do
+        r <- o .: "room"
+        d <- o .: "dir"
+        e <- o .:? "exit"  -- Nothing = removed exit
+        pure ((r, d), e)
 
 -- | Save file wrapper with metadata for save slots
 data SaveFile = SaveFile

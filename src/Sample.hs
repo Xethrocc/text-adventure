@@ -399,6 +399,7 @@ initSampleGame = GameState
         , rngState       = initialRngState
         , variables      = Map.empty
         , triggerStates = Map.empty
+        , exitOverrides  = Map.empty
         }
     , pendingNarrative = Nothing
     , pendingAnimation = Nothing

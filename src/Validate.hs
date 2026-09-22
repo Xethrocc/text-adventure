@@ -1,6 +1,7 @@
 -- | World validation before starting the game.
 --   Checks consistency of IDs, exits, references and reachability.
-module Validate (ValidationError(..), validateWorld, validateGameState, setFlagsInWorld) where
+module Validate (ValidationError(..), validateWorld, validateGameState, setFlagsInWorld,
+    idsFromOutcomeRoom) where
 
 import Types
 import Data.List (nub, stripPrefix, foldl')
@@ -90,6 +91,10 @@ idsFromOutcomeRoom :: Effect -> [String]
 idsFromOutcomeRoom outcome = case outcome of
     MoveEntity _ (InRoom r)                                     -> [r]
     SetValue (VRActorProp ActorPlayer PRoom) (EVString r)       -> [r]
+    -- Rogue Phase 3: `from` (and a `set_exit` target room) must exist.
+    SetExit from _ (Open to)                                    -> [from, to]
+    SetExit from _ (Locked to _)                                -> [from, to]
+    RemoveExit from _                                           -> [from]
     Sequence os                                              -> concatMap idsFromOutcomeRoom os
     RandomChoice os                                          -> concatMap (idsFromOutcomeRoom . snd) os
     Conditional _ t e                                        -> idsFromOutcomeRoom t ++ idsFromOutcomeRoom e

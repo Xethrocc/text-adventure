@@ -12,7 +12,7 @@ module Completion
   ) where
 
 import Types
-import Game (getCurrentRoom, getItemsInLocation, getNPCsInRoom)
+import Game (effectiveConnections, getCurrentRoom, getItemsInLocation, getNPCsInRoom)
 import Data.Char (toLower)
 import Data.List (isPrefixOf, nub)
 import qualified Data.Map.Strict as Map
@@ -50,9 +50,13 @@ inventoryTargets state = itemCompletionTerms (getItemsInLocation (CarriedBy "pla
 
 -- | Local copy of the reachable locked-exit entities. (The parser has its own
 --   variant for its own purposes; the two are deliberately independent.)
+-- | Local copy of the reachable locked-exit entities. (The parser has its own
+--   variant for its own purposes; the two are deliberately independent.)
+--   Rogue Phase 3: routed through 'effectiveConnections' so dynamically
+--   locked exits participate in tab completion like static ones.
 reachableExitEntities :: GameState -> [String]
 reachableExitEntities state = case getCurrentRoom state of
-    Just room -> [entity | Locked _ entity <- Map.elems (roomConnections room)]
+    Just room -> [entity | Locked _ entity <- Map.elems (effectiveConnections state (roomId room))]
     Nothing   -> []
 
 entityTargets :: GameState -> [String]

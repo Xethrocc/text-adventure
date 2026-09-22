@@ -237,6 +237,7 @@ compileAdventure adv =
                         , E.rngState = E.initialRngState
                         , E.variables = initialVars
                         , E.triggerStates = Map.empty
+                        , E.exitOverrides = Map.empty
                         }
             in Right (CompileResult gw startSave gameWarns)
   where

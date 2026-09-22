@@ -19,7 +19,7 @@ import Frontend (Frontend (..), commandCompletion)
 import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText)
 import Verbs (verbAliasMap)
 import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), resolveCombat, shipAbsorb)
-import Validate (ValidationError (..), validateWorld, validateGameState)
+import Validate (ValidationError (..), validateWorld, validateGameState, idsFromOutcomeRoom)
 import Sample (initSampleGame)
 import SaveLoad (computeWorldChecksum, formatSaveEntry, currentSaveVersion)
 import qualified SaveLoad as SaveLoad
@@ -1142,6 +1142,42 @@ testMetaWrittenOnGameOver = withSavesIsolation $ do
     r2 <- expectEqual (Just (VVInt 3)) (Map.lookup "meta.souls" metaOnDisk)
     pure (r1 && r2)
 
+
+-- ===== Rogue Phase 3: dynamic exits (SetExit / RemoveExit) =====
+
+-- | Rogue Phase 3: `SetExit` opens/rewires a connection at runtime (a runtime
+--   `Locked` exit lazily seeds its entity state as "locked", M4), `RemoveExit`
+--   closes even a static exit. All consumers share 'effectiveConnections';
+--   overrides survive the save round-trip; `idsFromOutcomeRoom` feeds the
+--   MissingRoom validation (L4).
+testDynamicExitOverrides :: IO Bool
+testDynamicExitOverrides = do
+    let st0 = initSampleGame
+        -- open a brand-new exit west into the meadow
+        (stOpen, _) = applyOutcome (SetExit "start" West (Open "meadow")) "torch" st0
+        -- rewire south (statically open to meadow) into a locked vault door
+        (stRewire, _) = applyOutcome (SetExit "start" South (Locked "vault" "vault_door")) "torch" st0
+        -- close the static north exit
+        (stRemoved, _) = applyOutcome (RemoveExit "start" North) "torch" st0
+        -- a state whose overrides were set for the round trip
+        stRT = st0 { save = (save st0) { exitOverrides = Map.fromList
+            [ (("start", North), Just (Open "hallway"))
+            , (("camp", South), Nothing) ] } }
+    r1 <- expectTrue "new exit is walkable" (canMove West stOpen)
+    r2 <- expectTrue "rewired exit resolves to the new connection"
+                     (getExitInDirection South stRewire == Just (Locked "vault" "vault_door"))
+    r3 <- expectTrue "runtime-locked entity seeded as locked"
+                     (getEntityState "vault_door" stRewire == Just "locked")
+    r4 <- expectTrue "removed static exit blocks movement"
+                     (not (canMove North stRemoved) && canMove North st0)
+    r5 <- expectTrue "exit overrides survive save/load round-trip"
+                     (case Aeson.decode (Aeson.encode (save stRT)) :: Maybe SaveState of
+                        Just ss -> exitOverrides ss == exitOverrides (save stRT)
+                        Nothing -> False)
+    r6 <- expectEqual ["hall", "treasure"]
+                     (idsFromOutcomeRoom (SetExit "hall" North (Open "treasure")))
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
 testLoopRunsOnCannedFrontend :: IO Bool
 testLoopRunsOnCannedFrontend = do
     (out, diag, played, remaining) <- cannedFrontend [Just "look", Just "take torch", Nothing]
@@ -1253,7 +1289,7 @@ testPlayClipQueuesCutscene = do
 --   (H4): the canned frontend records exactly one (rate, frames) playback.
 testLoopPlaysCutscene :: IO Bool
 testLoopPlaysCutscene = do
-    (out, diag, played, remaining) <-
+    (_, diag, played, remaining) <-
         cannedFrontendWith worldWithHallIntro [Just "go north", Nothing]
     r1 <- expectEqual [(250000, ["P0", "P1"])] played
     r2 <- expectTrue "no diagnostics" (null diag)
@@ -3629,7 +3665,6 @@ testSavesDirOverride :: IO Bool
 testSavesDirOverride = withSavesIsolation $ do
     let st0 = initSampleGame
     SaveLoad.saveGame st0 "p0slot"
-    d <- SaveLoad.savesDir
     slotPath <- SaveLoad.saveSlotPath "p0slot"
     r1 <- expectTrue "slot file lands under TA_SAVES_DIR"
              (("tmp" `isInfixOf` slotPath) && ("p0slot.json" `isSuffixOf` slotPath))
@@ -4377,6 +4412,7 @@ main = do
         , runTest "ironman: checkpoint deleted on death (Rogue P1)" testIronmanCheckpointDeletedOnDeath
         , runTest "meta survives restart (Rogue P2)" testMetaProgressionPreservedOnRestart
         , runTest "meta written on game over (Rogue P2)" testMetaWrittenOnGameOver
+        , runTest "dynamic exits: set/remove/rewire + round-trip (Rogue P3)" testDynamicExitOverrides
         , runTest "TA_SAVES_DIR redirects saves + deleteSaveSlot (Rogue P0)" testSavesDirOverride
         , runTest "savesDir default stays 'saves' (Rogue P0)" testSavesDirDefault
         , runTest "slugify is deterministic and file-safe (Rogue P0)" testSlugify

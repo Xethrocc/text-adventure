@@ -90,6 +90,7 @@ defaultSaveState gw = SaveState
     , rngState        = initialRngState
     , variables       = Map.map vdVarInitial (varDefs gw)
     , triggerStates   = Map.empty
+    , exitOverrides    = Map.empty
     }
 
 -- | Preferred starting room: "start" if it exists, else the first room by key order

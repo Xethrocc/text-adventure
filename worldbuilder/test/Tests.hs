@@ -70,6 +70,7 @@ minSave = E.SaveState
     , rngState = 0
     , variables = Map.empty
     , triggerStates = Map.empty
+    , exitOverrides = Map.empty
     }
 
 runTest :: String -> IO Bool -> IO Bool
