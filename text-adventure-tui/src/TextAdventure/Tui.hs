@@ -7,11 +7,24 @@
 --   the next input line; the Brick event loop renders the shared buffer and
 --   feeds submitted lines back. ANSI colour is stripped for now (the engine's
 --   art arrives with SGR sequences; mapping them to vty attributes is later
---   work), and the art panel from D21 arrives with Phase H — until then art
---   travels inline with the room text, as in the plain CLI.
+--   work).
+--
+--   Art panel (Phase H/H4b, D21): animated art plays in its own panel —
+--   cutscenes ('fePlayFrames') in-place, once, at the clip's own rate, then
+--   transitioning into the current room's ambient loop; rooms with an
+--   'ambient' block loop there while they are current. A panel exists only
+--   when it has something to show — a game without art is indistinguishable
+--   from a plain text game, and empty frames draw no box. The engine loop
+--   only ever blocks inside 'fePlayFrames' (cutscenes are allowed to block,
+--   D11); the ambient loop ticks entirely inside the UI.
 module TextAdventure.Tui
   ( runTui
   , TuiName (..)
+  , PanelState (..)
+  , PanelStep (..)
+  , roomAmbient
+  , panelFrame
+  , advancePanel
   ) where
 
 import Brick
@@ -26,29 +39,88 @@ import Graphics.Vty.CrossPlatform (mkVty)
 import qualified Data.Text as T
 import qualified Data.Text.Zipper as TZ
 import Control.Concurrent (forkIO, threadDelay)
-import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, takeMVar,
-                                tryPutMVar, withMVar)
-import Control.Monad (void, when)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, putMVar, takeMVar,
+                                tryPutMVar, tryTakeMVar, withMVar)
+import Control.Monad (forever, guard, unless, void, when)
 import Control.Monad.IO.Class (liftIO)
-import Data.Char (isLower)
+import Data.Char (isLower, isSpace)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intercalate)
+import qualified Data.Map.Strict as Map
+import qualified Brick.Types as BT
 
 import Ansi (stripAnsi)
 import Completion (completionFor)
 import Frontend (Frontend (..))
 import GameLoop (runGameWithFrontend)
-import Types (GameState)
+import Types
 
 -- | Brick names used by this UI.
 data TuiName = HistoryVp    -- ^ vertical viewport over the game history
              | CmdEdit      -- ^ the single-line command editor
              deriving (Eq, Ord, Show)
 
--- | Custom events from the worker thread to the UI.
+-- | Custom events from the worker/ticker threads to the UI.
 data TuiEvent = EvLines      -- ^ the shared history buffer changed
               | EvEnded      -- ^ the game loop finished
+              | EvArt        -- ^ the art panel's content changed (redraw it)
+              | EvTick       -- ^ advance the art panel by one frame
               deriving (Eq, Show)
+
+-- | What the art panel is currently doing (Phase H/H4b).
+--
+--   * 'PanelNone': no art to show — the panel is not drawn (D21).
+--   * 'PanelCutscene': a clip/watch playback, once, blocking the loop until
+--     the last frame was shown (then the UI signals 'panelDone' and the
+--     frontend transitions).
+--   * 'PanelAmbient': the current room's ambient loop, ticking forever while
+--     the room is current. Persists across ordinary output (panel-isolated:
+--     no scrollback cost, so D17's sticky/non-sticky distinction does not
+--     apply the same way in the TUI).
+data PanelState
+    = PanelNone
+    | PanelCutscene [String] Int Int (MVar ())       -- ^ frames, µs rate, index, done
+    | PanelAmbient  [String] Int Int String          -- ^ frames, µs rate, index, label
+
+-- | The pure outcome of one panel tick (the UI turns it into IO effects).
+data PanelStep
+    = PanelHold                          -- ^ nothing to advance
+    | PanelAdvanced PanelState           -- ^ show this as the new panel state
+    | PanelCutsceneDone (MVar ())        -- ^ last cutscene frame shown: signal the loop
+
+-- | The frame a panel currently shows, or 'Nothing' when it must not be
+--   drawn at all (D21: no panel, no box for blank art).
+panelFrame :: PanelState -> Maybe String
+panelFrame p = case p of
+    PanelNone -> Nothing
+    PanelCutscene frames _ idx _ -> keep (atIdx frames idx)
+    PanelAmbient  frames _ idx _ -> keep (atIdx frames idx)
+  where
+    atIdx fs i | null fs   = ""
+               | otherwise = fs !! min (length fs - 1) (max 0 i)
+    keep f = if all isSpace f then Nothing else Just f
+
+-- | One tick of the panel: advance a frame, or finish a cutscene. Pure; the
+--   UI applies the effects (update shared panel, signal 'panelDone').
+advancePanel :: PanelState -> PanelStep
+advancePanel p = case p of
+    PanelNone -> PanelHold
+    PanelCutscene frames micros idx done
+        | idx + 1 >= length frames -> PanelCutsceneDone done
+        | otherwise                -> PanelAdvanced (PanelCutscene frames micros (idx + 1) done)
+    PanelAmbient frames micros idx label
+        | null frames              -> PanelHold
+        | otherwise                -> PanelAdvanced (PanelAmbient frames micros
+                                                    ((idx + 1) `mod` length frames) label)
+
+-- | The current room's ambient loop: frames, µs rate, room name (for the
+--   panel label). 'Nothing' when the room has no usable ambient.
+roomAmbient :: GameState -> Maybe ([String], Int, String)
+roomAmbient st = do
+    r <- Map.lookup (currentRoom (save st)) (rooms (world st))
+    amb <- aaAmbient (roomAscii r)
+    guard (not (null (ambFrames amb)) && ambFps amb > 0)
+    pure (ambFrames amb, 1000000 `div` ambFps amb, roomName r)
 
 -- | State shared between the worker thread (game loop) and the UI thread.
 data TuiShared = TuiShared
@@ -59,6 +131,7 @@ data TuiShared = TuiShared
     , shState   :: IORef GameState -- ^ the state the next command runs in
     , shHistory :: IORef [String]  -- ^ submitted commands, newest first
     , shHistIdx :: IORef Int       -- ^ how far back the editor currently is
+    , shArt     :: MVar PanelState -- ^ what the art panel shows
     }
 
 -- | Brick-side state.
@@ -68,9 +141,8 @@ data TuiState = TuiState
     , tsSuggest :: [String]        -- ^ current completion suggestions
     , tsTitle   :: String
     , tsEnded   :: Bool
+    , tsPanel   :: PanelState      -- ^ snapshot of 'shArt' for drawing
     }
-
--- | Help line shown under the command editor.
 
 -- | Append one (possibly multi-line) chunk of game text to the shared buffer.
 appendShared :: TuiShared -> String -> IO ()
@@ -90,20 +162,65 @@ nextLine shared = do
         []       -> nextLine shared
         (x:rest) -> writeIORef (shPending shared) rest >> pure x
 
+-- | Art panel plumbing: read (non-destructively) and replace.
+readArtPanel :: TuiShared -> IO PanelState
+readArtPanel shared = withMVar (shArt shared) pure
+
+setArtPanel :: TuiShared -> BChan TuiEvent -> PanelState -> IO ()
+setArtPanel shared chan p = do
+    void (tryTakeMVar (shArt shared))
+    putMVar (shArt shared) p
+    writeBChan chan EvArt
+
 -- | The engine 'Frontend' implemented on top of the shared state.
 tuiFrontend :: TuiShared -> BChan TuiEvent -> Frontend
 tuiFrontend shared chan = Frontend
     { feEmitLine    = \l -> appendShared shared l >> notify
     , feEmitRaw     = \s -> when (not (null s)) (appendShared shared s >> notify)
-    , feReadInput   = \st _prompt -> writeIORef (shState shared) st >> Just <$> nextLine shared
+    , feReadInput   = \st _prompt -> do
+        writeIORef (shState shared) st
+        syncAmbientPanel st
+        Just <$> nextLine shared
     , feReadPlain   = \_prompt -> Just <$> nextLine shared
     , feReadPause   = void (nextLine shared)
-    , fePlayFrames  = \micros frames -> mapM_ (\fr -> appendShared shared fr
-                                                  >> threadDelay micros) frames
+    , fePlayFrames  = \micros frames -> do
+        -- H4b: in-place playback. Set the panel, let the ticker advance it,
+        -- and block until the UI signals the last frame (cutscenes may block,
+        -- D11). Then transition into the current room's ambient loop — the
+        -- Kameraschwenk that stops on the strand and keeps waving — or clear.
+        done <- newEmptyMVar
+        setArtPanel shared chan (PanelCutscene frames micros 0 done)
+        takeMVar done
+        st <- readIORef (shState shared)
+        case roomAmbient st of
+            Just (af, am, nm) -> setArtPanel shared chan (PanelAmbient af am 0 nm)
+            Nothing           -> setArtPanel shared chan PanelNone
     , feDiagnostics = \ms -> mapM_ (\m -> appendShared shared ("[Diagnose] " ++ m)) ms
     }
   where
     notify = writeBChan chan EvLines
+    -- Keep the panel in sync with the current room (ambient per room, none
+    -- elsewhere) — but never disturb a running playback (cutscene/watch).
+    syncAmbientPanel st = do
+        now <- readArtPanel shared
+        let keepNow = case now of
+                PanelCutscene _ _ _ _ -> True
+                PanelAmbient _ _ _ nm ->
+                    fmap (\(_, _, nm') -> nm') (roomAmbient st) == Just nm
+                PanelNone -> roomAmbient st == Nothing
+        unless keepNow $
+            setArtPanel shared chan $ case roomAmbient st of
+                Just (af, am, nm) -> PanelAmbient af am 0 nm
+                Nothing           -> PanelNone
+
+-- | The ticker thread: wakes the UI at the panel's current rate.
+panelTicker :: TuiShared -> BChan TuiEvent -> IO ()
+panelTicker shared chan = forever $ do
+    p <- readArtPanel shared
+    case p of
+        PanelCutscene _ micros _ _ -> threadDelay micros >> writeBChan chan EvTick
+        PanelAmbient  _ micros _ _ -> threadDelay micros >> writeBChan chan EvTick
+        PanelNone                  -> threadDelay 50000
 
 -- | Common prefix of two strings ('commonPrefix' is associative here in the
 --   way Tab-completion needs: fold over the option list).
@@ -179,8 +296,8 @@ handleHistory shared delta st = do
     put (setEditorText st entry)
 
 -- | The Brick application: history viewport on top, command line below.
-tuiApp :: TuiShared -> App TuiState TuiEvent TuiName
-tuiApp shared = App
+tuiApp :: TuiShared -> BChan TuiEvent -> App TuiState TuiEvent TuiName
+tuiApp shared chan = App
     { appDraw         = drawTui
     , appChooseCursor = \_ -> showCursorNamed CmdEdit
     , appHandleEvent  = handleEvent
@@ -197,6 +314,17 @@ tuiApp shared = App
                 put st { tsLines = map T.pack ls }
             AppEvent EvEnded ->
                 put st { tsEnded = True }
+            AppEvent EvArt -> do
+                p <- liftIO (readArtPanel shared)
+                put st { tsPanel = p }
+            AppEvent EvTick -> do
+                p <- liftIO (readArtPanel shared)
+                liftIO $ case advancePanel p of
+                    PanelHold -> pure ()
+                    PanelAdvanced p' -> setArtPanel shared chan p'
+                    PanelCutsceneDone done -> void (tryPutMVar done ())
+                p2 <- liftIO (readArtPanel shared)
+                put st { tsPanel = p2 }
             VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl]) -> halt
             VtyEvent (V.EvKey V.KEsc [])               -> halt
             VtyEvent (V.EvKey V.KEnter [])             -> handleSubmit shared st
@@ -204,9 +332,9 @@ tuiApp shared = App
             VtyEvent (V.EvKey V.KUp [])                -> handleHistory shared 1 st
             VtyEvent (V.EvKey V.KDown [])              -> handleHistory shared (-1) st
             VtyEvent (V.EvKey V.KPageUp []) ->
-                vScrollPage (viewportScroll HistoryVp) Up
+                vScrollPage (viewportScroll HistoryVp) BT.Up
             VtyEvent (V.EvKey V.KPageDown []) ->
-                vScrollPage (viewportScroll HistoryVp) Down
+                vScrollPage (viewportScroll HistoryVp) BT.Down
             -- Everything else goes to the editor, which mutates itself as the
             -- EventM state (nestEventM' embeds that into the app state).
             VtyEvent e@V.EvKey {} -> do
@@ -216,20 +344,32 @@ tuiApp shared = App
 
 drawTui :: TuiState -> [Widget TuiName]
 drawTui st =
-    [ vBox
+    [ vBox $
         [ withBorderStyle unicode $
           borderWithLabel (str (" " ++ tsTitle st ++ " ")) $
             viewport HistoryVp Vertical $
               vBox (map renderLine (if null (tsLines st) then [T.empty] else tsLines st))
-        , padLeftRight 1 $ vBox
-            [ suggestionLine
-            , hCenter (hBox [ str "> "
-                            , renderEditor (txt . T.concat) True (tsEditor st) ])
-            , hCenter (str helpLine)
-            ]
         ]
+        ++ panelWidgets
+        ++ [ padLeftRight 1 $ vBox
+               [ suggestionLine
+               , hCenter (hBox [ str "> "
+                               , renderEditor (txt . T.concat) True (tsEditor st) ])
+               , hCenter (str helpLine)
+               ]
+           ]
     ]
   where
+    -- D21: the panel exists only when it has something to show; a blank
+    -- frame draws no box. Art is rendered with `txt` — never rewrapped.
+    panelWidgets = case panelFrame (tsPanel st) of
+        Nothing -> []
+        Just frame -> case tsPanel st of
+            PanelAmbient _ _ _ label -> [artBox label frame]
+            PanelCutscene _ _ _ _    -> [artBox "Szene" frame]
+            PanelNone                -> []
+    artBox label frame =
+        withBorderStyle unicode $ borderWithLabel (str (" " ++ label ++ " ")) (txt (T.pack frame))
     -- Prose reflows to the available width; art lines and empty lines keep
     -- their exact shape (an empty txt would collapse to zero height).
     renderLine t
@@ -253,12 +393,14 @@ runTui initialLines st0 = do
     stateR  <- newIORef st0
     histR   <- newIORef []
     idxR    <- newIORef 0
+    artR    <- newMVar PanelNone
     let shared = TuiShared
             { shLines = linesR, shLock = lock, shSignal = signal
             , shPending = pending, shState = stateR
-            , shHistory = histR, shHistIdx = idxR
+            , shHistory = histR, shHistIdx = idxR, shArt = artR
             }
     chan <- newBChan 64
+    void . forkIO $ panelTicker shared chan
     void . forkIO $ do
         runGameWithFrontend (tuiFrontend shared chan) st0
         writeBChan chan EvEnded
@@ -269,5 +411,6 @@ runTui initialLines st0 = do
                         , tsSuggest = []
                         , tsTitle = "Text Adventure"
                         , tsEnded = False
+                        , tsPanel = PanelNone
                         }
-    void (customMain initialVty buildVty (Just chan) (tuiApp shared) st0')
+    void (customMain initialVty buildVty (Just chan) (tuiApp shared chan) st0')

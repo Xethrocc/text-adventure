@@ -28,6 +28,7 @@ library
                        vty-crossplatform >=0.5,
                        text >=1.2 && <3,
                        text-zipper >=0.13,
+                       containers >=0.6 && <0.8,
                        mtl >=2.2
   default-language:    Haskell2010
   ghc-options:         -Wall -Werror=missing-fields
@@ -43,3 +44,14 @@ executable text-adventure-tui
   -- -threaded: the ambient/animation timer thread needs the threaded runtime
   -- (BChan + forkIO); measured in the vty-windows hand probe (Phase T).
   ghc-options:         -Wall -Werror=missing-fields -threaded
+
+test-suite text-adventure-tui-tests
+  type:                exitcode-stdio-1.0
+  main-is:             Tests.hs
+  hs-source-dirs:      test
+  build-depends:       base >=4.12 && <5,
+                       text-adventure,
+                       text-adventure-tui,
+                       containers >=0.6 && <0.8
+  default-language:    Haskell2010
+  ghc-options:         -Wall -Werror=missing-fields

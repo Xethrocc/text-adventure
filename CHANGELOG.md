@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Phase H4b: Kunst-Panel im TUI (D21) — in-place-Cutscene + Ambiente-Loop
+
+- Neu `PanelState` (None / Cutscene einmal / Ambient-Loop) mit eigenem
+  MVar-geteilten Zustand und Ticker-Thread, der die UI mit der Kunst-Rate
+  (aus H1) weckt. Reine Helfer (`panelFrame`, `advancePanel`, `roomAmbient`)
+  tragen die Logik und sind in einer eigenen TUI-Test-Suite abgesichert
+  (6 Tests: Frame-Anzeige, D21-Leer-Regel, Loop-Wrap, Cutscene-Abschluss,
+  Raum-Ambiente-Auflösung, ungültige Raten).
+- **D21 erfüllt:** das Panel existiert nur, wenn es etwas zeigt — leere/
+  Whitespace-Frames zeichnen keinen Rahmen; ein Spiel ohne Kunst ist im TUI
+  vom reinen Textspiel nicht unterscheidbar. Kunst wird im Panel mit `txt`
+  gerendert (nie umgebrochen).
+- **H4-Übergang:** `fePlayFrames` spielt Cutscene/`watch` in-place im Panel
+  ab (der Loop blockiert nur dort — D11 erlaubt das), und geht danach in den
+  Ambiente-Loop des aktuellen Raums über bzw. räumt das Panel ab. Räume mit
+  `ambient` loopen im Panel, sobald sie aktuell sind; Raumwechsel schaltet um.
+- D17 (sticky/non-sticky) entfällt im TUI: das Panel ist isoliert, Ambiente
+  kostet keinen Scrollback. D13/D16 sind damit obsolet (nie gebaut worden).
+- Plain-CLI unverändert: E2E `ascii-state` läuft mit dem neuen
+  hall-pan-Cutscene-Pfad sequenziell und sequenzfrei durch die Pipe (H6-
+  Beleg). `scripts/ci.sh` grün (alle sechs Pakete, inkl. neuer TUI-Suite).
+
 ### Phase H4: Cutscenes — `clips`, `intro`, `play_clip`
 
 - Neu `Clip` (Frames + `fps`) im `GameWorld.worldClips`; YAML `clips:`-Segment
