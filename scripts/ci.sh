@@ -59,8 +59,11 @@ trap 'rm -rf "$tmp"' EXIT
 # expected marker. Shared by the happy-path and failure-path stages.
 run_e2e() {
     local name="$1" src="$2" out expect
+    # Rogue Phase 0: hermetic saves — every run gets its own TA_SAVES_DIR so
+    # save/load commands cannot leak between runs or pollute the repo.
+    mkdir -p "$tmp/$name-saves"
     "${WORLDBUILDER[@]}" compile "$src" -o "$tmp/$name" >/dev/null
-    out="$("${GAME[@]}" --world "$tmp/$name/world.json" --save "$tmp/$name/save.json" \
+    out="$(TA_SAVES_DIR="$tmp/$name-saves" "${GAME[@]}" --world "$tmp/$name/world.json" --save "$tmp/$name/save.json" \
             < "ci/e2e/$name.in" 2>&1 || true)"
     expect="$(cat "ci/e2e/$name.expect")"
     if grep -qF "$expect" <<<"$out"; then

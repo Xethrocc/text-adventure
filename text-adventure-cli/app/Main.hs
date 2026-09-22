@@ -11,7 +11,7 @@ import Sample (initSampleGame)
 import World (loadGame, siblingSavePath)
 import Types (GameState, world, save, worldName, worldTitleArt, isEmptyAscii)
 import Validate (validateWorld, validateGameState)
-import System.Environment (getArgs)
+import System.Environment (getArgs, setEnv)
 import System.Exit (exitFailure)
 import System.IO (hIsTerminalDevice, hSetEncoding, stdout, stderr, stdin, utf8)
 
@@ -84,11 +84,13 @@ initConsole = do
 
 usage :: String
 usage = unlines
-    [ "Usage: text-adventure [--world FILE] [--save FILE] [--allow-invalid] [--no-color] [--tui]"
+    [ "Usage: text-adventure [--world FILE] [--save FILE] [--allow-invalid] [--no-color] [--tui] [--saves-dir DIR]"
     , ""
     , "  --world FILE      Load a GameWorld from a JSON file (produced by the worldbuilder)."
     , "  --save FILE       Load an initial SaveState from a JSON file."
     , "  --allow-invalid   Start even if the world has validation issues."
+    , "  --saves-dir DIR   Redirect in-game saves (saves/<slot>.json) to DIR. Wins over"
+    , "                    the TA_SAVES_DIR environment variable (Rogue Phase 0)."
     , "  --tui             Start the brick-based terminal UI instead of the"
     , "                    Haskeline line editor (opt-in, D20). The TUI shows"
     , "                    colour regardless of --no-color."
@@ -107,17 +109,19 @@ data CliOptions = CliOptions
     , coAllowInvalid :: Bool
     , coNoColor      :: Bool
     , coTui          :: Bool
+    , coSavesDir     :: Maybe FilePath
     }
 
 -- | Minimal flag parser
 parseArgs :: [String] -> Maybe CliOptions
-parseArgs args = go args (CliOptions Nothing Nothing False False False)
+parseArgs args = go args (CliOptions Nothing Nothing False False False Nothing)
   where
     go [] opts = Just opts
     go ("--help" : _) _ = Nothing
     go ("--world" : p : rest) opts = go rest opts { coWorld = Just p }
     go ("--save" : p : rest) opts = go rest opts { coSave = Just p }
     go ("--allow-invalid" : rest) opts = go rest opts { coAllowInvalid = True }
+    go ("--saves-dir" : p : rest) opts = go rest opts { coSavesDir = Just p }
     go ("--no-color" : rest) opts = go rest opts { coNoColor = True }
     go ("--color" : rest) opts = go rest opts { coNoColor = False }
     go ("--tui" : rest) opts = go rest opts { coTui = True }
@@ -159,6 +163,10 @@ main = do
     case parseArgs args of
         Nothing -> putStr usage
         Just opts -> do
+            -- Rogue Phase 0: redirect the save directory on request. The flag
+            -- wins over TA_SAVES_DIR because it is applied later; tests and CI
+            -- set the variable directly.
+            maybe (pure ()) (setEnv "TA_SAVES_DIR") (coSavesDir opts)
             tty <- hIsTerminalDevice stdout
             -- W3: on Windows, VT processing must be on for escapes to render.
             -- It is attempted once here; when it fails (old conhost), colour is

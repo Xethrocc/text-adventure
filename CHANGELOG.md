@@ -1,6 +1,27 @@
 # Changelog
 
+# Changelog
+
 ## Unreleased
+
+### Feature: Rogue Phase 0 — Save-Isolation, `deleteSaveSlot`, `slugify`
+
+- `SaveLoad.savesDir` ist jetzt `IO FilePath` und ehrt die Umgebungsvariable
+  `TA_SAVES_DIR` (Default bleibt `saves/` relativ zum CWD — bit-identisch ohne
+  Variable). Alle Slot-Operationen (`saveGame`, `loadGame`, `listSaves`,
+  `saveSlotPath`) laufen durch dasselbe Verzeichnis; `savesDirFor` ist das
+  Geschwister für die Meta-Progressions-Pfade (Rogue Phase 2).
+- Neu `deleteSaveSlot`: löscht einen Slot (idempotent, `try`-Fehlerbehandlung) —
+  die Naht für den Ironman-Checkpoint (Rogue Phase 1).
+- Neu `slugify` in `Types.hs`: lowercase, `[a-z0-9_-]` bleibt, Rest wird
+  `_`/Leerzeichen (kollabiert), leer/blank → `default` — Basiselement für
+  `saves/<slug>_meta.json` (Rogue Phase 2, M8).
+- Beide Executables (`text-adventure`, `text-adventure-tui`) akzeptieren
+  `--saves-dir DIR`; das Flag gewinnt über `TA_SAVES_DIR`.
+- `scripts/ci.sh`: jede E2E-Runde bekommt ihr eigenes `TA_SAVES_DIR` —
+  save/load kann nicht mehr zwischen Läufen leaken oder das Repo verschmutzen.
+- Tests: `withSavesIsolation`-Seam, `testSavesDirOverride`,
+  `testSavesDirDefault`, `testSlugify`.
 
 ### Feature: `--tui` im Haupt-CLI — neues Paket `text-adventure-cli`
 

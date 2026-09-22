@@ -47,7 +47,9 @@ cabal run text-adventure-cli   # das Haupt-CLI (Haskeline; `--tui` startet die B
 Engine flags: `--world FILE` (compiled GameWorld), `--save FILE` (initial
 SaveState, must exist), `--allow-invalid`, `--no-color` / `--color`
 (`--no-color` is the default whenever stdout is not a terminal), `--help`.
-In-game saves are written to `saves/<slot>.json`.
+In-game saves are written to `saves/<slot>.json`. The directory can be
+redirected with `--saves-dir DIR` or the `TA_SAVES_DIR` environment variable
+(the flag wins) — used by tests and CI for hermetic runs.
 
 Whole pipeline — build, all four test suites, validation of 22 shipped
 adventures, 32 scripted playthroughs (23 happy paths + 9 non-victory runs):
