@@ -4,6 +4,28 @@
 
 ## Unreleased
 
+### Feature: Dynamische Ausgaenge — `set_exit` / `remove_exit` (Rogue Phase 3)
+
+- Neue Engine-Effects `SetExit <room> <dir> <exit>` und `RemoveExit <room> <dir>`:
+  Regeln/Trigger öffnen, verlegen oder schliessen Raumausgaenge zur Laufzeit.
+- `SaveState.exitOverrides` (Map über `(RoomID, Direction)` auf `Maybe Exit`):
+  `Just exit` ersetzt die statische Verbindung, `Nothing` entfernt sie — auch
+  statisch existierende. Kodiert als Objektliste (`exit: null` = entfernt);
+  das Feld wird nur bei Nicht-Leere geschrieben (bestehende Saves bleiben
+  bit-identisch).
+- `Game.effectiveConnections`: die eine Runtime-Lookup für Ausgaenge —
+  Bewegung, Parser-Tuer-Aliase und Tab-Completion sehen dynamische Ausgaenge
+  identisch. Ein per `set_exit` gesetzter `locked_by`-Ausgang legt seinen
+  Entity-State beim Setzen lazy als `locked` an.
+- Worldbuilder: `set_exit: {from, dir, to, locked_by?}` und
+  `remove_exit: {from, dir}` als Outcomes; `checkSetExitRefs` validiert
+  Richtungen (UnknownDirection) und Raeume (MissingRoom) ueber alle
+  autorenbaren Outcome-Baeume; die statische Erreichbarkeitspruefung
+  akzeptiert nur per `set_exit` erreichbare Raeume.
+- Tests: testDynamicExitOverrides (set/remove/rewire, lazy Locked-Seeding,
+  Save-Round-Trip), testSetExitCompiles (Compile + beide Validierungen).
+
+
 ### Feature: Meta-Progression — `meta.*`-Variablen (Rogue Phase 2)
 
 - `GamePolicy` um `gpMetaSlug` erweitert: `game.meta_slug:` überschreibt den

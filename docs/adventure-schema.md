@@ -580,6 +580,33 @@ rules:
 
 Events: `enter room`, `leave room`, `look room`, `search room`, `take item`, `drop item`, `use item`, `state entity`, `command verb`, `custom name`, `turn`.
 
+## Dynamische Ausgaenge: `set_exit` / `remove_exit` (Rogue Phase 3)
+
+Effekte, mit denen Regeln und Trigger Raumausgaenge zur Laufzeit öffnen, umleiten oder schliessen — Labyrinth-Shifts, Einstuerze, verborgene Boss-Türen:
+
+```yaml
+rooms:
+  - id: cellar
+    on_enter:
+      - msg: "Der Felsbewacher erbebt — eine Tür erscheint im Osten."
+      - set_exit: { from: cellar, dir: east, to: boss, locked_by: boss_seal }
+      - remove_exit: { from: hall, dir: south }   # Rückweg fällt hinter dir zu
+```
+
+- `set_exit` ersetzt die statische Verbindung für `(from, dir)`; `to` muss
+  existieren (`MissingRoom`, hart), `dir` eine gültige Richtung sein
+  (`UnknownDirection`, hart).
+- `locked_by` (optional): die neue Tür verhält sich wie eine statisch
+  verriegelte — der Entity-State wird beim Setzen automatisch als `locked`
+  angelegt; ein `set_state: unlocked` (oder Interaction) öffnet sie.
+- `remove_exit` entfernt den Ausgang in diese Richtung — auch einen statisch
+  existierenden (Einsturz, Einbahn nach Falltür).
+- Gültigkeit: Overrides leben im SaveState (`exitOverrides`), werden also
+  gespeichert/geladen; die Erreichbarkeitsprüfung akzeptiert Räume, die nur
+  per `set_exit` erreicht werden.
+- Alle Konsumenten (Bewegung, Tür-Aliase im Parser, Tab-Completion) sehen
+  dynamische Ausgänge wie statische.
+
 ## Interactions (Item-auf-Entity / Crafting)
 
 ```yaml
