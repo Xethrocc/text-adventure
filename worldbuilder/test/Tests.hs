@@ -37,7 +37,7 @@ minWorld = E.GameWorld
     , verbDefs = Map.empty
     , varDefs = Map.empty
     , triggerDefs = []
-    , combatProfile = E.CombatClassic
+    , combatProfile = E.CombatClassic Nothing
     , worldName = ""
     , abilities = Map.empty
     , worldEndArt = Map.empty
@@ -1591,10 +1591,10 @@ testCombatCompiles = do
     -- default: no combat block -> classic
     r0 <- case compileAdventure (minAdventure (minRoom "loc_0")) of
             Left _ -> expectTrue "default compiles" False
-            Right cr -> expectEqual E.CombatClassic (E.combatProfile (crWorld cr))
+            Right cr -> expectEqual (E.CombatClassic Nothing) (E.combatProfile (crWorld cr))
     -- off with custom refusal
     let advOff = (minAdventure (minRoom "loc_0"))
-            { advCombat = Just (ACombat "off" (Just "Im Fokus: Gespräch, nicht Gewalt.") 0 [] [] Nothing Nothing Nothing Nothing) }
+            { advCombat = Just (ACombat "off" (Just "Im Fokus: Gespräch, nicht Gewalt.") 0 [] [] Nothing Nothing Nothing Nothing Nothing) }
     r1 <- case compileAdventure advOff of
             Left _   -> expectTrue "off compiles" False
             Right cr -> expectEqual (E.CombatOff (Just "Im Fokus: Gespräch, nicht Gewalt."))
@@ -1604,7 +1604,7 @@ testCombatCompiles = do
             { advCombat = Just (ACombat "narrative" Nothing 3
                                     [ AOMessage "Du überzeugst ihn." ]
                                     [ AODamagePlayer 4 ]
-                                    Nothing Nothing Nothing Nothing) }
+                                    Nothing Nothing Nothing Nothing Nothing) }
     r2 <- case compileAdventure advNarr of
             Left _   -> expectTrue "narrative compiles" False
             Right cr -> case E.combatProfile (crWorld cr) of
@@ -1616,7 +1616,7 @@ testCombatCompiles = do
                 _ -> expectTrue "expected narrative profile" False
     -- tactical: custom options
     let advTac = (minAdventure (minRoom "loc_0"))
-            { advCombat = Just (ACombat "tactical" Nothing 0 [] [] (Just "by_speed") (Just False) (Just 50) (Just "agility")) }
+            { advCombat = Just (ACombat "tactical" Nothing 0 [] [] (Just "by_speed") (Just False) (Just 50) (Just "agility") Nothing) }
     r3 <- case compileAdventure advTac of
             Left _    -> expectTrue "tactical compiles" False
             Right cr  -> case E.combatProfile (crWorld cr) of
@@ -1629,7 +1629,7 @@ testCombatCompiles = do
                 _ -> expectTrue "expected tactical profile" False
     -- tactical default options:
     let advTacDef = (minAdventure (minRoom "loc_0"))
-            { advCombat = Just (ACombat "tactical" Nothing 0 [] [] Nothing Nothing Nothing Nothing) }
+            { advCombat = Just (ACombat "tactical" Nothing 0 [] [] Nothing Nothing Nothing Nothing Nothing) }
     r3Def <- case compileAdventure advTacDef of
             Left _    -> expectTrue "tactical defaults compile" False
             Right cr  -> case E.combatProfile (crWorld cr) of
@@ -1642,13 +1642,13 @@ testCombatCompiles = do
                 _ -> expectTrue "expected tactical profile with defaults" False
     -- tactical unknown initiative
     let advTacBadInit = (minAdventure (minRoom "loc_0"))
-            { advCombat = Just (ACombat "tactical" Nothing 0 [] [] (Just "random_dice") Nothing Nothing Nothing) }
+            { advCombat = Just (ACombat "tactical" Nothing 0 [] [] (Just "random_dice") Nothing Nothing Nothing Nothing) }
     r3Bad <- case compileAdventure advTacBadInit of
             Left errs -> expectContains "UnknownInitiativeRule" (issuesText errs)
             Right _   -> expectTrue "expected UnknownInitiativeRule" False
     -- unknown profile
     let advBad = (minAdventure (minRoom "loc_0"))
-            { advCombat = Just (ACombat "quantum" Nothing 0 [] [] Nothing Nothing Nothing Nothing) }
+            { advCombat = Just (ACombat "quantum" Nothing 0 [] [] Nothing Nothing Nothing Nothing Nothing) }
     r4 <- case compileAdventure advBad of
             Left errs -> expectContains "UnknownCombatProfile" (issuesText errs)
             Right _   -> expectTrue "expected unknown profile rejection" False
