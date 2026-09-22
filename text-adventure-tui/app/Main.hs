@@ -83,9 +83,12 @@ main = do
                                 exitFailure
                         else start state
   where
+    -- `lines` splits the (possibly multi-line) title art into individual
+    -- rows so the UI can render/protect each row on its own.
     start state = runTui
-        [ titleFor state
-        , "Type 'help' for available commands."
-        , "----------------------------"
-        ]
+        (concatMap lines
+            [ titleFor state
+            , "Type 'help' for available commands."
+            , "----------------------------"
+            ])
         state

@@ -30,6 +30,7 @@ import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, takeMVar,
                                 tryPutMVar, withMVar)
 import Control.Monad (void, when)
 import Control.Monad.IO.Class (liftIO)
+import Data.Char (isLower)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intercalate)
 
@@ -121,6 +122,20 @@ setEditorText st new =
 editorContent :: TuiState -> String
 editorContent st = T.unpack (T.concat (getEditContents (tsEditor st)))
 
+-- | Heuristic for lines that must not rewrap on a narrow terminal. ASCII art
+--   is structurally aligned; wrapping it would scramble it. Two cases:
+--   block/box-drawing characters (img2ascii half-block mode, Unicode art),
+--   and lines without a single lowercase letter that are long enough to
+--   matter (the text2ascii banner fonts render in ASCII @#@, and the img2ascii
+--   ramps use only @ .:-=+*#%@ — neither contains lowercase; normal prose
+--   essentially never goes eight-plus characters without one). This is a
+--   stopgap: with the D21 art panel (Phase H) art leaves the text stream
+--   entirely, and the B5 reflow non-goal (art reflow at runtime) stays closed.
+isArtLine :: String -> Bool
+isArtLine s = any isArtChar s || (length s > 8 && not (any isLower s))
+  where
+    isArtChar c = (c >= '\x2500' && c <= '\x259F')   -- box drawing + block elements
+
 -- | Submit the current editor content to the game loop.
 handleSubmit :: TuiShared -> TuiState -> EventM TuiName TuiState ()
 handleSubmit shared st = do
@@ -205,7 +220,7 @@ drawTui st =
         [ withBorderStyle unicode $
           borderWithLabel (str (" " ++ tsTitle st ++ " ")) $
             viewport HistoryVp Vertical $
-              vBox (map txt (if null (tsLines st) then [T.empty] else tsLines st))
+              vBox (map renderLine (if null (tsLines st) then [T.empty] else tsLines st))
         , padLeftRight 1 $ vBox
             [ suggestionLine
             , hCenter (hBox [ str "> "
@@ -215,6 +230,12 @@ drawTui st =
         ]
     ]
   where
+    -- Prose reflows to the available width; art lines and empty lines keep
+    -- their exact shape (an empty txt would collapse to zero height).
+    renderLine t
+        | T.null t                    = str " "
+        | isArtLine (T.unpack t)      = txt t
+        | otherwise                   = txtWrap t
     suggestionLine
         | null (tsSuggest st) = str ""
         | otherwise           = str ("  " ++ intercalate "   " (tsSuggest st))
