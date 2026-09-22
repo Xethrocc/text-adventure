@@ -3490,6 +3490,20 @@ testSavesDirDefault = do
         Nothing -> pure ()
     pure result
 
+-- | Rogue Phase 0: `slugify` produces safe, deterministic file-name parts
+--   and never an empty string.
+testSlugify :: IO Bool
+testSlugify = do
+    r1 <- expectEqual "the_fog" (slugify "The Fog")
+    r2 <- expectEqual "katakomben_von_vhal" (slugify "Katakomben von Vhal")
+    r3 <- expectEqual "demo" (slugify "demo")
+    r4 <- expectEqual "ber_fantastic_adventure_3000"
+                       (slugify "Über fantastic! Adventure 3000")
+    r5 <- expectEqual "default" (slugify "")
+    r6 <- expectEqual "---" (slugify "  ---  ")   -- '-' is a legal file-name char
+    r7 <- expectEqual "default" (slugify "  ")
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
 -- | L11: the turn pipeline is `incrementTurnCount` → `tickConditions` →
 --   `vehicleConditionTick` → `executeCommand` → `fireCommandTriggers`. A
 --   condition tick that kills the player therefore runs *before* the command —
@@ -4191,6 +4205,7 @@ main = do
         , runTest "SaveLoad round-trip + legacy + checksum (L2)" testSaveLoadRoundTrip
         , runTest "TA_SAVES_DIR redirects saves + deleteSaveSlot (Rogue P0)" testSavesDirOverride
         , runTest "savesDir default stays 'saves' (Rogue P0)" testSavesDirDefault
+        , runTest "slugify is deterministic and file-safe (Rogue P0)" testSlugify
         , runTest "fatal condition tick stops the command (L11)" testFatalTickStopsCommand
         -- Review L4: constructor coverage in Validate
         , runTest "MissingRoom from a rule room reference (L4)" testValidateMissingRoomInRule

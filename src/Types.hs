@@ -13,6 +13,7 @@ import Data.Aeson
 import Data.Aeson.Types (Parser, Pair, toJSONKeyText)
 import Control.Applicative ((<|>))
 import Data.Char (toLower)
+import Data.List (intercalate)
 import Data.Maybe (isNothing)
 
 -- ---------------------------------------------------------------------------
@@ -1501,6 +1502,33 @@ data GameState = GameState
 -- | Initial seed for a fresh playthrough (golden-ratio constant, nonzero).
 initialRngState :: Word64
 initialRngState = 0x9E3779B97F4A7C15
+
+-- ---------------------------------------------------------------------------
+-- Adventure slug (Rogue Phase 0)
+-- ---------------------------------------------------------------------------
+
+-- | Deterministic file-system slug for adventure-bound file names. The
+--   Roguelike/Roguelite extension (Rogue Phase 2) will use it for
+--   @saves/<slug>_meta.json@: lowercase ASCII letters, digits, @-@ and @_@
+--   survive; every other character becomes @_@ (runs of them collapse via
+--   'words'); a name without a single surviving character falls back to
+--   @"default"@ so file names stay well-formed even for worlds with an empty
+--   or purely non-ASCII @worldName@.
+--
+--   Deliberately simple: no transliteration (umlauts become @_@), so the
+--   result is stable across locales — and remember M8: adventures that want
+--   meta-progression to survive a title change will get an explicit
+--   @game.meta_slug@ override later.
+slugify :: String -> String
+slugify name
+    | null slug = "default"
+    | otherwise = slug
+  where
+    slug = intercalate "_" (words (map mapChar (map toLower name)))
+    mapChar c | isKept c  = c
+              | otherwise = ' '
+    isKept c = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+               || c == '_' || c == '-'
 
 -- | Advance the explicit RNG state (linear congruential generator).
 nextRng :: Word64 -> Word64
