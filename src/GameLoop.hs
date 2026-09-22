@@ -11,6 +11,11 @@ module GameLoop
   , commandEvents
   , consumesTurn
   , consumesTurnIn
+  , handleGameOver
+  , deathLoop
+  , saveBlockedMessage
+  , loadBlockedMessage
+  , deathMenuText
   ) where
 
 import Types
@@ -20,6 +25,7 @@ import Verbs (verbCanonicalName)
 import SaveLoad
 import Sample (initSampleGame)
 import Frontend
+import Control.Monad (when)
 import Data.Char (toLower)
 import Data.List (foldl')
 import Data.Maybe (fromMaybe)
@@ -30,14 +36,18 @@ import qualified Data.Map.Strict as Map
 -- ---------------------------------------------------------------------------
 
 -- | Runtime state for undo. History is newest-first and capped at 50 states.
+--   'lsSaveSlot' (Rogue Phase 1) remembers the ironman checkpoint slot of the
+--   current run: set by every successful save, reset by restart — the slot it
+--   points at is what the death screen deletes in ironman mode.
 data LoopState = LoopState
     { lsCurrent :: GameState
     , lsHistory :: [GameState]
     , lsInitial :: GameState   -- ^ pristine initial state, used by Restart
+    , lsSaveSlot :: Maybe String
     } deriving (Show, Eq)
 
 initLoopState :: GameState -> LoopState
-initLoopState state = LoopState state [] state
+initLoopState state = LoopState state [] state Nothing
 
 maxUndoHistory :: Int
 maxUndoHistory = 50
@@ -76,9 +86,15 @@ consumesTurnIn st cmd = case cmd of
 --   Undo itself does not consume a turn. Other commands run the normal turn
 --   ticks and save the exact pre-command state for restoration.
 applyLoopCommand :: Command -> LoopState -> (LoopState, String)
-applyLoopCommand Undo loopState = case lsHistory loopState of
-    [] -> (loopState, "Nothing to undo.")
-    previous : rest -> (LoopState previous rest (lsInitial loopState), "Undone.")
+applyLoopCommand Undo loopState
+    -- Rogue Phase 1: the author can disable undo globally (gpAllowUndo). The
+    -- state stays untouched — the command is refused, nothing to tick.
+    | not (gpAllowUndo (worldGamePolicy (world (lsCurrent loopState)))) =
+        (loopState, "Undo is disabled in this adventure.")
+    | otherwise = case lsHistory loopState of
+        [] -> (loopState, "Nothing to undo.")
+        previous : rest ->
+            (loopState { lsCurrent = previous, lsHistory = rest }, "Undone.")
 applyLoopCommand Quit loopState =
     let (newState, message) = executeCommand Quit (lsCurrent loopState)
     in (loopState { lsCurrent = newState }, message)
@@ -97,29 +113,65 @@ applyLoopCommand command loopState
         in (loopState { lsCurrent = stateAfterTriggers }, combined)
     | otherwise =
         let oldState = lsCurrent loopState
+            policy = worldGamePolicy (world oldState)
+            -- Rogue Phase 1: with undo disabled the history is not tracked at
+            -- all (saves memory; the command is rejected before use anyway).
+            history' = if gpAllowUndo policy
+                       then take maxUndoHistory (oldState : lsHistory loopState)
+                       else lsHistory loopState
             stateWithTurn = incrementTurnCount oldState
             (stateAfterTick, tickMsgs) = tickConditions stateWithTurn
             (stateAfterVehicleTick, vehicleTickMsg) = vehicleConditionTick stateAfterTick
             allTickMsgs = tickMsgs ++ (if null vehicleTickMsg then [] else [vehicleTickMsg])
             tickText = unlines allTickMsgs
-            history' = take maxUndoHistory (oldState : lsHistory loopState)
         in if gameOver (save stateAfterVehicleTick)
            then
                -- L11: the condition tick ended the game before the command ran
                -- (the tick pipeline runs first). The player is already dead, so
                -- the command is dropped — only the tick messages are reported.
-               (LoopState stateAfterVehicleTick history' (lsInitial loopState), tickText)
+               (loopState { lsCurrent = stateAfterVehicleTick, lsHistory = history' }, tickText)
            else
                let (newState, message) = executeCommand command stateAfterVehicleTick
                    (stateAfterTriggers, triggerMsg) = fireCommandTriggers command stateAfterVehicleTick newState
                    fullMessage = if null allTickMsgs then message else tickText ++ message
-               in (LoopState stateAfterTriggers history' (lsInitial loopState),
+               in (loopState { lsCurrent = stateAfterTriggers, lsHistory = history' },
                    combineMessages fullMessage triggerMsg)
 
 -- | Combine two message fragments for trigger output. Same rule as
 --   'Game.joinMessages' — empty fragments contribute nothing.
 combineMessages :: String -> String -> String
 combineMessages = joinMessages
+
+-- ---------------------------------------------------------------------------
+-- Policy gates (Rogue Phase 1)
+-- ---------------------------------------------------------------------------
+
+-- | Rogue Phase 1: pure gate for the in-game save command.
+--   'Nothing' allows saving; 'Just' carries the rejection message. Only the
+--   ironman mode restricts saving (to savezone rooms); every other adventure
+--   saves anywhere, as before.
+saveBlockedMessage :: GameState -> Maybe String
+saveBlockedMessage st
+    | not (gpIronman policy) = Nothing
+    | currentRoom (save st) `elem` gpSaveZones policy = Nothing
+    | otherwise = Just "You can only rest at a savezone."
+  where
+    policy = worldGamePolicy (world st)
+
+-- | Rogue Phase 1: loading is rejected in ironman mode — restoring a save
+--   would let the player outlive a death the checkpoint deletion was supposed
+--   to make final.
+loadBlockedMessage :: GameState -> Maybe String
+loadBlockedMessage st
+    | gpIronman (worldGamePolicy (world st)) = Just "Loading is disabled in ironman mode."
+    | otherwise = Nothing
+
+-- | The menu line under the death screen. Permadeath (and ironman, which
+--   deletes the checkpoint) offer no undo/load, only restart or quit.
+deathMenuText :: GamePolicy -> String
+deathMenuText policy
+    | gpPermadeath policy || gpIronman policy = "  [R]estart  |  [Q]uit"
+    | otherwise = "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
 
 -- | Determine which trigger events apply to a completed command, using the
 --   state before and after the command to detect room changes.
@@ -248,16 +300,32 @@ loopGame fe loopState
             Just input ->
                 case parseCommandWith (verbDefs (world state)) input of
                     Save name -> do
-                        saveGame state name
-                        loopGame fe loopState
-                    Load name -> do
-                        result <- loadGame state name
-                        case result of
-                            Just loadedState -> do
-                                let (loadedState', msg) = executeCommand Look loadedState
+                        -- Rogue Phase 1: ironman restricts saving to savezones
+                        -- and routes it into one checkpoint slot; normal games
+                        -- save wherever the player asks (unchanged).
+                        let policy = worldGamePolicy (world state)
+                            slotName = if gpIronman policy
+                                       then ironmanCheckpointSlot else name
+                        case saveBlockedMessage state of
+                            Just msg -> do
                                 feEmitLine fe msg
-                                loopGame fe (initLoopState loadedState')
-                            Nothing -> loopGame fe loopState
+                                loopGame fe loopState
+                            Nothing -> do
+                                saveGame state slotName
+                                loopGame fe loopState { lsSaveSlot = Just slotName }
+                    Load name -> do
+                        case loadBlockedMessage state of
+                            Just msg -> do
+                                feEmitLine fe msg
+                                loopGame fe loopState
+                            Nothing -> do
+                                result <- loadGame state name
+                                case result of
+                                    Just loadedState -> do
+                                        let (loadedState', msg) = executeCommand Look loadedState
+                                        feEmitLine fe msg
+                                        loopGame fe (initLoopState loadedState')
+                                    Nothing -> loopGame fe loopState
                     ListSaves -> do
                         listSaves (world state)
                         loopGame fe loopState
@@ -322,7 +390,14 @@ handleGameOver fe loopState = do
                 , "  YOU HAVE DIED"
                 , "========================================="
                 ]
-            feEmitLine fe "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
+            -- Rogue Phase 1 (M1/M2-Entscheidung): in ironman mode the run's
+            -- checkpoint dies with the run — exactly one slot, tracked by
+            -- 'lsSaveSlot' since the last in-zone save. The `--save` start
+            -- file is never touched (neutral re-entry point).
+            let policy = worldGamePolicy (world state)
+            when (gpIronman policy) $
+                maybe (pure ()) deleteSaveSlot (lsSaveSlot loopState)
+            feEmitLine fe (deathMenuText policy)
             deathLoop fe loopState
         Just Victory -> do
             emitEndArt fe state Victory
@@ -351,33 +426,57 @@ emitEndArt fe st reason fallback = do
         Nothing  -> mapM_ (feEmitLine fe) fallback
     feEmitLine fe ""
 
--- | Death screen input loop
+-- | Death screen input loop. Policy gates (Rogue Phase 1):
+--   * permadeath: no undo/load at all — only restart or quit;
+--   * ironman: the checkpoint was deleted by 'handleGameOver', load is
+--     rejected (restoring it would defeat the deletion);
+--   * 'gpAllowUndo = false' rejects undo.
+--   Everything else behaves as before (undo is the only path that can
+--   actually restore, and it needs an unspent history entry).
 deathLoop :: Frontend -> LoopState -> IO ()
 deathLoop fe loopState = do
     inputResult <- feReadPlain fe "> "
+    let policy = worldGamePolicy (world state)
     case map toLower . fromMaybe "q" <$> pure inputResult of
-        Just "u" ->
-            case lsHistory loopState of
-                [] -> do
-                    feEmitLine fe "Nothing to undo."
-                    deathLoop fe loopState
-                _ -> do
-                    let (restored, msg) = applyLoopCommand Undo loopState
-                    feEmitLine fe msg
-                    loopGame fe restored
-        Just "l" -> do
-            feEmitLine fe "Enter save name to load (or press Enter for 'savegame'):"
-            nameResult <- feReadPlain fe "> "
-            let name = case nameResult of
-                    Just n | not (null n) -> n
-                    _                     -> "savegame"
-            result <- loadGame state name
-            case result of
-                Just loadedState -> do
-                    let (s', msg) = executeCommand Look loadedState
-                    feEmitLine fe msg
-                    loopGame fe (initLoopState s')
-                Nothing -> deathLoop fe loopState
+        Just "u"
+            | gpPermadeath policy -> do
+                feEmitLine fe "No undo after death (permadeath)."
+                deathLoop fe loopState
+            | gpIronman policy -> do
+                feEmitLine fe "No undo in ironman mode."
+                deathLoop fe loopState
+            | not (gpAllowUndo policy) -> do
+                feEmitLine fe "Undo is disabled in this adventure."
+                deathLoop fe loopState
+            | otherwise ->
+                case lsHistory loopState of
+                    [] -> do
+                        feEmitLine fe "Nothing to undo."
+                        deathLoop fe loopState
+                    _ -> do
+                        let (restored, msg) = applyLoopCommand Undo loopState
+                        feEmitLine fe msg
+                        loopGame fe restored
+        Just "l"
+            | gpPermadeath policy -> do
+                feEmitLine fe "No load after death (permadeath)."
+                deathLoop fe loopState
+            | gpIronman policy -> do
+                feEmitLine fe "Loading is disabled in ironman mode."
+                deathLoop fe loopState
+            | otherwise -> do
+                feEmitLine fe "Enter save name to load (or press Enter for 'savegame'):"
+                nameResult <- feReadPlain fe "> "
+                let name = case nameResult of
+                        Just n | not (null n) -> n
+                        _                     -> "savegame"
+                result <- loadGame state name
+                case result of
+                    Just loadedState -> do
+                        let (s', msg) = executeCommand Look loadedState
+                        feEmitLine fe msg
+                        loopGame fe (initLoopState s')
+                    Nothing -> deathLoop fe loopState
         Just "r" -> do
             feEmitLine fe "Starting a new game...\n"
             let (restarted, msg) = applyLoopCommand Restart loopState
@@ -385,7 +484,7 @@ deathLoop fe loopState = do
             loopGame fe restarted
         Just "q" -> feEmitLine fe "Thanks for playing!"
         _ -> do
-            feEmitLine fe "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
+            feEmitLine fe (deathMenuText policy)
             deathLoop fe loopState
   where
     state = lsCurrent loopState

@@ -57,6 +57,12 @@ savesDir = maybe "saves" id <$> lookupEnv "TA_SAVES_DIR"
 savesDirFor :: String -> IO FilePath
 savesDirFor base = (</> base) <$> savesDir
 
+-- | Rogue Phase 1: the fixed ironman checkpoint slot. In ironman mode every
+--   in-zone save writes this one slot (overwriting the previous checkpoint),
+--   and it is what the death screen deletes — no slot sprawl, no scumming.
+ironmanCheckpointSlot :: String
+ironmanCheckpointSlot = "checkpoint"
+
 -- | Path of one save slot. Built with `System.FilePath` so the separator is
 --   the platform's: a literal "/" happens to work on Windows too, but the
 --   engine is meant to run wherever its authors do.

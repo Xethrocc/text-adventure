@@ -13,7 +13,8 @@ import System.Timeout (timeout)
 import Control.Exception (bracket, evaluate, try, SomeException)
 import Game
 import GameLoop (LoopState (..), initLoopState, applyLoopCommand,
-                 commandEvents, consumesTurn, consumesTurnIn, runGameWithFrontend)
+                 commandEvents, consumesTurn, consumesTurnIn, runGameWithFrontend,
+                 handleGameOver, saveBlockedMessage, loadBlockedMessage, deathMenuText)
 import Frontend (Frontend (..), commandCompletion)
 import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText)
 import Verbs (verbAliasMap)
@@ -962,7 +963,13 @@ cannedFrontendWith startState script = do
                       -- empty queue = end of input, the loop quits
                       []       -> pure Nothing
                       (x : xs) -> writeIORef inRef xs >> pure x
-            , feReadPlain   = \_ -> pure Nothing
+            , feReadPlain   = \_ -> do
+                  -- Rogue Phase 1: the death/victory loops read via
+                  -- feReadPlain, so they share the scripted queue.
+                  queue <- readIORef inRef
+                  case queue of
+                      []       -> pure Nothing
+                      (x : xs) -> writeIORef inRef xs >> pure x
             , feReadPause   = pure ()
             , fePlayFrames  = \micros frames -> modifyIORef' playRef ((micros, frames) :)
             , feDiagnostics = \ms -> modifyIORef' diagRef (++ ms)
@@ -973,6 +980,118 @@ cannedFrontendWith startState script = do
     remaining <- readIORef inRef
     played <- reverse <$> readIORef playRef
     pure (out, diag, played, remaining)
+
+-- | Rogue Phase 1: drive 'handleGameOver' directly with a scripted death
+--   screen. 'slot' becomes the LoopState's 'lsSaveSlot' (the ironman
+--   checkpoint); 'script' feeds 'feReadPlain'. Returns the captured output.
+driveDeathScreen :: GameState -> Maybe String -> [Maybe String] -> IO [String]
+driveDeathScreen startState slot script = do
+    outRef <- newIORef []
+    inRef <- newIORef script
+    let fe = Frontend
+            { feEmitLine    = \l -> modifyIORef' outRef (l :)
+            , feEmitRaw     = \s -> modifyIORef' outRef (s :)
+            , feReadInput   = \_ _ -> pure Nothing
+            , feReadPlain   = \_ -> do
+                  queue <- readIORef inRef
+                  case queue of
+                      []       -> pure Nothing
+                      (x : xs) -> writeIORef inRef xs >> pure x
+            , feReadPause   = pure ()
+            , fePlayFrames  = \_ _ -> pure ()
+            , feDiagnostics = \_ -> pure ()
+            }
+    handleGameOver fe (initLoopState startState) { lsSaveSlot = slot }
+    reverse <$> readIORef outRef
+
+-- ===== Rogue Phase 1: permadeath, ironman, savezones =====
+
+-- | A dead sample game: fresh world with the given policy, game over with
+--   reason Death.
+deadStateWith :: GamePolicy -> GameState
+deadStateWith policy = initSampleGame
+    { world = (world initSampleGame) { worldGamePolicy = policy }
+    , save = (save initSampleGame) { gameOver = True, gameOverReason = Just Death }
+    }
+
+-- | Rogue Phase 1: `allow_undo: false` rejects `undo` outright — state stays,
+--   message names the policy.
+testPermadeathDisablesUndo :: IO Bool
+testPermadeathDisablesUndo = do
+    let noUndo = initSampleGame
+            { world = (world initSampleGame)
+                        { worldGamePolicy = defaultGamePolicy { gpAllowUndo = False } } }
+        loop0 = initLoopState noUndo
+        (l1, _) = applyLoopCommand (Go North) loop0
+        (l2, msg) = applyLoopCommand Undo l1
+    r1 <- expectTrue "undo rejected when allow_undo = false"
+                     ("Undo is disabled in this adventure." `isInfixOf` msg)
+    r2 <- expectTrue "state not reverted by the refused undo"
+                     (lsCurrent l2 == lsCurrent l1)
+    pure (r1 && r2)
+
+-- | Rogue Phase 1: with permadeath the death screen offers only restart and
+--   quit; 'u' and 'l' inputs are rejected, not executed.
+testPermadeathDeathMenu :: IO Bool
+testPermadeathDeathMenu = do
+    let dead = deadStateWith defaultGamePolicy { gpPermadeath = True }
+    (out, _, _, _) <- cannedFrontendWith dead [Just "u", Just "l", Just "q"]
+    r1 <- expectTrue "permadeath menu shows restart/quit"
+                     (any ("  [R]estart  |  [Q]uit" `isInfixOf`) out)
+    r2 <- expectTrue "no [L]oad hint on the permadeath menu"
+                     (not (any ("[L]oad last save" `isInfixOf`) out))
+    r3 <- expectTrue "'u' is refused after death"
+                     (any ("No undo after death" `isInfixOf`) out)
+    r4 <- expectTrue "'l' is refused after death"
+                     (any ("No load after death" `isInfixOf`) out)
+    r5 <- expectTrue "'q' still quits" (any ("Thanks for playing!" `isInfixOf`) out)
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Rogue Phase 1 (pure gates): ironman saving is allowed only inside a
+--   savezone; load is rejected in ironman mode. Without ironman everything
+--   behaves as before.
+testIronmanSaveOnlyInSavezone :: IO Bool
+testIronmanSaveOnlyInSavezone = do
+    let iron = defaultGamePolicy { gpIronman = True, gpSaveZones = ["start"] }
+        ironSt = initSampleGame
+            { world = (world initSampleGame) { worldGamePolicy = iron } }
+        defaultSt = initSampleGame
+        (moved, _) = executeCommand (Go North) ironSt
+    r1 <- expectTrue "save allowed in a savezone"
+                     (saveBlockedMessage ironSt == Nothing)
+    r2 <- expectTrue "save blocked outside savezones"
+                     (saveBlockedMessage moved == Just "You can only rest at a savezone.")
+    r3 <- expectTrue "normal adventures save anywhere"
+                     (saveBlockedMessage initSampleGame == Nothing)
+    r4 <- expectTrue "load blocked in ironman"
+                     (loadBlockedMessage ironSt == Just "Loading is disabled in ironman mode.")
+    r5 <- expectTrue "load allowed without ironman"
+                     (loadBlockedMessage defaultSt == Nothing)
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Rogue Phase 1 (IO): saving inside a savezone writes the checkpoint slot;
+--   the death screen then deletes it ('--save' start files are untouched).
+--   Also verifies the in-zone save message and the outside-zone rejection
+--   through the scripted loop.
+testIronmanCheckpointDeletedOnDeath :: IO Bool
+testIronmanCheckpointDeletedOnDeath = withSavesIsolation $ do
+    let iron = defaultGamePolicy { gpIronman = True, gpSaveZones = ["start"] }
+        ironSt = initSampleGame
+            { world = (world initSampleGame) { worldGamePolicy = iron } }
+        dead = ironSt { save = (save ironSt) { gameOver = True, gameOverReason = Just Death } }
+    SaveLoad.saveGame dead SaveLoad.ironmanCheckpointSlot
+    checkpointPath <- SaveLoad.saveSlotPath SaveLoad.ironmanCheckpointSlot
+    existed <- doesFileExist checkpointPath
+    -- 'l' is rejected (load disabled in ironman), 'q' quits the death screen
+    out <- driveDeathScreen dead (Just SaveLoad.ironmanCheckpointSlot) [Just "l", Just "q"]
+    r1 <- expectTrue "checkpoint existed before death" existed
+    r2 <- expectTrue "load attempt refused on the death screen"
+                     (any ("Loading is disabled in ironman mode." `isInfixOf`) out)
+    r3 <- expectTrue "permadeath/ironman menu without undo/load"
+                     (any ("  [R]estart  |  [Q]uit" `isInfixOf`) out)
+    gone <- doesFileExist =<< SaveLoad.saveSlotPath SaveLoad.ironmanCheckpointSlot
+    r4 <- expectTrue "checkpoint deleted with the run" (not gone)
+    pure (r1 && r2 && r3 && r4)
 
 testLoopRunsOnCannedFrontend :: IO Bool
 testLoopRunsOnCannedFrontend = do
@@ -4203,6 +4322,10 @@ main = do
         , runTest "enter event precedes turn event (L5)" testEnterFiresBeforeTurnThroughLoop
         , runTest "consumesTurn complete for every Command (L13)" testConsumesTurnCompleteness
         , runTest "SaveLoad round-trip + legacy + checksum (L2)" testSaveLoadRoundTrip
+        , runTest "undo refused when allow_undo = false (Rogue P1)" testPermadeathDisablesUndo
+        , runTest "permadeath death menu without undo/load (Rogue P1)" testPermadeathDeathMenu
+        , runTest "ironman: save only in savezones, load disabled (Rogue P1)" testIronmanSaveOnlyInSavezone
+        , runTest "ironman: checkpoint deleted on death (Rogue P1)" testIronmanCheckpointDeletedOnDeath
         , runTest "TA_SAVES_DIR redirects saves + deleteSaveSlot (Rogue P0)" testSavesDirOverride
         , runTest "savesDir default stays 'saves' (Rogue P0)" testSavesDirDefault
         , runTest "slugify is deterministic and file-safe (Rogue P0)" testSlugify
