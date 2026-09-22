@@ -1117,7 +1117,10 @@ data GameWorld = GameWorld
     , worldEndArt        :: Map.Map String AsciiArt                  -- ^ "death"/"victory"/custom reason -> banner (Phase G)
     , worldTitleArt      :: AsciiArt                                 -- ^ Optional title banner replacing the `bannerFor` default (Phase G)
     , worldClips         :: Map.Map String Clip                      -- ^ Cutscene clips, embedded at compile time (Phase H/H4, D14)
+    , worldGamePolicy    :: GamePolicy                               -- ^ roguelike policy (Rogue Phase 1; default = unchanged behaviour)
     } deriving (Show, Eq)
+
+-- | A cutscene clip (Phase H/H4): a frame sequence played once at its own
 
 -- | A cutscene clip (Phase H/H4): a frame sequence played once at its own
 --   rate. Clips live in the compiled world (D14: companion files are embedded
@@ -1338,13 +1341,50 @@ instance ToJSON GameWorld where
         , "combatProfile"      .= combatProfile gw
         , "worldName"          .= worldName gw
         , "abilities"          .= abilities gw
-        ] ++ endArtPair ++ titleArtPair ++ clipPair
+        ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair
       where
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
         clipPair = [ "clips" .= worldClips gw | not (Map.null (worldClips gw)) ]
+        -- Rogue Phase 1 (M2): the policy field is only emitted when it differs
+        -- from the default, otherwise every world's checksum would change and
+        -- all existing saves would report "world mismatch!".
+        policyPair = [ "game" .= worldGamePolicy gw
+                     | worldGamePolicy gw /= defaultGamePolicy ]
         endArt = Map.filter (not . isEmptyAscii) (worldEndArt gw)
         titleArt = worldTitleArt gw
+
+-- | Author-defined game policy for roguelike/roguelite adventures. All
+--   defaults preserve today's behaviour ('defaultGamePolicy'), and the
+--   JSON encoding emits the field only when it differs from the default
+--   (M2: keeps the world checksum — and with it every existing save file —
+--   bit-identical).
+data GamePolicy = GamePolicy
+    { gpPermadeath :: Bool      -- ^ death offers no undo/load, only restart/quit
+    , gpAllowUndo  :: Bool      -- ^ 'undo' command globally disabled
+    , gpIronman    :: Bool       -- ^ saves only in savezones (one checkpoint slot,
+                                 -- ^ deleted on death); load disabled
+    , gpSaveZones  :: [RoomID]  -- ^ rooms where ironman saves are allowed
+    } deriving (Show, Eq, Generic)
+
+-- | Today's behaviour: nothing changes unless the author opts in.
+defaultGamePolicy :: GamePolicy
+defaultGamePolicy = GamePolicy False True False []
+
+instance ToJSON GamePolicy where
+    toJSON p = object
+        [ "permadeath" .= gpPermadeath p
+        , "allow_undo" .= gpAllowUndo p
+        , "ironman"    .= gpIronman p
+        , "save_zones" .= gpSaveZones p
+        ]
+
+instance FromJSON GamePolicy where
+    parseJSON = withObject "GamePolicy" $ \o -> GamePolicy
+        <$> o .:? "permadeath" .!= False
+        <*> o .:? "allow_undo" .!= True
+        <*> o .:? "ironman"    .!= False
+        <*> o .:? "save_zones" .!= []
 
 instance FromJSON GameWorld where
     parseJSON = withObject "GameWorld" $ \o -> GameWorld
@@ -1364,6 +1404,7 @@ instance FromJSON GameWorld where
         <*> o .:? "endArt" .!= Map.empty
         <*> o .:? "titleArt" .!= emptyAscii
         <*> o .:? "clips" .!= Map.empty
+        <*> o .:? "game" .!= defaultGamePolicy
 
 -- | Encode item-on-item outcomes as objects (P2-9).
 itemInteractionsToJSON :: Map.Map (String, String) Effect -> Value

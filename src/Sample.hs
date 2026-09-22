@@ -354,6 +354,7 @@ initSampleGame = GameState
         , varDefs = Map.empty
         , triggerDefs = []
         , combatProfile = CombatClassic Nothing
+        , worldGamePolicy = defaultGamePolicy
         , worldName = "Sample Adventure"
         , abilities = Map.empty
         , worldEndArt = Map.empty

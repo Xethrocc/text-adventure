@@ -38,6 +38,7 @@ minWorld = E.GameWorld
     , varDefs = Map.empty
     , triggerDefs = []
     , combatProfile = E.CombatClassic Nothing
+    , worldGamePolicy = E.defaultGamePolicy
     , worldName = ""
     , abilities = Map.empty
     , worldEndArt = Map.empty

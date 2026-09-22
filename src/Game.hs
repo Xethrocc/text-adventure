@@ -26,6 +26,7 @@ emptyGameWorld = GameWorld
     , triggerDefs        = []
     , combatProfile      = CombatClassic Nothing
     , worldName          = ""
+    , worldGamePolicy    = defaultGamePolicy
     , abilities          = Map.empty
     , worldEndArt        = Map.empty
     , worldTitleArt      = emptyAscii

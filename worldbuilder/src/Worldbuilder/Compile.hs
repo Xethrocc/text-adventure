@@ -143,6 +143,7 @@ compileAdventure adv =
                 , E.worldEndArt = Map.map compileAscii (advEndArt adv)
                 , E.worldTitleArt = compileAscii (advTitleArt adv)
                 , E.worldClips = compileClips (advClips adv)
+                , E.worldGamePolicy = E.defaultGamePolicy
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
