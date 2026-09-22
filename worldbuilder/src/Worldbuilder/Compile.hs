@@ -7,6 +7,7 @@ module Worldbuilder.Compile
     , CompileIssue(..)
     , Severity(..)
     , compileAActionOutcome
+    , allWorldEffects
     ) where
 
 import Worldbuilder.Types

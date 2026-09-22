@@ -16,7 +16,7 @@ import System.FilePath ((</>))
 import System.IO (hSetEncoding, stdout, utf8)
 import Worldbuilder.Types
 import Worldbuilder.Locate (lineForPath)
-import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome)
+import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome, allWorldEffects)
 import Worldbuilder.ParseFile (parseAdventureFile)
 import Types as E
 import Game (emptyGameState, evalPredicate)
@@ -212,6 +212,73 @@ testGamePolicyCompiles = do
                               (any (\i -> ciCode i == "MissingRoom") errs)
             Right _   -> expectTrue "unknown savezone must fail" False
     pure (r0 && r1 && r2 && r3)
+
+
+-- | Rogue Phase 3 helper: does an Effect tree contain a dynamic-exit effect?
+carriesExitEffect :: E.Effect -> Bool
+carriesExitEffect e = case e of
+    E.SetExit {}   -> True
+    E.RemoveExit {} -> True
+    E.Sequence os  -> any carriesExitEffect os
+    E.RandomChoice cs -> any (carriesExitEffect . snd) cs
+    E.Conditional _ t el -> carriesExitEffect t || carriesExitEffect el
+    E.Narrative _ f -> carriesExitEffect f
+    E.ApplyCondition _ _ (Just t) (Just el) -> carriesExitEffect t || carriesExitEffect el
+    E.ApplyCondition _ _ (Just t) Nothing   -> carriesExitEffect t
+    E.ApplyCondition _ _ Nothing (Just el)  -> carriesExitEffect el
+    _                -> False
+
+-- | Rogue Phase 3: `set_exit` / `remove_exit` compile to the engine effects;
+--   unknown directions and missing rooms are rejected.
+testSetExitCompiles :: IO Bool
+testSetExitCompiles = do
+    -- happy path: open + locked rewire
+    let advOk = (minAdventure (minRoom "loc_0"))
+            { advRooms =
+                [ (minRoom "loc_0") { arOnEnter = Just
+                    [ AOSetExit "loc_0" "east" "loc_b" Nothing
+                    , AOSetExit "loc_0" "west" "loc_b" (Just "seal")
+                    , AORemoveExit "loc_0" "north" ] }
+                , (minRoom "loc_b") { arExits = Map.fromList [("west", AExitRef "loc_0" Nothing)] }
+                ] }
+    r1 <- case compileAdventure advOk of
+            Left errs -> expectTrue ("set_exit compiles, got: " ++ show errs) False
+            Right cr -> do
+                -- die on_enter-Outcome-Liste kompiliert 1:1 (Sequence ueber dem Hook)
+                rA <- expectTrue "open set_exit compiles to the engine effect"
+                          (compileAActionOutcome (AOSetExit "loc_0" "east" "loc_b" Nothing)
+                              == E.SetExit "loc_0" E.East (E.Open "loc_b"))
+                rB <- expectTrue "locked set_exit compiles to the engine effect"
+                          (compileAActionOutcome (AOSetExit "loc_0" "west" "loc_b" (Just "seal"))
+                              == E.SetExit "loc_0" E.West (E.Locked "loc_b" "seal"))
+                rC <- expectTrue "remove_exit compiles to the engine effect"
+                          (compileAActionOutcome (AORemoveExit "loc_0" "north")
+                              == E.RemoveExit "loc_0" E.North)
+                rD <- expectTrue "the compiled world carries the effects"
+                          (any carriesExitEffect (allWorldEffects (crWorld cr)))
+                pure (rA && rB && rC && rD)
+    -- unknown direction
+    let advBadDir = (minAdventure (minRoom "loc_0"))
+            { advRooms = [ (minRoom "loc_0") { arOnEnter = Just [AORemoveExit "loc_0" "sideways"] } ] }
+    r2 <- case compileAdventure advBadDir of
+            Left errs -> expectTrue "unknown direction rejected"
+                          (any (\i -> ciCode i == "UnknownDirection") errs)
+            Right _   -> expectTrue "unknown direction must fail" False
+    -- missing from-room
+    let advBadRoom = (minAdventure (minRoom "loc_0"))
+            { advRooms = [ (minRoom "loc_0") { arOnEnter = Just [AOSetExit "ghost" "north" "loc_0" Nothing] } ] }
+    r3 <- case compileAdventure advBadRoom of
+            Left errs -> expectTrue "missing from-room rejected"
+                          (any (\i -> ciCode i == "MissingRoom") errs)
+            Right _   -> expectTrue "missing room must fail" False
+    -- missing to-room
+    let advBadTo = (minAdventure (minRoom "loc_0"))
+            { advRooms = [ (minRoom "loc_0") { arOnEnter = Just [AOSetExit "loc_0" "north" "ghost" Nothing] } ] }
+    r4 <- case compileAdventure advBadTo of
+            Left errs -> expectTrue "missing to-room rejected"
+                          (any (\i -> ciCode i == "MissingRoom") errs)
+            Right _   -> expectTrue "missing to-room must fail" False
+    pure (r1 && r2 && r3 && r4)
 
 -- ---------------------------------------------------------------------------
 -- Direction tests
@@ -2457,6 +2524,7 @@ tests =
     , ("combat fixtures compile + validate", testCombatFixturesCompile)
     -- Rogue Phase 1: authored game policy
     , ("game policy compiles (default/ironman/warning/missing room)", testGamePolicyCompiles)
+    , ("set_exit/remove_exit compile + validate (Rogue P3)", testSetExitCompiles)
     -- Phase 7g: party / companions
     , ("party block compiles to follow var + order verb", testPartyCompiles)
     , ("party block with can_join false is inert", testPartyCanJoinFalseIsInert)
