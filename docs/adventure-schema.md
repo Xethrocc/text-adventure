@@ -928,6 +928,37 @@ sein Tod öffnet das Runentor.
 Siehe `docs/modules.md` (7f/7g) für Details und die Referenz-Fixtures.
 ---
 
+## Game: Roguelike-Policy (Rogue Phase 1)
+
+Optionaler `game:`-Block für Roguelike-/Roguelite-Adventures. Ohne Block gilt
+`defaultGamePolicy` — das Verhalten aller bestehenden Adventures bleibt
+bit-identisch.
+
+```yaml
+game:
+  permadeath: true        # Tod bietet kein Undo/Load, nur [R]estart | [Q]uit
+  allow_undo: false       # 'undo' generell abweisen
+  ironman: true           # Speichern nur in Savezones; Checkpoint wird bei Tod gelöscht
+  save_zones: [camp, tavern]  # Räume, in denen im Ironman-Modus gespeichert werden darf
+  meta_slug: my_dungeon   # optional: Slug für die Meta-Datei (Rogue Phase 2, M8)
+```
+
+- `permadeath`: beim Tod gibt es kein `[U]ndo`/`[L]oad` mehr — nur
+  `[R]estart` und `[Q]uit`. Eingaben `u`/`l` werden abgewiesen.
+- `allow_undo: false`: der `undo`-Befehl wird generiert abgewiesen
+  ("Undo is disabled in this adventure."); die Undo-Historie wird dann gar
+  nicht erst aufgebaut.
+- `ironman` (Checkpoint-Modell):
+  - Speichern ist nur in `save_zones`-Räumen erlaubt ("You can only rest at
+    a savezone."); es gibt genau **einen** Checkpoint-Slot (`checkpoint`),
+    der bei jedem In-Zone-Save überschrieben wird.
+  - Beim Tod wird der Checkpoint-Slot automatisch von der Festplatte
+    gelöscht; `load` ist im Ironman-Modus gesperrt. Die per `--save`
+    geladene Startdatei bleibt als neutraler Wiedereinstieg erhalten.
+- Validierung: `save_zones` müssen existierende Raum-IDs sein
+  (`MissingRoom`, hart); `ironman` ohne `save_zones` ist legal (Hardcore:
+  nie speichern) warnt aber (`IronmanWithoutSavezones`).
+
 ## Banner: `title_art` und `end_art` (Phase G)
 
 Zwei optionale Top-Level-Felder ersetzen die fest eingebauten Textrahmen der

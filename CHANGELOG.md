@@ -4,6 +4,31 @@
 
 ## Unreleased
 
+### Feature: Permadeath, Ironman & Savezones (Rogue Phase 1)
+
+- Neuer optioneller YAML-Block `game:` (Worldbuilder-Schema `AGamePolicy`):
+  `permadeath`, `allow_undo`, `ironman`, `save_zones` — alle Felder optional,
+  Default = bisheriges Verhalten (Default-Invariante).
+- **Permadeath:** beim Tod gibt es kein `[U]ndo`/`[L]oad` mehr, nur
+  `[R]estart` | `[Q]uit`; `u`/`l`-Eingaben im Death-Screen werden abgewiesen.
+- **`allow_undo: false`:** der `undo`-Befehl wird abgewiesen, die Undo-Historie
+  wird dann nicht mehr aufgebaut.
+- **Ironman + Savezones:** Speichern nur in autordefinierten Savezone-Räumen
+  ("You can only rest at a savezone."), festes Slot-Modell
+  (`SaveLoad.ironmanCheckpointSlot = "checkpoint"`). Beim Tod löscht die
+  Engine genau diesen Checkpoint (`deleteSaveSlot`, idempotent); `load` ist
+  gesperrt. `--save`-Startdateien bleiben unberührt (neutraler Wiedereinstieg).
+- Validierung: unbekannte `save_zones`-Räume → `MissingRoom` (hart);
+  `ironman` ohne `save_zones` → Warnung `IronmanWithoutSavezones` (legal,
+  aber meist Versehen). Nicht-fatale Compiler-Diagnostik reisen neu über
+  `CompileResult.crWarnings` zum Autor; der `compile`-Befehl zeigt sie an,
+  ohne den Build abzubrechen.
+- M2-Schutz: `ToJSON GameWorld` emittiert `"game"` nur bei Nicht-Default —
+  World-Checksummen und damit alle bestehenden Saves bleiben bit-identisch.
+- Tests: 4 neue Engine-Tests (undo-gate, death menu, savezone gate,
+  Checkpoint-Löschung) + Worldbuilder-Tests (policy kompiliert, Warnung,
+  MissingRoom).
+
 ### Feature: Rogue Phase 0 — Save-Isolation, `deleteSaveSlot`, `slugify`
 
 - `SaveLoad.savesDir` ist jetzt `IO FilePath` und ehrt die Umgebungsvariable
