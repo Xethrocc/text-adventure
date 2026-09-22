@@ -4,9 +4,11 @@ module SaveLoad where
 import Types
 import Game (syncInventory)
 import Control.Exception (try, SomeException)
+import Control.Monad (when)
 import Data.List (foldl', sortBy)
 import Data.Time (getCurrentTime, formatTime, defaultTimeLocale)
-import System.Directory (createDirectoryIfMissing, listDirectory, doesFileExist)
+import System.Directory (createDirectoryIfMissing, listDirectory, doesFileExist, removeFile)
+import System.Environment (lookupEnv)
 import System.FilePath ((</>))
 
 import qualified Data.Aeson as Aeson
@@ -40,20 +42,32 @@ formatSaveEntry currentChecksum sf =
     compat | worldChecksum sf == currentChecksum = "compatible"
            | otherwise                           = "world mismatch!"
 
--- | The (working-directory relative) directory save slots live in.
-savesDir :: FilePath
-savesDir = "saves"
+-- | The directory save slots live in. Default: `saves` relative to the
+--   working directory (unchanged behaviour, Rogue Phase 0). The environment
+--   variable `TA_SAVES_DIR` overrides it — the hermetic seam for tests, E2E
+--   runs and per-adventure isolation, so the game can be driven from a temp
+--   directory without polluting the repo and without ordering-dependent
+--   saves leaking between runs.
+savesDir :: IO FilePath
+savesDir = maybe "saves" id <$> lookupEnv "TA_SAVES_DIR"
 
--- | Path of one save slot. Built with `System.FilePath` so the separator is the
---   platform's: a literal "/" happens to work on Windows too, but the engine is
---   meant to run wherever its authors do.
-saveSlotPath :: String -> FilePath
-saveSlotPath slotName = savesDir </> (slotName ++ ".json")
+-- | Directory for one specific purpose, honouring `TA_SAVES_DIR`. The variant
+--   the meta-progression layer (Rogue Phase 2) will use, kept next to its
+--   sibling so the path scheme stays in one place.
+savesDirFor :: String -> IO FilePath
+savesDirFor base = (</> base) <$> savesDir
+
+-- | Path of one save slot. Built with `System.FilePath` so the separator is
+--   the platform's: a literal "/" happens to work on Windows too, but the
+--   engine is meant to run wherever its authors do.
+saveSlotPath :: String -> IO FilePath
+saveSlotPath slotName = (</> (slotName ++ ".json")) <$> savesDir
 
 -- | Save game to a named slot with metadata
 saveGame :: GameState -> String -> IO ()
 saveGame state slotName = do
-    createDirectoryIfMissing True savesDir
+    dir <- savesDir
+    createDirectoryIfMissing True dir
     now <- getCurrentTime
     let timestamp = formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S" now
         checksum = computeWorldChecksum (world state)
@@ -64,14 +78,14 @@ saveGame state slotName = do
             , saveName      = slotName
             , saveData      = save state
             }
-        filepath = saveSlotPath slotName
+    filepath <- saveSlotPath slotName
     BL.writeFile filepath (Aeson.encodePretty saveFile)
     putStrLn $ "Game saved to " ++ filepath ++ " (" ++ timestamp ++ ")."
 
 -- | Load game from a named slot, with checksum validation
 loadGame :: GameState -> String -> IO (Maybe GameState)
 loadGame state slotName = do
-    let filepath = saveSlotPath slotName
+    filepath <- saveSlotPath slotName
     exists <- doesFileExist filepath
     if not exists
     then do
@@ -109,6 +123,20 @@ loadGame state slotName = do
                             putStrLn "Error: Save file is corrupted or incompatible."
                             return Nothing
 
+-- | Delete one save slot from disk (Rogue Phase 0). Missing files count as
+--   deleted (idempotent); anything else (permissions, locked file on Windows)
+--   is reported instead of crashing the game over path. This is the seam the
+--   Ironman mode (Rogue Phase 1) will call from 'GameLoop.handleGameOver'.
+deleteSaveSlot :: String -> IO ()
+deleteSaveSlot slotName = do
+    filepath <- saveSlotPath slotName
+    exists <- doesFileExist filepath
+    when exists $ do
+        result <- try (removeFile filepath) :: IO (Either SomeException ())
+        case result of
+            Right () -> putStrLn $ "Save slot deleted: " ++ filepath
+            Left _   -> putStrLn $ "Warning: could not delete save slot " ++ filepath ++ "."
+
 -- | Load a legacy save file (bare SaveState, no wrapper)
 loadLegacySave :: GameState -> FilePath -> IO (Maybe GameState)
 loadLegacySave state filepath = do
@@ -122,11 +150,12 @@ loadLegacySave state filepath = do
                 return (Just loadedState)
             Nothing -> return Nothing
 
--- | List all saves in the saves/ directory
+-- | List all saves in the saves directory (`TA_SAVES_DIR` overrides it)
 listSaves :: GameWorld -> IO ()
 listSaves gw = do
-    createDirectoryIfMissing True savesDir
-    files <- listDirectory savesDir
+    dir <- savesDir
+    createDirectoryIfMissing True dir
+    files <- listDirectory dir
     let jsonFiles = filter (\f -> length f > 5 && drop (length f - 5) f == ".json") files
     if null jsonFiles
     then putStrLn "No saved games found."
@@ -141,7 +170,8 @@ listSaves gw = do
   where
     loadSaveEntry :: String -> FilePath -> IO (Maybe (String, String))
     loadSaveEntry currentChecksum filename = do
-        result <- try (BL.readFile (savesDir </> filename)) :: IO (Either SomeException BL.ByteString)
+        dir <- savesDir
+        result <- try (BL.readFile (dir </> filename)) :: IO (Either SomeException BL.ByteString)
         case result of
             Left _ -> return Nothing
             Right contents -> case Aeson.decode contents of

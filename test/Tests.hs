@@ -1,7 +1,7 @@
 module Main where
 
 import Control.Monad (when)
-import Data.List (isInfixOf, isPrefixOf)
+import Data.List (isInfixOf, isPrefixOf, isSuffixOf)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AesonT
 import qualified Data.ByteString.Lazy.Char8 as BLC
@@ -10,7 +10,7 @@ import qualified Data.Set as Set
 import Data.Maybe (isJust, isNothing)
 import Data.Either (isLeft)
 import System.Timeout (timeout)
-import Control.Exception (evaluate)
+import Control.Exception (bracket, evaluate, try, SomeException)
 import Game
 import GameLoop (LoopState (..), initLoopState, applyLoopCommand,
                  commandEvents, consumesTurn, consumesTurnIn, runGameWithFrontend)
@@ -22,13 +22,16 @@ import Validate (ValidationError (..), validateWorld, validateGameState)
 import Sample (initSampleGame)
 import SaveLoad (computeWorldChecksum, formatSaveEntry, currentSaveVersion)
 import qualified SaveLoad as SaveLoad
-import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory,
-                         removeFile, withCurrentDirectory)
+import System.Directory (createDirectoryIfMissing, createDirectory, doesDirectoryExist,
+                         doesFileExist, getTemporaryDirectory, listDirectory,
+                         removeDirectoryRecursive, removeFile, withCurrentDirectory)
+import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef')
 import System.Console.Haskeline (Completion (..))
 import System.Exit (exitFailure)
 import Types
 import World (loadGame, loadGameWorld, loadSaveState, siblingSavePath)
+import System.FilePath ((</>))
 import Ansi (stripAnsi, ansiFilter)
 
 runTest :: String -> IO Bool -> IO Bool
@@ -36,6 +39,33 @@ runTest name testAction = do
     passed <- testAction
     putStrLn $ (if passed then "[PASS] " else "[FAIL] ") ++ name
     pure passed
+
+-- | Rogue Phase 0: run an IO action with `TA_SAVES_DIR` pointed at a fresh
+--   temp directory, restoring the ambient environment afterwards. The seam
+--   that keeps save-related tests hermetic: no repo pollution, no leaking
+--   slots between tests and no interference from an ambient `TA_SAVES_DIR`.
+--   Tests run sequentially, so a fixed directory name is fine; a stale
+--   directory from a crashed run is cleared on setup.
+withSavesIsolation :: IO a -> IO a
+withSavesIsolation action =
+    bracket setup teardown (\(d, _) -> setEnv "TA_SAVES_DIR" d >> action)
+  where
+    setup = do
+        tmp <- getTemporaryDirectory
+        let d = tmp </> "ta-saves-test"
+        stale <- doesDirectoryExist d
+        when stale (removeDirectoryRecursive d)
+        createDirectory d
+        old <- lookupEnv "TA_SAVES_DIR"
+        pure (d, old)
+    teardown (d, old) = do
+        case old of
+            Just v  -> setEnv "TA_SAVES_DIR" v
+            Nothing -> unsetEnv "TA_SAVES_DIR"
+        leftover <- doesDirectoryExist d
+        when leftover $ do
+            _ <- try (removeDirectoryRecursive d) :: IO (Either SomeException ())
+            pure ()
 
 expectEqual :: (Eq a, Show a) => a -> a -> IO Bool
 expectEqual expected actual
@@ -3165,6 +3195,7 @@ testGameWorldRoundTrip = do
     r1 <- expectEqual (Just gw) (Aeson.decode (Aeson.encode gw))
     let profiles =
             [ CombatClassic Nothing
+            , CombatClassic (Just (CombatScreen emptyAscii 12 Nothing Nothing))
             , CombatOff Nothing
             , CombatOff (Just "You cannot fight here.")
             , CombatNarrative (NarrativeCombat 3 (SendMessage "hit") (SendMessage "miss"))
@@ -3388,34 +3419,76 @@ testSaveLoadRoundTrip :: IO Bool
 testSaveLoadRoundTrip = do
     tmp <- getTemporaryDirectory
     withCurrentDirectory tmp $ do
-        let st0 = initSampleGame
-        -- save -> load -> identical SaveState
-        SaveLoad.saveGame st0 "l2slot"
-        loaded <- SaveLoad.loadGame st0 "l2slot"
-        r1 <- case loaded of
-            Just st' -> expectEqual (save st0) (save st')
-            Nothing  -> expectTrue "saveGame/loadGame round-trips" False
-        -- a changed world warns but still loads (checksum compatibility path)
-        let otherWorld = st0 { world = (world st0) { worldName = "Different World" } }
-        loaded2 <- SaveLoad.loadGame otherWorld "l2slot"
-        r2 <- case loaded2 of
-            Just st' -> expectEqual (save st0) (save st')
-            Nothing  -> expectTrue "a mismatching world still loads" False
-        -- a bare SaveState is picked up by the legacy branch
-        createDirectoryIfMissing True SaveLoad.savesDir
-        BLC.writeFile (SaveLoad.saveSlotPath "l2legacy") (Aeson.encode (save st0))
-        legacy <- SaveLoad.loadGame st0 "l2legacy"
-        r3 <- case legacy of
-            Just st' -> expectEqual (save st0) (save st')
-            Nothing  -> expectTrue "a bare SaveState loads via the legacy branch" False
-        -- ... and it must not be mistaken for a wrapper while decoding
-        r4 <- expectEqual (Nothing :: Maybe SaveFile)
-                  (Aeson.decode (Aeson.encode (save st0)))
-        mapM_ (\f -> do
-                  e <- doesFileExist f
-                  when e (removeFile f))
-              [SaveLoad.saveSlotPath "l2slot", SaveLoad.saveSlotPath "l2legacy"]
-        pure (r1 && r2 && r3 && r4)
+        -- Rogue Phase 0: hermetic saves — keep this test's slots out of any
+        -- TA_SAVES_DIR the ambient environment might carry.
+        withSavesIsolation $ do
+            let st0 = initSampleGame
+            -- save -> load -> identical SaveState
+            SaveLoad.saveGame st0 "l2slot"
+            loaded <- SaveLoad.loadGame st0 "l2slot"
+            r1 <- case loaded of
+                Just st' -> expectEqual (save st0) (save st')
+                Nothing  -> expectTrue "saveGame/loadGame round-trips" False
+            -- a changed world warns but still loads (checksum compatibility path)
+            let otherWorld = st0 { world = (world st0) { worldName = "Different World" } }
+            loaded2 <- SaveLoad.loadGame otherWorld "l2slot"
+            r2 <- case loaded2 of
+                Just st' -> expectEqual (save st0) (save st')
+                Nothing  -> expectTrue "a mismatching world still loads" False
+            -- a bare SaveState is picked up by the legacy branch
+            dir <- SaveLoad.savesDir
+            createDirectoryIfMissing True dir
+            legacyPath <- SaveLoad.saveSlotPath "l2legacy"
+            BLC.writeFile legacyPath (Aeson.encode (save st0))
+            legacy <- SaveLoad.loadGame st0 "l2legacy"
+            r3 <- case legacy of
+                Just st' -> expectEqual (save st0) (save st')
+                Nothing  -> expectTrue "a bare SaveState loads via the legacy branch" False
+            -- ... and it must not be mistaken for a wrapper while decoding
+            r4 <- expectEqual (Nothing :: Maybe SaveFile)
+                      (Aeson.decode (Aeson.encode (save st0)))
+            mapM_ (\slot -> do
+                      f <- SaveLoad.saveSlotPath slot
+                      e <- doesFileExist f
+                      when e (removeFile f))
+                  ["l2slot", "l2legacy"]
+            pure (r1 && r2 && r3 && r4)
+
+-- | Rogue Phase 0: `TA_SAVES_DIR` redirects `saveGame`/`loadGame`/`listSaves`
+--   and `saveSlotPath` — the hermetic seam for tests and E2E. Default without
+--   the variable stays the CWD-relative `saves` (bit-identical behaviour).
+testSavesDirOverride :: IO Bool
+testSavesDirOverride = withSavesIsolation $ do
+    let st0 = initSampleGame
+    SaveLoad.saveGame st0 "p0slot"
+    d <- SaveLoad.savesDir
+    slotPath <- SaveLoad.saveSlotPath "p0slot"
+    r1 <- expectTrue "slot file lands under TA_SAVES_DIR"
+             (("tmp" `isInfixOf` slotPath) && ("p0slot.json" `isSuffixOf` slotPath))
+    exists <- doesFileExist slotPath
+    r2 <- expectTrue "saved slot exists in the redirected directory" exists
+    -- the redirected directory holds exactly the one slot file
+    files <- SaveLoad.savesDir >>= listDirectory
+    r3 <- expectEqual ["p0slot.json"] files
+    -- deleteSaveSlot removes the file; missing slots are idempotent
+    SaveLoad.deleteSaveSlot "p0slot"
+    gone <- doesFileExist slotPath
+    r4 <- expectTrue "deleteSaveSlot removed the file" (not gone)
+    SaveLoad.deleteSaveSlot "p0slot"   -- must not throw
+    pure (r1 && r2 && r3 && r4)
+
+-- | Rogue Phase 0: the default directory (no `TA_SAVES_DIR`) stays the
+--   CWD-relative `saves` — the Default-Invariante for every existing setup.
+testSavesDirDefault :: IO Bool
+testSavesDirDefault = do
+    old <- lookupEnv "TA_SAVES_DIR"
+    unsetEnv "TA_SAVES_DIR"
+    d <- SaveLoad.savesDir
+    result <- expectEqual "saves" d
+    case old of
+        Just v  -> setEnv "TA_SAVES_DIR" v
+        Nothing -> pure ()
+    pure result
 
 -- | L11: the turn pipeline is `incrementTurnCount` → `tickConditions` →
 --   `vehicleConditionTick` → `executeCommand` → `fireCommandTriggers`. A
@@ -4116,6 +4189,8 @@ main = do
         , runTest "enter event precedes turn event (L5)" testEnterFiresBeforeTurnThroughLoop
         , runTest "consumesTurn complete for every Command (L13)" testConsumesTurnCompleteness
         , runTest "SaveLoad round-trip + legacy + checksum (L2)" testSaveLoadRoundTrip
+        , runTest "TA_SAVES_DIR redirects saves + deleteSaveSlot (Rogue P0)" testSavesDirOverride
+        , runTest "savesDir default stays 'saves' (Rogue P0)" testSavesDirDefault
         , runTest "fatal condition tick stops the command (L11)" testFatalTickStopsCommand
         -- Review L4: constructor coverage in Validate
         , runTest "MissingRoom from a rule room reference (L4)" testValidateMissingRoomInRule
