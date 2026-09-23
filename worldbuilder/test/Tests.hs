@@ -23,6 +23,9 @@ import Worldbuilder.Generate
 import Data.List (sort, stripPrefix)
 import Data.YAML.Aeson (decode1)
 import Data.YAML (posLine)
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
+import qualified Data.Text as T
 import Types as E
 import Game (emptyGameState, evalPredicate)
 import Validate (validateWorld, validateGameState, ValidationError (..))
@@ -2565,6 +2568,17 @@ tests =
     , ("template: invalid count range is rejected", testTemplateInvalidCount)
     , ("template: seed parses from number and string", testTemplateSeedParse)
     , ("template: invalid combat fragment fails parsing", testTemplateInvalidCombat)
+    -- Rogue Phase 4c: pure generation core
+    , ("gen: same seed, identical plan (determinism)", testGenDeterminism)
+    , ("gen: rooms.min unreachable -> GENoSpace", testGenNoSpace)
+    , ("gen: every cell reaches the boss (directed BFS)", testGenReachability)
+    , ("gen: early abort delivers dungeon + warning", testGenEarlyAbort)
+    , ("gen: one-way hint converts exactly one edge", testGenOneway)
+    , ("gen: start cell + savezone archetype", testGenStartCell)
+    , ("gen: boss sits at maximum depth", testGenBossDepth)
+    , ("gen: loops create cycles (edges > nodes - 1)", testGenCycles)
+    , ("gen: bidirectional edges are unique pairs", testGenEdgeUniqueness)
+    , ("gen: different seeds diverge (smoke)", testGenSeedDivergence)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -2864,6 +2878,137 @@ testTemplateInvalidCombat =
     in case parseYamlTemplate yaml of
         Left _  -> expectTrue "invalid combat fragment is a parse error" True
         Right _ -> expectTrue "expected parse failure for combat: \"nope\"" False
+
+-- ---------------------------------------------------------------------------
+-- Rogue Phase 4c: pure generation core
+-- ---------------------------------------------------------------------------
+
+-- | A directly built template (no YAML detour) for the generation tests.
+genTemplate :: DTemplate
+genTemplate = DTemplate
+    { dtName          = "Gen"
+    , dtDescription   = Nothing
+    , dtLayout        = DLayout 6 12 4 0.5 2
+    , dtRoomTemplates =
+        [ DRoomTemplate "junction" 3 (DRange 1 4) False (minRoom "x") False
+        , DRoomTemplate "camp" 1 (DRange 1 2) True (minRoom "y") False ]
+    , dtSpecial = DSpecial (Just (DStartSpec (Just "camp")))
+                           (Just (DBossSpec "junction" (Just (Aeson.String (T.pack "max")))))
+                           Nothing
+    , dtOnewayHints = []
+    , dtItemPool = []
+    , dtNpcPool = []
+    , dtCombat = Nothing
+    , dtPlayer = Nothing
+    , dtVariables = []
+    , dtSeed = Nothing
+    }
+
+-- | Directed BFS over the plan's edges (locks ignored, one-way followed).
+genReachable :: DungeonPlan -> Set.Set Cell
+genReachable plan = go [dpStartCell plan] (Set.singleton (dpStartCell plan))
+  where
+    succs = Map.fromListWith (++) (concatMap f (dpEdges plan))
+    f e | deOneway e = [(deFrom e, [deTo e])]
+        | otherwise  = [(deFrom e, [deTo e]), (deTo e, [deFrom e])]
+    go [] acc = acc
+    go (c:cs) acc =
+        let next = [ n | n <- Map.findWithDefault [] c succs, not (Set.member n acc) ]
+        in go (cs ++ next) (foldr Set.insert acc next)
+
+testGenDeterminism :: IO Bool
+testGenDeterminism =
+    expectEqual (generateDungeonLayout genTemplate 42)
+                (generateDungeonLayout genTemplate 42)
+
+testGenNoSpace :: IO Bool
+testGenNoSpace =
+    -- branching 0 + depth 3 => exactly 3 cells; min 5 is unsatisfiable
+    let t = genTemplate { dtLayout = DLayout 5 5 3 0.0 0 }
+    in expectEqual (Left GENoSpace) (generateDungeonLayout t 42)
+
+testGenReachability :: IO Bool
+testGenReachability = case generateDungeonLayout genTemplate 42 of
+    Left err -> expectTrue ("unexpected: " ++ show err) False
+    Right plan ->
+        let reach = genReachable plan
+        in expectTrue "all cells (incl. boss) reachable from start"
+            (Map.keys (dpGrid plan) `allElem` reach)
+  where
+    allElem xs s = all (`Set.member` s) xs
+
+testGenEarlyAbort :: IO Bool
+testGenEarlyAbort =
+    let t = genTemplate { dtLayout = DLayout 3 4 6 0.5 0 }
+    in case generateDungeonLayout t 42 of
+        Left err -> expectTrue ("unexpected: " ++ show err) False
+        Right plan -> do
+            r1 <- expectTrue "early abort detected"
+                             (dpEarlyAbort plan && dpMaxDepth plan < 6)
+            r2 <- expectTrue "GeneratorEarlyAbort warning attached"
+                ("GeneratorEarlyAbort" `elem` map ciCode (dpWarnings plan))
+            r3 <- expectTrue "boss sits at the reached maximum"
+                (prDepth (dpGrid plan Map.! dpBossCell plan) == dpMaxDepth plan)
+            pure (r1 && r2 && r3)
+
+testGenOneway :: IO Bool
+testGenOneway =
+    let t = genTemplate
+            { dtOnewayHints = [ DOnewayHint "junction" "any" "down" True ] }
+    in case generateDungeonLayout t 42 of
+        Left err -> expectTrue ("unexpected: " ++ show err) False
+        Right plan -> do
+            let oneways = filter deOneway (dpEdges plan)
+            r1 <- expectTrue "exactly one one-way edge" (length oneways == 1)
+            r2 <- expectTrue "forward direction renamed to 'down'"
+                (all (\e -> deDir e == "down") oneways)
+            r3 <- expectTrue "boss still reachable (directed)"
+                (Set.member (dpBossCell plan) (genReachable plan))
+            pure (r1 && r2 && r3)
+
+testGenStartCell :: IO Bool
+testGenStartCell = case generateDungeonLayout genTemplate 42 of
+    Left err -> expectTrue ("unexpected: " ++ show err) False
+    Right plan -> do
+        let sr = dpGrid plan Map.! dpStartCell plan
+        r1 <- expectEqual (0, 0) (dpStartCell plan)
+        r2 <- expectEqual 1 (prDepth sr)
+        r3 <- expectEqual "camp" (prArch sr)  -- special.start.template wins
+        pure (r1 && r2 && r3)
+
+testGenBossDepth :: IO Bool
+testGenBossDepth =
+    -- with enough headroom the boss sits at layout.depth; otherwise the
+    -- early-abort maximum — both cases: boss depth == dpMaxDepth
+    let checks t seed = case generateDungeonLayout t seed of
+            Left _   -> False
+            Right p  -> prDepth (dpGrid p Map.! dpBossCell p) == dpMaxDepth p
+                     && (dpMaxDepth p == dlDepth (dtLayout t) || dpEarlyAbort p)
+    in expectTrue "boss depth == max depth (both templates)"
+        (checks genTemplate 42 && checks genTemplate 7
+         && checks (genTemplate { dtLayout = DLayout 3 20 5 0.8 1 }) 99)
+
+testGenCycles :: IO Bool
+testGenCycles = case generateDungeonLayout genTemplate 42 of
+    Left err -> expectTrue ("unexpected: " ++ show err) False
+    Right plan ->
+        expectTrue "edge count exceeds a tree (cycles exist)"
+            (length (dpEdges plan) > Map.size (dpGrid plan) - 1)
+
+testGenEdgeUniqueness :: IO Bool
+testGenEdgeUniqueness = case generateDungeonLayout genTemplate 42 of
+    Left err -> expectTrue ("unexpected: " ++ show err) False
+    Right plan ->
+        let undirected = sort [ sort [deFrom e, deTo e] | e <- dpEdges plan ]
+        in expectTrue "no duplicate undirected pairs"
+            (length undirected == length (nub' undirected))
+  where
+    nub' = Set.toList . Set.fromList
+
+testGenSeedDivergence :: IO Bool
+testGenSeedDivergence =
+    expectTrue "seed 42 and seed 7 differ (smoke)"
+        (generateDungeonLayout genTemplate 42 /= generateDungeonLayout genTemplate 7)
 
 main :: IO ()
 main = do

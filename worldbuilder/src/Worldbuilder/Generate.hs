@@ -40,6 +40,16 @@ module Worldbuilder.Generate
     , DRange (..)
     , parseTemplate
     , validateTemplate
+    , GenerateError (..)
+    , Cell
+    , PlannedRoom (..)
+    , DEdge (..)
+    , DungeonPlan (..)
+    , generateDungeonLayout
+    , placeRooms
+    , assignArchetypes
+    , connectRooms
+    , ensureReachable
     ) where
 
 import Worldbuilder.Types
@@ -53,6 +63,7 @@ import Worldbuilder.Types
     , anId
     )
 import Worldbuilder.Compile (CompileIssue (..), Severity (..))
+import Worldbuilder.Rng (Rng, newRng, pickWeighted, randInt, shuffle)
 
 import Data.Aeson
     ( FromJSON (..)
@@ -65,6 +76,10 @@ import Data.Aeson
 import Data.Aeson.Types (parseEither)
 import qualified Data.Aeson.Key as K
 import qualified Data.Aeson.KeyMap as KM
+import qualified Data.Map.Strict as Map
+import Data.Map.Strict (Map)
+import qualified Data.Set as Set
+import Data.Set (Set)
 import Data.List (group, sort)
 import Data.Maybe (mapMaybe)
 import qualified Data.Text as T
@@ -495,3 +510,314 @@ nubDup = map head . filter ((> 1) . length) . group . sort
 fromMaybeMaybe :: Show a => Maybe a -> String
 fromMaybeMaybe (Just x) = show x
 fromMaybeMaybe Nothing  = "<nothing>"
+
+-- ---------------------------------------------------------------------------
+-- Rogue Phase 4c: pure generation core (detail plan section 3, steps 1-4)
+-- ---------------------------------------------------------------------------
+
+-- | Generation errors (detail plan section 3). @GENoSpace@ is only produced
+--   when not even @layout.rooms.min@ cells are placeable — anything beyond
+--   that is the early-abort warning path (@GeneratorEarlyAbort@), never a
+--   hard error (detail plan clarification).
+data GenerateError
+    = GETemplate [CompileIssue]   -- ^ schema violations (from 'validateTemplate')
+    | GEUnreachable [(Int, Int)]  -- ^ cells that could not be connected (generator bug)
+    | GENoSpace                   -- ^ fewer than @rooms.min@ cells placeable
+    deriving (Show, Eq)
+
+-- | One placed grid cell: archetype id + generation depth (start = 1).
+data PlannedRoom = PlannedRoom
+    { prArch  :: String
+    , prDepth :: Int
+    } deriving (Show, Eq)
+
+-- | A grid cell. @Data.Map@ iteration order (lexicographic) is the single
+--   source of determinism — never @HashMap@ (detail plan section 7).
+type Cell = (Int, Int)
+
+-- | One connection between two cells. Bidirectional edges (see 'deOneway')
+--   emit two @AExitRef@s; one-way edges emit only the forward direction
+--   (fall traps — Review decision 1). 'deDir' is the forward direction name.
+data DEdge = DEdge
+    { deFrom   :: Cell
+    , deTo     :: Cell
+    , deDir    :: String
+    , deOneway :: Bool
+    } deriving (Show, Eq)
+
+-- | The pure result of layout generation: everything 'emitAdventure' (4d)
+--   needs to build the @Adventure@ record.
+data DungeonPlan = DungeonPlan
+    { dpGrid         :: Map Cell PlannedRoom
+    , dpEdges        :: [DEdge]
+    , dpWarnings     :: [CompileIssue]  -- ^ e.g. GeneratorEarlyAbort, OnewayHintUnmatched
+    , dpStartCell    :: Cell            -- ^ always @(0, 0)@, depth 1
+    , dpBossCell     :: Cell
+    , dpTreasureCell :: Maybe Cell
+    , dpEarlyAbort   :: Bool            -- ^ reached depth < layout.depth
+    , dpMaxDepth     :: Int             -- ^ deepest placed cell (= boss depth)
+    } deriving (Show, Eq)
+
+-- | The four cardinal directions in deterministic draw order (north first —
+--   the order is part of the generation algorithm's definition).
+gridDirNames :: [String]
+gridDirNames = ["north", "south", "east", "west"]
+
+-- | Offset of a cardinal direction (screen coordinates: north = -y).
+stepCell :: Cell -> String -> Cell
+stepCell (x, y) dir = case dir of
+    "north" -> (x, y - 1)
+    "south" -> (x, y + 1)
+    "east"  -> (x + 1, y)
+    "west"  -> (x - 1, y)
+    _       -> (x, y)  -- guarded by callers
+
+-- | Direction name between two cells (cardinal or diagonal; the diagonals
+--   exist as engine 'E.Direction's and keep loop edges grid-consistent).
+gridDirBetween :: Cell -> Cell -> String
+gridDirBetween (x1, y1) (x2, y2)
+    | x2 == x1 && y2 == y1 - 1 = "north"
+    | x2 == x1 && y2 == y1 + 1 = "south"
+    | x2 == x1 + 1 && y2 == y1 = "east"
+    | x2 == x1 - 1 && y2 == y1 = "west"
+    | x2 == x1 + 1 && y2 == y1 - 1 = "northeast"
+    | x2 == x1 - 1 && y2 == y1 - 1 = "northwest"
+    | x2 == x1 + 1 && y2 == y1 + 1 = "southeast"
+    | x2 == x1 - 1 && y2 == y1 + 1 = "southwest"
+    | otherwise = "east"  -- unreachable: callers only pair neighbour cells
+
+-- | Step 1 — place rooms on grid coordinates. Start at @(0,0)@ (depth 1);
+--   iteratively expand the front-most frontier cell in a random free cardinal
+--   direction; @branching@ decides whether the new cell *joins* the frontier
+--   (tree growth) or *replaces* the current one (chain). Stops at
+--   @rooms.max@ or when the frontier runs dry.
+--
+--   Pure geometry: archetypes are assigned separately ('assignArchetypes') so
+--   this step is testable as pure layout logic. Result: cell -> depth.
+placeRooms :: DLayout -> Rng -> (Map Cell Int, Rng)
+placeRooms layout r0 = go [(0, 0)] (Map.singleton (0, 0) 1) 1 r0
+  where
+    maxCount = dlRoomsMax layout
+    maxDepth = dlDepth layout
+    go frontier cells count r
+        | count >= maxCount = (cells, r)
+        | otherwise = case frontier of
+            [] -> (cells, r)
+            (h : rest) ->
+                let d = cells Map.! h
+                in if d >= maxDepth
+                    then go rest cells count r  -- head exhausted (max depth)
+                    else
+                        let free = [ stepCell h dir
+                                   | dir <- gridDirNames
+                                   , not (Map.member (stepCell h dir) cells) ]
+                        in case free of
+                            [] -> go rest cells count r  -- head is walled in
+                            _  ->
+                                let (pick, r1) = randInt 0 (length free - 1) r
+                                    target = free !! pick
+                                    bp = floor (dlBranching layout * 10000) :: Int
+                                    (branch, r2)
+                                        | bp <= 0    = (False, r1)
+                                        | bp >= 10000 = (True, r1)
+                                        | otherwise =
+                                            let (draw, r') = randInt 1 10000 r1
+                                            in (draw <= bp, r')
+                                    cells' = Map.insert target (d + 1) cells
+                                    frontier' = if branch
+                                        then h : rest ++ [target]  -- tree growth
+                                        else target : rest         -- chain
+                                in go frontier' cells' (count + 1) r2
+
+-- | Step 2 — assign archetypes. Start gets @special.start.template@ (or the
+--   first sorted savezone archetype, or the first archetype), the boss cell
+--   gets @special.boss.template@; everything else is drawn weighted, filtered
+--   by the archetype's @depth_range@ (fallback: full weighted set).
+--   The treasure cell is the deepest free cell (tie: smallest coordinate) —
+--   no RNG needed.
+assignArchetypes :: DTemplate -> Map Cell Int -> Rng
+                 -> (Map Cell PlannedRoom, Cell, Maybe Cell, Rng)
+assignArchetypes t depths r0 =
+    let maxDepth = maximum (Map.elems depths)
+        bossCell = head [ c | c <- Map.keys depths, (depths Map.! c) == maxDepth ]
+        archIds  = map drtId (dtRoomTemplates t)
+        startArch = case dstTemplate =<< dspStart (dtSpecial t) of
+            Just a  -> a
+            Nothing -> case [ drtId rt | rt <- dtRoomTemplates t, drtSavezone rt ] of
+                (a : _) -> a
+                []      -> case archIds of
+                    (a : _) -> a
+                    []      -> "room"  -- NoRoomTemplates rejects this earlier
+        treasureCell = case dspTreasure (dtSpecial t) of
+            Nothing -> Nothing
+            Just _  -> case [ c | c <- Map.keys depths, c /= (0, 0), c /= bossCell ] of
+                [] -> Nothing
+                cs -> Just (head (sortByDepthDesc depths cs))
+        bossArch = maybe "room" dbsTemplate (dspBoss (dtSpecial t))
+        treasureArch = maybe "room" dtsTemplate (dspTreasure (dtSpecial t))
+        depthFits rng d = d >= drMin rng
+                          && (drMax rng == maxBound || d <= drMax rng)
+        -- weighted draw for a non-special cell at depth d
+        drawArch d r =
+            let fitting = [ (drtWeight rt, drtId rt) | rt <- dtRoomTemplates t
+                         , depthFits (drtDepth rt) d ]
+                pool = case fitting of
+                    [] -> [ (drtWeight rt, drtId rt) | rt <- dtRoomTemplates t ]
+                    _  -> fitting
+            in case pool of
+                []       -> (startArch, r)  -- no archetypes at all (rejected earlier)
+                nonempty -> pickWeighted nonempty r
+        build r = foldl step (Map.empty, r) (Map.keys depths)
+        step (acc, r) c
+            | c == (0, 0)      = (Map.insert c (PlannedRoom startArch 1) acc, r)
+            | c == bossCell    = (Map.insert c (PlannedRoom bossArch maxDepth) acc, r)
+            | Just c == treasureCell =
+                (Map.insert c (PlannedRoom treasureArch (depths Map.! c)) acc, r)
+            | otherwise =
+                let (a, r') = drawArch (depths Map.! c) r
+                in (Map.insert c (PlannedRoom a (depths Map.! c)) acc, r')
+        (grid, r1) = build r0
+    in (grid, bossCell, treasureCell, r1)
+
+-- | Sort cells by depth (descending), then coordinate (ascending).
+sortByDepthDesc :: Map Cell Int -> [Cell] -> [Cell]
+sortByDepthDesc depths cs =
+    map snd (sort [ (negate (depths Map.! c), c) | c <- cs ])
+
+-- | Step 3 — edges from grid adjacency (cardinal, bidirectional), then
+--   @layout.loops@ extra diagonal edges (Chebyshev-1 pairs are never directly
+--   connected, so they add real cycles while staying grid-consistent via the
+--   engine's ne/nw/se/sw directions), then one-way hints (exactly one edge
+--   per hint, forward direction renamed to the authored direction).
+connectRooms :: DTemplate -> Map Cell PlannedRoom -> Rng
+             -> ([DEdge], Rng, [CompileIssue])
+connectRooms t grid r0 =
+    let cardinalEdges =
+            [ DEdge c c' (gridDirBetween c c') False
+            | c <- Map.keys grid
+            , dir <- ["east", "south"]
+            , let c' = stepCell c dir
+            , Map.member c' grid ]
+        diagonalPairs =
+            [ (c, c')
+            | c <- Map.keys grid
+            , dir <- ["southeast", "southwest"]
+            , let c' = stepCell c dir
+            , Map.member c' grid ]
+        (loopPairs, r1) = chooseLoops (dlLoops (dtLayout t)) diagonalPairs r0
+        loopEdges =
+            [ DEdge a b (gridDirBetween a b) False | (a, b) <- loopPairs ]
+        (edges, warns) = foldl applyHint (cardinalEdges ++ loopEdges, [])
+                                (zip [0 :: Int ..] (dtOnewayHints t))
+        applyHint (es, ws) (i, h)
+            | not (dohOneway h) = (es, ws)   -- hint without oneway is inert
+            | otherwise =
+                let archOf c = maybe "" prArch (Map.lookup c grid)
+                    matches e =
+                        not (deOneway e)
+                        && archOf (deFrom e) == dohFrom h
+                        && (dohTo h == "any" || archOf (deTo e) == dohTo h)
+                in case filter matches es of
+                    [] -> (es, ws ++ [ CompileIssue
+                            ("oneway_hints." ++ show i) SWarning
+                            "OnewayHintUnmatched"
+                            ("no bidirectional edge from archetype '" ++ dohFrom h
+                             ++ "' to convert — hint ignored") ])
+                    (e : _) ->
+                        -- exactly one edge per hint, deterministic (first in
+                        -- sorted edge order); the forward direction is renamed
+                        -- to the authored direction (e.g. a fall trap 'down')
+                        let converted = e { deDir = dohDir h, deOneway = True }
+                        in (map (\x -> if x == e then converted else x) es, ws)
+    in (edges, r1, warns)
+
+-- | Choose up to @n@ loop pairs: prefer equal-depth pairs, then any.
+chooseLoops :: Int -> [(Cell, Cell)] -> Rng -> ([(Cell, Cell)], Rng)
+chooseLoops n cands r0
+    | n <= 0 || null cands = ([], r0)
+    | otherwise =
+        let (shuffled, r1) = shuffle cands r0
+        in (take n shuffled, r1)
+
+-- | Step 4 — BFS over the *directed* graph (one-way edges followed in their
+--   direction only, locks ignored); unconnected cells are docked to the next
+--   reachable grid neighbour with a fresh bidirectional edge. Returns the
+--   repaired edge list, or the cells that could not be fixed (a generator
+--   bug — the pure grid is always connected).
+ensureReachable :: Map Cell PlannedRoom -> [DEdge] -> ([DEdge], Maybe [Cell])
+ensureReachable grid edges0 = go edges0
+  where
+    start = (0, 0)
+    go edges =
+        let reach = bfsReach (successorsOf edges) start
+            bad = sort [ c | c <- Map.keys grid, not (Set.member c reach) ]
+        in case bad of
+            [] -> (edges, Nothing)
+            _  ->
+                let docks = [ (c, n)
+                            | c <- bad
+                            , n <- take 1 [ n' | dir <- gridDirNames
+                                           , let n' = stepCell c dir
+                                           , Map.member n' grid
+                                           , Set.member n' reach ] ]
+                in case docks of
+                    [] -> (edges, Just bad)
+                    _  ->
+                        let newEdges =
+                                [ DEdge n c (gridDirBetween n c) False | (c, n) <- docks ]
+                        in go (edges ++ newEdges)
+
+-- | Directed successor map: bidirectional edges contribute both directions,
+--   one-way edges only the forward one.
+successorsOf :: [DEdge] -> Map Cell [Cell]
+successorsOf edges = Map.fromListWith (++) (concatMap f edges)
+  where
+    f e | deOneway e = [(deFrom e, [deTo e])]
+        | otherwise  = [(deFrom e, [deTo e]), (deTo e, [deFrom e])]
+
+-- | BFS over a successor map, deterministic by construction.
+bfsReach :: Map Cell [Cell] -> Cell -> Set Cell
+bfsReach succ0 start = go [start] (Set.singleton start)
+  where
+    go [] acc = acc
+    go (c : cs) acc =
+        let next = [ n | n <- Map.findWithDefault [] c succ0
+                   , not (Set.member n acc) ]
+        in go (cs ++ next) (foldr Set.insert acc next)
+
+-- | Entry point for 4c: template -> pure layout plan (steps 1-4). Locks,
+--   pools and the final @Adventure@ emission follow in 4d.
+generateDungeonLayout :: DTemplate -> Word64 -> Either GenerateError DungeonPlan
+generateDungeonLayout t seed =
+    let layout = dtLayout t
+        (depths, r1) = placeRooms layout (newRng seed)
+    in if Map.size depths < dlRoomsMin layout
+        then Left GENoSpace
+        else
+            let (grid, bossCell, treasureCell, r2) = assignArchetypes t depths r1
+                (edges, _r3, onewayWarns) = connectRooms t grid r2
+                (edges', unreachable) = ensureReachable grid edges
+                maxDepth = maximum (Map.elems depths)
+                earlyAbort = maxDepth < dlDepth layout
+                earlyWarns =
+                    [ CompileIssue "layout" SWarning "GeneratorEarlyAbort"
+                        ("grid exhausted at depth " ++ show maxDepth
+                         ++ " of " ++ show (dlDepth layout)
+                         ++ " — dungeon delivered with reached maximum")
+                    | earlyAbort ]
+                treasureWarns =
+                    [ CompileIssue "special.treasure" SWarning "GeneratorTreasureSkipped"
+                        "no free cell for the treasure room — placed without it"
+                    | Just _ <- [dspTreasure (dtSpecial t)], treasureCell == Nothing ]
+            in case unreachable of
+                Just bad -> Left (GEUnreachable bad)
+                Nothing  -> Right DungeonPlan
+                    { dpGrid = grid
+                    , dpEdges = edges'
+                    , dpWarnings = onewayWarns ++ treasureWarns ++ earlyWarns
+                    , dpStartCell = (0, 0)
+                    , dpBossCell = bossCell
+                    , dpTreasureCell = treasureCell
+                    , dpEarlyAbort = earlyAbort
+                    , dpMaxDepth = maxDepth
+                    }
