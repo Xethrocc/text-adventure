@@ -178,13 +178,58 @@ In der Terminal-UI (TUI) filtert die Minimap automatisch auf die Räume der betr
 * **Vollständige Solvability** („ist der Boss mit den gefundenen Items
   besiegbar?") — der Generator garantiert Erreichbarkeit + Lock/Key-Ordnung;
   die Gegenwert-Abwägung liegt beim Template-Autor (Pools).
-* **Laufzeit-Generierung** (neues Dungeon pro Run) — ein generiertes Dungeon
-  ist eine statische Adventure-Datei; „neues Dungeon pro Run" (Meta-
-  Progression, Phase 2 / Phase 4c) erfolgt über den Runner `worldbuilder run`.
+## Run-Regeneration: `worldbuilder run` (Phase 4c)
+
+Für Roguelike-/Roguelite-Loops bietet das Tooling den Runner `worldbuilder run`.
+Er generiert für jeden Durchlauf deterministisch ein frisches Dungeon basierend
+auf dem globalen Fortschrittszähler `meta.runs` und startet die Engine.
+
+### CLI-Syntax & Optionen
+
+```bash
+worldbuilder run <template.yaml> [options]
+```
+
+* `--seed <n>`: Überschreibt die automatische Seed-Ableitung für reproduzierbare Tests/E2E.
+* `--saves-dir <dir>`: Basisverzeichnis für Speicherstände (Default: `saves` oder `$TA_SAVES_DIR`).
+* `--keep-runs <n>`: Behält nur die `n` neuesten Runs im Slug-Verzeichnis und räumt ältere `run_<k>`-Ordner auf (Default: unbegrenzt).
+* `--no-launch`, `--dry-run`: Bereitet die Welt und das Run-Verzeichnis vor, startet die Engine jedoch nicht.
+* `--force`: Startet auch bei Validierungsfehlern.
+* `--tui`: Übergibt an das Terminal-UI Frontend (Brick).
+* `--no-color`: Deaktiviert ANSI-Farbausgaben.
+
+### Seed-Ableitung & Determinismus
+
+Der Generation-Seed jedes Runs wird deterministisch aus dem Adventure-Slug und dem aktuellen Run-Index berechnet:
+```
+seed = splitmix64(salt(slug) * GOLDEN1 + runIndex * GOLDEN2)
+```
+* `GOLDEN1 = 0x9E3779B97F4A7C15`, `GOLDEN2 = 0xBF58476D1CE4E5B9`.
+* Gleicher Run-Index und Slug ergeben auf jeder Plattform und Maschine exakt dieselbe Welt.
+* Jeder neue Run (`meta.runs` steigt um 1) liefert eine neue, unverbrauchte Dungeon-Topologie ohne Abhängigkeit von Systemuhren.
+
+### Verzeichnisstruktur & Checkpoint-Bindung
+
+```
+saves/
+├── katakomben_von_vhal_meta.json      # Globaler Fortschritt (meta.runs, meta.souls, etc.)
+└── katakomben_von_vhal/
+    ├── run_1/
+    │   ├── world.json                 # Generierte Welt für Run 1
+    │   ├── save.json                  # Start-Zustand für Run 1
+    │   └── checkpoint.json            # Run-spezifischer Checkpoint-Save
+    └── run_2/
+        ├── world.json                 # Generierte Welt für Run 2
+        ├── save.json
+        └── checkpoint.json
+```
+
+1. **Globale Meta-Variablen:** `$TA_META_DIR` zielt auf `<saves-dir>/`, sodass `<slug>_meta.json` run-übergreifend erhalten bleibt.
+2. **Hermetische Checkpoint-Bindung:** `$TA_SAVES_DIR` zielt auf das Run-Verzeichnis `<saves-dir>/<slug>/run_<n>/`. In-Game-Saves landen dort. Ein Checkpoint aus Run 1 kann niemals fälschlicherweise in Run 2 geladen werden (World-Checksum-Schutz greift und verhindert Verfälschungen).
 
 ## CI
 
-`scripts/ci.sh` Stufe 6 generiert das Repo-Template zweimal mit gleichem Seed
-(byte-identischer Output), spielt den Dungeon-Durchlauf bis zum Boss-Kill
-durch (`ci/e2e/worldgen.in` / `worldgen.expect`) und prüft zusätzlich die
-Kampfbildschirm-Zeilen (Kombinationshebel `combat.screen:`).
+`scripts/ci.sh` prüft die Generierung und Run-Regeneration automatisiert:
+* **Stufe 6 (Worldgen Phase 4):** Generiert das Repo-Template zweimal mit gleichem Seed (byte-identischer Output), spielt den Dungeon-Durchlauf bis zum Boss-Kill durch (`ci/e2e/worldgen.in` / `worldgen.expect`) und prüft die Kampfbildschirm-Zeilen.
+* **Stufe 7 (Run-Regeneration Phase 4c):** Führt zwei aufeinanderfolgende Runs über denselben Template-Pfad aus, verifiziert die Erstellung der `run_1`- und `run_2`-Verzeichnisse, prüft die Divergenz der generierten Welten und stellt sicher, dass der Run-Zähler `meta.runs` korrekt von 1 auf 2 fortgeschrieben wird.
+

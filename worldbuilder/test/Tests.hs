@@ -11,15 +11,18 @@ import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import System.Exit (exitFailure)
-import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory, removeFile)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
 import System.FilePath ((</>))
 import System.IO (hSetEncoding, stdout, utf8)
+import Control.Exception (try, SomeException)
 import Worldbuilder.Types
 import Worldbuilder.Locate (lineForPath)
 import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome, allWorldEffects)
 import Worldbuilder.ParseFile (parseAdventureFile)
 import Worldbuilder.Rng
 import Worldbuilder.Generate
+import Worldbuilder.Run (RunConfig (..), RunResult (..), defaultRunConfig, prepareRun, pruneOldRuns)
+import qualified SaveLoad
 import Data.List (sort, sortOn, stripPrefix)
 import Data.YAML.Aeson (decode1)
 import Data.YAML (posLine)
@@ -2603,6 +2606,10 @@ tests =
     , ("gen: rooms carry roomFloor matching level", testGenMultiLevelRoomFloors)
     , ("engine: roomFloor JSON default-invariante holds", testRoomFloorJsonDefaultInvariant)
     , ("gen: multilevel_dungeon_template.yaml fixture compiles and validates clean", testMultiLevelFixtureCompiles)
+    , ("run: run-seed derivation and fresh runs across runs", testRunPreparationDeterministicSeedAndDifferentRuns)
+    , ("run: seed override is respected", testRunPreparationSeedOverride)
+    , ("run: pruneOldRuns removes oldest runs beyond keepCount", testPruneOldRuns)
+    , ("run: checkpoint checksum binds to world of that run", testCheckpointBindingAcrossRuns)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -3432,6 +3439,124 @@ testMultiLevelFixtureCompiles = do
                                     r5 <- expectTrue "down stairs exist between levels" (length downExits >= 2)
                                     r6 <- expectTrue "return stairs (up) exist" (length upExits >= 2)
                                     pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+testRunPreparationDeterministicSeedAndDifferentRuns :: IO Bool
+testRunPreparationDeterministicSeedAndDifferentRuns = do
+    mbPath <- findExample "dungeon_template.yaml"
+    case mbPath of
+        Nothing -> expectTrue "dungeon_template.yaml found" False
+        Just tmplPath -> do
+            tmpBase <- getTemporaryDirectory
+            let savesD = tmpBase </> "ta-run-test-1"
+                slug = "katakomben_von_vhal"
+                metaFile = savesD </> (slug ++ "_meta.json")
+            createDirectoryIfMissing True savesD
+            ex <- doesFileExist metaFile
+            when ex (removeFile metaFile)
+            -- 1. First run with empty/missing meta file -> produces run_1
+            let cfg1 = (defaultRunConfig tmplPath)
+                    { rcSavesDir = Just savesD
+                    , rcNoLaunch = True
+                    }
+            res1 <- prepareRun cfg1
+            case res1 of
+                Left err -> expectTrue ("run 1 failed: " ++ err) False
+                Right r1 -> do
+                    let expectedSeed1 = SaveLoad.deriveRunSeedFromSlug slug 1
+                    b1 <- expectEqual 1 (rrRunIndex r1)
+                    b2 <- expectEqual expectedSeed1 (rrSeed r1)
+                    b3 <- doesFileExist (rrWorldPath r1)
+                    b4 <- doesFileExist (rrSavePath r1)
+                    -- Check save.json has meta.runs = 0 (bumped to 1 when engine starts)
+                    b5 <- expectEqual (Just (E.VVInt 0)) (Map.lookup "meta.runs" (E.variables (rrSave r1)))
+                    -- 2. Simulate run 1 finished: write meta file with meta.runs = 1
+                    SaveLoad.saveMeta (rrWorld r1) (Map.singleton "meta.runs" (E.VVInt 1))
+                    -- 3. Second run with meta.runs = 1 on disk -> produces run_2
+                    let cfg2 = cfg1
+                    res2 <- prepareRun cfg2
+                    case res2 of
+                        Left err -> expectTrue ("run 2 failed: " ++ err) False
+                        Right r2 -> do
+                            let expectedSeed2 = SaveLoad.deriveRunSeedFromSlug slug 2
+                            b6 <- expectEqual 2 (rrRunIndex r2)
+                            b7 <- expectEqual expectedSeed2 (rrSeed r2)
+                            b8 <- doesFileExist (rrWorldPath r2)
+                            b9 <- doesFileExist (rrSavePath r2)
+                            -- Different seeds => different world checksums!
+                            let cs1 = SaveLoad.computeWorldChecksum (rrWorld r1)
+                                cs2 = SaveLoad.computeWorldChecksum (rrWorld r2)
+                            b10 <- expectTrue "run 1 and run 2 have different worlds" (cs1 /= cs2)
+                            -- Cleanup
+                            _ <- try (removeDirectoryRecursive savesD) :: IO (Either SomeException ())
+                            pure (b1 && b2 && b3 && b4 && b5 && b6 && b7 && b8 && b9 && b10)
+
+testRunPreparationSeedOverride :: IO Bool
+testRunPreparationSeedOverride = do
+    mbPath <- findExample "dungeon_template.yaml"
+    case mbPath of
+        Nothing -> expectTrue "dungeon_template.yaml found" False
+        Just tmplPath -> do
+            tmpBase <- getTemporaryDirectory
+            let savesD = tmpBase </> "ta-run-test-seed"
+            createDirectoryIfMissing True savesD
+            let cfg = (defaultRunConfig tmplPath)
+                    { rcSavesDir = Just savesD
+                    , rcSeedOverride = Just 777777
+                    , rcNoLaunch = True
+                    }
+            res <- prepareRun cfg
+            case res of
+                Left err -> expectTrue ("run failed: " ++ err) False
+                Right r -> do
+                    b1 <- expectEqual 777777 (rrSeed r)
+                    _ <- try (removeDirectoryRecursive savesD) :: IO (Either SomeException ())
+                    pure b1
+
+testPruneOldRuns :: IO Bool
+testPruneOldRuns = do
+    tmpBase <- getTemporaryDirectory
+    let testD = tmpBase </> "ta-prune-test"
+    createDirectoryIfMissing True testD
+    createDirectoryIfMissing True (testD </> "run_1")
+    createDirectoryIfMissing True (testD </> "run_2")
+    createDirectoryIfMissing True (testD </> "run_3")
+    createDirectoryIfMissing True (testD </> "run_4")
+    writeFile (testD </> "other.txt") "keep me"
+    pruned <- pruneOldRuns testD 2
+    b1 <- expectEqual 2 (length pruned)
+    e1 <- doesDirectoryExist (testD </> "run_1")
+    e2 <- doesDirectoryExist (testD </> "run_2")
+    e3 <- doesDirectoryExist (testD </> "run_3")
+    e4 <- doesDirectoryExist (testD </> "run_4")
+    otherOk <- doesFileExist (testD </> "other.txt")
+    _ <- try (removeDirectoryRecursive testD) :: IO (Either SomeException ())
+    pure (b1 && not e1 && not e2 && e3 && e4 && otherOk)
+
+testCheckpointBindingAcrossRuns :: IO Bool
+testCheckpointBindingAcrossRuns = do
+    mbPath <- findExample "dungeon_template.yaml"
+    case mbPath of
+        Nothing -> expectTrue "dungeon_template.yaml found" False
+        Just tmplPath -> do
+            tmpBase <- getTemporaryDirectory
+            let savesD = tmpBase </> "ta-run-test-cp"
+            createDirectoryIfMissing True savesD
+            res1 <- prepareRun (defaultRunConfig tmplPath) { rcSavesDir = Just savesD, rcSeedOverride = Just 111, rcNoLaunch = True }
+            res2 <- prepareRun (defaultRunConfig tmplPath) { rcSavesDir = Just savesD, rcSeedOverride = Just 222, rcNoLaunch = True }
+            case (res1, res2) of
+                (Right r1, Right r2) -> do
+                    let w1 = rrWorld r1
+                        w2 = rrWorld r2
+                        cs1 = SaveLoad.computeWorldChecksum w1
+                        cs2 = SaveLoad.computeWorldChecksum w2
+                    b1 <- expectTrue "different seeds -> different world checksums" (cs1 /= cs2)
+                    -- Checkpoint saved for r1 carries cs1
+                    let cpFile = E.SaveFile 3 "2026-09-23T00:00:00" cs1 "checkpoint" (rrSave r1)
+                    b2 <- expectEqual cs1 (E.worldChecksum cpFile)
+                    b3 <- expectTrue "checkpoint of run 1 mismatches world of run 2" (E.worldChecksum cpFile /= cs2)
+                    _ <- try (removeDirectoryRecursive savesD) :: IO (Either SomeException ())
+                    pure (b1 && b2 && b3)
+                _ -> expectTrue "runs preparation succeeded" False
 
 -- helpers -------------------------------------------------------------------
 

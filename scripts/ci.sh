@@ -149,5 +149,60 @@ while IFS= read -r marker; do
     fi
 done < "ci/e2e/worldgen.expect"
 
+# ---------------------------------------------------------------------------
+# Rogue Phase 4c: run-regeneration E2E (detail plan section 11, test 4).
+# Two consecutive runs on the same template: run 1 generates run_1, advances
+# meta.runs from 0 to 1; run 2 generates run_2 with a different seed/world,
+# and advances meta.runs to 2.
+# ---------------------------------------------------------------------------
+echo "== 7. run-regeneration (Rogue Phase 4c) =="
+run_saves="$tmp/run-saves"
+mkdir -p "$run_saves"
+"${WORLDBUILDER[@]}" run "$wg_src" --saves-dir "$run_saves" --no-launch >/dev/null
+if [ -f "$run_saves/katakomben_von_vhal/run_1/world.json" ]; then
+    echo "OK   run-1-preparation (run_1 directory created)"
+else
+    echo "FAIL run-1-preparation (run_1 directory missing)"
+    exit 1
+fi
+TA_META_DIR="$run_saves" TA_SAVES_DIR="$run_saves/katakomben_von_vhal/run_1" "${GAME[@]}" \
+    --world "$run_saves/katakomben_von_vhal/run_1/world.json" \
+    --save "$run_saves/katakomben_von_vhal/run_1/save.json" \
+    --saves-dir "$run_saves/katakomben_von_vhal/run_1" --no-color <<< "quit" >/dev/null 2>&1 || true
+
+if grep -q '"contents": 1' "$run_saves/katakomben_von_vhal_meta.json" 2>/dev/null; then
+    echo "OK   run-1-meta (meta.runs is 1 after run 1)"
+else
+    echo "FAIL run-1-meta (meta.runs != 1 after run 1)"
+    exit 1
+fi
+
+"${WORLDBUILDER[@]}" run "$wg_src" --saves-dir "$run_saves" --no-launch >/dev/null
+if [ -f "$run_saves/katakomben_von_vhal/run_2/world.json" ]; then
+    echo "OK   run-2-preparation (run_2 directory created)"
+else
+    echo "FAIL run-2-preparation (run_2 directory missing)"
+    exit 1
+fi
+
+if cmp -s "$run_saves/katakomben_von_vhal/run_1/world.json" "$run_saves/katakomben_von_vhal/run_2/world.json"; then
+    echo "FAIL run-divergence (run 1 and run 2 have identical worlds)"
+    exit 1
+else
+    echo "OK   run-divergence (run 1 and run 2 have distinct worlds)"
+fi
+
+TA_META_DIR="$run_saves" TA_SAVES_DIR="$run_saves/katakomben_von_vhal/run_2" "${GAME[@]}" \
+    --world "$run_saves/katakomben_von_vhal/run_2/world.json" \
+    --save "$run_saves/katakomben_von_vhal/run_2/save.json" \
+    --saves-dir "$run_saves/katakomben_von_vhal/run_2" --no-color <<< "quit" >/dev/null 2>&1 || true
+
+if grep -q '"contents": 2' "$run_saves/katakomben_von_vhal_meta.json" 2>/dev/null; then
+    echo "OK   run-2-meta (meta.runs is 2 after run 2)"
+else
+    echo "FAIL run-2-meta (meta.runs != 2 after run 2)"
+    exit 1
+fi
+
 echo
 echo "All checks passed."

@@ -3872,6 +3872,28 @@ testSlugify = do
     r7 <- expectEqual "default" (slugify "  ")
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
 
+-- | Rogue Phase 4c: run-seed derivation from slug and run index.
+--   Determinism, distinctness across runs, and distinctness across slugs.
+testDeriveRunSeed :: IO Bool
+testDeriveRunSeed = do
+    let s0 = SaveLoad.deriveRunSeedFromSlug "catacombs" 0
+        s0_repeat = SaveLoad.deriveRunSeedFromSlug "catacombs" 0
+        s1 = SaveLoad.deriveRunSeedFromSlug "catacombs" 1
+        s2 = SaveLoad.deriveRunSeedFromSlug "catacombs" 2
+        sOther = SaveLoad.deriveRunSeedFromSlug "dungeon" 0
+        gw = world initSampleGame
+        sWorld = SaveLoad.deriveRunSeed gw 0
+        sWorldExpected = SaveLoad.deriveRunSeedFromSlug (SaveLoad.adventureSlug gw) 0
+    r1 <- expectEqual s0 s0_repeat
+    r2 <- expectTrue "run 0 and run 1 have different seeds" (s0 /= s1)
+    r3 <- expectTrue "run 1 and run 2 have different seeds" (s1 /= s2)
+    r4 <- expectTrue "different slugs have different seeds" (s0 /= sOther)
+    r5 <- expectEqual sWorldExpected sWorld
+    -- Run indices 0..20 are all pairwise distinct
+    let runSeeds = [ SaveLoad.deriveRunSeedFromSlug "catacombs" i | i <- [0..20] ]
+    r6 <- expectEqual 21 (Set.size (Set.fromList runSeeds))
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
 -- | L11: the turn pipeline is `incrementTurnCount` → `tickConditions` →
 --   `vehicleConditionTick` → `executeCommand` → `fireCommandTriggers`. A
 --   condition tick that kills the player therefore runs *before* the command —
@@ -4585,6 +4607,7 @@ main = do
         , runTest "TA_SAVES_DIR redirects saves + deleteSaveSlot (Rogue P0)" testSavesDirOverride
         , runTest "savesDir default stays 'saves' (Rogue P0)" testSavesDirDefault
         , runTest "slugify is deterministic and file-safe (Rogue P0)" testSlugify
+        , runTest "run-seed derivation from slug and run index (Rogue P4c)" testDeriveRunSeed
         , runTest "fatal condition tick stops the command (L11)" testFatalTickStopsCommand
         -- Review L4: constructor coverage in Validate
         , runTest "MissingRoom from a rule room reference (L4)" testValidateMissingRoomInRule
