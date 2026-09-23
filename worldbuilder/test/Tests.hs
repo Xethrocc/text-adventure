@@ -2579,6 +2579,12 @@ tests =
     , ("gen: loops create cycles (edges > nodes - 1)", testGenCycles)
     , ("gen: bidirectional edges are unique pairs", testGenEdgeUniqueness)
     , ("gen: different seeds diverge (smoke)", testGenSeedDivergence)
+    -- Rogue Phase 4d: emission, locks, pools
+    , ("gen: adventure compiles + validates clean (multi-seed)", testGenAdventureClean)
+    , ("gen: combat passthrough reaches advCombat", testGenCombatPassthrough)
+    , ("gen: save_zones from savezone instances", testGenSavezones)
+    , ("gen: treasure lock + key ordering (keyDepth < lockDepth)", testGenLockKey)
+    , ("gen: pool placement lands in non-special rooms", testGenPools)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -3009,6 +3015,156 @@ testGenSeedDivergence :: IO Bool
 testGenSeedDivergence =
     expectTrue "seed 42 and seed 7 differ (smoke)"
         (generateDungeonLayout genTemplate 42 /= generateDungeonLayout genTemplate 7)
+
+-- ---------------------------------------------------------------------------
+-- Rogue Phase 4d: emission, locks, pools
+-- ---------------------------------------------------------------------------
+
+-- | The core pipeline guarantee: every generated adventure must pass
+--   compileAdventure without issues and both engine validators cleanly.
+testGenAdventureClean :: IO Bool
+testGenAdventureClean = do
+    let go t seed = case generateDungeon t seed of
+            Left err -> expectTrue ("unexpected: " ++ show err) False
+            Right (adv, _) -> case compileAdventure adv of
+                Left errs -> expectTrue ("compile errors: " ++ issuesText errs) False
+                Right cr ->
+                    let werrs = validateWorld (crWorld cr)
+                        serrs = validateGameState (crWorld cr) (crSave cr)
+                    in expectTrue ("validation clean ("
+                                   ++ show (length (werrs ++ serrs)) ++ " issues: "
+                                   ++ show (take 2 (werrs ++ serrs)) ++ ")")
+                            (null (werrs ++ serrs))
+    r1 <- go genTemplate 42
+    r2 <- go genTemplate 7
+    r3 <- go (genTemplate { dtLayout = DLayout 8 14 5 0.6 2 }) 123
+    r4 <- go (genTemplate { dtLayout = DLayout 3 4 6 0.5 0 }) 42  -- early abort
+    pure (r1 && r2 && r3 && r4)
+
+-- | The combat passthrough (combination lever with plan-kampfbildschirm.md):
+--   the authored combat: block reaches advCombat unchanged.
+testGenCombatPassthrough :: IO Bool
+testGenCombatPassthrough = case parseYamlTemplate (validTemplateYaml ++ unlines
+        [ "combat:"
+        , "  profile: classic"
+        , "  screen:"
+        , "    art: \"fight!\""
+        , "    bar_width: 20"
+        ]) of
+    Left err -> expectTrue ("parse failed: " ++ err) False
+    Right t -> case generateDungeon t 42 of
+        Left err -> expectTrue ("unexpected: " ++ show err) False
+        Right (adv, _) -> do
+            r1 <- expectTrue "advCombat present" (advCombat adv /= Nothing)
+            r2 <- expectTrue "classic profile with screen"
+                (case advCombat adv of
+                    Just c -> acProfile c == "classic" && acScreen c /= Nothing
+                    Nothing -> False)
+            pure (r1 && r2)
+
+-- | Phase-1 synergy: every savezone-archetype instance becomes a save zone
+--   and the generator implies ironman (otherwise save_zones would be dead).
+testGenSavezones :: IO Bool
+testGenSavezones = case generateDungeon genTemplate 42 of
+    Left err -> expectTrue ("unexpected: " ++ show err) False
+    Right (adv, _) -> case advGame adv of
+        Nothing -> expectTrue "expected a game block" False
+        Just gp -> do
+            r1 <- expectTrue "ironman implied" (agpIronman gp == Just True)
+            r2 <- expectTrue "start room is a savezone"
+                (advStartRoom adv `elem` agpSaveZones gp)
+            pure (r1 && r2)
+
+-- | The locked treasure: at least one approach exit is locked, the save
+--   seeds the lock entity as "locked", and the key carries the standard
+--   set_state rule (generated into its on_take by the generator).
+testGenLockKey :: IO Bool
+testGenLockKey =
+    let lockT = genTemplate
+            { dtSpecial = (dtSpecial genTemplate)
+                { dspTreasure = Just (DTreasureSpec "junction" True) }
+            , dtItemPool = [ DItemPoolEntry (minItemKey "key_iron") (DRange 1 1) (Just "key_iron") ]
+            }
+    in case generateDungeon lockT 42 of
+        Left err -> expectTrue ("unexpected: " ++ show err) False
+        Right (adv, warns) -> case compileAdventure adv of
+            Left errs -> expectTrue ("compile: " ++ issuesText errs) False
+            Right cr -> do
+                let w = crWorld cr
+                    s = crSave cr
+                    lockedExits = [ (rid, dir)
+                                  | (rid, room) <- Map.toList (E.rooms w)
+                                  , (dir, ex) <- Map.toList (E.roomConnections room)
+                                  , E.Locked _ _ <- [ex] ]
+                r1 <- expectTrue "at least one locked approach exit" (not (null lockedExits))
+                r2 <- expectTrue "lock entity seeded as locked in save"
+                    (elem "lock_junction" (Map.keys (E.entityStates s)))
+                r3 <- expectTrue "key carries set_state (unlock) rule"
+                    (case Map.lookup "key_iron" (E.itemDefs w) of
+                        Just it -> Map.member (E.VTake, "intact") (E.itemVerbMap it)
+                                   && not (null [ () | E.SetValue _ _ <- [e | (_, e) <- Map.toList (E.itemVerbMap it)] ])
+                        Nothing -> False)
+                pure (r1 && r2 && r3)
+
+-- | Pool placement: item and NPC instances land as item/npc defs and none
+--   of the skip warnings fire (the template has enough non-special rooms).
+testGenPools :: IO Bool
+testGenPools = case generateDungeon poolT 42 of
+    Left err -> expectTrue ("unexpected: " ++ show err) False
+    Right (adv, warns) -> do
+        r1 <- expectTrue "items placed" (not (null (advItems adv)))
+        r2 <- expectTrue "npcs placed" (not (null (advNPCs adv)))
+        r3 <- expectTrue "no GeneratorPopulationSkipped"
+            (not ("GeneratorPopulationSkipped" `elem` map ciCode warns))
+        pure (r1 && r2 && r3)
+  where
+    poolT = genTemplate
+        { dtItemPool = [ DItemPoolEntry (minItemKey "potion") (DRange 2 3) Nothing ]
+        , dtNpcPool = [ DNpcPoolEntry (minNpcKey "skeleton") (DRange 1 2) (Just (DRange 2 4)) False ]
+        }
+
+-- helpers -------------------------------------------------------------------
+
+-- | Minimal usable AItem for pool entries.
+minItemKey :: String -> AItem
+minItemKey iid = AItem
+    { aiId = iid
+    , aiName = iid
+    , aiTexts = ACondText "" []
+    , aiAscii = AAscii (ACondText "" []) [] 0 [] Nothing
+    , aiKeywords = []
+    , aiTags = []
+    , aiLocation = "start"
+    , aiState = "intact"
+    , aiEquipSlot = Nothing
+    , aiEquipEffects = []
+    , aiHidden = False
+    , aiDiscover = Nothing
+    , aiProps = Map.empty
+    , aiOnTake = Nothing
+    , aiVerbMap = Map.empty
+    , aiPortable = Just True
+    , aiTakeFailure = Nothing
+    , aiInContainer = Nothing
+    }
+
+-- | Minimal usable ANPC for pool entries.
+minNpcKey :: String -> ANPC
+minNpcKey nid = ANPC
+    { anId = nid
+    , anName = nid
+    , anTexts = ACondText "" []
+    , anAscii = AAscii (ACondText "" []) [] 0 [] Nothing
+    , anKeywords = []
+    , anLocation = "start"
+    , anState = "idle"
+    , anMaxHealth = Just 10
+    , anAttack = 2
+    , anDefense = 1
+    , anDialogue = Map.empty
+    , anVerbMap = Map.empty
+    , anParty = Nothing
+    }
 
 main :: IO ()
 main = do

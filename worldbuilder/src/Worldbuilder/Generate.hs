@@ -46,24 +46,39 @@ module Worldbuilder.Generate
     , DEdge (..)
     , DungeonPlan (..)
     , generateDungeonLayout
+    , genMaxRetries
     , placeRooms
     , assignArchetypes
     , connectRooms
     , ensureReachable
+    , cellRoomIds
+    , generateDungeon
     ) where
 
 import Worldbuilder.Types
     ( AAdventurePlayer
     , ACombat
-    , AItem
-    , ANPC
+    , AItem (..)
+    , ANPC (..)
     , ARoom
     , AVariable
+    , AActionOutcome (..)
+    , AExitRef (..)
+    , AGamePolicy (..)
+    , Adventure (..)
+    , AAscii (..)
+    , ACondText (..)
     , aiId
+    , aiLocation
+    , aiOnTake
     , anId
+    , anLocation
+    , arId
+    , arName
+    , arExits
     )
 import Worldbuilder.Compile (CompileIssue (..), Severity (..))
-import Worldbuilder.Rng (Rng, newRng, pickWeighted, randInt, shuffle)
+import Worldbuilder.Rng (Rng, newRng, pickWeighted, randInt, shuffle, deriveRuntimeSeed)
 
 import Data.Aeson
     ( FromJSON (..)
@@ -81,7 +96,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Set as Set
 import Data.Set (Set)
 import Data.List (group, sort)
-import Data.Maybe (mapMaybe)
+import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 import qualified Data.Text as T
 import Data.Word (Word64)
 
@@ -624,9 +639,25 @@ placeRooms layout r0 = go [(0, 0)] (Map.singleton (0, 0) 1) 1 r0
                                             let (draw, r') = randInt 1 10000 r1
                                             in (draw <= bp, r')
                                     cells' = Map.insert target (d + 1) cells
-                                    frontier' = if branch
-                                        then h : rest ++ [target]  -- tree growth
-                                        else target : rest         -- chain
+                                    childSterile = d + 1 >= maxDepth
+                                    -- Frontier policy (robust growth):
+                                    --  * branching 0.0: pure chain (Plan-Pol:
+                                    --    the child replaces the head) — dies at
+                                    --    layout.depth, matching the authored
+                                    --    parameters exactly
+                                    --  * otherwise the head stays in the ring:
+                                    --    branch keeps it in front (it may get
+                                    --    more children, tree growth), otherwise
+                                    --    it rotates to the back — and a sterile
+                                    --    child is never queued (it would drain
+                                    --    the frontier and extinct the tree)
+                                    frontier'
+                                        | bp <= 0 =
+                                            if childSterile then rest else target : rest
+                                        | branch =
+                                            h : (if childSterile then rest else rest ++ [target])
+                                        | otherwise =
+                                            (if childSterile then rest else rest ++ [target]) ++ [h]
                                 in go frontier' cells' (count + 1) r2
 
 -- | Step 2 — assign archetypes. Start gets @special.start.template@ (or the
@@ -701,8 +732,8 @@ connectRooms t grid r0 =
         diagonalPairs =
             [ (c, c')
             | c <- Map.keys grid
-            , dir <- ["southeast", "southwest"]
-            , let c' = stepCell c dir
+            , (dx, dy) <- [(1, 1), (-1, 1)]  -- southeast / southwest offsets
+            , let c' = (fst c + dx, snd c + dy)
             , Map.member c' grid ]
         (loopPairs, r1) = chooseLoops (dlLoops (dtLayout t)) diagonalPairs r0
         loopEdges =
@@ -785,12 +816,32 @@ bfsReach succ0 start = go [start] (Set.singleton start)
                    , not (Set.member n acc) ]
         in go (cs ++ next) (foldr Set.insert acc next)
 
--- | Entry point for 4c: template -> pure layout plan (steps 1-4). Locks,
---   pools and the final @Adventure@ emission follow in 4d.
+-- | Entry point for 4c: template -> pure layout plan (steps 1-4), with a
+--   deterministic retry pass: a probabilistic tree below @rooms.max@ can
+--   extinct before reaching @rooms.min@ (sterile max-depth cells block the
+--   frontier). We therefore try up to @genRetries@ sub-seeds derived from
+--   the seed (seed * GOLDEN + attempt — same seed, same retries) and keep
+--   the first attempt that reaches @rooms.min@; otherwise the attempt with
+--   the most cells (early-abort path). @GENoSpace@ fires only when no
+--   attempt can even reach @rooms.min@ — the hard floor of the detail plan
+--   clarification.
 generateDungeonLayout :: DTemplate -> Word64 -> Either GenerateError DungeonPlan
 generateDungeonLayout t seed =
     let layout = dtLayout t
-        (depths, r1) = placeRooms layout (newRng seed)
+        attempts = map (attemptSeed seed) [0 .. fromIntegral genMaxRetries - 1]
+        tryAttempt k = placeRooms layout (newRng k)
+        placed = map tryAttempt attempts
+        -- (rng, depths, attempt number) triples
+        sized = [ (r, ds, fromIntegral i :: Integer)
+                | (i, ((ds, r), _)) <- zip [0 :: Int ..] (zip placed attempts) ]
+        ok = filter (\(_, ds, _) -> Map.size ds >= dlRoomsMin layout) sized
+        chosen = case ok of
+            (p : _) -> p
+            []      -> if null sized then error "unreachable" else
+                        -- deterministic max by cell count (ties: first)
+                        foldl1 (\a@(_, da, _) b@(_, db, _) ->
+                            if Map.size db > Map.size da then b else a) sized
+        (r1, depths, attemptNo) = chosen
     in if Map.size depths < dlRoomsMin layout
         then Left GENoSpace
         else
@@ -803,7 +854,9 @@ generateDungeonLayout t seed =
                     [ CompileIssue "layout" SWarning "GeneratorEarlyAbort"
                         ("grid exhausted at depth " ++ show maxDepth
                          ++ " of " ++ show (dlDepth layout)
-                         ++ " — dungeon delivered with reached maximum")
+                         ++ " — dungeon delivered with reached maximum ("
+                         ++ show (Map.size depths) ++ " rooms placed, attempt "
+                         ++ show attemptNo ++ " of " ++ show genMaxRetries)
                     | earlyAbort ]
                 treasureWarns =
                     [ CompileIssue "special.treasure" SWarning "GeneratorTreasureSkipped"
@@ -821,3 +874,319 @@ generateDungeonLayout t seed =
                     , dpEarlyAbort = earlyAbort
                     , dpMaxDepth = maxDepth
                     }
+
+-- | Number of deterministic layout attempts per generation.
+genMaxRetries :: Int
+genMaxRetries = 12
+
+-- | Sub-seed for attempt @k@: decorrelated from the layout stream by
+--   multiplying with the golden constant (mirrors 'deriveRuntimeSeed').
+attemptSeed :: Word64 -> Word64 -> Word64
+attemptSeed base k = base * 0x9E3779B97F4A7C15 + k * 0x2545F4914F6CDD1D + 1
+
+-- ---------------------------------------------------------------------------
+-- Rogue Phase 4d: locks, population, adventure emission (detail plan 3.5-3.7)
+-- ---------------------------------------------------------------------------
+
+-- | Opposite direction of a cardinal/diagonal name.
+reverseDir :: String -> String
+reverseDir d = case d of
+    "north"     -> "south"
+    "south"     -> "north"
+    "east"      -> "west"
+    "west"      -> "east"
+    "up"        -> "down"
+    "down"      -> "up"
+    "northeast" -> "southwest"
+    "southwest" -> "northeast"
+    "northwest" -> "southeast"
+    "southeast" -> "northwest"
+    other       -> other
+
+-- | Deterministic room ids: @<archetype>_<n>@ with per-archetype counters in
+--   sorted cell order (Data.Map iteration order — the determinism source).
+cellRoomIds :: DungeonPlan -> Map Cell String
+cellRoomIds plan = go (Map.keys grid) Map.empty Map.empty
+  where
+    grid = dpGrid plan
+    go :: [Cell] -> Map Cell String -> Map String Int -> Map Cell String
+    go [] acc _ = acc
+    go (c : cs) acc counters =
+        let arch = prArch (grid Map.! c)
+            n    = Map.findWithDefault (0 :: Int) arch counters
+        in go cs (Map.insert c (arch ++ "_" ++ show (n + 1)) acc)
+                 (Map.insert arch (n + 1) counters)
+
+-- | The savezone archetype ids declared in the template (Phase-1 synergy).
+savezoneArchIds :: DTemplate -> [String]
+savezoneArchIds t = [ drtId rt | rt <- dtRoomTemplates t, drtSavezone rt ]
+
+-- | Build the exit maps: bidirectional edges emit both @AExitRef@s, one-way
+--   edges only the forward one. Bidirectional edges ending at the locked
+--   treasure cell carry @Just lockEntity@ on the approach direction
+--   (@initialEntityStates@ seeds the entity as \"locked\"; the key's on_take
+--   set_state opens it — standard Phase-7 mechanics, no new engine mechanism).
+buildExits :: DungeonPlan -> Map Cell String -> Maybe String
+           -> Map Cell (Map String AExitRef)
+buildExits plan roomIds lockEntity =
+    let lockFor cell = case (lockEntity, dpTreasureCell plan) of
+            (Just ent, Just tc) | cell == tc -> Just ent
+            _                                -> Nothing
+        step acc e =
+            let a = deFrom e
+                b = deTo e
+                idA = roomIds Map.! a
+                idB = roomIds Map.! b
+                dir = deDir e
+            in if deOneway e
+                then Map.insertWith Map.union a
+                        (Map.singleton dir (AExitRef idB Nothing)) acc
+                else
+                    -- both ends of a bidirectional edge lead into the
+                    -- treasure when that end is the treasure cell: edges are
+                    -- normalized from the lexically smaller cell, so the
+                    -- treasure can be either deFrom or deTo — lock whichever
+                    -- AExitRef points at it (approach side); the exit inside
+                    -- the treasure room itself stays open
+                    let fwd  = Map.singleton dir (AExitRef idB (lockFor b))
+                        back = Map.singleton (reverseDir dir) (AExitRef idA (lockFor a))
+                    in Map.insertWith Map.union b back
+                           (Map.insertWith Map.union a fwd acc)
+    in foldl step Map.empty (dpEdges plan)
+
+-- | Candidate cells for pool placement: everything except start, boss and
+--   treasure. The optional depth range filters the set.
+populateCandidates :: DungeonPlan -> Maybe DRange -> [Cell]
+populateCandidates plan mRange =
+    let excluded = Set.fromList
+            ([dpStartCell plan, dpBossCell plan] ++ maybe [] (: []) (dpTreasureCell plan))
+        grid = dpGrid plan
+        inRange d = case mRange of
+            Nothing  -> True
+            Just rng -> d >= drMin rng && (drMax rng == maxBound || d <= drMax rng)
+    in [ c | c <- Map.keys grid
+       , not (Set.member c excluded)
+       , inRange (prDepth (grid Map.! c)) ]
+
+-- | Weighted room draw: deeper rooms weigh more (detail plan 3.6:
+--   \"Räume gewichtet nach Tiefe ziehen\").
+drawPopCell :: DungeonPlan -> [Cell] -> Rng -> (Cell, Rng)
+drawPopCell plan cells r =
+    let grid = dpGrid plan
+    in pickWeighted [ (prDepth (grid Map.! c), c) | c <- cells ] r
+
+-- | One pool item instance: unique id @<id>_<k>@, location overridden.
+itemInstance :: AItem -> String -> String -> AItem
+itemInstance frag iid rid = frag { aiId = iid, aiLocation = rid }
+
+-- | One pool NPC instance: unique id @<id>_<k>@, location overridden.
+npcInstance :: ANPC -> String -> String -> ANPC
+npcInstance frag nid rid = frag { anId = nid, anLocation = rid }
+
+-- | Steps 5-6: key placement + pool population. The reserved key goes into a
+--   room with generation depth below the lock depth (tree depth is an upper
+--   bound of BFS distance, so keyDepth < lockDepth holds in BFS order);
+--   start room as fallback. Its on_take carries the standard set_state rule
+--   — reusing the Phase-7 trigger mechanics, no new engine mechanism.
+--   Ordinary pool entries draw a target room weighted by depth; boss NPCs go
+--   directly into the boss room (Review-Frage 4).
+populate :: DTemplate -> DungeonPlan -> Map Cell String -> Rng
+         -> ([AItem], [ANPC], [CompileIssue], Rng)
+populate t plan roomIds r0 =
+    let grid = dpGrid plan
+        treasureCell = dpTreasureCell plan
+        lockEntity = case (dspTreasure (dtSpecial t), treasureCell) of
+            (Just ts, Just _) | dtsLocked ts -> Just ("lock_" ++ dtsTemplate ts)
+            _                                -> Nothing
+
+        keyCandidates = case treasureCell of
+            Just tc ->
+                [ c | c <- populateCandidates plan Nothing
+                    , prDepth (grid Map.! c) < prDepth (grid Map.! tc) ]
+            Nothing -> populateCandidates plan Nothing
+        (keyCell, r1) = case keyCandidates of
+            [] -> (dpStartCell plan, r0)
+            cs -> (\(i, r) -> (cs !! i, r)) (randInt 0 (length cs - 1) r0)
+
+        drawCount :: DRange -> Rng -> (Int, Rng)
+        drawCount rng rr = randInt (drMin rng) (max (drMin rng) (drMax rng)) rr
+
+        skipWarn :: String -> CompileIssue
+        skipWarn what = CompileIssue ("template." ++ what) SWarning
+            "GeneratorPopulationSkipped" "no non-special room available"
+
+        stepItem (accItems, warns, rr) e =
+            let iid = aiId (dipItem e)
+            in case dipBossLock e of
+                Just mark | mark == iid ->
+                    -- exactly one reserved key instance (pairing rule)
+                    let rid = roomIds Map.! keyCell
+                        onTake = [ AOSetEntityState ent "unlocked" | Just ent <- [lockEntity] ]
+                        item = (dipItem e)
+                            { aiId = iid, aiLocation = rid
+                            , aiOnTake = Just (fromMaybe [] (aiOnTake (dipItem e)) ++ onTake) }
+                    in (accItems ++ [item], warns, rr)
+                Just _ -> (accItems, warns, rr)  -- BossLockMismatch already rejected
+                Nothing ->
+                    let cands = populateCandidates plan Nothing
+                    in if null cands
+                        then (accItems, warns ++ [skipWarn ("item_pool." ++ iid)], rr)
+                        else
+                            let (n, rr1) = drawCount (dipCount e) rr
+                                go :: Int -> [AItem] -> Rng -> ([AItem], Rng)
+                                go k acc rc
+                                    | k >= n    = (acc, rc)
+                                    | otherwise =
+                                        let (c, rc') = drawPopCell plan cands rc
+                                            inst = itemInstance (dipItem e)
+                                                    (iid ++ "_" ++ show (k + 1))
+                                                    (roomIds Map.! c)
+                                        in go (k + 1) (acc ++ [inst]) rc'
+                                (is, rr2) = go 0 [] rr1
+                            in (accItems ++ is, warns, rr2)
+
+        (items, itemWarns, r2) = foldl stepItem ([], [], r1) (dtItemPool t)
+
+        stepNpc (accNpcs, warns, rr) e =
+            let nid = anId (dnpNpc e)
+            in if dnpBoss e
+                then ( accNpcs ++ [npcInstance (dnpNpc e) nid (roomIds Map.! dpBossCell plan)]
+                     , warns, rr )
+                else
+                    let cands = populateCandidates plan (dnpDepthRange e)
+                    in if null cands
+                        then (accNpcs, warns ++ [skipWarn ("npc_pool." ++ nid)], rr)
+                        else
+                            let (n, rr1) = drawCount (dnpCount e) rr
+                                go k acc rc
+                                    | k >= n    = (acc, rc)
+                                    | otherwise =
+                                        let (c, rc') = drawPopCell plan cands rc
+                                            inst = npcInstance (dnpNpc e)
+                                                    (nid ++ "_" ++ show (k + 1))
+                                                    (roomIds Map.! c)
+                                        in go (k + 1 :: Int) (acc ++ [inst]) rc'
+                                (ns, rr2) = go 0 [] rr1
+                            in (accNpcs ++ ns, warns, rr2)
+
+        (npcs, npcWarns, r3) = foldl stepNpc ([], [], r2) (dtNpcPool t)
+
+    in (items, npcs, itemWarns ++ npcWarns, r3)
+
+-- | The default (empty) title art, mirroring the adventure schema default.
+emptyTitleArt :: AAscii
+emptyTitleArt = AAscii (ACondText "" []) [] 0 [] Nothing
+
+-- | Step 7 — build the @Adventure@ record (detail plan 3.7). Room ids are
+--   generator-assigned; the fragment's exits are discarded (the generator
+--   owns adjacency); item/NPC placement lands in advItems/advNPCs; the
+--   @game@ block carries exactly the savezone instances (Phase-1 synergy —
+--   ironman is implied, otherwise save_zones would be dead data); @combat:@
+--   is passed through 1:1 to @advCombat@ (combination lever with
+--   plan-kampfbildschirm.md). All maps iterate in sorted order.
+emitAdventure :: DTemplate -> DungeonPlan -> Word64 -> (Adventure, [CompileIssue])
+emitAdventure t plan seed =
+    let grid = dpGrid plan
+        roomIds = cellRoomIds plan
+        lockEntity = case (dspTreasure (dtSpecial t), dpTreasureCell plan) of
+            (Just ts, Just _) | dtsLocked ts -> Just ("lock_" ++ dtsTemplate ts)
+            _                                -> Nothing
+        exits = buildExits plan roomIds lockEntity
+        (items, npcs, popWarns, _rFinal) = populate t plan roomIds (newRng (deriveRuntimeSeed seed))
+
+        -- the lock entity itself: a hidden, non-portable door item so the
+        -- engine's entity references (set_state in the key's on_take, the
+        -- "locked" state from initialEntityStates) resolve against a real
+        -- definition
+        lockItem = case (dspTreasure (dtSpecial t), dpTreasureCell plan) of
+            (Just ts, Just tc) | dtsLocked ts ->
+                let ent = "lock_" ++ dtsTemplate ts
+                    prevCell = case [ deFrom e | e <- dpEdges plan, deTo e == tc ] of
+                        (c : _) -> c
+                        []      -> dpStartCell plan
+                    prevRoomId = roomIds Map.! prevCell
+                in Just (AItem
+                    { aiId = ent
+                    , aiName = "Verschlossenes Schloss"
+                    , aiTexts = ACondText "Ein schweres Schloss verschliesst den Durchgang." []
+                    , aiAscii = AAscii (ACondText "" []) [] 0 [] Nothing
+                    , aiKeywords = [ent, "schloss"]
+                    , aiTags = ["lock"]
+                    , aiLocation = prevRoomId
+                    , aiState = "locked"
+                    , aiEquipSlot = Nothing
+                    , aiEquipEffects = []
+                    , aiHidden = True
+                    , aiDiscover = Nothing
+                    , aiProps = Map.empty
+                    , aiOnTake = Nothing
+                    , aiVerbMap = Map.empty
+                    , aiPortable = Just False
+                    , aiTakeFailure = Nothing
+                    , aiInContainer = Nothing
+                    })
+            _ -> Nothing
+
+        findArch a = listToMaybe [ rt | rt <- dtRoomTemplates t, drtId rt == a ]
+        roomInstance c =
+            let rid = roomIds Map.! c
+                arch = prArch (grid Map.! c)
+            in case findArch arch of
+                Just rt -> (drtRoom rt) { arId = rid, arExits = Map.findWithDefault Map.empty c exits }
+                Nothing -> (drtRoom (head (dtRoomTemplates t)))
+                    { arId = rid, arName = rid
+                    , arExits = Map.findWithDefault Map.empty c exits }
+        rooms = map roomInstance (Map.keys grid)
+
+        savezoneIds = [ roomIds Map.! c | c <- Map.keys grid
+                      , prArch (grid Map.! c) `elem` savezoneArchIds t ]
+        generatedGamePolicy = if null savezoneIds
+            then Nothing
+            else Just AGamePolicy
+                { agpPermadeath = Nothing
+                , agpAllowUndo  = Nothing
+                , agpIronman    = Just True  -- save_zones are only meaningful in ironman mode
+                , agpSaveZones  = savezoneIds
+                , agpMetaSlug   = Nothing
+                }
+
+        adv = Adventure
+            { advName              = Just (dtName t)
+            , advStartRoom         = roomIds Map.! dpStartCell plan
+            , advRooms             = rooms
+            , advItems             = maybe items (\li -> li : items) lockItem
+            , advNPCs              = npcs
+            , advQuests            = []
+            , advVehicles          = []
+            , advInteractions      = Nothing
+            , advVerbs             = []
+            , advVariables         = dtVariables t
+            , advTriggers          = []
+            , advPlayer            = dtPlayer t
+            , advInitialVariables  = Map.empty
+            , advInitialFlags      = Map.empty
+            , advActiveQuests      = []
+            , advFactions          = []
+            , advEncounterTables   = []
+            , advEnvironment       = Nothing
+            , advStealth           = Nothing
+            , advPatrol            = Nothing
+            , advCombat            = dtCombat t
+            , advAbilities         = []
+            , advEndArt            = Map.empty
+            , advTitleArt          = emptyTitleArt
+            , advClips             = []
+            , advGame              = generatedGamePolicy
+            }
+    in (adv, dpWarnings plan ++ popWarns)
+
+-- | Top-level entry (detail plan section 3): validate, lay out, emit.
+--   @GETemplate@ wraps 'validateTemplate' output; @GENoSpace@ fires below
+--   @rooms.min@; @GEUnreachable@ would be a generator bug. Pure — the CLI
+--   (4d) feeds the result through @compileAdventure@ and validation.
+generateDungeon :: DTemplate -> Word64 -> Either GenerateError (Adventure, [CompileIssue])
+generateDungeon t seed = case validateTemplate t of
+    (i : _) -> Left (GETemplate (i : tail (validateTemplate t)))
+    []      -> case generateDungeonLayout t seed of
+        Left e   -> Left e
+        Right plan -> Right (emitAdventure t plan seed)

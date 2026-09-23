@@ -4,10 +4,14 @@ module Worldbuilder.CLI (runCLI) where
 import Worldbuilder.Types ()
 import Worldbuilder.Compile (CompileResult(..), compileAdventure, CompileIssue(..), Severity(..))
 import Worldbuilder.ParseFile (parseAdventureFile)
+import Worldbuilder.Generate (parseTemplate, validateTemplate, generateDungeon, dtSeed, GenerateError (..))
+import Worldbuilder.Rng (deriveRuntimeSeed)
 
 -- JSON encoding (output only)
 import Data.Aeson (encode)
+import qualified Data.YAML.Aeson (decode1)
 import qualified Data.ByteString.Lazy as BL
+import Data.Word (Word64)
 
 -- Engine
 import Validate (validateWorld, validateGameState)
@@ -22,6 +26,7 @@ import System.IO (hSetEncoding, stdout, stderr, stdin, utf8)
 import Control.Monad (unless)
 import Worldbuilder.Locate (lineForPath)
 import Control.Exception (try, SomeException)
+import Data.YAML (posLine, posColumn)
 import qualified Data.Map.Strict as Map
 
 -- | Entry point for the worldbuilder CLI
@@ -34,6 +39,7 @@ runCLI = do
     case args of
         ("validate" : path : _)  -> validate path
         ("compile" : path : rest) -> compile path rest
+        ("generate" : path : rest) -> generateCmd path rest
         ("check" : path : _)     -> checkStats path
         _                        -> putStrLn usage
 
@@ -46,6 +52,11 @@ usage = unlines
     , "  worldbuilder compile <adventure.json> -o <dir> [--force]  Emit world.json + save.json"
     , "                                              --force writes even if validation has issues"
     , "  worldbuilder check <adventure.json>         Print content statistics"
+    , ""
+    , "  worldbuilder generate <template.yaml> --seed N -o <dir> [--force]"
+    , "                                              Generate a dungeon from a template and emit"
+    , "                                              world.json + save.json (Rogue Phase 4; the seed"
+    , "                                              is required — same seed, bit-identical world)"
     , ""
     , "Supports .json, .yaml and .yml files."
     ]
@@ -240,3 +251,136 @@ checkStats path = do
                 then putStrLn "Validation:     CLEAN"
                 else putStrLn $ "Validation:     " ++ show (length validationErrors) ++ " issue(s)"
                 exitSuccess
+-- ---------------------------------------------------------------------------
+-- Generate (Rogue Phase 4d): template -> dungeon -> world.json + save.json
+-- ---------------------------------------------------------------------------
+
+-- | @generate <template.yaml> --seed N -o <dir> [--force]@
+--
+--   Reads the dungeon template (YAML/JSON like an adventure), validates its
+--   schema (TemplateIssue-style diagnostics rendered against the template
+--   file, with Locate line numbers), runs the pure generator, feeds the
+--   resulting Adventure through the regular compileAdventure pipeline,
+--   validates the compiled world + save and writes world.json + save.json.
+--   The save's runtime rngState is derived from the generation seed
+--   (detail plan section 2), so runtime randomness inside a generated
+--   dungeon is deterministic per seed as well.
+--
+--   Exit codes mirror compile: 0 ok, 1 on template/generation/compile/
+--   validation errors; --force writes despite validation issues.
+generateCmd :: FilePath -> [String] -> IO ()
+generateCmd path rest = do
+    let outDir = case lookupFlag "-o" rest of
+            Just d  -> d
+            Nothing -> case lookupFlag "--output" rest of
+                Just d  -> d
+                Nothing -> "."
+        force = "--force" `elem` rest
+        seedFromCli = case rest of
+            ("--seed" : s : _) -> readMaybeW64 s
+            _                  -> Nothing
+    rawResult <- try (BL.readFile path) :: IO (Either SomeException BL.ByteString)
+    templateValue <- case rawResult of
+        Left ioErr -> do
+            putStrLn $ "Failed to read template file: " ++ show ioErr
+            exitFailure
+        Right bytes -> case Data.YAML.Aeson.decode1 bytes of
+            Left (pos, err) -> do
+                putStrLn $ "Failed to parse template file: YAML parse error at line "
+                    ++ show (posLine pos) ++ ", column " ++ show (posColumn pos) ++ ": " ++ err
+                exitFailure
+            Right v -> pure v
+    case parseTemplate templateValue of
+        Left err -> do
+            putStrLn $ "Failed to decode template: " ++ err
+            exitFailure
+        Right tmpl -> do
+            -- schema validation first: diagnostics point into the template
+            case validateTemplate tmpl of
+                errs@(i : _)
+                    | any ((== SError) . ciSeverity) errs -> do
+                        putStrLn "Template errors:"
+                        printCompileIssues path errs
+                        putStrLn ""
+                        putStrLn $ show (length errs) ++ " template error(s) (first: " ++ ciCode i ++ ")."
+                        exitFailure
+                _ -> pure ()
+            -- seed: CLI wins over template seed; absence is an error (no
+            -- hidden time-based seed — determinism beats convenience)
+            seed <- case (seedFromCli, dtSeed tmpl) of
+                (Just s, _)  -> pure s
+                (Nothing, Just s) -> pure s
+                (Nothing, Nothing) -> do
+                    putStrLn "Error: no seed given. Pass --seed N (or seed: N in the template)."
+                    exitFailure
+            case generateDungeon tmpl seed of
+                Left err -> do
+                    putStrLn "Generation failed:"
+                    putStrLn $ "  - " ++ showGenerateError err
+                    exitFailure
+                Right (adv, genWarns) -> case compileAdventure adv of
+                    Left cerrs -> do
+                        putStrLn "Generated adventure failed to compile (generator bug — please report):"
+                        printCompileIssues path cerrs
+                        exitFailure
+                    Right cr0 -> do
+                        -- runtime rngState derived from the generation seed
+                        let cr = cr0 { crSave = (crSave cr0)
+                            { E.rngState = deriveRuntimeSeed seed } }
+                        unless (null genWarns) $ do
+                            putStrLn "Generator warnings:"
+                            printCompileIssues path genWarns
+                            putStrLn ""
+                        unless (null (crWarnings cr)) $ do
+                            putStrLn "Compiler warnings:"
+                            printCompileIssues path (crWarnings cr)
+                            putStrLn ""
+                        let errors = validateWorld (crWorld cr)
+                                     ++ validateGameState (crWorld cr) (crSave cr)
+                        if not (null errors) && not force
+                            then do
+                                putStrLn "Validation found issues (use --force to write anyway):"
+                                mapM_ (\e -> putStrLn ("  - " ++ showValidationError e)) errors
+                                exitFailure
+                            else do
+                                createDirectoryIfMissing True outDir
+                                let worldPath = outDir </> "world.json"
+                                BL.writeFile worldPath (encode (crWorld cr))
+                                putStrLn $ "Wrote " ++ worldPath
+                                let savePath = outDir </> "save.json"
+                                BL.writeFile savePath (encode (crSave cr))
+                                putStrLn $ "Wrote " ++ savePath
+                                putStrLn $ "Seed: " ++ show seed
+                                    ++ ", rooms: " ++ show (length (crWorldRooms cr))
+                                if null errors
+                                    then putStrLn "No validation issues found."
+                                    else do
+                                        putStrLn "Validation warnings (written with --force):"
+                                        mapM_ (\e -> putStrLn ("  - " ++ showValidationError e)) errors
+                                exitSuccess
+  where
+    crWorldRooms = Map.keys . E.rooms . crWorld
+
+-- | Parse a decimal Word64 seed, Nothing on garbage.
+readMaybeW64 :: String -> Maybe Word64
+readMaybeW64 s = case reads s of
+    [(n, "")] | n >= (0 :: Integer) -> Just (fromIntegral n)
+    _ -> Nothing
+
+-- | Value of @-x <value>@ anywhere in the argument list.
+lookupFlag :: String -> [String] -> Maybe String
+lookupFlag k (x : y : ys) | x == k    = Just y
+                          | otherwise = lookupFlag k (y : ys)
+lookupFlag _ _ = Nothing
+
+-- | Generation errors are parameter problems, not template locations
+--   (detail plan section 4) — reported without line numbers.
+showGenerateError :: GenerateError -> String
+showGenerateError (GETemplate iss) =
+    "template schema violation: " ++ unwords (map ciCode iss)
+showGenerateError (GEUnreachable cells) =
+    "cells unreachable after docking pass: " ++ show cells
+    ++ " (generator bug — please report)"
+showGenerateError GENoSpace =
+    "grid too small to place even layout.rooms.min cells —"
+    ++ " widen the grid budget (rooms.min) or reduce depth"
