@@ -63,6 +63,58 @@ Zwei Figuren aus dem Original, die der Port zuerst weggelassen hatte — jetzt �
 - **Warnung:** Der Original-Wortlaut „WARNING: A wolf is nearby!" feuert, sobald ein Wolf im selben Raum steht — genau wie das rote Banner in `gameLoop` beim Original. Zusätzlich listet `look` anwesende Wölfe als „Also here: …".
 - **Im Original unblutig:** Dort waren die vier Wölfe reine Kulisse (`checkEncounter` warnte nur, `wolfHp`/`wolfAttack` wurden nie gelesen) und der Kampfschirm fügte dem Spieler **nie** Schaden zu. Dass Wölfe hier beißen und töten können, ist die bewusste Erweiterung.
 
+## Kampfbildschirm (`combat.screen`)
+
+Der Straßenwolf wird jetzt im Original-Format dargestellt. `thefog.yaml` setzt
+dafür einen `combat.screen`-Block mit der **Original-Kampfkunst von `loc 54`**
+(Wolfsgesicht + Baum, aus `TheFog/Ascii.hs`) — sonst nichts, es gelten also die
+Vorgaben (Szenenzeile `>>You are in a Fight!<<`, Original-Flucht-Hinweis,
+Balkenbreite 10).
+
+Gemessen im Durchlauf (erste der vier Runden bis zum tödlichen Schlag):
+
+```
+________________________________________________________________________________
+________________________________________________________________________________
+     .---.
+    |  _  |
+    | (o o)|
+   .\   /
+    \_/|
+ |
+   |____|
+
+            .  .
+         .  |  .
+      .  |  |  .
+     |   |  |   |
+     |   |  |   |
+      \  |  /
+        \|/
+         |
+                    You are fighting a wolf
+                    >>You are in a Fight!<<
+Your Atk: 10
+Your Def: 7
+Your HP:  30 [██████████]
+Your Steps:   9
+HP of the wolf: 30 [██████████]
+You can 'attack' or try to 'flee'..
+ What will u do?
+You hit for 8, it hits you for 1.
+```
+
+- Gezeichnet wird **vor** der Auflösung der Runde, aus dem Zustand davor — wie im
+  Original, das den Schirm ausgab und *dann* zuschlug. Die Folgerunde zeigt
+  deshalb die neuen Balken (Spieler 29, Wolf 22).
+- `Your Def: 7` ist die Verteidigung **mit ausgerüstetem Schild** (3 + 4); der
+  Gegenschlag bleibt damit genau 1 (siehe Werte-Tabelle unten).
+- `Your Steps` ist der Zugzähler der Engine (`turnCount`), nicht das `charSteps`
+  des Originals — dort stand die Zeile immer auf 0, weil `addSteps` nie lief.
+- Die Wölfe haben bewusst **keine** `ascii`-Kunst: sonst erschiene nach jeder
+  Runde zusätzlich die Zustandskunst (`combatArtMsg`) unter der Meldung, die
+  Kampfkunst also doppelt.
+
 ## Spieler-Werte und warum sie nicht die Original-Zahlen sind
 
 `player: { max_hp: 30, attack: 10, defense: 3 }`.
