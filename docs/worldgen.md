@@ -72,6 +72,11 @@ npc_pool:
 combat:                              # optional: 1:1-Passthrough nach advCombat
   profile: classic
   screen: { bar_width: 20, scene: ">>Kampf in den Katakomben<<" }
+                                     # die Kampfbildschirm-Syntax (screen.art/
+                                     # scene/footer) ist in docs/adventure-schema.md
+                                     # dokumentiert (Abschnitt combat.screen);
+                                     # TheFog zeigt ein Authentizitäts-Beispiel:
+                                     # Kunst per CondText auf den Wolf-Kampf begrenzt
 
 player: { max_hp: 30 }
 variables: []
