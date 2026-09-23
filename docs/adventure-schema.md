@@ -686,7 +686,9 @@ encounter_tables:
 
 - `weight` muss eine positive ganze Zahl sein; `cooldown` Default 0 (kein
   Cooldown). Gezogen wird aus dem Save-`rngState` — gleicher Seed →
-  identische Zugfolge.
+  identische Zugfolge. **Nach einem `restart` wird der `rngState` frisch
+  abgeleitet** (Systemzeit im IO-Pfad), damit ein Roguelike nicht jede Runde
+  dieselbe Zufallsfolge wiederholt.
 - **`cooldown` zählt passende Ereignisse, nicht Runden** (P2-14): heruntergezählt
   wird nur, wenn das Ereignis eintritt, an das die Regel gebunden ist.
   `cooldown: 5` auf `on: turn` bedeutet daher „fünf Runden", auf
@@ -1106,6 +1108,13 @@ variables:
 
 - **Persistenz:** beim Spielende (Sieg, Tod, Custom, Quit) schreibt die
   Engine alle `meta.*`-Variablen automatisch in die Meta-Datei.
+- **`meta.runs` (Engine-eigen):** Jeder frische Run zählt — beim Spielstart und
+  bei jedem Restart erhöht die Engine `meta.runs` automatisch (auch ein
+  verlassener Run zählt) und persistiert sofort. Autoren können Unlocks an den
+  Zähler koppeln (z. B. `meta.runs >= 3` als Freischalt-Bedingung). Der
+  Zähler entsteht nur für Adventures, die tatsächlich Meta-Progression nutzen
+  (deklarierte `meta.*`-Variable oder vorhandene Meta-Datei) — für alle
+  anderen bleibt das Verhalten unverändert.
 - **Ablageort:** `saves/<slug>_meta.json` pro Adventure. Der Slug wird aus
   dem Adventure-Titel abgeleitet (lowercase, `[a-z0-9_-]`); ein explizites
   `game.meta_slug:` gewinnt — dann überlebt ein Titel-Umbenennen den

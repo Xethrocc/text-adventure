@@ -18,6 +18,8 @@ module GameLoop
   , deathMenuText
   , carryMetaVars
   , persistMeta
+  , reseedRng
+  , bumpMetaRuns
   ) where
 
 import Types
@@ -29,7 +31,9 @@ import Sample (initSampleGame)
 import Frontend
 import Control.Monad (when)
 import Data.Char (toLower)
-import Data.List (foldl')
+import Data.List (foldl', isPrefixOf)
+import Data.Time.Clock.POSIX (getPOSIXTime)
+import Data.Word (Word64)
 import Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
 
@@ -103,8 +107,12 @@ applyLoopCommand Quit loopState =
 applyLoopCommand Restart loopState =
     -- Rogue Phase 2: meta.* travels from the dying/finished run into the fresh
     -- one (the plan's restart semantics); lsSaveSlot resets (initLoopState).
+    -- The rngState reseed + run counter happen in the IO restart path
+    -- ('runRestart') — this branch stays pure for the unit tests.
     let (newState, message) = executeCommand Look (lsInitial loopState)
     in (initLoopState (carryMetaVars (lsCurrent loopState) newState), message)
+
+
 applyLoopCommand Help loopState = (loopState, helpText)
 applyLoopCommand (Save _) loopState = (loopState, "")
 applyLoopCommand (Load _) loopState = (loopState, "")
@@ -115,6 +123,7 @@ applyLoopCommand command loopState
             (stateAfterTriggers, triggerMsg) = fireCommandTriggers command (lsCurrent loopState) newState
             combined = combineMessages message triggerMsg
         in (loopState { lsCurrent = stateAfterTriggers }, combined)
+
     | otherwise =
         let oldState = lsCurrent loopState
             policy = worldGamePolicy (world oldState)
@@ -140,6 +149,49 @@ applyLoopCommand command loopState
                    fullMessage = if null allTickMsgs then message else tickText ++ message
                in (loopState { lsCurrent = stateAfterTriggers, lsHistory = history' },
                    combineMessages fullMessage triggerMsg)
+
+-- | Rogue (Empfehlung 3, pure): a restart begins a fresh run with a freshly
+--   derived rngState — carrying the old stream over would replay identical
+--   "randomness" in every run, which is fatal for a roguelike. The IO path
+--   derives the seed from the system clock and injects it here (M6-style:
+--   pure core, clock in the IO path only).
+reseedRng :: Word64 -> GameState -> GameState
+reseedRng seed st = st { save = (save st) { rngState = seed } }
+
+-- | Rogue Phase 2 (Zusatz-Empfehlung 4, pure): `meta.runs` counts fresh runs.
+--   Bumped at run start and on every restart (a restart is a new run). Only
+--   applied to adventures that actually use meta-progression (declared
+--   meta.* variable or existing meta file) — the Default-Invariante of the
+--   other adventures stays untouched (no meta file is ever created for them).
+bumpMetaRuns :: GameState -> GameState
+bumpMetaRuns st
+    | not isMetaAdventure = st
+    | otherwise = st { save = (save st)
+        { variables = Map.alter bump "meta.runs" (variables (save st)) } }
+  where
+    isMetaAdventure =
+        any ("meta." `isPrefixOf`) (Map.keys (varDefs (world st)))
+        || not (Map.null (metaVars (variables (save st))))
+    bump (Just (VVInt n)) = Just (VVInt (n + 1))
+    bump _                = Just (VVInt 1)
+
+-- | The shared restart path (main loop, death menu, victory menu): fresh
+--   rngState from the system clock, meta.runs bumped and persisted.
+runRestart :: Frontend -> LoopState -> IO ()
+runRestart fe loopState = do
+    seed <- newRngSeedIO
+    let (restarted, msg) = applyLoopCommand Restart loopState
+        fresh = restarted { lsCurrent = reseedRng seed . bumpMetaRuns $ lsCurrent restarted }
+    persistMeta (lsCurrent fresh)
+    feEmitLine fe "Starting a new game...\n"
+    feEmitLine fe msg
+    loopGame fe fresh
+
+-- | IO-side seed derivation for restarts (M6: clock stays in the IO path).
+newRngSeedIO :: IO Word64
+newRngSeedIO = do
+    t <- getPOSIXTime
+    pure (floor (t * 1000))
 
 -- | Combine two message fragments for trigger output. Same rule as
 --   'Game.joinMessages' — empty fragments contribute nothing.
@@ -298,7 +350,12 @@ runGameWith f = runGameWithFrontend (haskelineFrontend f)
 runGameWithFrontend :: Frontend -> GameState -> IO ()
 runGameWithFrontend fe state0 = do
     state <- mergeMetaFromDisk state0
-    let (newState, message) = executeCommand Look state
+    -- Zusatz-Empfehlung 4: every fresh run advances meta.runs (and persists it
+    -- immediately — even an abandoned run counts). No-op for adventures
+    -- without meta-progression (Default-Invariante).
+    let state' = bumpMetaRuns state
+    persistMeta state'
+    let (newState, message) = executeCommand Look state'
     feEmitLine fe message
     loopGame fe (initLoopState newState)
 
@@ -515,11 +572,7 @@ deathLoop fe loopState = do
                         feEmitLine fe msg
                         loopGame fe (initLoopState s')
                     Nothing -> deathLoop fe loopState
-        Just "r" -> do
-            feEmitLine fe "Starting a new game...\n"
-            let (restarted, msg) = applyLoopCommand Restart loopState
-            feEmitLine fe msg
-            loopGame fe restarted
+        Just "r" -> runRestart fe loopState
         Just "q" -> feEmitLine fe "Thanks for playing!"
         _ -> do
             feEmitLine fe (deathMenuText policy)
@@ -532,11 +585,7 @@ victoryLoop :: Frontend -> LoopState -> IO ()
 victoryLoop fe loopState = do
     inputResult <- feReadPlain fe (lsCurrent loopState) "> "
     case map toLower . fromMaybe "q" <$> pure inputResult of
-        Just "r" -> do
-            feEmitLine fe "Starting a new game...\n"
-            let (restarted, msg) = applyLoopCommand Restart loopState
-            feEmitLine fe msg
-            loopGame fe restarted
+        Just "r" -> runRestart fe loopState
         Just "q" -> feEmitLine fe "Thanks for playing!"
         _ -> do
             feEmitLine fe "  [R]estart  |  [Q]uit"

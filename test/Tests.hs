@@ -13,6 +13,7 @@ import System.Timeout (timeout)
 import Control.Exception (bracket, evaluate, try, SomeException)
 import Game
 import GameLoop (LoopState (..), initLoopState, applyLoopCommand,
+                 bumpMetaRuns, reseedRng,
                  commandEvents, consumesTurn, consumesTurnIn, runGameWithFrontend,
                  handleGameOver, saveBlockedMessage, loadBlockedMessage, deathMenuText)
 import Frontend (Frontend (..), commandCompletion)
@@ -1121,6 +1122,50 @@ testMetaProgressionPreservedOnRestart = do
     r5 <- expectTrue "restart lands on the pristine look text"
                      ("stone chamber" `isInfixOf` msg)
     pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Zusatz-Empfehlung 4 (Rogue P2): `meta.runs` counts fresh runs — bumped at
+--   run start and on every restart, but only for adventures that actually use
+--   meta-progression (declared meta.* variable or carried/disk meta vars).
+testMetaRunsCounter :: IO Bool
+testMetaRunsCounter = do
+    -- a meta adventure: declares meta.souls, counter carried from the disk map
+    let metaWorld = (world initSampleGame)
+            { varDefs = Map.fromList [("meta.souls", VarDef "meta.souls" (VTInt Nothing Nothing) (VVInt 0))] }
+        pristine = initSampleGame
+            { world = metaWorld
+            , save = (save initSampleGame)
+                { variables = Map.fromList [("meta.souls", VVInt 0)] } }
+        loop = LoopState pristine [] pristine Nothing
+    -- restart path bumps: 0 (carried) -> run 1... but the pristine state had no
+    -- meta.runs yet; two bumps simulate run-start + restart
+    let b1 = bumpMetaRuns pristine
+        b2 = bumpMetaRuns b1
+    r1 <- expectEqual (Just (VVInt 2)) (Map.lookup "meta.runs" (variables (save b2)))
+    -- restart path: the carried counter increments once per restart
+    let mid = pristine { save = (save pristine)
+            { variables = Map.fromList [("meta.souls", VVInt 3), ("meta.runs", VVInt 5)] } }
+        loop2 = LoopState mid [] pristine Nothing
+        (l3, _) = applyLoopCommand Restart loop2
+    r2 <- expectTrue "pure restart branch carries meta.runs (IO path bumps)"
+        (Map.lookup "meta.runs" (variables (save (lsCurrent l3))) == Just (VVInt 1))
+    -- plain adventures stay untouched (Default-Invariante): no meta.runs, no
+    -- meta file is ever created for them
+    let plain = initSampleGame
+        plainBumped = bumpMetaRuns plain
+    r3 <- expectTrue "no meta.runs for adventures without meta-progression"
+        (Map.notMember "meta.runs" (variables (save plainBumped)))
+    pure (r1 && r2 && r3)
+
+-- | Zusatz-Empfehlung 3 (Rogue): the restart reseeds the rngState (fresh
+--   stream per run); the pure injection function is what the IO path uses.
+testRestartRngReseeded :: IO Bool
+testRestartRngReseeded = do
+    let st = initSampleGame
+        reseeded = reseedRng 4242 st
+    r1 <- expectEqual (Just 4242) (Just (rngState (save reseeded)))
+    r2 <- expectTrue "other fields untouched"
+        (save reseeded == (save st) { rngState = 4242 })
+    pure (r1 && r2)
 
 -- | Rogue Phase 2 (IO): meta.* is written at game over (death) to
 --   `saves/<slug>_meta.json`, with the slug from `game.meta_slug` when given.
