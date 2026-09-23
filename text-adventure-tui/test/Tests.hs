@@ -6,7 +6,7 @@ import TextAdventure.Tui
 
 import TextAdventure.Tui.Hud
     ( HudView (..), MapCell (..), MapGrid (..), Bar (..), buildHud, mapGrid
-    , hpBar, condLine, equipmentLines, combatLines )
+    , hpBar, condLine, equipmentLines, combatLines, statsLines, barLine )
 
 import TextAdventure.Tui.Color
     ( SgrColor (..), SgrState (..), applySgrSeq, attrOfSgr, colorAttrName
@@ -127,6 +127,19 @@ testHudMapDynamic =
                                 (all (\c -> mcRoom c /= "hallway") (mgCells g2))
             pure (rA && rB)
 
+-- | The status panel lines: gauge format, conditions, equipment.
+testHudStatsLines :: IO Bool
+testHudStatsLines =
+    let hud = buildHud (hudState "start")
+        bar = Bar "HP" 60 100
+    in do
+        rA <- expectEqual "bar line format" "HP [######....] 60" (barLine bar)
+        rB <- expectTrue "statsLines carry the hp gauge"
+                (any (isInfixOf "HP [") (statsLines hud))
+        rC <- expectTrue "empty equipment renders no lines"
+                (not (any (isInfixOf "Weapon:") (statsLines hud)))
+        pure (rA && rB && rC)
+
 -- | Conditions, equipment, combat panel, game-over flag.
 testHudPanels :: IO Bool
 testHudPanels =
@@ -176,6 +189,7 @@ main = do
         , runTest "hud: minimap lattice from visited rooms" testHudMap
         , runTest "hud: dynamic exits shape the map (Rogue P3)" testHudMapDynamic
         , runTest "hud: conditions, equipment, combat, game over" testHudPanels
+        , runTest "hud: status lines + bar format" testHudStatsLines
         ]
     if and results then pure () else exitFailure
 

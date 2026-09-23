@@ -25,6 +25,8 @@ module TextAdventure.Tui
   , roomAmbient
   , panelFrame
   , advancePanel
+  , drawTui          -- ^ exported for offscreen render tests (Rogue Phase 5)
+  , TuiState (..)    -- ^ exported so tests can build a state offscreen
   ) where
 
 import Brick
@@ -51,6 +53,8 @@ import qualified Brick.Types as BT
 
 import Ansi (stripAnsi)
 import TextAdventure.Tui.Color (attrOfSgr, colorAttrName, parseSgrLine)
+import TextAdventure.Tui.Hud (HudView (..), MapGrid (..), buildHud,
+                              statsLines)
 import Completion (completionFor)
 import Frontend (Frontend (..))
 import GameLoop (runGameWithFrontend)
@@ -66,6 +70,7 @@ data TuiEvent = EvLines      -- ^ the shared history buffer changed
               | EvEnded      -- ^ the game loop finished
               | EvArt        -- ^ the art panel's content changed (redraw it)
               | EvTick       -- ^ advance the art panel by one frame
+              | EvHud        -- ^ the game state moved — rebuild the HUD snapshot
               deriving (Eq, Show)
 
 -- | What the art panel is currently doing (Phase H/H4b).
@@ -143,6 +148,7 @@ data TuiState = TuiState
     , tsTitle   :: String
     , tsEnded   :: Bool
     , tsPanel   :: PanelState      -- ^ snapshot of 'shArt' for drawing
+    , tsHud     :: HudView         -- ^ snapshot of the HUD model (Rogue Phase 5)
     }
 
 -- | Append one (possibly multi-line) chunk of game text to the shared buffer.
@@ -180,10 +186,12 @@ tuiFrontend shared chan = Frontend
     , feEmitRaw     = \s -> when (not (null s)) (appendShared shared s >> notify)
     , feReadInput   = \st _prompt -> do
         writeIORef (shState shared) st
+        writeBChan chan EvHud
         syncAmbientPanel st
         Just <$> nextLine shared
     , feReadPlain   = \st _prompt -> do
         writeIORef (shState shared) st
+        writeBChan chan EvHud
         syncAmbientPanel st
         Just <$> nextLine shared
     , feReadPause   = void (nextLine shared)
@@ -341,6 +349,9 @@ tuiApp shared chan = App
             AppEvent EvArt -> do
                 p <- liftIO (readArtPanel shared)
                 put st { tsPanel = p }
+            AppEvent EvHud -> do
+                gst <- liftIO (readIORef (shState shared))
+                put st { tsHud = buildHud gst }
             AppEvent EvTick -> do
                 p <- liftIO (readArtPanel shared)
                 liftIO $ case advancePanel p of
@@ -366,14 +377,20 @@ tuiApp shared chan = App
                 put st { tsEditor = ed }
             _ -> put st
 
+-- | The multi-panel layout (Rogue Phase 5): narrative history plus command
+--   line at the bottom (the classic view), HUD panels above. Side by side:
+--   the map (left) and character/stats + conditional combat panel (right).
+--   Panels vanish when empty (D21 principle): a game without combat never
+--   shows a combat box, a screen without exploration skips the map.
 drawTui :: TuiState -> [Widget TuiName]
 drawTui st =
     [ vBox $
-        [ withBorderStyle unicode $
-          borderWithLabel (str (" " ++ tsTitle st ++ " ")) $
-            viewport HistoryVp Vertical $
-              vBox (map renderLine (if null (tsLines st) then [T.empty] else tsLines st))
-        ]
+        [ hudWidgets ]
+        ++ [ withBorderStyle unicode $
+             borderWithLabel (str (" " ++ tsTitle st ++ " ")) $
+               viewport HistoryVp Vertical $
+                 vBox (map renderLine (if null (tsLines st) then [T.empty] else tsLines st))
+           ]
         ++ panelWidgets
         ++ [ padLeftRight 1 $ vBox
                [ suggestionLine
@@ -384,6 +401,30 @@ drawTui st =
            ]
     ]
   where
+    -- ------------------------------------------------------------------
+    -- HUD panels (Rogue Phase 5): map left, stats+combat right; both
+    -- vanish when they have nothing to show (D21 principle).
+    -- ------------------------------------------------------------------
+    hudWidgets
+        | null sidePanels = str ""                       -- no HUD, zero height
+        | otherwise = padBottom (Pad 1) $ hBox sidePanels
+    mapWidget = case hvMap (tsHud st) of
+        Nothing -> []
+        Just g  -> [ withBorderStyle unicode $
+                     borderWithLabel (str " [Karte] ") $
+                       vBox (map str (mgFog g)) ]
+    statsWidget = [ withBorderStyle unicode $
+                    borderWithLabel (str (" [Status] " ++ hudRoom ++ " ")) $
+                      vBox (map str (statsLines (tsHud st))) ]
+    combatWidget = case hvCombat (tsHud st) of
+        []   -> []
+        cls  -> [ withBorderStyle unicode $
+                  borderWithLabel (str " [Kampf] ") $
+                    vBox (map str cls) ]
+    -- map left, stats + conditional combat box stacked right
+    sidePanels = mapWidget ++ [ vBox (statsWidget ++ combatWidget) ]
+    hudRoom = hvRoom (tsHud st)
+
     -- D21: the panel exists only when it has something to show; a blank
     -- frame draws no box. Art is rendered with `txt` — never rewrapped.
     panelWidgets = case panelFrame (tsPanel st) of
@@ -456,5 +497,6 @@ runTui initialLines st0 = do
                         , tsTitle = "Text Adventure"
                         , tsEnded = False
                         , tsPanel = PanelNone
+                        , tsHud = buildHud st0
                         }
     void (customMain initialVty buildVty (Just chan) (tuiApp shared chan) st0')

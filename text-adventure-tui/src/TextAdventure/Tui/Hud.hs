@@ -16,11 +16,13 @@ module TextAdventure.Tui.Hud
   , condLine
   , equipmentLines
   , combatLines
+  , statsLines
+  , barLine
   ) where
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.List (sortOn)
+import Data.List (intercalate, sortOn)
 import Data.Char (toUpper)
 import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 
@@ -195,6 +197,30 @@ mapGrid w h st
                    [ byPos Map.! (row, col) | row <- rows, col <- cols
                    , Map.member (row, col) byPos ]
                    (interleave fogRows connRows)
+
+
+-- ---------------------------------------------------------------------------
+-- Rendering-Vorbereitung: reine Zeilen (das Widget-Modul macht nur `str`)
+-- ---------------------------------------------------------------------------
+
+-- | Status-panel lines from the HUD: gauges, conditions, equipment. Pure so
+--   the layout test can pin them without a terminal.
+statsLines :: HudView -> [String]
+statsLines hud = concat
+    [ map barLine (take 4 (hvBars hud))
+    , [ "Zustand: " ++ intercalate ", " (take 3 (hvConditions hud))
+      | not (null (hvConditions hud)) ]
+    , map ("  " ++) (take 3 (hvEquipment hud))
+    ]
+
+-- | A gauge as label + ASCII bar + value: "HP [######....] 60".
+barLine :: Bar -> String
+barLine b = barLabel b ++ " [" ++ barCells ++ "] " ++ show (barNow b)
+  where
+    cells = 10
+    filled = if barMax b <= 0 then 0
+             else max 0 (min cells (barNow b * cells `div` barMax b))
+    barCells = replicate filled '#' ++ replicate (cells - filled) '.'
 
 -- ---------------------------------------------------------------------------
 -- Stats HUD
