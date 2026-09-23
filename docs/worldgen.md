@@ -124,6 +124,55 @@ mit erreichtem Maximum abgegeben), `GeneratorPopulationSkipped`,
 sind — typischerweise Template-Parameter, die zusammen nicht passen
 (z. B. reine Kette bei `branching: 0.0` mit `rooms.min > depth`).
 
+## Multi-Level Dungeons (Rogue Phase 4b)
+
+Für mehrstöckige Dungeons unterstützt das Template einen optionalen `levels:`-Block:
+
+```yaml
+layout:
+  rooms: { min: 12, max: 18 }
+  depth: 3                           # Anzahl der Ebenen (1..3)
+
+levels:
+  - rooms: { min: 4, max: 6 }
+    depth: 4                         # Tiefenbudget innerhalb Ebene 1
+    branching: 0.4
+    return_stairs: true              # Treppe aufwärts ('up') zurück zur Vor-Ebene
+  - rooms: { min: 4, max: 6 }
+    depth: 4
+    branching: 0.3
+    return_stairs: true
+  - rooms: { min: 4, max: 6 }
+    depth: 4
+    branching: 0.0
+    return_stairs: false             # Point of no Return vor dem Bossraum
+```
+
+### Eigenschaften und Garantien
+
+1. **3D-Gitter `(x, y, z)`:** Jede Ebene `z ∈ {1 .. N}` erzeugt ein eigenes Teilgitter.
+2. **Treppenverbindungen:** Die tiefste Zelle der Ebene `i` wird über eine gerichtete Kante
+   (`down`) mit dem Einstiegspunkt `(0, 0, i+1)` der Ebene `i+1` verbunden.
+3. **Rückweg:** Wenn `return_stairs: true` für Ebene `i` gesetzt ist, wird automatisch eine
+   Gegenkante (`up`) von `(0, 0, i+1)` zurück zur Treppenzelle von Ebene `i` generiert.
+4. **Ebenen-Filterung:** `depth_range: [zMin, zMax]` an Raum- und NPC-Archetypen bezieht sich
+   im Multi-Level-Modus auf die Ebenennummer (z. B. `[1, 1]` nur für Ebene 1, `[2, 3]` für Ebenen 2 und 3).
+5. **Boss-Platzierung:** Der Boss-Raum wird stets auf der letzten Ebene (`z = N`) bei maximaler
+   Tiefe platziert.
+6. **Adventure/Engine-Feld `floor:`:** Generierte Räume tragen `floor: z` (in Haskell: `roomFloor :: Maybe Int`),
+   wodurch die Ebenenzugehörigkeit für Frontend und Logik erhalten bleibt. Bei Single-Level-Dungeons
+   wird das Feld weggelassen (M2 Default-Invariante).
+
+### TUI-Minimap & Ebenen-Wechsel
+
+In der Terminal-UI (TUI) filtert die Minimap automatisch auf die Räume der betrachteten Ebene:
+* **Aktuelle Ebene (Default):** Der Titel zeigt `[Karte: Ebene <n> (hier)]` und markiert den
+  Spieler mit `◆`.
+* **Ebenen-Wechsel:** Mit `F2` oder `Ctrl-F` kann der Spieler durch alle bisher besuchten
+  Ebenen blättern, um bereits erkundete Stockwerke zu prüfen (`[Karte: Ebene <k>]`).
+* **Auto-Reset:** Bei der nächsten Spielerbewegung oder Eingabe springt die Minimap automatisch
+  wieder auf die aktuelle Ebene des Spielers zurück.
+
 ## Nicht-Ziele
 
 * **Vollständige Solvability** („ist der Boss mit den gefundenen Items
@@ -131,9 +180,7 @@ sind — typischerweise Template-Parameter, die zusammen nicht passen
   die Gegenwert-Abwägung liegt beim Template-Autor (Pools).
 * **Laufzeit-Generierung** (neues Dungeon pro Run) — ein generiertes Dungeon
   ist eine statische Adventure-Datei; „neues Dungeon pro Run" (Meta-
-  Progression, Phase 2) bleibt Nachfolgeplan.
-* **Mehrere Ebenen** als erstklassiges Layout-Konzept (per-Ebene-Minimap,
-  `floor`-Tag) — weitgehend mit One-way-Kanten kombinierbar, Nachfolgeplan.
+  Progression, Phase 2 / Phase 4c) erfolgt über den Runner `worldbuilder run`.
 
 ## CI
 

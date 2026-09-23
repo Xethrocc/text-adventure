@@ -20,7 +20,7 @@ import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(
 import Worldbuilder.ParseFile (parseAdventureFile)
 import Worldbuilder.Rng
 import Worldbuilder.Generate
-import Data.List (sort, stripPrefix)
+import Data.List (sort, sortOn, stripPrefix)
 import Data.YAML.Aeson (decode1)
 import Data.YAML (posLine)
 import qualified Data.Map.Strict as Map
@@ -34,7 +34,7 @@ import Validate (validateWorld, validateGameState, ValidationError (..))
 minWorld :: E.GameWorld
 minWorld = E.GameWorld
     { rooms = Map.fromList
-        [ ("room_0", E.Room "room_0" "Room 0" (E.CondText "test" []) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing (E.AsciiArt (E.CondText "" []) [] 0 [] Nothing) Nothing)
+        [ ("room_0", E.Room "room_0" "Room 0" (E.CondText "test" []) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing (E.AsciiArt (E.CondText "" []) [] 0 [] Nothing) Nothing Nothing)
         ]
     , itemDefs = Map.empty
     , npcDefs = Map.empty
@@ -143,6 +143,7 @@ minRoom rid = ARoom
     , arSearch = Nothing
     , arAscii = AAscii (ACondText "" []) [] 0 [] Nothing
     , arIntro = Nothing
+    , arFloor = Nothing
     }
 
 -- | Build a minimal adventure with one room
@@ -649,6 +650,9 @@ findExample fname = firstExisting
     , "examples/genres" </> fname
     , "../examples/genres" </> fname
     , "../../examples/genres" </> fname
+    , "examples/templates" </> fname
+    , "../examples/templates" </> fname
+    , "../../examples/templates" </> fname
     ]
   where
     firstExisting [] = pure Nothing
@@ -2568,6 +2572,9 @@ tests =
     , ("template: invalid count range is rejected", testTemplateInvalidCount)
     , ("template: seed parses from number and string", testTemplateSeedParse)
     , ("template: invalid combat fragment fails parsing", testTemplateInvalidCombat)
+    , ("template: levels block parses with all fields", testTemplateLevelsParse)
+    , ("template: levels count exceeding layout.depth is rejected", testTemplateLevelsExceedDepth)
+    , ("template: levels invalid field values are rejected", testTemplateLevelsInvalidValues)
     -- Rogue Phase 4c: pure generation core
     , ("gen: same seed, identical plan (determinism)", testGenDeterminism)
     , ("gen: rooms.min unreachable -> GENoSpace", testGenNoSpace)
@@ -2585,6 +2592,17 @@ tests =
     , ("gen: save_zones from savezone instances", testGenSavezones)
     , ("gen: treasure lock + key ordering (keyDepth < lockDepth)", testGenLockKey)
     , ("gen: pool placement lands in non-special rooms", testGenPools)
+    -- Rogue Phase 4b: multi-level layout & stairs
+    , ("gen: multi-level layout places rooms on all levels (Ebenen 1..N)", testGenMultiLevelRoomsOnAllLevels)
+    , ("gen: multi-level descent edges connect deepest cell of level i to (0,0,i+1)", testGenMultiLevelStairEdges)
+    , ("gen: return_stairs true adds upward edge", testGenMultiLevelReturnStairs)
+    , ("gen: boss sits on the last level at maximum depth", testGenMultiLevelBossOnLastLevel)
+    , ("gen: depth_range filters room templates by level in multi-level layout", testGenMultiLevelDepthRangeFiltering)
+    , ("gen: auto-distribution of budget when levels entries are omitted", testGenMultiLevelAutoDistribution)
+    , ("gen: multi-level adventure compiles and validates clean", testGenMultiLevelAdventureValid)
+    , ("gen: rooms carry roomFloor matching level", testGenMultiLevelRoomFloors)
+    , ("engine: roomFloor JSON default-invariante holds", testRoomFloorJsonDefaultInvariant)
+    , ("gen: multilevel_dungeon_template.yaml fixture compiles and validates clean", testMultiLevelFixtureCompiles)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -2885,6 +2903,73 @@ testTemplateInvalidCombat =
         Left _  -> expectTrue "invalid combat fragment is a parse error" True
         Right _ -> expectTrue "expected parse failure for combat: \"nope\"" False
 
+testTemplateLevelsParse :: IO Bool
+testTemplateLevelsParse = do
+    let yaml = validTemplateYaml ++ unlines
+            [ "levels:"
+            , "  - rooms: { min: 8, max: 14 }"
+            , "    branching: 0.5"
+            , "    return_stairs: true"
+            , "    depth: 3"
+            , "  - rooms: 4"
+            , "    branching: 0.0"
+            ]
+    case parseYamlTemplate yaml of
+        Left err -> do
+            putStrLn $ "  parse error: " ++ err
+            pure False
+        Right t -> do
+            r1 <- expectEqual 2 (length (dtLevels t))
+            let lv1 = head (dtLevels t)
+                lv2 = dtLevels t !! 1
+            r2 <- expectEqual (Just (DRange 8 14)) (dlvRooms lv1)
+            r3 <- expectEqual (Just 0.5) (dlvBranching lv1)
+            r4 <- expectEqual True (dlvReturnStairs lv1)
+            r5 <- expectEqual (Just 3) (dlvDepth lv1)
+            r6 <- expectEqual (Just (DRange 4 4)) (dlvRooms lv2)
+            r7 <- expectEqual False (dlvReturnStairs lv2)
+            pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+testTemplateLevelsExceedDepth :: IO Bool
+testTemplateLevelsExceedDepth = do
+    -- validTemplateYaml has layout.depth = 2; adding 3 levels should trigger LevelsExceedDepth
+    let yaml = validTemplateYaml ++ unlines
+            [ "levels:"
+            , "  - { rooms: 2 }"
+            , "  - { rooms: 2 }"
+            , "  - { rooms: 2 }"
+            ]
+    expectTrue "LevelsExceedDepth reported"
+        ("LevelsExceedDepth" `elem` templateIssueCodes (parseYamlTemplate yaml))
+
+testTemplateLevelsInvalidValues :: IO Bool
+testTemplateLevelsInvalidValues = do
+    let yamlRooms = validTemplateYaml ++ unlines
+            [ "levels:"
+            , "  - { rooms: { min: 5, max: 2 } }"
+            ]
+        yamlRoomsZero = validTemplateYaml ++ unlines
+            [ "levels:"
+            , "  - { rooms: 0 }"
+            ]
+        yamlBranch = validTemplateYaml ++ unlines
+            [ "levels:"
+            , "  - { branching: 1.5 }"
+            ]
+        yamlDepth = validTemplateYaml ++ unlines
+            [ "levels:"
+            , "  - { depth: 0 }"
+            ]
+    r1 <- expectTrue "InvalidCount for rooms bounds"
+        ("InvalidCount" `elem` templateIssueCodes (parseYamlTemplate yamlRooms))
+    r2 <- expectTrue "InvalidCount for rooms < 1"
+        ("InvalidCount" `elem` templateIssueCodes (parseYamlTemplate yamlRoomsZero))
+    r3 <- expectTrue "LayoutBranching for branching > 1"
+        ("LayoutBranching" `elem` templateIssueCodes (parseYamlTemplate yamlBranch))
+    r4 <- expectTrue "LayoutDepth for depth < 1"
+        ("LayoutDepth" `elem` templateIssueCodes (parseYamlTemplate yamlDepth))
+    pure (r1 && r2 && r3 && r4)
+
 -- ---------------------------------------------------------------------------
 -- Rogue Phase 4c: pure generation core
 -- ---------------------------------------------------------------------------
@@ -2895,6 +2980,7 @@ genTemplate = DTemplate
     { dtName          = "Gen"
     , dtDescription   = Nothing
     , dtLayout        = DLayout 6 12 4 0.5 2
+    , dtLevels        = []
     , dtRoomTemplates =
         [ DRoomTemplate "junction" 3 (DRange 1 4) False (minRoom "x") False
         , DRoomTemplate "camp" 1 (DRange 1 2) True (minRoom "y") False ]
@@ -2977,7 +3063,7 @@ testGenStartCell = case generateDungeonLayout genTemplate 42 of
     Left err -> expectTrue ("unexpected: " ++ show err) False
     Right plan -> do
         let sr = dpGrid plan Map.! dpStartCell plan
-        r1 <- expectEqual (0, 0) (dpStartCell plan)
+        r1 <- expectEqual (0, 0, 1) (dpStartCell plan)
         r2 <- expectEqual 1 (prDepth sr)
         r3 <- expectEqual "camp" (prArch sr)  -- special.start.template wins
         pure (r1 && r2 && r3)
@@ -3122,6 +3208,230 @@ testGenPools = case generateDungeon poolT 42 of
         { dtItemPool = [ DItemPoolEntry (minItemKey "potion") (DRange 2 3) Nothing ]
         , dtNpcPool = [ DNpcPoolEntry (minNpcKey "skeleton") (DRange 1 2) (Just (DRange 2 4)) False ]
         }
+
+-- ---------------------------------------------------------------------------
+-- Rogue Phase 4b: multi-level layout & stairs tests
+-- ---------------------------------------------------------------------------
+
+-- | Multi-level template for Phase 4b generation tests.
+multiLevelTemplate :: DTemplate
+multiLevelTemplate = genTemplate
+    { dtLayout = DLayout 12 20 3 0.4 1
+    , dtLevels =
+        [ DLevel (Just (DRange 4 6)) (Just 6) (Just 0.4) True
+        , DLevel (Just (DRange 4 6)) (Just 6) (Just 0.3) False
+        , DLevel (Just (DRange 4 6)) (Just 6) (Just 0.0) False
+        ]
+    , dtRoomTemplates =
+        [ DRoomTemplate "junction" 3 (DRange 1 3) False (minRoom "x") False
+        , DRoomTemplate "camp" 1 (DRange 1 1) True (minRoom "y") False
+        , DRoomTemplate "mid" 2 (DRange 2 2) False (minRoom "z") False
+        ]
+    }
+
+testGenMultiLevelRoomsOnAllLevels :: IO Bool
+testGenMultiLevelRoomsOnAllLevels = case generateDungeonLayout multiLevelTemplate 42 of
+    Left err -> expectTrue ("unexpected layout error: " ++ show err) False
+    Right plan -> do
+        let grid = dpGrid plan
+            levels = Set.fromList [ z | (_, _, z) <- Map.keys grid ]
+            roomsL1 = length [ () | (_, _, z) <- Map.keys grid, z == 1 ]
+            roomsL2 = length [ () | (_, _, z) <- Map.keys grid, z == 2 ]
+            roomsL3 = length [ () | (_, _, z) <- Map.keys grid, z == 3 ]
+        r1 <- expectEqual (Set.fromList [1, 2, 3]) levels
+        r2 <- expectTrue "level 1 rooms in range [4, 6]" (roomsL1 >= 4 && roomsL1 <= 6)
+        r3 <- expectTrue "level 2 rooms in range [4, 6]" (roomsL2 >= 4 && roomsL2 <= 6)
+        r4 <- expectTrue "level 3 rooms in range [4, 6]" (roomsL3 >= 4 && roomsL3 <= 6)
+        pure (r1 && r2 && r3 && r4)
+
+testGenMultiLevelStairEdges :: IO Bool
+testGenMultiLevelStairEdges = case generateDungeonLayout multiLevelTemplate 42 of
+    Left err -> expectTrue ("unexpected layout error: " ++ show err) False
+    Right plan -> do
+        let edges = dpEdges plan
+            downEdges = [ e | e <- edges, deDir e == "down" ]
+            grid = dpGrid plan
+            cellsL1 = [ c | c@(_, _, z) <- Map.keys grid, z == 1 ]
+            deepest1 = head (sortOn (\c -> (negate (prDepth (grid Map.! c)), c)) cellsL1)
+            cellsL2 = [ c | c@(_, _, z) <- Map.keys grid, z == 2 ]
+            deepest2 = head (sortOn (\c -> (negate (prDepth (grid Map.! c)), c)) cellsL2)
+        r1 <- expectEqual 2 (length downEdges)
+        r2 <- expectTrue "down edge 1 connects deepest L1 to (0,0,2)"
+            (any (\e -> deFrom e == deepest1 && deTo e == (0, 0, 2) && deOneway e) downEdges)
+        r3 <- expectTrue "down edge 2 connects deepest L2 to (0,0,3)"
+            (any (\e -> deFrom e == deepest2 && deTo e == (0, 0, 3) && deOneway e) downEdges)
+        pure (r1 && r2 && r3)
+
+testGenMultiLevelReturnStairs :: IO Bool
+testGenMultiLevelReturnStairs = case generateDungeonLayout multiLevelTemplate 42 of
+    Left err -> expectTrue ("unexpected layout error: " ++ show err) False
+    Right plan -> do
+        let edges = dpEdges plan
+            upEdges = [ e | e <- edges, deDir e == "up" ]
+            grid = dpGrid plan
+            cellsL1 = [ c | c@(_, _, z) <- Map.keys grid, z == 1 ]
+            deepest1 = head (sortOn (\c -> (negate (prDepth (grid Map.! c)), c)) cellsL1)
+        r1 <- expectEqual 1 (length upEdges)
+        r2 <- expectTrue "up edge from (0,0,2) to deepest L1"
+            (any (\e -> deFrom e == (0, 0, 2) && deTo e == deepest1 && deOneway e) upEdges)
+        r3 <- expectTrue "no return stairs from level 3"
+            (null [ e | e <- upEdges, deFrom e == (0, 0, 3) ])
+        pure (r1 && r2 && r3)
+
+testGenMultiLevelBossOnLastLevel :: IO Bool
+testGenMultiLevelBossOnLastLevel = case generateDungeonLayout multiLevelTemplate 42 of
+    Left err -> expectTrue ("unexpected layout error: " ++ show err) False
+    Right plan -> do
+        let (_, _, bossZ) = dpBossCell plan
+            grid = dpGrid plan
+            maxZ = maximum [ z | (_, _, z) <- Map.keys grid ]
+            cellsOnMaxZ = [ c | c@(_, _, z) <- Map.keys grid, z == maxZ ]
+            maxDepthOnMaxZ = maximum [ prDepth (grid Map.! c) | c <- cellsOnMaxZ ]
+        r1 <- expectEqual maxZ bossZ
+        r2 <- expectEqual maxDepthOnMaxZ (prDepth (grid Map.! dpBossCell plan))
+        pure (r1 && r2)
+
+testGenMultiLevelDepthRangeFiltering :: IO Bool
+testGenMultiLevelDepthRangeFiltering = case generateDungeonLayout multiLevelTemplate 42 of
+    Left err -> expectTrue ("unexpected layout error: " ++ show err) False
+    Right plan -> do
+        let grid = dpGrid plan
+            midCells = [ c | (c, pr) <- Map.toList grid, prArch pr == "mid" ]
+        r1 <- expectTrue "mid room template was placed" (not (null midCells))
+        r2 <- expectTrue "all mid rooms are on level 2" (all (\(_, _, z) -> z == 2) midCells)
+        pure (r1 && r2)
+
+testGenMultiLevelAutoDistribution :: IO Bool
+testGenMultiLevelAutoDistribution = do
+    let partialT = genTemplate
+            { dtLayout = DLayout 12 18 3 0.4 1
+            , dtLevels = [ DLevel (Just (DRange 4 6)) Nothing Nothing False ]
+            }
+        resolved = resolveLevels partialT
+    r1 <- expectEqual 3 (length resolved)
+    let rl1 = head resolved
+        rl2 = resolved !! 1
+        rl3 = resolved !! 2
+    r2 <- expectEqual (4, 6) (rlRoomsMin rl1, rlRoomsMax rl1)
+    r3 <- expectEqual (4, 6) (rlRoomsMin rl2, rlRoomsMax rl2)
+    r4 <- expectEqual (4, 6) (rlRoomsMin rl3, rlRoomsMax rl3)
+    case generateDungeonLayout partialT 42 of
+        Left err -> expectTrue ("layout error: " ++ show err) False
+        Right plan -> do
+            let levels = Set.fromList [ z | (_, _, z) <- Map.keys (dpGrid plan) ]
+            r5 <- expectEqual (Set.fromList [1, 2, 3]) levels
+            pure (r1 && r2 && r3 && r4 && r5)
+
+testGenMultiLevelReachability :: IO Bool
+testGenMultiLevelReachability = case generateDungeonLayout multiLevelTemplate 42 of
+    Left err -> expectTrue ("unexpected layout error: " ++ show err) False
+    Right plan -> do
+        let reachable = genReachable plan
+            grid = dpGrid plan
+        expectEqual (Map.keysSet grid) reachable
+
+testGenMultiLevelAdventureValid :: IO Bool
+testGenMultiLevelAdventureValid = case generateDungeon multiLevelTemplate 42 of
+    Left err -> expectTrue ("generation error: " ++ show err) False
+    Right (adv, _warns) -> case compileAdventure adv of
+        Left errs -> expectTrue ("compile error: " ++ issuesText errs) False
+        Right cr -> do
+            let werrs = validateWorld (crWorld cr)
+                serrs = validateGameState (crWorld cr) (crSave cr)
+            expectTrue ("validation clean (" ++ show (length (werrs ++ serrs)) ++ " issues)")
+                       (null (werrs ++ serrs))
+
+testGenMultiLevelRoomFloors :: IO Bool
+testGenMultiLevelRoomFloors = case generateDungeon multiLevelTemplate 42 of
+    Left err -> expectTrue ("generation error: " ++ show err) False
+    Right (adv, _warns) -> case compileAdventure adv of
+        Left errs -> expectTrue ("compile error: " ++ issuesText errs) False
+        Right cr -> do
+            let w = crWorld cr
+                advRoomsList = advRooms adv
+                floors = [ arFloor r | r <- advRoomsList ]
+                compiledFloors = [ E.roomFloor r | (_, r) <- Map.toList (E.rooms w) ]
+            r1 <- expectTrue "every room in multi-level has Just floor"
+                    (all (\fl -> case fl of Just f -> f >= 1 && f <= 3; Nothing -> False) floors)
+            r2 <- expectTrue "compiled rooms keep roomFloor"
+                    (all (\fl -> case fl of Just f -> f >= 1 && f <= 3; Nothing -> False) compiledFloors)
+            r3 <- expectTrue "rooms exist on each floor 1, 2, 3"
+                    (Set.fromList [ f | Just f <- compiledFloors ] == Set.fromList [1, 2, 3])
+            pure (r1 && r2 && r3)
+
+testRoomFloorJsonDefaultInvariant :: IO Bool
+testRoomFloorJsonDefaultInvariant = do
+    let rNoFloor = E.Room "r1" "Room 1" (E.plainText "desc") Map.empty Set.empty Nothing
+                    Nothing Nothing Nothing Nothing E.emptyAscii Nothing Nothing
+        rWithFloor = rNoFloor { E.roomFloor = Just 2 }
+        sNoFloor = BLC.unpack (Aeson.encode rNoFloor)
+        sWithFloor = BLC.unpack (Aeson.encode rWithFloor)
+    r1 <- expectTrue "roomFloor Nothing is omitted from JSON (Default-Invariante)"
+            (not ("\"roomFloor\"" `isInfixOf` sNoFloor) && not ("\"floor\"" `isInfixOf` sNoFloor))
+    r2 <- expectTrue "roomFloor Just 2 is serialized into JSON as roomFloor"
+            ("\"roomFloor\":2" `isInfixOf` sWithFloor)
+    r3 <- case Aeson.decode (Aeson.encode rNoFloor) :: Maybe E.Room of
+        Just decoded -> expectEqual Nothing (E.roomFloor decoded)
+        Nothing      -> expectTrue "decode no floor failed" False
+    r4 <- case Aeson.decode (Aeson.encode rWithFloor) :: Maybe E.Room of
+        Just decoded -> expectEqual (Just 2) (E.roomFloor decoded)
+        Nothing      -> expectTrue "decode with floor failed" False
+    -- Also verify fallback parsing from "floor": 2
+    let sManualFloor = BLC.pack "{\"roomId\":\"r1\",\"roomName\":\"Room 1\",\"roomDescription\":{\"default\":\"desc\"},\"roomConnections\":[],\"roomTags\":[],\"floor\":2}"
+    r5 <- case Aeson.decode sManualFloor :: Maybe E.Room of
+        Just decoded -> expectEqual (Just 2) (E.roomFloor decoded)
+        Nothing      -> expectTrue "decode fallback floor:2 failed" False
+    pure (r1 && r2 && r3 && r4 && r5)
+
+testMultiLevelFixtureCompiles :: IO Bool
+testMultiLevelFixtureCompiles = do
+    mbPath <- findExample "multilevel_dungeon_template.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  multilevel_dungeon_template.yaml not found"
+            pure False
+        Just path -> do
+            bytes <- BLC.readFile path
+            case decode1 bytes of
+                Left (_, err) -> do
+                    putStrLn $ "  failed to decode YAML: " ++ err
+                    pure False
+                Right val -> case parseTemplate val of
+                    Left err -> do
+                        putStrLn $ "  failed to parse template: " ++ err
+                        pure False
+                    Right tmpl -> do
+                        let tIssues = validateTemplate tmpl
+                            tErrors = filter ((== SError) . ciSeverity) tIssues
+                        r1 <- expectTrue ("template validation clean (" ++ show (length tErrors) ++ " errors)")
+                                         (null tErrors)
+                        r2 <- expectEqual 3 (length (dtLevels tmpl))
+                        case generateDungeon tmpl 42 of
+                            Left err -> do
+                                putStrLn $ "  generation failed: " ++ show err
+                                pure False
+                            Right (adv, _warns) -> case compileAdventure adv of
+                                Left errs -> do
+                                    putStrLn $ "  compilation failed: " ++ issuesText errs
+                                    pure False
+                                Right cr -> do
+                                    let gw = crWorld cr
+                                        werrs = validateWorld gw
+                                        serrs = validateGameState gw (crSave cr)
+                                        roomList = Map.elems (E.rooms gw)
+                                        floors = [ fl | Just fl <- map E.roomFloor roomList ]
+                                    r3 <- expectTrue ("validation clean (" ++ show (length (werrs ++ serrs)) ++ " issues)")
+                                                     (null (werrs ++ serrs))
+                                    r4 <- expectTrue "rooms exist on each floor [1, 2, 3]"
+                                                     (Set.fromList floors == Set.fromList [1, 2, 3])
+                                    let allExits = [ (rid, dir, ex)
+                                                   | (rid, room) <- Map.toList (E.rooms gw)
+                                                   , (dir, ex) <- Map.toList (E.roomConnections room) ]
+                                        upExits = [ (rid, ex) | (rid, dir, ex) <- allExits, dir == E.Up ]
+                                        downExits = [ (rid, ex) | (rid, dir, ex) <- allExits, dir == E.Down ]
+                                    r5 <- expectTrue "down stairs exist between levels" (length downExits >= 2)
+                                    r6 <- expectTrue "return stairs (up) exist" (length upExits >= 2)
+                                    pure (r1 && r2 && r3 && r4 && r5 && r6)
 
 -- helpers -------------------------------------------------------------------
 

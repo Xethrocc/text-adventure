@@ -11,7 +11,9 @@ module TextAdventure.Tui.Hud
   , MapGrid (..)
   , Bar (..)
   , buildHud
+  , buildHudWithFloor
   , mapGrid
+  , mapGridWithFloor
   , hpBar
   , condLine
   , equipmentLines
@@ -22,7 +24,7 @@ module TextAdventure.Tui.Hud
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.List (intercalate, sortOn)
+import Data.List (intercalate, nub, sort, sortOn)
 import Data.Char (toUpper)
 import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 
@@ -63,6 +65,8 @@ data Bar = Bar
 data HudView = HudView
     { hvRoom       :: String        -- ^ current room name ("" = unknown room)
     , hvMap        :: Maybe MapGrid -- ^ minimap of visited rooms (Nothing = none)
+    , hvFloor      :: Maybe Int     -- ^ active floor of the minimap (if floor data exists)
+    , hvFloors     :: [Int]         -- ^ all known floors with visited rooms (sorted)
     , hvBars       :: [Bar]         -- ^ HP first, then declared numeric variables
     , hvConditions :: [String]      -- ^ active status effects, "name (n)"
     , hvEquipment  :: [String]      -- ^ "slot: item" lines, slot order
@@ -70,11 +74,13 @@ data HudView = HudView
     , hvGameOver   :: Bool          -- ^ dim the panels on the end screen
     } deriving (Show, Eq)
 
--- | The full HUD for a state: one entry point the TUI can call per refresh.
-buildHud :: GameState -> HudView
-buildHud st = HudView
+-- | The full HUD for a state, filtered by an optional floor view.
+buildHudWithFloor :: Maybe Int -> GameState -> HudView
+buildHudWithFloor mFloor st = HudView
     { hvRoom       = fromMaybe "" (roomName <$> Map.lookup here (rooms (world st)))
-    , hvMap        = mapGrid 9 5 st
+    , hvMap        = mapGridWithFloor activeFloor 9 5 st
+    , hvFloor      = activeFloor
+    , hvFloors     = allKnownFloors
     , hvBars       = [hpBar st] ++ numericBars st
     , hvConditions = mapMaybe condLine (Map.elems (conditions (save st)))
     , hvEquipment  = equipmentLines st
@@ -83,6 +89,16 @@ buildHud st = HudView
     }
   where
     here = currentRoom (save st)
+    visited = Set.insert here (visitedRooms (save st))
+    allKnownFloors = sort (nub (mapMaybe (\rm -> roomFloor =<< Map.lookup rm (rooms (world st))) (Set.toList visited)))
+    currentRoomFloor = roomFloor =<< Map.lookup here (rooms (world st))
+    activeFloor = case mFloor of
+        Just fl -> Just fl
+        Nothing -> currentRoomFloor
+
+-- | Build HUD following the player's current floor (default).
+buildHud :: GameState -> HudView
+buildHud = buildHudWithFloor Nothing
 
 -- ---------------------------------------------------------------------------
 -- Minimap (M10: visitedRooms + Phase 3 effective connections)
@@ -93,37 +109,54 @@ exitDest ex = case ex of
     Open dest  -> Just dest
     Locked d _ -> Just d
 
+-- | Default minimap: follows the player's current floor.
+mapGrid :: Int -> Int -> GameState -> Maybe MapGrid
+mapGrid = mapGridWithFloor Nothing
+
 -- | Lay the visited rooms out on their compass lattice (row grows south, col
 --   grows east, the anchor room sits at (0,0)), recentre so the player's cell
 --   stays inside the window, and render stamps with connectors and fog.
---   Connections are read through 'effectiveConnections', so dynamic exits
---   (Rogue Phase 3) shape the map exactly like static ones.
-mapGrid :: Int -> Int -> GameState -> Maybe MapGrid
-mapGrid w h st
+--   When @mFloor@ is @Just fl@, only visited rooms on that floor are shown.
+mapGridWithFloor :: Maybe Int -> Int -> Int -> GameState -> Maybe MapGrid
+mapGridWithFloor mFloor w h st
     | null stamped = Nothing
     | otherwise    = Just $ render w h (recentre w h here stamped)
   where
     here = currentRoom (save st)
     visited = Set.insert here (visitedRooms (save st))
-    -- BFS over the effective connections of *visited* rooms, stamping every
-    -- reachable visited room with lattice coordinates. Two visited rooms that
-    -- are only linked by an unexplored path get independent anchors — the map
-    -- then shows both clusters, the second rooted at the next unplaced room.
-    stamped = go [here] (Map.singleton here (0, 0))
+    targetRooms = case mFloor of
+        Just fl -> Set.filter (\rm -> (roomFloor =<< Map.lookup rm (rooms (world st))) == Just fl) visited
+        Nothing -> visited
+    startRoom = if Set.member here targetRooms
+                then here
+                else case Set.toList targetRooms of
+                    (r : _) -> r
+                    []      -> here
+    stamped
+        | Set.null targetRooms = Map.empty
+        | otherwise            = goAll targetRooms (Map.singleton startRoom (0, 0)) [startRoom]
       where
-        go [] stamps = stamps
-        go (x:xs) stamps =
-            let conns = [ (d, dest)
-                        | (d, ex) <- Map.toList (effectiveConnections st x)
-                        , Just dest <- [exitDest ex]
-                        , Set.member dest visited ]
-                step (sm, queue) (dir, dest)
-                    | Map.member dest sm = (sm, queue)
-                    | otherwise = case destCell dir (sm Map.! x) of
-                        Nothing -> (sm, queue)
-                        Just rc -> (Map.insert dest rc sm, queue ++ [dest])
-                (stamps', queue') = foldl step (stamps, xs) conns
-            in go queue' stamps'
+        goAll remaining stamps queue = case queue of
+            (x:xs) ->
+                let conns = [ (d, dest)
+                            | (d, ex) <- Map.toList (effectiveConnections st x)
+                            , Just dest <- [exitDest ex]
+                            , Set.member dest remaining ]
+                    step (sm, q) (dir, dest)
+                        | Map.member dest sm = (sm, q)
+                        | otherwise = case destCell dir (sm Map.! x) of
+                            Nothing -> (sm, q)
+                            Just rc -> (Map.insert dest rc sm, q ++ [dest])
+                    (stamps', queue') = foldl step (stamps, xs) conns
+                in goAll remaining stamps' queue'
+            [] ->
+                let unplaced = Set.filter (\r -> not (Map.member r stamps)) remaining
+                in if Set.null unplaced
+                   then stamps
+                   else
+                       let next = head (sort (Set.toList unplaced))
+                           maxC = if Map.null stamps then 0 else maximum (map snd (Map.elems stamps)) + 2
+                       in goAll remaining (Map.insert next (0, maxC) stamps) [next]
     -- compass lattice: rows/cols from the direction deltas (Up/Down would
     -- collapse onto the same cell, so they do not place a neighbour)
     destCell dir (row, col) = case dir of
@@ -147,7 +180,9 @@ mapGrid w h st
                     maximum (map f (Map.elems stamps)))
         (rmin, rmax) = spanOf fst
         (cmin, cmax) = spanOf snd
-        (hr, hcol) = stamps Map.! hc
+        (hr, hcol) = case Map.lookup hc stamps of
+            Just pt -> pt
+            Nothing -> (rmin + (rmax - rmin) `div` 2, cmin + (cmax - cmin) `div` 2)
         topR | rmax - rmin + 1 <= h' = rmin
              | otherwise = max rmin (min (hr - h' `div` 2) (rmax - h' + 1))
         topC | cmax - cmin + 1 <= w' = cmin

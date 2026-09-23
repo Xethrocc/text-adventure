@@ -1275,17 +1275,17 @@ testWatchCarriesRate = do
 testSiblingSavePath :: IO Bool
 testSiblingSavePath = do
     tmp <- getTemporaryDirectory
-    let dir = tmp ++ "/sibsave"
-        worldPath = dir ++ "/world.json"
+    let dir = tmp </> "sibsave"
+        worldPath = dir </> "world.json"
     createDirectoryIfMissing True dir
     writeFile worldPath "{}"
     noSibling <- siblingSavePath worldPath
-    writeFile (dir ++ "/save.json") "{}"
+    writeFile (dir </> "save.json") "{}"
     withSibling <- siblingSavePath worldPath
-    removeFile (dir ++ "/save.json")
+    removeFile (dir </> "save.json")
     removeFile worldPath
     r1 <- expectTrue "no sibling -> Nothing" (isNothing noSibling)
-    r2 <- expectTrue "sibling save.json found" (withSibling == Just (dir ++ "/save.json"))
+    r2 <- expectTrue "sibling save.json found" (withSibling == Just (dir </> "save.json"))
     pure (r1 && r2)
 
 testAmbientRoundTrip :: IO Bool
@@ -2300,7 +2300,7 @@ testSampleWorldIsValid = do
 testDanglingExitDetected :: IO Bool
 testDanglingExitDetected = do
     let roomA = Room "roomA" "Room A" (plainText "desc.") (Map.singleton North (Open "roomZ")) Set.empty Nothing
-            Nothing Nothing Nothing Nothing (emptyAscii) Nothing
+            Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing
         gw = (world initSampleGame) { rooms = Map.singleton "roomA" roomA }
         errors = validateWorld gw
     expectTrue "dangling exit detected" (DanglingExit "roomA" North "roomZ" `elem` errors)
@@ -2309,7 +2309,7 @@ testDuplicateIDsBetweenItemsAndRooms :: IO Bool
 testDuplicateIDsBetweenItemsAndRooms = do
     let gw = (world initSampleGame)
                 { rooms = Map.insert "key" (Room "key" "Duplicate" (plainText "desc.") Map.empty Set.empty Nothing
-                    Nothing Nothing Nothing Nothing (emptyAscii) Nothing) (rooms (world initSampleGame)) }
+                    Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing) (rooms (world initSampleGame)) }
         errors = validateWorld gw
     expectTrue "duplicate key found" (any isDup errors)
   where
@@ -2319,7 +2319,7 @@ testDuplicateIDsBetweenItemsAndRooms = do
 testUnreachableRoomDetected :: IO Bool
 testUnreachableRoomDetected = do
     let roomIsolated = Room "isolated" "Isolated" (plainText "Alone.") Map.empty Set.empty Nothing
-            Nothing Nothing Nothing Nothing (emptyAscii) Nothing
+            Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing
         gw = (world initSampleGame)
                 { rooms = Map.insert "isolated" roomIsolated (rooms (world initSampleGame)) }
         -- Reachability is checked where the real start room is known, i.e. in
@@ -3832,7 +3832,7 @@ testSavesDirOverride = withSavesIsolation $ do
     SaveLoad.saveGame st0 "p0slot"
     slotPath <- SaveLoad.saveSlotPath "p0slot"
     r1 <- expectTrue "slot file lands under TA_SAVES_DIR"
-             (("tmp" `isInfixOf` slotPath) && ("p0slot.json" `isSuffixOf` slotPath))
+             (("ta-saves-test" `isInfixOf` slotPath) && ("p0slot.json" `isSuffixOf` slotPath))
     exists <- doesFileExist slotPath
     r2 <- expectTrue "saved slot exists in the redirected directory" exists
     -- the redirected directory holds exactly the one slot file

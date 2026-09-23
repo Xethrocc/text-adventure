@@ -1022,6 +1022,7 @@ data Room = Room
     , roomSearchOutcome   :: Maybe Effect
     , roomAscii           :: AsciiArt                  -- ^ Optional ASCII art banner (state-dependent since Phase B, animated since Phase D)
     , roomIntro           :: Maybe String              -- ^ Clip id played once when entering (Phase H/H4)
+    , roomFloor           :: Maybe Int                 -- ^ Optional floor / dungeon level index (Phase 4b)
     } deriving (Show, Eq, Generic)
 
 instance ToJSON Room where
@@ -1038,6 +1039,7 @@ instance ToJSON Room where
         , "roomSearchOutcome"   .= roomSearchOutcome r
         ] ++ asciiPair "roomAscii" (roomAscii r)
           ++ [ "roomIntro" .= i | Just i <- [roomIntro r] ]
+          ++ [ "roomFloor" .= fl | Just fl <- [roomFloor r] ]
 
 instance FromJSON Room where
     parseJSON = withObject "Room" $ \o -> Room
@@ -1053,6 +1055,10 @@ instance FromJSON Room where
         <*> o .:? "roomSearchOutcome"   .!= Nothing
         <*> o .:? "roomAscii"           .!= emptyAscii
         <*> o .:? "roomIntro"           .!= Nothing
+        <*> (do mf <- o .:? "roomFloor"
+                case mf of
+                    Just _  -> pure mf
+                    Nothing -> o .:? "floor")
 
 -- | Player inventory
 type Inventory = [ItemID]
