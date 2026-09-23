@@ -21,6 +21,7 @@ build-type:         Simple
 library
   exposed-modules:     TextAdventure.Tui
                        TextAdventure.Tui.Color
+                       TextAdventure.Tui.Hud
   hs-source-dirs:      src
   build-depends:       base >=4.12 && <5,
                        text-adventure,

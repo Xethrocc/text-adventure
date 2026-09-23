@@ -4,6 +4,10 @@ module Main (main) where
 import TextAdventure.Tui
     ( PanelState (..), PanelStep (..), advancePanel, panelFrame, roomAmbient )
 
+import TextAdventure.Tui.Hud
+    ( HudView (..), MapCell (..), MapGrid (..), Bar (..), buildHud, mapGrid
+    , hpBar, condLine, equipmentLines, combatLines )
+
 import TextAdventure.Tui.Color
     ( SgrColor (..), SgrState (..), applySgrSeq, attrOfSgr, colorAttrName
     , emptySgr, parseSgrLine, rgbToColor240 )
@@ -11,6 +15,8 @@ import TextAdventure.Tui.Color
 import Sample (initSampleGame)
 import Types
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
+import Data.List (isInfixOf)
 import System.Exit (exitFailure)
 import qualified Graphics.Vty as V
 import Control.Concurrent.MVar (newEmptyMVar)
@@ -49,6 +55,109 @@ hallWithAmbient =
 inRoom :: RoomID -> GameState -> GameState
 inRoom rid st = st { save = (save st) { currentRoom = rid } }
 
+
+-- ---------------------------------------------------------------------------
+-- HUD model (Rogue Phase 5)
+-- ---------------------------------------------------------------------------
+
+-- | The sample world, current room set, player HP 60/100.
+hudState :: RoomID -> GameState
+hudState rid = (inRoom rid hallWithAmbient)
+    { save = (save (inRoom rid hallWithAmbient))
+        { player = (player (save (inRoom rid hallWithAmbient)))
+                     { playerHealth = 60, playerMaxHealth = 100 } } }
+
+testHudBar :: IO Bool
+testHudBar = expectEqual "hpBar reads the player" (Bar "HP" 60 100) (hpBar (hudState "start"))
+
+-- | The minimap lays the sample's visited rooms on their compass lattice:
+--   start anchors at (0,0), meadow south, hallway north.
+testHudMap :: IO Bool
+testHudMap =
+    let st = (hudState "start")
+          { save = (save (hudState "start"))
+              { visitedRooms = Set.fromList ["start", "hallway", "meadow"] } }
+    in case mapGrid 9 5 st of
+        Nothing -> expectTrue "map exists for visited rooms" False
+        Just g -> do
+            let cells = mgCells g
+            rA <- expectTrue "3 cells on the map" (length cells == 3)
+            rB <- expectTrue "start is marked as here"
+                    (any (\c -> mcHere c && mcRoom c == "start") cells)
+            rC <- expectTrue "hallway sits north of start"
+                    (any (\c -> mcRoom c == "hallway"
+                                && any (\s -> mcRoom s == "start" && mcRow c < mcRow s) cells)
+                        cells)
+            rD <- expectTrue "meadow sits south of start"
+                    (any (\c -> mcRoom c == "meadow"
+                                && any (\s -> mcRoom s == "start" && mcRow c > mcRow s) cells)
+                        cells)
+            rE <- expectTrue "connector row between the stamps"
+                    (any (\r -> '\x2502' `elem` r) (mgFog g))
+            pure (rA && rB && rC && rD && rE)
+
+-- | Dynamic exits (Rogue Phase 3) shape the map like static ones: a
+--   RemoveExit'd connection no longer places a neighbour.
+testHudMapDynamic :: IO Bool
+testHudMapDynamic =
+    let base = (hudState "start")
+          { save = (save (hudState "start"))
+              { visitedRooms = Set.fromList ["start", "hallway"] } }
+        -- remove the south exit from start (meadow way): the hallway link
+        -- (north) stays, so hallway still places; removing north too would
+        -- drop it from the lattice
+        ov = Map.fromList [(("start", South), Nothing :: Maybe Exit)]
+        st  = base { save = (save base) { exitOverrides = ov
+                                        , visitedRooms = Set.fromList ["start", "hallway"] } }
+    in case mapGrid 9 5 st of
+        Nothing -> expectTrue "map exists" False
+        Just g -> do
+            rA <- expectTrue "hallway still on the map (north link intact)"
+                    (any ((== "hallway") . mcRoom) (mgCells g)
+                     && length (mgCells g) == 2)
+            -- now remove the north exit as well: no connection left, hallway
+            -- gets its own anchor — with only 'start' visited it disappears
+            let ov2 = Map.fromList [ (("start", South), Nothing :: Maybe Exit)
+                                   , (("start", North), Nothing) ]
+                st2 = base { save = (save base) { exitOverrides = ov2
+                                                , visitedRooms = Set.fromList ["start"] } }
+            rB <- case mapGrid 9 5 st2 of
+                    Nothing -> expectTrue "single room still renders" False
+                    Just g2 -> expectTrue "start alone, no hallway stamp"
+                                (all (\c -> mcRoom c /= "hallway") (mgCells g2))
+            pure (rA && rB)
+
+-- | Conditions, equipment, combat panel, game-over flag.
+testHudPanels :: IO Bool
+testHudPanels =
+    let st0 = hudState "start"
+        withCond = st0 { save = (save st0)
+            { conditions = Map.singleton "poison"
+                (Condition "poison" 3 Nothing Nothing)
+            , equipment = Map.singleton Weapon "rusty_sword"
+            , variables = Map.fromList
+                [ ("combat.engaged", VVInt 1)
+                , ("combat.round", VVInt 4)
+                , ("combat.action", VVText "attack")
+                , ("gold", VVInt 25) ]
+            , gameOver = True } }
+        hud = buildHud withCond
+    in do
+        rA <- expectEqual "cond line" (Just "poison (3)") (condLine (Condition "poison" 3 Nothing Nothing))
+        rB <- expectTrue "expired cond dropped" (isNothing (condLine (Condition "old" 0 Nothing Nothing)))
+        rC <- expectTrue "equipment line" (any (isInfixOf "Weapon:") (hvEquipment hud))
+        rD <- expectTrue "combat panel engaged" (not (null (hvCombat hud)))
+        rE <- expectTrue "combat shows round 4" (any (isInfixOf "Round 4") (hvCombat hud))
+        rF <- expectTrue "combat shows the action" (any (isInfixOf "attack") (hvCombat hud))
+        rG <- expectTrue "combat round not a gauge"
+                (not (any (\b -> barLabel b == "combat.round") (hvBars hud)))
+        rH <- expectTrue "gold is a gauge" (any (\b -> barLabel b == "gold") (hvBars hud))
+        rI <- expectTrue "game over flagged" (hvGameOver hud)
+        rJ <- expectTrue "no combat panel when disengaged"
+                (null (hvCombat (buildHud (hudState "start"))))
+        pure (rA && rB && rC && rD && rE && rF && rG && rH && rI && rJ)
+
+
 main :: IO ()
 main = do
     results <- sequence
@@ -63,6 +172,10 @@ main = do
         , runTest "parseSgrLine: segments carry the state" testParse
         , runTest "colorAttrName: injective encoding" testAttrName
         , runTest "attrOfSgr: maps onto vty attributes" testAttr
+        , runTest "hud: hp bar reads the player" testHudBar
+        , runTest "hud: minimap lattice from visited rooms" testHudMap
+        , runTest "hud: dynamic exits shape the map (Rogue P3)" testHudMapDynamic
+        , runTest "hud: conditions, equipment, combat, game over" testHudPanels
         ]
     if and results then pure () else exitFailure
 
