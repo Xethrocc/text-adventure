@@ -111,9 +111,17 @@ You hit for 8, it hits you for 1.
   Gegenschlag bleibt damit genau 1 (siehe Werte-Tabelle unten).
 - `Your Steps` ist der Zugzähler der Engine (`turnCount`), nicht das `charSteps`
   des Originals — dort stand die Zeile immer auf 0, weil `addSteps` nie lief.
-- Die Wölfe haben bewusst **keine** `ascii`-Kunst: sonst erschiene nach jeder
-  Runde zusätzlich die Zustandskunst (`combatArtMsg`) unter der Meldung, die
-  Kampfkunst also doppelt.
+- **Nur der Straßenwolf** bekommt die Original-Kampfkunst: `screen.art` ist ein
+  `CondText` mit einer Variante auf `at: player, room: loc_3` (der Straßenwolf
+  steht fest in `loc_3`) — die Guardian-/Patrouillen-Kämpfe zeigen den Schirm
+  ohne Kunst. Begründung: `combat.screen` ist ein Profil pro Adventure; der
+  Schirm ist global, aber die Wolfsgesicht-Kunst gehört nur zum klassischen
+  Wolf-Fight des Originals (`loc 54`).
+- Alle fünf Wölfe tragen eine normale **Zustandskunst** (`npc.ascii`, gezeichnet
+  pro Runde über `combatArtMsg`) — beim Straßenwolf erscheint sie zusätzlich zur
+  Original-Kampfkunst (bewusste Entscheidung: die Kunst darf doppelt stehen).
+  Die Wolfskunst ist eine Port-Neuzeichnung; das Original kannte nur den
+  Fight-Schirm (`Ascii.hs` kennt nur `ascii 0/1/54`).
 
 ## Spieler-Werte und warum sie nicht die Original-Zahlen sind
 

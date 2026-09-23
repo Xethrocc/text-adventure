@@ -9,7 +9,13 @@
   "combat": {
     "profile": "classic",
     "screen": {
-      "art": "     .---.\n    |  _  |\n    | (o o)|\n   .\\   /\n    \\_/|\n |\n   |____|\n\n            .  .\n         .  |  .\n      .  |  |  .\n     |   |  |   |\n     |   |  |   |\n      \\  |  /\n        \\|/\n         |"
+      "art": {
+        "default": "",
+        "variants": [
+          { "when": { "at": "player", "room": "loc_3" },
+            "text": "     .---.\n    |  _  |\n    | (o o)|\n   .\\   /    \n    \\_/|\n |   \n   |____|\n\n            .  .\n         .  |  .\n      .  |  |  .\n     |   |  |   |\n     |   |  |   |\n      \\  |  /\n        \\|/\n         |" }
+        ]
+      }
     }
   },
   "end_art": {
@@ -893,6 +899,7 @@
         "shrine"
       ],
       "location": "loc_28",
+      "ascii": "  / \\__\n (    @\\____\n /         O\n/   (_____/\n/_____/   U",
       "state": "alive",
       "portable": false,
       "verb_map": {
@@ -1000,6 +1007,7 @@
         "wolf"
       ],
       "location": "loc_3",
+      "ascii": "  / \\__\n (    @\\____\n /         O\n/   (_____/\n/_____/   U",
       "max_hp": 30,
       "attack": 8,
       "defense": 2
@@ -1013,6 +1021,7 @@
         "shrine wolf"
       ],
       "location": "loc_28",
+      "ascii": "  / \\__\n (    @\\____\n /         O\n/   (_____/\n/_____/   U",
       "max_hp": 30,
       "attack": 8,
       "defense": 2
@@ -1026,6 +1035,7 @@
         "forest wolf"
       ],
       "location": "loc_13",
+      "ascii": "  / \\__\n (    @\\____\n /         O\n/   (_____/\n/_____/   U",
       "max_hp": 30,
       "attack": 8,
       "defense": 2
@@ -1039,6 +1049,7 @@
         "forest wolf"
       ],
       "location": "loc_17",
+      "ascii": "  / \\__\n (    @\\____\n /         O\n/   (_____/\n/_____/   U",
       "max_hp": 30,
       "attack": 8,
       "defense": 2
@@ -1052,6 +1063,7 @@
         "forest wolf"
       ],
       "location": "loc_20",
+      "ascii": "  / \\__\n (    @\\____\n /         O\n/   (_____/\n/_____/   U",
       "max_hp": 30,
       "attack": 8,
       "defense": 2
