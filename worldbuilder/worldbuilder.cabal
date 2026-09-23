@@ -18,7 +18,8 @@ library
                        Worldbuilder.Compile
                        Worldbuilder.CLI
                        Worldbuilder.Locate
-                   Worldbuilder.ParseFile
+                       Worldbuilder.ParseFile
+                       Worldbuilder.Rng
   hs-source-dirs:      src
   build-depends:       base >=4.12 && <5,
                        text-adventure,

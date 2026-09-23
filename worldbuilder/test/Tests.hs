@@ -18,6 +18,8 @@ import Worldbuilder.Types
 import Worldbuilder.Locate (lineForPath)
 import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome, allWorldEffects)
 import Worldbuilder.ParseFile (parseAdventureFile)
+import Worldbuilder.Rng
+import Data.List (sort)
 import Types as E
 import Game (emptyGameState, evalPredicate)
 import Validate (validateWorld, validateGameState, ValidationError (..))
@@ -2540,6 +2542,13 @@ tests =
     , ("combat. namespace is reserved (7f-3 A1)", testCombatVariableClash)
     , ("cooldown_ condition namespace is reserved (F6)", testCooldownConditionClash)
     , ("lineForPath finds issue source lines (W5)", testLocateLineForPath)
+    -- Rogue Phase 4a: SplitMix64 generator RNG
+    , ("rng: SplitMix64 known-answer vectors", testRngKnownVectors)
+    , ("rng: same seed, identical stream (determinism)", testRngDeterminism)
+    , ("rng: randInt bounds + coverage", testRngIntBounds)
+    , ("rng: pickWeighted respects weights (smoke)", testRngPickWeighted)
+    , ("rng: shuffle is a seeded permutation", testRngShuffle)
+    , ("rng: deriveRuntimeSeed matches seed * GOLDEN", testRngDeriveRuntimeSeed)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -2582,6 +2591,96 @@ testCooldownConditionClash = do
                             (not ("CooldownConditionClash" `isInfixOf` issuesText errs))
             Right _   -> pure True
     pure (r1 && r2 && r3)
+
+-- ---------------------------------------------------------------------------
+-- Rogue Phase 4a: SplitMix64 generator RNG (Worldbuilder.Rng)
+-- ---------------------------------------------------------------------------
+
+-- | Pin the exact SplitMix64 algorithm against independently computed
+--   reference vectors (standard spec: state += 0x9E3779B97F4A7C15, then the
+--   two multipliers and the final xor-shift). If any constant changes, this
+--   test breaks — which is the point: generated dungeons must stay
+--   bit-identical across compiler versions.
+testRngKnownVectors :: IO Bool
+testRngKnownVectors = do
+    let draws0 = take 3 (iterate (stepRng . snd) (stepRng (newRng 0)))
+        vals0  = map fst draws0
+        expect = [0xE220A8397B1DCDAF, 0x6E789E6AA1B965F4, 0x06C45D188009454F]
+        (w42a, _) = stepRng (newRng 42)
+        (w42b, _) = stepRng . snd $ stepRng (newRng 42)
+    r1 <- expectEqual expect vals0
+    r2 <- expectTrue "seed 42 first draw matches"
+                     (w42a == 0xBDD732262FEB6E95)
+    r3 <- expectTrue "seed 42 second draw matches"
+                     (w42b == 0x28EFE333B266F103)
+    pure (r1 && r2 && r3)
+
+-- | The core Phase 4 invariant in miniature: the same seed must produce the
+--   same stream of decisions (randInt, pickWeighted, shuffle) every time.
+testRngDeterminism :: IO Bool
+testRngDeterminism = do
+    let stream seed =
+            let (a, r1) = randInt 0 999 (newRng seed)
+                (b, r2) = randInt 1 6 r1
+                (c, r3) = pickWeighted [(3, 'x'), (5, 'y'), (1, 'z')] r2
+                (s, r4) = shuffle [1 .. 20 :: Int] r3
+            in (a, b, c, s)
+    r1 <- expectEqual (stream 12345) (stream 12345)
+    r2 <- expectTrue "different seeds diverge (smoke)"
+                     (stream 12345 /= stream 54321)
+    pure (r1 && r2)
+
+-- | randInt must stay within [lo, hi] and (smoke-level) cover small ranges
+--   entirely; a degenerate range must not advance the state.
+testRngIntBounds :: IO Bool
+testRngIntBounds = do
+    let (vs, finalR) = go (newRng 777) 1000 []
+        go r 0 acc = (reverse acc, r)
+        go r n acc = let (v, r') = randInt 3 7 r in go r' (n - 1 :: Int) (v : acc)
+    r1 <- expectTrue "all draws within [3,7]" (all (\v -> v >= 3 && v <= 7) vs)
+    r2 <- expectTrue "small range fully covered (smoke)"
+                     (length (nub vs) == 5)
+    -- degenerate range: single value, and the state must be untouched
+    let (one, rSame) = randInt 5 5 (newRng 42)
+    r3 <- expectEqual (5, newRng 42) (one, rSame)
+    _ <- pure finalR
+    pure (r1 && r2 && r3)
+
+-- | Weighted picks must stay inside the pool and (smoke-level) follow the
+--   weights: 90/10 must favor the heavy side decisively over 1000 draws.
+testRngPickWeighted :: IO Bool
+testRngPickWeighted = do
+    let go r 0 acc = (reverse acc, r)
+        go r n acc =
+            let (v, r') = pickWeighted [(9, 'a'), (1, 'b')] r
+            in go r' (n - 1 :: Int) (v : acc)
+        (picks, _) = go (newRng 2024) 1000 []
+        countA = length (filter (== 'a') picks)
+    r1 <- expectTrue "pool coverage: only 'a'/'b' drawn" (all (`elem` ['a', 'b']) picks)
+    r2 <- expectTrue "9:1 weights respected (smoke, a >= 800/1000)" (countA >= 800)
+    r3 <- expectTrue "both sides reachable" (countA < 1000)
+    pure (r1 && r2 && r3)
+
+-- | shuffle must return a true permutation (same multiset) and be seeded:
+--   two different seeds almost certainly produce different orders.
+testRngShuffle :: IO Bool
+testRngShuffle = do
+    let xs = [1 .. 50 :: Int]
+        (s1, _) = shuffle xs (newRng 1)
+        (s2, _) = shuffle xs (newRng 2)
+    r1 <- expectTrue "shuffle preserves the multiset" (sort s1 == xs)
+    r2 <- expectTrue "shuffle is seeded (smoke)" (s1 /= s2)
+    r3 <- expectTrue "empty shuffle stays empty" (null (fst (shuffle [] (newRng 9))))
+    r4 <- expectTrue "single element stays fixed"
+                     (fst (shuffle [7 :: Int] (newRng 9)) == [7])
+    pure (r1 && r2 && r3 && r4)
+
+testRngDeriveRuntimeSeed :: IO Bool
+testRngDeriveRuntimeSeed = do
+    r1 <- expectTrue "seed 7 * GOLDEN mod 2^64"
+        (deriveRuntimeSeed 7 == 0x538454127B096493)
+    r2 <- expectTrue "seed 0 derives 0 (documented edge)" (deriveRuntimeSeed 0 == 0)
+    pure (r1 && r2)
 
 main :: IO ()
 main = do
