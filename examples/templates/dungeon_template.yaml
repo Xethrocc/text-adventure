@@ -1,0 +1,71 @@
+# Rogue Phase 4: Beispiel-Template für den Pre-Run World Generator.
+#
+# Generieren:
+#   cabal run worldbuilder -- generate examples/templates/dungeon_template.yaml \
+#       --seed 42 -o /tmp/run
+#
+# Gleicher Seed + gleiches Template => bit-identisches world.json + save.json
+# (Determinismus-Invariante, geprüft in der CI). Ohne --seed nutzt der Generator
+# das seed:-Feld unten; fehlt beides, bricht der Lauf mit Fehler ab — bewusst,
+# kein versteckter Uhrzeit-Seed.
+
+template:
+  name: "Katakomben von Vhal"        # wird worldName (Slug via Phase-2-Regel)
+  description: "Zufällige Katakomben über drei Ebenen"
+  seed: 42
+
+layout:
+  rooms: { min: 10, max: 16 }        # Zielanzahl; Generator darf darunter bleiben
+  depth: 3                           # maximale Graphentiefe (Start = Tiefe 1)
+  branching: 0.4                     # P(Verzweigung) pro neuem Raum
+  loops: 2                           # zusätzliche diagonale Kanten (Zyklen)
+
+# Raum-Archetypen: Bausteine, aus denen der Generator gewichtet wählt.
+# `room:` ist ein vollständiges ARoom-Fragment (das normale Adventure-Schema);
+# die Raum-IDs (<archetyp>_<n>) vergibt der Generator selbst.
+room_templates:
+  - id: junction
+    weight: 3
+    depth_range: [1, 3]
+    room:
+      name: "Kreuzung"
+      desc: "Ein gewölbter Kreuzgang. Knochen bedecken den Boden."
+      tags: [crossroads]
+  - id: crypt
+    weight: 2
+    depth_range: [2, 3]
+    room:
+      name: "Gruft"
+      desc: "Steinsarkophage reihen sich an der Wand."
+      search: [{ msg: "Staub und verrottete Leinen." }]
+  - id: camp                         # Savezone-Synergie (Rogue Phase 1)
+    weight: 1
+    depth_range: [1, 1]
+    savezone: true
+    room:
+      name: "Lagerfeuer"
+      desc: "Ein verwittertes Feuerlager. Hier kannst du rasten."
+
+special:
+  start: { template: camp }          # Startraum (auch: irgendein savezone-Archetyp)
+  boss: { template: crypt, depth: max }   # immer maximale Tiefe, Ziel des Runs
+
+# Einbahn-Ausgänge (Falltüren) — optional; pro Eintrag genau eine Kante.
+# oneway_hints:
+#   - { from: pit_shaft, to: any, dir: down }
+
+item_pool:
+  - { item: { id: potion, name: "Heiltrank", portable: true }, count: { min: 2, max: 4 } }
+
+npc_pool:
+  - { npc: { id: skeleton, name: "Skelett", max_hp: 8, attack: 2 }, count: { min: 1, max: 3 }, depth_range: [2, 3] }
+  - { npc: { id: wraith, name: "Grabwicht", max_hp: 12, attack: 3 }, count: { min: 1, max: 1 }, boss: true }
+
+# Optional: Combat-Profil (1:1 in advCombat) — Kombinationshebel mit dem
+# Kampfbildschirm (classic + screen:) und dem Sieg über die Boss-NPCs.
+combat:
+  profile: classic
+  screen: { bar_width: 20, scene: ">>Kampf in den Katakomben<<" }
+
+player: { max_hp: 30 }
+variables: []

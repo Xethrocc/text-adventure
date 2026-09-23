@@ -117,5 +117,37 @@ for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss
     run_e2e "$name" "$src"
 done
 
+# ---------------------------------------------------------------------------
+# Rogue Phase 4: pre-run world generator (detail plan section 6, test 5).
+# Determinism check (same seed => byte-identical world.json) plus a scripted
+# playthrough of the generated dungeon up to the boss kill — with a fixed
+# seed and the template in the repo, the path and markers are stable.
+# ---------------------------------------------------------------------------
+echo "== 6. worldgen (Rogue Phase 4) =="
+wg_src="examples/templates/dungeon_template.yaml"
+"${WORLDBUILDER[@]}" generate "$wg_src" --seed 42 -o "$tmp/worldgen-a" >/dev/null
+"${WORLDBUILDER[@]}" generate "$wg_src" --seed 42 -o "$tmp/worldgen-b" >/dev/null
+if cmp -s "$tmp/worldgen-a/world.json" "$tmp/worldgen-b/world.json" \
+   && cmp -s "$tmp/worldgen-a/save.json" "$tmp/worldgen-b/save.json"; then
+    echo "OK   worldgen-determinism  (same seed, byte-identical output)"
+else
+    echo "FAIL worldgen-determinism  (same seed, output differs)"
+    exit 1
+fi
+mkdir -p "$tmp/worldgen-saves"
+out="$(TA_SAVES_DIR="$tmp/worldgen-saves" "${GAME[@]}" \
+        --world "$tmp/worldgen-a/world.json" --save "$tmp/worldgen-a/save.json" \
+        < "ci/e2e/worldgen.in" 2>&1 || true)"
+while IFS= read -r marker; do
+    if grep -qF "$marker" <<<"$out"; then
+        echo "OK   worldgen  (reached: $marker)"
+    else
+        echo "FAIL worldgen  (expected: $marker)"
+        echo "---- last output ----"
+        tail -20 <<<"$out"
+        exit 1
+    fi
+done < "ci/e2e/worldgen.expect"
+
 echo
 echo "All checks passed."
