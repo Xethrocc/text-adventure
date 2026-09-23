@@ -76,13 +76,14 @@ run_e2e() {
     fi
 }
 
-for name in thefog pure-if fantasy cyberpunk space-opera detective horror factions trade encounters survival stealth patrol combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state; do
+for name in thefog pure-if fantasy cyberpunk space-opera detective horror factions trade encounters survival stealth patrol combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state combat-screen; do
     case "$name" in
         thefog)             src=examples/thefog.yaml ;;
         factions|trade|encounters|survival|stealth|patrol|combat-off|combat-narrative|combat-classic|combat-tactical|party|starship|combo|ship-duel)     src="examples/modules/$name.yaml" ;;
         banner-art)         src="examples/fixtures/banner-art.yaml" ;;
         hotspot)            src="examples/fixtures/hotspot.yaml" ;;
         ascii-state)        src="examples/fixtures/ascii-state.yaml" ;;
+        combat-screen)      src="examples/fixtures/combat-screen.yaml" ;;
         *)                  src="examples/genres/$name.yaml" ;;
     esac
     run_e2e "$name" "$src"
@@ -99,11 +100,12 @@ echo "== 5. e2e non-victory paths =="
 # `patrol-attack` and `patrol-death` are not failures either but *behaviour*
 # paths: they pin that a patrolling NPC actually closes in, warns, bites — and
 # that its damage can kill (turn-consuming commands only; `look` is free).
-for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss-fail combo-fail combat-tactical-fail ship-duel-fail combat-tactical-defend patrol-attack patrol-death; do
+for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss-fail combo-fail combat-tactical-fail ship-duel-fail combat-tactical-defend patrol-attack patrol-death combat-screen-round; do
     case "$name" in
         trade-fail)        src=examples/modules/trade.yaml ;;
         combat-off-fail)   src=examples/modules/combat-off.yaml ;;
         patrol-attack|patrol-death) src=examples/modules/patrol.yaml ;;
+        combat-screen-round) src=examples/fixtures/combat-screen.yaml ;;
         survival-fail)     src=examples/modules/survival.yaml ;;
         starship-fail)     src=examples/modules/starship.yaml ;;
         starship-loss-fail) src=examples/modules/starship-loss.yaml ;;

@@ -18,7 +18,7 @@ import GameLoop (LoopState (..), initLoopState, applyLoopCommand,
 import Frontend (Frontend (..), commandCompletion)
 import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText)
 import Verbs (verbAliasMap)
-import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), resolveCombat, shipAbsorb)
+import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombat, shipAbsorb)
 import Validate (ValidationError (..), validateWorld, validateGameState, idsFromOutcomeRoom)
 import Sample (initSampleGame)
 import SaveLoad (computeWorldChecksum, formatSaveEntry, currentSaveVersion)
@@ -3503,6 +3503,126 @@ testShipAbsorbMatrix = do
     r10 <- expectEqual ([], 0, []) (shipAbsorb (ship (Just 5) (Just 9)) 0)
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10)
 
+-- ===== Combat screen (authored fight screen, classic profile) =====
+
+-- | The sample world with the player's, the goblin's and the clock's numbers
+--   pinned, so every rendered line of the screen is predictable.
+combatScreenState :: Int -> Int -> Int -> Int -> GameState
+combatScreenState hp maxHp enemyHp turns =
+    let st0 = initSampleGame
+    in st0 { save = (save st0)
+                { player = (player (save st0))
+                    { playerHealth = hp, playerMaxHealth = maxHp
+                    , playerAttack = 9, playerDefense = 3 }
+                , npcStates = Map.insert "goblin"
+                                (NPCState (InRoom "hallway") "alive" (Just enemyHp) Map.empty Nothing)
+                                (npcStates (save st0))
+                , turnCount = turns } }
+
+-- | The screen renders the original layout from the state *before* the round:
+--   rules, the enemy, the scene line, attack/defense, both HP bars, steps and
+--   the flee hint. Pure formatting — nothing here decides damage.
+testCombatScreenLayout :: IO Bool
+testCombatScreenLayout = do
+    let cs  = CombatScreen emptyAscii 10 Nothing Nothing
+        st  = combatScreenState 7 10 22 12
+        got = combatScreenLines cs "goblin" st
+        rule = replicate 80 '_'
+        bar filled = replicate filled '█' ++ replicate (10 - filled) ' '
+    r1 <- expectEqual
+        [ rule, rule
+        , "                    You are fighting a goblin"
+        , "                    >>You are in a Fight!<<"
+        , ""
+        , "Your Atk: 9"
+        , "Your Def: 3"
+        , ""
+        , "Your HP:  7 [" ++ bar 7 ++ "]"
+        , "Your Steps:   12"
+        , ""
+        , "HP of the goblin: 22 [" ++ bar 7 ++ "]"
+        , ""
+        , "You can 'attack' or try to 'flee'..\n What will u do?"
+        ] got
+    -- an unconfigured art must not add a line (no stray blank)
+    r2 <- expectTrue "no art line without art" (length got == 14)
+    pure (r1 && r2)
+
+-- | Bar semantics: proportional fill at the configured width, clamped at both
+--   ends. Two original artefacts are deliberately fixed — a negative fill no
+--   longer overfills the bar, and a degenerate maximum draws an empty bar
+--   instead of the original's stray bracket.
+testCombatScreenBars :: IO Bool
+testCombatScreenBars = do
+    let cs = CombatScreen emptyAscii 4 Nothing Nothing
+        st = combatScreenState 2 4 1 0
+        lineOf prefix src = [ l | l <- src, prefix `isPrefixOf` l ]
+    r1 <- expectEqual [ "Your HP:  2 [██  ]" ]
+              (lineOf "Your HP:" (combatScreenLines cs "goblin" st))
+    r2 <- expectEqual [ "HP of the goblin: 1 [    ]" ]
+              (lineOf "HP of the goblin:" (combatScreenLines cs "goblin" st))
+    -- full, over-max, zero and degenerate maximum
+    r3 <- expectEqual [ "Your HP:  4 [████]" ]
+              (lineOf "Your HP:" (combatScreenLines cs "goblin" (combatScreenState 4 4 1 0)))
+    r4 <- expectEqual [ "Your HP:  5 [████]" ]
+              (lineOf "Your HP:" (combatScreenLines cs "goblin" (combatScreenState 5 4 1 0)))
+    r5 <- expectEqual [ "Your HP:  0 [    ]" ]
+              (lineOf "Your HP:" (combatScreenLines cs "goblin" (combatScreenState 0 4 1 0)))
+    r6 <- expectEqual [ "Your HP:  3 [    ]" ]
+              (lineOf "Your HP:" (combatScreenLines cs "goblin" (combatScreenState 3 0 1 0)))
+    -- an NPC without health or maximum (the sample's old man): empty bar
+    r7 <- expectEqual [ "HP of the old man: 0 [    ]" ]
+              (lineOf "HP of the old man:" (combatScreenLines cs "oldman" st))
+    -- an unknown target renders nothing at all
+    r8 <- expectEqual [] (combatScreenLines cs "nope" st)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- | Authored art and text: art lands above the block, `scene`/`footer` replace
+--   the original wording, and an empty string hides the line.
+testCombatScreenAuthored :: IO Bool
+testCombatScreenAuthored = do
+    let art = AsciiArt (plainText "  (o o)\n  (___)") [] 0 [] Nothing
+        cs  = CombatScreen art 10 (Just "You are in a duel!") (Just "")
+        st  = combatScreenState 7 10 22 12
+        got = combatScreenLines cs "goblin" st
+    r1 <- expectEqual [ replicate 80 '_', replicate 80 '_', "  (o o)\n  (___)" ]
+              (take 3 got)
+    r2 <- expectTrue "authored scene line replaces the default"
+              (any (== "                    You are in a duel!") got)
+    r3 <- expectTrue "the default scene wording is gone"
+              (not (any (">>You are in a Fight!<<" `isInfixOf`) got))
+    r4 <- expectTrue "an empty footer hides the line"
+              (not (any ("attack' or try to" `isInfixOf`) got))
+    pure (r1 && r2 && r3 && r4)
+
+-- | The wiring in `executeAttack`: with a screen the round output leads with the
+--   rules, without one it must be unchanged (the invariant that keeps every
+--   existing adventure byte-identical), and a corpse is never given a screen.
+testCombatScreenWiring :: IO Bool
+testCombatScreenWiring = do
+    let screen = CombatScreen emptyAscii 10 Nothing Nothing
+        rule = replicate 80 '_'
+        stIn prof =
+            let st0 = combatScreenState 100 100 30 4
+                st1 = st0 { save = (save st0) { currentRoom = "hallway" } }
+            in st1 { world = (world st1) { combatProfile = prof } }
+        stLive = stIn (CombatClassic (Just screen))
+        (_, withScreen)    = executeCommand (Interact VAttack "goblin") stLive
+        (_, withoutScreen) = executeCommand (Interact VAttack "goblin") (stIn (CombatClassic Nothing))
+        stDead = stLive { save = (save stLive)
+                            { npcStates = Map.adjust (\ns -> ns { npcStatus = "dead" }) "goblin"
+                                                     (npcStates (save stLive)) } }
+        (_, corpseOut) = executeCommand (Interact VAttack "goblin") stDead
+    r1 <- expectTrue "the screen leads the round output" (rule `isPrefixOf` withScreen)
+    r2 <- expectTrue "the screen carries both HP lines"
+              (any ("Your HP:" `isPrefixOf`) (lines withScreen)
+               && any ("HP of the goblin:" `isPrefixOf`) (lines withScreen))
+    r3 <- expectTrue "no screen without a screen block" (not (rule `isPrefixOf` withoutScreen))
+    r4 <- expectTrue "the round itself stays unchanged" ("You hit for" `isInfixOf` withoutScreen)
+    r5 <- expectTrue "a corpse gets no screen" (not (rule `isPrefixOf` corpseOut))
+    r6 <- expectTrue "the corpse message is unchanged" ("already dead" `isInfixOf` corpseOut)
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
 -- | L5: `commandEvents` chooses which triggers a command raises and in which
 --   order — the project note says the *event* order decides for authors, not the
 --   rule order, and only `OnEnter` plus one `OnUse` alias were covered.
@@ -4402,6 +4522,10 @@ main = do
         , runTest "GameWorld JSON round-trip + profiles (L7)" testGameWorldRoundTrip
         , runTest "resolveCombat effect lists directly (L3)" testResolveCombatDirect
         , runTest "shipAbsorb matrix incl. no shields/hull (L3)" testShipAbsorbMatrix
+        , runTest "combat screen: original layout from the pre-round state" testCombatScreenLayout
+        , runTest "combat screen: HP bar fill and clamps" testCombatScreenBars
+        , runTest "combat screen: authored art/scene/footer" testCombatScreenAuthored
+        , runTest "combat screen: wiring + no-screen invariant" testCombatScreenWiring
         , runTest "commandEvents table per command (L5)" testCommandEventsTable
         , runTest "enter event precedes turn event (L5)" testEnterFiresBeforeTurnThroughLoop
         , runTest "consumesTurn complete for every Command (L13)" testConsumesTurnCompleteness

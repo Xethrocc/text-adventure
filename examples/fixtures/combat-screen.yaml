@@ -1,0 +1,55 @@
+name: "Die Arena (Combat Screen)"
+start_room: cs_entry
+
+# Kampfbildschirm (`combat.screen`, nur Profil `classic`): vor jeder Runde
+# zeichnet die Engine den Original-Schirm — Rahmenlinien, Kunst, Gegner,
+# Szenenzeile, Atk/Def, beide KP-Balken, Flucht-Hinweis.
+# Ohne `screen:`-Block bleibt die Ausgabe unverändert.
+
+combat:
+  profile: classic
+  screen:
+    art: |
+      /\
+      ||
+      /\
+    bar_width: 8
+    scene: "== Eine Runde in der Arena =="
+    footer: "attack or flee."
+
+player:
+  max_hp: 20
+  attack: 6
+  defense: 2
+
+npcs:
+  - id: brute
+    name: Brute
+    desc: "Ein massiger Raufbold mit kurzen Armen."
+    keys: [brute, raufbold]
+    location: cs_ring
+    state: alive
+    max_hp: 12
+    attack: 3
+    defense: 1
+
+rooms:
+  - id: cs_entry
+    name: Eingang
+    desc: "Ein Tor führt nach Norden in die Arena."
+    exits:
+      north: {to: cs_ring}
+  - id: cs_ring
+    name: Arena
+    desc: "Sand, Seile und ein Brute, der auf dich wartet."
+    exits:
+      south: {to: cs_entry}
+      north: {to: cs_trophy, locked_by: brute}
+  - id: cs_trophy
+    name: Trophäenraum
+    desc: "Der Siegerpreis steht auf einem Podest."
+    on_enter:
+      - { msg: "You claim the prize." }
+      - { game_end: victory, msg: "VICTORY — the brute is down." }
+    exits:
+      south: {to: cs_ring}

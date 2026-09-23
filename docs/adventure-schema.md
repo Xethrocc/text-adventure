@@ -851,6 +851,67 @@ rules:
   `when: { compare_var: { name: combat.engaged, op: gte, value: 1 } }` — kein
   Engine-Sonderpfad.
 
+### Kampfbildschirm (`combat.screen`, nur Profil `classic`)
+
+Das Original-TheFog zeichnete vor jedem Schlag einen Schirm; `combat.screen`
+gibt diesen Aufbau als Daten. Nur das Profil `classic` nutzt ihn — dort ist ein
+`attack` genau eine Runde. **Ohne `screen`-Block bleibt die Ausgabe
+unverändert**: das Profil ist dann `CombatClassic Nothing`, und der Schlüssel
+wird gar nicht erst serialisiert (Checksummen bestehender Saves bleiben gleich).
+
+```yaml
+combat:
+  profile: classic
+  screen:
+    art: |                       # optional — Kunst über dem Block (String/CondText)
+      /\
+      ||
+    bar_width: 8                 # optional, Default 10, mindestens 1
+    scene: "== Eine Runde =="    # optional; ohne Angabe ">>You are in a Fight!<<"
+    footer: "attack or flee."    # optional; ohne Angabe der Original-Flucht-Hinweis
+```
+
+Gerendert wird **vor** der Rundenauflösung, also aus dem Zustand *vor* dem
+Schlag — genau wie im Original. Reihenfolge:
+
+```
+________________________________________________________________________________   (2×)
+<art>
+                    You are fighting a <npcName>
+                    <scene>
+(leer)
+Your Atk: <attack>
+Your Def: <defense>
+(leer)
+Your HP:  <kp> [<balken>]
+Your Steps:   <turnCount>
+(leer)
+HP of the <npcName>: <kp> [<balken>]
+(leer)
+<footer>
+```
+
+- **Balken:** `filled = kp * bar_width / max`, geklemmt auf `0 … bar_width`,
+  Zeichen `█`. Zwei Original-Artefakte sind bewusst behoben: eine negative
+  Füllung überläuft den Balken nicht mehr, und ein Maximum ≤ 0 zeichnet einen
+  leeren Balken statt eines verwaisten `]`.
+- **Gegner-KP** kommen aus dem NPC-State (`npcHealth`), das **Maximum** aus
+  `npcMaxHealth`. Fehlt das Maximum (oder gibt es keinen State), gilt der
+  aktuelle Wert als Maximum → voller Balken, bei 0 KP ein leerer.
+- Die Zeilen zum Gegner nutzen den **NPC-Namen** (`name:`), während die
+  Rundenmeldungen weiterhin das vom Spieler getippte Wort zitieren.
+- **Der Schirm erscheint nur, wenn der Gegner angreifbar ist** (KP vorhanden):
+  ein toter NPC bleibt bei „… is already dead." — ohne Schirm.
+- **„Your Steps"** ist der Zugzähler des Spielstands (`turnCount`); die Engine
+  führt kein eigenes Schrittzähler-Feld. `scene: ""` bzw. `footer: ""`
+  unterdrückt die jeweilige Zeile.
+- **Fehler:** `BadScreenBarWidth` (`bar_width` kleiner 1).
+- Die Gegner-Kunst pro Runde (`npc.ascii`) bleibt unberührt: wer beides setzt,
+  sieht die Kampfkunst oben am Schirm **und** die Zustandskunst nach der Runde.
+- Beispiel: `examples/fixtures/combat-screen.yaml`, gepinnt von
+  `ci/e2e/combat-screen.expect` (Sieg) und `ci/e2e/combat-screen-round.expect`
+  (schrumpfender Balken im Statusblock).
+
 Umsetzung: `src/Combat.hs` — `resolveCombat :: CombatProfile -> [CombatActor] ->
 CombatTarget -> CombatAction -> GameState -> ([Effect], [String])`, pure
 Effekt-Erzeugung durch den einen Interpreter. `CombatAction` sagt, was der Spieler
