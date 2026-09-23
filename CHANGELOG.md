@@ -4,6 +4,24 @@
 
 ## Unreleased
 
+### Feature: Multi-Panel-TUI — Karte, Status-HUD, Kampf-Panel (Rogue Phase 5)
+
+- Die Brick-Oberflaeche (`--tui`) zeigt ueber dem Narrative-Viewport ein
+  HUD: ASCII-Minimap der besuchten Raeume (links), Status-Panel mit
+  HP-Balken, deklarierten numerischen Variablen als Gauges, Zustaenden
+  und Ausruestung (rechts), konditionales Kampf-Panel darunter
+  (sichtbar ab `combat.engaged >= 1` — Runde, Aktion, Gegner-HP).
+- D21-Prinzip durchgehalten: Panel leer => keine Box. Ohne Kampf /
+  Ausruestung / besuchte Raeume ist das Spiel visuell unveraendert.
+- Minimap-Verbindungen laufen ueber Phase-3 `effectiveConnections`:
+  `set_exit`/`remove_exit` formen die Karte wie statische Ausgaenge.
+- M10 geschlossen: `feReadPlain` erhaelt jetzt den GameState — das HUD
+  bleibt auch auf dem Death-/Victory-Screen aktuell (statt einzufrieren).
+  Alle 3 Frontend-Implementierungen angepasst; Haskeline-Verhalten
+  byte-identisch.
+- Tests: 5 neue HUD-Unit-Tests (Balken, Kompass-Lattice, dynamische
+  Exits, Panels, Status-Zeilen); TUI-Suite 15 Tests.
+
 ### Feature: Dynamische Ausgaenge — `set_exit` / `remove_exit` (Rogue Phase 3)
 
 - Neue Engine-Effects `SetExit <room> <dir> <exit>` und `RemoveExit <room> <dir>`:

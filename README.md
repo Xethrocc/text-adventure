@@ -19,7 +19,9 @@ profiles and gameplay modules are all content.
 - Quests with stages and rewards; conditions with tick and end effects
 - Vehicles: player-steered, automatic routes and paid rides — fuel, interior rooms, stops — and **ships with systems and stations** (power/shields/hull/weapons, station verbs, ship-to-ship combat)
 - Combat profiles `off` | `narrative` | `classic` | `tactical` (turn-based with initiative, flee, defend, and player abilities), resolved by a pure combat module that also drives companions and spaceship duels
+- **Rogue platform:** permadeath/ironman policies with savezones, persistent meta-progression (`meta.*` variables), dynamic exits (`set_exit`/`remove_exit`) — all backward compatible, opt-in per adventure
 - Deterministic RNG **in the save**, save/load (`saves/<slot>.json`), undo history, restart, tab completion
+- **Brick TUI** (`--tui`): scrollable history, tab completion, animated art panel, and a Roguelike dashboard — ASCII minimap of visited rooms (dynamic exits included), HP/variable gauges, status effects, equipment, and a combat panel that appears when a fight is engaged
 - Validation: `validateWorld` + `validateGameState` (used by the CLI and the tests)
 
 **Worldbuilder (`worldbuilder/`)**
