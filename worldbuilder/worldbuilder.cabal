@@ -20,6 +20,7 @@ library
                        Worldbuilder.Locate
                        Worldbuilder.ParseFile
                        Worldbuilder.Rng
+                       Worldbuilder.Generate
   hs-source-dirs:      src
   build-depends:       base >=4.12 && <5,
                        text-adventure,
@@ -54,6 +55,7 @@ test-suite worldbuilder-tests
                        containers >=0.6 && <0.8,
                        filepath >=1.4 && <2,
                        directory >=1.3 && <2,
-                       HsYAML-aeson >=0.2 && <1
+                       HsYAML-aeson >=0.2 && <1,
+                       HsYAML >=0.2 && <1
   default-language:    Haskell2010
   ghc-options:         -Wall -Werror=missing-fields -Werror=name-shadowing -Werror=incomplete-patterns -Werror=overlapping-patterns

@@ -19,7 +19,10 @@ import Worldbuilder.Locate (lineForPath)
 import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome, allWorldEffects)
 import Worldbuilder.ParseFile (parseAdventureFile)
 import Worldbuilder.Rng
-import Data.List (sort)
+import Worldbuilder.Generate
+import Data.List (sort, stripPrefix)
+import Data.YAML.Aeson (decode1)
+import Data.YAML (posLine)
 import Types as E
 import Game (emptyGameState, evalPredicate)
 import Validate (validateWorld, validateGameState, ValidationError (..))
@@ -2549,6 +2552,19 @@ tests =
     , ("rng: pickWeighted respects weights (smoke)", testRngPickWeighted)
     , ("rng: shuffle is a seeded permutation", testRngShuffle)
     , ("rng: deriveRuntimeSeed matches seed * GOLDEN", testRngDeriveRuntimeSeed)
+    -- Rogue Phase 4b: dungeon template schema + validation
+    , ("template: valid minimal template parses without issues", testTemplateValidMinimal)
+    , ("template: unknown special.*.template is rejected", testTemplateUnknownSpecial)
+    , ("template: depth_range outside layout.depth is rejected", testTemplateDepthRangeOutside)
+    , ("template: locked treasure without boss_lock key is rejected", testTemplateBossLockMissingKey)
+    , ("template: room.id is generator-assigned (RoomTemplateIdForbidden)", testTemplateRoomIdForbidden)
+    , ("template: boss depth must be 'max'", testTemplateBossDepthSpec)
+    , ("template: rooms.min < 3 is rejected", testTemplateLayoutTooSmall)
+    , ("template: oneway hint direction is validated", testTemplateOnewayDirection)
+    , ("template: at most one boss npc (Review-Frage 4)", testTemplateMultipleBossNpcs)
+    , ("template: invalid count range is rejected", testTemplateInvalidCount)
+    , ("template: seed parses from number and string", testTemplateSeedParse)
+    , ("template: invalid combat fragment fails parsing", testTemplateInvalidCombat)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -2681,6 +2697,173 @@ testRngDeriveRuntimeSeed = do
         (deriveRuntimeSeed 7 == 0x538454127B096493)
     r2 <- expectTrue "seed 0 derives 0 (documented edge)" (deriveRuntimeSeed 0 == 0)
     pure (r1 && r2)
+
+-- ---------------------------------------------------------------------------
+-- Rogue Phase 4b: dungeon template schema + validation
+-- ---------------------------------------------------------------------------
+
+-- | Replace the first occurrence of @needle@ in a template YAML snippet.
+replace1 :: String -> String -> String -> String
+replace1 needle repl = go
+  where
+    go [] = []
+    go s@(c:cs) = case stripPrefix needle s of
+        Just rest -> repl ++ go rest
+        Nothing   -> c : go cs
+
+-- | Parse a template through the production path: YAML -> Aeson.Value ->
+--   DTemplate (the same bridge the adventure parser uses).
+parseYamlTemplate :: String -> Either String DTemplate
+parseYamlTemplate yaml = case decode1 (BLC.pack yaml) of
+    Left (pos, err) -> Left ("YAML line " ++ show (posLine pos) ++ ": " ++ err)
+    Right v         -> parseTemplate v
+
+-- | A valid minimal template: two archetypes, start + boss, savezone camp.
+validTemplateYaml :: String
+validTemplateYaml = unlines
+    [ "template:"
+    , "  name: \"Test-Dungeon\""
+    , "layout:"
+    , "  rooms: { min: 3, max: 6 }"
+    , "  depth: 2"
+    , "room_templates:"
+    , "  - id: junction"
+    , "    weight: 3"
+    , "    depth_range: [1, 2]"
+    , "    room:"
+    , "      name: \"Kreuzung\""
+    , "      desc: \"Ein gewoelbter Kreuzgang.\""
+    , "  - id: camp"
+    , "    weight: 1"
+    , "    depth_range: [1, 1]"
+    , "    savezone: true"
+    , "    room:"
+    , "      name: \"Lager\""
+    , "      desc: \"Feuer.\""
+    , "special:"
+    , "  start: { template: camp }"
+    , "  boss: { template: junction, depth: max }"
+    ]
+
+-- | Run validation and collect the codes of all resulting issues.
+templateIssueCodes :: Either String DTemplate -> [String]
+templateIssueCodes (Left _)  = ["<parse-error>"]
+templateIssueCodes (Right t) = map ciCode (validateTemplate t)
+
+-- | The happy path: valid template parses, validates cleanly and carries the
+--   expected structure through.
+testTemplateValidMinimal :: IO Bool
+testTemplateValidMinimal = case parseYamlTemplate validTemplateYaml of
+    Left err -> do
+        putStrLn $ "  unexpected parse error: " ++ err
+        pure False
+    Right t -> do
+        r1 <- expectEqual [] (validateTemplate t)
+        r2 <- expectEqual "Test-Dungeon" (dtName t)
+        r3 <- expectEqual 2 (dlDepth (dtLayout t))
+        r4 <- expectTrue "seed absent" (dtSeed t == Nothing)
+        pure (r1 && r2 && r3 && r4)
+
+-- | Pairing rule: every special.*.template must name an existing
+--   room_templates id — treasure and boss paths are both checked.
+testTemplateUnknownSpecial :: IO Bool
+testTemplateUnknownSpecial = do
+    let yamlTreasure = validTemplateYaml ++ "  treasure: { template: vault }\n"
+        yamlBoss = replace1 "boss: { template: junction, depth: max }"
+                            "boss: { template: vault, depth: max }"
+                            validTemplateYaml
+    r1 <- expectTrue "UnknownRoomTemplate for special.treasure"
+        ("UnknownRoomTemplate" `elem` templateIssueCodes (parseYamlTemplate yamlTreasure))
+    r2 <- expectTrue "UnknownRoomTemplate for special.boss"
+        ("UnknownRoomTemplate" `elem` templateIssueCodes (parseYamlTemplate yamlBoss))
+    pure (r1 && r2)
+
+testTemplateDepthRangeOutside :: IO Bool
+testTemplateDepthRangeOutside =
+    let yaml = replace1 "depth_range: [1, 2]" "depth_range: [1, 5]" validTemplateYaml
+    in expectTrue "DepthRangeOutside reported"
+        ("DepthRangeOutside" `elem` templateIssueCodes (parseYamlTemplate yaml))
+
+testTemplateBossLockMissingKey :: IO Bool
+testTemplateBossLockMissingKey =
+    let yaml = validTemplateYaml ++ "  treasure: { template: junction, locked: true }\n"
+    in expectTrue "BossLockMissingKey reported"
+        ("BossLockMissingKey" `elem` templateIssueCodes (parseYamlTemplate yaml))
+
+testTemplateRoomIdForbidden :: IO Bool
+testTemplateRoomIdForbidden =
+    let yaml = replace1 "      name: \"Kreuzung\""
+                        "      id: hand_set\n      name: \"Kreuzung\""
+                        validTemplateYaml
+    in expectTrue "RoomTemplateIdForbidden reported"
+        ("RoomTemplateIdForbidden" `elem` templateIssueCodes (parseYamlTemplate yaml))
+
+testTemplateBossDepthSpec :: IO Bool
+testTemplateBossDepthSpec =
+    let yaml = replace1 "boss: { template: junction, depth: max }"
+                        "boss: { template: junction, depth: 3 }"
+                        validTemplateYaml
+    in expectTrue "BossDepthSpec reported"
+        ("BossDepthSpec" `elem` templateIssueCodes (parseYamlTemplate yaml))
+
+testTemplateLayoutTooSmall :: IO Bool
+testTemplateLayoutTooSmall =
+    let yaml = replace1 "rooms: { min: 3, max: 6 }" "rooms: { min: 2, max: 6 }"
+                        validTemplateYaml
+    in expectTrue "LayoutTooSmall reported"
+        ("LayoutTooSmall" `elem` templateIssueCodes (parseYamlTemplate yaml))
+
+testTemplateOnewayDirection :: IO Bool
+testTemplateOnewayDirection = do
+    let yamlBad = validTemplateYaml
+            ++ "oneway_hints:\n"
+            ++ "  - { from: junction, to: any, dir: sideways }\n"
+        yamlGood = validTemplateYaml
+            ++ "oneway_hints:\n"
+            ++ "  - { from: junction, to: any, dir: down }\n"
+    r1 <- expectTrue "UnknownDirection for 'sideways'"
+        ("UnknownDirection" `elem` templateIssueCodes (parseYamlTemplate yamlBad))
+    r2 <- expectEqual [] (templateIssueCodes (parseYamlTemplate yamlGood))
+    pure (r1 && r2)
+
+testTemplateMultipleBossNpcs :: IO Bool
+testTemplateMultipleBossNpcs =
+    let yaml = validTemplateYaml ++ unlines
+            [ "npc_pool:"
+            , "  - { npc: { id: ogre, name: \"Ogre\", max_health: 20 }, boss: true }"
+            , "  - { npc: { id: drake, name: \"Drake\", max_health: 30 }, boss: true }"
+            ]
+    in expectTrue "MultipleBossNpcs reported"
+        ("MultipleBossNpcs" `elem` templateIssueCodes (parseYamlTemplate yaml))
+
+testTemplateInvalidCount :: IO Bool
+testTemplateInvalidCount =
+    let yaml = validTemplateYaml ++ unlines
+            [ "item_pool:"
+            , "  - { item: { id: potion, name: \"Heiltrank\" }, count: { min: 3, max: 2 } }"
+            ]
+    in expectTrue "InvalidCount reported"
+        ("InvalidCount" `elem` templateIssueCodes (parseYamlTemplate yaml))
+
+testTemplateSeedParse :: IO Bool
+testTemplateSeedParse = do
+    let withSeed s = validTemplateYaml ++ "seed: " ++ s ++ "\n"
+    r1 <- case parseYamlTemplate (withSeed "42") of
+        Left err -> expectTrue ("numeric seed parse failed: " ++ err) False
+        Right t  -> expectEqual (Just 42) (dtSeed t)
+    r2 <- case parseYamlTemplate (withSeed "\"42\"") of
+        Left err -> expectTrue ("string seed parse failed: " ++ err) False
+        Right t  -> expectEqual (Just 42) (dtSeed t)
+    pure (r1 && r2)
+
+testTemplateInvalidCombat :: IO Bool
+testTemplateInvalidCombat =
+    -- combat must be an ACombat object; a scalar is a parse error (which the
+    -- CLI in 4d turns into Exit 1 — same outcome as a TemplateIssue).
+    let yaml = validTemplateYaml ++ "combat: \"nope\"\n"
+    in case parseYamlTemplate yaml of
+        Left _  -> expectTrue "invalid combat fragment is a parse error" True
+        Right _ -> expectTrue "expected parse failure for combat: \"nope\"" False
 
 main :: IO ()
 main = do
