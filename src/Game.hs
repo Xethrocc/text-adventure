@@ -737,10 +737,12 @@ evalPredicate (CompareVar name op n) st =
         Just (VVInt v) -> fromMaybe False (compareValues op v n)
         _              -> False
 -- A text variable equals a literal. This is the read side of `variables:` with
--- `type: text`: `set_var` stores a `VVText`, and no other predicate can inspect
--- it (`compare_var` only compares numbers, `compare` resolves text to 0).
--- The engine's own `combat.action` / `combat.ability` are text for exactly this
--- form — without it they would be write-only.
+-- `type: text`: the value is a `VVText`, and no other predicate can inspect it
+-- (`compare_var` only compares numbers, `compare` resolves text to 0). Such a
+-- variable is written by the engine itself (`combat.action` / `combat.ability`,
+-- which would otherwise be write-only) and seeded by `initial:` /
+-- `initial_variables:`. The authored `set_var` outcome takes integers only
+-- (`AOSetVar String Int`), so it cannot produce a text value.
 evalPredicate (VarIs name expected) st =
     case Map.lookup name (variables (save st)) of
         Just (VVText v) -> v == expected

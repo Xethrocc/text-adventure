@@ -373,8 +373,9 @@ Flags sind für Prädikate faktisch boolesch: `has_flag` prüft, ob ein Flag ges
 ist (`"true"`). Ein Vergleich gegen einen *anderen* String-Wert ist über Flags
 nicht ausdrückbar — dafür gibt es Text-Variablen.
 
-**Text-Variablen** (`variables:` mit `type: text`) werden mit `set_var` gesetzt
-und mit `{ var: <name>, is: <text> }` abgefragt:
+**Text-Variablen** (`variables:` mit `type: text`) werden mit
+`{ var: <name>, is: <text> }` abgefragt; ihren Startwert setzt die Deklaration
+(`initial:`) oder `initial_variables:`:
 
 ```yaml
 variables:
@@ -390,6 +391,15 @@ Der Vergleich ist exakt und verlangt eine **Text**-Variable: ein Int-Wert `1`
 matcht *nicht* gegen `is: "1"`. `not` und die übrigen Verknüpfungen funktionieren
 wie bei jedem Prädikat. Die Engine selbst nutzt genau diese Form für
 `combat.action` / `combat.ability` (taktischer Kampf).
+
+**Schreiben zur Laufzeit:** Text-Variablen setzt ausschließlich die Engine
+(`combat.action` / `combat.ability`). Ein Autoren-Effekt dafür fehlt — `set_var`
+nimmt nur Ganzzahlen (`AOSetVar String Int`), ein
+`{ set_var: weather, value: "sturm" }` ist deshalb ein Schemafehler
+(„Unknown outcome type"). Für Zustände, die zur Laufzeit umschalten sollen,
+bleiben heute numerische Variablen (`compare_var`) oder Flags. Den *Startwert*
+darf man über `initial:` in der Deklaration oder über `initial_variables:`
+setzen (dort sind Strings erlaubt).
 
 Das frühere `check_flag`-Kürzel wurde entfernt
 (P1-18), weil es nie dekodierbar war und den Erwartungswert still verwarf.
