@@ -545,6 +545,29 @@ variables:
     max: 100
 ```
 
+### Variablen vergleichen (`compare_var`)
+
+`compare_var` vergleicht eine Variable mit einem **Literal** oder mit einer
+**anderen Variable**:
+
+```yaml
+# gegen ein Literal
+when: { compare_var: { name: gold, op: gte, value: 100 } }
+
+# gegen eine andere Variable (Langform des Schlüssels: `other_var`)
+when: { compare_var: { name: gold, op: ">=", var: kosten } }
+```
+
+- `op` akzeptiert `eq`/`ne`/`lt`/`lte`/`gt`/`gte` **oder** die Symbole
+  `=` / `!=` / `<` / `<=` / `>` / `>=`.
+- Verglichen werden **Ganzzahlen**. Text-Variablen prüft man mit
+  `{ var: <name>, is: <text> }`.
+- Der Winkel-Schlüssel `gte_var` o. ä. existiert **nicht** — die Variable steht
+  unter `var:` (`other_var:` ist die gleichwertige Langform).
+- In der kompilierten Welt steht dafür die generische Form
+  `{ compare: { lhs, op, rhs } }` mit `ValueRef`s; `compare_var … var:` ist der
+  Zucker darauf.
+
 ## initial_variables / initial_flags / active_quests
 
 ```yaml
