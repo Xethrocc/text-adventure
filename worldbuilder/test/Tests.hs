@@ -182,6 +182,7 @@ minAdventure room = Adventure
     , advGame = Nothing
     , advCards = []
     , advDeck = Nothing
+    , advSandboxZones = []
     }
 
 -- ===== Rogue Phase 1: authored game policy =====
@@ -1138,6 +1139,32 @@ testDeckbuilderFixtureCompiles = do
                             then pure True
                             else do
                                 putStrLn $ "  deckbuilder_spire.yaml validation: " ++ show errs
+                                pure False
+
+-- | Genre 3: sandbox fixture sandbox_wilderness.yaml compiles and validates clean.
+testSandboxWildernessFixtureCompiles :: IO Bool
+testSandboxWildernessFixtureCompiles = do
+    mbPath <- findExample "sandbox_wilderness.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  sandbox_wilderness.yaml fixture not found"
+            pure False
+        Just path -> do
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse sandbox_wilderness.yaml: " ++ err
+                    pure False
+                Right adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  sandbox_wilderness.yaml compile errors: " ++ issuesText errs
+                        pure False
+                    Right cr -> do
+                        let errs = validateWorld (crWorld cr) ++ validateGameState (crWorld cr) (crSave cr)
+                        if null errs
+                            then pure True
+                            else do
+                                putStrLn $ "  sandbox_wilderness.yaml validation: " ++ show errs
                                 pure False
 
 -- ---------------------------------------------------------------------------
@@ -2674,6 +2701,13 @@ tests =
     , ("cards: unknown card in deck is rejected (Phase 2D)", testCardGameUnknownCardInDeck)
     , ("cards: duplicate card id is rejected (Phase 2D)", testCardGameDuplicateCardId)
     , ("cards: unknown card type and target are rejected (Phase 2D)", testCardGameUnknownTypeAndTarget)
+    -- Schritt 3 / Phase 3E: Procedural Sandbox Zones & Dynamic Worldgen
+    , ("sandbox: map syntax and biome templates compile (Phase 3E)", testSandboxZoneYamlCompilation)
+    , ("sandbox: generate_room outcome compiles (Phase 3E)", testGenerateRoomOutcomeCompilation)
+    , ("sandbox: empty biomes in zone is rejected (Phase 3E)", testSandboxZoneEmptyBiomesValidation)
+    , ("sandbox: duplicate zone id is rejected (Phase 3E)", testSandboxZoneDuplicateIdValidation)
+    , ("sandbox: unknown direction in passable_dirs is rejected (Phase 3E)", testSandboxZoneUnknownDirectionValidation)
+    , ("sandbox: wilderness fixture compiles and validates clean (Phase 3E)", testSandboxWildernessFixtureCompiles)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -3836,6 +3870,186 @@ testCardGameUnknownTypeAndTarget = do
                 r2 <- expectTrue "UnknownCardTarget found" (any (\i -> ciCode i == "UnknownCardTarget") errs)
                 pure (r1 && r2)
             Right _ -> expectTrue "expected compile failure for unknown card type and target" False
+
+-- ---------------------------------------------------------------------------
+-- Procedural Sandbox Zones & Dynamic Worldgen Tests (Schritt 3 / Phase 3E)
+-- ---------------------------------------------------------------------------
+
+-- | Test compiling YAML with sandbox_zones (map syntax) and verify GameWorld.sandboxZones.
+testSandboxZoneYamlCompilation :: IO Bool
+testSandboxZoneYamlCompilation = do
+    let yaml = unlines
+            [ "name: Sandbox Test"
+            , "start_room: camp"
+            , "rooms:"
+            , "  - id: camp"
+            , "    name: Base Camp"
+            , "    texts: Base camp."
+            , "    exits:"
+            , "      north: sandbox_wildnis"
+            , "sandbox_zones:"
+            , "  wildnis:"
+            , "    origin: [10, 20, 0]"
+            , "    floor: 2"
+            , "    biomes:"
+            , "      - id: forest"
+            , "        weight: 70"
+            , "        name_pattern: 'Wald ({x}, {y})'"
+            , "        description: 'Dichter Nadelwald.'"
+            , "        tags: ['forest', 'outdoor']"
+            , "        passable_dirs: ['north', 'south', 'east', 'west']"
+            , "      - id: cliff"
+            , "        weight: 30"
+            , "        name_pattern: 'Klippe ({x}, {y})'"
+            , "        description: 'Felswand.'"
+            , "        tags: ['rock']"
+            , "        passable_dirs: ['south', 'east']"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let w = crWorld cr
+                    zones = E.sandboxZones w
+                r1 <- expectEqual 1 (Map.size zones)
+                case Map.lookup "wildnis" zones of
+                    Nothing -> expectTrue "wildnis zone found" False
+                    Just sz -> do
+                        b1 <- expectEqual (10, 20, 0) (E.szOrigin sz)
+                        b2 <- expectEqual (Just 2) (E.szDefaultFloor sz)
+                        b3 <- expectEqual 2 (length (E.szBiomes sz))
+                        let bForest = head (E.szBiomes sz)
+                        b4 <- expectEqual "forest" (E.btId bForest)
+                        b5 <- expectEqual 70 (E.btWeight bForest)
+                        b6 <- expectEqual "Wald ({x}, {y})" (E.btNamePattern bForest)
+                        b7 <- expectEqual [E.North, E.South, E.East, E.West] (E.btPassableDirs bForest)
+                        let bCliff = E.szBiomes sz !! 1
+                        b8 <- expectEqual "cliff" (E.btId bCliff)
+                        b9 <- expectEqual 30 (E.btWeight bCliff)
+                        b10 <- expectEqual [E.South, E.East] (E.btPassableDirs bCliff)
+                        pure (r1 && b1 && b2 && b3 && b4 && b5 && b6 && b7 && b8 && b9 && b10)
+
+-- | Test compiling generate_room action outcome in rules.
+testGenerateRoomOutcomeCompilation :: IO Bool
+testGenerateRoomOutcomeCompilation = do
+    let yaml = unlines
+            [ "name: Dig Test"
+            , "start_room: entrance"
+            , "verbs:"
+            , "  - name: graben"
+            , "rooms:"
+            , "  - id: entrance"
+            , "    name: Entrance"
+            , "    texts: Entrance."
+            , "rules:"
+            , "  - id: dig_rule"
+            , "    on: command graben"
+            , "    effects:"
+            , "      - generate_room:"
+            , "          id: 'mine_{turn.count}'"
+            , "          name: 'Tiefe Mine'"
+            , "          description: 'Gegrabener Stollen.'"
+            , "          connect_from: 'current_room'"
+            , "          direction: 'down'"
+            , "          return_direction: 'up'"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let w = crWorld cr
+                    trigs = E.triggerDefs w
+                case trigs of
+                    [t] -> do
+                        let expected = E.GenerateRoom "mine_{turn.count}" "Tiefe Mine" "Gegrabener Stollen." "current_room" E.Down E.Up
+                        expectEqual [expected] (E.trEffects t)
+                    _ -> expectTrue "expected exactly 1 trigger" False
+
+-- | Test validation: empty biomes in sandbox zone is rejected.
+testSandboxZoneEmptyBiomesValidation :: IO Bool
+testSandboxZoneEmptyBiomesValidation = do
+    let yaml = unlines
+            [ "name: Bad Zone"
+            , "start_room: camp"
+            , "rooms:"
+            , "  - id: camp"
+            , "    name: Camp"
+            , "    texts: Camp."
+            , "sandbox_zones:"
+            , "  empty_zone:"
+            , "    origin: [0, 0, 0]"
+            , "    biomes: []"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> expectTrue "EmptySandboxZone error found"
+                            (any (\i -> ciCode i == "EmptySandboxZone") errs)
+            Right _ -> expectTrue "expected compile failure for empty biomes in sandbox zone" False
+
+-- | Test validation: duplicate sandbox zone id is rejected.
+testSandboxZoneDuplicateIdValidation :: IO Bool
+testSandboxZoneDuplicateIdValidation = do
+    let yaml = unlines
+            [ "name: Dup Zone"
+            , "start_room: camp"
+            , "rooms:"
+            , "  - id: camp"
+            , "    name: Camp"
+            , "    texts: Camp."
+            , "sandbox_zones:"
+            , "  - id: wildnis"
+            , "    biomes:"
+            , "      - id: b1"
+            , "  - id: wildnis"
+            , "    biomes:"
+            , "      - id: b2"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> expectTrue "DuplicateSandboxZone error found"
+                            (any (\i -> ciCode i == "DuplicateSandboxZone") errs)
+            Right _ -> expectTrue "expected compile failure for duplicate sandbox zone" False
+
+-- | Test validation: unknown direction in passable_dirs is rejected.
+testSandboxZoneUnknownDirectionValidation :: IO Bool
+testSandboxZoneUnknownDirectionValidation = do
+    let yaml = unlines
+            [ "name: Bad Dir"
+            , "start_room: camp"
+            , "rooms:"
+            , "  - id: camp"
+            , "    name: Camp"
+            , "    texts: Camp."
+            , "sandbox_zones:"
+            , "  wildnis:"
+            , "    biomes:"
+            , "      - id: b1"
+            , "        passable_dirs: ['nowhere']"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> expectTrue "UnknownDirection error found"
+                            (any (\i -> ciCode i == "UnknownDirection") errs)
+            Right _ -> expectTrue "expected compile failure for unknown direction" False
 
 -- helpers -------------------------------------------------------------------
 

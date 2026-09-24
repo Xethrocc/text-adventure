@@ -50,6 +50,7 @@ data Adventure = Adventure
     , advGame             :: Maybe AGamePolicy           -- ^ roguelike policy (Rogue Phase 1)
     , advCards            :: [ACard]                     -- ^ card definitions (Phase 2D)
     , advDeck             :: Maybe [String]              -- ^ starting deck (Phase 2D)
+    , advSandboxZones     :: [ASandboxZone]              -- ^ procedural sandbox zones (Schritt 3 / Phase 3E)
     } deriving (Show, Eq, Generic)
 
 -- | Rogue Phase 1: the authored `game:` block. Every field is optional so
@@ -118,6 +119,7 @@ instance FromJSON Adventure where
         <*> o .:? "game"
         <*> parseCardsField o
         <*> parseDeckField o
+        <*> parseSandboxZonesField o
 
 -- | Parse 'cards' field: supports both a map (`cards: { strike: { ... } }`) and a list (`cards: [ { id: "strike", ... } ]`).
 parseCardsField :: Object -> Parser [ACard]
@@ -153,6 +155,21 @@ parseDeckValue (Object obj) = do
                       ) (KM.toList obj)
     pure (concat cardLists)
 parseDeckValue _ = fail "Expected 'deck' to be a list of card IDs or a map of card ID to count"
+
+-- | Parse 'sandbox_zones' field: supports both a map (`sandbox_zones: { wildnis: { ... } }`) and a list (`sandbox_zones: [ { id: "wildnis", ... } ]`).
+parseSandboxZonesField :: Object -> Parser [ASandboxZone]
+parseSandboxZonesField o = do
+    mVal <- o .:? "sandbox_zones"
+    case mVal of
+        Nothing -> pure []
+        Just (Array arr) -> mapM parseJSON (Foldable.toList arr)
+        Just (Object obj) ->
+            mapM (\(k, v) -> do
+                    sz <- parseJSON v
+                    let zid = if null (aszId sz) then K.toString k else aszId sz
+                    pure sz { aszId = zid }
+                 ) (KM.toList obj)
+        Just _ -> fail "Expected 'sandbox_zones' to be an object (map) or array (list)"
 
 -- ---------------------------------------------------------------------------
 -- Cards (Schritt 2 / Phase 2D)
@@ -340,6 +357,76 @@ instance FromJSON AExitRef where
     parseJSON v = withObject "AExitRef" (\o -> AExitRef
         <$> o .:  "to"
         <*> o .:? "locked_by") v
+
+-- ---------------------------------------------------------------------------
+-- Procedural Sandbox Zones (Schritt 3 / Phase 3E)
+-- ---------------------------------------------------------------------------
+
+-- | Biome template as authored in YAML.
+data ABiomeTemplate = ABiomeTemplate
+    { abtId           :: String
+    , abtWeight       :: Maybe Int
+    , abtNamePattern  :: Maybe String
+    , abtDescription  :: ACondText
+    , abtTags         :: [String]
+    , abtAsciiArt     :: Maybe AAscii
+    , abtPassableDirs :: [String]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ABiomeTemplate where
+    parseJSON = withObject "ABiomeTemplate" $ \o -> ABiomeTemplate
+        <$> o .:? "id" .!= ""
+        <*> o .:? "weight"
+        <*> o .:? "name_pattern"
+        <*> textField o
+        <*> o .:? "tags" .!= []
+        <*> (o .:? "ascii_art" <|> o .:? "ascii")
+        <*> o .:? "passable_dirs" .!= []
+
+-- | Sandbox zone as authored in YAML.
+data ASandboxZone = ASandboxZone
+    { aszId     :: String
+    , aszOrigin :: (Int, Int, Int)
+    , aszFloor  :: Maybe Int
+    , aszBiomes :: [ABiomeTemplate]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ASandboxZone where
+    parseJSON = withObject "ASandboxZone" $ \o -> ASandboxZone
+        <$> o .:? "id" .!= ""
+        <*> parseOriginField o
+        <*> o .:? "floor"
+        <*> parseBiomesField o
+
+parseOriginField :: Object -> Parser (Int, Int, Int)
+parseOriginField o = do
+    mOrig <- o .:? "origin"
+    case mOrig of
+        Nothing -> pure (0, 0, 0)
+        Just (Array arr) -> case Foldable.toList arr of
+            [Number x, Number y, Number z] -> pure (round x, round y, round z)
+            [Number x, Number y]           -> pure (round x, round y, 0)
+            _                              -> fail "origin array must have 2 or 3 numbers"
+        Just (Object obj) -> do
+            x <- obj .:? "x" .!= 0
+            y <- obj .:? "y" .!= 0
+            z <- obj .:? "z" .!= 0
+            pure (x, y, z)
+        Just _ -> fail "origin must be array or object"
+
+parseBiomesField :: Object -> Parser [ABiomeTemplate]
+parseBiomesField o = do
+    mVal <- o .:? "biomes"
+    case mVal of
+        Nothing -> pure []
+        Just (Array arr) -> mapM parseJSON (Foldable.toList arr)
+        Just (Object obj) ->
+            mapM (\(k, v) -> do
+                    bt <- parseJSON v
+                    let bid = if null (abtId bt) then K.toString k else abtId bt
+                    pure bt { abtId = bid }
+                 ) (KM.toList obj)
+        Just _ -> fail "Expected 'biomes' to be an object (map) or array (list)"
 
 -- ---------------------------------------------------------------------------
 -- Items
@@ -1018,6 +1105,9 @@ data AActionOutcome
     | AOExhaustCard String
     | AOAddCardToDeck String String
     | AOShuffleDeck
+    -- Schritt 3 / Phase 3E: Dynamic room generation
+    | AOGenerateRoom String String String String String String
+      -- ^ id, name, desc, connect_from, direction, return_direction
     deriving (Show, Eq, Generic)
 
 -- Parse an outcome from an object with a single recognized key
@@ -1076,6 +1166,19 @@ instance FromJSON AActionOutcome where
                 AOAddCardToDeck <$> ac .: "card" <*> pure dest)
         <|> (do b <- o .: "shuffle_deck"
                 if b then pure AOShuffleDeck else fail "shuffle_deck must be true")
+        -- Schritt 3 / Phase 3E: dynamic room generation
+        <|> (do grVal <- o .: "generate_room"
+                case grVal of
+                    Object gr -> do
+                        rId <- gr .: "id"
+                        rName <- gr .:? "name" .!= ""
+                        rDesc <- gr .:? "description" >>= maybe (gr .:? "desc" >>= maybe (gr .:? "template" .!= "") pure) pure
+                        rFrom <- gr .:? "connect_from" >>= maybe (gr .:? "from" .!= "current_room") pure
+                        rDir <- gr .:? "direction" >>= maybe (gr .:? "dir" >>= maybe (gr .:? "to_dir" .!= "north") pure) pure
+                        rRetDir <- gr .:? "return_direction" >>= maybe (gr .:? "return_dir" >>= maybe (gr .:? "ret_dir" .!= "") pure) pure
+                        pure (AOGenerateRoom rId rName rDesc rFrom rDir rRetDir)
+                    String s -> pure (AOGenerateRoom (T.unpack s) "" "" "current_room" "north" "")
+                    _ -> fail "generate_room must be an object or string")
         <|> (AOMessage <$> o .: "msg")
         <|> (AOMessage <$> o .: "text")
         <|> (AOHealPlayer <$> o .: "heal")

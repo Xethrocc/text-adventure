@@ -1,0 +1,189 @@
+name: "Endlose Wildnis (Sandbox & Runtime-Worldgen)"
+start_room: "forsthaus"
+
+player:
+  health: 100
+  max_health: 100
+
+variables:
+  - name: "wood"
+    type: int
+    initial: 0
+    min: 0
+  - name: "ore"
+    type: int
+    initial: 0
+    min: 0
+  - name: "berries"
+    type: int
+    initial: 0
+    min: 0
+  - name: "energy"
+    type: int
+    initial: 100
+    min: 0
+    max: 100
+  - name: "depth"
+    type: int
+    initial: 1
+    min: 1
+
+verbs:
+  - name: "hacken"
+    aliases: ["faellen", "chop"]
+  - name: "graben"
+    aliases: ["dig", "schuerfen"]
+  - name: "sammeln"
+    aliases: ["harvest", "pfluecken"]
+  - name: "status"
+    aliases: ["stats", "ressourcen", "lager"]
+
+rooms:
+  - id: "forsthaus"
+    name: "Forsthaus am Waldrand"
+    floor: 1
+    description: "Eine gemütliche Holzhütte. Von der Veranda aus blickst du nach Norden in die endlose, unberührte Wildnis."
+    exits:
+      north: "sandbox_wildnis"
+    ascii: |
+      [Huette]
+      /    \
+      /____\
+      | [] |
+
+items:
+  - id: "axt"
+    name: "Holzfälleraxt"
+    location: "forsthaus"
+    keywords: ["axt", "holzfaelleraxt", "axe"]
+    description: "Eine schwere, geschärfte Axt mit Eschenholzstiel. Ideal zum Holzfällen."
+
+  - id: "spitzhacke"
+    name: "Eiserne Spitzhacke"
+    location: "forsthaus"
+    keywords: ["spitzhacke", "pickaxe", "hacke"]
+    description: "Eine robuste Spitzhacke aus geschmiedetem Eisen zum Schürfen und Graben."
+
+rules:
+  # Ressourcen-Status anzeigen
+  - id: "rule_status"
+    on: "command status"
+    effects:
+      - msg: "--- RESSOURCEN & VORRÄTE ---\nHolz: {wood} | Erz: {ore} | Beeren: {berries}\nEnergie: {energy}/100 | Stollen-Tiefe: {depth}"
+
+  # Bäume fällen in Waldzonen
+  - id: "rule_woodcutting"
+    on: "command hacken"
+    when:
+      all:
+        - has_item: "axt"
+        - compare_var: { name: "energy", op: "gte", value: 10 }
+        - room: "current_room"
+          has_tag: "forest"
+    effects:
+      - add_var: { variable: wood, delta: 2 }
+      - compute_var: { var: energy, expr: "max(0, energy - 10)" }
+      - msg: "Mit kräftigen Schlägen fällst du eine alte Kiefer. (+2 Holz, -10 Energie)"
+
+  - id: "rule_woodcutting_no_axe"
+    on: "command hacken"
+    when:
+      not:
+        has_item: "axt"
+    effects:
+      - msg: "Ohne eine Holzfälleraxt kannst du hier keine Bäume fällen."
+
+  - id: "rule_woodcutting_no_forest"
+    on: "command hacken"
+    when:
+      all:
+        - has_item: "axt"
+        - not:
+            room: "current_room"
+            has_tag: "forest"
+    effects:
+      - msg: "Hier gibt es keine Bäume, die sich zum Holzfällen eignen."
+
+  # Beeren sammeln auf Lichtungen
+  - id: "rule_foraging"
+    on: "command sammeln"
+    when:
+      room: "current_room"
+      has_tag: "clearing"
+    effects:
+      - add_var: { variable: berries, delta: 5 }
+      - compute_var: { var: energy, expr: "min(100, energy + 15)" }
+      - msg: "Du pflückst eine Handvoll süßer Waldbeeren und isst einige davon. (+5 Beeren, +15 Energie)"
+
+  - id: "rule_foraging_no_clearing"
+    on: "command sammeln"
+    when:
+      not:
+        room: "current_room"
+        has_tag: "clearing"
+    effects:
+      - msg: "Hier wachsen keine essbaren Beerensträucher."
+
+  # Dynamische Raumgenerierung: Graben nach unten erzeugt neue Stollen-Räume
+  - id: "rule_mining_dig"
+    on: "command graben"
+    when:
+      all:
+        - has_item: "spitzhacke"
+        - compare_var: { name: "energy", op: "gte", value: 15 }
+    effects:
+      - generate_room:
+          id: "stollen_{depth}"
+          name: "Unterirdischer Stollen (Tiefe {depth})"
+          description: "Ein von Hand getriebener Stollen tief im Erdreich. Schimmernde Erzknollen glitzern im Gestein bei Tiefe {depth}."
+          connect_from: "current_room"
+          direction: "down"
+          return_direction: "up"
+      - add_var: { variable: depth, delta: 1 }
+      - add_var: { variable: ore, delta: 3 }
+      - compute_var: { var: energy, expr: "max(0, energy - 15)" }
+      - msg: "Du schlägst mit der Spitzhacke in das Erdreich und legst einen neuen Stollen nach unten frei! (+3 Erz, -15 Energie, Weg nach unten geöffnet)"
+
+  - id: "rule_mining_no_pick"
+    on: "command graben"
+    when:
+      not:
+        has_item: "spitzhacke"
+    effects:
+      - msg: "Mit bloßen Händen kannst du das harte Gestein nicht aufbrechen. Du brauchst eine Spitzhacke."
+
+sandbox_zones:
+  wildnis:
+    origin: [0, 0, 0]
+    floor: 1
+    biomes:
+      - id: "forest"
+        weight: 60
+        name_pattern: "Dichter Wald [{x}, {y}]"
+        description: "Uralte Kiefern und Fichten ragen empor. Weiches Moos bedeckt den Waldboden bei Koordinate [{x}, {y}]."
+        tags: ["outdoor", "forest"]
+        passable_dirs: ["north", "south", "east", "west"]
+        ascii_art: |
+          / \ / \ / \
+          | | | | | |
+
+      - id: "clearing"
+        weight: 30
+        name_pattern: "Sonnige Waldlichtung [{x}, {y}]"
+        description: "Ein sonnendurchfluteter Fleck im Forst. Süße Waldbeeren wachsen hier im Gras bei Koordinate [{x}, {y}]."
+        tags: ["outdoor", "clearing"]
+        passable_dirs: ["north", "south", "east", "west"]
+        ascii_art: |
+          .  *  .
+          \|/|/|/
+          ---+---
+
+      - id: "cliff"
+        weight: 10
+        name_pattern: "Schroffe Klippe [{x}, {y}]"
+        description: "Mächtige Felswände ragen senkrecht in die Höhe. Der Weg nach Norden ist versperrt."
+        tags: ["outdoor", "mountain"]
+        passable_dirs: ["south", "east", "west"]
+        ascii_art: |
+          /\/\/\/\
+          | WAND |

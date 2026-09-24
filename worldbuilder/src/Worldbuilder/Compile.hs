@@ -90,12 +90,30 @@ checkSetExitRefs :: Set.Set String -> Adventure -> [CompileIssue]
 checkSetExitRefs roomKeys adv =
     concatMap go (allAOutcomes adv)
   where
+    sandboxZoneKeys = Set.fromList (map aszId (advSandboxZones adv))
+    isSandboxZoneTarget r =
+        case E.parseSandboxRoomId r of
+            Just (zid, _, _, _) -> zid `Set.member` sandboxZoneKeys
+            Nothing             -> r `Set.member` sandboxZoneKeys
+
     go (AOSetExit from dir to _mLock) =
         setExitIssues from dir (Just to)
             ++ [ ciError "outcomes.set_exit.to" "MissingRoom"
                     ("room '" ++ to ++ "' does not exist")
-               | to `Set.notMember` roomKeys ]
+               | to `Set.notMember` roomKeys, not (isSandboxZoneTarget to) ]
     go (AORemoveExit from dir) = setExitIssues from dir Nothing
+    go (AOGenerateRoom _ _ _ from toDir retDir) =
+        [ ciError "outcomes.generate_room.direction" "UnknownDirection"
+            ("generate_room direction '" ++ toDir ++ "' is unknown")
+        | either (const True) (const False) (parseDir toDir) ]
+        ++
+        [ ciError "outcomes.generate_room.return_direction" "UnknownDirection"
+            ("generate_room return_direction '" ++ retDir ++ "' is unknown")
+        | not (null retDir) && either (const True) (const False) (parseDir retDir) ]
+        ++
+        [ ciError "outcomes.generate_room.connect_from" "MissingRoom"
+            ("room '" ++ from ++ "' does not exist")
+        | not (null from), from `notElem` ["current", "current_room"], from `Set.notMember` roomKeys, not (isSandboxZoneTarget from) ]
     go (AOConditional _ ts es) = go' ts ++ go' es
     go (AONarrative _ follow)  = go' follow
     go (AORandomChoice cs)     = concatMap go' (map snd cs)
@@ -108,7 +126,7 @@ checkSetExitRefs roomKeys adv =
         | either (const True) (const False) (parseDir dir) ]
         ++ [ ciError ("outcomes." ++ tag) "MissingRoom"
                 ("room '" ++ r ++ "' does not exist")
-           | r <- nub (from : toRooms), r `Set.notMember` roomKeys ]
+           | r <- nub (from : toRooms), r `Set.notMember` roomKeys, not (isSandboxZoneTarget r) ]
       where
         tag = case mTo of
             Just _  -> "set_exit"
@@ -217,6 +235,7 @@ compileAdventure adv =
         compiledAbilities = Map.fromList [ (E.paId pa, pa) | a <- advAbilities adv, let pa = compileAbility a ]
 
         (cardErrs, compiledCards) = compileCards (advCards adv)
+        (szErrs, compiledSandboxZones) = compileSandboxZones (advSandboxZones adv)
         mStartingDeck = case advDeck adv of
             Just d  -> Just d
             Nothing -> advPlayer adv >>= apDeck
@@ -247,7 +266,7 @@ compileAdventure adv =
                 , E.worldClips = compileClips (advClips adv)
                 , E.worldGamePolicy = compiledPolicy
                 , E.cardDefs = compiledCards
-                , E.sandboxZones = Map.empty
+                , E.sandboxZones = compiledSandboxZones
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
@@ -284,6 +303,7 @@ compileAdventure adv =
                     ++ gameErrs
                     ++ cardErrs
                     ++ deckErrs
+                    ++ szErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -1617,6 +1637,12 @@ compileAActionOutcome ao = case ao of
                 _         -> E.DestDraw
         in E.AddCardToDeck cid dest
     AOShuffleDeck -> E.ShuffleDeck
+    AOGenerateRoom rId rName rDesc fromR toDirStr retDirStr ->
+        let toDir = dirOf toDirStr
+            retDir = if null retDirStr
+                     then E.oppositeDirection toDir
+                     else dirOf retDirStr
+        in E.GenerateRoom rId rName rDesc fromR toDir retDir
 
 -- | `Just` the compiled effect for a non-empty outcome list, else `Nothing`
 --   (engine `ApplyCondition` takes optional tick/end effects).
@@ -1945,3 +1971,80 @@ compileCards cards =
         "all"          -> Just E.TargetAllEnemies
         "none"         -> Just E.TargetNone
         _              -> Nothing
+
+-- ---------------------------------------------------------------------------
+-- Procedural Sandbox Zones (Schritt 3 / Phase 3E)
+-- ---------------------------------------------------------------------------
+
+-- | Compile authored sandbox zones into engine SandboxZones and validate biomes and directions.
+compileSandboxZones :: [ASandboxZone] -> ([CompileIssue], Map.Map String E.SandboxZone)
+compileSandboxZones zones =
+    let results = map compileOneZone zones
+        errors = concat [e | Left e <- results]
+        dupErrs =
+            [ ciError ("sandbox_zones." ++ zid) "DuplicateSandboxZone"
+                ("sandbox zone id '" ++ zid ++ "' is declared more than once")
+            | (zid, others) <- collisions [(aszId z, aszId z) | z <- zones]
+            , not (null others) ]
+        zoneMap = Map.fromList [ (aszId z, sz) | Right (z, sz) <- results ]
+    in (errors ++ dupErrs, zoneMap)
+  where
+    compileOneZone z =
+        let zPath = "sandbox_zones." ++ aszId z
+            idErr = if null (aszId z)
+                    then [ciError "sandbox_zones" "EmptySandboxZoneId" "sandbox zone id must not be empty"]
+                    else []
+            emptyBiomesErr = if null (aszBiomes z)
+                             then [ciError zPath "EmptySandboxZone" "sandbox zone has no biomes declared"]
+                             else []
+            (biomeErrs, compiledBiomes) = compileBiomes zPath (aszBiomes z)
+            allErrs = idErr ++ emptyBiomesErr ++ biomeErrs
+        in if null allErrs
+           then Right (z, E.SandboxZone
+                { E.szId = aszId z
+                , E.szOrigin = aszOrigin z
+                , E.szBiomes = compiledBiomes
+                , E.szDefaultFloor = aszFloor z
+                })
+           else Left allErrs
+
+    compileBiomes zPath biomes =
+        let results = map (compileOneBiome zPath) biomes
+            errors = concat [e | Left e <- results]
+            dupErrs =
+                [ ciError (zPath ++ ".biomes." ++ bid) "DuplicateBiomeId"
+                    ("biome id '" ++ bid ++ "' is declared more than once in zone")
+                | (bid, others) <- collisions [(abtId b, abtId b) | b <- biomes]
+                , not (null others) ]
+            biomeList = [ b | Right b <- results ]
+        in (errors ++ dupErrs, biomeList)
+
+    compileOneBiome zPath b =
+        let bPath = zPath ++ ".biomes." ++ abtId b
+            idErr = if null (abtId b)
+                    then [ciError (zPath ++ ".biomes") "EmptyBiomeId" "biome id must not be empty"]
+                    else []
+            weight = fromMaybe 1 (abtWeight b)
+            weightErr = if weight <= 0
+                        then [ciError (bPath ++ ".weight") "BadBiomeWeight" "biome weight must be a positive integer"]
+                        else []
+            parsedDirs = [(d, parseDir d) | d <- abtPassableDirs b]
+            dirErrs = [ ciError (bPath ++ ".passable_dirs." ++ d) "UnknownDirection" msg
+                      | (d, Left msg) <- parsedDirs ]
+            goodDirs = if null (abtPassableDirs b)
+                       then [E.North, E.South, E.East, E.West]
+                       else [dir | (_, Right dir) <- parsedDirs]
+            allErrs = idErr ++ weightErr ++ dirErrs
+        in if null allErrs
+           then Right E.BiomeTemplate
+                { E.btId = abtId b
+                , E.btWeight = weight
+                , E.btNamePattern = fromMaybe "Wildnis ({x}, {y})" (abtNamePattern b)
+                , E.btDescription = compileCondText (abtDescription b)
+                , E.btTags = abtTags b
+                , E.btAsciiArt = case abtAsciiArt b of
+                    Just aa -> compileAscii aa
+                    Nothing -> E.emptyAscii
+                , E.btPassableDirs = goodDirs
+                }
+           else Left allErrs
