@@ -6,3 +6,9 @@ Setup.o
 REVIEW-opus5.md
 plan-7f3-tactical-7h2-shipduell.md
 /tmp/
+
+# Pi-Konfiguration & Extensions (gehören zu Pi, nicht zum Projekt-Repo)
+.pi/extensions/
+
+# Pi Code-Index (lokal generiert, nicht committen)
+.pi/codeindex/
