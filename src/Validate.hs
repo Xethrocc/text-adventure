@@ -68,11 +68,8 @@ checkDanglingExits gw =
     , (dir, exit) <- Map.toList (roomConnections room)
     , let target = exitRoomID exit
     , target `notElem` Map.keys (rooms gw)
+    , not (isSandboxTarget target gw)
     ]
-
-exitRoomID :: Exit -> RoomID
-exitRoomID (Open r) = r
-exitRoomID (Locked r _) = r
 
 -- | Room references inside rules and outcomes: `MoveEntity … (InRoom r)` and the
 --   `move:` effect (`SetValue (VRActorProp APlayer PRoom) …`).
@@ -85,7 +82,7 @@ checkMissingRoomRefs :: GameWorld -> [ValidationError]
 checkMissingRoomRefs gw =
     let roomKeys = Set.fromList (Map.keys (rooms gw))
         refs = concatMap idsFromOutcomeRoom (allOutcomes gw)
-    in [MissingRoom r | r <- nub refs, not (Set.member r roomKeys)]
+    in [MissingRoom r | r <- nub refs, not (Set.member r roomKeys), not (isSandboxTarget r gw)]
 
 idsFromOutcomeRoom :: Effect -> [String]
 idsFromOutcomeRoom outcome = case outcome of

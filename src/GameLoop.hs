@@ -32,9 +32,9 @@ import Frontend
 import Control.Monad (when)
 import Data.Char (toLower)
 import Data.List (foldl', isPrefixOf)
+import Data.Maybe (isJust, fromMaybe)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Data.Word (Word64)
-import Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
 
 -- ---------------------------------------------------------------------------
@@ -302,8 +302,8 @@ commandEvents cmd before after = concat
         _ -> []
     itemLoc i st = itemLocation <$> Map.lookup i (itemStates (save st))
     lookSearchEvents = case cmd of
-        Look            -> [OnLook (currentRoom (save after)) | currentRoom (save after) `elem` Map.keys (rooms (world after))]
-        SearchCmd _     -> [OnSearch (currentRoom (save after)) | currentRoom (save after) `elem` Map.keys (rooms (world after))]
+        Look            -> [OnLook (currentRoom (save after)) | isJust (lookupRoom (currentRoom (save after)) after)]
+        SearchCmd _     -> [OnSearch (currentRoom (save after)) | isJust (lookupRoom (currentRoom (save after)) after)]
         _               -> []
 
 -- | Look up an item ID by alias. Returns `Nothing` when no declared item matches

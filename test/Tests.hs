@@ -4736,6 +4736,100 @@ testGenerateRoomEffectSerialization = do
         Nothing -> putStrLn "Failed to decode GenerateRoom effect" >> pure False
         Just decoded -> expectEqual eff decoded
 
+-- | Phase 3B: lookupRoom fallback to static room in GameWorld
+testLookupRoomFallback :: IO Bool
+testLookupRoomFallback = do
+    let gw = world initSampleGame
+        st = emptyGameState { world = gw }
+        mRoom = lookupRoom "start" st
+    case mRoom of
+        Nothing -> putStrLn "Expected to find static room 'start'" >> pure False
+        Just r -> expectEqual "start" (roomId r)
+
+-- | Phase 3B: lookupRoom prioritizes dynamic overlay in SaveState
+testLookupRoomDynamicPriority :: IO Bool
+testLookupRoomDynamicPriority = do
+    let gw = world initSampleGame
+        dynRoom = (rooms gw Map.! "start") { roomName = "Modifizierter Startraum" }
+        st = emptyGameState
+            { world = gw
+            , save = (save emptyGameState) { dynamicRooms = Map.singleton "start" dynRoom }
+            }
+        mRoom = lookupRoom "start" st
+    case mRoom of
+        Nothing -> putStrLn "Expected room" >> pure False
+        Just r -> expectEqual "Modifizierter Startraum" (roomName r)
+
+-- | Phase 3B: deterministic cell seed derivation via SplitMix64
+testDeterministicCellSeed :: IO Bool
+testDeterministicCellSeed = do
+    let seed1 = deriveCellSeed 12345 "wilderness" 10 (-5) 0
+        seed2 = deriveCellSeed 12345 "wilderness" 10 (-5) 0
+        seedDiffCoord = deriveCellSeed 12345 "wilderness" 10 (-4) 0
+        seedDiffZone = deriveCellSeed 12345 "forest" 10 (-5) 0
+    r1 <- expectEqual seed1 seed2
+    r2 <- expectTrue "different coordinate produces different seed" (seed1 /= seedDiffCoord)
+    r3 <- expectTrue "different zone produces different seed" (seed1 /= seedDiffZone)
+    pure (r1 && r2 && r3)
+
+-- | Phase 3B: Moving into sandbox generates cell in dynamicRooms with tags and coords
+testMoveIntoSandboxGeneratesRoom :: IO Bool
+testMoveIntoSandboxGeneratesRoom = do
+    let bForest = BiomeTemplate "forest" 10 "Dichter Wald [{x}, {y}]" (plainText "Tiefer Wald.") ["forest"] emptyAscii [North, South, East, West]
+        sz = SandboxZone "wildnis" (0, 0, 0) [bForest] (Just 1)
+        gw = emptyGameWorld
+            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Schlosstor") (Map.singleton North (Open "sandbox_wildnis")) Set.empty Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing)
+            , sandboxZones = Map.singleton "wildnis" sz
+            }
+        st0 = emptyGameState { world = gw, save = (save emptyGameState) { currentRoom = "gate" } }
+    -- Moving north into sandbox_wildnis
+    let (st1, _) = executeCommand (Go North) st0
+    r1 <- expectEqual "sandbox_wildnis_0_0_0" (currentRoom (save st1))
+    r2 <- expectTrue "dynamicRooms contains generated room" (Map.member "sandbox_wildnis_0_0_0" (dynamicRooms (save st1)))
+    let mGenRoom = lookupRoom "sandbox_wildnis_0_0_0" st1
+    case mGenRoom of
+        Nothing -> putStrLn "Generated room not found" >> pure False
+        Just genRoom -> do
+            r3 <- expectEqual "Dichter Wald [0, 0]" (roomName genRoom)
+            r4 <- expectTrue "has sandbox tag" (Set.member "sandbox" (roomTags genRoom))
+            r5 <- expectTrue "has wildnis tag" (Set.member "wildnis" (roomTags genRoom))
+            r6 <- expectTrue "has forest tag" (Set.member "forest" (roomTags genRoom))
+            pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | Phase 3B: Reciprocal exit wiring between authored and sandbox rooms, and between sandbox cells
+testReciprocalExitWiring :: IO Bool
+testReciprocalExitWiring = do
+    let bForest = BiomeTemplate "forest" 10 "Wald [{x}, {y}]" (plainText "Wald.") ["forest"] emptyAscii [North, South, East, West]
+        sz = SandboxZone "wildnis" (0, 0, 0) [bForest] (Just 1)
+        gw = emptyGameWorld
+            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Schlosstor") (Map.singleton North (Open "sandbox_wildnis_0_0_0")) Set.empty Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing)
+            , sandboxZones = Map.singleton "wildnis" sz
+            }
+        st0 = emptyGameState { world = gw, save = (save emptyGameState) { currentRoom = "gate" } }
+        (st1, _) = executeCommand (Go North) st0
+    -- Verify reciprocal exit from sandbox (0,0,0) back to gate via South
+    let mRoom0 = lookupRoom "sandbox_wildnis_0_0_0" st1
+    case mRoom0 of
+        Nothing -> putStrLn "Room 0,0,0 missing" >> pure False
+        Just r0 -> do
+            r1 <- expectEqual (Just (Open "gate")) (Map.lookup South (roomConnections r0))
+            -- Now move East to (1, 0, 0)
+            let (st2, _) = executeCommand (Go East) st1
+            r2 <- expectEqual "sandbox_wildnis_1_0_0" (currentRoom (save st2))
+            let mRoom1 = lookupRoom "sandbox_wildnis_1_0_0" st2
+            case mRoom1 of
+                Nothing -> putStrLn "Room 1,0,0 missing" >> pure False
+                Just r1_room -> do
+                    -- Verify reciprocal exit from (1,0,0) back to (0,0,0) via West
+                    r3 <- expectEqual (Just (Open "sandbox_wildnis_0_0_0")) (Map.lookup West (roomConnections r1_room))
+                    -- Move West back to (0,0,0)
+                    let (st3, _) = executeCommand (Go West) st2
+                    r4 <- expectEqual "sandbox_wildnis_0_0_0" (currentRoom (save st3))
+                    -- And South back to gate
+                    let (st4, _) = executeCommand (Go South) st3
+                    r5 <- expectEqual "gate" (currentRoom (save st4))
+                    pure (r1 && r2 && r3 && r4 && r5)
+
 -- | Phase 2B: Drawing cards from full deck decreases draw pile and fills hand.
 testDrawCardsFromFullDeck :: IO Bool
 testDrawCardsFromFullDeck = do
@@ -5445,5 +5539,11 @@ main = do
         , runTest "GameWorld sandboxZones M2 invariant (Phase 3A)" testGameWorldSandboxZonesM2Invariant
         , runTest "SaveState dynamicRooms M2 invariant (Phase 3A)" testSaveStateDynamicRoomsM2Invariant
         , runTest "GenerateRoom effect serialization (Phase 3A)" testGenerateRoomEffectSerialization
+        -- Phase 3B: Deterministic Cell Derivation & Room Generation
+        , runTest "lookupRoom fallback to static room (Phase 3B)" testLookupRoomFallback
+        , runTest "lookupRoom dynamic priority (Phase 3B)" testLookupRoomDynamicPriority
+        , runTest "deterministic cell seed derivation (Phase 3B)" testDeterministicCellSeed
+        , runTest "move into sandbox generates room (Phase 3B)" testMoveIntoSandboxGeneratesRoom
+        , runTest "reciprocal exit wiring (Phase 3B)" testReciprocalExitWiring
         ]
     when (not (and results)) exitFailure

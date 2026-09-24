@@ -8,13 +8,16 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
 import Data.Word (Word64)
+import Data.Bits (shiftR, xor)
 import GHC.Generics (Generic)
 import Data.Aeson
 import Data.Aeson.Types (Parser, Pair, toJSONKeyText)
 import Control.Applicative ((<|>))
+import Control.Monad (guard)
 import Data.Char (toLower, isDigit, isAlpha, isAlphaNum, isSpace)
-import Data.List (intercalate)
+import Data.List (intercalate, stripPrefix, foldl')
 import Data.Maybe (isNothing)
+import Text.Read (readMaybe)
 
 -- ---------------------------------------------------------------------------
 -- ID aliases
@@ -106,6 +109,11 @@ data Exit
 
 instance ToJSON Exit
 instance FromJSON Exit
+
+-- | Target RoomID of an Exit (Open or Locked).
+exitRoomID :: Exit -> RoomID
+exitRoomID (Open r) = r
+exitRoomID (Locked r _) = r
 
 -- | Verb for dynamic actions. Core verbs are built in; adventures may
 --   declare additional verbs (e.g. cast, hack, dock) via the world's verb
@@ -2019,3 +2027,92 @@ slugify name
 -- | Advance the explicit RNG state (linear congruential generator).
 nextRng :: Word64 -> Word64
 nextRng w = w * 6364136223846793005 + 1
+
+-- ---------------------------------------------------------------------------
+-- Sandbox & Runtime-Worldgen Primitives (Genre 3 / Phase 3B)
+-- ---------------------------------------------------------------------------
+
+-- | SplitMix64 64-bit mixer.
+splitMix64Mix :: Word64 -> Word64
+splitMix64Mix s =
+    let z1 = (s `xor` (s `shiftR` 30)) * 0xBF58476D1CE4E5B9
+        z2 = (z1 `xor` (z1 `shiftR` 27)) * 0x94D049BB133111EB
+    in z2 `xor` (z2 `shiftR` 31)
+
+-- | Derive a deterministic cell seed from base seed, zone name, and coordinates.
+deriveCellSeed :: Word64 -> String -> Int -> Int -> Int -> Word64
+deriveCellSeed baseSeed zone x y z =
+    let h1 = splitMix64Mix (baseSeed + fromIntegral x * 73856093)
+        h2 = splitMix64Mix (h1 + fromIntegral y * 19349663)
+        h3 = splitMix64Mix (h2 + fromIntegral z * 83492791)
+        zoneHash = foldl' (\h c -> h * 31 + fromIntegral (fromEnum c)) (fromIntegral (length zone)) zone
+    in splitMix64Mix (h3 + zoneHash)
+
+-- | Construct canonical sandbox room ID: "sandbox_<zone>_<x>_<y>_<z>"
+sandboxRoomId :: String -> Int -> Int -> Int -> RoomID
+sandboxRoomId zone x y z = "sandbox_" ++ zone ++ "_" ++ show x ++ "_" ++ show y ++ "_" ++ show z
+
+-- | Parse a sandbox room ID into (zone, x, y, z).
+parseSandboxRoomId :: RoomID -> Maybe (String, Int, Int, Int)
+parseSandboxRoomId rid = do
+    rest <- stripPrefix "sandbox_" rid
+    let parts = splitOnChar '_' rest
+    guard (length parts >= 4)
+    let zPart = last parts
+        yPart = parts !! (length parts - 2)
+        xPart = parts !! (length parts - 3)
+        zoneParts = take (length parts - 3) parts
+        zone = intercalate "_" zoneParts
+    guard (not (null zone))
+    x <- readSignedInt xPart
+    y <- readSignedInt yPart
+    z <- readSignedInt zPart
+    pure (zone, x, y, z)
+  where
+    splitOnChar _ [] = [""]
+    splitOnChar c (x:xs)
+        | x == c    = "" : splitOnChar c xs
+        | otherwise = case splitOnChar c xs of
+            []    -> [[x]]
+            (h:t) -> (x:h) : t
+
+    readSignedInt ('-':ds) | not (null ds) && all isDigit ds = negate <$> readMaybe ds
+    readSignedInt ds       | not (null ds) && all isDigit ds = readMaybe ds
+    readSignedInt _                                          = Nothing
+
+-- | Direction vector delta in (dx, dy, dz).
+directionDelta :: Direction -> (Int, Int, Int)
+directionDelta North     = (0, 1, 0)
+directionDelta South     = (0, -1, 0)
+directionDelta East      = (1, 0, 0)
+directionDelta West      = (-1, 0, 0)
+directionDelta Up        = (0, 0, 1)
+directionDelta Down      = (0, 0, -1)
+directionDelta Northeast = (1, 1, 0)
+directionDelta Northwest = (-1, 1, 0)
+directionDelta Southeast = (1, -1, 0)
+directionDelta Southwest = (-1, -1, 0)
+
+-- | Opposite compass direction.
+oppositeDirection :: Direction -> Direction
+oppositeDirection North     = South
+oppositeDirection South     = North
+oppositeDirection East      = West
+oppositeDirection West      = East
+oppositeDirection Up        = Down
+oppositeDirection Down      = Up
+oppositeDirection Northeast = Southwest
+oppositeDirection Southwest = Northeast
+oppositeDirection Northwest = Southeast
+oppositeDirection Southeast = Northwest
+
+-- | Check whether an exit destination refers to a declared sandbox zone.
+isSandboxTarget :: RoomID -> GameWorld -> Bool
+isSandboxTarget target gw =
+    Map.member target (sandboxZones gw)
+    || case stripPrefix "sandbox_" target of
+        Just zone | Map.member zone (sandboxZones gw) -> True
+        _ -> case parseSandboxRoomId target of
+            Just (zone, _, _, _) -> Map.member zone (sandboxZones gw)
+            Nothing              -> False
+

@@ -966,7 +966,7 @@ searchRoom state =
                              (Map.lookup iId (itemDefs (world state)) >>= itemDiscoverText)
                          | iId <- hidden ]
         (stateFinal, hookMsg) =
-            case Map.lookup rId (rooms (world state)) >>= roomSearchOutcome of
+            case lookupRoom rId state >>= roomSearchOutcome of
                 Nothing -> (stateAfterReveal, "")
                 Just outcome -> applyOutcome outcome "" stateAfterReveal
         full = intercalate "\n" (filter (not . null) (discoveredMsgs ++ [hookMsg]))

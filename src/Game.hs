@@ -3,10 +3,11 @@
 module Game where
 
 import Types
-import Data.List (intercalate, find, elemIndex, foldl', isPrefixOf, isInfixOf, nub)
+import Data.List (intercalate, find, elemIndex, foldl', isPrefixOf, isInfixOf, nub, stripPrefix)
 import Data.Bits (shiftR)
 import Data.Char (toLower, isDigit, isSpace)
 import Data.Maybe (listToMaybe, fromMaybe)
+import Control.Applicative ((<|>))
 import Control.Monad (guard)
 import Data.Word (Word64)
 import qualified Data.Map.Strict as Map
@@ -79,9 +80,143 @@ emptyGameState = GameState
 -- Lookups
 -- ---------------------------------------------------------------------------
 
--- | Helper to get current room from game state
+-- | Helper to look up a room by RoomID: checks dynamicRooms in SaveState first,
+-- then falls back to static rooms in GameWorld.
+lookupRoom :: RoomID -> GameState -> Maybe Room
+lookupRoom rId st =
+    Map.lookup rId (dynamicRooms (save st))
+    <|> Map.lookup rId (rooms (world st))
+
+-- | Helper to get current room from game state (ensures dynamic/sandbox room exists)
 getCurrentRoom :: GameState -> Maybe Room
-getCurrentRoom state = Map.lookup (currentRoom (save state)) (rooms (world state))
+getCurrentRoom state =
+    let cur = currentRoom (save state)
+        stEnsured = ensureRoomExists cur "" North state
+    in lookupRoom cur stEnsured
+
+-- | Seed for procedural generation (defaults to initialRngState or world.seed var).
+getWorldSeed :: GameState -> Word64
+getWorldSeed st = case Map.lookup "world.seed" (variables (save st)) of
+    Just (VVInt s) -> fromIntegral s
+    _              -> initialRngState
+
+-- | Pick a biome template using weighted random roll from seed.
+pickBiome :: [BiomeTemplate] -> Word64 -> Maybe BiomeTemplate
+pickBiome [] _ = Nothing
+pickBiome [b] _ = Just b
+pickBiome biomes seed =
+    let validBiomes = filter (\b -> btWeight b > 0) biomes
+    in case validBiomes of
+        [] -> listToMaybe biomes
+        [b] -> Just b
+        bs  ->
+            let totalWeight = sum [ btWeight b | b <- bs ]
+                roll = fromIntegral (seed `mod` fromIntegral totalWeight)
+                go [] _ = head bs
+                go (b:rest) acc
+                    | acc + btWeight b > roll = b
+                    | otherwise = go rest (acc + btWeight b)
+            in Just (go bs 0)
+
+-- | Pure substring replacement.
+replaceSubstr :: String -> String -> String -> String
+replaceSubstr _ _ [] = []
+replaceSubstr needle repl haystack@(c:cs)
+    | null needle = haystack
+    | needle `isPrefixOf` haystack = repl ++ replaceSubstr needle repl (drop (length needle) haystack)
+    | otherwise = c : replaceSubstr needle repl cs
+
+-- | Replace coordinate placeholders {x}, {y}, {z} in string.
+replaceCoords :: String -> Int -> Int -> Int -> String
+replaceCoords pat x y z =
+    let s1 = replaceSubstr "{x}" (show x) pat
+        s2 = replaceSubstr "{y}" (show y) s1
+    in replaceSubstr "{z}" (show z) s2
+
+-- | Replace coordinate placeholders in CondText.
+replaceCondTextCoords :: CondText -> Int -> Int -> Int -> CondText
+replaceCondTextCoords ct x y z =
+    CondText
+        { ctDefault = replaceCoords (ctDefault ct) x y z
+        , ctVariants = map (\v -> v { tvText = replaceCoords (tvText v) x y z }) (ctVariants ct)
+        }
+
+-- | Canonicalize a room ID against known sandbox zones.
+canonicalRoomId :: GameWorld -> RoomID -> RoomID
+canonicalRoomId gw rId =
+    case Map.lookup rId (sandboxZones gw) of
+        Just sz -> let (ox, oy, oz) = szOrigin sz in sandboxRoomId rId ox oy oz
+        Nothing -> case stripPrefix "sandbox_" rId of
+            Just zone | Map.member zone (sandboxZones gw) && not (isCoordFormat zone rId) ->
+                let (ox, oy, oz) = szOrigin (sandboxZones gw Map.! zone)
+                in sandboxRoomId zone ox oy oz
+            _ -> rId
+  where
+    isCoordFormat z str = case parseSandboxRoomId str of
+        Just (z', _, _, _) -> z' == z
+        Nothing            -> False
+
+-- | Default biome template fallback.
+defaultBiomeTemplate :: String -> BiomeTemplate
+defaultBiomeTemplate zone = BiomeTemplate
+    { btId = "wilderness"
+    , btWeight = 1
+    , btNamePattern = "Wildnis [{x}, {y}]"
+    , btDescription = plainText "Unberuehrte Wildnis erstreckt sich in alle Richtungen."
+    , btTags = ["outdoor", "wilderness", zone]
+    , btAsciiArt = emptyAscii
+    , btPassableDirs = [North, South, East, West]
+    }
+
+-- | Generate a dynamic sandbox cell and insert it into dynamicRooms.
+generateSandboxRoom :: SandboxZone -> Int -> Int -> Int -> RoomID -> Direction -> GameState -> (Room, GameState)
+generateSandboxRoom sz x y z fromRoom fromDir st =
+    let zone = szId sz
+        rId = sandboxRoomId zone x y z
+        baseSeed = getWorldSeed st
+        cellSeed = deriveCellSeed baseSeed zone x y z
+        mBiome = pickBiome (szBiomes sz) cellSeed
+        biome = fromMaybe (defaultBiomeTemplate zone) mBiome
+        rName = replaceCoords (btNamePattern biome) x y z
+        rDesc = replaceCondTextCoords (btDescription biome) x y z
+        baseExits = Map.fromList
+            [ (dir, Open (sandboxRoomId zone (x + dx) (y + dy) (z + dz)))
+            | dir <- btPassableDirs biome
+            , let (dx, dy, dz) = directionDelta dir
+            ]
+        finalExits = if null fromRoom
+                     then baseExits
+                     else Map.insert (oppositeDirection fromDir) (Open fromRoom) baseExits
+        room = Room
+            { roomId            = rId
+            , roomName          = rName
+            , roomDescription   = rDesc
+            , roomConnections   = finalExits
+            , roomTags          = Set.fromList ("sandbox" : zone : btTags biome)
+            , roomLightFlag     = Nothing
+            , roomOnEnter       = Nothing
+            , roomOnLook        = Nothing
+            , roomOnExit        = Nothing
+            , roomSearchOutcome = Nothing
+            , roomAscii         = btAsciiArt biome
+            , roomIntro         = Nothing
+            , roomFloor         = szDefaultFloor sz <|> Just 1
+            }
+        newDyn = Map.insert rId room (dynamicRooms (save st))
+        st' = st { save = (save st) { dynamicRooms = newDyn } }
+    in (room, st')
+
+-- | Ensure that a room exists; if it is an ungenerated sandbox cell, instantiates it.
+ensureRoomExists :: RoomID -> RoomID -> Direction -> GameState -> GameState
+ensureRoomExists dest fromRoom fromDir st =
+    case lookupRoom dest st of
+        Just _  -> st
+        Nothing -> case parseSandboxRoomId dest of
+            Just (zone, x, y, z) ->
+                case Map.lookup zone (sandboxZones (world st)) of
+                    Just sz -> snd (generateSandboxRoom sz x y z fromRoom fromDir st)
+                    Nothing -> st
+            Nothing -> st
 
 -- | Record an engine-level diagnostic (P2-23). Runtime-only: `GameState` has no
 --   JSON instance, so nothing serializes it. Diagnostics describe a *content*
@@ -173,15 +308,18 @@ moveToRoom destinationRoom state = state { save = (save state) { currentRoom = d
 --   statically present connection.
 effectiveConnections :: GameState -> RoomID -> Map.Map Direction Exit
 effectiveConnections state rId =
-    case Map.lookup rId (rooms (world state)) of
+    case lookupRoom rId state of
         Nothing   -> Map.empty
         Just room ->
             let overrides = Map.filterWithKey
                                 (\(r, _) _ -> r == rId)
                                 (exitOverrides (save state))
-            in Map.foldlWithKey step (roomConnections room) overrides
+                connsWithCanon = Map.map canonExit (roomConnections room)
+            in Map.foldlWithKey step connsWithCanon overrides
   where
-    step acc (_, dir) (Just exit) = Map.insert dir exit acc
+    canonExit (Open to)     = Open (canonicalRoomId (world state) to)
+    canonExit (Locked to k) = Locked (canonicalRoomId (world state) to) k
+    step acc (_, dir) (Just exit) = Map.insert dir (canonExit exit) acc
     step acc (_, dir) Nothing     = Map.delete dir acc
 
 -- | Check if a direction is valid from current room (static + dynamic exits)
@@ -741,7 +879,7 @@ evalPredicate (EntityHasState entity expected) st =
         Just is -> itemStatus is == expected
         Nothing -> False
 evalPredicate (RoomHasTag rId tag) st =
-    case Map.lookup rId (rooms (world st)) of
+    case lookupRoom rId st of
         Just room -> tag `Set.member` roomTags room
         Nothing   -> False
 evalPredicate (Location eId rId) st
@@ -1390,17 +1528,28 @@ applyOutcomes outcomes targetId state =
 -- | Run a room hook (onEnter / onLook / onExit) if one is defined
 runRoomHook :: (Room -> Maybe Effect) -> RoomID -> GameState -> (GameState, String)
 runRoomHook hook rId state =
-    case Map.lookup rId (rooms (world state)) >>= hook of
+    case lookupRoom rId state >>= hook of
         Nothing -> (state, "")
         Just outcome -> applyOutcome outcome "" state
+
+-- | Find direction of exit from one room to another
+findExitDirection :: RoomID -> RoomID -> GameState -> Maybe Direction
+findExitDirection fromId toId st =
+    let conns = effectiveConnections st fromId
+        matches = [ dir | (dir, exit) <- Map.toList conns, exitRoomID exit == toId ]
+    in listToMaybe matches
 
 -- | Move the player to another room, running exit/enter hooks and marking the
 --   destination visited. Used by both walking (Go) and TransitionRoom outcomes
 --   so data-driven teleports behave exactly like walks.
 transitionToRoom :: RoomID -> GameState -> (GameState, String)
-transitionToRoom dest state =
-    let cur = currentRoom (save state)
-        stAfterDialogue = clearActiveDialogue state
+transitionToRoom rawDest state =
+    let gw = world state
+        dest = canonicalRoomId gw rawDest
+        cur = currentRoom (save state)
+        mDir = findExitDirection cur dest state
+        stateWithRoom = ensureRoomExists dest cur (fromMaybe North mDir) state
+        stAfterDialogue = clearActiveDialogue stateWithRoom
         (stAfterExit, exitMsg) = runRoomHook roomOnExit cur stAfterDialogue
         moved = moveToRoom dest stAfterExit
         visited = markCurrentRoomVisited moved
@@ -1421,7 +1570,7 @@ transitionToRoom dest state =
 --   clip is unusable (compile-time validated, so silent here).
 introCutsceneOf :: RoomID -> GameState -> Maybe ([String], Int)
 introCutsceneOf rId state = do
-    r <- Map.lookup rId (rooms (world state))
+    r <- lookupRoom rId state
     clip <- Map.lookup (fromMaybe "" (roomIntro r)) (worldClips (world state))
     guard (not (null (clipFrames clip)))
     guard (clipFps clip > 0)
