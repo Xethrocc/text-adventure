@@ -254,7 +254,7 @@ probeVideo path = do
         out <- BS.hGetContents hout
         ec <- waitForProcess ph
         pure $ case ec of
-            ExitSuccess -> Right (lines (map (chr . fromIntegral) (BS.unpack out)))
+            ExitSuccess -> Right (lines (filter (/= '\r') (map (chr . fromIntegral) (BS.unpack out))))
             _ -> Left ("ffprobe failed on '" ++ path ++ "'")
     parseStream ls = case ls of
         (row:_) -> case splitCommas row of

@@ -391,6 +391,7 @@ compileRoom r =
             , E.roomSearchOutcome = compileMaybeOutcomes (arSearch r)
             , E.roomAscii = compileAscii (arAscii r)
             , E.roomIntro = arIntro r
+            , E.roomFloor = arFloor r
             }
        else Left allErrs
   where

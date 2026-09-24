@@ -6,6 +6,7 @@ import Worldbuilder.Compile (CompileResult(..), compileAdventure, CompileIssue(.
 import Worldbuilder.ParseFile (parseAdventureFile)
 import Worldbuilder.Generate (parseTemplate, validateTemplate, generateDungeon, dtSeed, GenerateError (..))
 import Worldbuilder.Rng (deriveRuntimeSeed)
+import Worldbuilder.Run (RunConfig (..), runRunner)
 
 -- JSON encoding (output only)
 import Data.Aeson (encode)
@@ -37,11 +38,12 @@ runCLI = do
     hSetEncoding stdin utf8
     args <- getArgs
     case args of
-        ("validate" : path : _)  -> validate path
-        ("compile" : path : rest) -> compile path rest
+        ("validate" : path : _)    -> validate path
+        ("compile" : path : rest)  -> compile path rest
         ("generate" : path : rest) -> generateCmd path rest
-        ("check" : path : _)     -> checkStats path
-        _                        -> putStrLn usage
+        ("run" : path : rest)      -> runCmd path rest
+        ("check" : path : _)       -> checkStats path
+        _                          -> putStrLn usage
 
 usage :: String
 usage = unlines
@@ -57,6 +59,12 @@ usage = unlines
     , "                                              Generate a dungeon from a template and emit"
     , "                                              world.json + save.json (Rogue Phase 4; the seed"
     , "                                              is required — same seed, bit-identical world)"
+    , ""
+    , "  worldbuilder run <template.yaml> [--seed N] [--saves-dir <dir>] [--keep-runs N]"
+    , "                                   [--no-launch] [--force] [--tui] [--no-color]"
+    , "                                              Generate next run from template (seed derived from"
+    , "                                              slug + meta.runs) in <saves-dir>/<slug>/run_<n>/"
+    , "                                              and start the engine on it (Rogue Phase 4c)."
     , ""
     , "Supports .json, .yaml and .yml files."
     ]
@@ -384,3 +392,34 @@ showGenerateError (GEUnreachable cells) =
 showGenerateError GENoSpace =
     "grid too small to place even layout.rooms.min cells —"
     ++ " widen the grid budget (rooms.min) or reduce depth"
+
+-- | Execute `worldbuilder run <template.yaml>` (Rogue Phase 4c).
+runCmd :: FilePath -> [String] -> IO ()
+runCmd path rest = do
+    let seedFromCli = case lookupFlag "--seed" rest of
+            Just s  -> readMaybeW64 s
+            Nothing -> Nothing
+        savesDirFromCli = lookupFlag "--saves-dir" rest
+        keepRunsFromCli = case lookupFlag "--keep-runs" rest of
+            Just s  -> readMaybeInt s
+            Nothing -> Nothing
+        noLaunch = "--no-launch" `elem` rest || "--dry-run" `elem` rest
+        force = "--force" `elem` rest
+        tui = "--tui" `elem` rest
+        noColor = "--no-color" `elem` rest
+        cfg = RunConfig
+            { rcTemplatePath = path
+            , rcSeedOverride = seedFromCli
+            , rcSavesDir     = savesDirFromCli
+            , rcKeepRuns     = keepRunsFromCli
+            , rcNoLaunch     = noLaunch
+            , rcForce        = force
+            , rcTui          = tui
+            , rcNoColor      = noColor
+            , rcExtraArgs    = filter (`notElem` [ "--no-launch", "--dry-run", "--force", "--tui", "--no-color" ]) rest
+            }
+    runRunner cfg
+  where
+    readMaybeInt s = case reads s of
+        [(n, "")] | n >= (0 :: Integer) -> Just (fromIntegral n :: Int)
+        _                               -> Nothing

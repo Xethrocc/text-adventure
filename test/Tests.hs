@@ -1275,17 +1275,17 @@ testWatchCarriesRate = do
 testSiblingSavePath :: IO Bool
 testSiblingSavePath = do
     tmp <- getTemporaryDirectory
-    let dir = tmp ++ "/sibsave"
-        worldPath = dir ++ "/world.json"
+    let dir = tmp </> "sibsave"
+        worldPath = dir </> "world.json"
     createDirectoryIfMissing True dir
     writeFile worldPath "{}"
     noSibling <- siblingSavePath worldPath
-    writeFile (dir ++ "/save.json") "{}"
+    writeFile (dir </> "save.json") "{}"
     withSibling <- siblingSavePath worldPath
-    removeFile (dir ++ "/save.json")
+    removeFile (dir </> "save.json")
     removeFile worldPath
     r1 <- expectTrue "no sibling -> Nothing" (isNothing noSibling)
-    r2 <- expectTrue "sibling save.json found" (withSibling == Just (dir ++ "/save.json"))
+    r2 <- expectTrue "sibling save.json found" (withSibling == Just (dir </> "save.json"))
     pure (r1 && r2)
 
 testAmbientRoundTrip :: IO Bool
@@ -2300,7 +2300,7 @@ testSampleWorldIsValid = do
 testDanglingExitDetected :: IO Bool
 testDanglingExitDetected = do
     let roomA = Room "roomA" "Room A" (plainText "desc.") (Map.singleton North (Open "roomZ")) Set.empty Nothing
-            Nothing Nothing Nothing Nothing (emptyAscii) Nothing
+            Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing
         gw = (world initSampleGame) { rooms = Map.singleton "roomA" roomA }
         errors = validateWorld gw
     expectTrue "dangling exit detected" (DanglingExit "roomA" North "roomZ" `elem` errors)
@@ -2309,7 +2309,7 @@ testDuplicateIDsBetweenItemsAndRooms :: IO Bool
 testDuplicateIDsBetweenItemsAndRooms = do
     let gw = (world initSampleGame)
                 { rooms = Map.insert "key" (Room "key" "Duplicate" (plainText "desc.") Map.empty Set.empty Nothing
-                    Nothing Nothing Nothing Nothing (emptyAscii) Nothing) (rooms (world initSampleGame)) }
+                    Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing) (rooms (world initSampleGame)) }
         errors = validateWorld gw
     expectTrue "duplicate key found" (any isDup errors)
   where
@@ -2319,7 +2319,7 @@ testDuplicateIDsBetweenItemsAndRooms = do
 testUnreachableRoomDetected :: IO Bool
 testUnreachableRoomDetected = do
     let roomIsolated = Room "isolated" "Isolated" (plainText "Alone.") Map.empty Set.empty Nothing
-            Nothing Nothing Nothing Nothing (emptyAscii) Nothing
+            Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing
         gw = (world initSampleGame)
                 { rooms = Map.insert "isolated" roomIsolated (rooms (world initSampleGame)) }
         -- Reachability is checked where the real start room is known, i.e. in
@@ -3832,7 +3832,7 @@ testSavesDirOverride = withSavesIsolation $ do
     SaveLoad.saveGame st0 "p0slot"
     slotPath <- SaveLoad.saveSlotPath "p0slot"
     r1 <- expectTrue "slot file lands under TA_SAVES_DIR"
-             (("tmp" `isInfixOf` slotPath) && ("p0slot.json" `isSuffixOf` slotPath))
+             (("ta-saves-test" `isInfixOf` slotPath) && ("p0slot.json" `isSuffixOf` slotPath))
     exists <- doesFileExist slotPath
     r2 <- expectTrue "saved slot exists in the redirected directory" exists
     -- the redirected directory holds exactly the one slot file
@@ -3871,6 +3871,28 @@ testSlugify = do
     r6 <- expectEqual "---" (slugify "  ---  ")   -- '-' is a legal file-name char
     r7 <- expectEqual "default" (slugify "  ")
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | Rogue Phase 4c: run-seed derivation from slug and run index.
+--   Determinism, distinctness across runs, and distinctness across slugs.
+testDeriveRunSeed :: IO Bool
+testDeriveRunSeed = do
+    let s0 = SaveLoad.deriveRunSeedFromSlug "catacombs" 0
+        s0_repeat = SaveLoad.deriveRunSeedFromSlug "catacombs" 0
+        s1 = SaveLoad.deriveRunSeedFromSlug "catacombs" 1
+        s2 = SaveLoad.deriveRunSeedFromSlug "catacombs" 2
+        sOther = SaveLoad.deriveRunSeedFromSlug "dungeon" 0
+        gw = world initSampleGame
+        sWorld = SaveLoad.deriveRunSeed gw 0
+        sWorldExpected = SaveLoad.deriveRunSeedFromSlug (SaveLoad.adventureSlug gw) 0
+    r1 <- expectEqual s0 s0_repeat
+    r2 <- expectTrue "run 0 and run 1 have different seeds" (s0 /= s1)
+    r3 <- expectTrue "run 1 and run 2 have different seeds" (s1 /= s2)
+    r4 <- expectTrue "different slugs have different seeds" (s0 /= sOther)
+    r5 <- expectEqual sWorldExpected sWorld
+    -- Run indices 0..20 are all pairwise distinct
+    let runSeeds = [ SaveLoad.deriveRunSeedFromSlug "catacombs" i | i <- [0..20] ]
+    r6 <- expectEqual 21 (Set.size (Set.fromList runSeeds))
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
 
 -- | L11: the turn pipeline is `incrementTurnCount` → `tickConditions` →
 --   `vehicleConditionTick` → `executeCommand` → `fireCommandTriggers`. A
@@ -4585,6 +4607,7 @@ main = do
         , runTest "TA_SAVES_DIR redirects saves + deleteSaveSlot (Rogue P0)" testSavesDirOverride
         , runTest "savesDir default stays 'saves' (Rogue P0)" testSavesDirDefault
         , runTest "slugify is deterministic and file-safe (Rogue P0)" testSlugify
+        , runTest "run-seed derivation from slug and run index (Rogue P4c)" testDeriveRunSeed
         , runTest "fatal condition tick stops the command (L11)" testFatalTickStopsCommand
         -- Review L4: constructor coverage in Validate
         , runTest "MissingRoom from a rule room reference (L4)" testValidateMissingRoomInRule

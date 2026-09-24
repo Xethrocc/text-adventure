@@ -29,6 +29,7 @@ module Worldbuilder.Generate
     ( DMeta (..)
     , DTemplate (..)
     , DLayout (..)
+    , DLevel (..)
     , DRoomTemplate (..)
     , DSpecial (..)
     , DStartSpec (..)
@@ -41,12 +42,16 @@ module Worldbuilder.Generate
     , parseTemplate
     , validateTemplate
     , GenerateError (..)
+    , Cell3
     , Cell
     , PlannedRoom (..)
     , DEdge (..)
     , DungeonPlan (..)
     , generateDungeonLayout
     , genMaxRetries
+    , ResolvedLevel (..)
+    , resolveLevels
+    , placeLevelRooms
     , placeRooms
     , assignArchetypes
     , connectRooms
@@ -76,6 +81,7 @@ import Worldbuilder.Types
     , arId
     , arName
     , arExits
+    , arFloor
     )
 import Worldbuilder.Compile (CompileIssue (..), Severity (..))
 import Worldbuilder.Rng (Rng, newRng, pickWeighted, randInt, shuffle, deriveRuntimeSeed)
@@ -95,7 +101,7 @@ import qualified Data.Map.Strict as Map
 import Data.Map.Strict (Map)
 import qualified Data.Set as Set
 import Data.Set (Set)
-import Data.List (group, sort)
+import Data.List (group, sort, sortOn)
 import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 import qualified Data.Text as T
 import Data.Word (Word64)
@@ -183,10 +189,84 @@ data DNpcPoolEntry = DNpcPoolEntry
     , dnpBoss       :: Bool         -- ^ at most one such entry (Review-Frage 4)
     } deriving (Show, Eq)
 
+data DLevel = DLevel
+    { dlvRooms        :: Maybe DRange   -- ^ room count range for this level (or absent: auto-distribution)
+    , dlvDepth        :: Maybe Int      -- ^ maximum tree depth within this level (levels[i].depth)
+    , dlvBranching    :: Maybe Double   -- ^ P(branch) override for this level
+    , dlvReturnStairs :: Bool           -- ^ True = generate upward stairs back to level i-1 (default False)
+    } deriving (Show, Eq)
+
+-- | Resolved layout parameters for a single dungeon level / floor (Phase 4b).
+data ResolvedLevel = ResolvedLevel
+    { rlIndex        :: Int      -- ^ 1..N
+    , rlRoomsMin     :: Int
+    , rlRoomsMax     :: Int
+    , rlBranching    :: Double
+    , rlDepthLimit   :: Int
+    , rlReturnStairs :: Bool
+    } deriving (Show, Eq)
+
+-- | Resolves the level configurations from a template's @layout:@ and @levels:@.
+--   When @levels:@ is absent, returns a single level matching the Phase 4 layout.
+--   When @levels:@ is present, missing entries are filled by distributing the
+--   remaining room budget deterministically across the unspecified levels.
+resolveLevels :: DTemplate -> [ResolvedLevel]
+resolveLevels t
+    | null (dtLevels t) =
+        [ ResolvedLevel
+            1
+            (dlRoomsMin layout)
+            (dlRoomsMax layout)
+            (dlBranching layout)
+            (dlDepth layout)
+            False
+        ]
+    | otherwise =
+        let numLevels = dlDepth layout
+            explicitLevels = dtLevels t
+            levelCfg i = if i <= length explicitLevels
+                         then Just (explicitLevels !! (i - 1))
+                         else Nothing
+            sumExplicitMin = sum [ drMin r | i <- [1 .. numLevels]
+                                 , Just lv <- [levelCfg i]
+                                 , Just r  <- [dlvRooms lv] ]
+            sumExplicitMax = sum [ drMax r | i <- [1 .. numLevels]
+                                 , Just lv <- [levelCfg i]
+                                 , Just r  <- [dlvRooms lv] ]
+            unspecifiedCount = length [ () | i <- [1 .. numLevels]
+                                      , case levelCfg i of
+                                          Just lv -> dlvRooms lv == Nothing
+                                          Nothing -> True ]
+            remMin = max 0 (dlRoomsMin layout - sumExplicitMin)
+            remMax = max remMin (dlRoomsMax layout - sumExplicitMax)
+            
+            calcRooms i kUnspec = case levelCfg i of
+                Just lv | Just r <- dlvRooms lv -> (drMin r, drMax r, kUnspec)
+                _ ->
+                    let minR = max 1 (remMin `div` max 1 unspecifiedCount
+                               + if kUnspec < (remMin `mod` max 1 unspecifiedCount) then 1 else 0)
+                        maxR = max minR (remMax `div` max 1 unspecifiedCount
+                               + if kUnspec < (remMax `mod` max 1 unspecifiedCount) then 1 else 0)
+                    in (minR, maxR, kUnspec + 1)
+            
+            build [] _ = []
+            build (i : is) k =
+                let (minR, maxR, k') = calcRooms i k
+                    cfg = levelCfg i
+                    br  = fromMaybe (dlBranching layout) (cfg >>= dlvBranching)
+                    dp  = fromMaybe maxBound (cfg >>= dlvDepth)
+                    ret = maybe False dlvReturnStairs cfg
+                    rl  = ResolvedLevel i minR maxR br dp ret
+                in rl : build is k'
+        in build [1 .. numLevels] 0
+  where
+    layout = dtLayout t
+
 data DTemplate = DTemplate
     { dtName          :: String
     , dtDescription   :: Maybe String
     , dtLayout        :: DLayout
+    , dtLevels        :: [DLevel]       -- ^ optional per-level layouts (Phase 4b)
     , dtRoomTemplates :: [DRoomTemplate]
     , dtSpecial       :: DSpecial
     , dtOnewayHints   :: [DOnewayHint]
@@ -282,6 +362,13 @@ instance FromJSON DNpcPoolEntry where
         <*> o .:? "depth_range"
         <*> o .:? "boss"        .!= False
 
+instance FromJSON DLevel where
+    parseJSON = withObject "level" $ \o -> DLevel
+        <$> o .:? "rooms"
+        <*> o .:? "depth"
+        <*> o .:? "branching"
+        <*> o .:? "return_stairs" .!= False
+
 instance FromJSON DMeta where
     parseJSON = withObject "template_meta" $ \o -> DMeta
         <$> o .:? "name"        .!= ""
@@ -293,6 +380,7 @@ instance FromJSON DTemplate where
         seed <- o .:? "seed"
         DTemplate (dmName meta) (dmDescription meta)
             <$> o .:? "layout"         .!= DLayout 12 20 4 0.35 2
+            <*> o .:? "levels"         .!= []
             <*> o .:? "room_templates" .!= []
             <*> o .:? "special"        .!= DSpecial Nothing Nothing Nothing
             <*> o .:? "oneway_hints"   .!= []
@@ -353,6 +441,7 @@ validateTemplate :: DTemplate -> [CompileIssue]
 validateTemplate t = concat
     [ metaIssues
     , layoutIssues
+    , levelsIssues
     , archetypeIssues
     , specialIssues
     , onewayIssues
@@ -391,6 +480,28 @@ validateTemplate t = concat
           | dlLoops layout < 0 ]
         ]
 
+    levelsIssues = concat
+        [ [ ti "levels" "LevelsExceedDepth"
+                ("levels count (" ++ show (length (dtLevels t))
+                 ++ ") must not exceed layout.depth (" ++ show (dlDepth layout) ++ ")")
+          | length (dtLevels t) > dlDepth layout ]
+        , concatMap perLevel (zip [0 :: Int ..] (dtLevels t))
+        ]
+      where
+        perLevel (i, lv) =
+            let base = "levels." ++ show i
+            in concat
+                [ [ ti (base ++ ".rooms") "InvalidCount"
+                        "rooms.min must be at least 1 and not exceed rooms.max"
+                  | Just r <- [dlvRooms lv], drMin r < 1 || drMin r > drMax r ]
+                , [ ti (base ++ ".branching") "LayoutBranching"
+                        "branching must lie in 0.0..1.0 (0 = chain, 1 = tree)"
+                  | Just b <- [dlvBranching lv], b < 0 || b > 1 ]
+                , [ ti (base ++ ".depth") "LayoutDepth"
+                        "depth must be at least 1"
+                  | Just d <- [dlvDepth lv], d < 1 ]
+                ]
+
     archetypeIssues
         | null (dtRoomTemplates t) =
             [ ti "room_templates" "NoRoomTemplates"
@@ -418,14 +529,6 @@ validateTemplate t = concat
                      ++ " (layout.depth)")
               | not (depthInRange (drtDepth rt)) ]
             ]
-
-        -- depth_range within 1..layout.depth; drMax == maxBound = unbounded
-        depthInRange r =
-            drMin r >= 1
-            && drMin r <= drMax r
-            && (if drMax r == maxBound
-                    then drMin r <= dlDepth layout
-                    else drMax r <= dlDepth layout)
 
     specialIssues = concat
         [ [ ti "special.start.template" "UnknownRoomTemplate"
@@ -504,11 +607,23 @@ validateTemplate t = concat
         , [ ti "npc_pool" "MultipleBossNpcs"
                 "at most one npc_pool entry may carry boss: true (Review-Frage 4)"
           | length (filter dnpBoss (dtNpcPool t)) > 1 ]
+        , [ ti ("npc_pool." ++ anId (dnpNpc e) ++ ".depth_range") "DepthRangeOutside"
+                ("depth_range must lie within 1.." ++ show (dlDepth layout)
+                 ++ " (layout.depth)")
+          | e <- dtNpcPool t, Just r <- [dnpDepthRange e], not (depthInRange r) ]
         ]
 
     -- helpers ---------------------------------------------------------------
 
     badRange r = drMin r < 0 || drMin r > drMax r
+
+    -- depth_range within 1..layout.depth; drMax == maxBound = unbounded
+    depthInRange r =
+        drMin r >= 1
+        && drMin r <= drMax r
+        && (if drMax r == maxBound
+                then drMin r <= dlDepth layout
+                else drMax r <= dlDepth layout)
 
     -- Known directions (mirror of Worldbuilder.Compile.parseDir — not
     -- exported there). Grid generation only uses N/S/E/W; 'down' is the
@@ -536,7 +651,7 @@ fromMaybeMaybe Nothing  = "<nothing>"
 --   hard error (detail plan clarification).
 data GenerateError
     = GETemplate [CompileIssue]   -- ^ schema violations (from 'validateTemplate')
-    | GEUnreachable [(Int, Int)]  -- ^ cells that could not be connected (generator bug)
+    | GEUnreachable [Cell]        -- ^ cells that could not be connected (generator bug)
     | GENoSpace                   -- ^ fewer than @rooms.min@ cells placeable
     deriving (Show, Eq)
 
@@ -546,9 +661,13 @@ data PlannedRoom = PlannedRoom
     , prDepth :: Int
     } deriving (Show, Eq)
 
--- | A grid cell. @Data.Map@ iteration order (lexicographic) is the single
+-- | A 3D grid cell: @(x, y, level)@. Startebene = 1 (Phase 4b).
+--   @Data.Map@ iteration order (lexicographic) is the single
 --   source of determinism — never @HashMap@ (detail plan section 7).
-type Cell = (Int, Int)
+type Cell3 = (Int, Int, Int)
+
+-- | Grid cell type (Phase 4b: 3D grid coordinate).
+type Cell = Cell3
 
 -- | One connection between two cells. Bidirectional edges (see 'deOneway')
 --   emit two @AExitRef@s; one-way edges emit only the forward direction
@@ -566,7 +685,7 @@ data DungeonPlan = DungeonPlan
     { dpGrid         :: Map Cell PlannedRoom
     , dpEdges        :: [DEdge]
     , dpWarnings     :: [CompileIssue]  -- ^ e.g. GeneratorEarlyAbort, OnewayHintUnmatched
-    , dpStartCell    :: Cell            -- ^ always @(0, 0)@, depth 1
+    , dpStartCell    :: Cell            -- ^ always @(0, 0, 1)@, depth 1
     , dpBossCell     :: Cell
     , dpTreasureCell :: Maybe Cell
     , dpEarlyAbort   :: Bool            -- ^ reached depth < layout.depth
@@ -578,27 +697,32 @@ data DungeonPlan = DungeonPlan
 gridDirNames :: [String]
 gridDirNames = ["north", "south", "east", "west"]
 
--- | Offset of a cardinal direction (screen coordinates: north = -y).
+-- | Offset of a cardinal or vertical direction (screen coordinates: north = -y; down = +z level).
 stepCell :: Cell -> String -> Cell
-stepCell (x, y) dir = case dir of
-    "north" -> (x, y - 1)
-    "south" -> (x, y + 1)
-    "east"  -> (x + 1, y)
-    "west"  -> (x - 1, y)
-    _       -> (x, y)  -- guarded by callers
+stepCell (x, y, z) dir = case dir of
+    "north" -> (x, y - 1, z)
+    "south" -> (x, y + 1, z)
+    "east"  -> (x + 1, y, z)
+    "west"  -> (x - 1, y, z)
+    "down"  -> (x, y, z + 1)
+    "up"    -> (x, y, z - 1)
+    _       -> (x, y, z)  -- guarded by callers
 
--- | Direction name between two cells (cardinal or diagonal; the diagonals
---   exist as engine 'E.Direction's and keep loop edges grid-consistent).
+-- | Direction name between two cells (cardinal, diagonal, or vertical).
 gridDirBetween :: Cell -> Cell -> String
-gridDirBetween (x1, y1) (x2, y2)
-    | x2 == x1 && y2 == y1 - 1 = "north"
-    | x2 == x1 && y2 == y1 + 1 = "south"
-    | x2 == x1 + 1 && y2 == y1 = "east"
-    | x2 == x1 - 1 && y2 == y1 = "west"
-    | x2 == x1 + 1 && y2 == y1 - 1 = "northeast"
-    | x2 == x1 - 1 && y2 == y1 - 1 = "northwest"
-    | x2 == x1 + 1 && y2 == y1 + 1 = "southeast"
-    | x2 == x1 - 1 && y2 == y1 + 1 = "southwest"
+gridDirBetween (x1, y1, z1) (x2, y2, z2)
+    | z2 > z1 && x2 == x1 && y2 == y1 = "down"
+    | z2 < z1 && x2 == x1 && y2 == y1 = "up"
+    | z2 == z1 && x2 == x1 && y2 == y1 - 1 = "north"
+    | z2 == z1 && x2 == x1 && y2 == y1 + 1 = "south"
+    | z2 == z1 && x2 == x1 + 1 && y2 == y1 = "east"
+    | z2 == z1 && x2 == x1 - 1 && y2 == y1 = "west"
+    | z2 == z1 && x2 == x1 + 1 && y2 == y1 - 1 = "northeast"
+    | z2 == z1 && x2 == x1 - 1 && y2 == y1 - 1 = "northwest"
+    | z2 == z1 && x2 == x1 + 1 && y2 == y1 + 1 = "southeast"
+    | z2 == z1 && x2 == x1 - 1 && y2 == y1 + 1 = "southwest"
+    | z2 > z1 = "down"
+    | z2 < z1 = "up"
     | otherwise = "east"  -- unreachable: callers only pair neighbour cells
 
 -- | Step 1 — place rooms on grid coordinates. Start at @(0,0)@ (depth 1);
@@ -609,18 +733,22 @@ gridDirBetween (x1, y1) (x2, y2)
 --
 --   Pure geometry: archetypes are assigned separately ('assignArchetypes') so
 --   this step is testable as pure layout logic. Result: cell -> depth.
-placeRooms :: DLayout -> Rng -> (Map Cell Int, Rng)
-placeRooms layout r0 = go [(0, 0)] (Map.singleton (0, 0) 1) 1 r0
+-- | Step 1 (per level) — place rooms on 2D grid coordinates for a specific level.
+--   Start at @(0, 0, level)@ (depth 1); iteratively expand the front-most frontier
+--   cell in a random free cardinal direction; @branching@ decides whether the new
+--   cell *joins* the frontier (tree growth) or *replaces* the current one (chain).
+--   Stops at @maxRooms@ or when the frontier runs dry. Result: cell -> depth within level.
+placeLevelRooms :: Int -> Int -> Double -> Int -> Rng -> (Map Cell Int, Rng)
+placeLevelRooms level maxRooms branching depthLimit r0 =
+    go [(0, 0, level)] (Map.singleton (0, 0, level) 1) 1 r0
   where
-    maxCount = dlRoomsMax layout
-    maxDepth = dlDepth layout
     go frontier cells count r
-        | count >= maxCount = (cells, r)
+        | count >= maxRooms = (cells, r)
         | otherwise = case frontier of
             [] -> (cells, r)
             (h : rest) ->
                 let d = cells Map.! h
-                in if d >= maxDepth
+                in if d >= depthLimit
                     then go rest cells count r  -- head exhausted (max depth)
                     else
                         let free = [ stepCell h dir
@@ -631,7 +759,7 @@ placeRooms layout r0 = go [(0, 0)] (Map.singleton (0, 0) 1) 1 r0
                             _  ->
                                 let (pick, r1) = randInt 0 (length free - 1) r
                                     target = free !! pick
-                                    bp = floor (dlBranching layout * 10000) :: Int
+                                    bp = floor (branching * 10000) :: Int
                                     (branch, r2)
                                         | bp <= 0    = (False, r1)
                                         | bp >= 10000 = (True, r1)
@@ -639,18 +767,7 @@ placeRooms layout r0 = go [(0, 0)] (Map.singleton (0, 0) 1) 1 r0
                                             let (draw, r') = randInt 1 10000 r1
                                             in (draw <= bp, r')
                                     cells' = Map.insert target (d + 1) cells
-                                    childSterile = d + 1 >= maxDepth
-                                    -- Frontier policy (robust growth):
-                                    --  * branching 0.0: pure chain (Plan-Pol:
-                                    --    the child replaces the head) — dies at
-                                    --    layout.depth, matching the authored
-                                    --    parameters exactly
-                                    --  * otherwise the head stays in the ring:
-                                    --    branch keeps it in front (it may get
-                                    --    more children, tree growth), otherwise
-                                    --    it rotates to the back — and a sterile
-                                    --    child is never queued (it would drain
-                                    --    the frontier and extinct the tree)
+                                    childSterile = d + 1 >= depthLimit
                                     frontier'
                                         | bp <= 0 =
                                             if childSterile then rest else target : rest
@@ -659,6 +776,26 @@ placeRooms layout r0 = go [(0, 0)] (Map.singleton (0, 0) 1) 1 r0
                                         | otherwise =
                                             (if childSterile then rest else rest ++ [target]) ++ [h]
                                 in go frontier' cells' (count + 1) r2
+
+-- | Step 1 — place rooms on grid coordinates (Phase 4 compatibility).
+placeRooms :: DLayout -> Rng -> (Map Cell Int, Rng)
+placeRooms layout = placeLevelRooms 1 (dlRoomsMax layout) (dlBranching layout) (dlDepth layout)
+
+-- | Step 1 (multi-level) — place rooms across all resolved levels of a template.
+placeTemplateRooms :: DTemplate -> Rng -> (Map Cell Int, Rng)
+placeTemplateRooms t r0
+    | null (dtLevels t) = placeRooms (dtLayout t) r0
+    | otherwise         =
+        let levels = resolveLevels t
+            step (accMap, r) rl =
+                let (lvlMap, r') = placeLevelRooms
+                        (rlIndex rl)
+                        (rlRoomsMax rl)
+                        (rlBranching rl)
+                        (rlDepthLimit rl)
+                        r
+                in (Map.union accMap lvlMap, r')
+        in foldl step (Map.empty, r0) levels
 
 -- | Step 2 — assign archetypes. Start gets @special.start.template@ (or the
 --   first sorted savezone archetype, or the first archetype), the boss cell
@@ -669,8 +806,10 @@ placeRooms layout r0 = go [(0, 0)] (Map.singleton (0, 0) 1) 1 r0
 assignArchetypes :: DTemplate -> Map Cell Int -> Rng
                  -> (Map Cell PlannedRoom, Cell, Maybe Cell, Rng)
 assignArchetypes t depths r0 =
-    let maxDepth = maximum (Map.elems depths)
-        bossCell = head [ c | c <- Map.keys depths, (depths Map.! c) == maxDepth ]
+    let isMultiLevel = not (null (dtLevels t))
+        maxLevel = maximum [ z | (_, _, z) <- Map.keys depths ]
+        lastLevelCells = [ c | c@(_, _, z) <- Map.keys depths, z == maxLevel ]
+        bossCell = head (sortByDepthDesc depths lastLevelCells)
         archIds  = map drtId (dtRoomTemplates t)
         startArch = case dstTemplate =<< dspStart (dtSpecial t) of
             Just a  -> a
@@ -681,17 +820,18 @@ assignArchetypes t depths r0 =
                     []      -> "room"  -- NoRoomTemplates rejects this earlier
         treasureCell = case dspTreasure (dtSpecial t) of
             Nothing -> Nothing
-            Just _  -> case [ c | c <- Map.keys depths, c /= (0, 0), c /= bossCell ] of
+            Just _  -> case [ c | c <- Map.keys depths, c /= (0, 0, 1), c /= bossCell ] of
                 [] -> Nothing
                 cs -> Just (head (sortByDepthDesc depths cs))
         bossArch = maybe "room" dbsTemplate (dspBoss (dtSpecial t))
         treasureArch = maybe "room" dtsTemplate (dspTreasure (dtSpecial t))
         depthFits rng d = d >= drMin rng
                           && (drMax rng == maxBound || d <= drMax rng)
-        -- weighted draw for a non-special cell at depth d
-        drawArch d r =
-            let fitting = [ (drtWeight rt, drtId rt) | rt <- dtRoomTemplates t
-                         , depthFits (drtDepth rt) d ]
+        -- weighted draw for a non-special cell at depth d (or level z in multi-level mode)
+        drawArch c treeDepth r =
+            let targetDepth = if isMultiLevel then (\(_, _, z) -> z) c else treeDepth
+                fitting = [ (drtWeight rt, drtId rt) | rt <- dtRoomTemplates t
+                          , depthFits (drtDepth rt) targetDepth ]
                 pool = case fitting of
                     [] -> [ (drtWeight rt, drtId rt) | rt <- dtRoomTemplates t ]
                     _  -> fitting
@@ -700,20 +840,21 @@ assignArchetypes t depths r0 =
                 nonempty -> pickWeighted nonempty r
         build r = foldl step (Map.empty, r) (Map.keys depths)
         step (acc, r) c
-            | c == (0, 0)      = (Map.insert c (PlannedRoom startArch 1) acc, r)
-            | c == bossCell    = (Map.insert c (PlannedRoom bossArch maxDepth) acc, r)
+            | c == (0, 0, 1)   = (Map.insert c (PlannedRoom startArch 1) acc, r)
+            | c == bossCell    = (Map.insert c (PlannedRoom bossArch (depths Map.! bossCell)) acc, r)
             | Just c == treasureCell =
                 (Map.insert c (PlannedRoom treasureArch (depths Map.! c)) acc, r)
             | otherwise =
-                let (a, r') = drawArch (depths Map.! c) r
+                let (a, r') = drawArch c (depths Map.! c) r
                 in (Map.insert c (PlannedRoom a (depths Map.! c)) acc, r')
         (grid, r1) = build r0
     in (grid, bossCell, treasureCell, r1)
 
--- | Sort cells by depth (descending), then coordinate (ascending).
+-- | Sort cells by level (descending), then depth (descending), then coordinate (ascending).
 sortByDepthDesc :: Map Cell Int -> [Cell] -> [Cell]
 sortByDepthDesc depths cs =
-    map snd (sort [ (negate (depths Map.! c), c) | c <- cs ])
+    map (\(_, _, c) -> c)
+        (sort [ (negate z, negate (depths Map.! c), c) | c@(_, _, z) <- cs ])
 
 -- | Step 3 — edges from grid adjacency (cardinal, bidirectional), then
 --   @layout.loops@ extra diagonal edges (Chebyshev-1 pairs are never directly
@@ -731,14 +872,14 @@ connectRooms t grid r0 =
             , Map.member c' grid ]
         diagonalPairs =
             [ (c, c')
-            | c <- Map.keys grid
+            | c@(x, y, z) <- Map.keys grid
             , (dx, dy) <- [(1, 1), (-1, 1)]  -- southeast / southwest offsets
-            , let c' = (fst c + dx, snd c + dy)
+            , let c' = (x + dx, y + dy, z)
             , Map.member c' grid ]
         (loopPairs, r1) = chooseLoops (dlLoops (dtLayout t)) diagonalPairs r0
         loopEdges =
             [ DEdge a b (gridDirBetween a b) False | (a, b) <- loopPairs ]
-        (edges, warns) = foldl applyHint (cardinalEdges ++ loopEdges, [])
+        (intraEdges, warns) = foldl applyHint (cardinalEdges ++ loopEdges, [])
                                 (zip [0 :: Int ..] (dtOnewayHints t))
         applyHint (es, ws) (i, h)
             | not (dohOneway h) = (es, ws)   -- hint without oneway is inert
@@ -760,6 +901,28 @@ connectRooms t grid r0 =
                         -- to the authored direction (e.g. a fall trap 'down')
                         let converted = e { deDir = dohDir h, deOneway = True }
                         in (map (\x -> if x == e then converted else x) es, ws)
+
+        -- Inter-level stair edges (Phase 4b)
+        levelsInGrid = Set.toAscList (Set.fromList [ z | (_, _, z) <- Map.keys grid ])
+        resolved = resolveLevels t
+        stairEdges = concat
+            [ let cellsA = [ c | c@(_, _, z) <- Map.keys grid, z == lvlA ]
+                  deepestA = head (sortOn (\c -> (negate (prDepth (grid Map.! c)), c)) cellsA)
+                  startB = if Map.member (0, 0, lvlB) grid
+                           then (0, 0, lvlB)
+                           else head (sortOn (\c -> (prDepth (grid Map.! c), c))
+                                       [ c | c@(_, _, z) <- Map.keys grid, z == lvlB ])
+                  downEdge = DEdge deepestA startB "down" True
+                  hasReturn = (lvlA <= length resolved && rlReturnStairs (resolved !! (lvlA - 1)))
+                              || (lvlB <= length resolved && rlReturnStairs (resolved !! (lvlB - 1)))
+                  upEdge = DEdge startB deepestA "up" True
+              in if null cellsA then []
+                 else if hasReturn then [downEdge, upEdge]
+                 else [downEdge]
+            | (lvlA, lvlB) <- zip levelsInGrid (drop 1 levelsInGrid)
+            , lvlB == lvlA + 1
+            ]
+        edges = intraEdges ++ stairEdges
     in (edges, r1, warns)
 
 -- | Choose up to @n@ loop pairs: prefer equal-depth pairs, then any.
@@ -778,7 +941,7 @@ chooseLoops n cands r0
 ensureReachable :: Map Cell PlannedRoom -> [DEdge] -> ([DEdge], Maybe [Cell])
 ensureReachable grid edges0 = go edges0
   where
-    start = (0, 0)
+    start = (0, 0, 1)
     go edges =
         let reach = bfsReach (successorsOf edges) start
             bad = sort [ c | c <- Map.keys grid, not (Set.member c reach) ]
@@ -828,13 +991,19 @@ bfsReach succ0 start = go [start] (Set.singleton start)
 generateDungeonLayout :: DTemplate -> Word64 -> Either GenerateError DungeonPlan
 generateDungeonLayout t seed =
     let layout = dtLayout t
+        resolved = resolveLevels t
         attempts = map (attemptSeed seed) [0 .. fromIntegral genMaxRetries - 1]
-        tryAttempt k = placeRooms layout (newRng k)
+        tryAttempt k = placeTemplateRooms t (newRng k)
         placed = map tryAttempt attempts
         -- (rng, depths, attempt number) triples
         sized = [ (r, ds, fromIntegral i :: Integer)
                 | (i, ((ds, r), _)) <- zip [0 :: Int ..] (zip placed attempts) ]
-        ok = filter (\(_, ds, _) -> Map.size ds >= dlRoomsMin layout) sized
+        levelSatisfied ds rl =
+            let count = length [ () | (_, _, z) <- Map.keys ds, z == rlIndex rl ]
+            in count >= rlRoomsMin rl
+        attemptOk ds =
+            Map.size ds >= dlRoomsMin layout && all (levelSatisfied ds) resolved
+        ok = filter (\(_, ds, _) -> attemptOk ds) sized
         chosen = case ok of
             (p : _) -> p
             []      -> if null sized then error "unreachable" else
@@ -849,14 +1018,20 @@ generateDungeonLayout t seed =
                 (edges, _r3, onewayWarns) = connectRooms t grid r2
                 (edges', unreachable) = ensureReachable grid edges
                 maxDepth = maximum (Map.elems depths)
-                earlyAbort = maxDepth < dlDepth layout
+                maxLevel = maximum [ z | (_, _, z) <- Map.keys depths ]
+                earlyAbort
+                    | not (null (dtLevels t)) = maxLevel < dlDepth layout
+                    | otherwise               = maxDepth < dlDepth layout
                 earlyWarns =
                     [ CompileIssue "layout" SWarning "GeneratorEarlyAbort"
-                        ("grid exhausted at depth " ++ show maxDepth
-                         ++ " of " ++ show (dlDepth layout)
-                         ++ " — dungeon delivered with reached maximum ("
-                         ++ show (Map.size depths) ++ " rooms placed, attempt "
-                         ++ show attemptNo ++ " of " ++ show genMaxRetries)
+                        (if not (null (dtLevels t))
+                            then "dungeon generator exhausted at level " ++ show maxLevel
+                                 ++ " of " ++ show (dlDepth layout)
+                            else "grid exhausted at depth " ++ show maxDepth
+                                 ++ " of " ++ show (dlDepth layout)
+                                 ++ " — dungeon delivered with reached maximum ("
+                                 ++ show (Map.size depths) ++ " rooms placed, attempt "
+                                 ++ show attemptNo ++ " of " ++ show genMaxRetries ++ ")")
                     | earlyAbort ]
                 treasureWarns =
                     [ CompileIssue "special.treasure" SWarning "GeneratorTreasureSkipped"
@@ -868,11 +1043,11 @@ generateDungeonLayout t seed =
                     { dpGrid = grid
                     , dpEdges = edges'
                     , dpWarnings = onewayWarns ++ treasureWarns ++ earlyWarns
-                    , dpStartCell = (0, 0)
+                    , dpStartCell = (0, 0, 1)
                     , dpBossCell = bossCell
                     , dpTreasureCell = treasureCell
                     , dpEarlyAbort = earlyAbort
-                    , dpMaxDepth = maxDepth
+                    , dpMaxDepth = depths Map.! bossCell
                     }
 
 -- | Number of deterministic layout attempts per generation.
@@ -904,11 +1079,12 @@ reverseDir d = case d of
     other       -> other
 
 -- | Deterministic room ids: @<archetype>_<n>@ with per-archetype counters in
---   sorted cell order (Data.Map iteration order — the determinism source).
+--   sorted cell order (level first, then x, y).
 cellRoomIds :: DungeonPlan -> Map Cell String
-cellRoomIds plan = go (Map.keys grid) Map.empty Map.empty
+cellRoomIds plan = go sortedCells Map.empty Map.empty
   where
     grid = dpGrid plan
+    sortedCells = sortOn (\(x, y, z) -> (z, x, y)) (Map.keys grid)
     go :: [Cell] -> Map Cell String -> Map String Int -> Map Cell String
     go [] acc _ = acc
     go (c : cs) acc counters =
@@ -955,18 +1131,23 @@ buildExits plan roomIds lockEntity =
     in foldl step Map.empty (dpEdges plan)
 
 -- | Candidate cells for pool placement: everything except start, boss and
---   treasure. The optional depth range filters the set.
-populateCandidates :: DungeonPlan -> Maybe DRange -> [Cell]
-populateCandidates plan mRange =
+--   treasure. The optional depth range filters the set (in multi-level mode,
+--   filters by level; in single-level mode, filters by tree depth).
+populateCandidates :: Bool -> DungeonPlan -> Maybe DRange -> [Cell]
+populateCandidates isMultiLevel plan mRange =
     let excluded = Set.fromList
             ([dpStartCell plan, dpBossCell plan] ++ maybe [] (: []) (dpTreasureCell plan))
         grid = dpGrid plan
-        inRange d = case mRange of
+        inRange c = case mRange of
             Nothing  -> True
-            Just rng -> d >= drMin rng && (drMax rng == maxBound || d <= drMax rng)
+            Just rng ->
+                let val = if isMultiLevel
+                          then let (_, _, z) = c in z
+                          else prDepth (grid Map.! c)
+                in val >= drMin rng && (drMax rng == maxBound || val <= drMax rng)
     in [ c | c <- Map.keys grid
        , not (Set.member c excluded)
-       , inRange (prDepth (grid Map.! c)) ]
+       , inRange c ]
 
 -- | Weighted room draw: deeper rooms weigh more (detail plan 3.6:
 --   \"Räume gewichtet nach Tiefe ziehen\").
@@ -993,7 +1174,8 @@ npcInstance frag nid rid = frag { anId = nid, anLocation = rid }
 populate :: DTemplate -> DungeonPlan -> Map Cell String -> Rng
          -> ([AItem], [ANPC], [CompileIssue], Rng)
 populate t plan roomIds r0 =
-    let grid = dpGrid plan
+    let isMultiLevel = not (null (dtLevels t))
+        grid = dpGrid plan
         treasureCell = dpTreasureCell plan
         lockEntity = case (dspTreasure (dtSpecial t), treasureCell) of
             (Just ts, Just _) | dtsLocked ts -> Just ("lock_" ++ dtsTemplate ts)
@@ -1001,9 +1183,15 @@ populate t plan roomIds r0 =
 
         keyCandidates = case treasureCell of
             Just tc ->
-                [ c | c <- populateCandidates plan Nothing
-                    , prDepth (grid Map.! c) < prDepth (grid Map.! tc) ]
-            Nothing -> populateCandidates plan Nothing
+                let (_, _, zt) = tc
+                    depT = prDepth (grid Map.! tc)
+                in [ c | c <- populateCandidates isMultiLevel plan Nothing
+                       , let (_, _, z) = c
+                             dep = prDepth (grid Map.! c)
+                         in if isMultiLevel
+                            then z < zt || (z == zt && dep < depT)
+                            else dep < depT ]
+            Nothing -> populateCandidates isMultiLevel plan Nothing
         (keyCell, r1) = case keyCandidates of
             [] -> (dpStartCell plan, r0)
             cs -> (\(i, r) -> (cs !! i, r)) (randInt 0 (length cs - 1) r0)
@@ -1028,7 +1216,7 @@ populate t plan roomIds r0 =
                     in (accItems ++ [item], warns, rr)
                 Just _ -> (accItems, warns, rr)  -- BossLockMismatch already rejected
                 Nothing ->
-                    let cands = populateCandidates plan Nothing
+                    let cands = populateCandidates isMultiLevel plan Nothing
                     in if null cands
                         then (accItems, warns ++ [skipWarn ("item_pool." ++ iid)], rr)
                         else
@@ -1053,7 +1241,7 @@ populate t plan roomIds r0 =
                 then ( accNpcs ++ [npcInstance (dnpNpc e) nid (roomIds Map.! dpBossCell plan)]
                      , warns, rr )
                 else
-                    let cands = populateCandidates plan (dnpDepthRange e)
+                    let cands = populateCandidates isMultiLevel plan (dnpDepthRange e)
                     in if null cands
                         then (accNpcs, warns ++ [skipWarn ("npc_pool." ++ nid)], rr)
                         else
@@ -1128,17 +1316,24 @@ emitAdventure t plan seed =
             _ -> Nothing
 
         findArch a = listToMaybe [ rt | rt <- dtRoomTemplates t, drtId rt == a ]
-        roomInstance c =
+        roomInstance c@(_, _, z) =
             let rid = roomIds Map.! c
                 arch = prArch (grid Map.! c)
+                fl = if not (null (dtLevels t)) then Just z else arFloor (drtRoom (head (dtRoomTemplates t)))
             in case findArch arch of
-                Just rt -> (drtRoom rt) { arId = rid, arExits = Map.findWithDefault Map.empty c exits }
+                Just rt -> (drtRoom rt)
+                    { arId = rid
+                    , arExits = Map.findWithDefault Map.empty c exits
+                    , arFloor = if not (null (dtLevels t)) then Just z else arFloor (drtRoom rt)
+                    }
                 Nothing -> (drtRoom (head (dtRoomTemplates t)))
                     { arId = rid, arName = rid
-                    , arExits = Map.findWithDefault Map.empty c exits }
-        rooms = map roomInstance (Map.keys grid)
+                    , arExits = Map.findWithDefault Map.empty c exits
+                    , arFloor = fl }
+        sortedCells = sortOn (\(x, y, z) -> (z, x, y)) (Map.keys grid)
+        rooms = map roomInstance sortedCells
 
-        savezoneIds = [ roomIds Map.! c | c <- Map.keys grid
+        savezoneIds = [ roomIds Map.! c | c <- sortedCells
                       , prArch (grid Map.! c) `elem` savezoneArchIds t ]
         generatedGamePolicy = if null savezoneIds
             then Nothing

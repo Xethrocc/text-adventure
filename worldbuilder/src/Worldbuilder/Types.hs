@@ -230,6 +230,7 @@ data ARoom = ARoom
     , arSearch      :: Maybe [AActionOutcome]
     , arAscii       :: AAscii
     , arIntro       :: Maybe String               -- ^ clip id played once on enter (Phase H/H4)
+    , arFloor       :: Maybe Int                  -- ^ optional floor / dungeon level index (Phase 4b)
     } deriving (Show, Eq, Generic)
 
 instance FromJSON ARoom where
@@ -246,6 +247,7 @@ instance FromJSON ARoom where
         <*> o .:? "search"
         <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0 [] Nothing
         <*> o .:? "intro"     .!= Nothing
+        <*> o .:? "floor"     .!= Nothing
 
 -- | Exit reference: target room + optional lock entity
 data AExitRef = AExitRef

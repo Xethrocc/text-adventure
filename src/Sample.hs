@@ -24,7 +24,8 @@ initSampleGame = GameState
                 , roomOnExit = Nothing
                 , roomSearchOutcome = Nothing
                 , roomAscii = emptyAscii
-        , roomIntro = Nothing
+                , roomIntro = Nothing
+                , roomFloor = Nothing
                 })
             , ("hallway", Room
                 { roomId = "hallway"
@@ -41,7 +42,8 @@ initSampleGame = GameState
                     [ SetValue (VRFlag "torch_lit") (EVString "true")
                     , SendMessage "Faded runes cover the eastern wall." ])
                 , roomAscii = emptyAscii
-        , roomIntro = Nothing
+                , roomIntro = Nothing
+                , roomFloor = Nothing
                 })
             , ("treasure", Room
                 { roomId = "treasure"
@@ -55,7 +57,8 @@ initSampleGame = GameState
                 , roomOnExit = Nothing
                 , roomSearchOutcome = Nothing
                 , roomAscii = emptyAscii
-        , roomIntro = Nothing
+                , roomIntro = Nothing
+                , roomFloor = Nothing
                 })
             -- Vehicle demo (Phase 3): a horse-drawn carriage
             , ("meadow", Room
@@ -74,7 +77,8 @@ initSampleGame = GameState
                 , roomOnExit = Nothing
                 , roomSearchOutcome = Nothing
                 , roomAscii = emptyAscii
-        , roomIntro = Nothing
+                , roomIntro = Nothing
+                , roomFloor = Nothing
                 })
             , ("carriage_cabin", Room
                 { roomId = "carriage_cabin"
@@ -88,7 +92,8 @@ initSampleGame = GameState
                 , roomOnExit = Nothing
                 , roomSearchOutcome = Nothing
                 , roomAscii = emptyAscii
-        , roomIntro = Nothing
+                , roomIntro = Nothing
+                , roomFloor = Nothing
                 })
             ]
         , itemDefs = Map.fromList

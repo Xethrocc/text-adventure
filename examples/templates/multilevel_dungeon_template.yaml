@@ -1,0 +1,83 @@
+# Rogue Phase 4b: Multi-Level Dungeon Template mit mehreren Ebenen und Treppen.
+#
+# Generieren:
+#   cabal run worldbuilder -- generate examples/templates/multilevel_dungeon_template.yaml \
+#       --seed 42 -o /tmp/run
+#
+# Gleicher Seed + gleiches Template => bit-identisches world.json + save.json.
+# Jede Ebene platziert ihre Räume im 3D-Gitter (z = 1, 2, ...).
+# Treppenkanten ('down' / 'up') verbinden die tiefste Zelle von Ebene i
+# mit dem Einstieg (0, 0, i+1) der nächsten Ebene.
+# In der TUI schaltet F2 / Ctrl-F die Minimap zwischen den erkundeten Ebenen um.
+
+template:
+  name: "Die Tiefen von Morvath"
+  description: "Ein dreistufiges Gewölbe hinab in die Dunkelheit"
+  seed: 42
+
+layout:
+  rooms: { min: 12, max: 18 }
+  depth: 3
+  branching: 0.4
+  loops: 1
+
+# Optionale per-Ebene-Konfiguration (Rogue Phase 4b):
+levels:
+  - rooms: { min: 4, max: 6 }
+    depth: 4
+    branching: 0.4
+    return_stairs: true         # Treppe aufwärts zurück zur Vor-Ebene existiert
+  - rooms: { min: 4, max: 6 }
+    depth: 4
+    branching: 0.3
+    return_stairs: true
+  - rooms: { min: 4, max: 6 }
+    depth: 4
+    branching: 0.0              # Lineares Finale hin zum Boss
+    return_stairs: false        # Point of no Return vor dem Bossraum
+
+room_templates:
+  - id: camp
+    weight: 1
+    depth_range: [1, 1]         # Ebene 1
+    savezone: true
+    room:
+      name: "Oberes Lager"
+      desc: "Licht dringt noch schwach von der Oberfläche herein. Ein sicherer Rastplatz."
+  - id: upper_hall
+    weight: 3
+    depth_range: [1, 2]         # Ebenen 1 und 2
+    room:
+      name: "Steinernes Gewölbe"
+      desc: "Massive Granitsäulen stützen die niedrige Decke."
+  - id: crypt
+    weight: 3
+    depth_range: [2, 3]         # Ebenen 2 und 3
+    room:
+      name: "Krypta der Vergessenen"
+      desc: "Uralte Gräber säumen die feuchten Wände."
+  - id: boss_sanctum
+    weight: 1
+    depth_range: [3, 3]         # Nur Ebene 3
+    room:
+      name: "Heiligtum des Abyss"
+      desc: "Ein finsterer Altar pulsiert in der Mitte der Halle."
+
+special:
+  start: { template: camp }
+  boss: { template: boss_sanctum, depth: max }
+
+item_pool:
+  - { item: { id: potion, name: "Heiltrank", portable: true }, count: { min: 2, max: 4 } }
+  - { item: { id: torch, name: "Fackel", portable: true }, count: { min: 1, max: 2 } }
+
+npc_pool:
+  - { npc: { id: cultist, name: "Kultist", max_hp: 8, attack: 2 }, count: { min: 2, max: 4 }, depth_range: [1, 2] }
+  - { npc: { id: demon, name: "Abyssaler Dämon", max_hp: 16, attack: 4 }, count: { min: 1, max: 1 }, boss: true }
+
+combat:
+  profile: classic
+  screen: { bar_width: 20, scene: ">>Die Tiefen von Morvath<<" }
+
+player: { max_hp: 35 }
+variables: []

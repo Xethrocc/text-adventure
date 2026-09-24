@@ -48,13 +48,14 @@ import Control.Monad.IO.Class (liftIO)
 import Data.Char (isLower, isSpace)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intercalate, nub)
+import Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
 import qualified Brick.Types as BT
 
 import Ansi (stripAnsi)
 import TextAdventure.Tui.Color (attrOfSgr, colorAttrName, parseSgrLine)
-import TextAdventure.Tui.Hud (HudView (..), MapGrid (..), buildHud,
-                              statsLines)
+import TextAdventure.Tui.Hud (HudView (..), MapCell (..), MapGrid (..), buildHud,
+                              buildHudWithFloor, statsLines)
 import Completion (completionFor)
 import Frontend (Frontend (..))
 import GameLoop (runGameWithFrontend)
@@ -149,6 +150,7 @@ data TuiState = TuiState
     , tsEnded   :: Bool
     , tsPanel   :: PanelState      -- ^ snapshot of 'shArt' for drawing
     , tsHud     :: HudView         -- ^ snapshot of the HUD model (Rogue Phase 5)
+    , tsFloor   :: Maybe Int       -- ^ currently viewed floor override (Nothing = follow player)
     }
 
 -- | Append one (possibly multi-line) chunk of game text to the shared buffer.
@@ -351,7 +353,7 @@ tuiApp shared chan = App
                 put st { tsPanel = p }
             AppEvent EvHud -> do
                 gst <- liftIO (readIORef (shState shared))
-                put st { tsHud = buildHud gst }
+                put st { tsHud = buildHudWithFloor (tsFloor st) gst }
             AppEvent EvTick -> do
                 p <- liftIO (readArtPanel shared)
                 liftIO $ case advancePanel p of
@@ -362,7 +364,8 @@ tuiApp shared chan = App
                 put st { tsPanel = p2 }
             VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl]) -> halt
             VtyEvent (V.EvKey V.KEsc [])               -> halt
-            VtyEvent (V.EvKey V.KEnter [])             -> handleSubmit shared st
+            VtyEvent (V.EvKey V.KEnter [])             -> do
+                handleSubmit shared (st { tsFloor = Nothing })
             VtyEvent (V.EvKey (V.KChar '\t') [])       -> handleTab shared st
             VtyEvent (V.EvKey V.KUp [])                -> handleHistory shared 1 st
             VtyEvent (V.EvKey V.KDown [])              -> handleHistory shared (-1) st
@@ -370,12 +373,30 @@ tuiApp shared chan = App
                 vScrollPage (viewportScroll HistoryVp) BT.Up
             VtyEvent (V.EvKey V.KPageDown []) ->
                 vScrollPage (viewportScroll HistoryVp) BT.Down
+            VtyEvent (V.EvKey (V.KFun 2) [])           -> handleCycleFloor shared st
+            VtyEvent (V.EvKey (V.KChar 'f') [V.MCtrl]) -> handleCycleFloor shared st
             -- Everything else goes to the editor, which mutates itself as the
             -- EventM state (nestEventM' embeds that into the app state).
             VtyEvent e@V.EvKey {} -> do
                 ed <- nestEventM' (tsEditor st) (handleEditorEvent (VtyEvent e))
                 put st { tsEditor = ed }
             _ -> put st
+
+-- | Cycle through explored floors on the minimap (F2 / Ctrl-F).
+handleCycleFloor :: TuiShared -> TuiState -> EventM TuiName TuiState ()
+handleCycleFloor shared st = do
+    gst <- liftIO (readIORef (shState shared))
+    let floors = hvFloors (tsHud st)
+    case floors of
+        [] -> put st
+        [_] -> put st
+        fs ->
+            let currentFl = fromMaybe (head fs) (hvFloor (tsHud st))
+                nextFl = case dropWhile (/= currentFl) fs of
+                    (_:next:_) -> next
+                    _          -> head fs
+            in put st { tsFloor = Just nextFl
+                      , tsHud = buildHudWithFloor (Just nextFl) gst }
 
 -- | The multi-panel layout (Rogue Phase 5): narrative history plus command
 --   line at the bottom (the classic view), HUD panels above. Side by side:
@@ -410,9 +431,14 @@ drawTui st =
         | otherwise = padBottom (Pad 1) $ hBox sidePanels
     mapWidget = case hvMap (tsHud st) of
         Nothing -> []
-        Just g  -> [ withBorderStyle unicode $
-                     borderWithLabel (str " [Karte] ") $
-                       vBox (map str (mgFog g)) ]
+        Just g  ->
+            let isHere = any mcHere (mgCells g)
+                label = case hvFloor (tsHud st) of
+                    Just fl -> " [Karte: Ebene " ++ show fl ++ (if isHere then " (hier)" else "") ++ "] "
+                    Nothing -> " [Karte] "
+            in [ withBorderStyle unicode $
+                 borderWithLabel (str label) $
+                   vBox (map str (mgFog g)) ]
     statsWidget = [ withBorderStyle unicode $
                     borderWithLabel (str (" [Status] " ++ hudRoom ++ " ")) $
                       vBox (map str (statsLines (tsHud st))) ]
@@ -465,6 +491,8 @@ drawTui st =
         | null (tsSuggest st) = str ""
         | otherwise           = str ("  " ++ intercalate "   " (tsSuggest st))
     helpLine | tsEnded st = "Spiel beendet — Ctrl-Q beendet das TUI."
+             | length (hvFloors (tsHud st)) > 1
+                          = "Tab: vervollständigen   ↑/↓: Verlauf   F2: Ebene   Ctrl-Q: beenden"
              | otherwise  = "Tab: vervollständigen   ↑/↓: Verlauf   PgUp/PgDn: scrollen   Ctrl-Q: beenden"
 
 -- | Run the TUI: fork the engine loop against a shared state, then hand the
@@ -498,5 +526,6 @@ runTui initialLines st0 = do
                         , tsEnded = False
                         , tsPanel = PanelNone
                         , tsHud = buildHud st0
+                        , tsFloor = Nothing
                         }
     void (customMain initialVty buildVty (Just chan) (tuiApp shared chan) st0')

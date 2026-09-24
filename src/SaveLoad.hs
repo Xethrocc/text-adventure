@@ -8,9 +8,11 @@ import Types
 import Game (syncInventory)
 import Control.Exception (try, SomeException)
 import Control.Monad (when, unless)
+import Data.Bits (shiftR, xor)
 import Data.List (foldl', sortBy, isPrefixOf)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.Word (Word64)
 import Data.Time (getCurrentTime, formatTime, defaultTimeLocale)
 import System.Directory (createDirectoryIfMissing, listDirectory, doesFileExist, removeFile)
 import System.Environment (lookupEnv)
@@ -94,6 +96,36 @@ mergeMetaVars incoming base = Map.union (metaVars incoming) base
 adventureSlug :: GameWorld -> String
 adventureSlug gw = maybe (slugify (worldName gw)) slugify (gpMetaSlug (worldGamePolicy gw))
 
+-- | Golden ratio gamma constants for run-seed derivation (Rogue Phase 4c).
+seedGolden1 :: Word64
+seedGolden1 = 0x9E3779B97F4A7C15
+
+seedGolden2 :: Word64
+seedGolden2 = 0xBF58476D1CE4E5B9
+
+-- | Hash / salt a string slug into a Word64 (djb2-xor variant with 64-bit golden mixer).
+saltSlug :: String -> Word64
+saltSlug = foldl' (\h c -> (h * 33) `xor` fromIntegral (fromEnum c)) 5381
+
+-- | Single SplitMix64 finalizer mix.
+splitmix64Mix :: Word64 -> Word64
+splitmix64Mix s =
+    let z1 = (s `xor` (s `shiftR` 30)) * 0xBF58476D1CE4E5B9
+        z2 = (z1 `xor` (z1 `shiftR` 27)) * 0x94D049BB133111EB
+    in z2 `xor` (z2 `shiftR` 31)
+
+-- | Derive the generation seed for a run from the adventure slug and run index (Phase 4c).
+--   Formula: splitmix64(salt(slug) * GOLDEN1 + runIndex * GOLDEN2).
+--   Deterministic across platforms and machines.
+deriveRunSeedFromSlug :: String -> Int -> Word64
+deriveRunSeedFromSlug slug runIndex =
+    let s = saltSlug slug * seedGolden1 + fromIntegral (max 0 runIndex) * seedGolden2
+    in splitmix64Mix s
+
+-- | Derive the generation seed for a run given a GameWorld (Phase 4c).
+deriveRunSeed :: GameWorld -> Int -> Word64
+deriveRunSeed gw runIndex = deriveRunSeedFromSlug (adventureSlug gw) runIndex
+
 -- | One meta-progression file: `saves/<slug>_meta.json`.
 data MetaFile = MetaFile
     { mfVersion :: Int
@@ -115,8 +147,22 @@ currentMetaVersion :: Int
 currentMetaVersion = 1
 
 -- | Path of the meta-progression file.
+-- | Directory for meta-progression files (Rogue Phase 4c).
+--   Defaults to `TA_META_DIR`, falling back to `savesDir`.
+metaDir :: IO FilePath
+metaDir = do
+    mbMeta <- lookupEnv "TA_META_DIR"
+    case mbMeta of
+        Just d  -> pure d
+        Nothing -> savesDir
+
+-- | Path of the meta-progression file.
 metaSavePath :: GameWorld -> IO FilePath
-metaSavePath gw = (</> (adventureSlug gw ++ "_meta.json")) <$> savesDir
+metaSavePath gw = metaSavePathForSlug (adventureSlug gw)
+
+-- | Path of the meta file directly from slug.
+metaSavePathForSlug :: String -> IO FilePath
+metaSavePathForSlug slug = (</> (slug ++ "_meta.json")) <$> metaDir
 
 -- | Persist the run's meta.* variables (Rogue Phase 2). Non-meta entries in
 --   the input map are ignored (defensive: callers pass the whole VarMap). An
@@ -127,16 +173,15 @@ saveMeta gw rawVars =
     let vars = metaVars rawVars
     in unless (Map.null vars) $ do
         path <- metaSavePath gw
-        dir <- savesDir
+        dir <- metaDir
         createDirectoryIfMissing True dir
         BL.writeFile path (encodePretty (MetaFile currentMetaVersion vars))
 
--- | Load the persisted meta.* variables. A missing file yields an empty map
---   (fresh run); a corrupt one warns and starts over — losing meta beats
---   crashing on a hand-edited file.
-loadMeta :: GameWorld -> IO (Map String VariableValue)
-loadMeta gw = do
-    path <- metaSavePath gw
+-- | Load the persisted meta.* variables by slug. A missing file yields an empty map
+--   (fresh run); a corrupt one warns and starts over.
+loadMetaForSlug :: String -> IO (Map String VariableValue)
+loadMetaForSlug slug = do
+    path <- metaSavePathForSlug slug
     exists <- doesFileExist path
     if not exists
     then return Map.empty
@@ -151,6 +196,10 @@ loadMeta gw = do
                 Nothing -> do
                     putStrLn ("Warning: meta file '" ++ path ++ "' is corrupted — starting fresh.")
                     return Map.empty
+
+-- | Load the persisted meta.* variables for a GameWorld.
+loadMeta :: GameWorld -> IO (Map String VariableValue)
+loadMeta gw = loadMetaForSlug (adventureSlug gw)
 
 -- | Path of one save slot. Built with `System.FilePath` so the separator is
 --   the platform's: a literal "/" happens to work on Windows too, but the

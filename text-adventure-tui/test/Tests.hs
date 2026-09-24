@@ -5,8 +5,8 @@ import TextAdventure.Tui
     ( PanelState (..), PanelStep (..), advancePanel, panelFrame, roomAmbient )
 
 import TextAdventure.Tui.Hud
-    ( HudView (..), MapCell (..), MapGrid (..), Bar (..), buildHud, mapGrid
-    , hpBar, condLine, equipmentLines, combatLines, statsLines, barLine )
+    ( HudView (..), MapCell (..), MapGrid (..), Bar (..), buildHud, buildHudWithFloor
+    , mapGrid, mapGridWithFloor, hpBar, condLine, equipmentLines, combatLines, statsLines, barLine )
 
 import TextAdventure.Tui.Color
     ( SgrColor (..), SgrState (..), applySgrSeq, attrOfSgr, colorAttrName
@@ -170,6 +170,49 @@ testHudPanels =
                 (null (hvCombat (buildHud (hudState "start"))))
         pure (rA && rB && rC && rD && rE && rF && rG && rH && rI && rJ)
 
+-- | Multi-floor HUD & Minimap: rooms on different floors are segregated,
+--   the HUD detects explored floors, and non-current floor views drop the player marker.
+testHudMultiFloor :: IO Bool
+testHudMultiFloor =
+    let r1 = (rooms (world initSampleGame) Map.! "start") { roomFloor = Just 1 }
+        r2 = (rooms (world initSampleGame) Map.! "hallway") { roomFloor = Just 1 }
+        r3 = (rooms (world initSampleGame) Map.! "meadow") { roomFloor = Just 2 }
+        w' = (world initSampleGame)
+               { rooms = Map.fromList [("start", r1), ("hallway", r2), ("meadow", r3)] }
+        st = initSampleGame
+               { world = w'
+               , save = (save initSampleGame)
+                   { currentRoom = "start"
+                   , visitedRooms = Set.fromList ["start", "hallway", "meadow"] }
+               }
+        hudDef = buildHud st
+        hudF2  = buildHudWithFloor (Just 2) st
+    in do
+        rA <- expectEqual "explored floors detected" [1, 2] (hvFloors hudDef)
+        rB <- expectEqual "default floor is player's floor (1)" (Just 1) (hvFloor hudDef)
+        rC <- expectEqual "custom floor selection sets hvFloor" (Just 2) (hvFloor hudF2)
+        -- Minimap on floor 1:
+        rD <- case mapGridWithFloor (Just 1) 9 5 st of
+            Nothing -> expectTrue "floor 1 grid exists" False
+            Just g1 -> do
+                let cells = mgCells g1
+                b1 <- expectEqual "floor 1 has only start & hallway" 2 (length cells)
+                b2 <- expectTrue "start is marked as here on floor 1"
+                        (any (\c -> mcHere c && mcRoom c == "start") cells)
+                b3 <- expectTrue "meadow is NOT on floor 1"
+                        (not (any (\c -> mcRoom c == "meadow") cells))
+                pure (b1 && b2 && b3)
+        -- Minimap on floor 2:
+        rE <- case mapGridWithFloor (Just 2) 9 5 st of
+            Nothing -> expectTrue "floor 2 grid exists" False
+            Just g2 -> do
+                let cells = mgCells g2
+                b4 <- expectEqual "floor 2 has only meadow" 1 (length cells)
+                b5 <- expectTrue "meadow is NOT marked as here (player is on floor 1)"
+                        (all (not . mcHere) cells)
+                pure (b4 && b5)
+        pure (rA && rB && rC && rD && rE)
+
 
 main :: IO ()
 main = do
@@ -190,6 +233,7 @@ main = do
         , runTest "hud: dynamic exits shape the map (Rogue P3)" testHudMapDynamic
         , runTest "hud: conditions, equipment, combat, game over" testHudPanels
         , runTest "hud: status lines + bar format" testHudStatsLines
+        , runTest "hud: multi-floor minimap isolates floors and tracks player" testHudMultiFloor
         ]
     if and results then pure () else exitFailure
 
