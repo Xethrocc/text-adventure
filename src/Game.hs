@@ -36,6 +36,7 @@ emptyGameWorld = GameWorld
     , worldTitleArt      = emptyAscii
     , worldClips         = Map.empty
     , cardDefs           = Map.empty
+    , sandboxZones       = Map.empty
     }
 
 -- | Default empty game state
@@ -66,6 +67,7 @@ emptyGameState = GameState
         , triggerStates      = Map.empty
         , exitOverrides      = Map.empty
         , deckState          = Nothing
+        , dynamicRooms       = Map.empty
         }
     , pendingNarrative = Nothing
     , pendingAnimation = Nothing
@@ -1217,6 +1219,29 @@ applyOutcomeWith depth salt outcome targetId state
     ExhaustCard cid -> (exhaustCard cid state, "", salt)
     AddCardToDeck cid dest -> (addCardToDeck cid dest state, "", salt)
     ShuffleDeck -> (shuffleDeck state, "", salt)
+
+    GenerateRoom newId rName rDesc from toDir returnDir ->
+        let ss = save state
+            fromId = if from `elem` ["current", "current_room"] then currentRoom ss else from
+            newRoom = Room
+                { roomId = newId
+                , roomName = rName
+                , roomDescription = plainText rDesc
+                , roomConnections = Map.singleton returnDir (Open fromId)
+                , roomTags = Set.empty
+                , roomLightFlag = Nothing
+                , roomOnEnter = Nothing
+                , roomOnLook = Nothing
+                , roomOnExit = Nothing
+                , roomSearchOutcome = Nothing
+                , roomAscii = emptyAscii
+                , roomIntro = Nothing
+                , roomFloor = Nothing
+                }
+            dyn' = Map.insert newId newRoom (dynamicRooms ss)
+            overrides' = Map.insert (fromId, toDir) (Just (Open newId)) (exitOverrides ss)
+            ss' = ss { dynamicRooms = dyn', exitOverrides = overrides' }
+        in (state { save = ss' }, "", salt)
 
     Noop -> (state, "", salt)
 

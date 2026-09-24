@@ -95,6 +95,7 @@ idsFromOutcomeRoom outcome = case outcome of
     SetExit from _ (Open to)                                    -> [from, to]
     SetExit from _ (Locked to _)                                -> [from, to]
     RemoveExit from _                                           -> [from]
+    GenerateRoom _ _ _ from _ _                                 -> if from `elem` ["current", "current_room"] then [] else [from]
     Sequence os                                              -> concatMap idsFromOutcomeRoom os
     RandomChoice os                                          -> concatMap (idsFromOutcomeRoom . snd) os
     Conditional _ t e                                        -> idsFromOutcomeRoom t ++ idsFromOutcomeRoom e
@@ -115,19 +116,21 @@ dynamicExitTargets gw =
     in Set.union direct nested
   where
     exitTarget :: Effect -> Maybe RoomID
-    exitTarget (SetExit _ _ (Open to))     = Just to
-    exitTarget (SetExit _ _ (Locked to _)) = Just to
-    exitTarget _                           = Nothing
+    exitTarget (SetExit _ _ (Open to))        = Just to
+    exitTarget (SetExit _ _ (Locked to _))    = Just to
+    exitTarget (GenerateRoom newId _ _ _ _ _) = Just newId
+    exitTarget _                              = Nothing
     -- effects inside containers (Conditional/Random/Narrative/ApplyCondition)
     nestedTargets :: Effect -> [RoomID]
-    nestedTargets (SetExit _ _ (Open to))     = [to]
-    nestedTargets (SetExit _ _ (Locked to _)) = [to]
-    nestedTargets (Sequence os)               = concatMap nestedTargets os
-    nestedTargets (RandomChoice os)           = concatMap (nestedTargets . snd) os
-    nestedTargets (Conditional _ t e)         = nestedTargets t ++ nestedTargets e
-    nestedTargets (Narrative _ f)             = nestedTargets f
-    nestedTargets (ApplyCondition _ _ t e)    = concatMap (maybe [] nestedTargets) [t, e]
-    nestedTargets _                           = []
+    nestedTargets (SetExit _ _ (Open to))        = [to]
+    nestedTargets (SetExit _ _ (Locked to _))    = [to]
+    nestedTargets (GenerateRoom newId _ _ _ _ _) = [newId]
+    nestedTargets (Sequence os)                  = concatMap nestedTargets os
+    nestedTargets (RandomChoice os)              = concatMap (nestedTargets . snd) os
+    nestedTargets (Conditional _ t e)            = nestedTargets t ++ nestedTargets e
+    nestedTargets (Narrative _ f)                = nestedTargets f
+    nestedTargets (ApplyCondition _ _ t e)       = concatMap (maybe [] nestedTargets) [t, e]
+    nestedTargets _                              = []
 
 -- | Rooms unreachable from the given start room via Open/Locked exits, plus the
 --   vehicle stops and interiors (reached by boarding/driving, not by room

@@ -630,6 +630,7 @@ data Effect
     | ExhaustCard CardID                          -- ^ Phase 2A: exhaust card from hand/play
     | AddCardToDeck CardID DeckDestination        -- ^ Phase 2A: add card to draw/discard/hand
     | ShuffleDeck                                 -- ^ Phase 2A: shuffle draw pile
+    | GenerateRoom RoomID String String RoomID Direction Direction -- ^ Phase 3A: id, name, description, fromRoom, toDir, returnDir
     | Noop                                        -- ^ Do nothing
     deriving (Show, Eq, Generic)
 
@@ -706,6 +707,63 @@ instance FromJSON DeckState where
         <*> o .:? "discardPile" .!= []
         <*> o .:? "exhaustPile" .!= []
         <*> o .:? "maxHandSize" .!= 10
+
+-- ---------------------------------------------------------------------------
+-- Procedural Sandbox & Runtime Worldgen (Schritt 3 / Phase 3A)
+-- ---------------------------------------------------------------------------
+
+-- | Definition of a biome template for procedural sandbox generation.
+data BiomeTemplate = BiomeTemplate
+    { btId            :: String               -- ^ Unique biome identifier (e.g. "forest")
+    , btWeight        :: Int                  -- ^ Relative frequency weight
+    , btNamePattern   :: String               -- ^ e.g. "Dichter Nadelwald ({x}, {y})"
+    , btDescription   :: CondText             -- ^ Room description with conditional variants
+    , btTags          :: [String]             -- ^ e.g. ["forest", "outdoor"]
+    , btAsciiArt      :: AsciiArt             -- ^ ASCII art landscape (emptyAscii if none)
+    , btPassableDirs  :: [Direction]          -- ^ Open directions (e.g. [North, South, East, West])
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON BiomeTemplate where
+    toJSON bt = object $
+        [ "id"            .= btId bt
+        , "weight"        .= btWeight bt
+        , "name_pattern"  .= btNamePattern bt
+        , "description"   .= btDescription bt
+        , "tags"          .= btTags bt
+        ] ++ asciiPair "ascii_art" (btAsciiArt bt)
+          ++ [ "passable_dirs" .= btPassableDirs bt ]
+
+instance FromJSON BiomeTemplate where
+    parseJSON = withObject "BiomeTemplate" $ \o -> BiomeTemplate
+        <$> o .: "id"
+        <*> o .:? "weight" .!= 1
+        <*> o .:? "name_pattern" .!= "Wildnis ({x}, {y})"
+        <*> o .:? "description" .!= plainText "Unberührte Wildnis."
+        <*> o .:? "tags" .!= []
+        <*> o .:? "ascii_art" .!= emptyAscii
+        <*> o .:? "passable_dirs" .!= [North, South, East, West]
+
+-- | Definition of an infinite procedural sandbox zone.
+data SandboxZone = SandboxZone
+    { szId            :: String               -- ^ Zone id (e.g. "wildnis")
+    , szOrigin        :: (Int, Int, Int)      -- ^ Entry coordinates (x, y, z)
+    , szBiomes        :: [BiomeTemplate]      -- ^ Available biomes in this zone
+    , szDefaultFloor  :: Maybe Int            -- ^ Floor index for minimap (default: Just 1)
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON SandboxZone where
+    toJSON sz = object $
+        [ "id"     .= szId sz
+        , "origin" .= szOrigin sz
+        , "biomes" .= szBiomes sz
+        ] ++ [ "floor" .= fl | Just fl <- [szDefaultFloor sz] ]
+
+instance FromJSON SandboxZone where
+    parseJSON = withObject "SandboxZone" $ \o -> SandboxZone
+        <$> o .: "id"
+        <*> o .:? "origin" .!= (0, 0, 0)
+        <*> o .:? "biomes" .!= []
+        <*> o .:? "floor"
 
 -- | Clip IDs are plain strings; the compiled world carries the clip map.
 type ClipID = String
@@ -1455,6 +1513,7 @@ data GameWorld = GameWorld
     , worldClips         :: Map.Map String Clip                      -- ^ Cutscene clips, embedded at compile time (Phase H/H4, D14)
     , worldGamePolicy    :: GamePolicy                               -- ^ roguelike policy (Rogue Phase 1; default = unchanged behaviour)
     , cardDefs           :: Map.Map CardID Card                      -- ^ Card definitions for deckbuilder / card games (Genre 5)
+    , sandboxZones       :: Map.Map String SandboxZone               -- ^ Procedural infinite sandbox zones (Genre 3)
     } deriving (Show, Eq)
 
 -- | A cutscene clip (Phase H/H4): a frame sequence played once at its own
@@ -1678,7 +1737,7 @@ instance ToJSON GameWorld where
         , "combatProfile"      .= combatProfile gw
         , "worldName"          .= worldName gw
         , "abilities"          .= abilities gw
-        ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair
+        ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair ++ sandboxPair
       where
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
@@ -1689,6 +1748,7 @@ instance ToJSON GameWorld where
         policyPair = [ "game" .= worldGamePolicy gw
                      | worldGamePolicy gw /= defaultGamePolicy ]
         cardPair = [ "cards" .= cardDefs gw | not (Map.null (cardDefs gw)) ]
+        sandboxPair = [ "sandboxZones" .= sandboxZones gw | not (Map.null (sandboxZones gw)) ]
         endArt = Map.filter (not . isEmptyAscii) (worldEndArt gw)
         titleArt = worldTitleArt gw
 
@@ -1746,6 +1806,7 @@ instance FromJSON GameWorld where
         <*> o .:? "clips" .!= Map.empty
         <*> o .:? "game" .!= defaultGamePolicy
         <*> o .:? "cards" .!= Map.empty
+        <*> o .:? "sandboxZones" .!= Map.empty
 
 -- | Encode item-on-item outcomes as objects (P2-9).
 itemInteractionsToJSON :: Map.Map (String, String) Effect -> Value
@@ -1804,6 +1865,7 @@ data SaveState = SaveState
         -- ^ the ToJSON instance omits it entirely, keeping every existing
         -- ^ save's encoding bit-identical).
     , deckState          :: Maybe DeckState                  -- ^ Runtime deckbuilder state (Genre 5)
+    , dynamicRooms       :: Map.Map RoomID Room              -- ^ Dynamically generated runtime rooms (Genre 3)
     } deriving (Show, Eq, Generic)
 
 instance ToJSON SaveState where
@@ -1829,7 +1891,7 @@ instance ToJSON SaveState where
         , "rngState"        .= rngState ss
         , "variables"       .= variables ss
         , "triggerStates"   .= triggerStates ss
-        ] ++ exitOverridePair ++ deckPair
+        ] ++ exitOverridePair ++ deckPair ++ dynamicRoomsPair
       where
         -- Rogue Phase 3 (M2): only emitted when non-empty — the encoding of
         -- untouched adventures stays bit-identical.
@@ -1839,6 +1901,9 @@ instance ToJSON SaveState where
         deckPair = case deckState ss of
             Nothing -> []
             Just ds -> [ "deckState" .= ds ]
+        dynamicRoomsPair =
+            [ "dynamicRooms" .= dynamicRooms ss
+            | not (Map.null (dynamicRooms ss)) ]
 
 instance FromJSON SaveState where
     parseJSON = withObject "SaveState" $ \o -> SaveState
@@ -1865,6 +1930,7 @@ instance FromJSON SaveState where
         <*> o .:? "triggerStates"   .!= Map.empty
         <*> (o .:? "exitOverrides" >>= maybe (pure Map.empty) parseExitOverrides)
         <*> o .:? "deckState"
+        <*> o .:? "dynamicRooms"   .!= Map.empty
 
 -- | Encode exit overrides as a list of {room, dir, exit} objects — the same
 --   shape as 'itemInteractionsToJSON': tuple-keyed maps have no JSON object

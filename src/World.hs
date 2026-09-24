@@ -92,6 +92,7 @@ defaultSaveState gw = SaveState
     , triggerStates   = Map.empty
     , exitOverrides    = Map.empty
     , deckState        = Nothing
+    , dynamicRooms     = Map.empty
     }
 
 -- | Preferred starting room: "start" if it exists, else the first room by key order

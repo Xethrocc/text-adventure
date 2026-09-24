@@ -366,6 +366,7 @@ initSampleGame = GameState
         , worldTitleArt = emptyAscii
         , worldClips = Map.empty
         , cardDefs = Map.empty
+        , sandboxZones = Map.empty
         }
     , save = SaveState
         { player = Player 100 100 10 5 (Map.singleton "lockpick" 2)
@@ -407,6 +408,7 @@ initSampleGame = GameState
         , triggerStates = Map.empty
         , exitOverrides  = Map.empty
         , deckState      = Nothing
+        , dynamicRooms   = Map.empty
         }
     , pendingNarrative = Nothing
     , pendingAnimation = Nothing

@@ -4687,6 +4687,55 @@ testSaveStateDeckStateM2Invariant = do
             r3 <- expectEqual (Just ds) (deckState decoded)
             pure (r1 && r2 && r3)
 
+-- | Phase 3A: BiomeTemplate and SandboxZone serialization and GameWorld M2 invariant
+testGameWorldSandboxZonesM2Invariant :: IO Bool
+testGameWorldSandboxZonesM2Invariant = do
+    let gw = world initSampleGame
+    let enc = Aeson.encode gw
+    -- "sandboxZones" must not appear in JSON when sandboxZones is empty
+    r1 <- expectEqual False (isInfixOf "\"sandboxZones\"" (BLC.unpack enc))
+    -- Checksum calculation is unaffected
+    let cs = computeWorldChecksum gw
+    r2 <- expectTrue "checksum is non-empty" (not (null cs))
+    -- Round-trip with sandboxZones populated
+    let bTemplate = BiomeTemplate "forest" 10 "Tiefer Wald" (plainText "Uralte Baeume umgeben dich.") ["outdoor", "forest"] emptyAscii [North, South, East, West]
+        sz = SandboxZone "wilderness" (0, 0, 0) [bTemplate] (Just 0)
+        gwWithSz = gw { sandboxZones = Map.singleton "wilderness" sz }
+        encWithSz = Aeson.encode gwWithSz
+    r3 <- expectTrue "sandboxZones key present when non-empty" (isInfixOf "\"sandboxZones\"" (BLC.unpack encWithSz))
+    case Aeson.decode encWithSz of
+        Nothing -> putStrLn "Failed to decode GameWorld with sandboxZones" >> pure False
+        Just decoded -> do
+            r4 <- expectEqual (Map.singleton "wilderness" sz) (sandboxZones decoded)
+            pure (r1 && r2 && r3 && r4)
+
+-- | Phase 3A: SaveState dynamicRooms M2 invariant (omitted when empty, round-trips when populated)
+testSaveStateDynamicRoomsM2Invariant :: IO Bool
+testSaveStateDynamicRoomsM2Invariant = do
+    let ss = save initSampleGame
+    let enc = Aeson.encode ss
+    -- "dynamicRooms" must not appear in JSON when dynamicRooms is empty
+    r1 <- expectEqual False (isInfixOf "\"dynamicRooms\"" (BLC.unpack enc))
+    -- Round-trip with dynamicRooms populated
+    let dynRoom = Room "dyn_1" "Dynamischer Raum" (plainText "Ein magischer Raum.") Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing
+        ssWithDyn = ss { dynamicRooms = Map.singleton "dyn_1" dynRoom }
+        encWithDyn = Aeson.encode ssWithDyn
+    r2 <- expectTrue "dynamicRooms key present when non-empty" (isInfixOf "\"dynamicRooms\"" (BLC.unpack encWithDyn))
+    case Aeson.decode encWithDyn of
+        Nothing -> putStrLn "Failed to decode SaveState with dynamicRooms" >> pure False
+        Just decoded -> do
+            r3 <- expectEqual (Map.singleton "dyn_1" dynRoom) (dynamicRooms decoded)
+            pure (r1 && r2 && r3)
+
+-- | Phase 3A: GenerateRoom effect serialization
+testGenerateRoomEffectSerialization :: IO Bool
+testGenerateRoomEffectSerialization = do
+    let eff = GenerateRoom "mine_1" "Stollen" "Ein dunkler Schacht." "start" North South
+        enc = Aeson.encode eff
+    case Aeson.decode enc of
+        Nothing -> putStrLn "Failed to decode GenerateRoom effect" >> pure False
+        Just decoded -> expectEqual eff decoded
+
 -- | Phase 2B: Drawing cards from full deck decreases draw pile and fills hand.
 testDrawCardsFromFullDeck :: IO Bool
 testDrawCardsFromFullDeck = do
@@ -5392,5 +5441,9 @@ main = do
         , runTest "hcatBoxes formatting and wrapping (Phase 2C)" testHcatBoxesFormatting
         , runTest "renderCardBox formatting and colors (Phase 2C)" testRenderCardBoxFormattingAndColors
         , runTest "renderDeckCombatHud and showHand (Phase 2C)" testRenderDeckCombatHud
+        -- Phase 3A: Sandbox & Runtime-Worldgen Data Model & Invariants
+        , runTest "GameWorld sandboxZones M2 invariant (Phase 3A)" testGameWorldSandboxZonesM2Invariant
+        , runTest "SaveState dynamicRooms M2 invariant (Phase 3A)" testSaveStateDynamicRoomsM2Invariant
+        , runTest "GenerateRoom effect serialization (Phase 3A)" testGenerateRoomEffectSerialization
         ]
     when (not (and results)) exitFailure

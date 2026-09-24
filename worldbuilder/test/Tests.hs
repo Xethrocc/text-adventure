@@ -54,6 +54,7 @@ minWorld = E.GameWorld
     , worldTitleArt = E.AsciiArt (E.CondText "" []) [] 1 [] Nothing
     , worldClips = Map.empty
     , cardDefs = Map.empty
+    , sandboxZones = Map.empty
     }
 
 -- | Helper: a minimal valid SaveState referencing room_0
@@ -82,6 +83,7 @@ minSave = E.SaveState
     , triggerStates = Map.empty
     , exitOverrides = Map.empty
     , deckState = Nothing
+    , dynamicRooms = Map.empty
     }
 
 runTest :: String -> IO Bool -> IO Bool

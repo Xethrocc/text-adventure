@@ -247,6 +247,7 @@ compileAdventure adv =
                 , E.worldClips = compileClips (advClips adv)
                 , E.worldGamePolicy = compiledPolicy
                 , E.cardDefs = compiledCards
+                , E.sandboxZones = Map.empty
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
@@ -313,6 +314,7 @@ compileAdventure adv =
                         , E.deckState = case mStartingDeck of
                               Just deckCards -> Just (E.defaultDeckState { E.drawPile = deckCards })
                               Nothing        -> Nothing
+                        , E.dynamicRooms = Map.empty
                         }
             in Right (CompileResult gw startSave gameWarns)
   where
