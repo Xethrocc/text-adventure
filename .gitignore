@@ -8,6 +8,14 @@ plan-7f3-tactical-7h2-shipduell.md
 /tmp/
 Rogue_worldgen_nachfolger_detailplan.md
 docs/genre_machbarkeitsanalyse_und_worldgen_plan.md
+
+# Pi-Konfiguration & Extensions (gehören zu Pi, nicht zum Projekt-Repo)
+.pi/extensions/
+
+# Pi Code-Index (lokal generiert, nicht committen)
+.pi/codeindex/
+
+# Genre-Detailpläne (nur relevant während der Entwicklung)
 docs/detailplan_endlos_sandbox_worldgen.md
 docs/detailplan_kartenspiel_deckbuilder.md
 docs/detailplan_wirtschaft_und_formeln.md
