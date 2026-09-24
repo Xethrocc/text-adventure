@@ -1358,9 +1358,18 @@ applyOutcomeWith depth salt outcome targetId state
     AddCardToDeck cid dest -> (addCardToDeck cid dest state, "", salt)
     ShuffleDeck -> (shuffleDeck state, "", salt)
 
-    GenerateRoom newId rName rDesc from toDir returnDir ->
+    GenerateRoom rawId rawName rawDesc from toDir returnDir ->
         let ss = save state
+            newId = formatWithVars rawId state
+            rName = formatWithVars rawName state
+            rDesc = formatWithVars rawDesc state
             fromId = if from `elem` ["current", "current_room"] then currentRoom ss else from
+            mFromFloor = lookupRoom fromId state >>= roomFloor
+            newFloor = case (mFromFloor, toDir) of
+                (Just fl, Down) -> Just (fl + 1)
+                (Just fl, Up)   -> Just (max 1 (fl - 1))
+                (Just fl, _)    -> Just fl
+                (Nothing, _)    -> Nothing
             newRoom = Room
                 { roomId = newId
                 , roomName = rName
@@ -1374,7 +1383,7 @@ applyOutcomeWith depth salt outcome targetId state
                 , roomSearchOutcome = Nothing
                 , roomAscii = emptyAscii
                 , roomIntro = Nothing
-                , roomFloor = Nothing
+                , roomFloor = newFloor
                 }
             dyn' = Map.insert newId newRoom (dynamicRooms ss)
             overrides' = Map.insert (fromId, toDir) (Just (Open newId)) (exitOverrides ss)

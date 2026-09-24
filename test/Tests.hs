@@ -4830,6 +4830,71 @@ testReciprocalExitWiring = do
                     r5 <- expectEqual "gate" (currentRoom (save st4))
                     pure (r1 && r2 && r3 && r4 && r5)
 
+-- | Phase 3C: GenerateRoom effect dynamically creates a room and wires bidirectional exits
+testGenerateRoomExecution :: IO Bool
+testGenerateRoomExecution = do
+    let gw = world initSampleGame
+        st0 = emptyGameState { world = gw, save = (save emptyGameState) { currentRoom = "start" } }
+        eff = GenerateRoom "secret_cellar" "Geheimer Keller" "Ein modriger Steinkeller." "current_room" Down Up
+        (st1, _) = applyOutcome eff "" st0
+    r1 <- expectTrue "new room in dynamicRooms" (Map.member "secret_cellar" (dynamicRooms (save st1)))
+    let mCellar = lookupRoom "secret_cellar" st1
+    case mCellar of
+        Nothing -> putStrLn "secret_cellar not found" >> pure False
+        Just cellar -> do
+            r2 <- expectEqual "Geheimer Keller" (roomName cellar)
+            r3 <- expectEqual (Just (Open "start")) (Map.lookup Up (roomConnections cellar))
+            -- Check player can move Down from start into secret_cellar
+            let (st2, _) = executeCommand (Go Down) st1
+            r4 <- expectEqual "secret_cellar" (currentRoom (save st2))
+            -- Check player can move Up from secret_cellar back to start
+            let (st3, _) = executeCommand (Go Up) st2
+            r5 <- expectEqual "start" (currentRoom (save st3))
+            pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Phase 3C: GenerateRoom supports variable interpolation in ID, name, and description
+testGenerateRoomInterpolation :: IO Bool
+testGenerateRoomInterpolation = do
+    let gw = world initSampleGame
+        vars0 = Map.fromList [("depth", VVInt 3), ("mine_name", VVText "Kupfermine")]
+        st0 = emptyGameState
+            { world = gw
+            , save = (save emptyGameState) { currentRoom = "start", variables = vars0 }
+            }
+        eff = GenerateRoom "{mine_name}_ebene_{depth}" "{mine_name} Ebene {depth}" "Stollen auf Tiefe {depth}m." "current_room" Down Up
+        (st1, _) = applyOutcome eff "" st0
+    let genId = "Kupfermine_ebene_3"
+    r1 <- expectTrue "interpolated ID in dynamicRooms" (Map.member genId (dynamicRooms (save st1)))
+    case lookupRoom genId st1 of
+        Nothing -> putStrLn "Interpolated room not found" >> pure False
+        Just rm -> do
+            r2 <- expectEqual "Kupfermine Ebene 3" (roomName rm)
+            r3 <- expectEqual (plainText "Stollen auf Tiefe 3m.") (roomDescription rm)
+            pure (r1 && r2 && r3)
+
+-- | Phase 3C: Resource harvesting in sandbox using formulas and variable computation
+testSandboxResourceHarvestFormulas :: IO Bool
+testSandboxResourceHarvestFormulas = do
+    let gw = world initSampleGame
+        vars0 = Map.fromList
+            [ ("wood", VVInt 0)
+            , ("axe_durability", VVInt 10)
+            , ("woodcutting_skill", VVInt 3)
+            , ("tree_capacity", VVInt 5)
+            ]
+        st0 = emptyGameState { world = gw, save = (save emptyGameState) { currentRoom = "start", variables = vars0 } }
+        harvestEffects =
+            [ ComputeValue (VRVariable "yield") (EMul (EVar "woodcutting_skill") (ELit 2))
+            , ComputeValue (VRVariable "wood") (EAdd (EVar "wood") (EVar "yield"))
+            , ModifyValue (VRVariable "axe_durability") (-1)
+            , ModifyValue (VRVariable "tree_capacity") (-1)
+            ]
+        (st1, _) = applyOutcomes harvestEffects "" st0
+    r1 <- expectEqual (Just (VVInt 6)) (Map.lookup "wood" (variables (save st1)))
+    r2 <- expectEqual (Just (VVInt 9)) (Map.lookup "axe_durability" (variables (save st1)))
+    r3 <- expectEqual (Just (VVInt 4)) (Map.lookup "tree_capacity" (variables (save st1)))
+    pure (r1 && r2 && r3)
+
 -- | Phase 2B: Drawing cards from full deck decreases draw pile and fills hand.
 testDrawCardsFromFullDeck :: IO Bool
 testDrawCardsFromFullDeck = do
@@ -5545,5 +5610,9 @@ main = do
         , runTest "deterministic cell seed derivation (Phase 3B)" testDeterministicCellSeed
         , runTest "move into sandbox generates room (Phase 3B)" testMoveIntoSandboxGeneratesRoom
         , runTest "reciprocal exit wiring (Phase 3B)" testReciprocalExitWiring
+        -- Phase 3C: Dynamic Room Generation (GenerateRoom) & Resource Formulas
+        , runTest "GenerateRoom execution and traversal (Phase 3C)" testGenerateRoomExecution
+        , runTest "GenerateRoom variable interpolation (Phase 3C)" testGenerateRoomInterpolation
+        , runTest "sandbox resource harvest formulas (Phase 3C)" testSandboxResourceHarvestFormulas
         ]
     when (not (and results)) exitFailure
