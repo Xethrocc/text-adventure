@@ -19,18 +19,22 @@ module TextAdventure.Tui.Hud
   , equipmentLines
   , combatLines
   , statsLines
+  , statsTable
   , barLine
+  , hcatBoxes
+  , renderCardBox
+  , renderDeckCombatHud
   ) where
 
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.List (intercalate, nub, sort, sortOn)
+import Data.List (intercalate, nub, sort, sortOn, isPrefixOf)
 import Data.Char (toUpper)
 import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 
 import Types
 import Game (effectiveConnections, getVariable, combatRound, combatRoundKey,
-             combatActionKey)
+             combatActionKey, hcatBoxes, renderCardBox, renderDeckCombatHud)
 
 -- | One cell of the minimap: the room's one-letter stamp plus the row/col
 --   it occupies in the grid. Drawn with box-drawing connectors between cells.
@@ -72,6 +76,7 @@ data HudView = HudView
     , hvEquipment  :: [String]      -- ^ "slot: item" lines, slot order
     , hvCombat     :: [String]      -- ^ combat panel lines (empty = no panel)
     , hvGameOver   :: Bool          -- ^ dim the panels on the end screen
+    , hvStatsTable :: [(String, String)] -- ^ formatted Key-Value stats table (Phase 1D)
     } deriving (Show, Eq)
 
 -- | The full HUD for a state, filtered by an optional floor view.
@@ -86,6 +91,7 @@ buildHudWithFloor mFloor st = HudView
     , hvEquipment  = equipmentLines st
     , hvCombat     = combatLines st
     , hvGameOver   = gameOver (save st)
+    , hvStatsTable = statsTable st
     }
   where
     here = currentRoom (save st)
@@ -243,10 +249,36 @@ mapGridWithFloor mFloor w h st
 statsLines :: HudView -> [String]
 statsLines hud = concat
     [ map barLine (take 4 (hvBars hud))
+    , if null (hvStatsTable hud)
+      then []
+      else "" : formatTable (hvStatsTable hud)
     , [ "Zustand: " ++ intercalate ", " (take 3 (hvConditions hud))
       | not (null (hvConditions hud)) ]
     , map ("  " ++) (take 3 (hvEquipment hud))
     ]
+  where
+    formatTable pairs =
+        let maxK = maximum (0 : map (length . fst) pairs)
+            maxV = maximum (0 : map (length . snd) pairs)
+        in [ k ++ ":" ++ replicate (max 1 (maxK + 2 - length k)) ' '
+               ++ replicate (max 0 (maxV - length v)) ' ' ++ v
+           | (k, v) <- pairs
+           ]
+
+-- | Formatted Key-Value stats table for economy and simulation variables.
+--   Filters out internal/engine variables (combat.*, cmd.*) and formats
+--   the remaining variables into (Key, Value) pairs.
+statsTable :: GameState -> [(String, String)]
+statsTable st =
+    [ (k, formatVal v)
+    | (k, v) <- sortOn fst (Map.toList (variables (save st)))
+    , not (isInternalVar k)
+    ]
+  where
+    isInternalVar k = "combat." `isPrefixOf` k || "cmd." `isPrefixOf` k
+    formatVal (VVInt n)  = show n
+    formatVal (VVBool b) = if b then "ja" else "nein"
+    formatVal (VVText s) = s
 
 -- | A gauge as label + ASCII bar + value: "HP [######....] 60".
 barLine :: Bar -> String
@@ -300,16 +332,38 @@ equipmentLines st =
 --   box entirely, D21).
 combatLines :: GameState -> [String]
 combatLines st
-    | engaged < 1 = []
-    | otherwise   = concat
+    | engaged >= 1 = concat
         [ [ "Round " ++ show (combatRound st) ]
         , [ "Action: " ++ a | Just (VVText a) <- [getVariable combatActionKey st] ]
         , maybe [] enemyLines (listToMaybe (mapMaybe living (Map.toList (npcDefs (world st)))))
         ]
+    | Just ds <- deckState (save st), hasLivingEnemies =
+        let deckCnt = length (drawPile ds)
+            discCnt = length (discardPile ds)
+            blockVal = case getVariable "player.block" st of
+                Just (VVInt b) -> b
+                _ -> case getVariable "block" st of
+                    Just (VVInt b) -> b
+                    _              -> 0
+            energyVal = case getVariable "player.energy" st of
+                Just (VVInt e) -> e
+                _ -> case getVariable "energy" st of
+                    Just (VVInt e) -> e
+                    _              -> 3
+            maxE = case getVariable "player.max_energy" st of
+                Just (VVInt m) -> m
+                _ -> case getVariable "max_energy" st of
+                    Just (VVInt m) -> m
+                    _              -> 3
+        in [ "Deck: " ++ show deckCnt ++ " | Ablage: " ++ show discCnt
+           , "Energie: " ++ show energyVal ++ "/" ++ show maxE ++ " | Block: " ++ show blockVal
+           ] ++ maybe [] enemyLines (listToMaybe (mapMaybe living (Map.toList (npcDefs (world st)))))
+    | otherwise = []
   where
     engaged = case getVariable "combat.engaged" st of
         Just (VVInt n) -> n
         _              -> 0
+    hasLivingEnemies = not (null (mapMaybe living (Map.toList (npcDefs (world st)))))
     -- an engaged enemy: an NPC definition with a live state carrying health
     living (nid, def) = case Map.lookup nid (npcStates (save st)) of
         Just ns | npcStatus ns /= "dead"

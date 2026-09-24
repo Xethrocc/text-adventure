@@ -91,6 +91,7 @@ defaultSaveState gw = SaveState
     , variables       = Map.map vdVarInitial (varDefs gw)
     , triggerStates   = Map.empty
     , exitOverrides    = Map.empty
+    , deckState        = Nothing
     }
 
 -- | Preferred starting room: "start" if it exists, else the first room by key order

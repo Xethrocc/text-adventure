@@ -12,7 +12,7 @@ import GHC.Generics (Generic)
 import Data.Aeson
 import Data.Aeson.Types (Parser, Pair, toJSONKeyText)
 import Control.Applicative ((<|>))
-import Data.Char (toLower)
+import Data.Char (toLower, isDigit, isAlpha, isAlphaNum, isSpace)
 import Data.List (intercalate)
 import Data.Maybe (isNothing)
 
@@ -44,6 +44,7 @@ type QuestID   = String
 type SkillID   = String
 type FlagID    = String
 type FactionID = String
+type CardID    = String
 
 -- ---------------------------------------------------------------------------
 -- | Combined result of executing a command
@@ -256,6 +257,177 @@ legacyVRProperty target   "hp"      = VRActorProp (ActorNPC target) PHealth
 legacyVRProperty "player" prop      = VRActorProp ActorPlayer (PCustom prop)
 legacyVRProperty target   prop      = VRActorProp (ActorNPC target) (PCustom prop)
 
+-- ---------------------------------------------------------------------------
+-- Arithmetic expressions for dynamic calculations (Phase 1A)
+-- ---------------------------------------------------------------------------
+
+-- | Arithmetic expression for dynamic calculations in outcomes
+data Expr
+    = ELit Int
+    | EVar String
+    | EAdd Expr Expr
+    | ESub Expr Expr
+    | EMul Expr Expr
+    | EDiv Expr Expr
+    | EMod Expr Expr
+    | EMin Expr Expr
+    | EMax Expr Expr
+    | EClamp Expr Expr Expr
+    deriving (Show, Eq, Generic)
+
+-- | Convert an Expr into a readable, unambiguous string representation.
+showExpr :: Expr -> String
+showExpr (ELit n)
+    | n < 0     = "(" ++ show n ++ ")"
+    | otherwise = show n
+showExpr (EVar v) = v
+showExpr (EAdd a b) = "(" ++ showExpr a ++ " + " ++ showExpr b ++ ")"
+showExpr (ESub a b) = "(" ++ showExpr a ++ " - " ++ showExpr b ++ ")"
+showExpr (EMul a b) = "(" ++ showExpr a ++ " * " ++ showExpr b ++ ")"
+showExpr (EDiv a b) = "(" ++ showExpr a ++ " / " ++ showExpr b ++ ")"
+showExpr (EMod a b) = "(" ++ showExpr a ++ " % " ++ showExpr b ++ ")"
+showExpr (EMin a b) = "min(" ++ showExpr a ++ ", " ++ showExpr b ++ ")"
+showExpr (EMax a b) = "max(" ++ showExpr a ++ ", " ++ showExpr b ++ ")"
+showExpr (EClamp mn mx v) = "clamp(" ++ showExpr mn ++ ", " ++ showExpr mx ++ ", " ++ showExpr v ++ ")"
+
+instance ToJSON Expr where
+    toJSON e = toJSON (showExpr e)
+
+instance FromJSON Expr where
+    parseJSON v = case v of
+        String s -> case parseExpr (T.unpack s) of
+            Right e  -> pure e
+            Left err -> fail ("Failed to parse expression: " ++ err)
+        Number n -> pure (ELit (round n))
+        Object _ -> genericParseJSON defaultOptions v
+        _        -> fail "Expected string expression, number, or object for Expr"
+
+-- | Internal tokens for expression parsing
+data ExprToken
+    = TokNum Int
+    | TokIdent String
+    | TokPlus
+    | TokMinus
+    | TokMul
+    | TokDiv
+    | TokMod
+    | TokLParen
+    | TokRParen
+    | TokComma
+    deriving (Show, Eq)
+
+-- | Lexer for mathematical expressions
+tokenizeExpr :: String -> Either String [ExprToken]
+tokenizeExpr [] = Right []
+tokenizeExpr (c:cs)
+    | isSpace c = tokenizeExpr cs
+    | c == '('  = (TokLParen :) <$> tokenizeExpr cs
+    | c == ')'  = (TokRParen :) <$> tokenizeExpr cs
+    | c == ','  = (TokComma :) <$> tokenizeExpr cs
+    | c == '+'  = (TokPlus :) <$> tokenizeExpr cs
+    | c == '-'  = (TokMinus :) <$> tokenizeExpr cs
+    | c == '*'  = (TokMul :) <$> tokenizeExpr cs
+    | c == '/'  = (TokDiv :) <$> tokenizeExpr cs
+    | c == '%'  = (TokMod :) <$> tokenizeExpr cs
+    | isDigit c =
+        let (digits, rest) = span isDigit (c:cs)
+        in (TokNum (read digits) :) <$> tokenizeExpr rest
+    | isAlpha c || c == '_' =
+        let (ident, rest) = span (\x -> isAlphaNum x || x == '_' || x == '.') (c:cs)
+        in (TokIdent ident :) <$> tokenizeExpr rest
+    | otherwise = Left ("Unexpected character in expression: " ++ [c])
+
+-- | Recursive descent parser for Expr tokens
+parseExprTokens :: [ExprToken] -> Either String (Expr, [ExprToken])
+parseExprTokens = parseExprAdditive
+
+parseExprAdditive :: [ExprToken] -> Either String (Expr, [ExprToken])
+parseExprAdditive tokens = do
+    (left, rest) <- parseExprMultiplicative tokens
+    loop left rest
+  where
+    loop acc (TokPlus : ts) = do
+        (rhs, rest') <- parseExprMultiplicative ts
+        loop (EAdd acc rhs) rest'
+    loop acc (TokMinus : ts) = do
+        (rhs, rest') <- parseExprMultiplicative ts
+        loop (ESub acc rhs) rest'
+    loop acc ts = Right (acc, ts)
+
+parseExprMultiplicative :: [ExprToken] -> Either String (Expr, [ExprToken])
+parseExprMultiplicative tokens = do
+    (left, rest) <- parseExprUnary tokens
+    loop left rest
+  where
+    loop acc (TokMul : ts) = do
+        (rhs, rest') <- parseExprUnary ts
+        loop (EMul acc rhs) rest'
+    loop acc (TokDiv : ts) = do
+        (rhs, rest') <- parseExprUnary ts
+        loop (EDiv acc rhs) rest'
+    loop acc (TokMod : ts) = do
+        (rhs, rest') <- parseExprUnary ts
+        loop (EMod acc rhs) rest'
+    loop acc ts = Right (acc, ts)
+
+parseExprUnary :: [ExprToken] -> Either String (Expr, [ExprToken])
+parseExprUnary (TokMinus : ts) = do
+    (sub, rest) <- parseExprUnary ts
+    Right (ESub (ELit 0) sub, rest)
+parseExprUnary (TokPlus : ts) = parseExprUnary ts
+parseExprUnary ts = parseExprPrimary ts
+
+parseExprPrimary :: [ExprToken] -> Either String (Expr, [ExprToken])
+parseExprPrimary (TokNum n : ts) = Right (ELit n, ts)
+parseExprPrimary (TokIdent "min" : TokLParen : ts) = do
+    (a, r1) <- parseExprAdditive ts
+    case r1 of
+        TokComma : r2 -> do
+            (b, r3) <- parseExprAdditive r2
+            case r3 of
+                TokRParen : r4 -> Right (EMin a b, r4)
+                _ -> Left "Expected ')' after min(a, b)"
+        _ -> Left "Expected ',' in min(a, b)"
+parseExprPrimary (TokIdent "max" : TokLParen : ts) = do
+    (a, r1) <- parseExprAdditive ts
+    case r1 of
+        TokComma : r2 -> do
+            (b, r3) <- parseExprAdditive r2
+            case r3 of
+                TokRParen : r4 -> Right (EMax a b, r4)
+                _ -> Left "Expected ')' after max(a, b)"
+        _ -> Left "Expected ',' in max(a, b)"
+parseExprPrimary (TokIdent "clamp" : TokLParen : ts) = do
+    (lo, r1) <- parseExprAdditive ts
+    case r1 of
+        TokComma : r2 -> do
+            (hi, r3) <- parseExprAdditive r2
+            case r3 of
+                TokComma : r4 -> do
+                    (val, r5) <- parseExprAdditive r4
+                    case r5 of
+                        TokRParen : r6 -> Right (EClamp lo hi val, r6)
+                        _ -> Left "Expected ')' after clamp(lo, hi, val)"
+                _ -> Left "Expected second ',' in clamp(lo, hi, val)"
+        _ -> Left "Expected first ',' in clamp(lo, hi, val)"
+parseExprPrimary (TokIdent name : ts) = Right (EVar name, ts)
+parseExprPrimary (TokLParen : ts) = do
+    (inner, rest) <- parseExprAdditive ts
+    case rest of
+        TokRParen : rest' -> Right (inner, rest')
+        _ -> Left "Missing closing parenthesis ')'"
+parseExprPrimary (t : _) = Left ("Unexpected token: " ++ show t)
+parseExprPrimary [] = Left "Unexpected end of expression"
+
+-- | Parse a mathematical string expression into an Expr AST.
+parseExpr :: String -> Either String Expr
+parseExpr s = do
+    tokens <- tokenizeExpr s
+    (expr, rest) <- parseExprTokens tokens
+    case rest of
+        [] -> Right expr
+        (t : _) -> Left ("Unexpected trailing token: " ++ show t)
+
 -- | Predicate: composable condition language for the generic rule system (Phase 3c).
 --   A single outcome `Conditional Predicate a a` replaces CheckFlag, HasCondition,
 --   CheckSkill, and any future bespoke check.
@@ -337,10 +509,13 @@ instance FromJSON Predicate where
         <|> (do cv  <- o .: "compare_var"
                 n   <- cv .: "name"
                 opS <- cv .: "op"
-                v   <- cv .: "value"
-                case parseComparatorName opS of
-                    Just cmp -> pure (CompareVar n cmp v)
-                    Nothing  -> fail ("Unknown comparator '" ++ opS ++ "' in compare_var"))
+                cmp <- case parseComparatorName opS of
+                    Just c  -> pure c
+                    Nothing -> fail ("Unknown comparator '" ++ opS ++ "' in compare_var")
+                (do v <- cv .: "value"
+                    pure (CompareVar n cmp v))
+                  <|> (do otherVar <- cv .: "var" <|> cv .: "other_var"
+                          pure (Compare (VRVariable n) cmp (VRVariable otherVar))))
         -- Phase 7a: standing sugar -> CompareVar on the "faction.<id>" variable.
         --   Input-only alias: ToJSON stays the canonical compare_var form, so
         --   saved worlds round-trip through the existing CompareVar branch.
@@ -352,6 +527,78 @@ instance FromJSON Predicate where
                  <|> (CompareVar var CEq  <$> st .: "equals")
                  <|> fail "standing: expected at_least, at_most, or equals" ))
         <|> fail "Unknown predicate"
+
+-- ---------------------------------------------------------------------------
+-- Card Games & Deckbuilder (Schritt 2 / Phase 2A)
+-- ---------------------------------------------------------------------------
+
+-- | Card classification for color coding, filtering and gameplay roles.
+data CardType
+    = CardAttack       -- ^ Attack card (red)
+    | CardSkill        -- ^ Skill / Defense card (blue)
+    | CardPower        -- ^ Power card (gold)
+    | CardCurse        -- ^ Curse card (purple)
+    | CardStatus       -- ^ Temporary status card (grey)
+    deriving (Show, Eq, Generic)
+
+instance ToJSON CardType where
+    toJSON CardAttack = "attack"
+    toJSON CardSkill  = "skill"
+    toJSON CardPower  = "power"
+    toJSON CardCurse  = "curse"
+    toJSON CardStatus = "status"
+
+instance FromJSON CardType where
+    parseJSON = withText "CardType" $ \t -> case map toLower (T.unpack t) of
+        "attack" -> pure CardAttack
+        "skill"  -> pure CardSkill
+        "power"  -> pure CardPower
+        "curse"  -> pure CardCurse
+        "status" -> pure CardStatus
+        other    -> fail ("Unknown card type: " ++ other)
+
+-- | Targeting requirement for playing a card.
+data CardTarget
+    = TargetSelf           -- ^ Affects the player only
+    | TargetSingleEnemy    -- ^ Requires a living targeted enemy in the room
+    | TargetAllEnemies     -- ^ Affects all enemies in the room automatically
+    | TargetNone           -- ^ No target required
+    deriving (Show, Eq, Generic)
+
+instance ToJSON CardTarget where
+    toJSON TargetSelf        = "self"
+    toJSON TargetSingleEnemy = "single_enemy"
+    toJSON TargetAllEnemies  = "all_enemies"
+    toJSON TargetNone        = "none"
+
+instance FromJSON CardTarget where
+    parseJSON = withText "CardTarget" $ \t -> case map toLower (T.unpack t) of
+        "self"         -> pure TargetSelf
+        "single_enemy" -> pure TargetSingleEnemy
+        "single"       -> pure TargetSingleEnemy
+        "all_enemies"  -> pure TargetAllEnemies
+        "all"          -> pure TargetAllEnemies
+        "none"         -> pure TargetNone
+        other          -> fail ("Unknown card target: " ++ other)
+
+-- | Target pile when adding a card to the deck.
+data DeckDestination
+    = DestDraw     -- ^ Top of draw pile
+    | DestDiscard  -- ^ Discard pile
+    | DestHand     -- ^ Into active hand
+    deriving (Show, Eq, Generic)
+
+instance ToJSON DeckDestination where
+    toJSON DestDraw    = "draw"
+    toJSON DestDiscard = "discard"
+    toJSON DestHand    = "hand"
+
+instance FromJSON DeckDestination where
+    parseJSON = withText "DeckDestination" $ \t -> case map toLower (T.unpack t) of
+        "draw"    -> pure DestDraw
+        "discard" -> pure DestDiscard
+        "hand"    -> pure DestHand
+        other     -> fail ("Unknown deck destination: " ++ other)
 
 -- | Action Outcome representing the result of an interaction
 --   This is the engine-level Effect-DSL: a compact, composable set of
@@ -376,8 +623,89 @@ data Effect
     | PlayClip ClipID                             -- ^ Phase H/H4: queue a cutscene clip (pendingCutscene)
     | SetExit RoomID Direction Exit               -- ^ Rogue Phase 3: open/rewire a dynamic exit
     | RemoveExit RoomID Direction                 -- ^ Rogue Phase 3: close a dynamic exit
+    | ComputeValue ValueRef Expr                  -- ^ Phase 1A: dynamically compute an expression and assign to ValueRef
+    | DrawCards Int                               -- ^ Phase 2A: draw n cards into hand
+    | DiscardHand                                 -- ^ Phase 2A: discard active hand
+    | DiscardCard CardID                          -- ^ Phase 2A: discard specific card from hand
+    | ExhaustCard CardID                          -- ^ Phase 2A: exhaust card from hand/play
+    | AddCardToDeck CardID DeckDestination        -- ^ Phase 2A: add card to draw/discard/hand
+    | ShuffleDeck                                 -- ^ Phase 2A: shuffle draw pile
     | Noop                                        -- ^ Do nothing
     deriving (Show, Eq, Generic)
+
+-- | Helper: compute an expression and write the result to a variable
+computeVar :: String -> Expr -> Effect
+computeVar name expr = ComputeValue (VRVariable name) expr
+
+-- | Static card definition in GameWorld.
+data Card = Card
+    { cardId          :: CardID
+    , cardName        :: String
+    , cardCost        :: Map.Map String Int       -- ^ Resource costs, e.g. { "energy": 1 }
+    , cardType        :: CardType
+    , cardDescription :: String
+    , cardTarget      :: CardTarget
+    , cardExhaust     :: Bool                     -- ^ Removed to exhaust pile on play
+    , cardEffects     :: [Effect]                 -- ^ Pure Effect DSL
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON Card where
+    toJSON c = object
+        [ "cardId"          .= cardId c
+        , "cardName"        .= cardName c
+        , "cardCost"        .= cardCost c
+        , "cardType"        .= cardType c
+        , "cardDescription" .= cardDescription c
+        , "cardTarget"      .= cardTarget c
+        , "cardExhaust"     .= cardExhaust c
+        , "cardEffects"     .= cardEffects c
+        ]
+
+instance FromJSON Card where
+    parseJSON = withObject "Card" $ \o -> Card
+        <$> (o .:? "cardId" >>= maybe (o .:? "id" .!= "") pure)
+        <*> (o .:? "cardName" >>= maybe (o .: "name") pure)
+        <*> (o .:? "cardCost" >>= maybe (o .:? "cost" .!= Map.empty) pure)
+        <*> (o .:? "cardType" >>= maybe (o .:? "type" .!= CardSkill) pure)
+        <*> (o .:? "cardDescription" >>= maybe (o .:? "description" >>= maybe (o .:? "desc" .!= "") pure) pure)
+        <*> (o .:? "cardTarget" >>= maybe (o .:? "target" .!= TargetNone) pure)
+        <*> (o .:? "cardExhaust" >>= maybe (o .:? "exhaust" .!= False) pure)
+        <*> (o .:? "cardEffects" >>= maybe (o .:? "effects" >>= maybe (o .:? "outcomes" .!= []) pure) pure)
+
+-- | Runtime state of card decks in SaveState.
+data DeckState = DeckState
+    { drawPile    :: [CardID]                 -- ^ Ordered draw pile (head = next to draw)
+    , hand        :: [CardID]                 -- ^ Current hand
+    , discardPile :: [CardID]                 -- ^ Discard pile
+    , exhaustPile :: [CardID]                 -- ^ Exhausted cards removed for combat
+    , maxHandSize :: Int                     -- ^ Max cards allowed in hand (default: 10)
+    } deriving (Show, Eq, Generic)
+
+defaultDeckState :: DeckState
+defaultDeckState = DeckState
+    { drawPile    = []
+    , hand        = []
+    , discardPile = []
+    , exhaustPile = []
+    , maxHandSize = 10
+    }
+
+instance ToJSON DeckState where
+    toJSON ds = object
+        [ "drawPile"    .= drawPile ds
+        , "hand"        .= hand ds
+        , "discardPile" .= discardPile ds
+        , "exhaustPile" .= exhaustPile ds
+        , "maxHandSize" .= maxHandSize ds
+        ]
+
+instance FromJSON DeckState where
+    parseJSON = withObject "DeckState" $ \o -> DeckState
+        <$> o .:? "drawPile"    .!= []
+        <*> o .:? "hand"        .!= []
+        <*> o .:? "discardPile" .!= []
+        <*> o .:? "exhaustPile" .!= []
+        <*> o .:? "maxHandSize" .!= 10
 
 -- | Clip IDs are plain strings; the compiled world carries the clip map.
 type ClipID = String
@@ -1126,6 +1454,7 @@ data GameWorld = GameWorld
     , worldTitleArt      :: AsciiArt                                 -- ^ Optional title banner replacing the `bannerFor` default (Phase G)
     , worldClips         :: Map.Map String Clip                      -- ^ Cutscene clips, embedded at compile time (Phase H/H4, D14)
     , worldGamePolicy    :: GamePolicy                               -- ^ roguelike policy (Rogue Phase 1; default = unchanged behaviour)
+    , cardDefs           :: Map.Map CardID Card                      -- ^ Card definitions for deckbuilder / card games (Genre 5)
     } deriving (Show, Eq)
 
 -- | A cutscene clip (Phase H/H4): a frame sequence played once at its own
@@ -1349,7 +1678,7 @@ instance ToJSON GameWorld where
         , "combatProfile"      .= combatProfile gw
         , "worldName"          .= worldName gw
         , "abilities"          .= abilities gw
-        ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair
+        ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair
       where
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
@@ -1359,6 +1688,7 @@ instance ToJSON GameWorld where
         -- all existing saves would report "world mismatch!".
         policyPair = [ "game" .= worldGamePolicy gw
                      | worldGamePolicy gw /= defaultGamePolicy ]
+        cardPair = [ "cards" .= cardDefs gw | not (Map.null (cardDefs gw)) ]
         endArt = Map.filter (not . isEmptyAscii) (worldEndArt gw)
         titleArt = worldTitleArt gw
 
@@ -1415,6 +1745,7 @@ instance FromJSON GameWorld where
         <*> o .:? "titleArt" .!= emptyAscii
         <*> o .:? "clips" .!= Map.empty
         <*> o .:? "game" .!= defaultGamePolicy
+        <*> o .:? "cards" .!= Map.empty
 
 -- | Encode item-on-item outcomes as objects (P2-9).
 itemInteractionsToJSON :: Map.Map (String, String) Effect -> Value
@@ -1472,6 +1803,7 @@ data SaveState = SaveState
         -- ^ removed (even if statically present). Empty = static world (M2:
         -- ^ the ToJSON instance omits it entirely, keeping every existing
         -- ^ save's encoding bit-identical).
+    , deckState          :: Maybe DeckState                  -- ^ Runtime deckbuilder state (Genre 5)
     } deriving (Show, Eq, Generic)
 
 instance ToJSON SaveState where
@@ -1497,13 +1829,16 @@ instance ToJSON SaveState where
         , "rngState"        .= rngState ss
         , "variables"       .= variables ss
         , "triggerStates"   .= triggerStates ss
-        ] ++ exitOverridePair
+        ] ++ exitOverridePair ++ deckPair
       where
         -- Rogue Phase 3 (M2): only emitted when non-empty — the encoding of
         -- untouched adventures stays bit-identical.
         exitOverridePair =
             [ "exitOverrides" .= exitOverridesToJSON (exitOverrides ss)
             | not (Map.null (exitOverrides ss)) ]
+        deckPair = case deckState ss of
+            Nothing -> []
+            Just ds -> [ "deckState" .= ds ]
 
 instance FromJSON SaveState where
     parseJSON = withObject "SaveState" $ \o -> SaveState
@@ -1529,6 +1864,7 @@ instance FromJSON SaveState where
         <*> o .:? "variables"       .!= Map.empty
         <*> o .:? "triggerStates"   .!= Map.empty
         <*> (o .:? "exitOverrides" >>= maybe (pure Map.empty) parseExitOverrides)
+        <*> o .:? "deckState"
 
 -- | Encode exit overrides as a list of {room, dir, exit} objects — the same
 --   shape as 'itemInteractionsToJSON': tuple-keyed maps have no JSON object

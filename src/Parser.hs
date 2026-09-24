@@ -8,11 +8,11 @@ import Game
 import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombat, targetShipSystems)
 import Control.Applicative ((<|>))
 import Data.Char (toLower, isDigit)
-import Data.List (find, intercalate, nub, foldl', dropWhileEnd)
+import Data.List (find, intercalate, nub, foldl', dropWhileEnd, isPrefixOf)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (fromMaybe, isJust)
 import qualified Data.Set as Set
-import Verbs (resolveVerb)
+import Verbs (resolveVerb, verbCanonicalName)
 
 -- | Parsed command structure
 data Command
@@ -46,6 +46,12 @@ data Command
     | Restart
     | Help
     | Quit
+    | ActionWithArgs Verb [String]  -- ^ Parameterized command (Phase 1C)
+    | PlayCardCmd Int (Maybe String) -- ^ Play card by 1-based index with optional target
+    | HandCmd                        -- ^ Show hand
+    | DeckCmd                        -- ^ Show draw pile / deck
+    | DiscardCmd                     -- ^ Show discard pile
+    | EndTurnCmd                     -- ^ End combat turn
     | Unknown String
     deriving (Show, Eq)
 
@@ -158,6 +164,31 @@ parseSimpleCommandWith defs tokens input = case tokens of
     ["journal"]            -> JournalCmd
     ["quests"]             -> JournalCmd
     ["undo"]               -> Undo
+    -- Card & Deck commands (Phase 2B)
+    ["hand"]               -> HandCmd
+    ["karten"]             -> HandCmd
+    ["cards"]              -> HandCmd
+    ["deck"]               -> DeckCmd
+    ["discard"]            -> DiscardCmd
+    ["ablage"]             -> DiscardCmd
+    ["end", "turn"]        -> EndTurnCmd
+    ["endturn"]            -> EndTurnCmd
+    ["zug", "beenden"]     -> EndTurnCmd
+    ["pass"]               -> EndTurnCmd
+    ["passe"]              -> EndTurnCmd
+    "play" : nStr : rest | all isDigit nStr && not (null nStr) ->
+        let target = unwords (safeStripStopWords rest)
+        in PlayCardCmd (read nStr) (if null target then Nothing else Just target)
+    ["play", nStr] | all isDigit nStr && not (null nStr) ->
+        PlayCardCmd (read nStr) Nothing
+    "spiele" : nStr : "auf" : rest | all isDigit nStr && not (null nStr) ->
+        let target = unwords (safeStripStopWords rest)
+        in PlayCardCmd (read nStr) (if null target then Nothing else Just target)
+    "spiele" : nStr : rest | all isDigit nStr && not (null nStr) ->
+        let target = unwords (safeStripStopWords rest)
+        in PlayCardCmd (read nStr) (if null target then Nothing else Just target)
+    ["spiele", nStr] | all isDigit nStr && not (null nStr) ->
+        PlayCardCmd (read nStr) Nothing
     -- Dialogue choice (Phase 4.6).
     -- `pick` is also a `take` alias (src/Verbs.hs) and `pick up <item>` is the
     -- take verb below (:206). A *numeric* `pick` therefore means "choose" and
@@ -232,7 +263,12 @@ parseSimpleCommandWith defs tokens input = case tokens of
     "use"   : useParts -> parseUse useParts input
     -- Generic verb-noun parsing: resolve against registry (core + custom)
     v : targetParts | not (null targetParts) -> case parseVerbWith defs v of
-        Just verb -> Interact verb (unwords (safeStripStopWords targetParts))
+        Just verb ->
+            let cleanParts = safeStripStopWords targetParts
+            in case (isCustomVerb verb, cleanParts) of
+                (True, [single]) -> Interact verb single
+                (True, parts)    -> ActionWithArgs verb parts
+                (False, _)       -> Interact verb (unwords cleanParts)
         Nothing   -> Unknown input
     -- Bare custom verb with no object (e.g. "align", "pray", "accuse")
     [v] | Just verb <- parseVerbWith defs v -> Interact verb ""
@@ -271,20 +307,6 @@ parseUse useParts input =
             Interact VUse (unwords (safeStripStopWords itemParts))
         _ -> Unknown input
 
-normalizeText :: String -> String
-normalizeText = map toLower
-
-itemAliases :: ItemDef -> [String]
-itemAliases item = nub $ map normalizeText (itemId item : itemName item : itemKeywords item)
-
-npcAliases :: NPCDef -> [String]
-npcAliases npc = nub $ map normalizeText (npcId npc : npcName npc : npcKeywords npc)
-
-matchesItemTarget :: String -> ItemDef -> Bool
-matchesItemTarget target item = normalizeText target `elem` itemAliases item
-
-matchesNPCTarget :: String -> NPCDef -> Bool
-matchesNPCTarget target npc = normalizeText target `elem` npcAliases npc
 
 -- | Rogue Phase 3: locked doors reachable from the current room — via the
 --   central 'effectiveConnections', so a dynamically set (`set_exit` with
@@ -317,6 +339,90 @@ resolveEntityCandidates entityStr state =
                 exitEntities ++ ["door", "locked door"]
             | otherwise = []
     in nub $ doorCandidates ++ [target] ++ maybe [] itemAliases matchedItem ++ maybe [] npcAliases matchedNPC
+
+-- ---------------------------------------------------------------------------
+-- Command argument binding & parameterized verbs (Phase 1C)
+-- ---------------------------------------------------------------------------
+
+-- | Check if a verb is custom or genre-specific
+isCustomVerb :: Verb -> Bool
+isCustomVerb (VCustom _) = True
+isCustomVerb _           = False
+
+-- | Check if the world defines an OnCommand trigger for this verb.
+hasOnCommandTrigger :: Verb -> GameState -> Bool
+hasOnCommandTrigger verb state =
+    let vName = verbCanonicalName verb
+    in any (\td -> trEvent td == OnCommand vName) (triggerDefs (world state))
+
+-- | Bind command arguments to cmd.* variables in GameState before trigger execution.
+--   Sets:
+--     cmd.verb     - String: canonical verb name
+--     cmd.count    - Int: number of arguments
+--     cmd.raw_args - String: unparsed argument string
+--     cmd.arg1..N  - VVInt if parseable as Int, otherwise VVText
+bindCommandVars :: Command -> GameState -> GameState
+bindCommandVars cmd st =
+    let (vName, rawArgs, argTokens) = extractCommandArgs cmd
+        countVal = length argTokens
+        baseVars = [ ("cmd.verb", VVText vName)
+                   , ("cmd.count", VVInt countVal)
+                   , ("cmd.raw_args", VVText rawArgs)
+                   ]
+        argVars = [ ("cmd.arg" ++ show i, parseArgVal tok)
+                  | (i, tok) <- zip [1 :: Int ..] argTokens
+                  ]
+        allNewCmdVars = baseVars ++ argVars
+        cleanedVars = Map.filterWithKey (\k _ -> not ("cmd.arg" `isPrefixOf` k)) (variables (save st))
+        finalVars = foldl' (\vm (k, v) -> Map.insert k v vm) cleanedVars allNewCmdVars
+    in st { save = (save st) { variables = finalVars } }
+  where
+    parseArgVal s = case reads s of
+        [(n, "")] -> VVInt n
+        _         -> VVText s
+
+-- | Extract canonical verb name, raw argument string, and token list from a command.
+extractCommandArgs :: Command -> (String, String, [String])
+extractCommandArgs cmd = case cmd of
+    ActionWithArgs v args -> (verbCanonicalName v, unwords args, args)
+    Interact v target     -> (verbCanonicalName v, target, words target)
+    InteractWith v t1 t2  -> (verbCanonicalName v, t1 ++ " " ++ t2, words (t1 ++ " " ++ t2))
+    Go dir                -> ("go", show dir, [show dir])
+    Look                  -> ("look", "", [])
+    Inventory             -> ("inventory", "", [])
+    StatsCmd              -> ("stats", "", [])
+    JournalCmd            -> ("journal", "", [])
+    SearchCmd Nothing     -> ("search", "", [])
+    SearchCmd (Just t)    -> ("search", t, words t)
+    WatchCmd Nothing      -> ("watch", "", [])
+    WatchCmd (Just t)     -> ("watch", t, words t)
+    MapCmd                -> ("map", "", [])
+    TakeAll               -> ("take", "all", ["all"])
+    DropAll               -> ("drop", "all", ["all"])
+    EquipCmd t            -> ("equip", t, words t)
+    UnequipCmd t          -> ("unequip", t, words t)
+    UnequipAllCmd         -> ("unequip", "all", ["all"])
+    Save s                -> ("save", s, words s)
+    Load s                -> ("load", s, words s)
+    ListSaves             -> ("saves", "", [])
+    Help                  -> ("help", "", [])
+    Quit                  -> ("quit", "", [])
+    Restart               -> ("restart", "", [])
+    Undo                  -> ("undo", "", [])
+    EnterVehicleCmd s     -> ("enter", s, words s)
+    ExitVehicleCmd        -> ("exit", "", [])
+    DriveToCmd s          -> ("drive", s, words s)
+    WaitCmd               -> ("wait", "", [])
+    RefuelCmd s           -> ("refuel", s, words s)
+    RepairCmd s           -> ("repair", s, words s)
+    ChooseCmd n           -> ("choose", show n, [show n])
+    PlayCardCmd idx mT    -> ("play", show idx ++ maybe "" (" " ++) mT, show idx : maybe [] words mT)
+    HandCmd               -> ("hand", "", [])
+    DeckCmd               -> ("deck", "", [])
+    DiscardCmd            -> ("discard", "", [])
+    EndTurnCmd            -> ("end_turn", "", [])
+    CompoundCommand _     -> ("compound", "", [])
+    Unknown s             -> ("unknown", s, words s)
 
 -- ---------------------------------------------------------------------------
 -- Command execution
@@ -405,6 +511,13 @@ executeCommand StatsCmd state =
 
 executeCommand JournalCmd state = (state, journalText state)
 executeCommand Undo state = (state, "Nothing to undo.")
+
+-- Card & Deck commands (Phase 2B)
+executeCommand (PlayCardCmd idx target) state = playCard idx target state
+executeCommand HandCmd state = showHand state
+executeCommand DeckCmd state = showDeck state
+executeCommand DiscardCmd state = showDiscard state
+executeCommand EndTurnCmd state = endTurn state
 
 executeCommand (ChooseCmd idx) state =
     case activeDialogue (save state) of
@@ -549,18 +662,23 @@ executeCommand MapCmd state = case getCurrentRoom state of
                                 | (i, h) <- zip [1 :: Int ..] spots ]
                    in (state, numbered ++ "\n\nLegend:\n" ++ unlines legend)
 
+executeCommand (ActionWithArgs verb args) state =
+    let stateWithVars = bindCommandVars (ActionWithArgs verb args) state
+    in executeCommand (Interact verb (unwords args)) stateWithVars
+
 executeCommand (Interact verb targetStr) state =
-    let resolvedTarget = resolveHotspotTarget targetStr state
-        roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
-        invItems = getItemsInLocation (CarriedBy "player") state
+    let stateWithVars = bindCommandVars (Interact verb targetStr) state
+        resolvedTarget = resolveHotspotTarget targetStr stateWithVars
+        roomItems = getItemsInLocation (InRoom (currentRoom (save stateWithVars))) stateWithVars
+        invItems = getItemsInLocation (CarriedBy "player") stateWithVars
         allReachableItems = roomItems ++ invItems
-        roomNPCs = getNPCsInRoom (currentRoom (save state)) state
+        roomNPCs = getNPCsInRoom (currentRoom (save stateWithVars)) stateWithVars
         targetItem = find (matchesItemTarget resolvedTarget) allReachableItems
         targetNPC = find (matchesNPCTarget resolvedTarget) roomNPCs
     in case (targetItem, targetNPC) of
         (Just item, _) ->
             let iId = itemId item
-                maybeItemState = Map.lookup iId (itemStates (save state))
+                maybeItemState = Map.lookup iId (itemStates (save stateWithVars))
                 currentStatus = maybe "unknown" itemStatus maybeItemState
                 notCarried = maybe True (\loc -> loc /= CarriedBy "player") (fmap itemLocation maybeItemState)
                 vmLookup = Map.lookup (verb, currentStatus) (itemVerbMap item)
@@ -568,69 +686,73 @@ executeCommand (Interact verb targetStr) state =
                 -- Taking: enforce portability, then pick up AND run on_take.
                 (VTake, _)
                     | not notCarried ->
-                        (state, "You already have the " ++ itemName item ++ ".")
+                        (stateWithVars, "You already have the " ++ itemName item ++ ".")
                     | otherwise ->
                         case itemPortable item of
-                            False -> (state, fromMaybe ("You can't take the " ++ itemName item ++ ".")
+                            False -> (stateWithVars, fromMaybe ("You can't take the " ++ itemName item ++ ".")
                                                      (itemTakeFailure item))
                             True ->
                                 let (st', extra) = case vmLookup of
-                                        Just outcome -> applyOutcome outcome iId state
-                                        Nothing      -> (state, "")
+                                        Just outcome -> applyOutcome outcome iId stateWithVars
+                                        Nothing      -> (stateWithVars, "")
                                     takeMsg = "You take the " ++ itemName item ++ "."
                                 in (pickupItem iId st',
                                     if null extra then takeMsg else takeMsg ++ "\n" ++ extra)
                 _ -> case vmLookup of
-                    Just outcome -> applyOutcome outcome iId state
+                    Just outcome -> applyOutcome outcome iId stateWithVars
                     Nothing ->
-                        if verb == VDrop && hasItem iId state
-                        then (dropItem iId state, "You drop the " ++ itemName item ++ ".")
+                        if verb == VDrop && hasItem iId stateWithVars
+                        then (dropItem iId stateWithVars, "You drop the " ++ itemName item ++ ".")
                         else if verb == VLookAt
-                        then (state, withAscii (renderArtForLook (itemAscii item) state)
-                                              (resolveCondText (itemDescription item) state))
-                        else case if verb == VAttack then tryAttackVehicle targetStr state else Nothing of
+                        then (stateWithVars, withAscii (renderArtForLook (itemAscii item) stateWithVars)
+                                              (resolveCondText (itemDescription item) stateWithVars))
+                        else case if verb == VAttack then tryAttackVehicle targetStr stateWithVars else Nothing of
                             Just res -> res
-                            Nothing  -> (state, "You can't do that to the " ++ itemName item ++ " right now.")
+                            Nothing
+                                | hasOnCommandTrigger verb stateWithVars -> (stateWithVars, "")
+                                | otherwise -> (stateWithVars, "You can't do that to the " ++ itemName item ++ " right now.")
 
         (Nothing, Just npc) ->
             let nId = npcId npc
-                maybeNpcState = Map.lookup nId (npcStates (save state))
+                maybeNpcState = Map.lookup nId (npcStates (save stateWithVars))
                 currentStatus = maybe "unknown" npcStatus maybeNpcState
-                isCorpse = isDeadNPC nId state
+                isCorpse = isDeadNPC nId stateWithVars
             in case Map.lookup (verb, currentStatus) (npcVerbMap npc) of
-                Just outcome -> applyOutcome outcome nId state
+                Just outcome -> applyOutcome outcome nId stateWithVars
                 Nothing
                     -- A body can be looked at, searched and targeted by authored
                     -- verbs, but it neither fights nor talks.
                     | isCorpse, verb == VAttack ->
-                        (state, "The " ++ npcName npc ++ " is already dead.")
+                        (stateWithVars, "The " ++ npcName npc ++ " is already dead.")
                     | isCorpse, verb == VTalk ->
-                        (state, "The " ++ npcName npc ++ " is dead and says nothing.")
-                    | verb == VTalk -> talkTo npc maybeNpcState state
-                    | verb == VAttack -> executeAttack npc maybeNpcState targetStr state
-                    | verb == VLookAt -> (state, withAscii (renderArtForLook (npcAscii npc) state)
-                                                          (resolveCondText (npcDescription npc) state))
-                    | otherwise -> (state, "You can't do that to " ++ npcName npc ++ ".")
+                        (stateWithVars, "The " ++ npcName npc ++ " is dead and says nothing.")
+                    | verb == VTalk -> talkTo npc maybeNpcState stateWithVars
+                    | verb == VAttack -> executeAttack npc maybeNpcState targetStr stateWithVars
+                    | verb == VLookAt -> (stateWithVars, withAscii (renderArtForLook (npcAscii npc) stateWithVars)
+                                                          (resolveCondText (npcDescription npc) stateWithVars))
+                    | hasOnCommandTrigger verb stateWithVars -> (stateWithVars, "")
+                    | otherwise -> (stateWithVars, "You can't do that to " ++ npcName npc ++ ".")
 
         (Nothing, Nothing)
             -- Phase 7f-3, A2: bare `defend` / `flee` during a tactical fight
             -- route through the combat resolver with the corresponding action.
             | null targetStr, VCustom vn <- verb
-            , CombatTactical _ <- combatProfile (world state)
-            , isCombatEngaged state
+            , CombatTactical _ <- combatProfile (world stateWithVars)
+            , isCombatEngaged stateWithVars
             , Just ca <- tacticalVerbAction vn
-            -> executeTacticalAction ca state
+            -> executeTacticalAction ca stateWithVars
             -- Phase 7f-3, A3: `use-ability <id>` during a tactical fight
             | not (null targetStr), VCustom vn <- verb
             , vn `elem` ["use-ability", "ability"]
-            , CombatTactical _ <- combatProfile (world state)
-            -> executeTacticalAction (CAAbility targetStr) state
+            , CombatTactical _ <- combatProfile (world stateWithVars)
+            -> executeTacticalAction (CAAbility targetStr) stateWithVars
             | null targetStr, VCustom vn <- verb
             , vn `elem` ["defend", "flee"]
-            -> (state, "You are not in combat.")
-            | null targetStr -> (state, "")   -- bare verb (e.g. custom command); triggers carry the message
-            | verb == VAttack, Just res <- tryAttackVehicle targetStr state -> res
-            | otherwise -> (state, "You don't see '" ++ targetStr ++ "' here.")
+            -> (stateWithVars, "You are not in combat.")
+            | null targetStr -> (stateWithVars, "")   -- bare verb (e.g. custom command); triggers carry the message
+            | hasOnCommandTrigger verb stateWithVars -> (stateWithVars, "")
+            | verb == VAttack, Just res <- tryAttackVehicle targetStr stateWithVars -> res
+            | otherwise -> (stateWithVars, "You don't see '" ++ targetStr ++ "' here.")
 
 -- | Handle "use <item> on <entity>" with weapon→attack fallback
 executeCommand (InteractWith VUseOn itemStr entityStr) state =
@@ -915,12 +1037,12 @@ renderDialogue npc tree maybeNpcState state =
     in case maybeNode of
         Nothing -> (clearActiveDialogue state, npcName npc ++ " has nothing to say.")
         Just node ->
-            let header = npcName npc ++ ": \"" ++ dnText node ++ "\""
+            let header = npcName npc ++ ": \"" ++ formatWithVars (dnText node) state ++ "\""
                 choices = visibleChoices state node
                 body = if null choices
                        then header
                        else header ++ "\n\n" ++ unlines
-                            [ "  [" ++ show i ++ "] " ++ dcText c
+                            [ "  [" ++ show i ++ "] " ++ formatWithVars (dcText c) state
                             | (i, c) <- zip [1 :: Int ..] choices ]
                 -- store the node so a follow-up `choose N` can resolve it
                 stateWithNode = setDialogueNode (npcId npc) (Just nodeId) state
@@ -1085,6 +1207,13 @@ helpText = intercalate "\n"
     , "  unequip / remove <item>    - Unequip an item"
     , "  unequip all                - Remove all equipment"
     , "  stats                      - Show health, attack, defense and equipment"
+    , ""
+    , "Cards & Decks:"
+    , "  hand / karten              - View cards in hand"
+    , "  play <n> [target]          - Play the n-th card (e.g. 'play 1 goblin')"
+    , "  deck                       - View draw pile"
+    , "  discard / ablage           - View discard pile"
+    , "  end turn / pass            - End combat turn"
     , ""
     , "Vehicles:"
     , "  enter / board <vehicle>    - Board a vehicle at your stop"

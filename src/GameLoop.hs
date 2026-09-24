@@ -76,6 +76,11 @@ consumesTurn cmd = case cmd of
     Restart        -> False
     WatchCmd _     -> False
     MapCmd         -> False
+    PlayCardCmd _ _ -> False
+    HandCmd        -> False
+    DeckCmd        -> False
+    DiscardCmd     -> False
+    EndTurnCmd     -> True
     Unknown _      -> False
     _              -> True
 
@@ -86,6 +91,8 @@ consumesTurn cmd = case cmd of
 consumesTurnIn :: GameState -> Command -> Bool
 consumesTurnIn st cmd = case cmd of
     ChooseCmd i -> isValidChoice i st
+    Interact v _ | verbCanonicalName v `elem` ["status", "bilanz", "finanzen"] -> False
+    ActionWithArgs v _ | verbCanonicalName v `elem` ["status", "bilanz", "finanzen"] -> False
     _           -> consumesTurn cmd
 
 -- | Pure command transition used by both the interactive loop and tests.
@@ -256,9 +263,10 @@ persistMeta st = saveMeta (world st) (variables (save st))
 fireCommandTriggers :: Command -> GameState -> GameState -> (GameState, String)
 fireCommandTriggers cmd before after =
     let events = commandEvents cmd before after
+        afterWithCmdVars = bindCommandVars cmd after
         (st, msgs) = foldl' (\(s, acc) ev -> let (s', m) = fireTriggers ev s
                                             in (s', combineMessages acc m))
-                           (after, "") events
+                           (afterWithCmdVars, "") events
     in (st, msgs)
 
 -- | Compute the list of events raised by a command.
@@ -326,6 +334,12 @@ commandVerbName cmd = case cmd of
     UnequipAllCmd -> "unequip"
     Interact v _        -> verbCanonicalName v
     InteractWith v _ _  -> verbCanonicalName v
+    ActionWithArgs v _  -> verbCanonicalName v
+    PlayCardCmd _ _     -> "play"
+    HandCmd             -> "hand"
+    DeckCmd             -> "deck"
+    DiscardCmd          -> "discard"
+    EndTurnCmd          -> "end_turn"
     _             -> "unknown"
 
 -- | Mapping applied to every player-facing line at the I/O boundary is now

@@ -6,7 +6,7 @@ import TextAdventure.Tui
 
 import TextAdventure.Tui.Hud
     ( HudView (..), MapCell (..), MapGrid (..), Bar (..), buildHud, buildHudWithFloor
-    , mapGrid, mapGridWithFloor, hpBar, condLine, equipmentLines, combatLines, statsLines, barLine )
+    , mapGrid, mapGridWithFloor, hpBar, condLine, combatLines, statsLines, barLine )
 
 import TextAdventure.Tui.Color
     ( SgrColor (..), SgrState (..), applySgrSeq, attrOfSgr, colorAttrName
@@ -140,6 +140,30 @@ testHudStatsLines =
                 (not (any (isInfixOf "Weapon:") (statsLines hud)))
         pure (rA && rB && rC)
 
+-- | Formatted Key-Value stats table for economy/simulation variables (Phase 1D).
+testHudStatsTable :: IO Bool
+testHudStatsTable =
+    let st0 = (hudState "start")
+            { save = (save (hudState "start"))
+                { variables = Map.fromList
+                    [ ("gold", VVInt 1450)
+                    , ("korn", VVInt 340)
+                    , ("cmd.arg1", VVInt 5)
+                    , ("combat.round", VVInt 1)
+                    ]
+                }
+            }
+        hud = buildHud st0
+        table = hvStatsTable hud
+    in do
+        rA <- expectEqual "gold in table" (Just "1450") (lookup "gold" table)
+        rB <- expectEqual "korn in table" (Just "340") (lookup "korn" table)
+        rC <- expectTrue "cmd vars excluded" (isNothing (lookup "cmd.arg1" table))
+        rD <- expectTrue "combat vars excluded" (isNothing (lookup "combat.round" table))
+        rE <- expectTrue "statsLines contains formatted table"
+                (any (isInfixOf "gold:") (statsLines hud))
+        pure (rA && rB && rC && rD && rE)
+
 -- | Conditions, equipment, combat panel, game-over flag.
 testHudPanels :: IO Bool
 testHudPanels =
@@ -213,6 +237,32 @@ testHudMultiFloor =
                 pure (b4 && b5)
         pure (rA && rB && rC && rD && rE)
 
+-- | Combat panel with deckbuilder active (Phase 2C).
+testHudDeckCombatLines :: IO Bool
+testHudDeckCombatLines =
+    let ds = DeckState ["c1", "c2"] ["c3"] ["c4"] [] 10
+        st0 = (hudState "start")
+            { save = (save (hudState "start"))
+                { deckState = Just ds
+                , variables = Map.fromList
+                    [ ("player.block", VVInt 8)
+                    , ("player.energy", VVInt 2)
+                    , ("player.max_energy", VVInt 3)
+                    ]
+                }
+            }
+        cl = combatLines st0
+        hud = buildHud st0
+    in do
+        rA <- expectTrue "combat panel active with deck and living enemy" (not (null cl))
+        rB <- expectTrue "shows deck and discard count" (any (isInfixOf "Deck: 2 | Ablage: 1") cl)
+        rC <- expectTrue "shows energy and block" (any (isInfixOf "Energie: 2/3 | Block: 8") cl)
+        rD <- expectTrue "shows living enemy HP" (any (isInfixOf "Enemy: goblin") cl)
+        rE <- expectEqual "hvCombat matches combatLines" cl (hvCombat hud)
+        -- Without living enemies:
+        let stDead = st0 { save = (save st0) { npcStates = Map.adjust (\ns -> ns { npcStatus = "dead", npcHealth = Just 0 }) "goblin" (npcStates (save st0)) } }
+        rF <- expectTrue "combatLines empty when all enemies dead" (null (combatLines stDead))
+        pure (rA && rB && rC && rD && rE && rF)
 
 main :: IO ()
 main = do
@@ -233,7 +283,9 @@ main = do
         , runTest "hud: dynamic exits shape the map (Rogue P3)" testHudMapDynamic
         , runTest "hud: conditions, equipment, combat, game over" testHudPanels
         , runTest "hud: status lines + bar format" testHudStatsLines
+        , runTest "hud: key-value stats table (Phase 1D)" testHudStatsTable
         , runTest "hud: multi-floor minimap isolates floors and tracks player" testHudMultiFloor
+        , runTest "hud: deck combat panel lines (Phase 2C)" testHudDeckCombatLines
         ]
     if and results then pure () else exitFailure
 

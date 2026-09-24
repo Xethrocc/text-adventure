@@ -1,0 +1,151 @@
+name: "Spire of Fate (Deckbuilder)"
+start_room: "turmfuss"
+
+player:
+  health: 80
+  max_health: 80
+
+combat:
+  profile: "classic"
+
+variables:
+  - name: "energy"
+    type: int
+    initial: 3
+    min: 0
+    max: 3
+  - name: "block"
+    type: int
+    initial: 0
+    min: 0
+  - name: "strength"
+    type: int
+    initial: 0
+
+verbs:
+  - name: "status"
+    aliases: ["stats", "charakter"]
+  - name: "rasten"
+    aliases: ["rest", "ausruhen"]
+  - name: "trinken"
+    aliases: ["drink", "schlucken"]
+
+rooms:
+  - id: "turmfuss"
+    name: "Fuß des Spire"
+    texts: "Ein finsterer Turm ragt in die Wolken. Dein Deck ist bereit für den Aufstieg."
+    exits:
+      north: "kobold_lager"
+
+  - id: "kobold_lager"
+    name: "Vorposten des Goblins"
+    texts: "Ein scharfzahniger Goblin lauert hier mit gezogenem Dolch!"
+    exits:
+      south: "turmfuss"
+      north: "schrein"
+
+  - id: "schrein"
+    name: "Uralter Schrein"
+    texts: "Eine Oase der Ruhe. Sanftes Licht erhellt antike Runen."
+    exits:
+      south: "kobold_lager"
+      north: "gipfel"
+
+  - id: "gipfel"
+    name: "Gipfel des Spire"
+    texts: "Ein titanischer Wächter aus lebendem Stein versperrt das Tor zur Freiheit!"
+    exits:
+      south: "schrein"
+
+items:
+  - id: "elixier"
+    name: "Lebenselixier"
+    texts: "Ein schimmernder roter Trank."
+    location: "turmfuss"
+    keywords: ["trank", "elixier", "potion"]
+    verb_map:
+      trinken:
+        - heal: 20
+        - consume: "elixier"
+        - msg: "Du trinkst das Lebenselixier und regenerierst 20 Lebenspunkte!"
+
+npcs:
+  - id: "kobold"
+    name: "Goblin-Späher"
+    texts: "Ein garstiger kleiner Goblin mit gelben Zähnen."
+    location: "kobold_lager"
+    max_health: 20
+    attack: 6
+    defense: 0
+    state: "idle"
+
+  - id: "sentinel"
+    name: "Turmwächter"
+    texts: "Ein uralter Wächtergolem aus massiven Felsblöcken."
+    location: "gipfel"
+    max_health: 50
+    attack: 10
+    defense: 2
+    state: "idle"
+
+cards:
+  strike:
+    name: "Hieb"
+    cost: { energy: 1 }
+    type: attack
+    target: single_enemy
+    description: "Fügt einem gewählten Feind 6 Schaden zu."
+    outcomes:
+      - damage_enemy: { target: chosen, amount: 6 }
+
+  defend:
+    name: "Verteidigung"
+    cost: { energy: 1 }
+    type: skill
+    target: self
+    description: "Erhöht den Schutz um 5 Block."
+    outcomes:
+      - add_var: { variable: block, delta: 5 }
+
+  bash:
+    name: "Schmetterschlag"
+    cost: { energy: 2 }
+    type: attack
+    target: single_enemy
+    description: "Fügt 8 schweren Schaden zu."
+    outcomes:
+      - damage_enemy: { target: chosen, amount: 8 }
+
+  cleave:
+    name: "Rundumschlag"
+    cost: { energy: 1 }
+    type: attack
+    target: all_enemies
+    description: "Fügt allen anwesenden Feinden 4 Schaden zu."
+    outcomes:
+      - damage_all_enemies: 4
+
+  shrug:
+    name: "Abprallen"
+    cost: { energy: 1 }
+    type: skill
+    target: self
+    description: "Gewährt 8 Block und zieht 1 Karte."
+    outcomes:
+      - add_var: { variable: block, delta: 8 }
+      - draw_cards: 1
+
+  battle_trance:
+    name: "Kampftrance"
+    cost: {}
+    type: skill
+    target: self
+    description: "Kostenlos: Ziehe 3 Karten."
+    outcomes:
+      - draw_cards: 3
+
+deck:
+  strike: 4
+  defend: 4
+  bash: 1
+  shrug: 1

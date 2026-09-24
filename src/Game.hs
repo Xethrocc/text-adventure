@@ -3,13 +3,17 @@
 module Game where
 
 import Types
-import Data.List (intercalate, find, elemIndex, foldl')
+import Data.List (intercalate, find, elemIndex, foldl', isPrefixOf, isInfixOf, nub)
 import Data.Bits (shiftR)
 import Data.Char (toLower, isDigit, isSpace)
 import Data.Maybe (listToMaybe, fromMaybe)
 import Control.Monad (guard)
+import Data.Word (Word64)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import qualified Data.Sequence as Seq
+import qualified Data.Foldable as Foldable
+import Ansi (stripAnsi)
 
 -- | Default empty game world
 emptyGameWorld :: GameWorld
@@ -31,6 +35,7 @@ emptyGameWorld = GameWorld
     , worldEndArt        = Map.empty
     , worldTitleArt      = emptyAscii
     , worldClips         = Map.empty
+    , cardDefs           = Map.empty
     }
 
 -- | Default empty game state
@@ -60,6 +65,7 @@ emptyGameState = GameState
         , variables          = Map.empty
         , triggerStates      = Map.empty
         , exitOverrides      = Map.empty
+        , deckState          = Nothing
         }
     , pendingNarrative = Nothing
     , pendingAnimation = Nothing
@@ -413,13 +419,25 @@ setEntityStateWithEvents eId val state
     | getEntityState eId state == Just val = (state, "")
     | otherwise = fireTriggers (OnStateChange eId) (setEntityState eId val state)
 
+-- | Resolve dynamic or placeholder actor identifiers (e.g. "target", "chosen", "current_target")
+--   to the specific NPC ID stored in the variable "cmd.target".
+resolveActorNpcId :: NPCID -> GameState -> NPCID
+resolveActorNpcId nId state
+    | nId `elem` ["target", "chosen", "current_target"] =
+        case getVariable "cmd.target" state of
+            Just (VVText s) -> s
+            _               -> nId
+    | otherwise = nId
+
 -- | Modify an NPC's property
 modifyNPCProp :: String -> String -> Int -> GameState -> GameState
-modifyNPCProp nId prop delta state = state
-    { save = (save state) { npcStates = Map.adjust (\s ->
-        let currentVal = Map.findWithDefault 0 prop (npcProps s)
-        in s { npcProps = Map.insert prop (currentVal + delta) (npcProps s) }
-        ) nId (npcStates (save state)) } }
+modifyNPCProp nIdRaw prop delta state =
+    let nId = resolveActorNpcId nIdRaw state
+    in state
+        { save = (save state) { npcStates = Map.adjust (\s ->
+            let currentVal = Map.findWithDefault 0 prop (npcProps s)
+            in s { npcProps = Map.insert prop (currentVal + delta) (npcProps s) }
+            ) nId (npcStates (save state)) } }
 
 -- | Move an NPC to a different room
 moveNPCToRoom :: String -> RoomID -> GameState -> GameState
@@ -759,7 +777,15 @@ resolveValueRef :: ValueRef -> GameState -> Int
 resolveValueRef (VRVariable name) st =
     case Map.lookup name (variables (save st)) of
         Just (VVInt n)  -> n
-        _               -> 0
+        Just (VVText s) -> case reads s of [(n,"")] -> n; _ -> 0
+        _               -> case name of
+            "player.hp"         -> playerHealth (player (save st))
+            "player.health"     -> playerHealth (player (save st))
+            "player.max_hp"     -> playerMaxHealth (player (save st))
+            "player.max_health" -> playerMaxHealth (player (save st))
+            "turn.count"        -> turnCount (save st)
+            "turns"             -> turnCount (save st)
+            _                   -> 0
 resolveValueRef (VRFlag f) st =
     case getFlag f st of
         Just "true"  -> 1
@@ -772,11 +798,11 @@ resolveValueRef (VRItemProp iId prop) st =
 resolveValueRef (VRActorProp ActorPlayer PHealth) st =
     playerHealth (player (save st))
 resolveValueRef (VRActorProp (ActorNPC eId) PHealth) st =
-    case Map.lookup eId (npcStates (save st)) of
+    case Map.lookup (resolveActorNpcId eId st) (npcStates (save st)) of
         Just ns -> fromMaybe 0 (npcHealth ns)
         Nothing -> 0
 resolveValueRef (VRActorProp (ActorNPC nId) (PCustom prop)) st =
-    case Map.lookup nId (npcStates (save st)) of
+    case Map.lookup (resolveActorNpcId nId st) (npcStates (save st)) of
         Just ns -> Map.findWithDefault 0 prop (npcProps ns)
         Nothing -> 0
 resolveValueRef (VRActorProp (ActorRoom rId) PVisited) st =
@@ -800,6 +826,112 @@ compareValues CGt  a b = Just (a >  b)
 compareValues CGte a b = Just (a >= b)
 
 -- ---------------------------------------------------------------------------
+-- Arithmetic expression evaluator (Phase 1A)
+-- ---------------------------------------------------------------------------
+
+-- | Evaluate an arithmetic expression against the current game state.
+--   Division and modulo by 0 return 0 safely.
+evalExpr :: Expr -> GameState -> Int
+evalExpr expr st = case expr of
+    ELit n -> n
+    EVar v -> resolveValueRef (VRVariable v) st
+    EAdd a b -> evalExpr a st + evalExpr b st
+    ESub a b -> evalExpr a st - evalExpr b st
+    EMul a b -> evalExpr a st * evalExpr b st
+    EDiv a b ->
+        let d = evalExpr b st
+        in if d == 0 then 0 else evalExpr a st `div` d
+    EMod a b ->
+        let m = evalExpr b st
+        in if m == 0 then 0 else evalExpr a st `mod` m
+    EMin a b -> min (evalExpr a st) (evalExpr b st)
+    EMax a b -> max (evalExpr a st) (evalExpr b st)
+    EClamp mn mx v ->
+        let l = evalExpr mn st
+            h = evalExpr mx st
+            val = evalExpr v st
+            low = min l h
+            high = max l h
+        in max low (min high val)
+
+-- ---------------------------------------------------------------------------
+-- String interpolation with variables (Phase 1B)
+-- ---------------------------------------------------------------------------
+
+-- | Format a template string by interpolating variables from GameState.
+--   Supports:
+--     - Plain variables: {var:gold} or {gold}
+--     - Sign modifier: {bilanz:+} (forces + on non-negative numbers)
+--     - Width padding: {gold:6} (right-aligned) or {gold:-6} (left-aligned)
+--     - System variables: {player.hp}, {player.max_hp}, {turn.count}, {room.name}
+--     - Escaped braces: \{...\} or {{...}}
+formatWithVars :: String -> GameState -> String
+formatWithVars str st = formatStringWith str (lookupVarForFormat st)
+
+lookupVarForFormat :: GameState -> String -> Maybe String
+lookupVarForFormat st name
+    | Just val <- Map.lookup name (variables (save st)) =
+        Just (varToString val)
+    | name `elem` ["player.hp", "player.health"] =
+        Just (show (playerHealth (player (save st))))
+    | name `elem` ["player.max_hp", "player.max_health"] =
+        Just (show (playerMaxHealth (player (save st))))
+    | name `elem` ["turn.count", "turns"] =
+        Just (show (turnCount (save st)))
+    | name `elem` ["room.name", "current_room.name"] =
+        Just (fromMaybe "" (roomName <$> getCurrentRoom st))
+    | name `elem` ["room.id", "current_room.id", "room"] =
+        Just (currentRoom (save st))
+    | name `elem` Map.keys (varDefs (world st)) =
+        Just "0"
+    | otherwise = Nothing
+  where
+    varToString (VVInt n)  = show n
+    varToString (VVBool b) = if b then "true" else "false"
+    varToString (VVText s) = s
+
+applyVarModifier :: String -> String -> String
+applyVarModifier str modif =
+    let forceSign = '+' `elem` modif
+        widthPart = filter (/= '+') modif
+        signedStr = if forceSign
+                    then case str of
+                        ('-':_) -> str
+                        _       -> '+' : str
+                    else str
+    in case widthPart of
+        ('-':digits) | not (null digits) && all isDigit digits ->
+            let w = read digits :: Int
+            in signedStr ++ replicate (max 0 (w - length signedStr)) ' '
+        digits | not (null digits) && all isDigit digits ->
+            let w = read digits :: Int
+            in replicate (max 0 (w - length signedStr)) ' ' ++ signedStr
+        _ -> signedStr
+
+formatStringWith :: String -> (String -> Maybe String) -> String
+formatStringWith [] _ = []
+formatStringWith ('\\':'{':cs) env = '{' : formatStringWith cs env
+formatStringWith ('\\':'}':cs) env = '}' : formatStringWith cs env
+formatStringWith ('{':'{':cs) env = '{' : formatStringWith cs env
+formatStringWith ('}':'}':cs) env = '}' : formatStringWith cs env
+formatStringWith ('{':cs) env =
+    case span (/= '}') cs of
+        (inside, '}':rest) ->
+            let (isExplicitVar, clean) = if "var:" `isPrefixOf` inside
+                                        then (True, drop 4 inside)
+                                        else (False, inside)
+                (varName, modif) = case break (== ':') clean of
+                    (name, ':':m) -> (name, m)
+                    (name, _)     -> (name, "")
+            in case env varName of
+                Just val -> applyVarModifier val modif ++ formatStringWith rest env
+                Nothing
+                    | isExplicitVar -> applyVarModifier "0" modif ++ formatStringWith rest env
+                    | otherwise     -> '{' : inside ++ "}" ++ formatStringWith rest env
+        _ -> '{' : formatStringWith cs env
+formatStringWith (c:cs) env = c : formatStringWith cs env
+
+-- ---------------------------------------------------------------------------
 -- Conditional text (Phase 3g)
 -- ---------------------------------------------------------------------------
 
@@ -807,9 +939,10 @@ compareValues CGte a b = Just (a >= b)
 --   the default is returned.
 resolveCondText :: CondText -> GameState -> String
 resolveCondText ct state =
-    case [tvText tv | tv <- ctVariants ct, evalPredicate (tvWhen tv) state] of
-        (s:_) -> s
-        []    -> ctDefault ct
+    let raw = case [tvText tv | tv <- ctVariants ct, evalPredicate (tvWhen tv) state] of
+            (s:_) -> s
+            []    -> ctDefault ct
+    in formatWithVars raw state
 
 -- ---------------------------------------------------------------------------
 -- ASCII art (Phase B/C/D)
@@ -937,7 +1070,7 @@ applyOutcomeWith depth salt outcome targetId state
             state
         , "", salt )
     | otherwise = case outcome of
-    SendMessage msg -> (state, msg, salt)
+    SendMessage msg -> (state, formatWithVars msg state, salt)
 
     Sequence outcomes ->
         let (st', msg', salt') = foldl' (\(st, acc, s) o ->
@@ -948,6 +1081,11 @@ applyOutcomeWith depth salt outcome targetId state
 
     SetValue vr ev ->
         let (state', msg') = applySetValue vr ev state
+        in (state', msg', salt)
+
+    ComputeValue vr expr ->
+        let val = evalExpr expr state
+            (state', msg') = applySetValue vr (EVInt val) state
         in (state', msg', salt)
 
     ModifyValue VRPlayerHealth delta ->
@@ -1021,7 +1159,7 @@ applyOutcomeWith depth salt outcome targetId state
             go _ [] = Noop
         in applyOutcomeWith (depth + 1) (salt + 1) (go 0 weighted) targetId st'
 
-    GameEnd reason msg -> (endGame reason state, msg, salt)
+    GameEnd reason msg -> (endGame reason state, formatWithVars msg state, salt)
 
     -- Phase H/H4: queue a cutscene for one playback at the frontend. Unknown
     -- or unusable clips are compile errors (UnknownClip/ClipFpsInvalid/
@@ -1060,9 +1198,9 @@ applyOutcomeWith depth salt outcome targetId state
                 Locked _ e | Map.notMember e (entityStates ss) ->
                     ss { entityStates = Map.insert e "locked" (entityStates ss) }
                 _ -> ss
-        in (state { save = withEntity
-            { exitOverrides = Map.insert (from, dir) (Just exit) (exitOverrides withEntity) } }
-        , "", salt)
+            in (state { save = withEntity
+                { exitOverrides = Map.insert (from, dir) (Just exit) (exitOverrides withEntity) } }
+            , "", salt)
     RemoveExit from dir ->
         (state { save = (save state)
             { exitOverrides = Map.insert (from, dir) Nothing (exitOverrides (save state)) } }
@@ -1070,7 +1208,15 @@ applyOutcomeWith depth salt outcome targetId state
 
     -- Narrative: store lines + follow-up for interactive display
     Narrative nls followUp ->
-        (state { pendingNarrative = Just (nls, followUp) }, intercalate "\n" nls, salt)
+        let formatted = map (`formatWithVars` state) nls
+        in (state { pendingNarrative = Just (formatted, followUp) }, intercalate "\n" formatted, salt)
+
+    DrawCards n -> (drawCards n state, "", salt)
+    DiscardHand -> (discardHand state, "", salt)
+    DiscardCard cid -> (discardCard cid state, "", salt)
+    ExhaustCard cid -> (exhaustCard cid state, "", salt)
+    AddCardToDeck cid dest -> (addCardToDeck cid dest state, "", salt)
+    ShuffleDeck -> (shuffleDeck state, "", salt)
 
     Noop -> (state, "", salt)
 
@@ -1119,10 +1265,23 @@ modifyValueProp (VRVariable name) delta state =
     in (setVariableChecked name (VVInt (cur + delta)) state, "")
 modifyValueProp (VRItemProp iId prop) delta state =
     (modifyItemProp iId prop delta state, "")
-modifyValueProp (VRActorProp (ActorNPC eId) PHealth) delta state =
-    modifyNPCHealth eId delta state
+modifyValueProp (VRActorProp (ActorNPC eId) PHealth) delta state
+    | resolveActorNpcId eId state `elem` ["all", "all_enemies"] =
+        let curRoom = currentRoom (save state)
+            enemies = [ npcId def
+                      | def <- getNPCsInRoom curRoom state
+                      , not (isDeadNPC (npcId def) state)
+                      , not (isInParty (npcId def) state)
+                      ]
+            step (st, msgs) eid =
+                let (st', m) = modifyNPCHealth eid delta st
+                in (st', if null m then msgs else msgs ++ [m])
+            (stFin, msgsFin) = foldl' step (state, []) enemies
+        in (stFin, intercalate "\n" msgsFin)
+    | otherwise =
+        modifyNPCHealth (resolveActorNpcId eId state) delta state
 modifyValueProp (VRActorProp (ActorNPC nId) (PCustom prop)) delta state =
-    (modifyNPCProp nId prop delta state, "")
+    (modifyNPCProp (resolveActorNpcId nId state) prop delta state, "")
 modifyValueProp (VRActorProp ActorPlayer PHealth) delta state =
     let cur = playerHealth (player (save state))
         newHP = cur + delta
@@ -1151,8 +1310,9 @@ effectValueToString (EVBool b)   = if b then "true" else "false"
 -- | Modify an NPC's health, killing them if <= 0. The kill's state-change
 --   event messages are threaded back to the caller.
 modifyNPCHealth :: NPCID -> Int -> GameState -> (GameState, String)
-modifyNPCHealth nId delta state =
-    case Map.lookup nId (npcStates (save state)) of
+modifyNPCHealth nIdRaw delta state =
+    let nId = resolveActorNpcId nIdRaw state
+    in case Map.lookup nId (npcStates (save state)) of
         Nothing -> (state, "")
         Just n ->
             let oldHealth = fromMaybe 0 (npcHealth n)
@@ -1618,3 +1778,542 @@ fireTriggerList depth triggers state =
                 in (s', a ++ m ++ "\n")) (st { save = (save st) { triggerStates = updatedTs } }, acc) (trEffects tr)
             updatedTs = Map.insert tId (TriggerState True (trCooldown tr)) (triggerStates (save st))
         in (st', msgs)
+
+-- ---------------------------------------------------------------------------
+-- Deck & Card Operations (Schritt 2 / Phase 2A & 2B)
+-- ---------------------------------------------------------------------------
+
+-- | Fisher-Yates shuffle (from the back) using 64-bit RNG state.
+shuffleList :: [a] -> Word64 -> ([a], Word64)
+shuffleList [] rng = ([], rng)
+shuffleList xs rng0 = go (Seq.fromList xs) (length xs) rng0
+  where
+    go s n r
+        | n <= 1    = (Foldable.toList s, r)
+        | otherwise =
+            let r' = nextRng r
+                pick = fromIntegral ((r' `shiftR` 33) `mod` fromIntegral n)
+                xi   = Seq.index s pick
+                xj   = Seq.index s (n - 1)
+                s'   = Seq.update (n - 1) xi (Seq.update pick xj s)
+            in go s' (n - 1) r'
+
+-- | Helper to modify DeckState if present in SaveState.
+modifyDeckState :: (DeckState -> GameState -> GameState) -> GameState -> GameState
+modifyDeckState f st = case deckState (save st) of
+    Nothing -> st
+    Just ds -> f ds st
+
+-- | Draw up to n cards from draw pile into hand (capped by maxHandSize).
+--   If draw pile runs out, discard pile is shuffled into draw pile.
+drawCards :: Int -> GameState -> GameState
+drawCards n st
+    | n <= 0    = st
+    | otherwise = modifyDeckState go st
+  where
+    go ds currentSt =
+        let currentHand = hand ds
+            curDraw = drawPile ds
+            curDiscard = discardPile ds
+            handCap = maxHandSize ds
+            freeSpace = max 0 (handCap - length currentHand)
+            toDraw = min n freeSpace
+        in if toDraw <= 0
+           then currentSt
+           else if length curDraw >= toDraw
+                then let (drawn, remainingDraw) = splitAt toDraw curDraw
+                         ds' = ds { hand = currentHand ++ drawn, drawPile = remainingDraw }
+                     in currentSt { save = (save currentSt) { deckState = Just ds' } }
+                else -- Need to draw what we have, then shuffle discard pile
+                     let drawnFromDraw = curDraw
+                         neededMore = toDraw - length drawnFromDraw
+                     in if null curDiscard
+                        then let ds' = ds { hand = currentHand ++ drawnFromDraw, drawPile = [] }
+                             in currentSt { save = (save currentSt) { deckState = Just ds' } }
+                        else let (shuffledDiscard, newRng) = shuffleList curDiscard (rngState (save currentSt))
+                                 (drawnFromDiscard, remainingNewDraw) = splitAt neededMore shuffledDiscard
+                                 ds' = ds
+                                     { hand = currentHand ++ drawnFromDraw ++ drawnFromDiscard
+                                     , drawPile = remainingNewDraw
+                                     , discardPile = []
+                                     }
+                                 ss' = (save currentSt) { deckState = Just ds', rngState = newRng }
+                             in currentSt { save = ss' }
+
+-- | Discard all cards from hand to discard pile.
+discardHand :: GameState -> GameState
+discardHand st = modifyDeckState go st
+  where
+    go ds currentSt =
+        let ds' = ds { discardPile = discardPile ds ++ hand ds, hand = [] }
+        in currentSt { save = (save currentSt) { deckState = Just ds' } }
+
+-- | Discard a specific card from hand by ID (first matching occurrence).
+discardCard :: CardID -> GameState -> GameState
+discardCard cid st = modifyDeckState go st
+  where
+    go ds currentSt =
+        case removeFirst cid (hand ds) of
+            Nothing -> currentSt
+            Just remainingHand ->
+                let ds' = ds { hand = remainingHand, discardPile = discardPile ds ++ [cid] }
+                in currentSt { save = (save currentSt) { deckState = Just ds' } }
+
+-- | Exhaust a specific card (from hand, or discard/draw if not in hand) to exhaust pile.
+exhaustCard :: CardID -> GameState -> GameState
+exhaustCard cid st = modifyDeckState go st
+  where
+    go ds currentSt =
+        case removeFirst cid (hand ds) of
+            Just remainingHand ->
+                let ds' = ds { hand = remainingHand, exhaustPile = exhaustPile ds ++ [cid] }
+                in currentSt { save = (save currentSt) { deckState = Just ds' } }
+            Nothing -> case removeFirst cid (discardPile ds) of
+                Just remainingDiscard ->
+                    let ds' = ds { discardPile = remainingDiscard, exhaustPile = exhaustPile ds ++ [cid] }
+                    in currentSt { save = (save currentSt) { deckState = Just ds' } }
+                Nothing -> case removeFirst cid (drawPile ds) of
+                    Just remainingDraw ->
+                        let ds' = ds { drawPile = remainingDraw, exhaustPile = exhaustPile ds ++ [cid] }
+                        in currentSt { save = (save currentSt) { deckState = Just ds' } }
+                    Nothing -> currentSt
+
+-- | Add a card to the deck at the specified destination.
+addCardToDeck :: CardID -> DeckDestination -> GameState -> GameState
+addCardToDeck cid dest st = modifyDeckState go st
+  where
+    go ds currentSt =
+        let ds' = case dest of
+                DestDraw    -> ds { drawPile = cid : drawPile ds }
+                DestDiscard -> ds { discardPile = discardPile ds ++ [cid] }
+                DestHand    -> if length (hand ds) < maxHandSize ds
+                               then ds { hand = hand ds ++ [cid] }
+                               else ds { discardPile = discardPile ds ++ [cid] }
+        in currentSt { save = (save currentSt) { deckState = Just ds' } }
+
+-- | Shuffle the current draw pile.
+shuffleDeck :: GameState -> GameState
+shuffleDeck st = modifyDeckState go st
+  where
+    go ds currentSt =
+        let (shuffled, newRng) = shuffleList (drawPile ds) (rngState (save currentSt))
+            ds' = ds { drawPile = shuffled }
+            ss' = (save currentSt) { deckState = Just ds', rngState = newRng }
+        in currentSt { save = ss' }
+
+-- | Helper to remove the first occurrence of an element from a list.
+removeFirst :: Eq a => a -> [a] -> Maybe [a]
+removeFirst _ [] = Nothing
+removeFirst x (y:ys)
+    | x == y    = Just ys
+    | otherwise = (y :) <$> removeFirst x ys
+
+-- | Remove an element at 0-based index from a list.
+removeAt :: Int -> [a] -> [a]
+removeAt idx xs
+    | idx < 0   = xs
+    | otherwise = take idx xs ++ drop (idx + 1) xs
+
+-- | Normalize text to lower case.
+normalizeText :: String -> String
+normalizeText = map toLower
+
+-- | All lowercase aliases for an item.
+itemAliases :: ItemDef -> [String]
+itemAliases item = nub $ map normalizeText (itemId item : itemName item : itemKeywords item)
+
+-- | All lowercase aliases for an NPC.
+npcAliases :: NPCDef -> [String]
+npcAliases npc = nub $ map normalizeText (npcId npc : npcName npc : npcKeywords npc)
+
+-- | Check if a target string matches an item definition by ID, name, or keywords.
+matchesItemTarget :: String -> ItemDef -> Bool
+matchesItemTarget target item
+    | null (words target) = False
+    | otherwise           = normalizeText target `elem` itemAliases item
+
+-- | Stop words ignored during target matching for cards.
+cardStopWords :: [String]
+cardStopWords = ["the", "a", "an", "some", "that", "this", "der", "die", "das", "ein", "eine", "den", "dem"]
+
+-- | Check if a target string matches an NPC definition by ID, name, or keywords.
+matchesNPCTarget :: String -> NPCDef -> Bool
+matchesNPCTarget tgt npc
+    | null (words tgt) = False
+    | otherwise =
+        let lower = map toLower
+            tgtWords = words tgt
+            cleanedTgt = lower (unwords (filter (`notElem` cardStopWords) tgtWords))
+            rawTgt = lower (unwords tgtWords)
+            candidates = npcAliases npc
+        in rawTgt `elem` candidates
+           || (not (null cleanedTgt) && cleanedTgt `elem` candidates)
+           || any (\c -> (not (null rawTgt) && rawTgt `isInfixOf` c)
+                      || (not (null cleanedTgt) && cleanedTgt `isInfixOf` c)) candidates
+
+-- | Validate and deduct resource costs for playing a card.
+--   Supports "player.<resource>" or "<resource>".
+checkResourceCosts :: Map.Map String Int -> GameState -> Either String GameState
+checkResourceCosts costs st =
+    let costList = Map.toList costs
+        resolveVar name =
+            let pKey = "player." ++ name
+            in case getVariable pKey st of
+                Just (VVInt v) -> (pKey, v)
+                _ -> case getVariable name st of
+                    Just (VVInt v) -> (name, v)
+                    _              -> (pKey, 0)
+        checkOne (res, req) =
+            let (_, cur) = resolveVar res
+            in if cur >= req
+               then Right ()
+               else Left ("Not enough " ++ res ++ " (need " ++ show req ++ ", have " ++ show cur ++ ").")
+    in case mapM_ checkOne costList of
+        Left err -> Left err
+        Right () ->
+            let deduct stAcc (res, req) =
+                    let (varKey, cur) = resolveVar res
+                    in setVariableChecked varKey (VVInt (cur - req)) stAcc
+            in Right (foldl' deduct st costList)
+
+-- | Validate card target against living enemies in current room.
+validateTarget :: CardTarget -> Maybe String -> GameState -> Either String (String, GameState)
+validateTarget targetReq mTarget st =
+    let curRoom = currentRoom (save st)
+        roomNPCs = getNPCsInRoom curRoom st
+        livingEnemies = [npc | npc <- roomNPCs, not (isDeadNPC (npcId npc) st), not (isInParty (npcId npc) st)]
+    in case targetReq of
+        TargetNone ->
+            Right ("", st)
+        TargetSelf ->
+            Right ("player", setVariableChecked "cmd.target" (VVText "player") st)
+        TargetAllEnemies ->
+            if null livingEnemies
+            then Left "There are no living enemies here to target."
+            else Right ("all enemies", setVariableChecked "cmd.target" (VVText "all") st)
+        TargetSingleEnemy ->
+            if null livingEnemies
+            then Left "There are no living enemies here to target."
+            else case mTarget of
+                Nothing ->
+                    if length livingEnemies == 1
+                    then let sole = head livingEnemies
+                         in Right (npcName sole, setVariableChecked "cmd.target" (VVText (npcId sole)) st)
+                    else Left ("Please specify a target (e.g. 'play <n> <target>'). Available: "
+                               ++ intercalate ", " (map npcName livingEnemies))
+                Just tStr ->
+                    let matches = filter (matchesNPCTarget tStr) livingEnemies
+                    in case matches of
+                        [] -> Left ("No living enemy matches '" ++ tStr ++ "'.")
+                        (targetNpc:_) ->
+                            Right (npcName targetNpc, setVariableChecked "cmd.target" (VVText (npcId targetNpc)) st)
+
+-- | Play a card from hand by 1-based index, with optional target.
+playCard :: Int -> Maybe String -> GameState -> CommandResult
+playCard idx mTarget st = case deckState (save st) of
+    Nothing -> (st, "You don't have a deck to play cards from.")
+    Just ds ->
+        let curHand = hand ds
+        in if idx < 1 || idx > length curHand
+           then (st, "Invalid card number " ++ show idx ++ ". You have "
+                     ++ show (length curHand) ++ " card(s) in hand.")
+           else
+               let cId = curHand !! (idx - 1)
+               in case Map.lookup cId (cardDefs (world st)) of
+                   Nothing -> (st, "Unknown card: '" ++ cId ++ "'.")
+                   Just card ->
+                       case validateTarget (cardTarget card) mTarget st of
+                           Left err -> (st, err)
+                           Right (targetLabel, stTargeted) ->
+                               case checkResourceCosts (cardCost card) stTargeted of
+                                   Left costErr -> (st, costErr)
+                                   Right stCostPaid ->
+                                       let dsCurrent = fromMaybe ds (deckState (save stCostPaid))
+                                           handAfter = removeAt (idx - 1) (hand dsCurrent)
+                                           dsAfter = if cardExhaust card
+                                                     then dsCurrent { hand = handAfter
+                                                                    , exhaustPile = exhaustPile dsCurrent ++ [cId] }
+                                                     else dsCurrent { hand = handAfter
+                                                                    , discardPile = discardPile dsCurrent ++ [cId] }
+                                           stAfterCard = stCostPaid
+                                               { save = (save stCostPaid) { deckState = Just dsAfter } }
+                                           (stFinal, effectMsgs) = foldl' (\(sAcc, msgsAcc) eff ->
+                                               let (s', m) = applyOutcome eff "" sAcc
+                                               in (s', if null m then msgsAcc else msgsAcc ++ [m])
+                                               ) (stAfterCard, []) (cardEffects card)
+                                           header = "You play " ++ cardName card
+                                                    ++ (if null targetLabel then "" else " on " ++ targetLabel)
+                                                    ++ (if cardExhaust card then " (Exhausted)." else ".")
+                                           allMsg = intercalate "\n" (filter (not . null) (header : effectMsgs))
+                                       in (stFinal, allMsg)
+
+-- | End the player's turn:
+--   - Discards remaining hand cards
+--   - Resets player.block to 0
+--   - Restores energy to player.max_energy (default: 3)
+--   - Draws cards (default: 5 or player.draw_per_turn)
+endTurn :: GameState -> CommandResult
+endTurn st = case deckState (save st) of
+    Nothing -> (st, "You don't have a deck to end your turn.")
+    Just _ds ->
+        let st1 = discardHand st
+            st2 = setVariableChecked "player.block" (VVInt 0)
+                    (if Map.member "block" (variables (save st1))
+                     then setVariableChecked "block" (VVInt 0) st1
+                     else st1)
+            maxE = case getVariable "player.max_energy" st2 of
+                Just (VVInt m) -> m
+                _ -> case getVariable "max_energy" st2 of
+                    Just (VVInt m) -> m
+                    _              -> 3
+            st3 = setVariableChecked "player.energy" (VVInt maxE)
+                    (if Map.member "energy" (variables (save st2))
+                     then setVariableChecked "energy" (VVInt maxE) st2
+                     else st2)
+            drawCount = case getVariable "player.draw_per_turn" st3 of
+                Just (VVInt d) -> d
+                _ -> case getVariable "draw_per_turn" st3 of
+                    Just (VVInt d) -> d
+                    _              -> 5
+            st4 = drawCards drawCount st3
+            msg = "Turn ended. Energy restored to " ++ show maxE
+                  ++ ". Drew " ++ show drawCount ++ " cards."
+        in (st4, msg)
+
+-- | Visible width of a string, ignoring ANSI CSI escape sequences.
+visibleWidth :: String -> Int
+visibleWidth = length . stripAnsi
+
+-- | Pad a string on the right to reach the desired visible width.
+padRightVisible :: Int -> String -> String
+padRightVisible w s =
+    let cur = visibleWidth s
+    in if cur < w then s ++ replicate (w - cur) ' ' else s
+
+-- | Break a string into words and wrap to lines of at most maxW characters.
+wrapWords :: Int -> String -> [String]
+wrapWords _ "" = []
+wrapWords maxW text = go (words text)
+  where
+    go [] = []
+    go (w : ws) =
+        let (lineWords, rest) = takeLine (length w) [w] ws
+        in unwords lineWords : go rest
+    takeLine _ acc [] = (reverse acc, [])
+    takeLine curLen acc (w : ws)
+        | curLen + 1 + length w <= maxW = takeLine (curLen + 1 + length w) (w : acc) ws
+        | otherwise                      = (reverse acc, w : ws)
+
+-- | 24-bit ANSI styling codes for card types (Ruby Red, Sapphire Blue, Golden Yellow, Shadow Purple, Grey).
+cardTypeAnsiColor :: CardType -> String
+cardTypeAnsiColor CardAttack = "\ESC[38;2;220;50;50m"
+cardTypeAnsiColor CardSkill  = "\ESC[38;2;60;130;240m"
+cardTypeAnsiColor CardPower  = "\ESC[38;2;240;190;40m"
+cardTypeAnsiColor CardCurse  = "\ESC[38;2;160;60;200m"
+cardTypeAnsiColor CardStatus = "\ESC[38;2;150;150;150m"
+
+-- | German localized label for card types.
+cardTypeLabel :: CardType -> String
+cardTypeLabel CardAttack = "[Angriff]"
+cardTypeLabel CardSkill  = "[Fertigkeit]"
+cardTypeLabel CardPower  = "[Macht]"
+cardTypeLabel CardCurse  = "[Fluch]"
+cardTypeLabel CardStatus = "[Status]"
+
+-- | Render a single card as a multi-line box (width 16).
+renderCardBox :: Int -> Card -> [String]
+renderCardBox idx card =
+    let topBorder = "┌──────────────┐"
+        botBorder = "└──────────────┘"
+        emptyInner = "│              │"
+
+        costStr = case Map.lookup "energy" (cardCost card) of
+            Just c  -> "(" ++ show c ++ ")"
+            Nothing -> if Map.null (cardCost card) then "(0)" else "(" ++ show (sum (Map.elems (cardCost card))) ++ ")"
+        prefix = show idx ++ ". "
+        availNameW = max 1 (14 - length prefix - length costStr - 1)
+        namePart = take availNameW (cardName card)
+        gapLen = max 1 (14 - length prefix - length namePart - length costStr)
+        headerLine = "│" ++ take 14 (prefix ++ namePart ++ replicate gapLen ' ' ++ costStr ++ replicate 14 ' ') ++ "│"
+
+        cColor = cardTypeAnsiColor (cardType card)
+        cLabel = cardTypeLabel (cardType card)
+        rawTag = cColor ++ cLabel ++ "\ESC[0m"
+        tagVisible = length cLabel
+        leftPad = max 0 ((14 - tagVisible) `div` 2)
+        rightPad = max 0 (14 - tagVisible - leftPad)
+        typeLine = "│" ++ replicate leftPad ' ' ++ rawTag ++ replicate rightPad ' ' ++ "│"
+
+        wrapped = wrapWords 12 (cardDescription card)
+        descLines = case wrapped of
+            []        -> [emptyInner, emptyInner]
+            [l]       -> ["│ " ++ padRightVisible 12 l ++ " │", emptyInner]
+            (l1:l2:_) -> ["│ " ++ padRightVisible 12 l1 ++ " │", "│ " ++ padRightVisible 12 l2 ++ " │"]
+    in [topBorder, headerLine, typeLine, emptyInner] ++ descLines ++ [botBorder]
+
+-- | Tile multi-line text boxes horizontally with 2-space padding between boxes.
+--   Wraps into a new row of boxes when adding another box would exceed maxWidth.
+--   Pads boxes in each row vertically to match the height of the tallest box in that row.
+hcatBoxes :: Int -> [[String]] -> [String]
+hcatBoxes _ [] = []
+hcatBoxes maxW allBoxes =
+    let spacing = 2
+        normBoxes = [ (maximum (0 : map visibleWidth b), b) | b <- allBoxes ]
+
+        groupRows [] = []
+        groupRows ((w, b) : rest) =
+            let (row, remainder) = takeRow (w + spacing) [ (w, b) ] rest
+            in map snd row : groupRows remainder
+
+        takeRow _ current [] = (reverse current, [])
+        takeRow usedWidth current ((w, b) : next)
+            | usedWidth + w <= maxW =
+                takeRow (usedWidth + w + spacing) ((w, b) : current) next
+            | otherwise =
+                (reverse current, (w, b) : next)
+
+        rows = groupRows normBoxes
+
+        renderRow [] = []
+        renderRow rowBoxes =
+            let maxH = maximum (0 : map length rowBoxes)
+                boxWidths = map (\b -> maximum (0 : map visibleWidth b)) rowBoxes
+                padBoxVert h w b =
+                    let extraLines = h - length b
+                        padded = map (padRightVisible w) b
+                    in padded ++ replicate extraLines (replicate w ' ')
+                paddedBoxes = zipWith (padBoxVert maxH) boxWidths rowBoxes
+                stitchLines lineIdx =
+                    intercalate (replicate spacing ' ') [b !! lineIdx | b <- paddedBoxes]
+            in [stitchLines i | i <- [0 .. maxH - 1]]
+
+    in intercalate [""] (map renderRow rows)
+
+-- | Compact combat HUD above hand cards in deckbuilder mode.
+renderDeckCombatHud :: GameState -> DeckState -> [String]
+renderDeckCombatHud st ds =
+    let w = 78
+        doubleLine = replicate w '═'
+        singleLine = replicate w '─'
+
+        p = player (save st)
+        hp = playerHealth p
+        maxHp = effectiveMaxHealth st
+        blockVal = case getVariable "player.block" st of
+            Just (VVInt b) -> b
+            _ -> case getVariable "block" st of
+                Just (VVInt b) -> b
+                _              -> 0
+        energyVal = case getVariable "player.energy" st of
+            Just (VVInt e) -> e
+            _ -> case getVariable "energy" st of
+                Just (VVInt e) -> e
+                _              -> 3
+        maxEnergyVal = case getVariable "player.max_energy" st of
+            Just (VVInt m) -> m
+            _ -> case getVariable "max_energy" st of
+                Just (VVInt m) -> m
+                _              -> 3
+
+        deckCnt = length (drawPile ds)
+        discCnt = length (discardPile ds)
+        exhCnt  = length (exhaustPile ds)
+        exhStr  = if exhCnt > 0 then " | Erschöpft: " ++ show exhCnt else ""
+
+        statusBar = " [Deck: " ++ show deckCnt ++ "] ─── HP " ++ show hp ++ "/" ++ show maxHp
+                    ++ " | Block: " ++ show blockVal
+                    ++ " | Energie: " ++ show energyVal ++ "/" ++ show maxEnergyVal
+                    ++ exhStr
+                    ++ " ─── [Ablage: " ++ show discCnt ++ "]"
+
+        curRoom = currentRoom (save st)
+        roomEnemies = [ def
+                      | def <- getNPCsInRoom curRoom st
+                      , not (isDeadNPC (npcId def) st)
+                      , not (isInParty (npcId def) st)
+                      ]
+
+        enemyLines = concatMap formatEnemy roomEnemies
+        formatEnemy def =
+            let eHp = case Map.lookup (npcId def) (npcStates (save st)) of
+                    Just ns -> fromMaybe 0 (npcHealth ns)
+                    Nothing -> 0
+                eMax = fromMaybe eHp (npcMaxHealth def)
+                eLine = " GEGNER: " ++ npcName def ++ " (HP: " ++ show eHp ++ "/" ++ show eMax ++ ")"
+                mIntent = case getVariable ("intent." ++ npcId def) st of
+                    Just (VVText it) -> Just it
+                    _ -> case getVariable ("combat.intent." ++ npcId def) st of
+                        Just (VVText it) -> Just it
+                        _                -> Nothing
+                intentLine = case mIntent of
+                    Just it -> [" ABSICHT: " ++ it]
+                    Nothing -> []
+            in eLine : intentLine
+    in [doubleLine, statusBar, singleLine]
+       ++ (if null enemyLines then [" (Keine Gegner im Raum)"] else enemyLines)
+       ++ [doubleLine]
+
+-- | Display the current hand in horizontal tile layout with combat HUD.
+showHand :: GameState -> CommandResult
+showHand st = case deckState (save st) of
+    Nothing -> (st, "You don't have a deck.")
+    Just ds ->
+        let curHand = hand ds
+            hudLines = renderDeckCombatHud st ds
+        in if null curHand
+           then (st, intercalate "\n" (hudLines ++ ["Your hand is empty."]))
+           else
+               let lookupCardBox idx cId = case Map.lookup cId (cardDefs (world st)) of
+                       Just c  -> renderCardBox idx c
+                       Nothing ->
+                           [ "┌──────────────┐"
+                           , "│ " ++ padRightVisible 12 (show idx ++ ". " ++ take 8 cId) ++ " │"
+                           , "│  [Unbekannt] │"
+                           , "│              │"
+                           , "│ Nicht        │"
+                           , "│ gefunden     │"
+                           , "└──────────────┘"
+                           ]
+                   cardBoxes = zipWith lookupCardBox [1 :: Int ..] curHand
+                   tiledHand = hcatBoxes 80 cardBoxes
+               in (st, intercalate "\n" (hudLines ++ [""] ++ tiledHand))
+
+-- | Display draw pile summary.
+showDeck :: GameState -> CommandResult
+showDeck st = case deckState (save st) of
+    Nothing -> (st, "You don't have a deck.")
+    Just ds ->
+        let curDraw = drawPile ds
+            curHand = hand ds
+            curDisc = discardPile ds
+            curExh  = exhaustPile ds
+            total = length curDraw + length curHand + length curDisc + length curExh
+            nameOf cId = case Map.lookup cId (cardDefs (world st)) of
+                Just c  -> cardName c
+                Nothing -> cId
+            cardCounts = Map.toList (Map.fromListWith (+) [(nameOf cId, 1 :: Int) | cId <- curDraw])
+            cardLines = [ "  - " ++ name ++ (if cnt > 1 then " (x" ++ show cnt ++ ")" else "")
+                        | (name, cnt) <- cardCounts ]
+            header = "=== Draw Pile (" ++ show (length curDraw) ++ "/" ++ show total ++ " cards) ==="
+            body = if null cardLines then ["  (Empty)"] else cardLines
+            footer = "Hand: " ++ show (length curHand)
+                     ++ " | Discard: " ++ show (length curDisc)
+                     ++ " | Exhaust: " ++ show (length curExh)
+        in (st, intercalate "\n" ([header] ++ body ++ [footer]))
+
+-- | Display discard pile contents.
+showDiscard :: GameState -> CommandResult
+showDiscard st = case deckState (save st) of
+    Nothing -> (st, "You don't have a deck.")
+    Just ds ->
+        let curDisc = discardPile ds
+            nameOf cId = case Map.lookup cId (cardDefs (world st)) of
+                Just c  -> cardName c
+                Nothing -> cId
+            cardCounts = Map.toList (Map.fromListWith (+) [(nameOf cId, 1 :: Int) | cId <- curDisc])
+            cardLines = [ "  - " ++ name ++ (if cnt > 1 then " (x" ++ show cnt ++ ")" else "")
+                        | (name, cnt) <- cardCounts ]
+            header = "=== Discard Pile (" ++ show (length curDisc) ++ " cards) ==="
+            body = if null cardLines then ["  (Empty)"] else cardLines
+        in (st, intercalate "\n" ([header] ++ body))
+

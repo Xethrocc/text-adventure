@@ -8,9 +8,13 @@ module Worldbuilder.Types where
 import Data.Aeson
 import Data.Aeson.Types (Parser)
 import Control.Applicative ((<|>))
+import Data.Maybe (fromMaybe)
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
+import qualified Data.Aeson.KeyMap as KM
+import qualified Data.Aeson.Key as K
+import qualified Data.Foldable as Foldable
 import qualified Types as E
 
 -- ---------------------------------------------------------------------------
@@ -44,6 +48,8 @@ data Adventure = Adventure
     , advTitleArt         :: AAscii                      -- ^ optional title banner (Phase G)
     , advClips            :: [AClip]                     -- ^ cutscene clips (Phase H/H4)
     , advGame             :: Maybe AGamePolicy           -- ^ roguelike policy (Rogue Phase 1)
+    , advCards            :: [ACard]                     -- ^ card definitions (Phase 2D)
+    , advDeck             :: Maybe [String]              -- ^ starting deck (Phase 2D)
     } deriving (Show, Eq, Generic)
 
 -- | Rogue Phase 1: the authored `game:` block. Every field is optional so
@@ -110,14 +116,85 @@ instance FromJSON Adventure where
         <*> o .:? "title_art"       .!= AAscii (ACondText "" []) [] 1 [] Nothing
         <*> o .:? "clips"           .!= []
         <*> o .:? "game"
+        <*> parseCardsField o
+        <*> parseDeckField o
+
+-- | Parse 'cards' field: supports both a map (`cards: { strike: { ... } }`) and a list (`cards: [ { id: "strike", ... } ]`).
+parseCardsField :: Object -> Parser [ACard]
+parseCardsField o = do
+    mVal <- o .:? "cards"
+    case mVal of
+        Nothing -> pure []
+        Just (Array arr) -> mapM parseJSON (Foldable.toList arr)
+        Just (Object obj) ->
+            mapM (\(k, v) -> do
+                    card <- parseJSON v
+                    let cid = if null (acdId card) then K.toString k else acdId card
+                        cname = if null (acdName card) then cid else acdName card
+                    pure card { acdId = cid, acdName = cname }
+                 ) (KM.toList obj)
+        Just _ -> fail "Expected 'cards' to be an object (map) or array (list)"
+
+-- | Parse 'deck' field: supports list of card IDs (`[strike, defend]`) or map with counts (`{ strike: 4, defend: 4 }`).
+parseDeckField :: Object -> Parser (Maybe [String])
+parseDeckField o = do
+    mVal <- o .:? "deck"
+    case mVal of
+        Nothing -> pure Nothing
+        Just v  -> Just <$> parseDeckValue v
+
+-- | Parse deck representation from JSON Value (list or map with counts)
+parseDeckValue :: Value -> Parser [String]
+parseDeckValue (Array arr) = mapM parseJSON (Foldable.toList arr)
+parseDeckValue (Object obj) = do
+    cardLists <- mapM (\(k, v) -> do
+                         count <- parseJSON v :: Parser Int
+                         pure (replicate count (K.toString k))
+                      ) (KM.toList obj)
+    pure (concat cardLists)
+parseDeckValue _ = fail "Expected 'deck' to be a list of card IDs or a map of card ID to count"
+
+-- ---------------------------------------------------------------------------
+-- Cards (Schritt 2 / Phase 2D)
+-- ---------------------------------------------------------------------------
+
+-- | A card as authored in YAML.
+data ACard = ACard
+    { acdId          :: String
+    , acdName        :: String
+    , acdCost        :: Map.Map String Int
+    , acdType        :: String               -- ^ "attack", "skill", "power", "curse", "status"
+    , acdTarget      :: String               -- ^ "self", "single_enemy", "all_enemies", "none"
+    , acdDescription :: String
+    , acdExhaust     :: Bool
+    , acdOutcomes    :: [AActionOutcome]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ACard where
+    parseJSON = withObject "ACard" $ \o -> ACard
+        <$> o .:? "id"          .!= ""
+        <*> o .:? "name"        .!= ""
+        <*> o .:? "cost"        .!= Map.empty
+        <*> o .:? "type"        .!= "skill"
+        <*> o .:? "target"      .!= "none"
+        <*> (do mDesc <- o .:? "description"
+                case mDesc of
+                    Just d -> pure d
+                    Nothing -> o .:? "desc" .!= "")
+        <*> o .:? "exhaust"     .!= False
+        <*> (do mOutcomes <- o .:? "outcomes"
+                case mOutcomes of
+                    Just os -> pure os
+                    Nothing -> o .:? "effects" .!= [])
 
 -- | Optional player stats block in YAML (Phase 4d).
---   `player: { max_hp: 50, attack: 8, defense: 3, skills: { lockpick: 5 } }`
+--   `player: { max_hp: 50, attack: 8, defense: 3, skills: { lockpick: 5 }, deck: [strike, defend] }`
 data AAdventurePlayer = AAdventurePlayer
     { apMaxHealth :: Maybe Int
     , apAttack    :: Maybe Int
     , apDefense   :: Maybe Int
     , apSkills    :: Map.Map String Int
+    , apDeck      :: Maybe [String]
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AAdventurePlayer where
@@ -126,6 +203,7 @@ instance FromJSON AAdventurePlayer where
         <*> o .:? "attack"
         <*> o .:? "defense"
         <*> o .:? "skills" .!= Map.empty
+        <*> (o .:? "deck" >>= maybe (pure Nothing) (fmap Just . parseDeckValue))
 
 -- | A declared adventure verb: canonical name + input aliases (Phase 3a).
 data AVerb = AVerb
@@ -932,11 +1010,22 @@ data AActionOutcome
     | AORandomChoice [(Int, [AActionOutcome])]  -- ^ random: [[weight, [outcomes]], ...]
     | AORaiseEvent String              -- ^ raise: <name> — fires `on: custom <name>` (P1-20)
     | AOPlayClip String                -- ^ play_clip: <clip-id> — queues a cutscene (Phase H/H4)
+    | AOComputeVar String E.Expr       -- ^ compute_var: { var: name, expr: "..." }
+    -- Schritt 2 / Phase 2D: Card game outcomes
+    | AODrawCards Int
+    | AODiscardHand
+    | AODiscardCard String
+    | AOExhaustCard String
+    | AOAddCardToDeck String String
+    | AOShuffleDeck
     deriving (Show, Eq, Generic)
 
 -- Parse an outcome from an object with a single recognized key
 instance FromJSON AActionOutcome where
-    parseJSON (String s) = pure (AOMessage (T.unpack s))
+    parseJSON (String s)
+        | s == "discard_hand" = pure AODiscardHand
+        | s == "shuffle_deck" = pure AOShuffleDeck
+        | otherwise           = pure (AOMessage (T.unpack s))
     parseJSON v = withObject "AActionOutcome" (\o ->
             -- NOTE: game_end must be tried before msg: an object may carry both
             -- "game_end" and a "msg" for the end screen.
@@ -955,9 +1044,40 @@ instance FromJSON AActionOutcome where
         <|> (AORandomChoice <$> o .: "random")
         <|> (AORaiseEvent <$> o .: "raise")
         <|> (AOPlayClip <$> o .: "play_clip")
-        <|> (AOSetVar <$> o .: "set_var" <*> o .: "value")
-        <|> (AOAddVar <$> o .: "add_var" <*> o .: "delta")
+        <|> (do cv <- o .: "compute_var"
+                AOComputeVar <$> cv .: "var" <*> cv .: "expr")
+        <|> (AOComputeVar <$> o .: "compute_var" <*> o .: "expr")
+        <|> (do c <- o .: "compute"
+                AOComputeVar <$> c .: "var" <*> c .: "expr")
+        <|> (do varVal <- o .: "set_var"
+                case varVal of
+                    Object obj -> AOSetVar <$> (obj .: "var" <|> obj .: "variable") <*> obj .: "value"
+                    String s   -> AOSetVar (T.unpack s) <$> o .: "value"
+                    _          -> fail "set_var must be string or object")
+        <|> (do varVal <- o .: "add_var"
+                case varVal of
+                    Object obj -> AOAddVar <$> (obj .: "var" <|> obj .: "variable") <*> obj .: "delta"
+                    String s   -> AOAddVar (T.unpack s) <$> o .: "delta"
+                    _          -> fail "add_var must be string or object")
+        <|> (AODrawCards <$> o .: "draw_cards")
+        <|> (AODrawCards <$> o .: "draw")
+        <|> (do b <- o .: "discard_hand"
+                if b then pure AODiscardHand else fail "discard_hand must be true")
+        <|> (AODiscardCard <$> o .: "discard_card")
+        <|> (AODiscardCard <$> o .: "discard")
+        <|> (AOExhaustCard <$> o .: "exhaust_card")
+        <|> (AOExhaustCard <$> o .: "exhaust")
+        <|> (do ac <- o .: "add_card"
+                mTo <- ac .:? "to"
+                mDest <- ac .:? "destination"
+                let dest = case mTo of
+                        Just d  -> d
+                        Nothing -> fromMaybe "draw" mDest
+                AOAddCardToDeck <$> ac .: "card" <*> pure dest)
+        <|> (do b <- o .: "shuffle_deck"
+                if b then pure AOShuffleDeck else fail "shuffle_deck must be true")
         <|> (AOMessage <$> o .: "msg")
+        <|> (AOMessage <$> o .: "text")
         <|> (AOHealPlayer <$> o .: "heal")
         <|> (AODamagePlayer <$> o .: "damage")
         <|> (AOGiveItem <$> o .: "give")
@@ -972,6 +1092,22 @@ instance FromJSON AActionOutcome where
         -- Phase 7g: damage an NPC (companion death via trap, scripted harm)
         <|> (do dn <- o .: "damage_npc"
                 AODamageNPC <$> dn .: "npc" <*> dn .: "amount")
+        -- Phase 2D: card damage helpers
+        <|> (do dmgVal <- o .: "damage_enemy"
+                case dmgVal of
+                    Object de -> do
+                        tgt <- de .:? "target" .!= "chosen"
+                        amt <- de .: "amount"
+                        pure (AODamageNPC tgt amt)
+                    Number n -> pure (AODamageNPC "chosen" (truncate n))
+                    _ -> fail "damage_enemy must be object or number")
+        <|> (do dmgVal <- o .: "damage_all_enemies"
+                case dmgVal of
+                    Object de -> do
+                        amt <- de .: "amount"
+                        pure (AODamageNPC "all" amt)
+                    Number n -> pure (AODamageNPC "all" (truncate n))
+                    _ -> fail "damage_all_enemies must be object or number")
         -- Phase 7a: standing sugar + set_state
         <|> (do st <- o .: "standing"
                 fid <- st .: "faction"

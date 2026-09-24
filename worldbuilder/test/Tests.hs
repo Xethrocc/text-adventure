@@ -26,8 +26,6 @@ import qualified SaveLoad
 import Data.List (sort, sortOn, stripPrefix)
 import Data.YAML.Aeson (decode1)
 import Data.YAML (posLine)
-import qualified Data.Map.Strict as Map
-import qualified Data.Set as Set
 import qualified Data.Text as T
 import Types as E
 import Game (emptyGameState, evalPredicate)
@@ -55,6 +53,7 @@ minWorld = E.GameWorld
     , worldEndArt = Map.empty
     , worldTitleArt = E.AsciiArt (E.CondText "" []) [] 1 [] Nothing
     , worldClips = Map.empty
+    , cardDefs = Map.empty
     }
 
 -- | Helper: a minimal valid SaveState referencing room_0
@@ -82,6 +81,7 @@ minSave = E.SaveState
     , variables = Map.empty
     , triggerStates = Map.empty
     , exitOverrides = Map.empty
+    , deckState = Nothing
     }
 
 runTest :: String -> IO Bool -> IO Bool
@@ -178,6 +178,8 @@ minAdventure room = Adventure
     , advTitleArt = AAscii (ACondText "" []) [] 1 [] Nothing
     , advClips = []
     , advGame = Nothing
+    , advCards = []
+    , advDeck = Nothing
     }
 
 -- ===== Rogue Phase 1: authored game policy =====
@@ -1083,6 +1085,58 @@ testGenreFixturesCompile = do
                                 else do
                                     putStrLn $ "  " ++ fname ++ " validation: " ++ show errs
                                     pure False
+
+-- | Genre 4: economy fixture economy_hamurabi.yaml compiles and validates clean.
+testEconomyFixtureCompiles :: IO Bool
+testEconomyFixtureCompiles = do
+    mbPath <- findExample "economy_hamurabi.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  economy_hamurabi.yaml fixture not found"
+            pure False
+        Just path -> do
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse economy_hamurabi.yaml: " ++ err
+                    pure False
+                Right adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  economy_hamurabi.yaml compile errors: " ++ issuesText errs
+                        pure False
+                    Right cr -> do
+                        let errs = validateWorld (crWorld cr) ++ validateGameState (crWorld cr) (crSave cr)
+                        if null errs
+                            then pure True
+                            else do
+                                putStrLn $ "  economy_hamurabi.yaml validation: " ++ show errs
+                                pure False
+
+-- | Genre 5: deckbuilder fixture deckbuilder_spire.yaml compiles and validates clean.
+testDeckbuilderFixtureCompiles :: IO Bool
+testDeckbuilderFixtureCompiles = do
+    mbPath <- findExample "deckbuilder_spire.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  deckbuilder_spire.yaml fixture not found"
+            pure False
+        Just path -> do
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse deckbuilder_spire.yaml: " ++ err
+                    pure False
+                Right adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  deckbuilder_spire.yaml compile errors: " ++ issuesText errs
+                        pure False
+                    Right cr -> do
+                        let errs = validateWorld (crWorld cr) ++ validateGameState (crWorld cr) (crSave cr)
+                        if null errs
+                            then pure True
+                            else do
+                                putStrLn $ "  deckbuilder_spire.yaml validation: " ++ show errs
+                                pure False
 
 -- ---------------------------------------------------------------------------
 -- Phase 7a: factions / standing / set_state
@@ -2505,6 +2559,8 @@ tests =
     , ("item-on-item (crafting) interaction compiles", testItemInteractionCompiles)
     , ("entity interaction (use on target) compiles", testEntityInteractionCompiles)
     , ("all 6 genre fixtures compile + validate clean", testGenreFixturesCompile)
+    , ("economy genre fixture compiles + validates clean", testEconomyFixtureCompiles)
+    , ("deckbuilder genre fixture compiles + validates clean", testDeckbuilderFixtureCompiles)
     -- Phase 7a: factions / standing / set_state
     , ("factions segment seeds faction.* variables", testFactionsSeedVariables)
     , ("standing add/set outcome compiles to faction var", testStandingOutcomeCompiles)
@@ -2610,6 +2666,12 @@ tests =
     , ("run: seed override is respected", testRunPreparationSeedOverride)
     , ("run: pruneOldRuns removes oldest runs beyond keepCount", testPruneOldRuns)
     , ("run: checkpoint checksum binds to world of that run", testCheckpointBindingAcrossRuns)
+    -- Schritt 2 / Phase 2D: Cards & Deckbuilder
+    , ("cards: map syntax and deck count-map compile (Phase 2D)", testCardGameYamlCompilation)
+    , ("cards: list syntax and card outcomes compile (Phase 2D)", testCardGameListFormAndOutcomes)
+    , ("cards: unknown card in deck is rejected (Phase 2D)", testCardGameUnknownCardInDeck)
+    , ("cards: duplicate card id is rejected (Phase 2D)", testCardGameDuplicateCardId)
+    , ("cards: unknown card type and target are rejected (Phase 2D)", testCardGameUnknownTypeAndTarget)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -2684,7 +2746,7 @@ testRngDeterminism = do
             let (a, r1) = randInt 0 999 (newRng seed)
                 (b, r2) = randInt 1 6 r1
                 (c, r3) = pickWeighted [(3, 'x'), (5, 'y'), (1, 'z')] r2
-                (s, r4) = shuffle [1 .. 20 :: Int] r3
+                (s, _r4) = shuffle [1 .. 20 :: Int] r3
             in (a, b, c, s)
     r1 <- expectEqual (stream 12345) (stream 12345)
     r2 <- expectTrue "different seeds diverge (smoke)"
@@ -3180,7 +3242,7 @@ testGenLockKey =
             }
     in case generateDungeon lockT 42 of
         Left err -> expectTrue ("unexpected: " ++ show err) False
-        Right (adv, warns) -> case compileAdventure adv of
+        Right (adv, _warns) -> case compileAdventure adv of
             Left errs -> expectTrue ("compile: " ++ issuesText errs) False
             Right cr -> do
                 let w = crWorld cr
@@ -3557,6 +3619,221 @@ testCheckpointBindingAcrossRuns = do
                     _ <- try (removeDirectoryRecursive savesD) :: IO (Either SomeException ())
                     pure (b1 && b2 && b3)
                 _ -> expectTrue "runs preparation succeeded" False
+
+-- ---------------------------------------------------------------------------
+-- Cards & Deck Tests (Schritt 2 / Phase 2D)
+-- ---------------------------------------------------------------------------
+
+-- | Test compiling YAML with cards (map syntax) and deck (count-map syntax).
+testCardGameYamlCompilation :: IO Bool
+testCardGameYamlCompilation = do
+    let yaml = unlines
+            [ "name: Deck Adventure"
+            , "start_room: arena"
+            , "rooms:"
+            , "  - id: arena"
+            , "    name: Kampfarena"
+            , "    texts: Der Kampf beginnt."
+            , "cards:"
+            , "  strike:"
+            , "    name: Schlag"
+            , "    cost: { energy: 1 }"
+            , "    type: attack"
+            , "    target: single_enemy"
+            , "    description: Fuegt 6 Schaden zu."
+            , "    outcomes:"
+            , "      - damage_enemy: { target: chosen, amount: 6 }"
+            , "  defend:"
+            , "    name: Verteidigung"
+            , "    cost: { energy: 1 }"
+            , "    type: skill"
+            , "    target: self"
+            , "    description: Erhoeht Block um 5."
+            , "    outcomes:"
+            , "      - add_var: { variable: block, delta: 5 }"
+            , "  tactics:"
+            , "    name: Taktik"
+            , "    cost: {}"
+            , "    type: skill"
+            , "    target: self"
+            , "    description: Ziehe 2 Karten."
+            , "    outcomes:"
+            , "      - draw_cards: 2"
+            , "deck:"
+            , "  strike: 3"
+            , "  defend: 2"
+            , "  tactics: 1"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let w = crWorld cr
+                    s = crSave cr
+                    cDefs = E.cardDefs w
+                r1 <- expectEqual 3 (Map.size cDefs)
+                r2 <- expectTrue "strike is attack" (maybe False (\c -> E.cardType c == E.CardAttack) (Map.lookup "strike" cDefs))
+                r3 <- expectTrue "defend is skill" (maybe False (\c -> E.cardType c == E.CardSkill) (Map.lookup "defend" cDefs))
+                r4 <- expectTrue "strike target is SingleEnemy" (maybe False (\c -> E.cardTarget c == E.TargetSingleEnemy) (Map.lookup "strike" cDefs))
+                r5 <- expectTrue "deckState initialized" (case E.deckState s of
+                    Nothing -> False
+                    Just ds -> length (E.drawPile ds) == 6 && null (E.hand ds) && null (E.discardPile ds))
+                pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Test compiling cards (list syntax), player.deck, and card outcomes (draw, discard, exhaust, add_card, shuffle).
+testCardGameListFormAndOutcomes :: IO Bool
+testCardGameListFormAndOutcomes = do
+    let yaml = unlines
+            [ "name: List Deck Adventure"
+            , "start_room: arena"
+            , "rooms:"
+            , "  - id: arena"
+            , "    name: Arena"
+            , "    texts: Arena."
+            , "player:"
+            , "  deck: [bash, sweep, utility]"
+            , "cards:"
+            , "  - id: bash"
+            , "    name: Schmettern"
+            , "    cost: { energy: 2 }"
+            , "    type: attack"
+            , "    target: enemy"
+            , "    description: 8 Schaden."
+            , "    outcomes:"
+            , "      - damage_enemy: { target: chosen, amount: 8 }"
+            , "  - id: sweep"
+            , "    name: Rundumschlag"
+            , "    cost: { energy: 1 }"
+            , "    type: attack"
+            , "    target: all_enemies"
+            , "    description: 4 Schaden an alle Feinde."
+            , "    outcomes:"
+            , "      - damage_all_enemies: 4"
+            , "  - id: utility"
+            , "    name: Nuetzlich"
+            , "    cost: {}"
+            , "    type: skill"
+            , "    target: self"
+            , "    description: Verschiedene Karteneffekte."
+            , "    outcomes:"
+            , "      - draw_cards: 2"
+            , "      - discard_hand: true"
+            , "      - discard_card: bash"
+            , "      - exhaust_card: bash"
+            , "      - add_card: { card: bash, destination: discard }"
+            , "      - shuffle_deck: true"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let w = crWorld cr
+                    s = crSave cr
+                    cDefs = E.cardDefs w
+                r1 <- expectEqual 3 (Map.size cDefs)
+                r2 <- expectTrue "deck has 3 cards" (case E.deckState s of
+                    Nothing -> False
+                    Just ds -> E.drawPile ds == ["bash", "sweep", "utility"])
+                let mUtil = Map.lookup "utility" cDefs
+                    expectedEffects =
+                        [ E.DrawCards 2
+                        , E.DiscardHand
+                        , E.DiscardCard "bash"
+                        , E.ExhaustCard "bash"
+                        , E.AddCardToDeck "bash" E.DestDiscard
+                        , E.ShuffleDeck
+                        ]
+                r3 <- expectTrue "utility effects match" (maybe False (\c -> E.cardEffects c == expectedEffects) mUtil)
+                let mSweep = Map.lookup "sweep" cDefs
+                r4 <- expectTrue "sweep has TargetAllEnemies" (maybe False (\c -> E.cardTarget c == E.TargetAllEnemies) mSweep)
+                pure (r1 && r2 && r3 && r4)
+
+-- | Test validation: unknown card referenced in deck.
+testCardGameUnknownCardInDeck :: IO Bool
+testCardGameUnknownCardInDeck = do
+    let yaml = unlines
+            [ "name: Bad Deck"
+            , "start_room: arena"
+            , "rooms:"
+            , "  - id: arena"
+            , "    name: Arena"
+            , "    texts: Arena."
+            , "cards:"
+            , "  strike:"
+            , "    name: Schlag"
+            , "    type: attack"
+            , "deck: [strike, phantom_card]"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> expectTrue "UnknownCardInDeck error found"
+                            (any (\i -> ciCode i == "UnknownCardInDeck") errs)
+            Right _ -> expectTrue "expected compile failure for unknown card in deck" False
+
+-- | Test validation: duplicate card ID detected.
+testCardGameDuplicateCardId :: IO Bool
+testCardGameDuplicateCardId = do
+    let yaml = unlines
+            [ "name: Duplicate Cards"
+            , "start_room: arena"
+            , "rooms:"
+            , "  - id: arena"
+            , "    name: Arena"
+            , "    texts: Arena."
+            , "cards:"
+            , "  - id: strike"
+            , "    name: Schlag 1"
+            , "  - id: strike"
+            , "    name: Schlag 2"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> expectTrue "DuplicateCardId error found"
+                            (any (\i -> ciCode i == "DuplicateCardId") errs)
+            Right _ -> expectTrue "expected compile failure for duplicate card id" False
+
+-- | Test validation: unknown card type and target detected.
+testCardGameUnknownTypeAndTarget :: IO Bool
+testCardGameUnknownTypeAndTarget = do
+    let yaml = unlines
+            [ "name: Bad Card"
+            , "start_room: arena"
+            , "rooms:"
+            , "  - id: arena"
+            , "    name: Arena"
+            , "    texts: Arena."
+            , "cards:"
+            , "  weird:"
+            , "    name: Seltsam"
+            , "    type: cosmic"
+            , "    target: galaxy"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                r1 <- expectTrue "UnknownCardType found" (any (\i -> ciCode i == "UnknownCardType") errs)
+                r2 <- expectTrue "UnknownCardTarget found" (any (\i -> ciCode i == "UnknownCardTarget") errs)
+                pure (r1 && r2)
+            Right _ -> expectTrue "expected compile failure for unknown card type and target" False
 
 -- helpers -------------------------------------------------------------------
 

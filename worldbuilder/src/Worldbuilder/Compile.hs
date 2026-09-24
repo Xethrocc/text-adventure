@@ -130,6 +130,7 @@ checkSetExitRefs roomKeys adv =
             , concatMap (concat . Map.elems . anVerbMap) (advNPCs a)
             , interactions
             , concatMap (maybe [] id . aqReward) (advQuests a)
+            , concatMap acdOutcomes (advCards a)
             ]
 collisions :: Ord a => [(String, a)] -> [(a, [String])]
 collisions pairs =
@@ -215,6 +216,18 @@ compileAdventure adv =
             }
         compiledAbilities = Map.fromList [ (E.paId pa, pa) | a <- advAbilities adv, let pa = compileAbility a ]
 
+        (cardErrs, compiledCards) = compileCards (advCards adv)
+        mStartingDeck = case advDeck adv of
+            Just d  -> Just d
+            Nothing -> advPlayer adv >>= apDeck
+        deckErrs = case mStartingDeck of
+            Nothing -> []
+            Just deckCards ->
+                [ ciError ("deck." ++ cid) "UnknownCardInDeck"
+                    ("deck references card '" ++ cid ++ "', which is not declared under 'cards:'")
+                | cid <- deckCards
+                , cid `Map.notMember` compiledCards ]
+
         gw = E.GameWorld
                 { E.rooms = allRooms
                 , E.itemDefs = itemDefs
@@ -233,6 +246,7 @@ compileAdventure adv =
                 , E.worldTitleArt = compileAscii (advTitleArt adv)
                 , E.worldClips = compileClips (advClips adv)
                 , E.worldGamePolicy = compiledPolicy
+                , E.cardDefs = compiledCards
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
@@ -267,6 +281,8 @@ compileAdventure adv =
                     ++ clipErrs
                     ++ setExitErrs
                     ++ gameErrs
+                    ++ cardErrs
+                    ++ deckErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -294,6 +310,9 @@ compileAdventure adv =
                         , E.variables = initialVars
                         , E.triggerStates = Map.empty
                         , E.exitOverrides = Map.empty
+                        , E.deckState = case mStartingDeck of
+                              Just deckCards -> Just (E.defaultDeckState { E.drawPile = deckCards })
+                              Nothing        -> Nothing
                         }
             in Right (CompileResult gw startSave gameWarns)
   where
@@ -1109,6 +1128,7 @@ allWorldEffects gw = concat
     , concatMap (Map.elems . vehicleConditionEffects) (Map.elems (E.vehicleDefs gw))
     , Map.elems (E.itemInteractions gw)
     , concatMap E.paEffects (Map.elems (E.abilities gw))
+    , concatMap E.cardEffects (Map.elems (E.cardDefs gw))
     ]
   where
     roomHooks r = catMaybes [roomOnEnter r, roomOnLook r, roomOnExit r, roomSearchOutcome r]
@@ -1175,10 +1195,11 @@ factionFromVar n = case stripPrefix "faction." n of
 checkDamageNpcRefs :: E.GameWorld -> [CompileIssue]
 checkDamageNpcRefs gw =
     let declared = Set.fromList (Map.keys (E.npcDefs gw))
+        dynamicTargets = Set.fromList ["chosen", "target", "current_target", "all", "all_enemies"]
         refs = nub (concatMap hpTargetsInEffect (allWorldEffects gw))
     in [ ciError "damage_npc" "UnknownDamageNPC"
             ("damage_npc targets '" ++ nid ++ "', which is not declared under 'npcs:'")
-       | nid <- refs, nid `Set.notMember` declared ]
+       | nid <- refs, nid `Set.notMember` declared, nid `Set.notMember` dynamicTargets ]
 
 -- | `VRActorProp (ActorNPC <entity>) PHealth` references inside an Effect tree — what
 --   `damage_npc` compiles to.
@@ -1559,6 +1580,7 @@ compileAActionOutcome ao = case ao of
         E.Conditional p (compileOutcomes ts) (compileOutcomes es)
     AOSetVar name v -> E.SetValue (E.VRVariable name) (E.EVInt v)
     AOAddVar name d -> E.ModifyValue (E.VRVariable name) d
+    AOComputeVar name expr -> E.ComputeValue (E.VRVariable name) expr
     AONarrative ls follow -> E.Narrative ls (compileOutcomes follow)
     AOStandingAdd fid n -> E.ModifyValue (E.VRVariable ("faction." ++ fid)) n
     AOStandingSet fid n -> E.SetValue (E.VRVariable ("faction." ++ fid)) (E.EVInt n)
@@ -1582,6 +1604,17 @@ compileAActionOutcome ao = case ao of
         E.RandomChoice [ (w, compileOutcomes os) | (w, os) <- weighted ]
     AORaiseEvent name -> E.RaiseEvent name
     AOPlayClip clipId -> E.PlayClip clipId
+    AODrawCards n -> E.DrawCards n
+    AODiscardHand -> E.DiscardHand
+    AODiscardCard cid -> E.DiscardCard cid
+    AOExhaustCard cid -> E.ExhaustCard cid
+    AOAddCardToDeck cid destStr ->
+        let dest = case map toLower destStr of
+                "discard" -> E.DestDiscard
+                "hand"    -> E.DestHand
+                _         -> E.DestDraw
+        in E.AddCardToDeck cid dest
+    AOShuffleDeck -> E.ShuffleDeck
 
 -- | `Just` the compiled effect for a non-empty outcome list, else `Nothing`
 --   (engine `ApplyCondition` takes optional tick/end effects).
@@ -1849,3 +1882,64 @@ compileInitialState questIds flagMap questDefs =
         errs = [ ciError ("active_quests." ++ q) "UnknownQuest" "active quest is not defined in questDefs"
                | q <- missing ]
     in (errs, flagMap, Map.fromList [(q, 0) | q <- questIds, Map.member q questDefs])
+
+-- ---------------------------------------------------------------------------
+-- Cards & Deck (Schritt 2 / Phase 2D)
+-- ---------------------------------------------------------------------------
+
+-- | Compile authored cards into engine Cards and validate card types and targets.
+compileCards :: [ACard] -> ([CompileIssue], Map.Map String E.Card)
+compileCards cards =
+    let results = map compileOneCard cards
+        errors = concat [e | Left e <- results]
+        dupErrs =
+            [ ciError ("cards." ++ cid) "DuplicateCardId"
+                ("card id '" ++ cid ++ "' is declared more than once")
+            | (cid, others) <- collisions [(acdId c, acdId c) | c <- cards]
+            , not (null others) ]
+        cardMap = Map.fromList [ (acdId c, card) | Right (c, card) <- results ]
+    in (errors ++ dupErrs, cardMap)
+  where
+    compileOneCard c =
+        let cPath = "cards." ++ acdId c
+            mType = parseCardType (acdType c)
+            mTarget = parseCardTarget (acdTarget c)
+            typeErr = case mType of
+                Nothing -> [ciError (cPath ++ ".type") "UnknownCardType"
+                             ("Unknown card type '" ++ acdType c ++ "' (expected: attack, skill, power, curse, status)")]
+                Just _  -> []
+            targetErr = case mTarget of
+                Nothing -> [ciError (cPath ++ ".target") "UnknownCardTarget"
+                             ("Unknown card target '" ++ acdTarget c ++ "' (expected: self, single_enemy, all_enemies, none)")]
+                Just _  -> []
+            allErrs = typeErr ++ targetErr
+        in if null allErrs
+           then Right (c, E.Card
+                { E.cardId = acdId c
+                , E.cardName = if null (acdName c) then acdId c else acdName c
+                , E.cardCost = acdCost c
+                , E.cardType = fromMaybe E.CardSkill mType
+                , E.cardDescription = acdDescription c
+                , E.cardTarget = fromMaybe E.TargetNone mTarget
+                , E.cardExhaust = acdExhaust c
+                , E.cardEffects = map compileAActionOutcome (acdOutcomes c)
+                })
+           else Left allErrs
+
+    parseCardType s = case map toLower s of
+        "attack" -> Just E.CardAttack
+        "skill"  -> Just E.CardSkill
+        "power"  -> Just E.CardPower
+        "curse"  -> Just E.CardCurse
+        "status" -> Just E.CardStatus
+        _        -> Nothing
+
+    parseCardTarget s = case map toLower s of
+        "self"         -> Just E.TargetSelf
+        "single_enemy" -> Just E.TargetSingleEnemy
+        "single"       -> Just E.TargetSingleEnemy
+        "enemy"        -> Just E.TargetSingleEnemy
+        "all_enemies"  -> Just E.TargetAllEnemies
+        "all"          -> Just E.TargetAllEnemies
+        "none"         -> Just E.TargetNone
+        _              -> Nothing

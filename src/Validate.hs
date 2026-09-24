@@ -270,8 +270,9 @@ checkMissingEntitiesInDefs gw =
         -- `set_state` on a lock would read as a missing entity.
         lockEntities = [ e | room <- Map.elems (rooms gw)
                            , Locked _ e <- Map.elems (roomConnections room) ]
-        entityRefs = Set.insert "player"
-            (Set.fromList (Map.keys (itemDefs gw) ++ Map.keys (npcDefs gw) ++ lockEntities))
+        dynamicEntities = ["player", "chosen", "target", "current_target", "all", "all_enemies"]
+        entityRefs = Set.fromList dynamicEntities
+            `Set.union` Set.fromList (Map.keys (itemDefs gw) ++ Map.keys (npcDefs gw) ++ lockEntities)
         allRefs = concatMap idsFromOutcomeEntity (allOutcomes gw)
     in [MissingEntity eId "property" | eId <- nub allRefs, not (Set.member eId entityRefs)]
 
@@ -325,6 +326,7 @@ allOutcomes gw = concat
     -- references inside `rules:`.
     , concatMap trEffects (triggerDefs gw)
     , concatMap paEffects (Map.elems (abilities gw))
+    , concatMap cardEffects (Map.elems (cardDefs gw))
     ]
 
 -- | Every predicate tree reachable from a GameWorld: trigger conditions,
@@ -361,6 +363,7 @@ idsFromOutcomeItem outcome = case outcome of
     MoveEntity iId _             -> [iId]
     SetValue (VRItemProp iId _) _ -> [iId]
     ModifyValue (VRItemProp iId _) _ -> [iId]
+    ComputeValue (VRItemProp iId _) _ -> [iId]
     Sequence os                  -> concatMap idsFromOutcomeItem os
     RandomChoice os              -> concatMap (idsFromOutcomeItem . snd) os
     Conditional _ t e            -> idsFromOutcomeItem t ++ idsFromOutcomeItem e
@@ -380,6 +383,7 @@ idsFromOutcomeEntity :: Effect -> [String]
 idsFromOutcomeEntity outcome = case outcome of
     SetValue (VRActorProp actor _) _    -> actorEntity actor
     ModifyValue (VRActorProp actor _) _ -> actorEntity actor
+    ComputeValue (VRActorProp actor _) _ -> actorEntity actor
     Sequence os                         -> concatMap idsFromOutcomeEntity os
     RandomChoice os                     -> concatMap (idsFromOutcomeEntity . snd) os
     Conditional _ t e                   -> idsFromOutcomeEntity t ++ idsFromOutcomeEntity e
@@ -406,8 +410,10 @@ idsFromOutcomeVehicle :: Effect -> [String]
 idsFromOutcomeVehicle outcome = case outcome of
     SetValue (VRActorProp (ActorShip vId) _) _    -> [vId]
     ModifyValue (VRActorProp (ActorShip vId) _) _ -> [vId]
+    ComputeValue (VRActorProp (ActorShip vId) _) _ -> [vId]
     SetValue (VRVariable n) _                    -> shipFromVar n
     ModifyValue (VRVariable n) _                 -> shipFromVar n
+    ComputeValue (VRVariable n) _                -> shipFromVar n
     Sequence os                                  -> concatMap idsFromOutcomeVehicle os
     RandomChoice os                              -> concatMap (idsFromOutcomeVehicle . snd) os
     Conditional p t e                            -> idsFromPredicateVehicle p
@@ -576,6 +582,7 @@ flagsInCondText ct = concatMap (flagsInPredicate . tvWhen) (ctVariants ct)
 scanSetFlags :: Set.Set FlagID -> Effect -> Set.Set FlagID
 scanSetFlags acc outcome = case outcome of
     SetValue (VRFlag n) _         -> Set.insert n acc
+    ComputeValue (VRFlag n) _     -> Set.insert n acc
     Sequence os                   -> foldl' scanSetFlags acc os
     RandomChoice os               -> foldl' scanSetFlags acc (map snd os)
     Conditional _ t e             -> scanSetFlags (scanSetFlags acc t) e

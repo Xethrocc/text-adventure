@@ -1372,6 +1372,8 @@ emitAdventure t plan seed =
             , advTitleArt          = emptyTitleArt
             , advClips             = []
             , advGame              = generatedGamePolicy
+            , advCards             = []
+            , advDeck              = Nothing
             }
     in (adv, dpWarnings plan ++ popWarns)
 

@@ -17,7 +17,7 @@ import GameLoop (LoopState (..), initLoopState, applyLoopCommand,
                  commandEvents, consumesTurn, consumesTurnIn, runGameWithFrontend,
                  handleGameOver, saveBlockedMessage, loadBlockedMessage, deathMenuText)
 import Frontend (Frontend (..), commandCompletion)
-import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText)
+import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText, bindCommandVars)
 import Verbs (verbAliasMap)
 import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombat, shipAbsorb)
 import Validate (ValidationError (..), validateWorld, validateGameState, idsFromOutcomeRoom)
@@ -3728,6 +3728,7 @@ expectedConsumesTurn cmd = case cmd of
     Inventory          -> False
     Interact _ _       -> True
     InteractWith _ _ _ -> True
+    ActionWithArgs _ _ -> True
     ChooseCmd _        -> True   -- refined by consumesTurnIn: only a valid choice ticks
     TakeAll            -> True
     DropAll            -> True
@@ -3753,6 +3754,11 @@ expectedConsumesTurn cmd = case cmd of
     Restart            -> False
     Help               -> False
     Quit               -> False
+    PlayCardCmd _ _    -> False
+    HandCmd            -> False
+    DeckCmd            -> False
+    DiscardCmd         -> False
+    EndTurnCmd         -> True
     Unknown _          -> False
 
 -- | One sample per `Command` constructor.
@@ -3763,7 +3769,8 @@ allCommandSamples =
     , EquipCmd "x", UnequipCmd "x", UnequipAllCmd, StatsCmd, SearchCmd Nothing
     , JournalCmd, Undo, EnterVehicleCmd "v", ExitVehicleCmd, DriveToCmd "s"
     , WaitCmd, RefuelCmd "v", RepairCmd "v", Save "s", Load "s", ListSaves
-    , Restart, Help, Quit, Unknown "z" ]
+    , Restart, Help, Quit, ActionWithArgs (VCustom "action") ["a"]
+    , PlayCardCmd 1 Nothing, HandCmd, DeckCmd, DiscardCmd, EndTurnCmd, Unknown "z" ]
 
 -- | L13: the verdict table must match `consumesTurn` for every constructor, and
 --   the sample count pins the list so a forgotten sample is noticed.
@@ -3771,8 +3778,8 @@ testConsumesTurnCompleteness :: IO Bool
 testConsumesTurnCompleteness = do
     let st0 = initSampleGame
     r1 <- expectTrue "consumesTurn matches the documented verdict everywhere"
-              (all (\c -> consumesTurn c == expectedConsumesTurn c) allCommandSamples)
-    r2 <- expectEqual 29 (length allCommandSamples)
+        (all (\c -> consumesTurn c == expectedConsumesTurn c) allCommandSamples)
+    r2 <- expectEqual 35 (length allCommandSamples)
     r3 <- expectTrue "an invalid dialogue choice is a typo, not a turn"
               (not (consumesTurnIn st0 (ChooseCmd 99)))
     r4 <- expectTrue "a valid dialogue choice consumes the turn"
@@ -4386,6 +4393,645 @@ testUseItemPlaceholder = do
     r3 <- expectTrue "a wired action still resolves" (not (null effs2))
     pure (r1 && r2 && r3)
 
+-- ---------------------------------------------------------------------------
+-- Phase 1A: Arithmetic expressions (Expr) & ComputeValue
+-- ---------------------------------------------------------------------------
+
+-- | Phase 1A: Arithmetic expressions: parsing, operator precedence, parentheses and functions
+testExprParsingAndPrecedence :: IO Bool
+testExprParsingAndPrecedence = do
+    r1 <- expectEqual (Right (EAdd (ELit 2) (EMul (ELit 3) (ELit 4)))) (parseExpr "2 + 3 * 4")
+    r2 <- expectEqual (Right (EMul (EAdd (ELit 2) (ELit 3)) (ELit 4))) (parseExpr "(2 + 3) * 4")
+    r3 <- expectEqual (Right (ESub (ESub (ELit 100) (ELit 30)) (ELit 20))) (parseExpr "100 - 30 - 20")
+    r4 <- expectEqual (Right (EDiv (EDiv (ELit 100) (ELit 10)) (ELit 2))) (parseExpr "100 / 10 / 2")
+    r5 <- expectEqual (Right (EMod (ELit 10) (ELit 3))) (parseExpr "10 % 3")
+    r6 <- expectEqual (Right (EAdd (ESub (ELit 0) (ELit 5)) (ELit 10))) (parseExpr "-5 + 10")
+    r7 <- expectEqual (Right (EAdd (EMin (ELit 10) (ELit 20)) (EMax (ELit 5) (ELit 1)))) (parseExpr "min(10, 20) + max(5, 1)")
+    r8 <- expectEqual (Right (EClamp (ELit 0) (ELit 100) (ELit 150))) (parseExpr "clamp(0, 100, 150)")
+    r9 <- case parseExpr "2 + * 3" of
+        Left _ -> pure True
+        Right _ -> putStrLn "Expected parse failure for '2 + * 3'" >> pure False
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9)
+
+-- | Phase 1A: Arithmetic expressions: evaluation, division-by-zero safety, min/max/clamp
+testExprEvalAndZeroSafety :: IO Bool
+testExprEvalAndZeroSafety = do
+    let st = initSampleGame
+    r1 <- expectEqual 0 (evalExpr (EDiv (ELit 10) (ELit 0)) st)
+    r2 <- expectEqual 0 (evalExpr (EMod (ELit 10) (ELit 0)) st)
+    r3 <- expectEqual 10 (evalExpr (EClamp (ELit 10) (ELit 20) (ELit 5)) st)
+    r4 <- expectEqual 20 (evalExpr (EClamp (ELit 10) (ELit 20) (ELit 25)) st)
+    r5 <- expectEqual 15 (evalExpr (EClamp (ELit 10) (ELit 20) (ELit 15)) st)
+    r6 <- expectEqual 5  (evalExpr (EMin (ELit 10) (ELit 5)) st)
+    r7 <- expectEqual 10 (evalExpr (EMax (ELit 10) (ELit 5)) st)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | Phase 1A: Arithmetic expressions: variable resolution and system variables
+testExprVariableResolution :: IO Bool
+testExprVariableResolution = do
+    let st0 = initSampleGame
+        st1 = setVariable "gold" (VVInt 100) st0
+        st2 = setVariable "tax" (VVInt 2) st1
+        st3 = setVariable "pop" (VVInt 50) st2
+    case parseExpr "gold + pop * tax" of
+        Left err -> putStrLn ("Failed to parse: " ++ err) >> pure False
+        Right expr -> do
+            r1 <- expectEqual 200 (evalExpr expr st3)
+            case parseExpr "player.hp + 5" of
+                Left err -> putStrLn ("Failed to parse player.hp: " ++ err) >> pure False
+                Right hpExpr -> do
+                    let expectedHp = playerHealth (player (save st3)) + 5
+                    r2 <- expectEqual expectedHp (evalExpr hpExpr st3)
+                    pure (r1 && r2)
+
+-- | Phase 1A: ComputeValue outcome modifies variables and player health
+testComputeValueOutcome :: IO Bool
+testComputeValueOutcome = do
+    let st0 = setVariable "gold" (VVInt 100) initSampleGame
+    case parseExpr "gold + 50" of
+        Left err -> putStrLn ("Parse error: " ++ err) >> pure False
+        Right expr -> do
+            let (st1, _) = applyOutcome (ComputeValue (VRVariable "gold") expr) "" st0
+            r1 <- expectEqual (Just (VVInt 150)) (getVariable "gold" st1)
+            let (st2, _) = applyOutcome (ComputeValue VRPlayerHealth (ELit 75)) "" st1
+            r2 <- expectEqual 75 (playerHealth (player (save st2)))
+            pure (r1 && r2)
+
+-- | Phase 1A: Expr and ComputeValue JSON round-trip
+testExprJSONRoundTrip :: IO Bool
+testExprJSONRoundTrip = do
+    case parseExpr "staatskasse.gold + (pop * 2)" of
+        Left err -> putStrLn ("Parse error: " ++ err) >> pure False
+        Right expr -> do
+            let enc = Aeson.encode expr
+            r1 <- expectEqual (Just expr) (Aeson.decode enc)
+            let eff = ComputeValue (VRVariable "gold") expr
+            let effEnc = Aeson.encode eff
+            r2 <- expectEqual (Just eff) (Aeson.decode effEnc)
+            pure (r1 && r2)
+
+-- ---------------------------------------------------------------------------
+-- Phase 1B: String interpolation with variables (formatWithVars)
+-- ---------------------------------------------------------------------------
+
+-- | Phase 1B: String interpolation: plain vars, sign modifier, padding, system vars, escaping
+testFormatWithVarsBasics :: IO Bool
+testFormatWithVarsBasics = do
+    let st0 = initSampleGame
+        st1 = setVariable "gold" (VVInt 42) st0
+        st2 = setVariable "city" (VVText "Aethelgard") st1
+        st3 = setVariable "surplus" (VVInt 15) st2
+        st4 = setVariable "deficit" (VVInt (-8)) st3
+    r1 <- expectEqual "You have 42 gold." (formatWithVars "You have {gold} gold." st4)
+    r2 <- expectEqual "Explicit: 42." (formatWithVars "Explicit: {var:gold}." st4)
+    r3 <- expectEqual "Welcome to Aethelgard!" (formatWithVars "Welcome to {city}!" st4)
+    r4 <- expectEqual "Surplus: +15, Deficit: -8" (formatWithVars "Surplus: {surplus:+}, Deficit: {deficit:+}" st4)
+    r5 <- expectEqual "Box: [    42] and [-8    ]" (formatWithVars "Box: [{gold:6}] and [{deficit:-6}]" st4)
+    r6 <- expectEqual "HP: 100, Turn: 0" (formatWithVars "HP: {player.hp}, Turn: {turn.count}" st4)
+    r7 <- expectEqual "Escaped: {literal} and {lit2}" (formatWithVars "Escaped: \\{literal\\} and {{lit2}}" st4)
+    r8 <- expectEqual "Unknown stays: {unknown_var}" (formatWithVars "Unknown stays: {unknown_var}" st4)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- | Phase 1B: String interpolation integration in SendMessage and CondText
+testFormatWithVarsIntegration :: IO Bool
+testFormatWithVarsIntegration = do
+    let st0 = setVariable "harvest" (VVInt 120) initSampleGame
+    -- SendMessage interpolation
+    let (_, msg) = applyOutcome (SendMessage "Ernte: {harvest} Korn.") "" st0
+    r1 <- expectEqual "Ernte: 120 Korn." msg
+    -- CondText interpolation
+    let ct = plainText "Vorrat: {harvest} Einheiten."
+    r2 <- expectEqual "Vorrat: 120 Einheiten." (resolveCondText ct st0)
+    pure (r1 && r2)
+
+-- ---------------------------------------------------------------------------
+-- Phase 1C: Parameterized commands and argument binding
+-- ---------------------------------------------------------------------------
+
+-- | Phase 1C: Parameterized command parsing
+testParameterizedCommandParsing :: IO Bool
+testParameterizedCommandParsing = do
+    let reg = Map.fromList
+            [ ("kaufe", VerbDef "kaufe" ["kaufe", "buy"])
+            , ("steuern", VerbDef "steuern" ["steuern", "tax"])
+            , ("status", VerbDef "status" ["status"])
+            ]
+    r1 <- expectEqual (ActionWithArgs (VCustom "kaufe") ["5", "weizen"])
+                      (parseCommandWith reg "kaufe 5 weizen")
+    r2 <- expectEqual (Interact (VCustom "steuern") "15")
+                      (parseCommandWith reg "steuern 15")
+    r3 <- expectEqual (Interact (VCustom "status") "")
+                      (parseCommandWith reg "status")
+    r4 <- expectEqual (Interact VTake "healing potion")
+                      (parseCommandWith reg "take healing potion")
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 1C: Binding command variables to GameState
+testBindCommandVars :: IO Bool
+testBindCommandVars = do
+    let st0 = initSampleGame
+        st1 = bindCommandVars (ActionWithArgs (VCustom "kaufe") ["5", "weizen"]) st0
+    r1 <- expectEqual (Just (VVText "kaufe")) (getVariable "cmd.verb" st1)
+    r2 <- expectEqual (Just (VVInt 2)) (getVariable "cmd.count" st1)
+    r3 <- expectEqual (Just (VVText "5 weizen")) (getVariable "cmd.raw_args" st1)
+    r4 <- expectEqual (Just (VVInt 5)) (getVariable "cmd.arg1" st1)
+    r5 <- expectEqual (Just (VVText "weizen")) (getVariable "cmd.arg2" st1)
+    -- Subsequent command with 0 args clears cmd.arg1/cmd.arg2
+    let st2 = bindCommandVars (Interact (VCustom "status") "") st1
+    r6 <- expectEqual (Just (VVInt 0)) (getVariable "cmd.count" st2)
+    r7 <- expectEqual Nothing (getVariable "cmd.arg1" st2)
+    r8 <- expectEqual Nothing (getVariable "cmd.arg2" st2)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- | Phase 1C: OnCommand trigger with args, formulas, conditional and interpolation
+testOnCommandTriggerWithArgsAndFormulas :: IO Bool
+testOnCommandTriggerWithArgsAndFormulas = do
+    let reg = Map.fromList [("kaufe", VerbDef "kaufe" ["kaufe"])]
+        st0 = setVariable "gold" (VVInt 100)
+            $ setVariable "korn" (VVInt 0)
+            $ setVariable "markt.korn_preis" (VVInt 10)
+            $ initSampleGame
+        calcCost = ComputeValue (VRVariable "kosten") (EMul (EVar "cmd.arg1") (EVar "markt.korn_preis"))
+        payGold = ComputeValue (VRVariable "gold") (ESub (EVar "gold") (EVar "kosten"))
+        addKorn = ComputeValue (VRVariable "korn") (EAdd (EVar "korn") (EVar "cmd.arg1"))
+        msgSuccess = SendMessage "Du kaufst {cmd.arg1} Korn fuer {kosten} Gold."
+        msgFail = SendMessage "Nicht genug Gold!"
+        canAfford = Compare (VRVariable "gold") CGte (VRVariable "kosten")
+        buyTrigger = TriggerDef
+            { trId = "tr_kaufe"
+            , trEvent = OnCommand "kaufe"
+            , trCondition = Nothing
+            , trEffects =
+                [ calcCost
+                , Conditional canAfford
+                    (Sequence [payGold, addKorn, msgSuccess])
+                    msgFail
+                ]
+            , trOnce = False
+            , trCooldown = 0
+            }
+        worldWithTrigger = (world st0)
+            { verbDefs = reg
+            , triggerDefs = [buyTrigger]
+            }
+        stWithTrigger = st0 { world = worldWithTrigger }
+        loop0 = initLoopState stWithTrigger
+        -- Execute first purchase: kaufe 5 korn (costs 50 gold)
+        (loop1, msg1) = applyLoopCommand (parseCommandWith reg "kaufe 5 korn") loop0
+        stAfter1 = lsCurrent loop1
+    r1 <- expectTrue "msg1 contains purchase text" (isInfixOf "Du kaufst 5 Korn fuer 50 Gold." msg1)
+    r2 <- expectEqual (Just (VVInt 50)) (getVariable "gold" stAfter1)
+    r3 <- expectEqual (Just (VVInt 5)) (getVariable "korn" stAfter1)
+    -- Execute second purchase: kaufe 10 korn (costs 100 gold, but player only has 50)
+    let (loop2, msg2) = applyLoopCommand (parseCommandWith reg "kaufe 10 korn") loop1
+    let stAfter2 = lsCurrent loop2
+    r4 <- expectTrue "msg2 contains insufficient funds text" (isInfixOf "Nicht genug Gold!" msg2)
+    r5 <- expectEqual (Just (VVInt 50)) (getVariable "gold" stAfter2)
+    r6 <- expectEqual (Just (VVInt 5)) (getVariable "korn" stAfter2)
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | Phase 1C: Informational custom verbs (status, bilanz) consume no turn
+testStatusVerbNoTurnConsumed :: IO Bool
+testStatusVerbNoTurnConsumed = do
+    let reg = Map.fromList [("status", VerbDef "status" ["status"])]
+        st0 = (initSampleGame) { world = (world initSampleGame) { verbDefs = reg } }
+        cmd = parseCommandWith reg "status"
+    r1 <- expectEqual False (consumesTurnIn st0 cmd)
+    let loop0 = initLoopState st0
+        (loop1, _) = applyLoopCommand cmd loop0
+    r2 <- expectEqual 0 (turnCount (save (lsCurrent loop1)))
+    pure (r1 && r2)
+
+-- ---------------------------------------------------------------------------
+-- Phase 2A: Card Games & Deckbuilder Data Model
+-- ---------------------------------------------------------------------------
+
+-- | Phase 2A: Card, CardType, CardTarget, DeckDestination, DeckState JSON round-trip
+testCardDataTypesJSONRoundTrip :: IO Bool
+testCardDataTypesJSONRoundTrip = do
+    -- CardType round-trip
+    let ct = CardAttack
+    r1 <- expectEqual (Just ct) (Aeson.decode (Aeson.encode ct))
+    -- CardTarget round-trip
+    let tg = TargetSingleEnemy
+    r2 <- expectEqual (Just tg) (Aeson.decode (Aeson.encode tg))
+    -- DeckDestination round-trip
+    let dest = DestDiscard
+    r3 <- expectEqual (Just dest) (Aeson.decode (Aeson.encode dest))
+    -- Card round-trip
+    let card = Card
+            { cardId = "strike"
+            , cardName = "Hieb"
+            , cardCost = Map.singleton "energy" 1
+            , cardType = CardAttack
+            , cardDescription = "Deals 6 damage."
+            , cardTarget = TargetSingleEnemy
+            , cardExhaust = False
+            , cardEffects = [ ModifyValue (VRVariable "enemy.hp") (-6) ]
+            }
+    let cardEnc = Aeson.encode card
+    r4 <- expectEqual (Just card) (Aeson.decode cardEnc)
+    -- DeckState round-trip
+    let ds = DeckState
+            { drawPile = ["strike", "defend"]
+            , hand = ["strike"]
+            , discardPile = ["defend"]
+            , exhaustPile = []
+            , maxHandSize = 8
+            }
+    let dsEnc = Aeson.encode ds
+    r5 <- expectEqual (Just ds) (Aeson.decode dsEnc)
+    -- Card operations in Effect round-trip
+    let effs = [ DrawCards 3, DiscardHand, DiscardCard "strike", ExhaustCard "defend"
+               , AddCardToDeck "strike" DestDraw, ShuffleDeck ]
+    let effsEnc = Aeson.encode effs
+    r6 <- expectEqual (Just effs) (Aeson.decode effsEnc)
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | Phase 2A: GameWorld cardDefs M2 invariant (omitted when empty, preserves checksum)
+testGameWorldCardDefsM2Invariant :: IO Bool
+testGameWorldCardDefsM2Invariant = do
+    let gw = world initSampleGame
+    let enc = Aeson.encode gw
+    -- "cards" must not appear in JSON when cardDefs is empty
+    r1 <- expectEqual False (isInfixOf "\"cards\"" (BLC.unpack enc))
+    -- Checksum calculation is unaffected
+    let cs = computeWorldChecksum gw
+    r2 <- expectTrue "checksum is non-empty" (not (null cs))
+    -- Round-trip with cardDefs populated
+    let card = Card "c1" "Defend" (Map.singleton "energy" 1) CardSkill "Block +5" TargetSelf False []
+        gwWithCards = gw { cardDefs = Map.singleton "c1" card }
+        encWithCards = Aeson.encode gwWithCards
+    r3 <- expectTrue "cards key present when non-empty" (isInfixOf "\"cards\"" (BLC.unpack encWithCards))
+    case Aeson.decode encWithCards of
+        Nothing -> putStrLn "Failed to decode GameWorld with cards" >> pure False
+        Just decoded -> do
+            r4 <- expectEqual (Map.singleton "c1" card) (cardDefs decoded)
+            pure (r1 && r2 && r3 && r4)
+
+-- | Phase 2A: SaveState deckState M2 invariant (omitted when Nothing, round-trips when Just)
+testSaveStateDeckStateM2Invariant :: IO Bool
+testSaveStateDeckStateM2Invariant = do
+    let ss = save initSampleGame
+    let enc = Aeson.encode ss
+    -- "deckState" must not appear in JSON when deckState is Nothing
+    r1 <- expectEqual False (isInfixOf "\"deckState\"" (BLC.unpack enc))
+    -- Round-trip with deckState populated
+    let ds = DeckState ["c1", "c2"] ["c3"] [] [] 10
+        ssWithDeck = ss { deckState = Just ds }
+        encWithDeck = Aeson.encode ssWithDeck
+    r2 <- expectTrue "deckState key present when Just" (isInfixOf "\"deckState\"" (BLC.unpack encWithDeck))
+    case Aeson.decode encWithDeck of
+        Nothing -> putStrLn "Failed to decode SaveState with deckState" >> pure False
+        Just decoded -> do
+            r3 <- expectEqual (Just ds) (deckState decoded)
+            pure (r1 && r2 && r3)
+
+-- | Phase 2B: Drawing cards from full deck decreases draw pile and fills hand.
+testDrawCardsFromFullDeck :: IO Bool
+testDrawCardsFromFullDeck = do
+    let ds = defaultDeckState { drawPile = ["c1", "c2", "c3", "c4", "c5", "c6"] }
+        st = emptyGameState { save = (save emptyGameState) { deckState = Just ds } }
+        st' = drawCards 3 st
+        mDs' = deckState (save st')
+    case mDs' of
+        Nothing -> putStrLn "deckState is Nothing" >> pure False
+        Just ds' -> do
+            r1 <- expectEqual ["c1", "c2", "c3"] (hand ds')
+            r2 <- expectEqual ["c4", "c5", "c6"] (drawPile ds')
+            r3 <- expectEqual [] (discardPile ds')
+            pure (r1 && r2 && r3)
+
+-- | Phase 2B: Drawing more cards than in draw pile reshuffles discard pile.
+testDrawCardsReshufflesDiscard :: IO Bool
+testDrawCardsReshufflesDiscard = do
+    let ds = defaultDeckState
+            { drawPile = ["c1"]
+            , discardPile = ["c2", "c3", "c4"]
+            , hand = []
+            }
+        st = emptyGameState { save = (save emptyGameState) { deckState = Just ds } }
+        st' = drawCards 3 st
+        mDs' = deckState (save st')
+    case mDs' of
+        Nothing -> putStrLn "deckState is Nothing" >> pure False
+        Just ds' -> do
+            r1 <- expectEqual 3 (length (hand ds'))
+            r2 <- expectEqual ["c1"] (take 1 (hand ds'))
+            r3 <- expectEqual 1 (length (drawPile ds'))
+            r4 <- expectEqual [] (discardPile ds')
+            pure (r1 && r2 && r3 && r4)
+
+-- | Phase 2B: ShuffleList is deterministic given the same RNG state.
+testShuffleIsDeterministic :: IO Bool
+testShuffleIsDeterministic = do
+    let cards = ["c1", "c2", "c3", "c4", "c5", "c6", "c7", "c8"]
+        rng0 = initialRngState
+        (shuffled1, rng1) = shuffleList cards rng0
+        (shuffled2, rng2) = shuffleList cards rng0
+        (shuffled3, rng3) = shuffleList cards (nextRng rng0)
+    r1 <- expectEqual shuffled1 shuffled2
+    r2 <- expectEqual rng1 rng2
+    r3 <- expectTrue "different seed produces different order or rng"
+        (shuffled1 /= shuffled3 || rng1 /= rng3)
+    r4 <- expectEqual (length cards) (length shuffled1)
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 2B: Playing a card deducts energy, resolves target, applies outcomes, and discards.
+testPlayCardDeductsEnergyAndAppliesOutcomes :: IO Bool
+testPlayCardDeductsEnergyAndAppliesOutcomes = do
+    let strike = Card
+            { cardId = "strike"
+            , cardName = "Strike"
+            , cardCost = Map.singleton "energy" 1
+            , cardType = CardAttack
+            , cardDescription = "Deals 6 damage to target."
+            , cardTarget = TargetSingleEnemy
+            , cardExhaust = False
+            , cardEffects = [ ModifyValue (VRActorProp (ActorNPC "chosen") PHealth) (-6) ]
+            }
+        baseSt = initSampleGame
+        cRoom = currentRoom (save baseSt)
+        goblinDef = (head (Map.elems (npcDefs (world baseSt))))
+            { npcId = "goblin"
+            , npcName = "Goblin"
+            , npcKeywords = ["goblin"]
+            , npcMaxHealth = Just 20
+            }
+        st0 = baseSt
+            { world = (world baseSt)
+                { cardDefs = Map.singleton "strike" strike
+                , npcDefs = Map.insert "goblin" goblinDef (npcDefs (world baseSt))
+                }
+            , save = (save baseSt)
+                { deckState = Just (defaultDeckState { hand = ["strike"] })
+                , npcStates = Map.singleton "goblin" (NPCState (InRoom cRoom) "alive" (Just 20) Map.empty Nothing)
+                , variables = Map.singleton "player.energy" (VVInt 3)
+                }
+            }
+        (st1, msg) = playCard 1 (Just "goblin") st0
+        mDs1 = deckState (save st1)
+        goblinHp = case Map.lookup "goblin" (npcStates (save st1)) of
+            Just ns -> case npcHealth ns of Just h -> h; Nothing -> 0
+            Nothing -> 0
+        energyVal = case getVariable "player.energy" st1 of
+            Just (VVInt v) -> v
+            _              -> 0
+    case mDs1 of
+        Nothing -> putStrLn "deckState is Nothing" >> pure False
+        Just ds1 -> do
+            r1 <- expectEqual 2 energyVal
+            r2 <- expectEqual 14 goblinHp
+            r3 <- expectEqual [] (hand ds1)
+            r4 <- expectEqual ["strike"] (discardPile ds1)
+            r5 <- expectTrue "msg mentions playing Strike" (isInfixOf "Strike" msg)
+            pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Phase 2B: Exhausting card moves it to exhaustPile rather than discardPile.
+testPlayCardExhaustsCorrectly :: IO Bool
+testPlayCardExhaustsCorrectly = do
+    let obliterate = Card
+            { cardId = "obliterate"
+            , cardName = "Obliterate"
+            , cardCost = Map.singleton "energy" 2
+            , cardType = CardAttack
+            , cardDescription = "Deals 20 damage and exhausts."
+            , cardTarget = TargetSingleEnemy
+            , cardExhaust = True
+            , cardEffects = [ ModifyValue (VRActorProp (ActorNPC "chosen") PHealth) (-20) ]
+            }
+        baseSt = initSampleGame
+        cRoom = currentRoom (save baseSt)
+        goblinDef = (head (Map.elems (npcDefs (world baseSt))))
+            { npcId = "goblin"
+            , npcName = "Goblin"
+            , npcKeywords = ["goblin"]
+            , npcMaxHealth = Just 30
+            }
+        st0 = baseSt
+            { world = (world baseSt)
+                { cardDefs = Map.singleton "obliterate" obliterate
+                , npcDefs = Map.insert "goblin" goblinDef (npcDefs (world baseSt))
+                }
+            , save = (save baseSt)
+                { deckState = Just (defaultDeckState { hand = ["obliterate"] })
+                , npcStates = Map.singleton "goblin" (NPCState (InRoom cRoom) "alive" (Just 30) Map.empty Nothing)
+                , variables = Map.singleton "player.energy" (VVInt 3)
+                }
+            }
+        (st1, msg) = playCard 1 (Just "goblin") st0
+        mDs1 = deckState (save st1)
+    case mDs1 of
+        Nothing -> putStrLn "deckState is Nothing" >> pure False
+        Just ds1 -> do
+            r1 <- expectEqual [] (hand ds1)
+            r2 <- expectEqual [] (discardPile ds1)
+            r3 <- expectEqual ["obliterate"] (exhaustPile ds1)
+            r4 <- expectTrue "msg notes exhaust" (isInfixOf "Exhaust" msg)
+            pure (r1 && r2 && r3 && r4)
+
+-- | Phase 2B: endTurn discards unplayed hand, resets block, restores energy, and draws 5 cards.
+testEndTurnDiscardsAndDraws :: IO Bool
+testEndTurnDiscardsAndDraws = do
+    let ds = defaultDeckState
+            { hand = ["h1", "h2"]
+            , drawPile = ["d1", "d2", "d3", "d4", "d5", "d6"]
+            , discardPile = []
+            }
+        vars = Map.fromList
+            [ ("player.block", VVInt 15)
+            , ("player.energy", VVInt 0)
+            , ("player.max_energy", VVInt 3)
+            ]
+        st0 = emptyGameState { save = (save emptyGameState) { deckState = Just ds, variables = vars } }
+        (st1, _msg) = endTurn st0
+        mDs1 = deckState (save st1)
+        blockVal = case getVariable "player.block" st1 of
+            Just (VVInt b) -> b
+            _              -> -1
+        energyVal = case getVariable "player.energy" st1 of
+            Just (VVInt e) -> e
+            _              -> -1
+    case mDs1 of
+        Nothing -> putStrLn "deckState is Nothing" >> pure False
+        Just ds1 -> do
+            r1 <- expectEqual 0 blockVal
+            r2 <- expectEqual 3 energyVal
+            r3 <- expectEqual ["h1", "h2"] (discardPile ds1)
+            r4 <- expectEqual ["d1", "d2", "d3", "d4", "d5"] (hand ds1)
+            r5 <- expectEqual ["d6"] (drawPile ds1)
+            pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Phase 2B: Card and deck parser commands match intended constructors and arguments.
+testCardCommandsParsing :: IO Bool
+testCardCommandsParsing = do
+    r1 <- expectEqual (PlayCardCmd 1 Nothing) (parseCommand "play 1")
+    r2 <- expectEqual (PlayCardCmd 2 (Just "goblin")) (parseCommand "play 2 goblin")
+    r3 <- expectEqual (PlayCardCmd 3 (Just "cave troll")) (parseCommand "play 3 the cave troll")
+    r4 <- expectEqual (PlayCardCmd 1 (Just "troll")) (parseCommand "spiele 1 auf troll")
+    r5 <- expectEqual (PlayCardCmd 2 Nothing) (parseCommand "spiele 2")
+    r6 <- expectEqual HandCmd (parseCommand "hand")
+    r7 <- expectEqual HandCmd (parseCommand "karten")
+    r8 <- expectEqual DeckCmd (parseCommand "deck")
+    r9 <- expectEqual DiscardCmd (parseCommand "discard")
+    r10 <- expectEqual DiscardCmd (parseCommand "ablage")
+    r11 <- expectEqual EndTurnCmd (parseCommand "end turn")
+    r12 <- expectEqual EndTurnCmd (parseCommand "zug beenden")
+    r13 <- expectEqual EndTurnCmd (parseCommand "pass")
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13)
+
+-- ---------------------------------------------------------------------------
+-- Phase 2C: Visuals & HUD Tests (Card Boxes, Horizontal Tiling, Combat Banner)
+-- ---------------------------------------------------------------------------
+
+-- | Phase 2C: hcatBoxes tiles boxes side-by-side, wraps on maxWidth, and pads vertically.
+testHcatBoxesFormatting :: IO Bool
+testHcatBoxesFormatting = do
+    let b1 = ["┌──┐", "│11│", "└──┘"]          -- width 4, height 3
+        b2 = ["┌────┐", "│2222│", "└────┘"]      -- width 6, height 3
+        b3 = ["┌──┐", "│33│", "└──┘"]          -- width 4, height 3
+        bShort = ["┌──┐", "└──┘"]              -- width 4, height 2
+    -- Test 1: Wide enough to fit all three side-by-side with 2 spaces between
+    -- Total width = 4 + 2 + 6 + 2 + 4 = 18
+    let tiledWide = hcatBoxes 80 [b1, b2, b3]
+    r1 <- expectEqual 3 (length tiledWide)
+    r2 <- expectEqual "┌──┐  ┌────┐  ┌──┐" (tiledWide !! 0)
+    r3 <- expectEqual "│11│  │2222│  │33│" (tiledWide !! 1)
+    r4 <- expectEqual "└──┘  └────┘  └──┘" (tiledWide !! 2)
+
+    -- Test 2: Wrap when maxWidth is exceeded
+    -- maxW = 15: b1 (4) + 2 + b2 (6) = 12 <= 15. Adding b3 (+ 2 + 4 = 18 > 15) forces b3 to next row.
+    -- Rows are separated by an empty line intercalate [""]
+    let tiledWrapped = hcatBoxes 15 [b1, b2, b3]
+    r5 <- expectEqual 7 (length tiledWrapped)
+    r6 <- expectEqual "┌──┐  ┌────┐" (tiledWrapped !! 0)
+    r7 <- expectEqual "" (tiledWrapped !! 3)
+    r8 <- expectEqual "┌──┐" (tiledWrapped !! 4)
+
+    -- Test 3: Vertical padding when boxes have unequal heights
+    let tiledUnequal = hcatBoxes 80 [bShort, b2]
+    r9 <- expectEqual 3 (length tiledUnequal)
+    -- bShort only has 2 lines, so 3rd line must be padded with 4 spaces (width of bShort) + 2 spacing spaces = 6 spaces before b2
+    r10 <- expectEqual "      └────┘" (tiledUnequal !! 2)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10)
+
+-- | Phase 2C: renderCardBox creates uniform 16-width box with 24-bit ANSI colors and wrapping.
+testRenderCardBoxFormattingAndColors :: IO Bool
+testRenderCardBoxFormattingAndColors = do
+    let strike = Card
+            { cardId = "strike"
+            , cardName = "Strike"
+            , cardCost = Map.singleton "energy" 1
+            , cardType = CardAttack
+            , cardDescription = "Deals 6 damage to single target."
+            , cardTarget = TargetSingleEnemy
+            , cardExhaust = False
+            , cardEffects = []
+            }
+        defend = Card
+            { cardId = "defend"
+            , cardName = "Defend"
+            , cardCost = Map.singleton "energy" 1
+            , cardType = CardSkill
+            , cardDescription = "Gain 5 block."
+            , cardTarget = TargetSelf
+            , cardExhaust = False
+            , cardEffects = []
+            }
+        power = Card
+            { cardId = "demon_form"
+            , cardName = "Demon Form"
+            , cardCost = Map.singleton "energy" 3
+            , cardType = CardPower
+            , cardDescription = "At start of turn gain 2 strength."
+            , cardTarget = TargetSelf
+            , cardExhaust = False
+            , cardEffects = []
+            }
+    let box1 = renderCardBox 1 strike
+    -- Check that every line has visible width 16
+    let widths1 = map (length . stripAnsi) box1
+    r1 <- expectTrue "all lines of strike box have visible width 16" (all (== 16) widths1)
+    r2 <- expectEqual 7 (length box1)
+    -- Top border
+    r3 <- expectEqual "┌──────────────┐" (head box1)
+    -- Header contains "1. Strike" and "(1)"
+    r4 <- expectTrue "header contains 1. Strike" (isInfixOf "1. Strike" (box1 !! 1))
+    r5 <- expectTrue "header contains cost (1)" (isInfixOf "(1)" (box1 !! 1))
+    -- Attack ANSI color code and German label
+    r6 <- expectTrue "type line contains attack ansi color" (isInfixOf "\ESC[38;2;220;50;50m" (box1 !! 2))
+    r7 <- expectTrue "type line contains [Angriff]" (isInfixOf "[Angriff]" (box1 !! 2))
+
+    -- Skill box
+    let box2 = renderCardBox 2 defend
+    let widths2 = map (length . stripAnsi) box2
+    r8 <- expectTrue "all lines of defend box have visible width 16" (all (== 16) widths2)
+    r9 <- expectTrue "type line contains skill ansi color" (isInfixOf "\ESC[38;2;60;130;240m" (box2 !! 2))
+    r10 <- expectTrue "type line contains [Fertigkeit]" (isInfixOf "[Fertigkeit]" (box2 !! 2))
+
+    -- Power box
+    let box3 = renderCardBox 3 power
+    let widths3 = map (length . stripAnsi) box3
+    r11 <- expectTrue "all lines of power box have visible width 16" (all (== 16) widths3)
+    r12 <- expectTrue "type line contains power ansi color" (isInfixOf "\ESC[38;2;240;190;40m" (box3 !! 2))
+    r13 <- expectTrue "type line contains [Macht]" (isInfixOf "[Macht]" (box3 !! 2))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13)
+
+-- | Phase 2C: renderDeckCombatHud generates combat status banner and enemy intent lines.
+testRenderDeckCombatHud :: IO Bool
+testRenderDeckCombatHud = do
+    let strike = Card "strike" "Hieb" (Map.singleton "energy" 1) CardAttack "6 Schaden." TargetSingleEnemy False []
+        ds = DeckState
+            { drawPile = ["c1", "c2", "c3"]
+            , hand = ["strike"]
+            , discardPile = ["d1"]
+            , exhaustPile = ["e1"]
+            , maxHandSize = 8
+            }
+        baseSt = initSampleGame
+        cRoom = currentRoom (save baseSt)
+        trollDef = (head (Map.elems (npcDefs (world baseSt))))
+            { npcId = "troll"
+            , npcName = "Höhlentroll"
+            , npcKeywords = ["troll"]
+            , npcMaxHealth = Just 50
+            }
+        vars = Map.fromList
+            [ ("player.block", VVInt 12)
+            , ("player.energy", VVInt 2)
+            , ("player.max_energy", VVInt 3)
+            , ("combat.intent.troll", VVText "Schlag für 14 Schaden")
+            ]
+        st = baseSt
+            { world = (world baseSt)
+                { cardDefs = Map.singleton "strike" strike
+                , npcDefs = Map.insert "troll" trollDef (npcDefs (world baseSt))
+                }
+            , save = (save baseSt)
+                { deckState = Just ds
+                , npcStates = Map.singleton "troll" (NPCState (InRoom cRoom) "alive" (Just 40) Map.empty Nothing)
+                , variables = vars
+                }
+            }
+    let hudLines = renderDeckCombatHud st ds
+    r1 <- expectTrue "top border double line 78 chars" (replicate 78 '═' `elem` hudLines)
+    -- Status bar line
+    r2 <- expectTrue "status bar contains Deck count" (any (isInfixOf "[Deck: 3]") hudLines)
+    r3 <- expectTrue "status bar contains Ablage count" (any (isInfixOf "[Ablage: 1]") hudLines)
+    r4 <- expectTrue "status bar contains Block" (any (isInfixOf "Block: 12") hudLines)
+    r5 <- expectTrue "status bar contains Energie" (any (isInfixOf "Energie: 2/3") hudLines)
+    r6 <- expectTrue "status bar contains Erschöpft count" (any (isInfixOf "Erschöpft: 1") hudLines)
+    -- Enemy lines
+    r7 <- expectTrue "contains enemy name and hp" (any (isInfixOf "GEGNER: Höhlentroll (HP: 40/50)") hudLines)
+    r8 <- expectTrue "contains enemy intent" (any (isInfixOf "ABSICHT: Schlag für 14 Schaden") hudLines)
+    -- showHand integration test
+    let (stHand, handMsg) = showHand st
+    r9 <- expectEqual (save st) (save stHand)
+    r10 <- expectTrue "showHand includes HUD" (isInfixOf "GEGNER: Höhlentroll" handMsg)
+    r11 <- expectTrue "showHand includes card name" (isInfixOf "Hieb" handMsg)
+    r12 <- expectTrue "showHand includes card type" (isInfixOf "[Angriff]" handMsg)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -4716,5 +5362,35 @@ main = do
         , runTest "genre verb comes from the registry (P1-13)" testGenreVerbFromRegistry
         -- Phase V: frontend abstraction
         , runTest "loop runs on a canned (non-Haskeline) frontend" testLoopRunsOnCannedFrontend
+        -- Phase 1A: Arithmetic expressions (Expr) & ComputeValue
+        , runTest "expr parsing and precedence (Phase 1A)" testExprParsingAndPrecedence
+        , runTest "expr eval and zero-safety (Phase 1A)" testExprEvalAndZeroSafety
+        , runTest "expr variable resolution (Phase 1A)" testExprVariableResolution
+        , runTest "compute_value outcome execution (Phase 1A)" testComputeValueOutcome
+        , runTest "expr JSON round-trip (Phase 1A)" testExprJSONRoundTrip
+        -- Phase 1B: String interpolation with variables (formatWithVars)
+        , runTest "formatWithVars basics and modifiers (Phase 1B)" testFormatWithVarsBasics
+        , runTest "formatWithVars integration in outcomes and condText (Phase 1B)" testFormatWithVarsIntegration
+        -- Phase 1C: Parameterized commands and argument binding
+        , runTest "parameterized command parsing (Phase 1C)" testParameterizedCommandParsing
+        , runTest "bind command variables to GameState (Phase 1C)" testBindCommandVars
+        , runTest "OnCommand trigger with args and formulas (Phase 1C)" testOnCommandTriggerWithArgsAndFormulas
+        , runTest "status verb consumes no turn (Phase 1C)" testStatusVerbNoTurnConsumed
+        -- Phase 2A: Card Games & Deckbuilder Data Model
+        , runTest "card data types and effect operations JSON round-trip (Phase 2A)" testCardDataTypesJSONRoundTrip
+        , runTest "GameWorld cardDefs M2 invariant (Phase 2A)" testGameWorldCardDefsM2Invariant
+        , runTest "SaveState deckState M2 invariant (Phase 2A)" testSaveStateDeckStateM2Invariant
+        -- Phase 2B: Card & Deck Mechanics
+        , runTest "draw cards from full deck (Phase 2B)" testDrawCardsFromFullDeck
+        , runTest "draw cards reshuffles discard (Phase 2B)" testDrawCardsReshufflesDiscard
+        , runTest "shuffleList is deterministic (Phase 2B)" testShuffleIsDeterministic
+        , runTest "play card deducts energy and applies outcomes (Phase 2B)" testPlayCardDeductsEnergyAndAppliesOutcomes
+        , runTest "play card exhausts correctly (Phase 2B)" testPlayCardExhaustsCorrectly
+        , runTest "end turn discards, restores energy and draws (Phase 2B)" testEndTurnDiscardsAndDraws
+        , runTest "card commands parsing (Phase 2B)" testCardCommandsParsing
+        -- Phase 2C: Visuals & HUD (Deckbuilder)
+        , runTest "hcatBoxes formatting and wrapping (Phase 2C)" testHcatBoxesFormatting
+        , runTest "renderCardBox formatting and colors (Phase 2C)" testRenderCardBoxFormattingAndColors
+        , runTest "renderDeckCombatHud and showHand (Phase 2C)" testRenderDeckCombatHud
         ]
     when (not (and results)) exitFailure

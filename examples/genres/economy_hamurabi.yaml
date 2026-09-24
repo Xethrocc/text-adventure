@@ -1,0 +1,185 @@
+name: "Provinz Königsberg (Wirtschaft)"
+start_room: "thronsaal"
+
+verbs:
+  - name: "status"
+    aliases: ["bilanz", "finanzen", "reich"]
+  - name: "kaufe"
+    aliases: ["buy"]
+  - name: "verkaufe"
+    aliases: ["sell"]
+  - name: "steuern"
+    aliases: ["tax"]
+  - name: "weiter"
+    aliases: ["jahr", "next"]
+
+variables:
+  - name: "jahr"
+    type: int
+    initial: 1
+    min: 1
+  - name: "gold"
+    type: int
+    initial: 1000
+    min: 0
+  - name: "korn"
+    type: int
+    initial: 2800
+    min: 0
+  - name: "land"
+    type: int
+    initial: 1000
+    min: 0
+  - name: "bevoelkerung"
+    type: int
+    initial: 100
+    min: 1
+  - name: "land_preis"
+    type: int
+    initial: 20
+    min: 1
+  - name: "korn_preis"
+    type: int
+    initial: 2
+    min: 1
+  - name: "steuersatz"
+    type: int
+    initial: 10
+    min: 0
+    max: 100
+  - name: "ernte_faktor"
+    type: int
+    initial: 3
+    min: 1
+  - name: "kosten"
+    type: int
+    initial: 0
+  - name: "erloes"
+    type: int
+    initial: 0
+  - name: "einnahmen"
+    type: int
+    initial: 0
+  - name: "verbrauch"
+    type: int
+    initial: 0
+
+rooms:
+  - id: "thronsaal"
+    name: "Großer Thronsaal"
+    desc: "Du blickst von deinem geschnitzten Eichenthron über die Ratskammer. Kanzler Heinrich wartet auf deine Befehle. Mit 'status' prüfst du die Schatzkammer, mit 'kaufe <menge> land' erweiterst du dein Reich."
+    exits:
+      north: {to: "balkon"}
+      east: {to: "kornkammer"}
+      south: {to: "marktplatz"}
+
+  - id: "balkon"
+    name: "Palastbalkon"
+    desc: "Ein herrlicher Ausblick über weite Felder und rauchende Schornsteine. Deine Ländereien umfassen derzeit {land} Hektar fruchtbaren Bodens."
+    exits:
+      south: {to: "thronsaal"}
+
+  - id: "kornkammer"
+    name: "Königliche Kornkammer"
+    desc: "Riesige Holzbehälter voller Weizen. Der Duft von frischem Korn erfüllt den Raum. Vorrat: {korn} Scheffel."
+    exits:
+      west: {to: "thronsaal"}
+
+  - id: "marktplatz"
+    name: "Handelsplatz Königsberg"
+    desc: "Händler aus dem ganzen Umland bieten Waren an. Land kostet heute {land_preis} Gold pro Hektar, Korn {korn_preis} Gold pro Scheffel."
+    exits:
+      north: {to: "thronsaal"}
+
+npcs:
+  - id: "berater"
+    name: "Kanzler Heinrich"
+    desc: "Ein erfahrener Beamter mit Federkiel und Pergamentrolle. Er verwaltet die Provinzbücher."
+    location: "thronsaal"
+    dialogue:
+      alive:
+        entry: "start"
+        nodes:
+          start:
+            text: "Mein Fürst! Die Kasse zählt {gold} Gold und die Kornkammer {korn} Scheffel. Was befehlt Ihr?"
+            choices:
+              - text: "Wie steht es um das Reich?"
+                next: "lage"
+              - text: "Ich entscheide selbst."
+                next: null
+          lage:
+            text: "Unsere {bevoelkerung} Bürger benötigen jedes Jahr 20 Scheffel Korn pro Seele. Bei {steuersatz}% Steuern nehmen wir jährlich Gold ein."
+            choices:
+              - text: "Danke, Heinrich."
+                next: null
+
+rules:
+  - id: "rule_status"
+    on: "command status"
+    effects:
+      - text: "╔════════════════════════ PROVINZ KÖNIGSBERG ════════════════════════╗\n║ Jahr: {jahr:3}                 Bürger: {bevoelkerung:6} Seelen                      ║\n║────────────────────────────────────────────────────────────────────║\n║ Schatzkammer:    {gold:6} Gold                                     ║\n║ Kornkammer:      {korn:6} Scheffel                                 ║\n║ Landbesitz:      {land:6} Hektar  (Marktpreis: {land_preis} Gold/ha)         ║\n║ Steuersatz:      {steuersatz:3}%     (Kornpreis:  {korn_preis} Gold/Scheffel)    ║\n╚═════════════════════════════════════════════════════════════════════╝"
+
+  - id: "rule_kaufe"
+    on: "command kaufe"
+    effects:
+      - if: { compare_var: { name: "cmd.count", op: ">=", value: 2 } }
+        then:
+          - if: { var: "cmd.arg2", is: "land" }
+            then:
+              - compute_var: { var: "kosten", expr: "cmd.arg1 * land_preis" }
+              - if: { compare_var: { name: "gold", op: ">=", var: "kosten" } }
+                then:
+                  - compute_var: { var: "gold", expr: "gold - kosten" }
+                  - compute_var: { var: "land", expr: "land + cmd.arg1" }
+                  - text: "Erfolgreich erworben: {cmd.arg1} Hektar Land für {kosten} Gold."
+                else:
+                  - text: "Nicht genug Gold in der Schatzkammer! Du benötigst {kosten} Gold."
+            else:
+              - text: "Auf dem Markt kannst du nur 'land' kaufen (kaufe <menge> land)."
+        else:
+          - text: "Verwendung: kaufe <menge> land"
+
+  - id: "rule_verkaufe"
+    on: "command verkaufe"
+    effects:
+      - if: { compare_var: { name: "cmd.count", op: ">=", value: 2 } }
+        then:
+          - if: { var: "cmd.arg2", is: "land" }
+            then:
+              - if: { compare_var: { name: "land", op: ">=", var: "cmd.arg1" } }
+                then:
+                  - compute_var: { var: "erloes", expr: "cmd.arg1 * land_preis" }
+                  - compute_var: { var: "gold", expr: "gold + erloes" }
+                  - compute_var: { var: "land", expr: "land - cmd.arg1" }
+                  - text: "Erfolgreich verkauft: {cmd.arg1} Hektar Land für {erloes} Gold."
+                else:
+                  - text: "So viel Land besitzt die Provinz nicht!"
+            else:
+              - text: "Auf dem Markt kannst du nur 'land' verkaufen (verkaufe <menge> land)."
+        else:
+          - text: "Verwendung: verkaufe <menge> land"
+
+  - id: "rule_steuern"
+    on: "command steuern"
+    effects:
+      - if: { compare_var: { name: "cmd.count", op: ">=", value: 1 } }
+        then:
+          - compute_var: { var: "steuersatz", expr: "clamp(0, 100, cmd.arg1)" }
+          - text: "Der Steuersatz wurde auf {steuersatz}% festgesetzt."
+        else:
+          - text: "Aktueller Steuersatz: {steuersatz}%. Verwendung: steuern <prozent>"
+
+  - id: "rule_weiter"
+    on: "command weiter"
+    effects:
+      - compute_var: { var: "einnahmen", expr: "bevoelkerung * steuersatz / 5" }
+      - compute_var: { var: "verbrauch", expr: "bevoelkerung * 20" }
+      - compute_var: { var: "gold", expr: "gold + einnahmen" }
+      - compute_var: { var: "jahr", expr: "jahr + 1" }
+      - if: { compare_var: { name: "korn", op: ">=", var: "verbrauch" } }
+        then:
+          - compute_var: { var: "korn", expr: "korn - verbrauch + (land * ernte_faktor)" }
+          - text: "Ein neues Jahr bricht an (Jahr {jahr})!\nSteuereinnahmen: +{einnahmen} Gold.\nVerbrauch der Bürger: -{verbrauch} Scheffel Korn.\nNeue Ernte eingefahren! Vorrat: {korn} Scheffel."
+        else:
+          - compute_var: { var: "korn", expr: "land * ernte_faktor" }
+          - text: "Hungersnot im Winter! Die Kornkammer war leer, doch die neue Ernte bringt {korn} Scheffel."
