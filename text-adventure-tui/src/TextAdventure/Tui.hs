@@ -49,7 +49,6 @@ import Data.Char (isLower, isSpace)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intercalate, nub)
 import Data.Maybe (fromMaybe)
-import qualified Data.Map.Strict as Map
 import qualified Brick.Types as BT
 
 import Ansi (stripAnsi)
@@ -59,6 +58,7 @@ import TextAdventure.Tui.Hud (HudView (..), MapCell (..), MapGrid (..), buildHud
 import Completion (completionFor)
 import Frontend (Frontend (..))
 import GameLoop (runGameWithFrontend)
+import Game (lookupRoom)
 import Types
 
 -- | Brick names used by this UI.
@@ -124,7 +124,7 @@ advancePanel p = case p of
 --   panel label). 'Nothing' when the room has no usable ambient.
 roomAmbient :: GameState -> Maybe ([String], Int, String)
 roomAmbient st = do
-    r <- Map.lookup (currentRoom (save st)) (rooms (world st))
+    r <- lookupRoom (currentRoom (save st)) st
     amb <- aaAmbient (roomAscii r)
     guard (not (null (ambFrames amb)) && ambFps amb > 0)
     pure (ambFrames amb, 1000000 `div` ambFps amb, roomName r)

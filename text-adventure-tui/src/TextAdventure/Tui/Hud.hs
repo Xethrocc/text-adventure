@@ -33,7 +33,7 @@ import Data.Char (toUpper)
 import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 
 import Types
-import Game (effectiveConnections, getVariable, combatRound, combatRoundKey,
+import Game (effectiveConnections, lookupRoom, getVariable, combatRound, combatRoundKey,
              combatActionKey, hcatBoxes, renderCardBox, renderDeckCombatHud)
 
 -- | One cell of the minimap: the room's one-letter stamp plus the row/col
@@ -82,7 +82,7 @@ data HudView = HudView
 -- | The full HUD for a state, filtered by an optional floor view.
 buildHudWithFloor :: Maybe Int -> GameState -> HudView
 buildHudWithFloor mFloor st = HudView
-    { hvRoom       = fromMaybe "" (roomName <$> Map.lookup here (rooms (world st)))
+    { hvRoom       = fromMaybe "" (roomName <$> lookupRoom here st)
     , hvMap        = mapGridWithFloor activeFloor 9 5 st
     , hvFloor      = activeFloor
     , hvFloors     = allKnownFloors
@@ -96,8 +96,8 @@ buildHudWithFloor mFloor st = HudView
   where
     here = currentRoom (save st)
     visited = Set.insert here (visitedRooms (save st))
-    allKnownFloors = sort (nub (mapMaybe (\rm -> roomFloor =<< Map.lookup rm (rooms (world st))) (Set.toList visited)))
-    currentRoomFloor = roomFloor =<< Map.lookup here (rooms (world st))
+    allKnownFloors = sort (nub (mapMaybe (\rm -> roomFloor =<< lookupRoom rm st) (Set.toList visited)))
+    currentRoomFloor = roomFloor =<< lookupRoom here st
     activeFloor = case mFloor of
         Just fl -> Just fl
         Nothing -> currentRoomFloor
@@ -131,7 +131,7 @@ mapGridWithFloor mFloor w h st
     here = currentRoom (save st)
     visited = Set.insert here (visitedRooms (save st))
     targetRooms = case mFloor of
-        Just fl -> Set.filter (\rm -> (roomFloor =<< Map.lookup rm (rooms (world st))) == Just fl) visited
+        Just fl -> Set.filter (\rm -> (roomFloor =<< lookupRoom rm st) == Just fl) visited
         Nothing -> visited
     startRoom = if Set.member here targetRooms
                 then here
@@ -193,7 +193,7 @@ mapGridWithFloor mFloor w h st
              | otherwise = max rmin (min (hr - h' `div` 2) (rmax - h' + 1))
         topC | cmax - cmin + 1 <= w' = cmin
              | otherwise = max cmin (min (hcol - w' `div` 2) (cmax - w' + 1))
-    stampOf rm = case Map.lookup rm (rooms (world st)) of
+    stampOf rm = case lookupRoom rm st of
         Just room | (c:_) <- roomName room -> toUpper c
         _ -> '?'
     render w' h' cells =

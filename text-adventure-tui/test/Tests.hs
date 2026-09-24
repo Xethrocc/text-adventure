@@ -13,6 +13,7 @@ import TextAdventure.Tui.Color
     , emptySgr, parseSgrLine, rgbToColor240 )
 
 import Sample (initSampleGame)
+import Game (emptyGameWorld, emptyGameState)
 import Types
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -286,6 +287,7 @@ main = do
         , runTest "hud: key-value stats table (Phase 1D)" testHudStatsTable
         , runTest "hud: multi-floor minimap isolates floors and tracks player" testHudMultiFloor
         , runTest "hud: deck combat panel lines (Phase 2C)" testHudDeckCombatLines
+        , runTest "hud: sandbox minimap renders dynamic cells and stamps (Phase 3D)" testHudMapSandbox
         ]
     if and results then pure () else exitFailure
 
@@ -418,3 +420,42 @@ testRoomAmbientAbsent = do
     r2 <- expectTrue "room without ambient -> Nothing"
                       (isNothing (roomAmbient (inRoom "start" initSampleGame)))
     pure (r1 && r2)
+
+-- | Phase 3D: Minimap correctly renders dynamic and sandbox rooms
+testHudMapSandbox :: IO Bool
+testHudMapSandbox = do
+    let bForest = BiomeTemplate "forest" 10 "Wald [{x}, {y}]" (plainText "Wald.") ["forest"] emptyAscii [North, South, East, West]
+        sz = SandboxZone "wildnis" (0, 0, 0) [bForest] (Just 1)
+        gw = emptyGameWorld
+            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Schlosstor") (Map.singleton North (Open "sandbox_wildnis_0_0_0")) Set.empty Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing (Just 1))
+            , sandboxZones = Map.singleton "wildnis" sz
+            }
+        dynRoom0 = Room "sandbox_wildnis_0_0_0" "Wald [0, 0]" (plainText "Wald.")
+                        (Map.fromList [(South, Open "gate"), (East, Open "sandbox_wildnis_1_0_0")])
+                        (Set.fromList ["sandbox", "wildnis", "forest"]) Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing (Just 1)
+        dynRoom1 = Room "sandbox_wildnis_1_0_0" "Wald [1, 0]" (plainText "Wald.")
+                        (Map.singleton West (Open "sandbox_wildnis_0_0_0"))
+                        (Set.fromList ["sandbox", "wildnis", "forest"]) Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing (Just 1)
+        dyns = Map.fromList [("sandbox_wildnis_0_0_0", dynRoom0), ("sandbox_wildnis_1_0_0", dynRoom1)]
+        st = emptyGameState
+            { world = gw
+            , save = (save emptyGameState)
+                { currentRoom = "sandbox_wildnis_0_0_0"
+                , visitedRooms = Set.fromList ["gate", "sandbox_wildnis_0_0_0", "sandbox_wildnis_1_0_0"]
+                , dynamicRooms = dyns
+                }
+            }
+        hud = buildHud st
+    r1 <- expectEqual "current room title" "Wald [0, 0]" (hvRoom hud)
+    case hvMap hud of
+        Nothing -> putStrLn "Expected map for sandbox rooms" >> pure False
+        Just g -> do
+            let cells = mgCells g
+            r2 <- expectEqual "three cells rendered" 3 (length cells)
+            r3 <- expectTrue "sandbox_wildnis_0_0_0 is here"
+                    (any (\c -> mcRoom c == "sandbox_wildnis_0_0_0" && mcHere c && mcStamp c == 'W') cells)
+            r4 <- expectTrue "gate cell present with stamp T"
+                    (any (\c -> mcRoom c == "gate" && not (mcHere c) && mcStamp c == 'T') cells)
+            r5 <- expectTrue "sandbox_wildnis_1_0_0 cell present with stamp W"
+                    (any (\c -> mcRoom c == "sandbox_wildnis_1_0_0" && not (mcHere c) && mcStamp c == 'W') cells)
+            pure (r1 && r2 && r3 && r4 && r5)
