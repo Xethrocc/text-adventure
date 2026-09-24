@@ -2,8 +2,7 @@ name: "Endlose Wildnis (Sandbox & Runtime-Worldgen)"
 start_room: "forsthaus"
 
 player:
-  health: 100
-  max_health: 100
+  max_hp: 100
 
 variables:
   - name: "wood"

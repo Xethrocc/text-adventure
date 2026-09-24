@@ -2587,7 +2587,7 @@ tests =
     , ("in_container at missing item is detected", testInvalidContainerDetected)
     , ("item-on-item (crafting) interaction compiles", testItemInteractionCompiles)
     , ("entity interaction (use on target) compiles", testEntityInteractionCompiles)
-    , ("all 6 genre fixtures compile + validate clean", testGenreFixturesCompile)
+    , ("the 6 original genre fixtures compile + validate clean", testGenreFixturesCompile)
     , ("economy genre fixture compiles + validates clean", testEconomyFixtureCompiles)
     , ("deckbuilder genre fixture compiles + validates clean", testDeckbuilderFixtureCompiles)
     -- Phase 7a: factions / standing / set_state

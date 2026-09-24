@@ -58,25 +58,30 @@ trap 'rm -rf "$tmp"' EXIT
 # Compile one adventure and drive it through one input file, then check the
 # expected marker. Shared by the happy-path and failure-path stages.
 run_e2e() {
-    local name="$1" src="$2" out expect
+    local name="$1" src="$2" out marker failed=0
     # Rogue Phase 0: hermetic saves — every run gets its own TA_SAVES_DIR so
     # save/load commands cannot leak between runs or pollute the repo.
     mkdir -p "$tmp/$name-saves"
     "${WORLDBUILDER[@]}" compile "$src" -o "$tmp/$name" >/dev/null
     out="$(TA_SAVES_DIR="$tmp/$name-saves" "${GAME[@]}" --world "$tmp/$name/world.json" --save "$tmp/$name/save.json" \
             < "ci/e2e/$name.in" 2>&1 || true)"
-    expect="$(cat "ci/e2e/$name.expect")"
-    if grep -qF "$expect" <<<"$out"; then
-        echo "OK   $name  (reached: $expect)"
-    else
-        echo "FAIL $name  (expected: $expect)"
-        echo "---- last output ----"
-        tail -20 <<<"$out"
-        exit 1
-    fi
+    # One marker per line; every single one has to appear. A one-line .expect
+    # behaves exactly as before, so the older cases stay untouched.
+    while IFS= read -r marker; do
+        [ -n "$marker" ] || continue
+        if grep -qF "$marker" <<<"$out"; then
+            echo "OK   $name  (reached: $marker)"
+        else
+            echo "FAIL $name  (expected: $marker)"
+            echo "---- last output ----"
+            tail -20 <<<"$out"
+            failed=1
+        fi
+    done < "ci/e2e/$name.expect"
+    [ "$failed" -eq 0 ] || exit 1
 }
 
-for name in thefog pure-if fantasy cyberpunk space-opera detective horror factions trade encounters survival stealth patrol combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state combat-screen; do
+for name in thefog pure-if fantasy cyberpunk space-opera detective horror economy_hamurabi deckbuilder_spire sandbox_wilderness factions trade encounters survival stealth patrol combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state combat-screen; do
     case "$name" in
         thefog)             src=examples/thefog.yaml ;;
         factions|trade|encounters|survival|stealth|patrol|combat-off|combat-narrative|combat-classic|combat-tactical|party|starship|combo|ship-duel)     src="examples/modules/$name.yaml" ;;

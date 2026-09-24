@@ -2,8 +2,7 @@ name: "Spire of Fate (Deckbuilder)"
 start_room: "turmfuss"
 
 player:
-  health: 80
-  max_health: 80
+  max_hp: 80
 
 combat:
   profile: "classic"
@@ -74,7 +73,7 @@ npcs:
     name: "Goblin-Späher"
     texts: "Ein garstiger kleiner Goblin mit gelben Zähnen."
     location: "kobold_lager"
-    max_health: 20
+    max_hp: 20
     attack: 6
     defense: 0
     state: "idle"
@@ -83,7 +82,7 @@ npcs:
     name: "Turmwächter"
     texts: "Ein uralter Wächtergolem aus massiven Felsblöcken."
     location: "gipfel"
-    max_health: 50
+    max_hp: 50
     attack: 10
     defense: 2
     state: "idle"
