@@ -46,6 +46,8 @@ data Frontend = Frontend
     , feDiagnostics :: [String] -> IO ()
       -- ^ engine diagnostics channel (stderr today) — never game text
     , fePlaySfx :: FilePath -> IO ()  -- ^ play a sound effect file (Audio Phase 1); no-op when audio is off
+    , feStartMusic :: FilePath -> IO ()  -- ^ start/switch a looping music track (Audio Phase 2)
+    , feStopMusic  :: IO ()              -- ^ stop the current music track (Audio Phase 2)
     }
 
 -- | Haskeline/stdout implementation: today's terminal behaviour, byte for
@@ -61,6 +63,8 @@ haskelineFrontend f = Frontend
     , fePlayFrames  = \micros -> mapM_ (\fr -> putStrLn (f fr) >> threadDelay micros)
     , feDiagnostics = mapM_ (hPutStrLn stderr)
     , fePlaySfx     = \_ -> pure ()  -- Audio Phase 1: no-op default; overridden by Main when audio helpers are available
+    , feStartMusic = \_ -> pure ()  -- Audio Phase 2: overridden by Main
+    , feStopMusic  = pure ()        -- Audio Phase 2: overridden by Main
     }
 
 haskelineSettings :: GameState -> Settings IO

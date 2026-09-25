@@ -74,6 +74,7 @@ emptyGameState = GameState
     , pendingAnimation = Nothing
     , pendingCutscene = Nothing
     , pendingSfx = []
+    , pendingMusic = Nothing
     , diagnostics = []
     }
 
@@ -1355,6 +1356,14 @@ applyOutcomeWith depth salt outcome targetId state
     -- philosophy as VT/colour).
     PlaySfx path ->
         (state { pendingSfx = pendingSfx state ++ [path] }, "", salt)
+
+    -- Audio Phase 2: signal a music change to the frontend. Last write wins
+    -- within a Sequence — same pattern as pendingCutscene.
+    PlayMusic path ->
+        (state { pendingMusic = Just (MusicStart path) }, "", salt)
+
+    StopMusic ->
+        (state { pendingMusic = Just MusicStop }, "", salt)
 
     ApplyCondition name turns tick end -> (applyCondition name turns tick end state, "", salt)
     ClearCondition name -> (clearCondition name state, "", salt)

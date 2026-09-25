@@ -919,6 +919,24 @@ testP117EffectSugar = do
               (compileAActionOutcome (AORandomChoice [(2, [AOMessage "a"])]))
     pure (and [r1, r2, r3, r4, r5, c1, c2, c3, c4, c5])
 
+-- | Audio Phase 1 & 2: `sfx:`, `music:`, `stop_music:` decode and compile.
+testAudioOutcomes :: IO Bool
+testAudioOutcomes = do
+    let dec = Aeson.decode :: BLC.ByteString -> Maybe AActionOutcome
+    r1 <- expectEqual (Just (AOPlaySfx "sword.wav"))
+              (dec (BLC.pack "{\"sfx\": \"sword.wav\"}"))
+    r2 <- expectEqual (Just (AOPlayMusic "theme.xm"))
+              (dec (BLC.pack "{\"music\": \"theme.xm\"}"))
+    r3 <- expectEqual (Just AOStopMusic)
+              (dec (BLC.pack "{\"stop_music\": true}"))
+    c1 <- expectEqual (E.PlaySfx "sword.wav")
+              (compileAActionOutcome (AOPlaySfx "sword.wav"))
+    c2 <- expectEqual (E.PlayMusic "theme.xm")
+              (compileAActionOutcome (AOPlayMusic "theme.xm"))
+    c3 <- expectEqual E.StopMusic
+              (compileAActionOutcome AOStopMusic)
+    pure (and [r1, r2, r3, c1, c2, c3])
+
 -- | P1-18: the never-decodable `check_flag` shortcut is gone — flag tests now
 --   go through `if: { has_flag: … }` (and a stale `check_flag` is a parse error
 --   instead of a silently wrong compile).
@@ -2580,6 +2598,7 @@ tests =
     , ("in_container places item inside container", testInContainerCompiles)
     , ("if/then/else outcome compiles to Conditional", testConditionalOutcomeCompiles)
     , ("P1-17 effect sugar: narrative/condition/skill/random", testP117EffectSugar)
+    , ("audio outcomes: sfx, music, stop_music (Audio Phase 1/2)", testAudioOutcomes)
     , ("P1-18 check_flag is rejected, has_flag works", testP118CheckFlagRejected)
     , ("P1-19 paid stop cost reaches the engine", testP119StopCost)
     , ("P1-20 raise: fires a custom event", testP120RaiseEvent)

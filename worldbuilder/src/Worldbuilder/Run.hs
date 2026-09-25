@@ -216,5 +216,5 @@ runRunner cfg = do
                             callProcess exePath args
                         Nothing -> do
                             let outFilter = if rcNoColor cfg then stripAnsi else id
-                                st = E.GameState (rrWorld res) (rrSave res) Nothing Nothing Nothing [] []
+                                st = E.GameState (rrWorld res) (rrSave res) Nothing Nothing Nothing [] Nothing []
                             runGameWith outFilter st

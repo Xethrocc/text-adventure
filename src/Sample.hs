@@ -414,5 +414,6 @@ initSampleGame = GameState
     , pendingAnimation = Nothing
     , pendingCutscene = Nothing
     , pendingSfx = []
+    , pendingMusic = Nothing
     , diagnostics = []
     }

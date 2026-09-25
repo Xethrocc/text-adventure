@@ -5,7 +5,7 @@ module Main where
 
 import GameLoop (runGameWith, runGameWithFrontend)
 import Frontend (haskelineFrontend, Frontend(..))
-import Audio (AudioConfig, discoverAudio, playSfx, noAudio)
+import Audio (AudioConfig, discoverAudio, playSfx, noAudio, newMusicHandle, startMusic, stopMusic)
 import Ansi (ansiFilter)
 import TextAdventure.Tui (runTui)
 import Game (resolveAsciiArt)
@@ -191,7 +191,12 @@ main = do
                             putStrLn "Type 'help' for available commands."
                             putStrLn "----------------------------"
                             audioCfg <- if coNoAudio opts then pure noAudio else discoverAudio (coAudioHelper opts)
-                            let fe = (haskelineFrontend outFilter) { fePlaySfx = playSfx audioCfg }
+                            musicH <- newMusicHandle
+                            let fe = (haskelineFrontend outFilter)
+                                    { fePlaySfx = playSfx audioCfg
+                                    , feStartMusic = startMusic audioCfg musicH
+                                    , feStopMusic  = stopMusic musicH
+                                    }
                             runGameWithFrontend fe initSampleGame
                 Just worldPath -> do
                     savePath <- case coSave opts of
@@ -223,5 +228,10 @@ main = do
                                     putStrLn "Type 'help' for available commands."
                                     putStrLn "----------------------------"
                                     audioCfg <- if coNoAudio opts then pure noAudio else discoverAudio (coAudioHelper opts)
-                                    let fe = (haskelineFrontend outFilter) { fePlaySfx = playSfx audioCfg }
+                                    musicH <- newMusicHandle
+                                    let fe = (haskelineFrontend outFilter)
+                                            { fePlaySfx = playSfx audioCfg
+                                            , feStartMusic = startMusic audioCfg musicH
+                                            , feStopMusic  = stopMusic musicH
+                                            }
                                     runGameWithFrontend fe state

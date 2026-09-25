@@ -211,6 +211,8 @@ tuiFrontend shared chan = Frontend
             Nothing           -> setArtPanel shared chan PanelNone
     , feDiagnostics = \ms -> mapM_ (\m -> appendShared shared ("[Diagnose] " ++ m)) ms
     , fePlaySfx = \_ -> pure ()
+    , feStartMusic = \_ -> pure ()
+    , feStopMusic = pure ()
     }
   where
     notify = writeBChan chan EvLines

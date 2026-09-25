@@ -452,12 +452,18 @@ loopGame fe loopState
                         -- Audio Phase 1: drain queued SFX (fire-and-forget).
                         mapM_ (fePlaySfx fe) (pendingSfx (lsCurrent loopState'))
                         let loopState'a = loopState' { lsCurrent = (lsCurrent loopState') { pendingSfx = [] } }
-                        curAfterCutscene <- case pendingCutscene (lsCurrent loopState'a) of
+                        -- Audio Phase 2: dispatch pending music command.
+                        case pendingMusic (lsCurrent loopState'a) of
+                            Just (MusicStart path) -> feStartMusic fe path
+                            Just MusicStop         -> feStopMusic fe
+                            Nothing                -> pure ()
+                        let loopState'b = loopState'a { lsCurrent = (lsCurrent loopState'a) { pendingMusic = Nothing } }
+                        curAfterCutscene <- case pendingCutscene (lsCurrent loopState'b) of
                             Just (frames, micros) -> do
                                 fePlayFrames fe micros frames
-                                pure ((lsCurrent loopState'a) { pendingCutscene = Nothing })
-                            Nothing -> pure (lsCurrent loopState'a)
-                        let loopState'' = loopState'a { lsCurrent = curAfterCutscene }
+                                pure ((lsCurrent loopState'b) { pendingCutscene = Nothing })
+                            Nothing -> pure (lsCurrent loopState'b)
+                        let loopState'' = loopState'b { lsCurrent = curAfterCutscene }
                         case pendingAnimation (lsCurrent loopState'') of
                             Just (frames, micros) -> do
                                 fePlayFrames fe micros frames

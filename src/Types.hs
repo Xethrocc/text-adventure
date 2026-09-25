@@ -622,6 +622,13 @@ instance FromJSON DeckDestination where
         "hand"    -> pure DestHand
         other     -> fail ("Unknown deck destination: " ++ other)
 
+-- | Music command queued by the pure engine for the frontend (Audio Phase 2).
+data MusicCommand = MusicStart FilePath | MusicStop
+    deriving (Show, Eq, Generic)
+
+instance ToJSON MusicCommand
+instance FromJSON MusicCommand
+
 -- | Action Outcome representing the result of an interaction
 --   This is the engine-level Effect-DSL: a compact, composable set of
 --   effect constructors that replace the previous 30-specific Effect
@@ -644,6 +651,8 @@ data Effect
     | Narrative [String] Effect                   -- ^ Lines to show, then follow-up (stored as pendingNarrative)
     | PlayClip ClipID                             -- ^ Phase H/H4: queue a cutscene clip (pendingCutscene)
     | PlaySfx FilePath                            -- ^ Audio Phase 1: queue a sound effect for the frontend
+    | PlayMusic FilePath                          -- ^ Audio Phase 2: start/switch background music loop
+    | StopMusic                                   -- ^ Audio Phase 2: stop background music
     | SetExit RoomID Direction Exit               -- ^ Rogue Phase 3: open/rewire a dynamic exit
     | RemoveExit RoomID Direction                 -- ^ Rogue Phase 3: close a dynamic exit
     | ComputeValue ValueRef Expr                  -- ^ Phase 1A: dynamically compute an expression and assign to ValueRef
@@ -1995,6 +2004,7 @@ data GameState = GameState
     , pendingAnimation :: Maybe ([String], Int)    -- ^ Frames + rate in µs (Phase D/H1, runtime only)
     , pendingCutscene :: Maybe ([String], Int)      -- ^ Cutscene frames + rate in µs, played once (Phase H/H4, runtime only)
     , pendingSfx :: [FilePath]  -- ^ SFX files queued for playback (Audio Phase 1, runtime only)
+    , pendingMusic :: Maybe MusicCommand           -- ^ Music command for the frontend (Audio Phase 2, runtime only)
     , diagnostics :: [String]                      -- ^ Engine-level findings for the author (P2-23)
     } deriving (Show, Eq)
 

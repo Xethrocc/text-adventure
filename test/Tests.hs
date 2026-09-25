@@ -975,6 +975,8 @@ cannedFrontendWith startState script = do
             , fePlayFrames  = \micros frames -> modifyIORef' playRef ((micros, frames) :)
             , feDiagnostics = \ms -> modifyIORef' diagRef (++ ms)
             , fePlaySfx     = \_ -> pure ()
+            , feStartMusic  = \_ -> pure ()
+            , feStopMusic   = pure ()
             }
     runGameWithFrontend fe startState
     out <- reverse <$> readIORef outRef
@@ -1003,6 +1005,8 @@ driveDeathScreen startState slot script = do
             , fePlayFrames  = \_ _ -> pure ()
             , feDiagnostics = \_ -> pure ()
             , fePlaySfx     = \_ -> pure ()
+            , feStartMusic  = \_ -> pure ()
+            , feStopMusic   = pure ()
             }
     handleGameOver fe (initLoopState startState) { lsSaveSlot = slot }
     reverse <$> readIORef outRef
@@ -1342,6 +1346,18 @@ testLoopPlaysCutscene = do
     r2 <- expectTrue "no diagnostics" (null diag)
     r3 <- expectTrue "script fully consumed" (null remaining)
     pure (r1 && r2 && r3)
+
+-- | Audio Phase 1 & 2: PlaySfx queues file paths, PlayMusic / StopMusic set pendingMusic.
+testAudioEffectsQueueState :: IO Bool
+testAudioEffectsQueueState = do
+    let (st1, _) = applyOutcome (PlaySfx "sword.wav") "" initSampleGame
+    r1 <- expectEqual ["sword.wav"] (pendingSfx st1)
+    let (st2, _) = applyOutcome (Sequence [PlaySfx "hit.wav", PlayMusic "boss.xm"]) "" st1
+    r2 <- expectEqual ["sword.wav", "hit.wav"] (pendingSfx st2)
+    r3 <- expectEqual (Just (MusicStart "boss.xm")) (pendingMusic st2)
+    let (st3, _) = applyOutcome StopMusic "" st2
+    r4 <- expectEqual (Just MusicStop) (pendingMusic st3)
+    pure (r1 && r2 && r3 && r4)
 
 -- ===== Completion Tests =====
 
@@ -5669,6 +5685,7 @@ main = do
         , runTest "room intro queues a cutscene (H4)" testIntroQueuesCutscene
         , runTest "play_clip queues a cutscene (H4)" testPlayClipQueuesCutscene
         , runTest "loop plays the cutscene once (H4)" testLoopPlaysCutscene
+        , runTest "audio effects queue sfx and music (Audio Phase 1/2)" testAudioEffectsQueueState
         , runTest "sibling save.json auto-discovery" testSiblingSavePath
         , runTest "end_art resolves per reason (G)" testEndArtFor
         , runTest "title_art resolves against state (G)" testTitleArtResolves

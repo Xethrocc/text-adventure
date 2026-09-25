@@ -1811,6 +1811,8 @@ compileAActionOutcome ao = case ao of
     AORaiseEvent name -> E.RaiseEvent name
     AOPlayClip clipId -> E.PlayClip clipId
     AOPlaySfx path -> E.PlaySfx path
+    AOPlayMusic path -> E.PlayMusic path
+    AOStopMusic -> E.StopMusic
     AODrawCards n -> E.DrawCards n
     AODiscardHand -> E.DiscardHand
     AODiscardCard cid -> E.DiscardCard cid

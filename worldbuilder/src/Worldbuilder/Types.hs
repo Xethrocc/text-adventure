@@ -1123,6 +1123,8 @@ data AActionOutcome
     | AORaiseEvent String              -- ^ raise: <name> — fires `on: custom <name>` (P1-20)
     | AOPlayClip String                -- ^ play_clip: <clip-id> — queues a cutscene (Phase H/H4)
     | AOPlaySfx String                 -- ^ sfx: <file> — queues a sound effect (Audio Phase 1)
+    | AOPlayMusic String              -- ^ music: <file> — start/switch background music (Audio Phase 2)
+    | AOStopMusic                     -- ^ stop_music — stop background music (Audio Phase 2)
     | AOComputeVar String E.Expr       -- ^ compute_var: { var: name, expr: "..." }
     -- Schritt 2 / Phase 2D: Card game outcomes
     | AODrawCards Int
@@ -1161,6 +1163,9 @@ instance FromJSON AActionOutcome where
         <|> (AORaiseEvent <$> o .: "raise")
         <|> (AOPlayClip <$> o .: "play_clip")
         <|> (AOPlaySfx <$> o .: "sfx")
+        <|> (AOPlayMusic <$> o .: "music")
+        <|> (do b <- o .: "stop_music"
+                if b then pure AOStopMusic else fail "stop_music must be true")
         <|> (do cv <- o .: "compute_var"
                 AOComputeVar <$> cv .: "var" <*> cv .: "expr")
         <|> (AOComputeVar <$> o .: "compute_var" <*> o .: "expr")

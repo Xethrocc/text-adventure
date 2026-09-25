@@ -53,12 +53,12 @@ loadGame worldPath maybeSavePath = do
     case worldResult of
         Left err -> pure (Left err)
         Right gw -> case maybeSavePath of
-            Nothing -> pure (Right (GameState gw (defaultSaveState gw) Nothing Nothing Nothing [] []))
+            Nothing -> pure (Right (GameState gw (defaultSaveState gw) Nothing Nothing Nothing [] Nothing []))
             Just savePath -> do
                 saveResult <- loadSaveState savePath
                 pure $ case saveResult of
                     Left err -> Left err
-                    Right ss -> Right (GameState gw ss Nothing Nothing Nothing [] [])
+                    Right ss -> Right (GameState gw ss Nothing Nothing Nothing [] Nothing [])
 
 -- | A bare starting state for a freshly loaded world.
 --   Rooms exist but nothing is placed; use an initial-save file for that.
