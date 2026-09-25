@@ -51,6 +51,7 @@ data Adventure = Adventure
     , advGame             :: Maybe AGamePolicy           -- ^ roguelike policy (Rogue Phase 1)
     , advCards            :: [ACard]                     -- ^ card definitions (Phase 2D)
     , advDeck             :: Maybe [String]              -- ^ starting deck (Phase 2D)
+    , advHandLimit        :: Maybe Int                   -- ^ maximum cards in hand (Phase 2 / S2)
     , advSandboxZones     :: [ASandboxZone]              -- ^ procedural sandbox zones (Schritt 3 / Phase 3E)
     , advRawValue         :: Maybe Value                 -- ^ raw parsed JSON/YAML value for schema validation
     } deriving (Show, Eq, Generic)
@@ -121,6 +122,7 @@ instance FromJSON Adventure where
         <*> o .:? "game"
         <*> parseCardsField o
         <*> parseDeckField o
+        <*> parseHandLimitField o
         <*> parseSandboxZonesField o
         <*> pure (Just v)
     parseJSON _ = fail "Expected Adventure to be an object"
@@ -141,6 +143,18 @@ parseCardsField o = do
                  ) (KM.toList obj)
         Just _ -> fail "Expected 'cards' to be an object (map) or array (list)"
 
+-- | Parse 'handLimit' / 'hand_limit' field: supports top-level or inside 'deck' block.
+parseHandLimitField :: Object -> Parser (Maybe Int)
+parseHandLimitField o = do
+    topHL <- (o .:? "handLimit") <|> (o .:? "hand_limit")
+    case topHL of
+        Just hl -> pure (Just hl)
+        Nothing -> do
+            mDeckVal <- o .:? "deck"
+            case mDeckVal of
+                Just (Object dObj) -> (dObj .:? "handLimit") <|> (dObj .:? "hand_limit")
+                _                  -> pure Nothing
+
 -- | Parse 'deck' field: supports list of card IDs (`[strike, defend]`) or map with counts (`{ strike: 4, defend: 4 }`).
 parseDeckField :: Object -> Parser (Maybe [String])
 parseDeckField o = do
@@ -153,11 +167,15 @@ parseDeckField o = do
 parseDeckValue :: Value -> Parser [String]
 parseDeckValue (Array arr) = mapM parseJSON (Foldable.toList arr)
 parseDeckValue (Object obj) = do
-    cardLists <- mapM (\(k, v) -> do
-                         count <- parseJSON v :: Parser Int
-                         pure (replicate count (K.toString k))
-                      ) (KM.toList obj)
-    pure (concat cardLists)
+    case KM.lookup "cards" obj of
+        Just cardsVal -> parseDeckValue cardsVal
+        Nothing -> do
+            let cardPairs = filter (\(k, _) -> K.toString k `notElem` ["handLimit", "hand_limit"]) (KM.toList obj)
+            cardLists <- mapM (\(k, v) -> do
+                                 count <- parseJSON v :: Parser Int
+                                 pure (replicate count (K.toString k))
+                              ) cardPairs
+            pure (concat cardLists)
 parseDeckValue _ = fail "Expected 'deck' to be a list of card IDs or a map of card ID to count"
 
 -- | Parse 'sandbox_zones' field: supports both a map (`sandbox_zones: { wildnis: { ... } }`) and a list (`sandbox_zones: [ { id: "wildnis", ... } ]`).
@@ -216,6 +234,7 @@ data AAdventurePlayer = AAdventurePlayer
     , apDefense   :: Maybe Int
     , apSkills    :: Map.Map String Int
     , apDeck      :: Maybe [String]
+    , apHandLimit :: Maybe Int
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AAdventurePlayer where
@@ -225,6 +244,7 @@ instance FromJSON AAdventurePlayer where
         <*> o .:? "defense"
         <*> o .:? "skills" .!= Map.empty
         <*> (o .:? "deck" >>= maybe (pure Nothing) (fmap Just . parseDeckValue))
+        <*> (o .:? "handLimit" <|> o .:? "hand_limit")
 
 -- | A declared adventure verb: canonical name + input aliases (Phase 3a).
 data AVerb = AVerb
@@ -1274,7 +1294,7 @@ knownKeys EntAdventure = Set.fromList
     , "initial_variables", "initial_flags", "active_quests", "factions"
     , "encounter_tables", "environment", "stealth", "patrol", "combat"
     , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
-    , "sandbox_zones"
+    , "handLimit", "hand_limit", "sandbox_zones"
     ]
 knownKeys EntRoom = Set.fromList
     [ "id", "name", "desc", "description", "exits", "tags", "light_flag"
@@ -1324,7 +1344,7 @@ knownKeys EntAbility = Set.fromList
 knownKeys EntClip = Set.fromList
     [ "id", "file", "frames", "fps" ]
 knownKeys EntPlayer = Set.fromList
-    [ "max_hp", "attack", "defense", "skills", "deck" ]
+    [ "max_hp", "attack", "defense", "skills", "deck", "handLimit", "hand_limit" ]
 knownKeys EntGame = Set.fromList
     [ "permadeath", "allow_undo", "ironman", "save_zones", "meta_slug" ]
 knownKeys EntEnvironment = Set.fromList

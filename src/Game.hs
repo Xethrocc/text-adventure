@@ -871,12 +871,22 @@ evalPredicate (EntityHasState entity expected) st =
     getEntityState entity st == Just expected
         || npcStateMatches
         || itemStateMatches
+        || cardStateMatches
   where
     npcStateMatches = case Map.lookup entity (npcStates (save st)) of
         Just ns -> npcStatus ns == expected
         Nothing -> False
     itemStateMatches = case Map.lookup entity (itemStates (save st)) of
         Just is -> itemStatus is == expected
+        Nothing -> False
+    cardStateMatches = case deckState (save st) of
+        Just ds -> case expected of
+            "hand"        -> entity `elem` hand ds
+            "in_hand"     -> entity `elem` hand ds
+            "draw"        -> entity `elem` drawPile ds
+            "discard"     -> entity `elem` discardPile ds
+            "exhaust"     -> entity `elem` exhaustPile ds
+            _             -> False
         Nothing -> False
 evalPredicate (RoomHasTag rId tag) st =
     case lookupRoom rId st of
@@ -925,6 +935,10 @@ resolveValueRef (VRVariable name) st =
             "player.max_health" -> playerMaxHealth (player (save st))
             "turn.count"        -> turnCount (save st)
             "turns"             -> turnCount (save st)
+            "hand.count"        -> maybe 0 (length . hand) (deckState (save st))
+            "deck.count"        -> maybe 0 (length . drawPile) (deckState (save st))
+            "discard.count"     -> maybe 0 (length . discardPile) (deckState (save st))
+            "exhaust.count"     -> maybe 0 (length . exhaustPile) (deckState (save st))
             _                   -> 0
 resolveValueRef (VRFlag f) st =
     case getFlag f st of
@@ -1018,6 +1032,14 @@ lookupVarForFormat st name
         Just (show (playerMaxHealth (player (save st))))
     | name `elem` ["turn.count", "turns"] =
         Just (show (turnCount (save st)))
+    | name `elem` ["hand.count", "cards_in_hand"] =
+        Just (show (maybe 0 (length . hand) (deckState (save st))))
+    | name `elem` ["deck.count", "draw_pile.count"] =
+        Just (show (maybe 0 (length . drawPile) (deckState (save st))))
+    | name `elem` ["discard.count", "discard_pile.count"] =
+        Just (show (maybe 0 (length . discardPile) (deckState (save st))))
+    | name `elem` ["exhaust.count", "exhaust_pile.count"] =
+        Just (show (maybe 0 (length . exhaustPile) (deckState (save st))))
     | name `elem` ["room.name", "current_room.name"] =
         Just (fromMaybe "" (roomName <$> getCurrentRoom st))
     | name `elem` ["room.id", "current_room.id", "room"] =
@@ -1987,41 +2009,42 @@ modifyDeckState f st = case deckState (save st) of
     Nothing -> st
     Just ds -> f ds st
 
--- | Draw up to n cards from draw pile into hand (capped by maxHandSize).
+-- | Draw up to n cards from draw pile into hand (capped by maxHandSize if > 0).
 --   If draw pile runs out, discard pile is shuffled into draw pile.
+--   Hand limit is checked after reshuffle so cards in discard are properly recycled.
 drawCards :: Int -> GameState -> GameState
 drawCards n st
     | n <= 0    = st
-    | otherwise = modifyDeckState go st
+    | otherwise = modifyDeckState (drawCardsHelper n) st
+
+drawCardsHelper :: Int -> DeckState -> GameState -> GameState
+drawCardsHelper n ds0 currentSt = go n ds0 currentSt
   where
-    go ds currentSt =
-        let currentHand = hand ds
-            curDraw = drawPile ds
-            curDiscard = discardPile ds
-            handCap = maxHandSize ds
-            freeSpace = max 0 (handCap - length currentHand)
-            toDraw = min n freeSpace
-        in if toDraw <= 0
-           then currentSt
-           else if length curDraw >= toDraw
-                then let (drawn, remainingDraw) = splitAt toDraw curDraw
-                         ds' = ds { hand = currentHand ++ drawn, drawPile = remainingDraw }
-                     in currentSt { save = (save currentSt) { deckState = Just ds' } }
-                else -- Need to draw what we have, then shuffle discard pile
-                     let drawnFromDraw = curDraw
-                         neededMore = toDraw - length drawnFromDraw
-                     in if null curDiscard
-                        then let ds' = ds { hand = currentHand ++ drawnFromDraw, drawPile = [] }
-                             in currentSt { save = (save currentSt) { deckState = Just ds' } }
-                        else let (shuffledDiscard, newRng) = shuffleList curDiscard (rngState (save currentSt))
-                                 (drawnFromDiscard, remainingNewDraw) = splitAt neededMore shuffledDiscard
-                                 ds' = ds
-                                     { hand = currentHand ++ drawnFromDraw ++ drawnFromDiscard
-                                     , drawPile = remainingNewDraw
-                                     , discardPile = []
-                                     }
-                                 ss' = (save currentSt) { deckState = Just ds', rngState = newRng }
-                             in currentSt { save = ss' }
+    handCap = maxHandSize ds0
+
+    go remainingCards ds stAcc
+        | remainingCards <= 0 = stAcc
+        | handCap > 0 && length (hand ds) >= handCap =
+            -- Hand is full. If drawPile is empty and discardPile has cards,
+            -- reshuffle discardPile into drawPile now so cards are ready.
+            if null (drawPile ds) && not (null (discardPile ds))
+            then
+                let (shuffled, newRng) = shuffleList (discardPile ds) (rngState (save stAcc))
+                    ds' = ds { drawPile = shuffled, discardPile = [] }
+                in stAcc { save = (save stAcc) { deckState = Just ds', rngState = newRng } }
+            else stAcc { save = (save stAcc) { deckState = Just ds } }
+        | not (null (drawPile ds)) =
+            let c = head (drawPile ds)
+                ds' = ds { hand = hand ds ++ [c], drawPile = tail (drawPile ds) }
+                stAcc' = stAcc { save = (save stAcc) { deckState = Just ds' } }
+            in go (remainingCards - 1) ds' stAcc'
+        | not (null (discardPile ds)) =
+            let (shuffled, newRng) = shuffleList (discardPile ds) (rngState (save stAcc))
+                ds' = ds { drawPile = shuffled, discardPile = [] }
+                stAcc' = stAcc { save = (save stAcc) { deckState = Just ds', rngState = newRng } }
+            in go remainingCards ds' stAcc'
+        | otherwise =
+            stAcc { save = (save stAcc) { deckState = Just ds } }
 
 -- | Discard all cards from hand to discard pile.
 discardHand :: GameState -> GameState
@@ -2069,7 +2092,7 @@ addCardToDeck cid dest st = modifyDeckState go st
         let ds' = case dest of
                 DestDraw    -> ds { drawPile = cid : drawPile ds }
                 DestDiscard -> ds { discardPile = discardPile ds ++ [cid] }
-                DestHand    -> if length (hand ds) < maxHandSize ds
+                DestHand    -> if maxHandSize ds <= 0 || length (hand ds) < maxHandSize ds
                                then ds { hand = hand ds ++ [cid] }
                                else ds { discardPile = discardPile ds ++ [cid] }
         in currentSt { save = (save currentSt) { deckState = Just ds' } }

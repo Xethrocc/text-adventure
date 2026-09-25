@@ -5088,6 +5088,101 @@ testCardCommandsParsing = do
     r13 <- expectEqual EndTurnCmd (parseCommand "pass")
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13)
 
+-- | Phase 2 / S2: Drawing cards when hand reaches maxHandSize blocks further drawing.
+testDrawCardsHandLimitBlocked :: IO Bool
+testDrawCardsHandLimitBlocked = do
+    let ds = defaultDeckState
+            { maxHandSize = 5
+            , hand = ["h1", "h2", "h3", "h4", "h5"]
+            , drawPile = ["d1", "d2"]
+            , discardPile = []
+            }
+        st0 = emptyGameState { save = (save emptyGameState) { deckState = Just ds } }
+        st1 = drawCards 2 st0
+        mDs1 = deckState (save st1)
+    case mDs1 of
+        Nothing -> putStrLn "deckState is Nothing" >> pure False
+        Just ds1 -> do
+            r1 <- expectEqual 5 (length (hand ds1))
+            r2 <- expectEqual ["h1", "h2", "h3", "h4", "h5"] (hand ds1)
+            r3 <- expectEqual ["d1", "d2"] (drawPile ds1)
+            pure (r1 && r2 && r3)
+
+-- | Phase 2 / S2: Hand limit is checked after reshuffling discard pile.
+testDrawCardsHandLimitReshuffle :: IO Bool
+testDrawCardsHandLimitReshuffle = do
+    let ds = defaultDeckState
+            { maxHandSize = 4
+            , hand = ["h1", "h2"]
+            , drawPile = ["d1"]
+            , discardPile = ["x1", "x2", "x3"]
+            }
+        st0 = emptyGameState { save = (save emptyGameState) { deckState = Just ds } }
+        st1 = drawCards 4 st0
+        mDs1 = deckState (save st1)
+    case mDs1 of
+        Nothing -> putStrLn "deckState is Nothing" >> pure False
+        Just ds1 -> do
+            -- Draws d1, then reshuffles 3 cards into draw pile, draws 1 more (hand has 4 = limit)
+            r1 <- expectEqual 4 (length (hand ds1))
+            r2 <- expectEqual 2 (length (drawPile ds1))
+            r3 <- expectEqual [] (discardPile ds1)
+            pure (r1 && r2 && r3)
+
+-- | Phase 2 / S2: Card combo/synergy: card_in_hand condition triggers bonus outcome.
+testCardSynergyCombo :: IO Bool
+testCardSynergyCombo = do
+    let bash = Card
+            { cardId = "bash"
+            , cardName = "Bash"
+            , cardCost = Map.empty
+            , cardType = CardAttack
+            , cardDescription = "Deals 8 damage, +4 if Defend in hand."
+            , cardTarget = TargetSingleEnemy
+            , cardExhaust = False
+            , cardEffects =
+                [ ModifyValue (VRActorProp (ActorNPC "chosen") PHealth) (-8)
+                , Conditional (EntityHasState "defend" "in_hand")
+                    (ModifyValue (VRActorProp (ActorNPC "chosen") PHealth) (-4))
+                    Noop
+                ]
+            }
+        baseSt = initSampleGame
+        cRoom = currentRoom (save baseSt)
+        goblinDef = (head (Map.elems (npcDefs (world baseSt))))
+            { npcId = "goblin"
+            , npcName = "Goblin"
+            , npcKeywords = ["goblin"]
+            , npcMaxHealth = Just 30
+            }
+        stCombo = baseSt
+            { world = (world baseSt)
+                { cardDefs = Map.singleton "bash" bash
+                , npcDefs = Map.insert "goblin" goblinDef (npcDefs (world baseSt))
+                }
+            , save = (save baseSt)
+                { deckState = Just (defaultDeckState { hand = ["bash", "defend"] })
+                , npcStates = Map.singleton "goblin" (NPCState (InRoom cRoom) "alive" (Just 30) Map.empty Nothing)
+                }
+            }
+        stNoCombo = baseSt
+            { world = (world baseSt)
+                { cardDefs = Map.singleton "bash" bash
+                , npcDefs = Map.insert "goblin" goblinDef (npcDefs (world baseSt))
+                }
+            , save = (save baseSt)
+                { deckState = Just (defaultDeckState { hand = ["bash", "strike"] })
+                , npcStates = Map.singleton "goblin" (NPCState (InRoom cRoom) "alive" (Just 30) Map.empty Nothing)
+                }
+            }
+        (st1, _) = playCard 1 (Just "goblin") stCombo
+        (st2, _) = playCard 1 (Just "goblin") stNoCombo
+        hp1 = npcHealth =<< Map.lookup "goblin" (npcStates (save st1))
+        hp2 = npcHealth =<< Map.lookup "goblin" (npcStates (save st2))
+    r1 <- expectEqual (Just 18) hp1   -- 30 - 8 - 4 = 18
+    r2 <- expectEqual (Just 22) hp2   -- 30 - 8 = 22
+    pure (r1 && r2)
+
 -- ---------------------------------------------------------------------------
 -- Phase 2C: Visuals & HUD Tests (Card Boxes, Horizontal Tiling, Combat Banner)
 -- ---------------------------------------------------------------------------
@@ -5596,6 +5691,9 @@ main = do
         , runTest "play card exhausts correctly (Phase 2B)" testPlayCardExhaustsCorrectly
         , runTest "end turn discards, restores energy and draws (Phase 2B)" testEndTurnDiscardsAndDraws
         , runTest "card commands parsing (Phase 2B)" testCardCommandsParsing
+        , runTest "draw cards hand limit blocks when full (Phase 2 / S2)" testDrawCardsHandLimitBlocked
+        , runTest "draw cards hand limit checks after reshuffle (Phase 2 / S2)" testDrawCardsHandLimitReshuffle
+        , runTest "card combo synergy outcome (Phase 2 / S2)" testCardSynergyCombo
         -- Phase 2C: Visuals & HUD (Deckbuilder)
         , runTest "hcatBoxes formatting and wrapping (Phase 2C)" testHcatBoxesFormatting
         , runTest "renderCardBox formatting and colors (Phase 2C)" testRenderCardBoxFormattingAndColors

@@ -249,6 +249,9 @@ compileAdventure adv =
         mStartingDeck = case advDeck adv of
             Just d  -> Just d
             Nothing -> advPlayer adv >>= apDeck
+        mHandLimit = case advHandLimit adv of
+            Just hl -> Just hl
+            Nothing -> advPlayer adv >>= apHandLimit
         deckErrs = case mStartingDeck of
             Nothing -> []
             Just deckCards ->
@@ -342,7 +345,10 @@ compileAdventure adv =
                         , E.triggerStates = Map.empty
                         , E.exitOverrides = Map.empty
                         , E.deckState = case mStartingDeck of
-                              Just deckCards -> Just (E.defaultDeckState { E.drawPile = deckCards })
+                              Just deckCards -> Just (E.defaultDeckState
+                                  { E.drawPile = deckCards
+                                  , E.maxHandSize = fromMaybe 0 mHandLimit
+                                  })
                               Nothing        -> Nothing
                         , E.dynamicRooms = Map.empty
                         }

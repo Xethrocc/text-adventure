@@ -17,6 +17,7 @@ import Control.Monad (guard)
 import Data.Char (toLower, isDigit, isAlpha, isAlphaNum, isSpace)
 import Data.List (intercalate, stripPrefix, foldl')
 import Data.Maybe (isNothing)
+import qualified Data.Foldable as Foldable
 import Text.Read (readMaybe)
 
 -- ---------------------------------------------------------------------------
@@ -500,7 +501,8 @@ parseComparatorName s = case map toLower s of
 
 instance FromJSON Predicate where
     parseJSON = withObject "Predicate" $ \o ->
-            (PAll  <$> o .: "all")
+            (o .: "predicate")
+        <|> (PAll  <$> o .: "all")
         <|> (PAny  <$> o .: "any")
         <|> (PNot  <$> o .: "not")
         <|> (PTrue <$ (o .: "true" :: Parser Bool))
@@ -534,6 +536,18 @@ instance FromJSON Predicate where
                  <|> (CompareVar var CLte <$> st .: "at_most")
                  <|> (CompareVar var CEq  <$> st .: "equals")
                  <|> fail "standing: expected at_least, at_most, or equals" ))
+        -- Card game synergy sugar: card_in_hand / cards_in_hand / combo
+        <|> (do c <- o .: "card_in_hand"
+                pure (EntityHasState c "in_hand"))
+        <|> (do cs <- o .: "cards_in_hand"
+                pure (PAll [EntityHasState c "in_hand" | c <- cs]))
+        <|> (do val <- o .: "combo"
+                case val of
+                    Array arr -> do
+                        cs <- mapM parseJSON (Foldable.toList arr)
+                        pure (PAll [EntityHasState c "in_hand" | c <- cs])
+                    String s -> pure (EntityHasState (T.unpack s) "in_hand")
+                    _        -> fail "Expected card id or list of card ids for combo")
         <|> fail "Unknown predicate"
 
 -- ---------------------------------------------------------------------------
@@ -687,7 +701,7 @@ data DeckState = DeckState
     , hand        :: [CardID]                 -- ^ Current hand
     , discardPile :: [CardID]                 -- ^ Discard pile
     , exhaustPile :: [CardID]                 -- ^ Exhausted cards removed for combat
-    , maxHandSize :: Int                     -- ^ Max cards allowed in hand (default: 10)
+    , maxHandSize :: Int                     -- ^ Max cards allowed in hand (0 = unlimited)
     } deriving (Show, Eq, Generic)
 
 defaultDeckState :: DeckState
@@ -696,7 +710,7 @@ defaultDeckState = DeckState
     , hand        = []
     , discardPile = []
     , exhaustPile = []
-    , maxHandSize = 10
+    , maxHandSize = 0
     }
 
 instance ToJSON DeckState where
@@ -714,7 +728,7 @@ instance FromJSON DeckState where
         <*> o .:? "hand"        .!= []
         <*> o .:? "discardPile" .!= []
         <*> o .:? "exhaustPile" .!= []
-        <*> o .:? "maxHandSize" .!= 10
+        <*> o .:? "maxHandSize" .!= 0
 
 -- ---------------------------------------------------------------------------
 -- Procedural Sandbox & Runtime Worldgen (Schritt 3 / Phase 3A)

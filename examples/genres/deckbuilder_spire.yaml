@@ -111,9 +111,13 @@ cards:
     cost: { energy: 2 }
     type: attack
     target: single_enemy
-    description: "Fügt 8 schweren Schaden zu."
+    description: "Fügt 8 schweren Schaden zu. Kombo mit Verteidigung: +4 Schildschlag-Schaden!"
     outcomes:
       - damage_enemy: { target: chosen, amount: 8 }
+      - if: { card_in_hand: defend }
+        then:
+          - damage_enemy: { target: chosen, amount: 4 }
+          - msg: "Kombo-Synergie! Verteidigung auf der Hand verstärkt Schmetterschlag um 4 Bonusschaden!"
 
   cleave:
     name: "Rundumschlag"
@@ -143,6 +147,7 @@ cards:
     outcomes:
       - draw_cards: 3
 
+handLimit: 5
 deck:
   strike: 4
   defend: 4

@@ -182,6 +182,7 @@ minAdventure room = Adventure
     , advGame = Nothing
     , advCards = []
     , advDeck = Nothing
+    , advHandLimit = Nothing
     , advSandboxZones = []
     , advRawValue = Nothing
     }
@@ -2699,6 +2700,7 @@ tests =
     -- Schritt 2 / Phase 2D: Cards & Deckbuilder
     , ("cards: map syntax and deck count-map compile (Phase 2D)", testCardGameYamlCompilation)
     , ("cards: list syntax and card outcomes compile (Phase 2D)", testCardGameListFormAndOutcomes)
+    , ("cards: handLimit compiles to maxHandSize (Phase 2 / S2)", testCardGameHandLimitCompilation)
     , ("cards: unknown card in deck is rejected (Phase 2D)", testCardGameUnknownCardInDeck)
     , ("cards: duplicate card id is rejected (Phase 2D)", testCardGameDuplicateCardId)
     , ("cards: unknown card type and target are rejected (Phase 2D)", testCardGameUnknownTypeAndTarget)
@@ -3800,6 +3802,53 @@ testCardGameListFormAndOutcomes = do
                 let mSweep = Map.lookup "sweep" cDefs
                 r4 <- expectTrue "sweep has TargetAllEnemies" (maybe False (\c -> E.cardTarget c == E.TargetAllEnemies) mSweep)
                 pure (r1 && r2 && r3 && r4)
+
+-- | Phase 2 / S2: Test handLimit compilation (top-level, deck-level, and absent).
+testCardGameHandLimitCompilation :: IO Bool
+testCardGameHandLimitCompilation = do
+    let yamlTop = unlines
+            [ "name: Top Limit"
+            , "start_room: arena"
+            , "rooms: [{id: arena, name: Arena}]"
+            , "cards: {strike: {name: Schlag, type: attack}}"
+            , "deck: [strike, strike]"
+            , "handLimit: 5"
+            ]
+        yamlDeck = unlines
+            [ "name: Deck Limit"
+            , "start_room: arena"
+            , "rooms: [{id: arena, name: Arena}]"
+            , "cards: {strike: {name: Schlag, type: attack}}"
+            , "deck:"
+            , "  handLimit: 4"
+            , "  strike: 3"
+            ]
+        yamlNoLimit = unlines
+            [ "name: No Limit"
+            , "start_room: arena"
+            , "rooms: [{id: arena, name: Arena}]"
+            , "cards: {strike: {name: Schlag, type: attack}}"
+            , "deck: [strike]"
+            ]
+    res1 <- case decode1 (BLC.pack yamlTop) of
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Right cr -> pure (maybe 0 E.maxHandSize (E.deckState (crSave cr)) == 5)
+            _        -> pure False
+        _ -> pure False
+    res2 <- case decode1 (BLC.pack yamlDeck) of
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Right cr -> pure (maybe 0 E.maxHandSize (E.deckState (crSave cr)) == 4)
+            _        -> pure False
+        _ -> pure False
+    res3 <- case decode1 (BLC.pack yamlNoLimit) of
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Right cr -> pure (maybe (-1) E.maxHandSize (E.deckState (crSave cr)) == 0)
+            _        -> pure False
+        _ -> pure False
+    r1 <- expectTrue "top-level handLimit compiles to maxHandSize 5" res1
+    r2 <- expectTrue "deck-level handLimit compiles to maxHandSize 4" res2
+    r3 <- expectTrue "no handLimit compiles to maxHandSize 0 (unlimited)" res3
+    pure (r1 && r2 && r3)
 
 -- | Test validation: unknown card referenced in deck.
 testCardGameUnknownCardInDeck :: IO Bool

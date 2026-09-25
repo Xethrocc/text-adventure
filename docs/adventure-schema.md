@@ -1322,3 +1322,121 @@ wenn stdout kein Terminal ist oder `--no-color` gesetzt wurde (siehe
 
 Ohne `end_art` bleiben `YOU HAVE DIED` / `VICTORY!` / `Game Over: <msg>` und
 die Steuerhinweise unverändert — reine Rückwärtskompatibilität.
+
+---
+
+## Deckbuilder & Kartensystem (Phase 2)
+
+Adventures können rundenbasierte Deckbuilding-Mechaniken definieren (inspiriert von *Slay the Spire*). Karten besitzen Ressourcenkosten (z. B. Energie oder Mana), Zielvorgaben, optionale Erschöpfung (`exhaust`) und Effektketten.
+
+### Kartendefinition (`cards:`)
+
+Karten werden unter dem Top-Level-Schlüssel `cards:` deklariert — entweder als Liste von Objekten oder als Mapping von Card-ID auf Kartendefinition:
+
+```yaml
+cards:
+  - id: strike
+    name: "Schlag"
+    type: attack            # attack | skill | power | curse
+    cost: { energy: 1 }     # Ressourcenkosten (Variable muss existieren oder wird initialisiert)
+    target: single_enemy    # single_enemy | all_enemies | self | none
+    exhaust: false          # Wandert bei true nach dem Ausspielen auf den Exhaust-Stapel
+    description: "Fügt einem Ziel 6 Schaden zu."
+    outcomes:
+      - damage: 6
+
+  - id: bash
+    name: "Schmetterschlag"
+    type: attack
+    cost: { energy: 2 }
+    target: single_enemy
+    description: "Fügt 8 Schaden zu. +4 Bonusschaden, wenn 'defend' auf der Hand liegt."
+    outcomes:
+      - damage: 8
+      - if: { card_in_hand: defend }
+        then:
+          - damage: 4
+          - text: "Synergie! Das Zusammenspiel mit 'defend' zertrümmert die Abwehr (+4 Schaden)!"
+```
+
+| Feld | Typ | Default | Beschreibung |
+|---|---|---|---|
+| `id` | String | **required** | Eindeutige Kennung der Karte (z. B. `strike`, `defend`) |
+| `name` | String | = `id` | Angezeigter Kartenname im Hand-Display und HUD |
+| `type` | String | `skill` | Kartentyp: `attack`, `skill`, `power`, `curse` |
+| `cost` | Map (String -> Int) | `{}` | Benötigte Ressourcen (z. B. `energy: 1`, `mana: 2`) |
+| `target` | String | `single_enemy` | Zielmodus: `single_enemy`, `all_enemies`, `self`, `none` |
+| `exhaust` | Bool | `false` | Falls `true`, landet die Karte nach dem Ausspielen im `exhaust`-Stapel statt im `discard` |
+| `description` | String | `""` | Kurzbeschreibung für den ASCII-Kartenrahmen |
+| `outcomes` / `effects` | [Effekt] | `[]` | Liste auszuführender Effekte beim erfolgreichen Ausspielen |
+
+### Startdeck (`deck:`) & Hand-Limit (`handLimit:`)
+
+Das Startdeck kann top-level unter `deck:` oder unter `player.deck:` definiert werden:
+
+```yaml
+# Variante A: Liste von Karten-IDs
+deck: [strike, strike, strike, defend, defend, bash]
+
+# Variante B: Häufigkeits-Mapping mit Handkarten-Limit
+deck:
+  strike: 4
+  defend: 4
+  bash: 1
+handLimit: 5
+
+# Variante C: Geschachteltes Deck-Objekt
+deck:
+  handLimit: 5
+  cards:
+    strike: 4
+    defend: 4
+    bash: 1
+```
+
+- **`handLimit:` / `hand_limit:` (Option des Autors):**
+  - Ohne Angabe (oder `<= 0`) ist die Handgröße **unbegrenzt** (volle Rückwärtskompatibilität).
+  - Ist ein Limit gesetzt (z. B. `handLimit: 5`), zieht der Spieler nur so viele Karten, bis das Limit erreicht ist.
+  - Das Nachmischen des Ablagestapels (`discard`) in den Nachziehstapel (`draw`) erfolgt wie gewohnt, wenn der Nachziehstapel leer wird; das Ziehen wird jedoch gestoppt, sobald die Hand voll ist.
+
+### Kartensynergien & Combos (`card_in_hand` / `combo`)
+
+Bedingte Karteneffekte und Synergien können prüfen, ob sich bestimmte Karten aktuell auf der Spielerhand befinden:
+
+```yaml
+# Shorthand 1: Einzelne Karte auf der Hand
+if: { card_in_hand: defend }
+then:
+  - damage: 4
+
+# Shorthand 2: Combo mit mehreren Karten
+if: { combo: [strike, defend] }
+then:
+  - msg: "Perfekte Klingenkombination!"
+
+# Standard-Prädikat über Entity-State:
+if: { state: defend, is: in_hand }
+then:
+  - modify_value: { actor: player, prop: health, delta: 3 }
+```
+
+Folgende Kartenzustände können mit `state: <cardId>, is: <zustand>` geprüft werden:
+- `in_hand` / `hand`: Karte befindet sich auf der aktiven Hand
+- `draw`: Karte befindet sich im Nachziehstapel
+- `discard`: Karte befindet sich im Ablagestapel
+- `exhaust`: Karte befindet sich im Erschöpft-Stapel
+
+### Deck-Variablen & Text-Interpolation
+
+Zur Anzeige in Beschreibungen, Dashboards und HUDs stellt die Engine dynamische Zähler zur Verfügung:
+- `{hand.count}`: Anzahl Karten auf der aktuellen Hand
+- `{deck.count}`: Anzahl verbleibender Karten im Nachziehstapel
+- `{discard.count}`: Anzahl Karten auf dem Ablagestapel
+- `{exhaust.count}`: Anzahl Karten im Erschöpft-Stapel
+
+### Befehle im Spiel
+
+- `hand` / `karten`: Zeigt die aktuelle Hand in hübschen ASCII-Rahmen mit Typ, Kosten, Beschreibung und Synergien an.
+- `play <card>` / `spiele <card>`: Spielt eine Karte aus der Hand aus (prüft Ressourcen, zieht Kosten ab, führt Effekte aus).
+- `endturn` / `zugende`: Beendet den Spielzug, legt verbliebene Handkarten auf den Ablagestapel, stellt Energie wieder her und zieht eine frische Hand.
+
