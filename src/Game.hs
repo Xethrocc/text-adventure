@@ -73,6 +73,7 @@ emptyGameState = GameState
     , pendingNarrative = Nothing
     , pendingAnimation = Nothing
     , pendingCutscene = Nothing
+    , pendingSfx = []
     , diagnostics = []
     }
 
@@ -1347,6 +1348,13 @@ applyOutcomeWith depth salt outcome targetId state
                             Just (clipFrames clip, 1000000 `div` clipFps clip) }
                 , "", salt)
             _ -> (state, "", salt)
+
+    -- Audio Phase 1: queue a sound effect for playback by the frontend.
+    -- Unknown files are a content concern, not a runtime error; the frontend
+    -- plays what it can and silently drops what it cannot (same degrade
+    -- philosophy as VT/colour).
+    PlaySfx path ->
+        (state { pendingSfx = pendingSfx state ++ [path] }, "", salt)
 
     ApplyCondition name turns tick end -> (applyCondition name turns tick end state, "", salt)
     ClearCondition name -> (clearCondition name state, "", salt)

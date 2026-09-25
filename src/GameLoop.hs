@@ -449,12 +449,15 @@ loopGame fe loopState
                         -- played once at the clip's own rate), then the other
                         -- pending presentations (animation, narrative).
                         feEmitLine fe message
-                        curAfterCutscene <- case pendingCutscene (lsCurrent loopState') of
+                        -- Audio Phase 1: drain queued SFX (fire-and-forget).
+                        mapM_ (fePlaySfx fe) (pendingSfx (lsCurrent loopState'))
+                        let loopState'a = loopState' { lsCurrent = (lsCurrent loopState') { pendingSfx = [] } }
+                        curAfterCutscene <- case pendingCutscene (lsCurrent loopState'a) of
                             Just (frames, micros) -> do
                                 fePlayFrames fe micros frames
-                                pure ((lsCurrent loopState') { pendingCutscene = Nothing })
-                            Nothing -> pure (lsCurrent loopState')
-                        let loopState'' = loopState' { lsCurrent = curAfterCutscene }
+                                pure ((lsCurrent loopState'a) { pendingCutscene = Nothing })
+                            Nothing -> pure (lsCurrent loopState'a)
+                        let loopState'' = loopState'a { lsCurrent = curAfterCutscene }
                         case pendingAnimation (lsCurrent loopState'') of
                             Just (frames, micros) -> do
                                 fePlayFrames fe micros frames

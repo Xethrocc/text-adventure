@@ -643,6 +643,7 @@ data Effect
     | GameEnd GameOverReason String               -- ^ End the game with a reason
     | Narrative [String] Effect                   -- ^ Lines to show, then follow-up (stored as pendingNarrative)
     | PlayClip ClipID                             -- ^ Phase H/H4: queue a cutscene clip (pendingCutscene)
+    | PlaySfx FilePath                            -- ^ Audio Phase 1: queue a sound effect for the frontend
     | SetExit RoomID Direction Exit               -- ^ Rogue Phase 3: open/rewire a dynamic exit
     | RemoveExit RoomID Direction                 -- ^ Rogue Phase 3: close a dynamic exit
     | ComputeValue ValueRef Expr                  -- ^ Phase 1A: dynamically compute an expression and assign to ValueRef
@@ -1993,6 +1994,7 @@ data GameState = GameState
     , pendingNarrative :: Maybe ([String], Effect)  -- ^ Narrative lines + follow-up (Phase 4.4)
     , pendingAnimation :: Maybe ([String], Int)    -- ^ Frames + rate in µs (Phase D/H1, runtime only)
     , pendingCutscene :: Maybe ([String], Int)      -- ^ Cutscene frames + rate in µs, played once (Phase H/H4, runtime only)
+    , pendingSfx :: [FilePath]  -- ^ SFX files queued for playback (Audio Phase 1, runtime only)
     , diagnostics :: [String]                      -- ^ Engine-level findings for the author (P2-23)
     } deriving (Show, Eq)
 

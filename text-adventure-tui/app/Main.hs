@@ -25,6 +25,7 @@ usage = unlines
     , "  --allow-invalid   Start even if the world has validation issues."
     , "  --saves-dir DIR   Redirect in-game saves (saves/<slot>.json) to DIR. Wins over"
     , "                    the TA_SAVES_DIR environment variable (Rogue Phase 0)."
+    , "  --no-audio        Disable SFX playback (Audio Phase 1, accepted for consistency)."
     , "  --help            Show this message."
     , ""
     , "Without --world the bundled sample adventure is used."
@@ -46,6 +47,7 @@ parseArgs args = go args (CliOptions Nothing Nothing False Nothing)
     go ("--save" : p : rest) opts = go rest opts { coSave = Just p }
     go ("--allow-invalid" : rest) opts = go rest opts { coAllowInvalid = True }
     go ("--saves-dir" : p : rest) opts = go rest opts { coSavesDir = Just p }
+    go ("--no-audio" : rest) opts = go rest opts
     go (_ : rest) opts = go rest opts
 
 -- | Title banner: the authored `title_art` when present, otherwise the world

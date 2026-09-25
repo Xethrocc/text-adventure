@@ -1810,6 +1810,7 @@ compileAActionOutcome ao = case ao of
         E.RandomChoice [ (w, compileOutcomes os) | (w, os) <- weighted ]
     AORaiseEvent name -> E.RaiseEvent name
     AOPlayClip clipId -> E.PlayClip clipId
+    AOPlaySfx path -> E.PlaySfx path
     AODrawCards n -> E.DrawCards n
     AODiscardHand -> E.DiscardHand
     AODiscardCard cid -> E.DiscardCard cid

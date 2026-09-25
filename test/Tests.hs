@@ -974,6 +974,7 @@ cannedFrontendWith startState script = do
             , feReadPause   = pure ()
             , fePlayFrames  = \micros frames -> modifyIORef' playRef ((micros, frames) :)
             , feDiagnostics = \ms -> modifyIORef' diagRef (++ ms)
+            , fePlaySfx     = \_ -> pure ()
             }
     runGameWithFrontend fe startState
     out <- reverse <$> readIORef outRef
@@ -1001,6 +1002,7 @@ driveDeathScreen startState slot script = do
             , feReadPause   = pure ()
             , fePlayFrames  = \_ _ -> pure ()
             , feDiagnostics = \_ -> pure ()
+            , fePlaySfx     = \_ -> pure ()
             }
     handleGameOver fe (initLoopState startState) { lsSaveSlot = slot }
     reverse <$> readIORef outRef

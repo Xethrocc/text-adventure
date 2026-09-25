@@ -45,6 +45,7 @@ data Frontend = Frontend
       --   (the rate comes from the art via the pure core, Phase H/H1)
     , feDiagnostics :: [String] -> IO ()
       -- ^ engine diagnostics channel (stderr today) — never game text
+    , fePlaySfx :: FilePath -> IO ()  -- ^ play a sound effect file (Audio Phase 1); no-op when audio is off
     }
 
 -- | Haskeline/stdout implementation: today's terminal behaviour, byte for
@@ -59,6 +60,7 @@ haskelineFrontend f = Frontend
     , feReadPause   = putStr (f "  [Press Enter to continue]") >> void getLine
     , fePlayFrames  = \micros -> mapM_ (\fr -> putStrLn (f fr) >> threadDelay micros)
     , feDiagnostics = mapM_ (hPutStrLn stderr)
+    , fePlaySfx     = \_ -> pure ()  -- Audio Phase 1: no-op default; overridden by Main when audio helpers are available
     }
 
 haskelineSettings :: GameState -> Settings IO

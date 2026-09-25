@@ -413,5 +413,6 @@ initSampleGame = GameState
     , pendingNarrative = Nothing
     , pendingAnimation = Nothing
     , pendingCutscene = Nothing
+    , pendingSfx = []
     , diagnostics = []
     }

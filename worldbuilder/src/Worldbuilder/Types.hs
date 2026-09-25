@@ -1122,6 +1122,7 @@ data AActionOutcome
     | AORandomChoice [(Int, [AActionOutcome])]  -- ^ random: [[weight, [outcomes]], ...]
     | AORaiseEvent String              -- ^ raise: <name> — fires `on: custom <name>` (P1-20)
     | AOPlayClip String                -- ^ play_clip: <clip-id> — queues a cutscene (Phase H/H4)
+    | AOPlaySfx String                 -- ^ sfx: <file> — queues a sound effect (Audio Phase 1)
     | AOComputeVar String E.Expr       -- ^ compute_var: { var: name, expr: "..." }
     -- Schritt 2 / Phase 2D: Card game outcomes
     | AODrawCards Int
@@ -1159,6 +1160,7 @@ instance FromJSON AActionOutcome where
         <|> (AORandomChoice <$> o .: "random")
         <|> (AORaiseEvent <$> o .: "raise")
         <|> (AOPlayClip <$> o .: "play_clip")
+        <|> (AOPlaySfx <$> o .: "sfx")
         <|> (do cv <- o .: "compute_var"
                 AOComputeVar <$> cv .: "var" <*> cv .: "expr")
         <|> (AOComputeVar <$> o .: "compute_var" <*> o .: "expr")

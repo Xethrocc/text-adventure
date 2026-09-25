@@ -3,7 +3,9 @@
 -- | Main module for the Haskell text adventure game
 module Main where
 
-import GameLoop (runGameWith)
+import GameLoop (runGameWith, runGameWithFrontend)
+import Frontend (haskelineFrontend, Frontend(..))
+import Audio (AudioConfig, discoverAudio, playSfx, noAudio)
 import Ansi (ansiFilter)
 import TextAdventure.Tui (runTui)
 import Game (resolveAsciiArt)
@@ -97,6 +99,8 @@ usage = unlines
     , "  --no-color        Strip ANSI colour from the output (also done automatically"
     , "                    when stdout is not a terminal)."
     , "  --color           Allow ANSI colour when stdout is a terminal (default)."
+    , "  --no-audio        Disable SFX playback entirely (Audio Phase 1)."
+    , "  --audio-helper P  Use executable at P to play sound effects."
     , "  --help            Show this message."
     , ""
     , "Without --world the bundled sample adventure is used."
@@ -110,11 +114,13 @@ data CliOptions = CliOptions
     , coNoColor      :: Bool
     , coTui          :: Bool
     , coSavesDir     :: Maybe FilePath
+    , coNoAudio      :: Bool
+    , coAudioHelper  :: Maybe FilePath
     }
 
 -- | Minimal flag parser
 parseArgs :: [String] -> Maybe CliOptions
-parseArgs args = go args (CliOptions Nothing Nothing False False False Nothing)
+parseArgs args = go args (CliOptions Nothing Nothing False False False Nothing False Nothing)
   where
     go [] opts = Just opts
     go ("--help" : _) _ = Nothing
@@ -125,6 +131,8 @@ parseArgs args = go args (CliOptions Nothing Nothing False False False Nothing)
     go ("--no-color" : rest) opts = go rest opts { coNoColor = True }
     go ("--color" : rest) opts = go rest opts { coNoColor = False }
     go ("--tui" : rest) opts = go rest opts { coTui = True }
+    go ("--no-audio" : rest) opts = go rest opts { coNoAudio = True }
+    go ("--audio-helper" : p : rest) opts = go rest opts { coAudioHelper = Just p }
     go (_ : rest) opts = go rest opts
 
 -- | Banner line: the adventure title when the world carries one (P2-18).
@@ -182,7 +190,9 @@ main = do
                             putStrLn (outFilter (titleBanner initSampleGame))
                             putStrLn "Type 'help' for available commands."
                             putStrLn "----------------------------"
-                            runGameWith outFilter initSampleGame
+                            audioCfg <- if coNoAudio opts then pure noAudio else discoverAudio (coAudioHelper opts)
+                            let fe = (haskelineFrontend outFilter) { fePlaySfx = playSfx audioCfg }
+                            runGameWithFrontend fe initSampleGame
                 Just worldPath -> do
                     savePath <- case coSave opts of
                         Just s  -> pure (Just s)
@@ -212,4 +222,6 @@ main = do
                                     putStrLn ("Loaded world: " ++ worldPath)
                                     putStrLn "Type 'help' for available commands."
                                     putStrLn "----------------------------"
-                                    runGameWith outFilter state
+                                    audioCfg <- if coNoAudio opts then pure noAudio else discoverAudio (coAudioHelper opts)
+                                    let fe = (haskelineFrontend outFilter) { fePlaySfx = playSfx audioCfg }
+                                    runGameWithFrontend fe state
