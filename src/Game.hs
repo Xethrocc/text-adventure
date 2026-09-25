@@ -141,6 +141,14 @@ replaceCondTextCoords ct x y z =
         , ctVariants = map (\v -> v { tvText = replaceCoords (tvText v) x y z }) (ctVariants ct)
         }
 
+-- | Replace coordinate placeholders in AsciiArt.
+replaceAsciiCoords :: AsciiArt -> Int -> Int -> Int -> AsciiArt
+replaceAsciiCoords art x y z =
+    art
+        { aaStatic = replaceCondTextCoords (aaStatic art) x y z
+        , aaFrames = map (\ct -> replaceCondTextCoords ct x y z) (aaFrames art)
+        }
+
 -- | Canonicalize a room ID against known sandbox zones.
 canonicalRoomId :: GameWorld -> RoomID -> RoomID
 canonicalRoomId gw rId =
@@ -179,6 +187,7 @@ generateSandboxRoom sz x y z fromRoom fromDir st =
         biome = fromMaybe (defaultBiomeTemplate zone) mBiome
         rName = replaceCoords (btNamePattern biome) x y z
         rDesc = replaceCondTextCoords (btDescription biome) x y z
+        rAscii = replaceAsciiCoords (btAsciiArt biome) x y z
         baseExits = Map.fromList
             [ (dir, Open (sandboxRoomId zone (x + dx) (y + dy) (z + dz)))
             | dir <- btPassableDirs biome
@@ -198,7 +207,7 @@ generateSandboxRoom sz x y z fromRoom fromDir st =
             , roomOnLook        = Nothing
             , roomOnExit        = Nothing
             , roomSearchOutcome = Nothing
-            , roomAscii         = btAsciiArt biome
+            , roomAscii         = rAscii
             , roomIntro         = Nothing
             , roomFloor         = szDefaultFloor sz <|> Just 1
             }
@@ -872,6 +881,7 @@ evalPredicate (EntityHasState entity expected) st =
         || npcStateMatches
         || itemStateMatches
         || cardStateMatches
+        || varTextMatches
   where
     npcStateMatches = case Map.lookup entity (npcStates (save st)) of
         Just ns -> npcStatus ns == expected
@@ -888,6 +898,9 @@ evalPredicate (EntityHasState entity expected) st =
             "exhaust"     -> entity `elem` exhaustPile ds
             _             -> False
         Nothing -> False
+    varTextMatches = case Map.lookup entity (variables (save st)) of
+        Just (VVText s) -> s == expected
+        _               -> False
 evalPredicate (RoomHasTag rId tag) st =
     case lookupRoom rId st of
         Just room -> tag `Set.member` roomTags room

@@ -1104,6 +1104,7 @@ data AActionOutcome
     | AOGameEnd String (Maybe String)  -- ^ reason (victory/death/custom), optional msg
     | AOConditional E.Predicate [AActionOutcome] [AActionOutcome]  -- ^ if/then/else
     | AOSetVar String Int              -- ^ set a declared numeric variable
+    | AOSetTextVar String String       -- ^ set a declared text variable
     | AOAddVar String Int              -- ^ add a delta to a declared numeric variable
     | AONarrative [String] [AActionOutcome]  -- ^ narrative: [...] + optional `then:` follow-ups
     | AOStandingAdd String Int         -- ^ standing: {faction: X, add: N} (Phase 7a)
@@ -1165,8 +1166,19 @@ instance FromJSON AActionOutcome where
                 AOComputeVar <$> c .: "var" <*> c .: "expr")
         <|> (do varVal <- o .: "set_var"
                 case varVal of
-                    Object obj -> AOSetVar <$> (obj .: "var" <|> obj .: "variable") <*> obj .: "value"
-                    String s   -> AOSetVar (T.unpack s) <$> o .: "value"
+                    Object obj -> do
+                        varName <- obj .: "var" <|> obj .: "variable" <|> obj .: "name"
+                        valContent <- obj .: "value" <|> obj .: "val"
+                        case valContent of
+                            Number n   -> pure (AOSetVar varName (truncate n))
+                            String s   -> pure (AOSetTextVar varName (T.unpack s))
+                            _          -> fail "set_var value must be int or string"
+                    String s   -> do
+                        valContent <- o .: "value" <|> o .: "val"
+                        case valContent of
+                            Number n   -> pure (AOSetVar (T.unpack s) (truncate n))
+                            String str -> pure (AOSetTextVar (T.unpack s) (T.unpack str))
+                            _          -> fail "set_var value must be int or string"
                     _          -> fail "set_var must be string or object")
         <|> (do varVal <- o .: "add_var"
                 case varVal of

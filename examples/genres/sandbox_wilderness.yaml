@@ -26,6 +26,16 @@ variables:
     type: int
     initial: 1
     min: 1
+  - name: "beeren_timer"
+    type: int
+    initial: 0
+    min: 0
+  - name: "weather"
+    type: text
+    initial: "sonne"
+  - name: "time_of_day"
+    type: text
+    initial: "tag"
 
 verbs:
   - name: "hacken"
@@ -34,6 +44,8 @@ verbs:
     aliases: ["dig", "schuerfen"]
   - name: "sammeln"
     aliases: ["harvest", "pfluecken"]
+  - name: "rasten"
+    aliases: ["rest", "schlafen", "warten", "campen"]
   - name: "status"
     aliases: ["stats", "ressourcen", "lager"]
 
@@ -103,16 +115,51 @@ rules:
     effects:
       - msg: "Hier gibt es keine Bäume, die sich zum Holzfällen eignen."
 
-  # Beeren sammeln auf Lichtungen
+  # Rasten: Tag/Nacht- und Wetter-Wechsel
+  - id: "rule_rasten"
+    on: "command rasten"
+    effects:
+      - if: { var: "time_of_day", is: "nacht" }
+        then:
+          - set_var: { var: "time_of_day", value: "tag" }
+          - set_var: { var: "weather", value: "sonne" }
+          - compute_var: { var: energy, expr: "min(100, energy + 25)" }
+          - msg: "Du ruhst dich aus. Die Nacht weicht dem Morgen — die Sonne geht auf! (+25 Energie, Tag bricht an)"
+        else:
+          - set_var: { var: "time_of_day", value: "nacht" }
+          - set_var: { var: "weather", value: "regen" }
+          - msg: "Du schlägst ein Lager auf und rastest. Dunkle Wolken ziehen auf — die Nacht bricht herein und Regen setzt ein."
+
+  # Beeren sammeln auf Lichtungen (mit Respawn-Zähler)
   - id: "rule_foraging"
     on: "command sammeln"
     when:
-      room: "current_room"
-      has_tag: "clearing"
+      all:
+        - room: "current_room"
+          has_tag: "clearing"
+        - compare_var: { name: "beeren_timer", op: "<=", value: 0 }
     effects:
       - add_var: { variable: berries, delta: 5 }
+      - add_var: { variable: beeren_timer, delta: 3 }
       - compute_var: { var: energy, expr: "min(100, energy + 15)" }
-      - msg: "Du pflückst eine Handvoll süßer Waldbeeren und isst einige davon. (+5 Beeren, +15 Energie)"
+      - msg: "Du pflückst eine Handvoll süßer Waldbeeren und isst einige davon. (+5 Beeren, +15 Energie, Strauch abgeerntet)"
+
+  - id: "rule_foraging_cooldown"
+    on: "command sammeln"
+    when:
+      all:
+        - room: "current_room"
+          has_tag: "clearing"
+        - compare_var: { name: "beeren_timer", op: ">", value: 0 }
+    effects:
+      - msg: "Die Beerensträucher wurden vor kurzem abgeerntet und müssen erst nachwachsen ({beeren_timer} Runden verbleibend)."
+
+  # Beeren-Respawn-Timer tickt jede Runde herunter
+  - id: "rule_beeren_respawn"
+    on: turn
+    when: { compare_var: { name: "beeren_timer", op: ">", value: 0 } }
+    effects:
+      - add_var: { variable: beeren_timer, delta: -1 }
 
   - id: "rule_foraging_no_clearing"
     on: "command sammeln"
@@ -159,23 +206,57 @@ sandbox_zones:
       - id: "forest"
         weight: 60
         name_pattern: "Dichter Wald [{x}, {y}]"
-        description: "Uralte Kiefern und Fichten ragen empor. Weiches Moos bedeckt den Waldboden bei Koordinate [{x}, {y}]."
+        description:
+          default: "Uralte Kiefern und Fichten ragen empor. Weiches Moos bedeckt den Waldboden bei Koordinate [{x}, {y}]."
+          variants:
+            - when: { state: "weather", is: "regen" }
+              text: "Schwere Regentropfen prasseln durch das Nadelholzdach auf den Waldboden bei Koordinate [{x}, {y}]."
+            - when: { state: "time_of_day", is: "nacht" }
+              text: "Die finstere Nacht hüllt den uralten Forst in tiefe Schatten bei Koordinate [{x}, {y}]."
         tags: ["outdoor", "forest"]
         passable_dirs: ["north", "south", "east", "west"]
-        ascii_art: |
-          / \ / \ / \
-          | | | | | |
+        ascii_art:
+          default: |
+            / \ / \ / \  [Tag: {x}, {y}]
+            | | | | | |
+          variants:
+            - when: { state: "weather", is: "regen" }
+              text: |
+                / / / \ / /  [Regen: {x}, {y}]
+                / / | | / /
+            - when: { state: "time_of_day", is: "nacht" }
+              text: |
+                * . / \ . *  [Nacht: {x}, {y}]
+                . * | | * .
 
       - id: "clearing"
         weight: 30
         name_pattern: "Sonnige Waldlichtung [{x}, {y}]"
-        description: "Ein sonnendurchfluteter Fleck im Forst. Süße Waldbeeren wachsen hier im Gras bei Koordinate [{x}, {y}]."
+        description:
+          default: "Ein sonnendurchfluteter Fleck im Forst. Süße Waldbeeren wachsen hier im Gras bei Koordinate [{x}, {y}]."
+          variants:
+            - when: { state: "weather", is: "regen" }
+              text: "Kalter Regen peitscht über die offene Lichtung bei Koordinate [{x}, {y}]."
+            - when: { state: "time_of_day", is: "nacht" }
+              text: "Silbriges Mondlicht erleuchtet die stille Lichtung bei Koordinate [{x}, {y}]."
         tags: ["outdoor", "clearing"]
         passable_dirs: ["north", "south", "east", "west"]
-        ascii_art: |
-          .  *  .
-          \|/|/|/
-          ---+---
+        ascii_art:
+          default: |
+            .  *  .  [Tag: {x}, {y}]
+            \|/|/|/
+            ---+---
+          variants:
+            - when: { state: "weather", is: "regen" }
+              text: |
+                '  '  '  [Regen: {x}, {y}]
+                \|/|/|/
+                ---+---
+            - when: { state: "time_of_day", is: "nacht" }
+              text: |
+                .  .  *  [Nacht: {x}, {y}]
+                \|/|/|/
+                ---+---
 
       - id: "cliff"
         weight: 10
@@ -183,6 +264,16 @@ sandbox_zones:
         description: "Mächtige Felswände ragen senkrecht in die Höhe. Der Weg nach Norden ist versperrt."
         tags: ["outdoor", "mountain"]
         passable_dirs: ["south", "east", "west"]
-        ascii_art: |
-          /\/\/\/\
-          | WAND |
+        ascii_art:
+          default: |
+            /\/\/\/\  [Tag: {x}, {y}]
+            | WAND |
+          variants:
+            - when: { state: "weather", is: "regen" }
+              text: |
+                /\/\/\/\  [Regen: {x}, {y}]
+                | NASS |
+            - when: { state: "time_of_day", is: "nacht" }
+              text: |
+                /\/\/\/\  [Nacht: {x}, {y}]
+                | DUNK |

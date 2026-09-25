@@ -1440,3 +1440,181 @@ Zur Anzeige in Beschreibungen, Dashboards und HUDs stellt die Engine dynamische 
 - `play <card>` / `spiele <card>`: Spielt eine Karte aus der Hand aus (prüft Ressourcen, zieht Kosten ab, führt Effekte aus).
 - `endturn` / `zugende`: Beendet den Spielzug, legt verbliebene Handkarten auf den Ablagestapel, stellt Energie wieder her und zieht eine frische Hand.
 
+---
+
+## Endlos-Sandbox & Prozedurale Zonen (Phase 3)
+
+Adventures können offene, unendliche Sandbox-Welten oder prozedurale Minen/Wildnisse deklarieren (`sandbox_zones:`). Betritt der Spieler eine noch ungenerierte Koordinate $(x, y, z)$, erzeugt die Engine die Zelle deterministisch (via SplitMix64-Seed), verdrahtet automatisch den Gegen-Exit und speichert den Raum im `dynamicRooms`-Overlay des Spielstands.
+
+### Sandbox-Zonendefinition (`sandbox_zones:`)
+
+```yaml
+sandbox_zones:
+  wildnis:
+    origin: [0, 0, 0]      # Einstiegskoordinate bei Betreten von 'sandbox_wildnis'
+    floor: 1               # Ebene für TUI-Minimap
+    biomes:
+      - id: "forest"
+        weight: 60
+        name_pattern: "Dichter Wald [{x}, {y}]"
+        tags: ["outdoor", "forest"]
+        passable_dirs: ["north", "south", "east", "west"]
+        description:
+          default: "Uralte Kiefern und Fichten ragen empor bei Koordinate [{x}, {y}]."
+          variants:
+            - when: { var: "weather", is: "regen" }
+              text: "Schwere Regentropfen prasseln durch das Nadelholzdach bei [{x}, {y}]."
+            - when: { var: "time_of_day", is: "nacht" }
+              text: "Die finstere Nacht hüllt den Wald in tiefe Schatten bei [{x}, {y}]."
+        ascii_art:
+          default: |
+            / \ / \ / \  [Tag: {x}, {y}]
+            | | | | | |
+          variants:
+            - when: { var: "weather", is: "regen" }
+              text: |
+                / / / \ / /  [Regen: {x}, {y}]
+                / / | | / /
+            - when: { var: "time_of_day", is: "nacht" }
+              text: |
+                * . / \ . *  [Nacht: {x}, {y}]
+                . * | | * .
+
+      - id: "clearing"
+        weight: 30
+        name_pattern: "Sonnige Waldlichtung [{x}, {y}]"
+        tags: ["outdoor", "clearing"]
+        passable_dirs: ["north", "south", "east", "west"]
+        ascii_art:
+          default: |
+            .  *  .  [Tag: {x}, {y}]
+            \|/|/|/
+            ---+---
+          variants:
+            - when: { var: "weather", is: "regen" }
+              text: |
+                '  '  '  [Regen: {x}, {y}]
+                \|/|/|/
+                ---+---
+
+      - id: "cliff"
+        weight: 10
+        name_pattern: "Schroffe Klippe [{x}, {y}]"
+        tags: ["outdoor", "mountain"]
+        passable_dirs: ["south", "east", "west"]   # Blockiert nach Norden
+        ascii_art: |
+          /\/\/\/\
+          | WAND |
+```
+
+| Feld | Typ | Default | Beschreibung |
+|---|---|---|---|
+| `origin` | [Int, Int, Int] | `[0, 0, 0]` | Startkoordinate $(x, y, z)$ der Zone beim ersten Eintritt |
+| `floor` | Int | `1` | Kartenebene für die Minimap |
+| `biomes[].id` | String | **required** | Eindeutige ID des Bioms |
+| `biomes[].weight` | Int | `1` | Relative Zufallshäufigkeit (SplitMix64 gewichteter Wurf) |
+| `biomes[].name_pattern` | String | `"Wildnis ({x}, {y})"` | Raumnamens-Muster mit `{x}`, `{y}`, `{z}` Platzhaltern |
+| `biomes[].description` | String / CondText | `"Unberührte Wildnis."` | Statischer Text oder `{default, variants}` mit Tag/Wetter-Bedingungen |
+| `biomes[].tags` | [String] | `[]` | Raum-Tags für Rules (z. B. `forest`, `clearing`, `cave`) |
+| `biomes[].passable_dirs` | [String] | alle 4 | Richtungen, die passierbar sind (ermöglicht Sackgassen und Klippen) |
+| `biomes[].ascii_art` | String / AsciiArt | `""` | Kunstwerk mit `{x}`, `{y}`-Interpolation und Tag/Wetter-Varianten |
+
+### Prozedurale Landschaftskunst & Zustandsvarianten (`btAsciiArt`)
+
+Die ASCII-Landschaftskunst (`ascii_art`) von Biom-Templates nutzt das bewährte Varianten-System der Engine:
+- **Koordinaten-Interpolation:** Platzhalter `{x}`, `{y}` und `{z}` werden sowohl im Standardtext als auch in allen Varianten automatisch durch die Koordinaten der generierten Zelle ersetzt.
+- **Wetter- & Tageszeitvarianten:** Über `variants:` mit Bedingungen (`when: { var: weather, is: regen }`, `when: { var: time_of_day, is: nacht }` oder `{ state: ..., is: ... }`) schaltet das Bild beim Rasten oder Wetterwechsel deterministisch um.
+
+### Ressourcen-Knoten, Harvesting & Respawn-Zähler
+
+In Sandbox- und Survival-Welten können Ressourcen abgebaut oder gesammelt werden. Zur Steuerung von Abbau und Regeneration bieten sich zwei erprobte Autoren-Muster an:
+
+#### 1. Respawn über Variable und Zähler-Trigger (aus `sandbox_wilderness.yaml`)
+
+```yaml
+variables:
+  - name: berries
+    type: int
+    initial: 0
+  - name: beeren_timer
+    type: int
+    initial: 0
+
+verbs:
+  - name: sammeln
+    aliases: [harvest, pfluecken]
+
+rules:
+  # Ernten: nur möglich, wenn der Respawn-Timer abgelaufen ist (<= 0)
+  - id: rule_foraging
+    on: command sammeln
+    when:
+      all:
+        - room: current_room
+          has_tag: clearing
+        - compare_var: { name: beeren_timer, op: "<=", value: 0 }
+    effects:
+      - add_var: { variable: berries, delta: 5 }
+      - set_var: { var: beeren_timer, value: 3 }    # 3 Runden Cooldown
+      - msg: "Du pflückst frische Beeren vom Strauch. (+5 Beeren, Strauch abgeerntet)"
+
+  # Rückmeldung bei noch nicht regeneriertem Vorkommen
+  - id: rule_foraging_cooldown
+    on: command sammeln
+    when:
+      all:
+        - room: current_room
+          has_tag: clearing
+        - compare_var: { name: beeren_timer, op: ">", value: 0 }
+    effects:
+      - msg: "Die Beerensträucher wurden vor kurzem abgeerntet ({beeren_timer} Runden verbleibend)."
+
+  # Respawn-Zähler: verringert den Timer jede Spielrunde um 1
+  - id: rule_beeren_respawn
+    on: turn
+    when: { compare_var: { name: beeren_timer, op: ">", value: 0 } }
+    effects:
+      - add_var: { variable: beeren_timer, delta: -1 }
+```
+
+#### 2. Physischer Ressourcen-Knoten als Item mit Zuständen (`state:`)
+
+Für gezielte Abbauknoten (z. B. eine spezifische Erzader oder einen Obstbaum in einem Raum) kann das Vorkommen als unbewegliches Item (`portable: false`) mit eigener `verb_map:` und Zuständen deklariert werden:
+
+```yaml
+items:
+  - id: erzader
+    name: "Glitzernde Erzader"
+    location: "stollen_1"
+    portable: false
+    state: "rich"
+    description:
+      default: "Eine vielversprechende Quarzader mit dicken Silberadern."
+      variants:
+        - when: { state: erzader, is: depleted }
+          text: "Die Ader ist bis auf den tauben Fels ausgebeutet."
+    verb_map:
+      schuerfen:
+        depleted:
+          msg: "Hier ist kein verwertbares Erz mehr zu finden."
+        rich:
+          effects:
+            - set_state: { entity: erzader, state: depleted }
+            - add_var: { variable: ore, delta: 3 }
+            - set_var: { var: erz_respawn, value: 10 }
+            - msg: "Du brichst glänzende Erzbrocken aus dem Stein! (+3 Erz, Ader erschöpft)"
+
+rules:
+  # Respawn-Trigger regeneriert die Ader, wenn der Zähler 0 erreicht
+  - id: rule_erz_regeneration
+    on: turn
+    when:
+      all:
+        - state: erzader
+          is: depleted
+        - compare_var: { name: erz_respawn, op: "<=", value: 0 }
+    effects:
+      - set_state: { entity: erzader, state: rich }
+      - msg: "Durch Gebirgsdruck sind neue Erzkristalle an der Ader zutage getreten!"
+```
+

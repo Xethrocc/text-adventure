@@ -2711,6 +2711,7 @@ tests =
     , ("sandbox: duplicate zone id is rejected (Phase 3E)", testSandboxZoneDuplicateIdValidation)
     , ("sandbox: unknown direction in passable_dirs is rejected (Phase 3E)", testSandboxZoneUnknownDirectionValidation)
     , ("sandbox: wilderness fixture compiles and validates clean (Phase 3E)", testSandboxWildernessFixtureCompiles)
+    , ("sandbox: set_var text and biome ascii variants compile (Phase 2 / S3)", testSetTextVarAndBiomeAsciiVariants)
     -- Phase 1: Compiler-Härtung — Unbekannte YAML-Schlüssel warnen
     , ("schema: valid keys compile with zero warnings (Phase 1)", testKnownKeysClean)
     , ("schema: pinned W6 rewards typo produces warning (Phase 1)", testW6RewardsTypoWarningPinned)
@@ -4106,6 +4107,70 @@ testSandboxZoneUnknownDirectionValidation = do
             Left errs -> expectTrue "UnknownDirection error found"
                             (any (\i -> ciCode i == "UnknownDirection") errs)
             Right _ -> expectTrue "expected compile failure for unknown direction" False
+
+-- | Test compiling set_var with text value and biome ascii variants (Phase 2 / S3).
+testSetTextVarAndBiomeAsciiVariants :: IO Bool
+testSetTextVarAndBiomeAsciiVariants = do
+    let yaml = unlines
+            [ "name: Variant Test"
+            , "start_room: camp"
+            , "variables:"
+            , "  - name: weather"
+            , "    type: text"
+            , "    initial: sonne"
+            , "verbs:"
+            , "  - name: rasten"
+            , "rooms:"
+            , "  - id: camp"
+            , "    name: Camp"
+            , "    texts: Camp."
+            , "    exits:"
+            , "      north: sandbox_wildnis"
+            , "rules:"
+            , "  - id: rule_rain"
+            , "    on: command rasten"
+            , "    effects:"
+            , "      - set_var: { var: weather, value: regen }"
+            , "sandbox_zones:"
+            , "  wildnis:"
+            , "    origin: [0, 0, 0]"
+            , "    biomes:"
+            , "      - id: forest"
+            , "        weight: 100"
+            , "        name_pattern: 'Wald ({x}, {y})'"
+            , "        ascii_art:"
+            , "          default: 'DAY ({x}, {y})'"
+            , "          variants:"
+            , "            - when: { var: weather, is: regen }"
+            , "              text: 'RAIN ({x}, {y})'"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let w = crWorld cr
+                    trigs = E.triggerDefs w
+                    zones = E.sandboxZones w
+                r1 <- case trigs of
+                    [t] -> expectEqual [E.SetValue (E.VRVariable "weather") (E.EVString "regen")] (E.trEffects t)
+                    _   -> expectTrue "expected 1 trigger" False
+                case Map.lookup "wildnis" zones of
+                    Nothing -> expectTrue "wildnis zone found" False
+                    Just sz -> do
+                        let b = head (E.szBiomes sz)
+                            art = E.btAsciiArt b
+                            stat = E.aaStatic art
+                        r2 <- expectEqual "DAY ({x}, {y})" (E.ctDefault stat)
+                        r3 <- expectEqual 1 (length (E.ctVariants stat))
+                        let v = head (E.ctVariants stat)
+                        r4 <- expectEqual (E.VarIs "weather" "regen") (E.tvWhen v)
+                        r5 <- expectEqual "RAIN ({x}, {y})" (E.tvText v)
+                        pure (r1 && r2 && r3 && r4 && r5)
 
 -- ===========================================================================
 -- Phase 1: Compiler-Härtung — Unbekannte YAML-Schlüssel warnen

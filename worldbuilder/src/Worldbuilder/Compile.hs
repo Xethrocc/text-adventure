@@ -1784,6 +1784,7 @@ compileAActionOutcome ao = case ao of
     AOConditional p ts es ->
         E.Conditional p (compileOutcomes ts) (compileOutcomes es)
     AOSetVar name v -> E.SetValue (E.VRVariable name) (E.EVInt v)
+    AOSetTextVar name s -> E.SetValue (E.VRVariable name) (E.EVString s)
     AOAddVar name d -> E.ModifyValue (E.VRVariable name) d
     AOComputeVar name expr -> E.ComputeValue (E.VRVariable name) expr
     AONarrative ls follow -> E.Narrative ls (compileOutcomes follow)

@@ -4895,6 +4895,46 @@ testSandboxResourceHarvestFormulas = do
     r3 <- expectEqual (Just (VVInt 4)) (Map.lookup "tree_capacity" (variables (save st1)))
     pure (r1 && r2 && r3)
 
+-- | Phase 2 / S3: Biome landscape ASCII art with day/weather state variants and coordinate interpolation
+testBiomeAsciiArtVariantsDayNight :: IO Bool
+testBiomeAsciiArtVariantsDayNight = do
+    let artVariants = AsciiArt
+            { aaStatic = CondText
+                { ctDefault = "/ \\ / \\ [Tag: {x}, {y}]"
+                , ctVariants =
+                    [ TextVariant (VarIs "weather" "regen") "/ / / / [Regen: {x}, {y}]"
+                    , TextVariant (VarIs "time_of_day" "nacht") "* . * . [Nacht: {x}, {y}]"
+                    ]
+                }
+            , aaFrames = []
+            , aaEvery = 0
+            , aaHotspots = []
+            , aaAmbient = Nothing
+            }
+        bForest = BiomeTemplate "forest" 10 "Wald [{x}, {y}]" (plainText "Dichter Wald.") ["forest"] artVariants [North, South, East, West]
+        sz = SandboxZone "wildnis" (0, 0, 0) [bForest] (Just 1)
+        gw = emptyGameWorld
+            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Tor") (Map.singleton North (Open "sandbox_wildnis")) Set.empty Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing)
+            , sandboxZones = Map.singleton "wildnis" sz
+            }
+        st0 = emptyGameState { world = gw, save = (save emptyGameState) { currentRoom = "gate" } }
+        (st1, _) = executeCommand (Go North) st0
+        mRoom = lookupRoom "sandbox_wildnis_0_0_0" st1
+    case mRoom of
+        Nothing -> putStrLn "sandbox_wildnis_0_0_0 not found" >> pure False
+        Just room -> do
+            let artDay = resolveAsciiArt (roomAscii room) st1
+            r1 <- expectEqual "/ \\ / \\ [Tag: 0, 0]" artDay
+            -- Switch weather to rain
+            let stRain = st1 { save = (save st1) { variables = Map.insert "weather" (VVText "regen") (variables (save st1)) } }
+                artRain = resolveAsciiArt (roomAscii room) stRain
+            r2 <- expectEqual "/ / / / [Regen: 0, 0]" artRain
+            -- Switch time of day to night
+            let stNight = st1 { save = (save st1) { variables = Map.insert "time_of_day" (VVText "nacht") (variables (save st1)) } }
+                artNight = resolveAsciiArt (roomAscii room) stNight
+            r3 <- expectEqual "* . * . [Nacht: 0, 0]" artNight
+            pure (r1 && r2 && r3)
+
 -- | Phase 2B: Drawing cards from full deck decreases draw pile and fills hand.
 testDrawCardsFromFullDeck :: IO Bool
 testDrawCardsFromFullDeck = do
@@ -5712,5 +5752,6 @@ main = do
         , runTest "GenerateRoom execution and traversal (Phase 3C)" testGenerateRoomExecution
         , runTest "GenerateRoom variable interpolation (Phase 3C)" testGenerateRoomInterpolation
         , runTest "sandbox resource harvest formulas (Phase 3C)" testSandboxResourceHarvestFormulas
+        , runTest "biome landscape ascii art with day/weather variants (Phase 2 / S3)" testBiomeAsciiArtVariantsDayNight
         ]
     when (not (and results)) exitFailure
