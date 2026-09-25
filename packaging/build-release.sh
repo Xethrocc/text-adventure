@@ -64,6 +64,51 @@ for exe in text-adventure worldbuilder img2ascii text2ascii; do
     cp "$path" "$bundle/bin/"
 done
 
+# Bundle optional audio helper binary for Windows if available:
+# 1. Any pre-placed binaries in packaging/windows/bin/
+# 2. Path specified in WINDOWS_AUDIO_HELPER environment variable
+# 3. Discovered mpv.exe or ffplay.exe on the building system
+if [ -d "packaging/windows/bin" ]; then
+    for helper in packaging/windows/bin/*; do
+        if [ -f "$helper" ]; then
+            echo "bundling pre-placed audio helper: $(basename "$helper")"
+            cp "$helper" "$bundle/bin/"
+        fi
+    done
+fi
+if [ -n "${WINDOWS_AUDIO_HELPER:-}" ] && [ -f "$WINDOWS_AUDIO_HELPER" ]; then
+    echo "bundling WINDOWS_AUDIO_HELPER: $WINDOWS_AUDIO_HELPER"
+    cp "$WINDOWS_AUDIO_HELPER" "$bundle/bin/"
+fi
+has_helper=0
+for f in "$bundle/bin/"*mpv* "$bundle/bin/"*ffplay* "$bundle/bin/"*audio-helper*; do
+    if [ -f "$f" ]; then
+        has_helper=1
+        break
+    fi
+done
+if [ "$has_helper" -eq 0 ]; then
+    for candidate in mpv.exe ffplay.exe; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            cpath="$(command -v "$candidate")"
+            if command -v cygpath >/dev/null 2>&1; then
+                cpath="$(cygpath -u "$cpath")"
+            fi
+            if [ -f "$cpath" ]; then
+                echo "bundling discovered system audio helper: $candidate from $cpath"
+                cp "$cpath" "$bundle/bin/"
+                has_helper=1
+                break
+            fi
+        fi
+    done
+fi
+if [ "$has_helper" -eq 1 ]; then
+    echo "audio helper bundled in bin/"
+else
+    echo "Note: No audio helper binary bundled. Game will discover mpv/ffplay on player's PATH or run with silent audio degrade."
+fi
+
 # Author-facing material: flat at the top level of the bundle.
 cp packaging/windows/START-HERE.txt "$bundle/"
 cp packaging/windows/WRITING-ADVENTURES.txt "$bundle/"

@@ -170,7 +170,28 @@
 # Colour is automatic in modern terminals; the engine falls back to plain
 # text on old consoles by itself.
 #
-# ================ STEP 12: Share your adventure ===========================
+# ================ STEP 12: Sound effects and music (optional) ==============
+#
+# You can attach sound effects and background music to any rule or trigger:
+#
+#   triggers:
+#     - on: enter
+#       room: dungeon
+#       effects:
+#         - music: audio/ambient.xm     # loops in the background (.xm, .mid, .ogg, .wav)
+#         - sfx: audio/drip.wav         # plays once
+#         - msg: "A drop of water echoes in the darkness."
+#
+# To stop background music:
+#
+#     - effects:
+#         - stop_music: true
+#
+# Audio files can be placed alongside your adventure (e.g. adventures\audio\).
+# If a player has no audio helper or sound card, audio is silently skipped —
+# your adventure remains completely playable!
+#
+# ================ STEP 13: Share your adventure ===========================
 #
 # Two files are what matter:
 #

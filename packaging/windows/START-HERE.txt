@@ -76,6 +76,21 @@ Colour note
   also accepts --no-color to print plain text:
       bin\text-adventure.exe --world worlds\demo\world.json --no-color
 
+Audio note (Sound effects & Music)
+----------------------------------
+  The engine supports sound effects (sfx:) and background music (music:).
+  Audio playback uses external helpers (mpv or ffplay).
+  - On Windows: if an audio helper binary (mpv.exe or ffplay.exe) is
+    present in bin\, play.bat detects it automatically.
+  - If no audio helper is found on your system, the game gracefully runs
+    in silent mode without errors.
+  - You can disable audio explicitly at any time with --no-audio:
+      bin\text-adventure.exe --world worlds\demo\world.json --no-audio
+  - Linux/macOS: install an audio player via your package manager:
+      Ubuntu/Debian: sudo apt install mpv
+      macOS:         brew install mpv
+      Arch:          sudo pacman -S mpv
+
 Command line reference
 ----------------------
   check.bat                      validate + compile everything in adventures\

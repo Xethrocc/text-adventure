@@ -7,6 +7,17 @@ setlocal enabledelayedexpansion
 chcp 65001 >nul 2>&1
 cd /d "%~dp0"
 
+rem Auto-detect bundled audio helper in bin\ if not already configured
+if not defined TEXT_ADVENTURE_AUDIO_HELPER (
+    if exist "%~dp0bin\mpv.exe" (
+        set "TEXT_ADVENTURE_AUDIO_HELPER=%~dp0bin\mpv.exe"
+    ) else if exist "%~dp0bin\ffplay.exe" (
+        set "TEXT_ADVENTURE_AUDIO_HELPER=%~dp0bin\ffplay.exe"
+    ) else if exist "%~dp0bin\audio-helper.exe" (
+        set "TEXT_ADVENTURE_AUDIO_HELPER=%~dp0bin\audio-helper.exe"
+    )
+)
+
 if not "%~1"=="" (
     call :play "%~1"
     goto :eof

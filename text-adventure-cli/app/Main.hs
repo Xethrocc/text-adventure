@@ -3,9 +3,9 @@
 -- | Main module for the Haskell text adventure game
 module Main where
 
-import GameLoop (runGameWith, runGameWithFrontend)
+import GameLoop (runGameWithFrontend)
 import Frontend (haskelineFrontend, Frontend(..))
-import Audio (AudioConfig, discoverAudio, playSfx, noAudio, newMusicHandle, startMusic, stopMusic)
+import Audio (discoverAudio, playSfx, noAudio, newMusicHandle, startMusic, stopMusic)
 import Ansi (ansiFilter)
 import TextAdventure.Tui (runTui)
 import Game (resolveAsciiArt)
