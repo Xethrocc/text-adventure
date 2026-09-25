@@ -215,7 +215,7 @@ npcs:
         entry: greeting
         nodes:
           greeting:
-            text: "Seile, Laternen, Siegel. Was immer der Hafen braucht — ich hab's."
+            text: "Seile, Laternen, Siegel. Was immer der Hafen braucht — ich hab's. (Börse: {credits} Münzen)"
             choices:
               - text: "Was kostet das Gildensiegel?"
                 next: seal_price

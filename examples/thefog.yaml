@@ -22,6 +22,10 @@
     "death": "=========================================\n  YOU HAVE DIED\n=========================================\n  The forest keeps what it takes.",
     "fog": "=========================================\n  GAME OVER\n=========================================\n  The fog has taken the land."
   },
+  "variables": [
+    { "name": "shrines_active", "type": "int", "initial": 0 },
+    { "name": "fog_unrest", "type": "int", "initial": 0 }
+  ],
   "rooms": [
     {
       "id": "loc_0",
@@ -826,7 +830,9 @@
             "if": { "has_item": "crystal" },
             "then": [
               { "set_flag": "water_shrine_active", "val": "true" },
-              { "msg": "The crystal resonates! The water shrine glows with power!" },
+              { "compute_var": { "var": "shrines_active", "expr": "shrines_active + 1" } },
+              { "compute_var": { "var": "fog_unrest", "expr": "shrines_active * 25" } },
+              { "msg": "The crystal resonates! The water shrine glows with power! [Shrines awakened: {shrines_active}/4 | Fog unrest: {fog_unrest}%]" },
               { "advance_quest": "activate_water" }
             ],
             "else": [
@@ -853,7 +859,9 @@
             "if": { "has_item": "crystal" },
             "then": [
               { "set_flag": "fire_shrine_active", "val": "true" },
-              { "msg": "The crystal resonates! The fire shrine glows with power!" },
+              { "compute_var": { "var": "shrines_active", "expr": "shrines_active + 1" } },
+              { "compute_var": { "var": "fog_unrest", "expr": "shrines_active * 25" } },
+              { "msg": "The crystal resonates! The fire shrine glows with power! [Shrines awakened: {shrines_active}/4 | Fog unrest: {fog_unrest}%]" },
               { "advance_quest": "activate_fire" }
             ],
             "else": [
@@ -880,7 +888,9 @@
             "if": { "has_item": "crystal" },
             "then": [
               { "set_flag": "air_shrine_active", "val": "true" },
-              { "msg": "The crystal resonates! The air shrine glows with power!" },
+              { "compute_var": { "var": "shrines_active", "expr": "shrines_active + 1" } },
+              { "compute_var": { "var": "fog_unrest", "expr": "shrines_active * 25" } },
+              { "msg": "The crystal resonates! The air shrine glows with power! [Shrines awakened: {shrines_active}/4 | Fog unrest: {fog_unrest}%]" },
               { "advance_quest": "activate_air" }
             ],
             "else": [
@@ -908,7 +918,9 @@
             "if": { "has_item": "crystal" },
             "then": [
               { "set_flag": "earth_shrine_active", "val": "true" },
-              { "msg": "The crystal resonates! The earth shrine glows with power!" },
+              { "compute_var": { "var": "shrines_active", "expr": "shrines_active + 1" } },
+              { "compute_var": { "var": "fog_unrest", "expr": "shrines_active * 25" } },
+              { "msg": "The crystal resonates! The earth shrine glows with power! [Shrines awakened: {shrines_active}/4 | Fog unrest: {fog_unrest}%]" },
               { "advance_quest": "activate_earth" }
             ],
             "else": [
@@ -1226,7 +1238,8 @@
   ],
   "verbs": [
     { "name": "swim" },
-    { "name": "crawl" }
+    { "name": "crawl" },
+    { "name": "status", "aliases": ["stats", "dashboard"] }
   ],
   "rules": [
     {
@@ -1284,7 +1297,7 @@
         { "has_flag": "earth_shrine_active" }
       ]},
       "effects": [
-        { "msg": "The fog descends over the land..." },
+        { "msg": "The fog descends over the land... [Unrest reaches {fog_unrest}%]" },
         { "msg": "Wolves grow stronger, guards fall, the world becomes hostile..." },
         { "game_end": "fog" }
       ]
@@ -1305,6 +1318,13 @@
       "effects": [
         { "move": "loc_45" },
         { "msg": "You crawl through the narrow entrance." }
+      ]
+    },
+    {
+      "id": "player_status",
+      "on": "command status",
+      "effects": [
+        { "msg": "=== ADVENTURER STATUS ===\nHealth: {player.hp}/{player.max_hp} HP\nShrines awakened: {shrines_active}/4\nFog unrest: {fog_unrest}%\nTurn: {turn.count}\n=========================" }
       ]
     }
   ],

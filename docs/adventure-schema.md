@@ -568,6 +568,135 @@ when: { compare_var: { name: gold, op: ">=", var: kosten } }
   `{ compare: { lhs, op, rhs } }` mit `ValueRef`s; `compare_var … var:` ist der
   Zucker darauf.
 
+### Formeln & dynamische Berechnungen (`compute_var`)
+
+Mit `compute_var` können Variablen zur Laufzeit durch mathematische Formeln berechnet
+und aktualisiert werden:
+
+```yaml
+# In Outcomes / Effects:
+- compute_var:
+    var: gold
+    expr: "gold - (menge * stueckpreis)"
+```
+
+#### Unterstützte Formel-Syntax (AST-Operatoren)
+Der mathematische Ausdruck (`expr`) unterstützt ganzzahlige Arithmetik (64-Bit `Int`):
+- **Grundrechenarten:** `+` (Addition), `-` (Subtraktion), `*` (Multiplikation),
+  `/` (ganzzahlige Division `div`), `%` (Modulo)
+- **Operator-Vorrang:** Punktrechnung (`*`, `/`, `%`) bindet stärker als Strichrechnung (`+`, `-`)
+- **Klammerung:** Beliebig tief geschachtelte Klammern `( ... )`
+- **Unäre Vorzeichen:** `-wert`, `+wert`
+- **Funktionen:**
+  - `min(a, b)`: Liefert das Minimum zweier Ausdrücke
+  - `max(a, b)`: Liefert das Maximum zweier Ausdrücke
+  - `clamp(lo, hi, val)`: Begrenzt `val` auf den Bereich `[lo, hi]`
+- **Nullteiler-Sicherheit:** Division und Modulo durch 0 liefern deterministisch `0` (kein Absturz)
+- **Variablen-Auflösung:**
+  - Beliebige Spielvariablen (`gold`, `kosten`, `stadt.einkommen`)
+  - Parametrisierte Befehlsargumente (`cmd.arg1`, `cmd.arg2`, `cmd.count`)
+  - Systemwerte: `player.hp`, `player.max_hp`, `turn.count`
+
+### Parametrisierte Befehle (`cmd.argN`, `cmd.count`, `cmd.raw_args`)
+
+Custom-Verben können mit nachfolgenden Argumenten eingegeben werden (z. B. `kaufe 50 land`
+oder `steuern 15`). Vor dem Ausführen von `on: command`-Triggern bindet die Engine
+automatisch temporäre Variablen in den Spielzustand:
+
+- `cmd.verb`: Der kanonische Name des aufgerufenen Verbs (z. B. `"kaufe"`).
+- `cmd.arg1`, `cmd.arg2`, …: Einzelne Token nach dem Verb. Zahlen werden automatisch
+  als ganzzahlige `VTInt` typisiert, Wörter als `VTText`.
+- `cmd.count`: Anzahl der übergebenen Argumente (als `VTInt`).
+- `cmd.raw_args`: Der gesamte unzerlegte Rest-String nach dem Verb.
+
+### Text-Interpolation (`{var:name}` / `{name}`)
+
+Texte in Dialogen, Raumbeschreibungen, Ereignismeldungen (`msg`/`text`) und
+ASCII-Art können dynamisch Variablen und Spielwerte einbetten:
+
+- `{name}` oder `{var:name}`: Ersetzt den Platzhalter durch den aktuellen Wert der Variable.
+- **Vorzeichen-Modifikator:** `{name:+}` erzwingt bei nicht-negativen Zahlen ein Pluszeichen
+  (z. B. `+15`, `-8`).
+- **Breiten-Padding:**
+  - `{name:6}`: Rechtsbündig auf 6 Zeichen formatiert (ideal für Tabellen & Dashboards).
+  - `{name:-6}`: Linksbündig auf 6 Zeichen formatiert.
+- **Systemvariablen:**
+  - `{player.hp}` / `{player.max_hp}`: Aktuelle und maximale Lebenspunkte.
+  - `{turn.count}`: Bisher vergangene Züge.
+  - `{room.name}` / `{room.id}`: Name und ID des aktuellen Raums.
+- **Escaping:** Geschweifte Klammern können mit `\{literal\}` oder `{{literal}}`
+  maskiert werden.
+
+### Praxisbeispiele aus `economy_hamurabi.yaml`
+
+#### 1. Parametrisierter Handel mit Validierung und Formeln (`rule_kaufe`)
+
+```yaml
+  - id: "rule_kaufe"
+    on: "command kaufe"
+    effects:
+      - if: { compare_var: { name: "cmd.count", op: ">=", value: 2 } }
+        then:
+          - if: { var: "cmd.arg2", is: "land" }
+            then:
+              - compute_var: { var: "kosten", expr: "cmd.arg1 * land_preis" }
+              - if: { compare_var: { name: "gold", op: ">=", var: "kosten" } }
+                then:
+                  - compute_var: { var: "gold", expr: "gold - kosten" }
+                  - compute_var: { var: "land", expr: "land + cmd.arg1" }
+                  - text: "Erfolgreich erworben: {cmd.arg1} Hektar Land für {kosten} Gold."
+                else:
+                  - text: "Nicht genug Gold in der Schatzkammer! Du benötigst {kosten} Gold."
+            else:
+              - text: "Auf dem Markt kannst du nur 'land' kaufen (kaufe <menge> land)."
+        else:
+          - text: "Verwendung: kaufe <menge> land"
+```
+
+**Gerenderter Output im Spiel:**
+```text
+> kaufe 50 land
+Erfolgreich erworben: 50 Hektar Land für 1000 Gold.
+
+> kaufe 1 land
+Nicht genug Gold in der Schatzkammer! Du benötigst 20 Gold.
+```
+
+#### 2. Status-Dashboard & Wertbegrenzung (`rule_status` & `rule_steuern`)
+
+```yaml
+  - id: "rule_status"
+    on: "command status"
+    effects:
+      - text: "╔════════════════════════ PROVINZ KÖNIGSBERG ════════════════════════╗\n║ Jahr: {jahr:3}                 Bürger: {bevoelkerung:6} Seelen                      ║\n║────────────────────────────────────────────────────────────────────║\n║ Schatzkammer:    {gold:6} Gold                                     ║\n║ Kornkammer:      {korn:6} Scheffel                                 ║\n║ Landbesitz:      {land:6} Hektar  (Marktpreis: {land_preis} Gold/ha)         ║\n║ Steuersatz:      {steuersatz:3}%     (Kornpreis:  {korn_preis} Gold/Scheffel)    ║\n╚═════════════════════════════════════════════════════════════════════╝"
+
+  - id: "rule_steuern"
+    on: "command steuern"
+    effects:
+      - if: { compare_var: { name: "cmd.count", op: ">=", value: 1 } }
+        then:
+          - compute_var: { var: "steuersatz", expr: "clamp(0, 100, cmd.arg1)" }
+          - text: "Der Steuersatz wurde auf {steuersatz}% festgesetzt."
+        else:
+          - text: "Aktueller Steuersatz: {steuersatz}%. Verwendung: steuern <prozent>"
+```
+
+**Gerenderter Output im Spiel:**
+```text
+> status
+╔════════════════════════ PROVINZ KÖNIGSBERG ════════════════════════╗
+║ Jahr:   1                 Bürger:    100 Seelen                      ║
+║────────────────────────────────────────────────────────────────────║
+║ Schatzkammer:      1000 Gold                                     ║
+║ Kornkammer:        2800 Scheffel                                 ║
+║ Landbesitz:        1000 Hektar  (Marktpreis: 20 Gold/ha)         ║
+║ Steuersatz:          10%     (Kornpreis:  2 Gold/Scheffel)    ║
+╚═════════════════════════════════════════════════════════════════════╝
+
+> steuern 120
+Der Steuersatz wurde auf 100% festgesetzt.
+```
+
 ## initial_variables / initial_flags / active_quests
 
 ```yaml
