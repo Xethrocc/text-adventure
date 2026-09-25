@@ -32,36 +32,36 @@ verbs:
 rooms:
   - id: "turmfuss"
     name: "Fuß des Spire"
-    texts: "Ein finsterer Turm ragt in die Wolken. Dein Deck ist bereit für den Aufstieg."
+    desc: "Ein finsterer Turm ragt in die Wolken. Dein Deck ist bereit für den Aufstieg."
     exits:
       north: "kobold_lager"
 
   - id: "kobold_lager"
     name: "Vorposten des Goblins"
-    texts: "Ein scharfzahniger Goblin lauert hier mit gezogenem Dolch!"
+    desc: "Ein scharfzahniger Goblin lauert hier mit gezogenem Dolch!"
     exits:
       south: "turmfuss"
       north: "schrein"
 
   - id: "schrein"
     name: "Uralter Schrein"
-    texts: "Eine Oase der Ruhe. Sanftes Licht erhellt antike Runen."
+    desc: "Eine Oase der Ruhe. Sanftes Licht erhellt antike Runen."
     exits:
       south: "kobold_lager"
       north: "gipfel"
 
   - id: "gipfel"
     name: "Gipfel des Spire"
-    texts: "Ein titanischer Wächter aus lebendem Stein versperrt das Tor zur Freiheit!"
+    desc: "Ein titanischer Wächter aus lebendem Stein versperrt das Tor zur Freiheit!"
     exits:
       south: "schrein"
 
 items:
   - id: "elixier"
     name: "Lebenselixier"
-    texts: "Ein schimmernder roter Trank."
+    desc: "Ein schimmernder roter Trank."
     location: "turmfuss"
-    keywords: ["trank", "elixier", "potion"]
+    keys: ["trank", "elixier", "potion"]
     verb_map:
       trinken:
         - heal: 20
@@ -71,7 +71,7 @@ items:
 npcs:
   - id: "kobold"
     name: "Goblin-Späher"
-    texts: "Ein garstiger kleiner Goblin mit gelben Zähnen."
+    desc: "Ein garstiger kleiner Goblin mit gelben Zähnen."
     location: "kobold_lager"
     max_hp: 20
     attack: 6
@@ -80,7 +80,7 @@ npcs:
 
   - id: "sentinel"
     name: "Turmwächter"
-    texts: "Ein uralter Wächtergolem aus massiven Felsblöcken."
+    desc: "Ein uralter Wächtergolem aus massiven Felsblöcken."
     location: "gipfel"
     max_hp: 50
     attack: 10

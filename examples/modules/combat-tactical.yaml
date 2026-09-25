@@ -46,8 +46,6 @@ npcs:
     max_hp: 25
     attack: 5
     defense: 2
-    props:
-      speed: 8
     dialogue:
       alive:
         entry: greet

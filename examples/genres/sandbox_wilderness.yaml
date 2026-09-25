@@ -54,13 +54,13 @@ items:
   - id: "axt"
     name: "Holzfälleraxt"
     location: "forsthaus"
-    keywords: ["axt", "holzfaelleraxt", "axe"]
+    keys: ["axt", "holzfaelleraxt", "axe"]
     description: "Eine schwere, geschärfte Axt mit Eschenholzstiel. Ideal zum Holzfällen."
 
   - id: "spitzhacke"
     name: "Eiserne Spitzhacke"
     location: "forsthaus"
-    keywords: ["spitzhacke", "pickaxe", "hacke"]
+    keys: ["spitzhacke", "pickaxe", "hacke"]
     description: "Eine robuste Spitzhacke aus geschmiedetem Eisen zum Schürfen und Graben."
 
 rules:

@@ -1,4 +1,5 @@
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 -- | Compile an Adventure (authoring schema) into engine types, or return structured issues
 module Worldbuilder.Compile
@@ -8,6 +9,11 @@ module Worldbuilder.Compile
     , Severity(..)
     , compileAActionOutcome
     , allWorldEffects
+    , EntityType(..)
+    , knownKeys
+    , checkUnknownYamlKeys
+    , levenshtein
+    , formatUnknownKey
     ) where
 
 import Worldbuilder.Types
@@ -19,11 +25,15 @@ import qualified Types as E
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Char (toLower, isDigit, isSpace)
-import Data.List (nub, stripPrefix, isPrefixOf)
+import Data.List (nub, stripPrefix, isPrefixOf, minimumBy)
+import Data.Ord (comparing)
 import Data.Maybe (mapMaybe, fromMaybe, catMaybes)
 import Data.Either (partitionEithers)
 import Text.Read (readMaybe)
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.KeyMap as KM
+import qualified Data.Aeson.Key as K
+import qualified Data.Foldable as Foldable
 import qualified Data.Text as T
 import qualified Verbs
 
@@ -336,7 +346,10 @@ compileAdventure adv =
                               Nothing        -> Nothing
                         , E.dynamicRooms = Map.empty
                         }
-            in Right (CompileResult gw startSave gameWarns)
+                yamlKeyWarns = case advRawValue adv of
+                    Just v  -> checkUnknownYamlKeys v
+                    Nothing -> []
+            in Right (CompileResult gw startSave (gameWarns ++ yamlKeyWarns))
   where
     -- Every locked exit starts locked in entityStates
     initialEntityStates rooms =
@@ -345,6 +358,170 @@ compileAdventure adv =
             | room <- Map.elems rooms
             , E.Locked _ e <- Map.elems (E.roomConnections room)
             ]
+
+-- ---------------------------------------------------------------------------
+-- YAML Key Validation (Compiler-Härtung)
+-- ---------------------------------------------------------------------------
+
+-- | Standard Levenshtein distance between two strings.
+levenshtein :: String -> String -> Int
+levenshtein s1 s2 = last (foldl transform [0 .. length s1] s2)
+  where
+    transform (d:ds) c = scanl (step c) (d + 1) (zip3 s1 (d:ds) ds)
+    transform [] _     = []
+    step c above (ch, diag, left) =
+        minimum [above + 1, left + 1, diag + if ch == c then 0 else 1]
+
+-- | Format an unknown YAML key warning message, providing a suggestion if
+-- any known key has Levenshtein distance <= 2.
+formatUnknownKey :: String -> Set.Set String -> String
+formatUnknownKey unk known =
+    let candidates = [ (k, levenshtein unk k) | k <- Set.toList known ]
+        close = filter (\(_, d) -> d <= 2) candidates
+    in case close of
+        [] -> "'" ++ unk ++ "' is not a known key"
+        _  ->
+            let best = fst (minimumBy (comparing snd <> comparing fst) close)
+            in "'" ++ unk ++ "' is not a known key - did you mean '" ++ best ++ "'?"
+
+-- | Check parsed JSON/YAML value for unknown keys across all entity types.
+checkUnknownYamlKeys :: Aeson.Value -> [CompileIssue]
+checkUnknownYamlKeys (Aeson.Object topObj) =
+    let topWarns = checkKeys "" EntAdventure (KM.keys topObj)
+        sectionWarns =
+            checkListOrMap "rooms" EntRoom (KM.lookup "rooms" topObj) checkRoomNested
+            ++ checkListOrMap "items" EntItem (KM.lookup "items" topObj) noNested
+            ++ checkListOrMap "npcs" EntNPC (KM.lookup "npcs" topObj) noNested
+            ++ checkListOrMap "quests" EntQuest (KM.lookup "quests" topObj) checkQuestNested
+            ++ checkListOrMap "rules" EntRule (KM.lookup "rules" topObj) noNested
+            ++ checkListOrMap "cards" EntCard (KM.lookup "cards" topObj) noNested
+            ++ checkListOrMap "sandbox_zones" EntSandboxZone (KM.lookup "sandbox_zones" topObj) checkZoneNested
+            ++ checkListOrMap "vehicles" EntVehicle (KM.lookup "vehicles" topObj) noNested
+            ++ checkListOrMap "variables" EntVariable (KM.lookup "variables" topObj) noNested
+            ++ checkListOrMap "verbs" EntVerb (KM.lookup "verbs" topObj) noNested
+            ++ checkListOrMap "factions" EntFaction (KM.lookup "factions" topObj) noNested
+            ++ checkListOrMap "encounter_tables" EntEncounterTable (KM.lookup "encounter_tables" topObj) noNested
+            ++ checkListOrMap "abilities" EntAbility (KM.lookup "abilities" topObj) noNested
+            ++ checkListOrMap "clips" EntClip (KM.lookup "clips" topObj) noNested
+            ++ checkSingleton "player" EntPlayer (KM.lookup "player" topObj)
+            ++ checkSingleton "game" EntGame (KM.lookup "game" topObj)
+            ++ checkSingleton "environment" EntEnvironment (KM.lookup "environment" topObj)
+            ++ checkSingleton "stealth" EntStealth (KM.lookup "stealth" topObj)
+            ++ checkSingleton "patrol" EntPatrol (KM.lookup "patrol" topObj)
+            ++ checkCombat (KM.lookup "combat" topObj)
+            ++ checkSingleton "interactions" EntInteractions (KM.lookup "interactions" topObj)
+    in topWarns ++ sectionWarns
+checkUnknownYamlKeys _ = []
+
+checkKeys :: String -> EntityType -> [Aeson.Key] -> [CompileIssue]
+checkKeys prefix entType actualKeys =
+    let allowed = knownKeys entType
+    in [ CompileIssue
+            { ciPath = if null prefix then kStr else prefix
+            , ciSeverity = SWarning
+            , ciCode = "UnknownYamlKey"
+            , ciMessage = formatUnknownKey kStr allowed
+            }
+       | k <- actualKeys
+       , let kStr = K.toString k
+       , kStr `Set.notMember` allowed
+       ]
+
+noNested :: String -> Aeson.Object -> [CompileIssue]
+noNested _ _ = []
+
+checkListOrMap :: String
+               -> EntityType
+               -> Maybe Aeson.Value
+               -> (String -> Aeson.Object -> [CompileIssue])
+               -> [CompileIssue]
+checkListOrMap section entType mVal nestedFn = case mVal of
+    Nothing -> []
+    Just (Aeson.Array arr) ->
+        concatMap (checkOneItem section entType nestedFn) (Foldable.toList arr)
+    Just (Aeson.Object obj) ->
+        concatMap (\(k, v) -> checkOneNamedItem (section ++ "." ++ K.toString k) entType v nestedFn) (KM.toList obj)
+    Just _ -> []
+
+checkOneItem :: String -> EntityType -> (String -> Aeson.Object -> [CompileIssue]) -> Aeson.Value -> [CompileIssue]
+checkOneItem section entType nestedFn (Aeson.Object o) =
+    let eid = extractEntityId o
+        path = section ++ "." ++ eid
+    in checkKeys path entType (KM.keys o) ++ nestedFn path o
+checkOneItem _ _ _ _ = []
+
+checkOneNamedItem :: String -> EntityType -> Aeson.Value -> (String -> Aeson.Object -> [CompileIssue]) -> [CompileIssue]
+checkOneNamedItem path entType (Aeson.Object o) nestedFn =
+    checkKeys path entType (KM.keys o) ++ nestedFn path o
+checkOneNamedItem _ _ _ _ = []
+
+extractEntityId :: Aeson.Object -> String
+extractEntityId o =
+    case KM.lookup "id" o of
+        Just (Aeson.String s) -> T.unpack s
+        _ -> case KM.lookup "name" o of
+            Just (Aeson.String s) -> T.unpack s
+            _ -> "?"
+
+checkRoomNested :: String -> Aeson.Object -> [CompileIssue]
+checkRoomNested roomPath o =
+    case KM.lookup "exits" o of
+        Just (Aeson.Object exitsObj) ->
+            concatMap (\(dirKey, val) ->
+                case val of
+                    Aeson.Object exitObj ->
+                        checkKeys (roomPath ++ ".exits." ++ K.toString dirKey) EntExitRef (KM.keys exitObj)
+                    _ -> []
+                ) (KM.toList exitsObj)
+        _ -> []
+
+checkQuestNested :: String -> Aeson.Object -> [CompileIssue]
+checkQuestNested questPath o =
+    case KM.lookup "stages" o of
+        Just (Aeson.Array arr) ->
+            concatMap (\case
+                Aeson.Object stObj ->
+                    let sid = extractEntityId stObj
+                        stPath = questPath ++ ".stages." ++ sid
+                    in checkKeys stPath EntQuestStage (KM.keys stObj)
+                _ -> []
+                ) (Foldable.toList arr)
+        _ -> []
+
+checkZoneNested :: String -> Aeson.Object -> [CompileIssue]
+checkZoneNested zonePath o =
+    case KM.lookup "biomes" o of
+        Just (Aeson.Array arr) ->
+            concatMap (\case
+                Aeson.Object bObj ->
+                    let bid = extractEntityId bObj
+                        bPath = zonePath ++ ".biomes." ++ bid
+                    in checkKeys bPath EntBiomeTemplate (KM.keys bObj)
+                _ -> []
+                ) (Foldable.toList arr)
+        Just (Aeson.Object obj) ->
+            concatMap (\(bKey, bVal) ->
+                case bVal of
+                    Aeson.Object bObj ->
+                        let bPath = zonePath ++ ".biomes." ++ K.toString bKey
+                        in checkKeys bPath EntBiomeTemplate (KM.keys bObj)
+                    _ -> []
+                ) (KM.toList obj)
+        _ -> []
+
+checkSingleton :: String -> EntityType -> Maybe Aeson.Value -> [CompileIssue]
+checkSingleton path entType (Just (Aeson.Object o)) =
+    checkKeys path entType (KM.keys o)
+checkSingleton _ _ _ = []
+
+checkCombat :: Maybe Aeson.Value -> [CompileIssue]
+checkCombat (Just (Aeson.Object o)) =
+    checkKeys "combat" EntCombat (KM.keys o)
+    ++ case KM.lookup "screen" o of
+        Just (Aeson.Object screenObj) ->
+            checkKeys "combat.screen" EntCombatScreen (KM.keys screenObj)
+        _ -> []
+checkCombat _ = []
 
 -- ---------------------------------------------------------------------------
 -- Direction parsing (strict — unknown = compile error)

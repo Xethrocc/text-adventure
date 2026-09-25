@@ -183,6 +183,7 @@ minAdventure room = Adventure
     , advCards = []
     , advDeck = Nothing
     , advSandboxZones = []
+    , advRawValue = Nothing
     }
 
 -- ===== Rogue Phase 1: authored game policy =====
@@ -2708,6 +2709,12 @@ tests =
     , ("sandbox: duplicate zone id is rejected (Phase 3E)", testSandboxZoneDuplicateIdValidation)
     , ("sandbox: unknown direction in passable_dirs is rejected (Phase 3E)", testSandboxZoneUnknownDirectionValidation)
     , ("sandbox: wilderness fixture compiles and validates clean (Phase 3E)", testSandboxWildernessFixtureCompiles)
+    -- Phase 1: Compiler-Härtung — Unbekannte YAML-Schlüssel warnen
+    , ("schema: valid keys compile with zero warnings (Phase 1)", testKnownKeysClean)
+    , ("schema: pinned W6 rewards typo produces warning (Phase 1)", testW6RewardsTypoWarningPinned)
+    , ("schema: room key typo produces warning with suggestion (Phase 1)", testRoomTypoWarning)
+    , ("schema: unknown key without close match produces warning (Phase 1)", testUnknownKeyNoSuggestion)
+    , ("schema: top-level typo produces warning with suggestion (Phase 1)", testTopLevelTypoWarning)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -4050,6 +4057,165 @@ testSandboxZoneUnknownDirectionValidation = do
             Left errs -> expectTrue "UnknownDirection error found"
                             (any (\i -> ciCode i == "UnknownDirection") errs)
             Right _ -> expectTrue "expected compile failure for unknown direction" False
+
+-- ===========================================================================
+-- Phase 1: Compiler-Härtung — Unbekannte YAML-Schlüssel warnen
+-- ===========================================================================
+
+testKnownKeysClean :: IO Bool
+testKnownKeysClean = do
+    let yaml = unlines
+            [ "start_room: start"
+            , "rooms:"
+            , "  - id: start"
+            , "    name: Start Room"
+            , "    desc: A clean room."
+            , "    exits:"
+            , "      north: start"
+            , "    tags: [safe]"
+            , "quests:"
+            , "  - id: sample_quest"
+            , "    name: Sample"
+            , "    desc: Just a test."
+            , "    reward:"
+            , "      - { msg: 'Done!' }"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ show errs
+                pure False
+            Right cr -> do
+                let keyWarns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
+                expectTrue ("expected 0 unknown key warnings, got " ++ show (length keyWarns)) (null keyWarns)
+
+-- | Pinned W6 test case: 'rewards:' (plural) instead of 'reward:' (singular) on a quest
+-- produces an UnknownYamlKey warning pointing at quests.find_hermit with 'did you mean reward?'.
+testW6RewardsTypoWarningPinned :: IO Bool
+testW6RewardsTypoWarningPinned = do
+    let yaml = unlines
+            [ "start_room: start"
+            , "rooms:"
+            , "  - id: start"
+            , "    name: Start Room"
+            , "    desc: Starting point."
+            , "quests:"
+            , "  - id: find_hermit"
+            , "    name: The Lost Hermit"
+            , "    desc: Find the hermit in the forest."
+            , "    rewards:"
+            , "      - { msg: 'Hermit found!' }"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed unexpectedly: " ++ show errs
+                pure False
+            Right cr -> do
+                let warns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
+                r1 <- expectEqual 1 (length warns)
+                case listToMaybe warns of
+                    Nothing -> pure False
+                    Just w -> do
+                        r2 <- expectEqual "quests.find_hermit" (ciPath w)
+                        r3 <- expectEqual SWarning (ciSeverity w)
+                        r4 <- expectEqual "'rewards' is not a known key - did you mean 'reward'?" (ciMessage w)
+                        let mLine = lineForPath yaml (ciPath w)
+                        r5 <- expectTrue "lineForPath finds source line" (case mLine of Just (n, _) -> n > 0; Nothing -> False)
+                        pure (r1 && r2 && r3 && r4 && r5)
+
+testRoomTypoWarning :: IO Bool
+testRoomTypoWarning = do
+    let yaml = unlines
+            [ "start_room: start"
+            , "rooms:"
+            , "  - id: start"
+            , "    name: Start Room"
+            , "    desc: Test."
+            , "    exitz:"
+            , "      north: start"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed unexpectedly: " ++ show errs
+                pure False
+            Right cr -> do
+                let warns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
+                r1 <- expectEqual 1 (length warns)
+                case listToMaybe warns of
+                    Nothing -> pure False
+                    Just w -> do
+                        r2 <- expectEqual "rooms.start" (ciPath w)
+                        r3 <- expectEqual "'exitz' is not a known key - did you mean 'exits'?" (ciMessage w)
+                        pure (r1 && r2 && r3)
+
+testUnknownKeyNoSuggestion :: IO Bool
+testUnknownKeyNoSuggestion = do
+    let yaml = unlines
+            [ "start_room: start"
+            , "rooms:"
+            , "  - id: start"
+            , "    name: Start Room"
+            , "    desc: Test."
+            , "    foobar_unknown_field: 123"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed unexpectedly: " ++ show errs
+                pure False
+            Right cr -> do
+                let warns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
+                r1 <- expectEqual 1 (length warns)
+                case listToMaybe warns of
+                    Nothing -> pure False
+                    Just w -> do
+                        r2 <- expectEqual "rooms.start" (ciPath w)
+                        r3 <- expectEqual "'foobar_unknown_field' is not a known key" (ciMessage w)
+                        pure (r1 && r2 && r3)
+
+testTopLevelTypoWarning :: IO Bool
+testTopLevelTypoWarning = do
+    let yaml = unlines
+            [ "start_room: start"
+            , "rooms:"
+            , "  - id: start"
+            , "    name: Start Room"
+            , "    desc: Test."
+            , "quest:"
+            , "  - id: q1"
+            , "    name: Q1"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed unexpectedly: " ++ show errs
+                pure False
+            Right cr -> do
+                let warns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
+                r1 <- expectEqual 1 (length warns)
+                case listToMaybe warns of
+                    Nothing -> pure False
+                    Just w -> do
+                        r2 <- expectEqual "quest" (ciPath w)
+                        r3 <- expectEqual "'quest' is not a known key - did you mean 'quests'?" (ciMessage w)
+                        pure (r1 && r2 && r3)
 
 -- helpers -------------------------------------------------------------------
 

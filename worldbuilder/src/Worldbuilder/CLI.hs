@@ -160,6 +160,10 @@ validate path = do
                     putStrLn $ show (length errs) ++ " hard error(s); adventure cannot be compiled."
                     exitFailure
                 Right cr -> do
+                    unless (null (crWarnings cr)) $ do
+                        putStrLn "Compiler warnings:"
+                        printCompileIssues path (crWarnings cr)
+                        putStrLn ""
                     let worldErrs = validateWorld (crWorld cr)
                         stateErrs = validateGameState (crWorld cr) (crSave cr)
                         allErrs = worldErrs ++ stateErrs

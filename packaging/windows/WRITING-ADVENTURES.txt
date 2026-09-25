@@ -154,6 +154,7 @@
 #   - Indentation changed while editing        -> "Nothing compiles"
 #   - Two things share an id                   -> Duplicate...
 #   - An exit direction that does not exist    -> UnknownDirection
+#   - A typo in a key (rewards vs reward)      -> UnknownYamlKey
 #
 # ================ STEP 11: Art, colour, polish (optional) =================
 #

@@ -292,7 +292,7 @@ quests:
     desc: Gather the four pieces of evidence, then name the killer.
     stages:
       - {id: scene, desc: Examine the scene and the household.}
-      - {id: evidence, desc: Collect the payments, alibi, letter and glove.}
+      - {id: evidence, desc: "Collect the payments, alibi, letter and glove."}
       - {id: accuse, desc: Accuse the right person with the evidence in hand.}
     reward:
       - {msg: "The case is closed."}

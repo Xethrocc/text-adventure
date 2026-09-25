@@ -31,10 +31,10 @@ rooms:
 quests:
   - id: find_treasure
     name: Find the Treasure
-    description: A quest.
+    desc: A quest.
     stages:
       - id: s1
-        text: Stage one
+        desc: Stage one
 
 active_quests:
   - find_treasure

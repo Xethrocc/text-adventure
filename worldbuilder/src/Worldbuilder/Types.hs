@@ -11,6 +11,7 @@ import Control.Applicative ((<|>))
 import Data.Maybe (fromMaybe)
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import qualified Data.Text as T
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Aeson.Key as K
@@ -51,6 +52,7 @@ data Adventure = Adventure
     , advCards            :: [ACard]                     -- ^ card definitions (Phase 2D)
     , advDeck             :: Maybe [String]              -- ^ starting deck (Phase 2D)
     , advSandboxZones     :: [ASandboxZone]              -- ^ procedural sandbox zones (Schritt 3 / Phase 3E)
+    , advRawValue         :: Maybe Value                 -- ^ raw parsed JSON/YAML value for schema validation
     } deriving (Show, Eq, Generic)
 
 -- | Rogue Phase 1: the authored `game:` block. Every field is optional so
@@ -90,7 +92,7 @@ instance FromJSON AClip where
         <*> o .: "fps"
 
 instance FromJSON Adventure where
-    parseJSON = withObject "Adventure" $ \o -> Adventure
+    parseJSON v@(Object o) = Adventure
         <$> o .:? "name"
         <*> o .:  "start_room"
         <*> o .:? "rooms"           .!= []
@@ -120,6 +122,8 @@ instance FromJSON Adventure where
         <*> parseCardsField o
         <*> parseDeckField o
         <*> parseSandboxZonesField o
+        <*> pure (Just v)
+    parseJSON _ = fail "Expected Adventure to be an object"
 
 -- | Parse 'cards' field: supports both a map (`cards: { strike: { ... } }`) and a list (`cards: [ { id: "strike", ... } ]`).
 parseCardsField :: Object -> Parser [ACard]
@@ -1226,3 +1230,114 @@ instance FromJSON AActionOutcome where
                 AORemoveExit <$> re .: "from" <*> re .: "dir")
         <|> fail "Unknown outcome type. Use one of: msg, heal, damage, give, consume, set_flag, start_quest, etc."
         ) v
+
+-- ---------------------------------------------------------------------------
+-- Known YAML Keys per Entity Type (Compiler-Härtung)
+-- ---------------------------------------------------------------------------
+
+-- | Entity types in the YAML adventure schema that have known key specifications.
+data EntityType
+    = EntAdventure
+    | EntRoom
+    | EntExitRef
+    | EntItem
+    | EntNPC
+    | EntQuest
+    | EntQuestStage
+    | EntRule
+    | EntCard
+    | EntSandboxZone
+    | EntBiomeTemplate
+    | EntVehicle
+    | EntVariable
+    | EntVerb
+    | EntFaction
+    | EntEncounterTable
+    | EntAbility
+    | EntClip
+    | EntPlayer
+    | EntGame
+    | EntEnvironment
+    | EntStealth
+    | EntPatrol
+    | EntCombat
+    | EntCombatScreen
+    | EntInteractions
+    deriving (Show, Eq, Ord, Enum, Bounded)
+
+-- | Single source of truth for allowed YAML mapping keys per entity type,
+-- derived directly from the 'FromJSON' instances.
+knownKeys :: EntityType -> Set.Set String
+knownKeys EntAdventure = Set.fromList
+    [ "name", "start_room", "rooms", "items", "npcs", "quests", "vehicles"
+    , "interactions", "verbs", "variables", "rules", "player"
+    , "initial_variables", "initial_flags", "active_quests", "factions"
+    , "encounter_tables", "environment", "stealth", "patrol", "combat"
+    , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
+    , "sandbox_zones"
+    ]
+knownKeys EntRoom = Set.fromList
+    [ "id", "name", "desc", "description", "exits", "tags", "light_flag"
+    , "on_enter", "on_look", "on_exit", "search", "ascii", "intro", "floor"
+    ]
+knownKeys EntExitRef = Set.fromList
+    [ "to", "locked_by" ]
+knownKeys EntItem = Set.fromList
+    [ "id", "name", "desc", "description", "ascii", "keys", "tags"
+    , "location", "state", "slot", "effects", "hidden", "discover"
+    , "props", "on_take", "verb_map", "portable", "take_failure", "in_container"
+    ]
+knownKeys EntNPC = Set.fromList
+    [ "id", "name", "desc", "description", "ascii", "keys", "location"
+    , "state", "max_hp", "attack", "defense", "dialogue", "verb_map", "party"
+    ]
+knownKeys EntQuest = Set.fromList
+    [ "id", "name", "desc", "prereqs", "stages", "reward" ]
+knownKeys EntQuestStage = Set.fromList
+    [ "id", "desc", "hint" ]
+knownKeys EntRule = Set.fromList
+    [ "id", "on", "when", "effects", "once", "cooldown" ]
+knownKeys EntCard = Set.fromList
+    [ "id", "name", "cost", "type", "target", "description", "desc"
+    , "exhaust", "outcomes", "effects"
+    ]
+knownKeys EntSandboxZone = Set.fromList
+    [ "id", "origin", "floor", "biomes" ]
+knownKeys EntBiomeTemplate = Set.fromList
+    [ "id", "weight", "name_pattern", "description", "desc", "tags"
+    , "ascii_art", "ascii", "passable_dirs"
+    ]
+knownKeys EntVehicle = Set.fromList
+    [ "id", "name", "desc", "type", "interior", "entry_room", "cockpit"
+    , "stops", "keys", "fuel", "conditions", "start_stop", "systems", "stations"
+    ]
+knownKeys EntVariable = Set.fromList
+    [ "name", "type", "initial", "min", "max" ]
+knownKeys EntVerb = Set.fromList
+    [ "name", "aliases" ]
+knownKeys EntFaction = Set.fromList
+    [ "id", "name", "initial", "levels" ]
+knownKeys EntEncounterTable = Set.fromList
+    [ "id", "on", "when", "cooldown", "entries" ]
+knownKeys EntAbility = Set.fromList
+    [ "id", "name", "cost_var", "cost", "cooldown", "effects" ]
+knownKeys EntClip = Set.fromList
+    [ "id", "file", "frames", "fps" ]
+knownKeys EntPlayer = Set.fromList
+    [ "max_hp", "attack", "defense", "skills", "deck" ]
+knownKeys EntGame = Set.fromList
+    [ "permadeath", "allow_undo", "ironman", "save_zones", "meta_slug" ]
+knownKeys EntEnvironment = Set.fromList
+    [ "weather", "drains" ]
+knownKeys EntStealth = Set.fromList
+    [ "noise", "observers" ]
+knownKeys EntPatrol = Set.fromList
+    [ "hostiles" ]
+knownKeys EntCombat = Set.fromList
+    [ "profile", "attack_refused", "difficulty", "on_win", "on_lose"
+    , "initiative", "flee_allowed", "max_rounds", "speed_attribute", "screen"
+    ]
+knownKeys EntCombatScreen = Set.fromList
+    [ "art", "bar_width", "scene", "footer" ]
+knownKeys EntInteractions = Set.fromList
+    [ "entity", "item" ]

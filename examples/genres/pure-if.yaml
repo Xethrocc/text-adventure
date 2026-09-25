@@ -208,7 +208,7 @@ quests:
     desc: Restore the light and open the sealed vault.
     stages:
       - {id: explore, desc: Explore the village and lighthouse.}
-      - {id: gather, desc: Gather oil, lens and the star chart.}
+      - {id: gather, desc: "Gather oil, lens and the star chart."}
       - {id: align, desc: Align the telescope with the northern stars.}
       - {id: vault, desc: Descend into the vault.}
     reward:

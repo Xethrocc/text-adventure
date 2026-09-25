@@ -5,12 +5,12 @@ rooms:
   - id: entrance
     name: Entrance Hall
     description: A cold stone hall with a passage east.
-    connections:
+    exits:
       east: pit
   - id: pit
     name: Spike Pit
     description: A dark pit lined with spikes.
-    connections:
+    exits:
       west: entrance
 
 items:
