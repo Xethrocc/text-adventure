@@ -17,7 +17,8 @@ import GameLoop (LoopState (..), initLoopState, applyLoopCommand,
                  commandEvents, consumesTurn, consumesTurnIn, runGameWithFrontend,
                  handleGameOver, saveBlockedMessage, loadBlockedMessage, deathMenuText)
 import Frontend (Frontend (..), commandCompletion)
-import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText, bindCommandVars)
+import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText, bindCommandVars,
+               InteractTarget (..), resolveInteractTarget)
 import Verbs (verbAliasMap)
 import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombat, shipAbsorb)
 import Validate (ValidationError (..), validateWorld, validateGameState, idsFromOutcomeRoom)
@@ -5393,11 +5394,70 @@ testRenderDeckCombatHud = do
     r12 <- expectTrue "showHand includes card type" (isInfixOf "[Angriff]" handMsg)
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12)
 
+-- | Phase R3: Test resolveInteractTarget for Item, NPC, Bare, Vehicle and NotFound
+testResolveInteractTarget :: IO Bool
+testResolveInteractTarget = do
+    let st = initSampleGame  -- player in "start", torch in "start", oldman in "start"
+    -- 1. Item in room resolves to ITItem
+    let tItem = resolveInteractTarget VLookAt "torch" st
+    r1 <- case tItem of
+        ITItem item _ -> expectEqual "torch" (itemId item)
+        _             -> expectTrue "expected ITItem for torch" False
+    -- 2. NPC in room resolves to ITNpc
+    let tNpc = resolveInteractTarget VTalk "old man" st
+    r2 <- case tNpc of
+        ITNpc npc _ -> expectEqual "oldman" (npcId npc)
+        _           -> expectTrue "expected ITNpc for old man" False
+    -- 3. Bare verb with empty target resolves to ITBareVerb
+    let tBare = resolveInteractTarget (VCustom "defend") "" st
+    r3 <- expectEqual ITBareVerb tBare
+    -- 4. Vehicle attack resolution
+    let tVeh = resolveInteractTarget VAttack "carriage" st
+    r4 <- case tVeh of
+        ITVehicle v -> expectEqual "carriage" (vehicleId v)
+        _           -> expectTrue "expected ITVehicle for carriage attack" False
+    -- 5. Non-existent entity resolves to ITNotFound
+    let tNotFound = resolveInteractTarget VLookAt "ghost" st
+    r5 <- expectEqual (ITNotFound "ghost") tNotFound
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Phase R3: Test that interactItem preserves the take/use contract (portability + pickup + on_take outcome)
+testInteractItemContract :: IO Bool
+testInteractItemContract = do
+    let st0 = initSampleGame
+        -- 'torch' is in the room and has no on_take outcome
+        res1 = executeCommand (Interact VTake "torch") st0
+        st1 = fst res1
+        msg1 = snd res1
+    r1 <- expectTrue "torch is in inventory after take" (hasItem "torch" st1)
+    r2 <- expectEqual "You take the torch." msg1
+    -- taking already carried item produces 'You already have the ...'
+    let resAlready = executeCommand (Interact VTake "torch") st1
+    r3 <- expectEqual "You already have the torch." (snd resAlready)
+    -- taking non-portable item
+    let gwNonPortable = (world st0)
+            { itemDefs = Map.adjust (\it -> it { itemPortable = False, itemTakeFailure = Just "It's bolted down!" }) "torch" (itemDefs (world st0)) }
+        stNonPortable = st0 { world = gwNonPortable }
+        resNonPortable = executeCommand (Interact VTake "torch") stNonPortable
+    r4 <- expectEqual "It's bolted down!" (snd resNonPortable)
+    r5 <- expectTrue "non-portable item remains not carried" (not (hasItem "torch" (fst resNonPortable)))
+    -- taking item with on_take outcome (like 'key' in hallway)
+    let stInHallway = st0 { save = (save st0) { currentRoom = "hallway" } }
+        resKey = executeCommand (Interact VTake "key") stInHallway
+        stAfterKey = fst resKey
+        msgKey = snd resKey
+    r6 <- expectTrue "key is picked up" (hasItem "key" stAfterKey)
+    r7 <- expectTrue "on_take outcome ran (flag quest_started was set)" (getFlag "quest_started" stAfterKey == Just "true")
+    r8 <- expectTrue "take message is present" ("You take the key." `isPrefixOf` msgKey)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
 main :: IO ()
 main = do
     results <- sequence
         -- Parser tests
-        [ runTest "parse look at multi-word target" testParseLookAtMultiWord
+        [ runTest "resolveInteractTarget resolves all target categories (R3)" testResolveInteractTarget
+        , runTest "interactItem preserves take/use contract (R3)" testInteractItemContract
+        , runTest "parse look at multi-word target" testParseLookAtMultiWord
         , runTest "parse use-on multi-word target" testParseUseOnMultiWord
         , runTest "parse take multi-word target" testParseTakeMultiWord
         , runTest "parse take all" testParseTakeAll

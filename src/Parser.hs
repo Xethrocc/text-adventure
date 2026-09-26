@@ -668,91 +668,12 @@ executeCommand (ActionWithArgs verb args) state =
 
 executeCommand (Interact verb targetStr) state =
     let stateWithVars = bindCommandVars (Interact verb targetStr) state
-        resolvedTarget = resolveHotspotTarget targetStr stateWithVars
-        roomItems = getItemsInLocation (InRoom (currentRoom (save stateWithVars))) stateWithVars
-        invItems = getItemsInLocation (CarriedBy "player") stateWithVars
-        allReachableItems = roomItems ++ invItems
-        roomNPCs = getNPCsInRoom (currentRoom (save stateWithVars)) stateWithVars
-        targetItem = find (matchesItemTarget resolvedTarget) allReachableItems
-        targetNPC = find (matchesNPCTarget resolvedTarget) roomNPCs
-    in case (targetItem, targetNPC) of
-        (Just item, _) ->
-            let iId = itemId item
-                maybeItemState = Map.lookup iId (itemStates (save stateWithVars))
-                currentStatus = maybe "unknown" itemStatus maybeItemState
-                notCarried = maybe True (\loc -> loc /= CarriedBy "player") (fmap itemLocation maybeItemState)
-                vmLookup = Map.lookup (verb, currentStatus) (itemVerbMap item)
-            in case (verb, vmLookup) of
-                -- Taking: enforce portability, then pick up AND run on_take.
-                (VTake, _)
-                    | not notCarried ->
-                        (stateWithVars, "You already have the " ++ itemName item ++ ".")
-                    | otherwise ->
-                        case itemPortable item of
-                            False -> (stateWithVars, fromMaybe ("You can't take the " ++ itemName item ++ ".")
-                                                     (itemTakeFailure item))
-                            True ->
-                                let (st', extra) = case vmLookup of
-                                        Just outcome -> applyOutcome outcome iId stateWithVars
-                                        Nothing      -> (stateWithVars, "")
-                                    takeMsg = "You take the " ++ itemName item ++ "."
-                                in (pickupItem iId st',
-                                    if null extra then takeMsg else takeMsg ++ "\n" ++ extra)
-                _ -> case vmLookup of
-                    Just outcome -> applyOutcome outcome iId stateWithVars
-                    Nothing ->
-                        if verb == VDrop && hasItem iId stateWithVars
-                        then (dropItem iId stateWithVars, "You drop the " ++ itemName item ++ ".")
-                        else if verb == VLookAt
-                        then (stateWithVars, withAscii (renderArtForLook (itemAscii item) stateWithVars)
-                                              (resolveCondText (itemDescription item) stateWithVars))
-                        else case if verb == VAttack then tryAttackVehicle targetStr stateWithVars else Nothing of
-                            Just res -> res
-                            Nothing
-                                | hasOnCommandTrigger verb stateWithVars -> (stateWithVars, "")
-                                | otherwise -> (stateWithVars, "You can't do that to the " ++ itemName item ++ " right now.")
-
-        (Nothing, Just npc) ->
-            let nId = npcId npc
-                maybeNpcState = Map.lookup nId (npcStates (save stateWithVars))
-                currentStatus = maybe "unknown" npcStatus maybeNpcState
-                isCorpse = isDeadNPC nId stateWithVars
-            in case Map.lookup (verb, currentStatus) (npcVerbMap npc) of
-                Just outcome -> applyOutcome outcome nId stateWithVars
-                Nothing
-                    -- A body can be looked at, searched and targeted by authored
-                    -- verbs, but it neither fights nor talks.
-                    | isCorpse, verb == VAttack ->
-                        (stateWithVars, "The " ++ npcName npc ++ " is already dead.")
-                    | isCorpse, verb == VTalk ->
-                        (stateWithVars, "The " ++ npcName npc ++ " is dead and says nothing.")
-                    | verb == VTalk -> talkTo npc maybeNpcState stateWithVars
-                    | verb == VAttack -> executeAttack npc maybeNpcState targetStr stateWithVars
-                    | verb == VLookAt -> (stateWithVars, withAscii (renderArtForLook (npcAscii npc) stateWithVars)
-                                                          (resolveCondText (npcDescription npc) stateWithVars))
-                    | hasOnCommandTrigger verb stateWithVars -> (stateWithVars, "")
-                    | otherwise -> (stateWithVars, "You can't do that to " ++ npcName npc ++ ".")
-
-        (Nothing, Nothing)
-            -- Phase 7f-3, A2: bare `defend` / `flee` during a tactical fight
-            -- route through the combat resolver with the corresponding action.
-            | null targetStr, VCustom vn <- verb
-            , CombatTactical _ <- combatProfile (world stateWithVars)
-            , isCombatEngaged stateWithVars
-            , Just ca <- tacticalVerbAction vn
-            -> executeTacticalAction ca stateWithVars
-            -- Phase 7f-3, A3: `use-ability <id>` during a tactical fight
-            | not (null targetStr), VCustom vn <- verb
-            , vn `elem` ["use-ability", "ability"]
-            , CombatTactical _ <- combatProfile (world stateWithVars)
-            -> executeTacticalAction (CAAbility targetStr) stateWithVars
-            | null targetStr, VCustom vn <- verb
-            , vn `elem` ["defend", "flee"]
-            -> (stateWithVars, "You are not in combat.")
-            | null targetStr -> (stateWithVars, "")   -- bare verb (e.g. custom command); triggers carry the message
-            | hasOnCommandTrigger verb stateWithVars -> (stateWithVars, "")
-            | verb == VAttack, Just res <- tryAttackVehicle targetStr stateWithVars -> res
-            | otherwise -> (stateWithVars, "You don't see '" ++ targetStr ++ "' here.")
+    in case resolveInteractTarget verb targetStr stateWithVars of
+        ITItem item mSt  -> interactItem verb item mSt targetStr stateWithVars
+        ITNpc npc mSt    -> interactNpc verb npc mSt targetStr stateWithVars
+        ITVehicle veh    -> interactVehicle verb veh targetStr stateWithVars
+        ITBareVerb       -> interactBare verb stateWithVars
+        ITNotFound str   -> interactNotFound verb str stateWithVars
 
 -- | Handle "use <item> on <entity>" with weapon→attack fallback
 executeCommand (InteractWith VUseOn itemStr entityStr) state =
@@ -899,6 +820,127 @@ findVehicle targetStr state =
 -- ---------------------------------------------------------------------------
 -- Helpers used by executeCommand
 -- ---------------------------------------------------------------------------
+
+-- | Target resolved for an interaction command (Phase R3).
+data InteractTarget
+    = ITItem    ItemDef    (Maybe ItemState)  -- ^ Item in current room or inventory
+    | ITNpc     NPCDef     (Maybe NPCState)   -- ^ NPC in current room
+    | ITVehicle VehicleDef                    -- ^ Vehicle attack candidate
+    | ITBareVerb                              -- ^ Bare verb with no target (e.g. defend, flee, custom command)
+    | ITNotFound String                       -- ^ Target not found
+    deriving (Show, Eq)
+
+-- | Resolve what entity an interaction verb is targeting.
+resolveInteractTarget :: Verb -> String -> GameState -> InteractTarget
+resolveInteractTarget verb targetStr state
+    | null targetStr = ITBareVerb
+    | Just item <- targetItem = ITItem item maybeItemState
+    | Just npc  <- targetNPC  = ITNpc npc maybeNpcState
+    | verb == VAttack, Just veh <- findVehicle targetStr state = ITVehicle veh
+    | otherwise = ITNotFound targetStr
+  where
+    resolvedTarget = resolveHotspotTarget targetStr state
+    roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
+    invItems = getItemsInLocation (CarriedBy "player") state
+    allReachableItems = roomItems ++ invItems
+    roomNPCs = getNPCsInRoom (currentRoom (save state)) state
+    targetItem = find (matchesItemTarget resolvedTarget) allReachableItems
+    targetNPC = find (matchesNPCTarget resolvedTarget) roomNPCs
+    maybeItemState = targetItem >>= \i -> Map.lookup (itemId i) (itemStates (save state))
+    maybeNpcState = targetNPC >>= \n -> Map.lookup (npcId n) (npcStates (save state))
+
+-- | Execute interaction on an item.
+interactItem :: Verb -> ItemDef -> Maybe ItemState -> String -> GameState -> CommandResult
+interactItem verb item maybeItemState targetStr state =
+    let iId = itemId item
+        currentStatus = maybe "unknown" itemStatus maybeItemState
+        notCarried = maybe True (\loc -> loc /= CarriedBy "player") (fmap itemLocation maybeItemState)
+        vmLookup = Map.lookup (verb, currentStatus) (itemVerbMap item)
+    in case (verb, vmLookup) of
+        -- Taking: enforce portability, then pick up AND run on_take.
+        (VTake, _)
+            | not notCarried ->
+                (state, "You already have the " ++ itemName item ++ ".")
+            | otherwise ->
+                case itemPortable item of
+                    False -> (state, fromMaybe ("You can't take the " ++ itemName item ++ ".")
+                                             (itemTakeFailure item))
+                    True ->
+                        let (st', extra) = case vmLookup of
+                                Just outcome -> applyOutcome outcome iId state
+                                Nothing      -> (state, "")
+                            takeMsg = "You take the " ++ itemName item ++ "."
+                        in (pickupItem iId st',
+                            if null extra then takeMsg else takeMsg ++ "\n" ++ extra)
+        _ -> case vmLookup of
+            Just outcome -> applyOutcome outcome iId state
+            Nothing ->
+                if verb == VDrop && hasItem iId state
+                then (dropItem iId state, "You drop the " ++ itemName item ++ ".")
+                else if verb == VLookAt
+                then (state, withAscii (renderArtForLook (itemAscii item) state)
+                                      (resolveCondText (itemDescription item) state))
+                else case if verb == VAttack then tryAttackVehicle targetStr state else Nothing of
+                    Just res -> res
+                    Nothing
+                        | hasOnCommandTrigger verb state -> (state, "")
+                        | otherwise -> (state, "You can't do that to the " ++ itemName item ++ " right now.")
+
+-- | Execute interaction on an NPC.
+interactNpc :: Verb -> NPCDef -> Maybe NPCState -> String -> GameState -> CommandResult
+interactNpc verb npc maybeNpcState targetStr state =
+    let nId = npcId npc
+        currentStatus = maybe "unknown" npcStatus maybeNpcState
+        isCorpse = isDeadNPC nId state
+    in case Map.lookup (verb, currentStatus) (npcVerbMap npc) of
+        Just outcome -> applyOutcome outcome nId state
+        Nothing
+            -- A body can be looked at, searched and targeted by authored
+            -- verbs, but it neither fights nor talks.
+            | isCorpse, verb == VAttack ->
+                (state, "The " ++ npcName npc ++ " is already dead.")
+            | isCorpse, verb == VTalk ->
+                (state, "The " ++ npcName npc ++ " is dead and says nothing.")
+            | verb == VTalk -> talkTo npc maybeNpcState state
+            | verb == VAttack -> executeAttack npc maybeNpcState targetStr state
+            | verb == VLookAt -> (state, withAscii (renderArtForLook (npcAscii npc) state)
+                                                  (resolveCondText (npcDescription npc) state))
+            | hasOnCommandTrigger verb state -> (state, "")
+            | otherwise -> (state, "You can't do that to " ++ npcName npc ++ ".")
+
+-- | Execute interaction on a vehicle.
+interactVehicle :: Verb -> VehicleDef -> String -> GameState -> CommandResult
+interactVehicle verb _veh targetStr state
+    | hasOnCommandTrigger verb state = (state, "")
+    | verb == VAttack, Just res <- tryAttackVehicle targetStr state = res
+    | otherwise = (state, "You don't see '" ++ targetStr ++ "' here.")
+
+-- | Execute a bare interaction command without a target string.
+interactBare :: Verb -> GameState -> CommandResult
+interactBare verb state
+    -- Phase 7f-3, A2: bare `defend` / `flee` during a tactical fight
+    -- route through the combat resolver with the corresponding action.
+    | VCustom vn <- verb
+    , CombatTactical _ <- combatProfile (world state)
+    , isCombatEngaged state
+    , Just ca <- tacticalVerbAction vn
+    = executeTacticalAction ca state
+    | VCustom vn <- verb
+    , vn `elem` ["defend", "flee"]
+    = (state, "You are not in combat.")
+    | otherwise = (state, "")   -- bare verb (e.g. custom command); triggers carry the message
+
+-- | Fallback interaction when target was not found.
+interactNotFound :: Verb -> String -> GameState -> CommandResult
+interactNotFound verb targetStr state
+    -- Phase 7f-3, A3: `use-ability <id>` during a tactical fight
+    | not (null targetStr), VCustom vn <- verb
+    , vn `elem` ["use-ability", "ability"]
+    , CombatTactical _ <- combatProfile (world state)
+    = executeTacticalAction (CAAbility targetStr) state
+    | hasOnCommandTrigger verb state = (state, "")
+    | verb == VAttack, Just res <- tryAttackVehicle targetStr state = res
+    | otherwise = (state, "You don't see '" ++ targetStr ++ "' here.")
 
 -- | Display name of a hotspot target (item first, then NPC, else the id).
 hotspotLabel :: GameState -> Hotspot -> String
