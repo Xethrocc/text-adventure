@@ -514,19 +514,28 @@ Playthroughs: 20 Happy Paths + 8 Failure Paths).
 
 Die Modul-Architektur folgt einem strikten Schema: **YAML-Segment + Compiler-Pass auf bestehende Core-Konzepte**. Ein neues Modul erzeugt keinen eigenen Interpreter, kein eigenes `SaveState`-Feld und kein zweites State-Silo. Ohne das YAML-Segment bleibt jede bestehende Welt bit-identisch.
 
-### 1. Compiler-Signatur
+### 1. Compiler-Signatur & Erlaubnisfälle
 
-Jede Modul-Kompilierung in `worldbuilder/src/Worldbuilder/Compile.hs` folgt dem Schema:
+Das standardmäßige Schema für eine Modul-Kompilierung in `worldbuilder/src/Worldbuilder/Compile.hs` lautet:
 
 ```haskell
 compileMyModule :: Adventure -> ([CompileIssue], [TriggerDef], Map String VarDef, Map String VariableValue)
 ```
 
-Sie liefert vier Dinge:
+Sie liefert vier Kernkomponenten:
 1. `[CompileIssue]`: Diagnosefehler und Warnungen bei fehlerhaftem Schema oder Referenzen.
 2. `[TriggerDef]`: generierte Trigger (z. B. `OnCommand`, `OnTurn`, `OnStateChange`).
 3. `Map String VarDef`: Variablendefinitionen für die Welt (`varDefs`), inklusive Typ und Clamping-Grenzen (`VTInt (Just min) (Just max)`).
 4. `Map String VariableValue`: Anfangswerte im `SaveState` (`variables`).
+
+#### Audit: Erlaubnisfall für Teilmengen (Card, Audio & Sugar)
+Ein Modul muss **nicht zwingend alle vier Rückgabewerte** erzeugen:
+- **Reine Effekt-Module (z. B. `Audio`):** Module wie SFX/Musik (`sfx:`, `music:`, `stop_music:`) benötigen kein eigenes YAML-Top-Level-Segment und keine Variablen. Sie erweitern lediglich die Effekt-Syntax `AActionOutcome` in `Worldbuilder/Types.hs` und den Interpreter-Pass `compileAActionOutcome` in `Compile.hs`.
+- **Reine Daten-/Regelsatz-Module (z. B. `Cards` / S2-Deckbuilder):** `compileCards :: [ACard] -> ([CompileIssue], Map String E.Card)` liefert Issues und die Kartendefinitionen für `world.cards`. Ein optionales `deck:`-Segment initialisiert `deckState` im `SaveState`, ohne zwingend Trigger oder Variablen zu generieren.
+- **Reine Trigger-Sugar-Module (z. B. `encounters`):** `compileEncounterTables` liefert nur `([CompileIssue], [TriggerDef])` und keine Variablen.
+- **Reine Variablen-Module (z. B. `factions`):** `compileFactions` liefert nur Variablen und Anfangswerte, aber keine Trigger.
+
+---
 
 ### 2. Die fünf Eintragungsstellen im Worldbuilder (`Compile.hs`)
 
@@ -553,7 +562,21 @@ Wenn ein neues YAML-Segment `mymodule:` eingeführt wird:
    - Referenzprüfungen gegen unbekannte IDs (Räume, NPCs, Items, Verben) durchführen.
    - Falls Trigger generiert werden: sicherstellen, dass deren IDs den reservierten Präfix tragen und keine Kollisionen erzeugen.
 
-### 3. CI- und Test-Integration
+---
+
+### 3. Namensraum-Disziplin (Review-Empfehlung 4)
+
+> [!IMPORTANT]
+> **Grundsatz für compilergenerierte Schlüssel:**
+> *Jeder compilergenerierte Schlüssel — Variable ODER Trigger-ID — braucht einen reservierten Präfix und einen Clash-Check im selben Compile-Pass.*
+
+- **Variablen:** Autoren dürfen keine Variablen deklarieren, die mit dem reservierten Modul-Präfix beginnen (z. B. `patrol.`, `faction.`, `stealth.`, `ship.`). Dies verhindert, dass Autoren unbeabsichtigt interne State-Variablen überschreiben oder aushebeln.
+- **Trigger-IDs:** Generierte Trigger müssen immer den reservierten Präfix tragen (z. B. `patrol.<npc>.step_<n>`, `encounter.<id>`). In `Compile.hs` muss sichergestellt sein, dass Autoren-Trigger (`advTriggers`) nicht denselben Präfix verwenden oder IDs doppeln.
+- **Stabile Diagnose-Codes:** Kollisionsprüfungen melden standardisierte Fehlercodes (z. B. `FactionVariableClash`, `PatrolVariableClash`, `DuplicateTriggerID`). Tests prüfen auf diesen Code (`ciCode`), nicht auf den Fehlertext.
+
+---
+
+### 4. CI- und Test-Integration (`scripts/ci.sh`)
 
 Zu jedem Modul gehört:
 1. **Unit-Tests (`worldbuilder/test/Tests.hs` & `test/Tests.hs`)**:
@@ -561,7 +584,17 @@ Zu jedem Modul gehört:
    - Test auf gemeldete Schemafehler / Clashes (`Duplicate...`, `Unknown...`, `...VariableClash`).
 2. **Modul-Fixture (`examples/modules/<modul>.yaml`)**:
    - Vollständiges, spielbares Mini-Adventure (13–18 Räume).
-3. **CI-Pipeline (`scripts/ci.sh`)**:
-   - **Stufe 3 (Validierung)**: `examples/modules/<modul>.yaml` in die Liste aufnehmen.
-   - **Stufe 4 (Happy Path E2E)**: `ci/e2e/<modul>.in` und `ci/e2e/<modul>.expect`.
-   - **Stufe 5 (Failure Path E2E)**: `ci/e2e/<modul>-fail.in` und `ci/e2e/<modul>-fail.expect`.
+3. **CI-Pipeline (`scripts/ci.sh`) — Die fünf Eintragungsstellen:**
+   - **Stufe 3 (Validierung):** Automatisch via Dateiglobbing (`examples/modules/*.yaml`) erfasst.
+   - **Stufe 4 (Happy Path E2E):**
+     1. *Liste:* Name in die `for name in ...`-Schleife (`scripts/ci.sh:84`) eintragen.
+     2. *Case:* Im `case "$name" in ...` (`scripts/ci.sh:87`) in das Modul-Pattern aufnehmen (`src="examples/modules/$name.yaml"`).
+   - **Stufe 5 (Non-Victory / Failure / Behaviour E2E):**
+     3. *Liste:* Testfallname (`<modul>-fail` bzw. Verhaltenspfad wie `patrol-attack`) in die `for name in ...`-Schleife (`scripts/ci.sh:108`) eintragen.
+     4. *Case:* Im `case "$name" in ...` (`scripts/ci.sh:109`) die Quell-Fixture zuordnen.
+   - **E2E-Dateien (`ci/e2e/`):**
+     5. Die zugehörigen Steuerdateien anlegen:
+        - `ci/e2e/<modul>.in` und `ci/e2e/<modul>.expect` (Happy Path)
+        - `ci/e2e/<modul>-fail.in` und `ci/e2e/<modul>-fail.expect` (Failure Path)
+
+*(Achtung: Wird die Eintragung in Stufe 4 oder 5 von `scripts/ci.sh` vergessen, läuft die CI grün durch, ohne dass das Modul tatsächlich end-to-end getestet wird!)*
