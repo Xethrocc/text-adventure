@@ -46,7 +46,7 @@ roomTargets state =
     in nub (itemCompletionTerms roomItems ++ npcCompletionTerms roomNpcs)
 
 inventoryTargets :: GameState -> [String]
-inventoryTargets state = itemCompletionTerms (getItemsInLocation (CarriedBy "player") state)
+inventoryTargets state = itemCompletionTerms (getItemsInLocation (CarriedBy ActorPlayer) state)
 
 -- | Local copy of the reachable locked-exit entities. (The parser has its own
 --   variant for its own purposes; the two are deliberately independent.)

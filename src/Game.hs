@@ -263,7 +263,7 @@ getAllItemsInLocation loc state =
 -- | Check if player has an item in inventory
 hasItem :: ItemID -> GameState -> Bool
 hasItem iId state = case Map.lookup iId (itemStates (save state)) of
-    Just itemState -> itemLocation itemState == CarriedBy "player"
+    Just itemState -> itemLocation itemState == CarriedBy ActorPlayer
     Nothing        -> False
 
 -- | Check if an item is currently equipped
@@ -279,7 +279,7 @@ syncInventory saveState =
     saveState
         { inventory =
             Map.keys
-                (Map.filter (\itemState -> itemLocation itemState == CarriedBy "player") (itemStates saveState))
+                (Map.filter (\itemState -> itemLocation itemState == CarriedBy ActorPlayer) (itemStates saveState))
         }
 
 -- ---------------------------------------------------------------------------
@@ -349,7 +349,7 @@ getExitInDirection dir state = case getCurrentRoom state of
 
 -- | Add item to player's inventory
 pickupItem :: ItemID -> GameState -> GameState
-pickupItem iId state = relocateItem iId (CarriedBy "player") state
+pickupItem iId state = relocateItem iId (CarriedBy ActorPlayer) state
 
 -- | Remove item from player's inventory to current room
 dropItem :: ItemID -> GameState -> GameState
@@ -357,7 +357,7 @@ dropItem iId state = relocateItem iId (InRoom (currentRoom (save state))) state
 
 -- | Give item directly to player inventory (e.g., NPC reward, loot)
 giveItem :: ItemID -> GameState -> GameState
-giveItem iId state = relocateItem iId (CarriedBy "player") state
+giveItem iId state = relocateItem iId (CarriedBy ActorPlayer) state
 
 -- | Move an item to a specific room (e.g., loot drop)
 moveItemToRoom :: ItemID -> RoomID -> GameState -> GameState
@@ -861,12 +861,17 @@ evalPredicate (RoomHasTag rId tag) st =
     case lookupRoom rId st of
         Just room -> tag `Set.member` roomTags room
         Nothing   -> False
-evalPredicate (Location eId rId) st
-    | eId == "player" = currentRoom (save st) == rId
-    | otherwise =
+evalPredicate (Location actor rId) st = case actor of
+    ActorPlayer     -> currentRoom (save st) == rId
+    ActorNPC nId    -> checkEntityLoc nId
+    ActorEntity eId -> checkEntityLoc eId
+    ActorShip _     -> False
+    ActorRoom _     -> False
+  where
+    checkEntityLoc eId =
         case Map.lookup eId (npcStates (save st)) of
-            Just ns  -> npcLocation ns == InRoom rId
-            Nothing  -> case Map.lookup eId (itemStates (save st)) of
+            Just ns -> npcLocation ns == InRoom rId
+            Nothing -> case Map.lookup eId (itemStates (save st)) of
                 Just is -> itemLocation is == InRoom rId
                 Nothing -> False
 evalPredicate (CompareVar name op n) st =

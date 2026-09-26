@@ -202,7 +202,20 @@ data ActorRef
     deriving (Show, Eq, Generic)
 
 instance ToJSON ActorRef
-instance FromJSON ActorRef
+
+instance FromJSON ActorRef where
+    parseJSON (String s)
+        | s == "player" = pure ActorPlayer
+        | otherwise     = pure (ActorNPC (T.unpack s))
+    parseJSON v = genericParseJSON defaultOptions v
+
+-- | Canonical string ID for an actor reference.
+actorId :: ActorRef -> String
+actorId ActorPlayer       = "player"
+actorId (ActorNPC nId)    = nId
+actorId (ActorShip vId)   = vId
+actorId (ActorRoom rId)   = rId
+actorId (ActorEntity eId) = eId
 
 -- | Reference to a specific property of an actor or entity.
 data PropRef
@@ -450,7 +463,7 @@ data Predicate
     | EntityHasState String String           -- ^ entity, expected state (e.g. "wolf", "dead")
     | HasFlag FlagID                         -- ^ flag == "true"
     | RoomHasTag RoomID String               -- ^ room has a given tag
-    | Location String String   -- ^ entity ID, room ID (is entity in this room?)
+    | Location ActorRef RoomID -- ^ actor reference, room ID (is actor in this room?)
     | CompareVar String Comparator Int  -- ^ variable vs integer literal (mana >= 5)
     | VarIs String String               -- ^ text variable equals a literal (`{ var: X, is: Y }`)
     deriving (Show, Eq, Generic)
@@ -468,7 +481,7 @@ instance ToJSON Predicate where
         EntityHasState e s -> object [ "state"    .= e, "is" .= s ]
         HasFlag f          -> object [ "has_flag" .= f ]
         RoomHasTag r t     -> object [ "room"     .= r, "has_tag" .= t ]
-        Location e r       -> object [ "at"       .= e, "room" .= r ]
+        Location a r       -> object [ "at"       .= actorId a, "room" .= r ]
         CompareVar n op v  -> object [ "compare_var" .= object
                                         [ "name" .= n, "op" .= comparatorName op, "value" .= v ] ]
         VarIs n v          -> object [ "var" .= n, "is" .= v ]
@@ -820,14 +833,34 @@ instance FromJSON EffectValue
 -- | Typed location for MoveEntity.
 data Location
     = InRoom RoomID
-    | CarriedBy EntityID
+    | CarriedBy ActorRef
     | InContainer EntityID
-    | EquippedBy EntityID
+    | EquippedBy ActorRef
     | Removed
     deriving (Show, Eq, Generic)
 
-instance ToJSON Location
-instance FromJSON Location
+instance ToJSON Location where
+    toJSON (InRoom r)       = object [ "tag" .= ("InRoom" :: T.Text), "contents" .= r ]
+    toJSON (CarriedBy a)    = object [ "tag" .= ("CarriedBy" :: T.Text), "contents" .= toJSON a ]
+    toJSON (InContainer c)  = object [ "tag" .= ("InContainer" :: T.Text), "contents" .= c ]
+    toJSON (EquippedBy a)   = object [ "tag" .= ("EquippedBy" :: T.Text), "contents" .= toJSON a ]
+    toJSON Removed          = object [ "tag" .= ("Removed" :: T.Text) ]
+
+instance FromJSON Location where
+    parseJSON (String s) = pure (InRoom (T.unpack s))
+    parseJSON v = withObject "Location" (\o -> do
+        tag <- o .: "tag" :: Parser T.Text
+        case tag of
+            "InRoom"      -> InRoom <$> o .: "contents"
+            "CarriedBy"   -> do
+                c <- o .: "contents"
+                CarriedBy <$> parseJSON c
+            "InContainer" -> InContainer <$> o .: "contents"
+            "EquippedBy"  -> do
+                c <- o .: "contents"
+                EquippedBy <$> parseJSON c
+            "Removed"     -> pure Removed
+            _             -> fail ("Unknown Location tag: " ++ T.unpack tag)) v
 
 -- ---------------------------------------------------------------------------
 -- Conditionally selected text (Phase 3g)

@@ -209,7 +209,7 @@ testTakeAllPicksUpItems = do
 
 testGiveItem :: IO Bool
 testGiveItem = do
-    let (newState, _) = applyOutcome (MoveEntity "key" (CarriedBy "player")) "" initSampleGame
+    let (newState, _) = applyOutcome (MoveEntity "key" (CarriedBy ActorPlayer)) "" initSampleGame
     expectTrue "key in inventory" (hasItem "key" newState)
 
 testConsumeItem :: IO Bool
@@ -798,10 +798,63 @@ testValidateMissingShipInActorProp = do
 testLocationPlayerPredicate :: IO Bool
 testLocationPlayerPredicate = do
     let st = initSampleGame { save = (save initSampleGame) { currentRoom = "hallway" } }
-    r1 <- expectTrue "player in room" (evalPredicate (Location "player" "hallway") st)
-    r2 <- expectTrue "player not in room" (not (evalPredicate (Location "player" "start") st))
-    r3 <- expectTrue "npc location still works" (evalPredicate (Location "goblin" "hallway") st)
+    r1 <- expectTrue "player in room" (evalPredicate (Location ActorPlayer "hallway") st)
+    r2 <- expectTrue "player not in room" (not (evalPredicate (Location ActorPlayer "start") st))
+    r3 <- expectTrue "npc location still works" (evalPredicate (Location (ActorNPC "goblin") "hallway") st)
     pure (r1 && r2 && r3)
+
+-- | R1: Location round-trip and backward-compatible decoding of legacy "player" strings.
+testLocationJsonRoundTrip :: IO Bool
+testLocationJsonRoundTrip = do
+    let locs = [ CarriedBy ActorPlayer
+               , CarriedBy (ActorNPC "goblin")
+               , EquippedBy ActorPlayer
+               , EquippedBy (ActorNPC "goblin")
+               , InRoom "hallway"
+               , InContainer "chest"
+               , Removed
+               ]
+        roundTrips = all (\l -> Aeson.decode (Aeson.encode l) == Just l) locs
+    r1 <- expectTrue "Location round-trips cleanly" roundTrips
+    -- Legacy decode: String "player" -> ActorPlayer
+    let legacyCarried = Aeson.decode (BLC.pack "{\"tag\":\"CarriedBy\",\"contents\":\"player\"}")
+    r2 <- expectEqual (Just (CarriedBy ActorPlayer)) legacyCarried
+    let legacyEquipped = Aeson.decode (BLC.pack "{\"tag\":\"EquippedBy\",\"contents\":\"player\"}")
+    r3 <- expectEqual (Just (EquippedBy ActorPlayer)) legacyEquipped
+    let legacyNpc = Aeson.decode (BLC.pack "{\"tag\":\"CarriedBy\",\"contents\":\"goblin\"}")
+    r4 <- expectEqual (Just (CarriedBy (ActorNPC "goblin"))) legacyNpc
+    let legacyRoom = Aeson.decode (BLC.pack "\"start\"")
+    r5 <- expectEqual (Just (InRoom "start")) legacyRoom
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | R1: Predicate.Location round-trip and backward-compatible decoding of legacy "player" string.
+testPredicateLocationJsonRoundTrip :: IO Bool
+testPredicateLocationJsonRoundTrip = do
+    let pPlayer = Location ActorPlayer "hallway"
+        pNpc = Location (ActorNPC "goblin") "hallway"
+    r1 <- expectEqual (Just pPlayer) (Aeson.decode (Aeson.encode pPlayer))
+    r2 <- expectEqual (Just pNpc) (Aeson.decode (Aeson.encode pNpc))
+    -- Legacy JSON: { "at": "player", "room": "hallway" }
+    let legacyPlayer = Aeson.decode (BLC.pack "{\"at\":\"player\",\"room\":\"hallway\"}")
+    r3 <- expectEqual (Just pPlayer) legacyPlayer
+    let legacyNpc = Aeson.decode (BLC.pack "{\"at\":\"goblin\",\"room\":\"hallway\"}")
+    r4 <- expectEqual (Just pNpc) legacyNpc
+    pure (r1 && r2 && r3 && r4)
+
+-- | R1: an unknown entity in a `Predicate.Location` (e.g. `at: palyer` typo) is reported as a MissingEntity error.
+testValidateTypoInPredicateLocation :: IO Bool
+testValidateTypoInPredicateLocation = do
+    let Just typoPred = Aeson.decode (BLC.pack "{\"at\":\"palyer\",\"room\":\"start\"}") :: Maybe Predicate
+        Just okPred   = Aeson.decode (BLC.pack "{\"at\":\"player\",\"room\":\"start\"}") :: Maybe Predicate
+        gwTypo = (world initSampleGame)
+            { triggerDefs = [ TriggerDef "t" OnTurn (Just typoPred) [SendMessage "ok"] False 0 ] }
+        gwOk = (world initSampleGame)
+            { triggerDefs = [ TriggerDef "t" OnTurn (Just okPred) [SendMessage "ok"] False 0 ] }
+    r1 <- expectTrue "'at: palyer' fixture produces MissingEntity validation error"
+              (MissingEntity "palyer" "property" `elem` validateWorld gwTypo)
+    r2 <- expectTrue "'at: player' does not produce validation error"
+              (MissingEntity "player" "property" `notElem` validateWorld gwOk)
+    pure (r1 && r2)
 
 -- | `exit` is the quit alias, `disembark` leaves a vehicle — the help text has
 --   to say the same, otherwise players quit the game instead of leaving a ship.
@@ -1685,7 +1738,7 @@ testQuestRewardGiveItemWorks = do
     let quest = Quest "test_quest" "Test Quest" "desc"
                     Map.empty
                     [QuestStage "s1" "step one" Nothing]
-                    (Just (MoveEntity "torch" (CarriedBy "player")))
+                    (Just (MoveEntity "torch" (CarriedBy ActorPlayer)))
         withQuest = initSampleGame
             { world = (world initSampleGame)
                 { questDefs = Map.insert "test_quest" quest (questDefs (world initSampleGame)) } }
@@ -1698,7 +1751,7 @@ testQuestRewardGiveItemWorks = do
 -- | Condition-Tick nutzt ebenfalls den vollständigen Interpreter
 testConditionTickGiveItemWorks :: IO Bool
 testConditionTickGiveItemWorks = do
-    let cond = Condition "reward_tick" 2 (Just (MoveEntity "torch" (CarriedBy "player"))) Nothing
+    let cond = Condition "reward_tick" 2 (Just (MoveEntity "torch" (CarriedBy ActorPlayer))) Nothing
         withCond = initSampleGame
             { save = (save initSampleGame) { conditions = Map.singleton "reward_tick" cond } }
         (st1, _) = tickConditions withCond
@@ -2249,7 +2302,7 @@ testTakeEventOnlyOnSuccess = do
                              (ItemState (InRoom "start") "intact" Map.empty False)
                              (itemStates (save base)) } }
         carriedTorch = st0 { save = (save st0)
-                       { itemStates = Map.adjust (\i -> i { itemLocation = CarriedBy "player" })
+                       { itemStates = Map.adjust (\i -> i { itemLocation = CarriedBy ActorPlayer })
                                                  "torch" (itemStates (save st0)) } }
         fires st ev cmd =
             let st' = st { world = (world st)
@@ -2472,7 +2525,7 @@ testOnUseTriggerMultiWordAlias = do
             { world = w
             , save = (save sample)
                 { itemStates = Map.insert "oil_can"
-                    (ItemState (CarriedBy "player") "intact" Map.empty True)
+                    (ItemState (CarriedBy ActorPlayer) "intact" Map.empty True)
                     (itemStates (save sample)) } }
         runForm t = let (ls', _) = applyLoopCommand (Interact VUse t) (initLoopState st)
                     in Map.lookup "lantern_lit" (flags (save (lsCurrent ls')))
@@ -2542,11 +2595,11 @@ testEquippedImpliesCarried = do
         st = sample { world = w
                     , save = (save sample)
                         { itemStates = Map.insert "blade"
-                            (ItemState (CarriedBy "player") "intact" Map.empty True)
+                            (ItemState (CarriedBy ActorPlayer) "intact" Map.empty True)
                             (itemStates (save sample)) } }
         (st', _) = executeCommand (EquipCmd "blade") st
     r1 <- expectEqual (Just "blade") (Map.lookup Weapon (equipment (save st')))
-    r2 <- expectEqual (Just (CarriedBy "player"))
+    r2 <- expectEqual (Just (CarriedBy ActorPlayer))
             (itemLocation <$> Map.lookup "blade" (itemStates (save st')))
     pure (r1 && r2)
 
@@ -2558,7 +2611,7 @@ testRemovedItemNotInAnyRoom = do
         st = sample { world = w
                     , save = (save sample)
                         { itemStates = Map.insert "ash"
-                            (ItemState (CarriedBy "player") "intact" Map.empty True)
+                            (ItemState (CarriedBy ActorPlayer) "intact" Map.empty True)
                             (itemStates (save sample)) } }
         st' = consumeItem "ash" st
         inRooms = or [ "ash" `elem` map itemId (getItemsInLocation (InRoom r) st')
@@ -3110,7 +3163,7 @@ tradeWorld stock credits =
                   , CompareVar ("shop.merchant." ++ "rope") CGt 0 ])
             (Sequence [ ModifyValue (VRVariable "credits") (-12)
                       , ModifyValue (VRVariable "shop.merchant.rope") (-1)
-                      , MoveEntity "rope" (CarriedBy "player")
+                      , MoveEntity "rope" (CarriedBy ActorPlayer)
                       , SendMessage "You buy the rope." ])
             (SendMessage "You can't afford it.")
         sellEff = Sequence [ ModifyValue (VRVariable "credits") 5
@@ -3162,7 +3215,7 @@ testTradeSellAddsCredits = do
     let st = tradeWorld [] 20
         withRope = st { save = (save st)
             { itemStates = Map.insert "rope"
-                (ItemState (CarriedBy "player") "intact" Map.empty True)
+                (ItemState (CarriedBy ActorPlayer) "intact" Map.empty True)
                 (itemStates (save st)) } }
         (st', _) = executeCommand (Interact (VCustom "sell") "rope") withRope
     r1 <- expectEqual (Just (VVInt 25)) (getVariable "credits" st')
@@ -5835,5 +5888,9 @@ main = do
         , runTest "GenerateRoom variable interpolation (Phase 3C)" testGenerateRoomInterpolation
         , runTest "sandbox resource harvest formulas (Phase 3C)" testSandboxResourceHarvestFormulas
         , runTest "biome landscape ascii art with day/weather variants (Phase 2 / S3)" testBiomeAsciiArtVariantsDayNight
+        -- R1: Location & Predicate.Location typed ActorRef and backward compatibility
+        , runTest "Location round-trip and backward-compatible decoding (R1)" testLocationJsonRoundTrip
+        , runTest "Predicate.Location round-trip and backward-compatible decoding (R1)" testPredicateLocationJsonRoundTrip
+        , runTest "at: palyer typo fixture produces validation error (R1)" testValidateTypoInPredicateLocation
         ]
     when (not (and results)) exitFailure

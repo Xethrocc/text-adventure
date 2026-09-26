@@ -274,6 +274,7 @@ checkMissingEntitiesInDefs gw =
         entityRefs = Set.fromList dynamicEntities
             `Set.union` Set.fromList (Map.keys (itemDefs gw) ++ Map.keys (npcDefs gw) ++ lockEntities)
         allRefs = concatMap idsFromOutcomeEntity (allOutcomes gw)
+               ++ concatMap idsFromPredicateEntity (allPredicates gw)
     in [MissingEntity eId "property" | eId <- nub allRefs, not (Set.member eId entityRefs)]
 
 checkMissingQuestsInDefs :: GameWorld -> [ValidationError]
@@ -436,6 +437,24 @@ idsFromPredicateVehicle p = case p of
     shipFromRef (VRVariable n)                  = shipFromVar n
     shipFromRef (VRActorProp (ActorShip vId) _) = [vId]
     shipFromRef _                               = []
+
+-- | Entity IDs referenced in Predicates (e.g. Predicate.Location and VRActorProp).
+idsFromPredicateEntity :: Predicate -> [String]
+idsFromPredicateEntity p = case p of
+    PNot q            -> idsFromPredicateEntity q
+    PAll qs           -> concatMap idsFromPredicateEntity qs
+    PAny qs           -> concatMap idsFromPredicateEntity qs
+    Location actor _  -> actorEntity actor
+    Compare lhs _ rhs -> actorFromRef lhs ++ actorFromRef rhs
+    _                 -> []
+  where
+    actorEntity ActorPlayer       = ["player"]
+    actorEntity (ActorNPC nId)    = [nId]
+    actorEntity (ActorEntity eId) = [eId]
+    actorEntity _                 = []
+
+    actorFromRef (VRActorProp actor _) = actorEntity actor
+    actorFromRef _                     = []
 
 -- | `"ship.<vehicleId>.<system>"` -> `Just "<vehicleId>"`; anything else ->
 --   Nothing. Requires a non-empty vehicle id and a following ".system" part,

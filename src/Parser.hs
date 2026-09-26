@@ -488,7 +488,7 @@ executeCommand Look state = case getCurrentRoom state of
             in (state', full)
 
 executeCommand Inventory state =
-    let invItems = getItemsInLocation (CarriedBy "player") state
+    let invItems = getItemsInLocation (CarriedBy ActorPlayer) state
     in if null invItems
        then (state, "You're not carrying anything.")
        else (state, "Inventory: " ++ intercalate ", " (map itemName invItems))
@@ -591,7 +591,7 @@ executeCommand TakeAll state =
             in (finalState, intercalate "\n" msgs)
 
 executeCommand DropAll state =
-    let invItems = getItemsInLocation (CarriedBy "player") state
+    let invItems = getItemsInLocation (CarriedBy ActorPlayer) state
     in if null invItems
        then (state, "You're not carrying anything to drop.")
        else let (finalState, msgs) = foldl' (\(s, ms) item ->
@@ -642,7 +642,7 @@ executeCommand (WatchCmd maybeTarget) state = case getCurrentRoom state of
                         Nothing  -> (state, "You don't see '" ++ targetStr ++ "' here.")
   where
     allReachableItems = getItemsInLocation (InRoom (currentRoom (save state))) state
-                        ++ getItemsInLocation (CarriedBy "player") state
+                        ++ getItemsInLocation (CarriedBy ActorPlayer) state
     roomNPCs = getNPCsInRoom (currentRoom (save state)) state
     watchArt art label = case asciiPlayback art state of
         ([], _)            -> (state, "There is nothing to watch about " ++ label ++ ".")
@@ -683,7 +683,7 @@ executeCommand (Interact verb targetStr) state =
 executeCommand (InteractWith VUseOn itemStr entityStr) state =
     let itemTarget = normalizeText itemStr
         entityTarget = normalizeText entityStr
-        inventoryItems = getItemsInLocation (CarriedBy "player") state
+        inventoryItems = getItemsInLocation (CarriedBy ActorPlayer) state
         maybeItem = find (matchesItemTarget itemTarget) inventoryItems
         maybeVehicle = findVehicle entityStr state
     in case maybeItem of
@@ -845,7 +845,7 @@ resolveInteractTarget verb targetStr state
   where
     resolvedTarget = resolveHotspotTarget targetStr state
     roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
-    invItems = getItemsInLocation (CarriedBy "player") state
+    invItems = getItemsInLocation (CarriedBy ActorPlayer) state
     allReachableItems = roomItems ++ invItems
     roomNPCs = getNPCsInRoom (currentRoom (save state)) state
     targetItem = find (matchesItemTarget resolvedTarget) allReachableItems
@@ -858,7 +858,7 @@ interactItem :: Verb -> ItemDef -> Maybe ItemState -> String -> GameState -> Com
 interactItem verb item maybeItemState targetStr state =
     let iId = itemId item
         currentStatus = maybe "unknown" itemStatus maybeItemState
-        notCarried = maybe True (\loc -> loc /= CarriedBy "player") (fmap itemLocation maybeItemState)
+        notCarried = maybe True (\loc -> loc /= CarriedBy ActorPlayer) (fmap itemLocation maybeItemState)
         vmLookup = Map.lookup (verb, currentStatus) (itemVerbMap item)
     in case (verb, vmLookup) of
         -- Taking: enforce portability, then pick up AND run on_take.
@@ -958,7 +958,7 @@ hotspotLabel state h = case Map.lookup (hsTarget h) (itemDefs (world state)) of
 findMatchingItem :: String -> GameState -> Maybe ItemDef
 findMatchingItem targetStr state =
     let roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
-        invItems = getItemsInLocation (CarriedBy "player") state
+        invItems = getItemsInLocation (CarriedBy ActorPlayer) state
     in find (matchesItemTarget targetStr) (invItems ++ roomItems)
 
 -- | Is the room dark?

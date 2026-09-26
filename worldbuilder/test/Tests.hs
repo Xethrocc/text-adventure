@@ -1706,7 +1706,7 @@ testPatrolCompiles = do
                 step0 = byId "patrol.step.wolf.0"
                 warn  = byId "patrol.warn.wolf"
                 atk   = byId "patrol.attack.wolf"
-                roomCheck r = E.PAll [ E.Location "player" r, E.Location "wolf" r ]
+                roomCheck r = E.PAll [ E.Location E.ActorPlayer r, E.Location (E.ActorNPC "wolf") r ]
             r1 <- expectEqual [ "patrol.clear.wolf"
                               , "patrol.step.wolf.0"
                               , "patrol.step.wolf.1"
@@ -2158,7 +2158,7 @@ testShipSystemsCompile = do
             r5 <- case stationTriggers of
                 [t] -> do
                     a <- expectEqual [E.OnCommand "feuern"] (map E.trEvent stationTriggers)
-                    b <- expectEqual (Just (E.PAll [E.Location "player" "kestrel_guns"])) (E.trCondition t)
+                    b <- expectEqual (Just (E.PAll [E.Location E.ActorPlayer "kestrel_guns"])) (E.trCondition t)
                     c <- expectEqual [E.SendMessage "Die Waffen feuern."] (E.trEffects t)
                     pure (a && b && c)
                 _ -> do

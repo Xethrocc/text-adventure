@@ -963,7 +963,7 @@ compilePatrol roomIds npcIds (Just p) =
             E.TriggerDef ("patrol." ++ kind ++ "." ++ ahNPC h) E.OnTurn
                 (Just (E.PNot (E.EntityHasState (ahNPC h) "dead")))
                 [ E.Conditional
-                    (E.PAll [ E.Location "player" r, E.Location (ahNPC h) r ])
+                    (E.PAll [ E.Location E.ActorPlayer r, E.Location (E.ActorNPC (ahNPC h)) r ])
                     payload E.Noop
                 | r <- ahPath h ] False 0
 
@@ -1099,7 +1099,7 @@ compileShipSystems registry vehicles =
             [ E.TriggerDef
                 ( "ship." ++ avId v ++ ".station." ++ astRoom st )
                 (E.OnCommand verb)
-                (Just (E.PAll ([E.Location "player" (astRoom st)] ++ maybe [] (:[]) (astWhen st))))
+                (Just (E.PAll ([E.Location E.ActorPlayer (astRoom st)] ++ maybe [] (:[]) (astWhen st))))
                 [ compileOutcomes (astEffects st) ]
                 False
                 0
@@ -1770,13 +1770,13 @@ compileAActionOutcome ao = case ao of
     AOMessage s -> E.SendMessage s
     AOHealPlayer n -> E.ModifyValue E.VRPlayerHealth n
     AODamagePlayer n -> E.ModifyValue E.VRPlayerHealth (-n)
-    AOGiveItem i -> E.MoveEntity i (E.CarriedBy "player")
+    AOGiveItem i -> E.MoveEntity i (E.CarriedBy E.ActorPlayer)
     AOConsumeItem i -> E.MoveEntity i E.Removed
     AOSetFlag f v -> E.SetValue (E.VRFlag f) (E.EVString v)
     AOStartQuest q -> E.QuestOp E.StartQuest q
     AOAdvanceQuest q -> E.QuestOp E.AdvanceQuest q
     AOCompleteQuest q -> E.QuestOp E.CompleteQuest q
-    AOEquipItem i -> E.MoveEntity i (E.EquippedBy "player")
+    AOEquipItem i -> E.MoveEntity i (E.EquippedBy E.ActorPlayer)
     AORoomTransition r -> E.SetValue (E.VRActorProp E.ActorPlayer E.PRoom) (E.EVString r)
     AOMoveNPC n r -> E.MoveEntity n (E.InRoom r)
     AODamageNPC n amount -> E.ModifyValue (E.VRActorProp (E.ActorNPC n) E.PHealth) (-amount)

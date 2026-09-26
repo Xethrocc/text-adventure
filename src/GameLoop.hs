@@ -292,12 +292,12 @@ commandEvents cmd before after = concat
         -- `drop` of something not held must not fire `OnTake`/`OnDrop`.
         Interact VTake t ->
             [ OnTake iid | Just iid <- [findItemIdByAlias t after]
-                         , itemLoc iid before /= Just (CarriedBy "player")
-                         , itemLoc iid after  == Just (CarriedBy "player") ]
+                         , itemLoc iid before /= Just (CarriedBy ActorPlayer)
+                         , itemLoc iid after  == Just (CarriedBy ActorPlayer) ]
         Interact VDrop t ->
             [ OnDrop iid | Just iid <- [findItemIdByAlias t after]
-                         , itemLoc iid before == Just (CarriedBy "player")
-                         , itemLoc iid after  /= Just (CarriedBy "player") ]
+                         , itemLoc iid before == Just (CarriedBy ActorPlayer)
+                         , itemLoc iid after  /= Just (CarriedBy ActorPlayer) ]
         -- `use` has no state criterion (its effect is up to the author).
         Interact VUse t  -> [OnUse iid | Just iid <- [findItemIdByAlias t after]]
         _ -> []
