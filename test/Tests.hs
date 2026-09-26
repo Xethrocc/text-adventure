@@ -13,6 +13,8 @@ import System.Timeout (timeout)
 import Control.Exception (bracket, evaluate, try, SomeException)
 import Game
 import Vehicles
+import Effects
+import Quests
 import GameLoop (LoopState (..), initLoopState, applyLoopCommand,
                  bumpMetaRuns, reseedRng,
                  commandEvents, consumesTurn, consumesTurnIn, runGameWithFrontend,

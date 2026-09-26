@@ -17,12 +17,11 @@ module Vehicles
     , refuelVehicle
     , clearVehicleCondition
     , vehicleConditionTickWith
-    , vehicleConditionTick
     , vehicleLookAddon
     ) where
 
 import Types
-import Game (followParty, hasItem, consumeItem, applyOutcome)
+import Game (followParty, hasItem, consumeItem)
 import Data.List (intercalate, find, elemIndex, foldl')
 import Data.Char (toLower)
 import Data.Maybe (listToMaybe, fromMaybe)
@@ -223,10 +222,6 @@ vehicleConditionTickWith runOutcome state = case currentVehicle (save state) of
                             in (s2, if null m2 then ms else ms ++ [m2]))
                             (state, []) outcomes
                    in (st', intercalate "\n" msgs)
-
--- | Fire a vehicle-wide condition effect using the engine's applyOutcome.
-vehicleConditionTick :: GameState -> (GameState, String)
-vehicleConditionTick = vehicleConditionTickWith applyOutcome
 
 -- | Vehicle flavour for `look`: room override + active conditions + fuel
 vehicleLookAddon :: GameState -> Maybe String
