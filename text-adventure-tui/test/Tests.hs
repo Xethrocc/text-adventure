@@ -315,11 +315,11 @@ testAmbientLoops = do
     case advancePanel p0 of
         PanelAdvanced (PanelAmbient _ _ 1 _) -> do
             let p2 = PanelAmbient ["W0", "W1", "W2"] 250000 2 "Hall"
-            case advancePanel p2 of
+            rWrap <- case advancePanel p2 of
                 PanelAdvanced (PanelAmbient _ _ 0 _) -> expectTrue "wraps to 0" True
                 _ -> expectTrue "wrap advances" False
             -- second check: first tick result was asserted by the pattern
-            pure True
+            pure rWrap
         _ -> expectTrue "ambient advances" False
 
 testCutsceneFinishes :: IO Bool
@@ -368,7 +368,6 @@ testQuantize = do
 
 testParse :: IO Bool
 testParse = do
-    let segs = parseSgrLine "\ESC[1;33m!\ESC[0m rest"
     r1 <- expectEqual "two segments" 2 (length segs)
     r2 <- expectEqual "hotspot state: bold + yellow (33 -> ISO 3)"
                       (Just (Iso 3), Nothing, True)
