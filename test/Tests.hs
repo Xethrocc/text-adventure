@@ -15,6 +15,7 @@ import Game
 import Vehicles
 import Effects
 import Quests
+import Cards
 import GameLoop (LoopState (..), initLoopState, applyLoopCommand,
                  bumpMetaRuns, reseedRng,
                  commandEvents, consumesTurn, consumesTurnIn, runGameWithFrontend,

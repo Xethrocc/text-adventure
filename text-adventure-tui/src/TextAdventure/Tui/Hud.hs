@@ -34,7 +34,8 @@ import Data.Maybe (fromMaybe, listToMaybe, mapMaybe)
 
 import Types
 import Game (effectiveConnections, lookupRoom, getVariable, combatRound, combatRoundKey,
-             combatActionKey, hcatBoxes, renderCardBox, renderDeckCombatHud)
+             combatActionKey)
+import Cards (hcatBoxes, renderCardBox, renderDeckCombatHud)
 
 -- | One cell of the minimap: the room's one-letter stamp plus the row/col
 --   it occupies in the grid. Drawn with box-drawing connectors between cells.

@@ -8,6 +8,7 @@ import Game
 import Vehicles
 import Effects
 import Quests
+import Cards
 import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombat, targetShipSystems)
 import Control.Applicative ((<|>))
 import Data.Char (toLower, isDigit)

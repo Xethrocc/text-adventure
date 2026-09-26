@@ -23,7 +23,6 @@ module Effects
     , tickConditions
     , completeQuestWithMsg
     , vehicleConditionTick
-    , playCard
     , joinMessages
     ) where
 
@@ -404,10 +403,6 @@ completeQuestWithMsg = completeQuestWith applyOutcome
 -- | Vehicle-wide condition tick using applyOutcome.
 vehicleConditionTick :: GameState -> (GameState, String)
 vehicleConditionTick = vehicleConditionTickWith applyOutcome
-
--- | Play a card using applyOutcome.
-playCard :: Int -> Maybe String -> GameState -> CommandResult
-playCard = playCardWith applyOutcome
 
 -- ---------------------------------------------------------------------------
 -- Trigger system (Phase 3f)
