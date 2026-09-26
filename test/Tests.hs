@@ -12,10 +12,11 @@ import Data.Either (isLeft)
 import System.Timeout (timeout)
 import Control.Exception (bracket, evaluate, try, SomeException)
 import Game
+import Vehicles
 import GameLoop (LoopState (..), initLoopState, applyLoopCommand,
                  bumpMetaRuns, reseedRng,
                  commandEvents, consumesTurn, consumesTurnIn, runGameWithFrontend,
-                 handleGameOver, saveBlockedMessage, loadBlockedMessage, deathMenuText)
+                 handleGameOver, saveBlockedMessage, loadBlockedMessage)
 import Frontend (Frontend (..), commandCompletion)
 import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText, bindCommandVars,
                InteractTarget (..), resolveInteractTarget)
@@ -29,7 +30,7 @@ import System.Directory (createDirectoryIfMissing, createDirectory, doesDirector
                          doesFileExist, getTemporaryDirectory, listDirectory,
                          removeDirectoryRecursive, removeFile, withCurrentDirectory)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
-import Data.IORef (IORef, newIORef, readIORef, writeIORef, modifyIORef')
+import Data.IORef (newIORef, readIORef, writeIORef, modifyIORef')
 import System.Console.Haskeline (Completion (..))
 import System.Exit (exitFailure)
 import Types
@@ -1142,7 +1143,6 @@ testMetaRunsCounter = do
             { world = metaWorld
             , save = (save initSampleGame)
                 { variables = Map.fromList [("meta.souls", VVInt 0)] } }
-        loop = LoopState pristine [] pristine Nothing
     -- restart path bumps: 0 (carried) -> run 1... but the pristine state had no
     -- meta.runs yet; two bumps simulate run-start + restart
     let b1 = bumpMetaRuns pristine

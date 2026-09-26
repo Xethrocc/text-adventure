@@ -21,7 +21,8 @@ module Combat
     ) where
 
 import Types
-import Game (effectiveAttack, effectiveDefense, getVariable, getVehicleState,
+import Vehicles (getVehicleState)
+import Game (effectiveAttack, effectiveDefense, getVariable,
             resolveAsciiArt,
             combatRound, combatRoundKey, combatEngagedKey, combatActionKey,
             combatInitiativePlayerKey, combatInitiativeKey, combatAbilityKey,

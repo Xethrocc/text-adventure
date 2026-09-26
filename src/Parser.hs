@@ -5,6 +5,7 @@ module Parser where
 
 import Types
 import Game
+import Vehicles
 import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombat, targetShipSystems)
 import Control.Applicative ((<|>))
 import Data.Char (toLower, isDigit)

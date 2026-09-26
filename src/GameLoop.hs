@@ -24,6 +24,7 @@ module GameLoop
 
 import Types
 import Game
+import Vehicles
 import Parser
 import Verbs (verbCanonicalName)
 import SaveLoad
