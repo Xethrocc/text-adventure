@@ -17,7 +17,7 @@ import Data.Aeson.Types (Parser)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
-import {-# SOURCE #-} Types (RoomID, ItemID, VehicleID, Effect)
+import {-# SOURCE #-} Types.Core (RoomID, ItemID, VehicleID, Effect)
 
 -- | How a vehicle moves between its stops
 data VehicleType

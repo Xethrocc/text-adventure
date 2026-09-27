@@ -17,7 +17,7 @@ import Data.Char (toLower)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 
-import {-# SOURCE #-} Types (CardID, Effect)
+import {-# SOURCE #-} Types.Core (CardID, Effect)
 
 -- | Card classification for color coding, filtering and gameplay roles.
 data CardType

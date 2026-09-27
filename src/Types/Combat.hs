@@ -17,7 +17,7 @@ import GHC.Generics (Generic)
 import Data.Aeson
 import qualified Data.Text as T
 
-import {-# SOURCE #-} Types (Effect, noopEffect, AsciiArt, emptyAscii, isEmptyAscii, ItemID)
+import {-# SOURCE #-} Types.Core (Effect, noopEffect, AsciiArt, emptyAscii, isEmptyAscii, ItemID)
 
 -- | Player ability definition for tactical combat (Phase 7f-3, step A3).
 data PlayerAbility = PlayerAbility

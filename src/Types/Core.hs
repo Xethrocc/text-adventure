@@ -1,0 +1,1886 @@
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
+
+-- | Core data types for the text adventure engine
+module Types.Core
+    ( -- * ID aliases
+      ItemID
+    , RoomID
+    , NPCID
+    , EntityID
+    , VehicleID
+    , QuestID
+    , SkillID
+    , FlagID
+    , FactionID
+    , CardID
+    , ClipID
+      -- * Command results
+    , CommandResult
+      -- * Variables
+    , VariableType (..)
+    , VariableValue (..)
+    , VarDef (..)
+      -- * Basic enumerations
+    , Direction (..)
+    , Exit (..)
+    , exitRoomID
+    , Verb (..)
+    , VerbDef (..)
+    , directionDelta
+    , oppositeDirection
+    , GameOverReason (..)
+      -- * Equipment
+    , EquipSlot (..)
+    , EquipEffect (..)
+      -- * Predicates & Expressions
+    , Comparator (..)
+    , comparatorName
+    , parseComparatorName
+    , ActorRef (..)
+    , actorId
+    , PropRef (..)
+    , ValueRef (..)
+    , legacyVRProperty
+    , Expr (..)
+    , showExpr
+    , ExprToken (..)
+    , tokenizeExpr
+    , parseExprTokens
+    , parseExprAdditive
+    , parseExprMultiplicative
+    , parseExprUnary
+    , parseExprPrimary
+    , parseExpr
+    , Predicate (..)
+      -- * Audio / Music
+    , MusicCommand (..)
+      -- * Effects
+    , Effect (..)
+    , noopEffect
+    , EffectValue (..)
+    , Location (..)
+    , QuestOp (..)
+      -- * Text and Art
+    , TextVariant (..)
+    , CondText (..)
+    , plainText
+    , isEmptyCond
+    , Hotspot (..)
+    , AsciiArt (..)
+    , Ambient (..)
+    , emptyAscii
+    , isEmptyAscii
+    , asciiPair
+      -- * JSON helpers
+    , verbStateMapToJSON
+    , verbStateMapFromJSON
+    , verbStateMapFromLegacyJSON
+    , tupleMapToJSON
+    , tupleMapFromJSON
+    , tupleMapFromLegacyJSON
+      -- * Items
+    , ItemDef (..)
+    , ItemState (..)
+      -- * Dialogue
+    , DialogueChoice (..)
+    , DialogueNode (..)
+    , DialogueTree (..)
+      -- * NPCs
+    , NPCDef (..)
+    , NPCState (..)
+    , ContainerState (..)
+      -- * Player
+    , Player (..)
+    , Inventory
+      -- * Conditions
+    , Condition (..)
+      -- * Quests
+    , Quest (..)
+    , QuestStage (..)
+      -- * Rooms
+    , Room (..)
+      -- * Events and Triggers
+    , EventType (..)
+    , TriggerDef (..)
+    , TriggerState (..)
+      -- * Procedural Sandbox & Cutscenes
+    , BiomeTemplate (..)
+    , SandboxZone (..)
+    , Clip (..)
+      -- * Game Policy & World
+    , GamePolicy (..)
+    , defaultGamePolicy
+    , GameWorld (..)
+    , itemInteractionsToJSON
+    , parseItemInteractions
+      -- * Save & Game State
+    , SaveState (..)
+    , exitOverridesToJSON
+    , parseExitOverrides
+    , SaveFile (..)
+    , GameState (..)
+      -- * RNG and Utilities
+    , initialRngState
+    , nextRng
+    , slugify
+    , splitMix64Mix
+    , deriveCellSeed
+    , sandboxRoomId
+    , parseSandboxRoomId
+    , isSandboxTarget
+    ) where
+
+import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
+import qualified Data.Text as T
+import Data.Word (Word64)
+import Data.Bits (shiftR, xor)
+import GHC.Generics (Generic)
+import Data.Aeson
+import Data.Aeson.Types (Parser, Pair, toJSONKeyText)
+import Control.Applicative ((<|>))
+import Control.Monad (guard)
+import Data.Char (toLower, isDigit, isAlpha, isAlphaNum, isSpace)
+import Data.List (intercalate, stripPrefix, foldl')
+import Data.Maybe (isNothing)
+import qualified Data.Foldable as Foldable
+import Text.Read (readMaybe)
+
+import Types.Cards
+import Types.Vehicles
+import Types.Combat
+
+-- ---------------------------------------------------------------------------
+-- ID aliases
+--
+-- All IDs, descriptions and messages are `String`, not `Text`. Review P2-24
+-- raised this ("`computeWorldChecksum` and `resolveCondText` pay for it") and
+-- asked for a conscious decision rather than a silent omission:
+--
+--   * Every value here crosses the `world.json` boundary and the YAML authoring
+--     schema. `String` keeps `Aeson`/`HsYAML` round-trips direct, and the
+--     character-level work (`computeWorldChecksum`, `resolveCondText`) is
+--     measured at ~12 ns per command at TheFog scale.
+--   * Migrating to `Text` touches every module and every type alias at once —
+--     a cross-cutting change with no user-visible effect and a real risk of
+--     half-migrated APIs.
+--
+-- Decision (Cluster E): keep `String`. Revisit only if a profiling run shows
+-- text handling dominating, which the measurement above does not.
+-- ---------------------------------------------------------------------------
+
+type ItemID    = String
+type RoomID    = String
+type NPCID     = String
+type EntityID  = String
+type VehicleID = String
+type QuestID   = String
+type SkillID   = String
+type FlagID    = String
+type FactionID = String
+type CardID    = String
+
+-- ---------------------------------------------------------------------------
+-- | Combined result of executing a command
+type CommandResult = (GameState, String)
+
+-- ---------------------------------------------------------------------------
+-- Variable system (Phase 3b): deklarierte Variablen für erweiterte Profile
+-- ---------------------------------------------------------------------------
+
+-- | Variable type: determines valid values and validation.
+data VariableType
+    = VTBool                     -- ^ true/false (stored as Int 0/1)
+    | VTInt (Maybe Int) (Maybe Int)  -- ^ integer range (Nothing = unbounded)
+    | VTText                     -- ^ arbitrary string
+    | VTEnum [String]            -- ^ one of the listed values
+    deriving (Show, Eq, Generic)
+
+instance ToJSON VariableType
+instance FromJSON VariableType
+
+-- | A runtime variable value.
+data VariableValue
+    = VVBool Bool
+    | VVInt  Int
+    | VVText String
+    deriving (Show, Eq, Generic)
+
+instance ToJSON VariableValue
+instance FromJSON VariableValue
+
+-- | Static definition of an adventure-declared variable.
+data VarDef = VarDef
+    { vdVarName    :: String
+    , vdVarType    :: VariableType
+    , vdVarInitial :: VariableValue
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON VarDef
+instance FromJSON VarDef
+
+-- | Basic enumerations
+-- ---------------------------------------------------------------------------
+
+-- | Direction enumeration for movement
+data Direction = North | South | East | West | Up | Down
+               | Northeast | Northwest | Southeast | Southwest
+    deriving (Show, Eq, Ord, Enum, Bounded, Generic)
+
+instance ToJSON Direction
+instance FromJSON Direction
+instance ToJSONKey Direction
+instance FromJSONKey Direction
+
+-- | Exit connection between rooms
+data Exit
+    = Open String             -- ^ Destination room name
+    | Locked String String    -- ^ Destination room name, Entity name
+    deriving (Show, Eq, Generic)
+
+instance ToJSON Exit
+instance FromJSON Exit
+
+-- | Target RoomID of an Exit (Open or Locked).
+exitRoomID :: Exit -> RoomID
+exitRoomID (Open r) = r
+exitRoomID (Locked r _) = r
+
+-- | Verb for dynamic actions. Core verbs are built in; adventures may
+--   declare additional verbs (e.g. cast, hack, dock) via the world's verb
+--   registry (Phase 3a). VUnknown is a parse fallback, never authored.
+data Verb = VGo | VLook | VLookAt | VTake | VDrop | VInventory | VUse | VUseOn
+          | VTalk | VAttack | VSearch | VHelp | VQuit | VUnknown
+          | VCustom String
+    deriving (Show, Read, Eq, Ord, Generic)
+
+instance ToJSON Verb
+instance FromJSON Verb
+
+-- | A declared adventure verb: canonical name plus input aliases.
+--   The canonical name is what appears in verb_map keys ("cast,intact").
+data VerbDef = VerbDef
+    { vdName    :: String
+    , vdAliases :: [String]
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON VerbDef
+instance FromJSON VerbDef
+
+-- | Reason the game ended
+data GameOverReason = Victory | Death | Custom String
+    deriving (Show, Eq, Generic)
+
+instance ToJSON GameOverReason
+instance FromJSON GameOverReason
+
+-- ---------------------------------------------------------------------------
+-- Equipment
+-- ---------------------------------------------------------------------------
+
+-- | Slots an item can be equipped in. One item per slot.
+data EquipSlot
+    = Head
+    | Body
+    | Hands
+    | Feet
+    | Weapon
+    | Offhand
+    | Accessory
+    deriving (Show, Read, Eq, Ord, Enum, Bounded, Generic)
+
+instance ToJSON EquipSlot
+instance FromJSON EquipSlot
+
+instance ToJSONKey EquipSlot where
+    toJSONKey = toJSONKeyText (T.pack . show)
+
+instance FromJSONKey EquipSlot where
+    fromJSONKey = FromJSONKeyTextParser $ \t ->
+        case reads (T.unpack t) of
+            [(s, "")] -> pure s
+            _         -> fail ("Unknown EquipSlot: " ++ T.unpack t)
+
+-- | Passive bonus granted by an equipped item
+data EquipEffect
+    = AttackBonus    Int
+    | DefenseBonus   Int
+    | MaxHealthBonus Int
+    deriving (Show, Eq, Generic)
+
+instance ToJSON EquipEffect
+instance FromJSON EquipEffect
+
+-- ---------------------------------------------------------------------------
+-- Action outcomes
+-- ---------------------------------------------------------------------------
+
+-- | Comparison operator for predicates
+data Comparator = CEq | CNeq | CLt | CLte | CGt | CGte
+    deriving (Show, Eq, Generic)
+
+instance ToJSON Comparator
+instance FromJSON Comparator
+
+-- | Reference to an entity/actor whose property is inspected or modified.
+data ActorRef
+    = ActorPlayer
+    | ActorNPC NPCID
+    | ActorShip VehicleID
+    | ActorRoom RoomID
+    | ActorEntity EntityID
+    deriving (Show, Eq, Generic)
+
+instance ToJSON ActorRef
+
+instance FromJSON ActorRef where
+    parseJSON (String s)
+        | s == "player" = pure ActorPlayer
+        | otherwise     = pure (ActorNPC (T.unpack s))
+    parseJSON v = genericParseJSON defaultOptions v
+
+-- | Canonical string ID for an actor reference.
+actorId :: ActorRef -> String
+actorId ActorPlayer       = "player"
+actorId (ActorNPC nId)    = nId
+actorId (ActorShip vId)   = vId
+actorId (ActorRoom rId)   = rId
+actorId (ActorEntity eId) = eId
+
+-- | Reference to a specific property of an actor or entity.
+data PropRef
+    = PHealth
+    | PRoom
+    | PVisited
+    | PState
+    | PCustom String
+    deriving (Show, Eq, Generic)
+
+instance ToJSON PropRef
+instance FromJSON PropRef
+
+-- | Reference to a value that can be compared in a predicate or modified in an effect.
+data ValueRef
+    = VRFlag    FlagID                -- ^ flag value as string
+    | VRVariable String                -- ^ adventure variable name (float/int)
+    | VRItemProp ItemID String         -- ^ (item name, property name)
+    | VRActorProp ActorRef PropRef      -- ^ (actor, property) typed reference
+    | VRPlayerHealth                   -- ^ player hit points
+    deriving (Show, Eq, Generic)
+
+instance ToJSON ValueRef where
+    toJSON (VRFlag f)        = object [ "tag" .= ("VRFlag" :: T.Text), "contents" .= f ]
+    toJSON (VRVariable v)    = object [ "tag" .= ("VRVariable" :: T.Text), "contents" .= v ]
+    toJSON (VRItemProp i p)  = object [ "tag" .= ("VRItemProp" :: T.Text), "contents" .= [i, p] ]
+    toJSON (VRActorProp a p) = object [ "tag" .= ("VRActorProp" :: T.Text), "contents" .= [toJSON a, toJSON p] ]
+    toJSON VRPlayerHealth    = object [ "tag" .= ("VRPlayerHealth" :: T.Text) ]
+
+instance FromJSON ValueRef where
+    parseJSON = withObject "ValueRef" $ \o -> do
+        tag <- o .: "tag" :: Parser T.Text
+        case tag of
+            "VRFlag"         -> VRFlag <$> o .: "contents"
+            "VRVariable"     -> VRVariable <$> o .: "contents"
+            "VRItemProp"     -> do
+                contents <- o .: "contents"
+                case contents of
+                    [i, p] -> pure (VRItemProp i p)
+                    _      -> fail "VRItemProp: expected [itemId, prop]"
+            "VRActorProp"    -> do
+                contents <- o .: "contents"
+                case contents of
+                    [aVal, pVal] -> VRActorProp <$> parseJSON aVal <*> parseJSON pVal
+                    _            -> fail "VRActorProp: expected [actor, prop]"
+            "VRPlayerHealth" -> pure VRPlayerHealth
+            "VRProperty"     -> do
+                contents <- o .: "contents"
+                case contents of
+                    (targetStr : propStr : _) -> pure (legacyVRProperty targetStr propStr)
+                    _                         -> fail "VRProperty: expected [target, prop]"
+            _                -> fail ("Unknown ValueRef tag: " ++ T.unpack tag)
+
+-- | Map legacy stringly-typed `VRProperty target prop` into `VRActorProp`
+legacyVRProperty :: String -> String -> ValueRef
+legacyVRProperty "player" "room"    = VRActorProp ActorPlayer PRoom
+legacyVRProperty "player" "hp"      = VRActorProp ActorPlayer PHealth
+legacyVRProperty target   "visited" = VRActorProp (ActorRoom target) PVisited
+legacyVRProperty target   "state"   = VRActorProp (ActorEntity target) PState
+legacyVRProperty target   "hp"      = VRActorProp (ActorNPC target) PHealth
+legacyVRProperty "player" prop      = VRActorProp ActorPlayer (PCustom prop)
+legacyVRProperty target   prop      = VRActorProp (ActorNPC target) (PCustom prop)
+
+-- ---------------------------------------------------------------------------
+-- Arithmetic expressions for dynamic calculations (Phase 1A)
+-- ---------------------------------------------------------------------------
+
+-- | Arithmetic expression for dynamic calculations in outcomes
+data Expr
+    = ELit Int
+    | EVar String
+    | EAdd Expr Expr
+    | ESub Expr Expr
+    | EMul Expr Expr
+    | EDiv Expr Expr
+    | EMod Expr Expr
+    | EMin Expr Expr
+    | EMax Expr Expr
+    | EClamp Expr Expr Expr
+    deriving (Show, Eq, Generic)
+
+-- | Convert an Expr into a readable, unambiguous string representation.
+showExpr :: Expr -> String
+showExpr (ELit n)
+    | n < 0     = "(" ++ show n ++ ")"
+    | otherwise = show n
+showExpr (EVar v) = v
+showExpr (EAdd a b) = "(" ++ showExpr a ++ " + " ++ showExpr b ++ ")"
+showExpr (ESub a b) = "(" ++ showExpr a ++ " - " ++ showExpr b ++ ")"
+showExpr (EMul a b) = "(" ++ showExpr a ++ " * " ++ showExpr b ++ ")"
+showExpr (EDiv a b) = "(" ++ showExpr a ++ " / " ++ showExpr b ++ ")"
+showExpr (EMod a b) = "(" ++ showExpr a ++ " % " ++ showExpr b ++ ")"
+showExpr (EMin a b) = "min(" ++ showExpr a ++ ", " ++ showExpr b ++ ")"
+showExpr (EMax a b) = "max(" ++ showExpr a ++ ", " ++ showExpr b ++ ")"
+showExpr (EClamp mn mx v) = "clamp(" ++ showExpr mn ++ ", " ++ showExpr mx ++ ", " ++ showExpr v ++ ")"
+
+instance ToJSON Expr where
+    toJSON e = toJSON (showExpr e)
+
+instance FromJSON Expr where
+    parseJSON v = case v of
+        String s -> case parseExpr (T.unpack s) of
+            Right e  -> pure e
+            Left err -> fail ("Failed to parse expression: " ++ err)
+        Number n -> pure (ELit (round n))
+        Object _ -> genericParseJSON defaultOptions v
+        _        -> fail "Expected string expression, number, or object for Expr"
+
+-- | Internal tokens for expression parsing
+data ExprToken
+    = TokNum Int
+    | TokIdent String
+    | TokPlus
+    | TokMinus
+    | TokMul
+    | TokDiv
+    | TokMod
+    | TokLParen
+    | TokRParen
+    | TokComma
+    deriving (Show, Eq)
+
+-- | Lexer for mathematical expressions
+tokenizeExpr :: String -> Either String [ExprToken]
+tokenizeExpr [] = Right []
+tokenizeExpr (c:cs)
+    | isSpace c = tokenizeExpr cs
+    | c == '('  = (TokLParen :) <$> tokenizeExpr cs
+    | c == ')'  = (TokRParen :) <$> tokenizeExpr cs
+    | c == ','  = (TokComma :) <$> tokenizeExpr cs
+    | c == '+'  = (TokPlus :) <$> tokenizeExpr cs
+    | c == '-'  = (TokMinus :) <$> tokenizeExpr cs
+    | c == '*'  = (TokMul :) <$> tokenizeExpr cs
+    | c == '/'  = (TokDiv :) <$> tokenizeExpr cs
+    | c == '%'  = (TokMod :) <$> tokenizeExpr cs
+    | isDigit c =
+        let (digits, rest) = span isDigit (c:cs)
+        in (TokNum (read digits) :) <$> tokenizeExpr rest
+    | isAlpha c || c == '_' =
+        let (ident, rest) = span (\x -> isAlphaNum x || x == '_' || x == '.') (c:cs)
+        in (TokIdent ident :) <$> tokenizeExpr rest
+    | otherwise = Left ("Unexpected character in expression: " ++ [c])
+
+-- | Recursive descent parser for Expr tokens
+parseExprTokens :: [ExprToken] -> Either String (Expr, [ExprToken])
+parseExprTokens = parseExprAdditive
+
+parseExprAdditive :: [ExprToken] -> Either String (Expr, [ExprToken])
+parseExprAdditive tokens = do
+    (left, rest) <- parseExprMultiplicative tokens
+    loop left rest
+  where
+    loop acc (TokPlus : ts) = do
+        (rhs, rest') <- parseExprMultiplicative ts
+        loop (EAdd acc rhs) rest'
+    loop acc (TokMinus : ts) = do
+        (rhs, rest') <- parseExprMultiplicative ts
+        loop (ESub acc rhs) rest'
+    loop acc ts = Right (acc, ts)
+
+parseExprMultiplicative :: [ExprToken] -> Either String (Expr, [ExprToken])
+parseExprMultiplicative tokens = do
+    (left, rest) <- parseExprUnary tokens
+    loop left rest
+  where
+    loop acc (TokMul : ts) = do
+        (rhs, rest') <- parseExprUnary ts
+        loop (EMul acc rhs) rest'
+    loop acc (TokDiv : ts) = do
+        (rhs, rest') <- parseExprUnary ts
+        loop (EDiv acc rhs) rest'
+    loop acc (TokMod : ts) = do
+        (rhs, rest') <- parseExprUnary ts
+        loop (EMod acc rhs) rest'
+    loop acc ts = Right (acc, ts)
+
+parseExprUnary :: [ExprToken] -> Either String (Expr, [ExprToken])
+parseExprUnary (TokMinus : ts) = do
+    (sub, rest) <- parseExprUnary ts
+    Right (ESub (ELit 0) sub, rest)
+parseExprUnary (TokPlus : ts) = parseExprUnary ts
+parseExprUnary ts = parseExprPrimary ts
+
+parseExprPrimary :: [ExprToken] -> Either String (Expr, [ExprToken])
+parseExprPrimary (TokNum n : ts) = Right (ELit n, ts)
+parseExprPrimary (TokIdent "min" : TokLParen : ts) = do
+    (a, r1) <- parseExprAdditive ts
+    case r1 of
+        TokComma : r2 -> do
+            (b, r3) <- parseExprAdditive r2
+            case r3 of
+                TokRParen : r4 -> Right (EMin a b, r4)
+                _ -> Left "Expected ')' after min(a, b)"
+        _ -> Left "Expected ',' in min(a, b)"
+parseExprPrimary (TokIdent "max" : TokLParen : ts) = do
+    (a, r1) <- parseExprAdditive ts
+    case r1 of
+        TokComma : r2 -> do
+            (b, r3) <- parseExprAdditive r2
+            case r3 of
+                TokRParen : r4 -> Right (EMax a b, r4)
+                _ -> Left "Expected ')' after max(a, b)"
+        _ -> Left "Expected ',' in max(a, b)"
+parseExprPrimary (TokIdent "clamp" : TokLParen : ts) = do
+    (lo, r1) <- parseExprAdditive ts
+    case r1 of
+        TokComma : r2 -> do
+            (hi, r3) <- parseExprAdditive r2
+            case r3 of
+                TokComma : r4 -> do
+                    (val, r5) <- parseExprAdditive r4
+                    case r5 of
+                        TokRParen : r6 -> Right (EClamp lo hi val, r6)
+                        _ -> Left "Expected ')' after clamp(lo, hi, val)"
+                _ -> Left "Expected second ',' in clamp(lo, hi, val)"
+        _ -> Left "Expected first ',' in clamp(lo, hi, val)"
+parseExprPrimary (TokIdent name : ts) = Right (EVar name, ts)
+parseExprPrimary (TokLParen : ts) = do
+    (inner, rest) <- parseExprAdditive ts
+    case rest of
+        TokRParen : rest' -> Right (inner, rest')
+        _ -> Left "Missing closing parenthesis ')'"
+parseExprPrimary (t : _) = Left ("Unexpected token: " ++ show t)
+parseExprPrimary [] = Left "Unexpected end of expression"
+
+-- | Parse a mathematical string expression into an Expr AST.
+parseExpr :: String -> Either String Expr
+parseExpr s = do
+    tokens <- tokenizeExpr s
+    (expr, rest) <- parseExprTokens tokens
+    case rest of
+        [] -> Right expr
+        (t : _) -> Left ("Unexpected trailing token: " ++ show t)
+
+-- | Predicate: composable condition language for the generic rule system (Phase 3c).
+--   A single outcome `Conditional Predicate a a` replaces CheckFlag, HasCondition,
+--   CheckSkill, and any future bespoke check.
+data Predicate
+    = PTrue
+    | PNot Predicate
+    | PAll  [Predicate]       -- ^ logical AND
+    | PAny [Predicate]       -- ^ logical OR
+    | Compare ValueRef Comparator ValueRef   -- ^ compare two values/constants
+    | PlayerHas ItemID                       -- ^ does the player carry this item?
+    | EntityHasState String String           -- ^ entity, expected state (e.g. "wolf", "dead")
+    | HasFlag FlagID                         -- ^ flag == "true"
+    | RoomHasTag RoomID String               -- ^ room has a given tag
+    | Location ActorRef RoomID -- ^ actor reference, room ID (is actor in this room?)
+    | CompareVar String Comparator Int  -- ^ variable vs integer literal (mana >= 5)
+    | VarIs String String               -- ^ text variable equals a literal (`{ var: X, is: Y }`)
+    deriving (Show, Eq, Generic)
+
+-- | Serialize to the same compact object shape that FromJSON accepts
+--   (mirrors the YAML shorthand so saved worlds round-trip cleanly).
+instance ToJSON Predicate where
+    toJSON p = case p of
+        PTrue              -> object [ "true"     .= True ]
+        PNot q             -> object [ "not"      .= q ]
+        PAll qs            -> object [ "all"      .= qs ]
+        PAny qs            -> object [ "any"      .= qs ]
+        Compare l op r     -> object [ "lhs" .= l, "op" .= op, "rhs" .= r ]
+        PlayerHas i        -> object [ "has_item" .= i ]
+        EntityHasState e s -> object [ "state"    .= e, "is" .= s ]
+        HasFlag f          -> object [ "has_flag" .= f ]
+        RoomHasTag r t     -> object [ "room"     .= r, "has_tag" .= t ]
+        Location a r       -> object [ "at"       .= actorId a, "room" .= r ]
+        CompareVar n op v  -> object [ "compare_var" .= object
+                                        [ "name" .= n, "op" .= comparatorName op, "value" .= v ] ]
+        VarIs n v          -> object [ "var" .= n, "is" .= v ]
+
+-- | Stable string form of a comparator, used in YAML/JSON predicates.
+comparatorName :: Comparator -> String
+comparatorName CEq  = "eq"
+comparatorName CNeq = "ne"
+comparatorName CLt  = "lt"
+comparatorName CLte = "lte"
+comparatorName CGt  = "gt"
+comparatorName CGte = "gte"
+
+-- | Parse a comparator from its string form.
+parseComparatorName :: String -> Maybe Comparator
+parseComparatorName s = case map toLower s of
+    "eq"  -> Just CEq
+    "="   -> Just CEq
+    "ne"  -> Just CNeq
+    "!="  -> Just CNeq
+    "lt"  -> Just CLt
+    "<"   -> Just CLt
+    "lte" -> Just CLte
+    "<="  -> Just CLte
+    "gt"  -> Just CGt
+    ">"   -> Just CGt
+    "gte" -> Just CGte
+    ">="  -> Just CGte
+    _     -> Nothing
+
+instance FromJSON Predicate where
+    parseJSON = withObject "Predicate" $ \o ->
+            (o .: "predicate")
+        <|> (PAll  <$> o .: "all")
+        <|> (PAny  <$> o .: "any")
+        <|> (PNot  <$> o .: "not")
+        <|> (PTrue <$ (o .: "true" :: Parser Bool))
+        <|> (PlayerHas <$> o .: "has_item")
+        <|> (HasFlag   <$> o .: "has_flag")
+        <|> (EntityHasState <$> o .: "state" <*> o .: "is")
+        -- Text comparison for variables holding text (`type: text`), e.g. the
+        -- engine's own `combat.action`. Distinct from `state`/`is`, which tests
+        -- an entity's state layer.
+        <|> (VarIs <$> o .: "var" <*> o .: "is")
+        <|> (RoomHasTag     <$> o .: "room"  <*> o .: "has_tag")
+        <|> (Location       <$> o .: "at"    <*> o .: "room")
+        <|> (Compare <$> o .: "lhs" <*> o .: "op" <*> o .: "rhs")
+        <|> (do cv  <- o .: "compare_var"
+                n   <- cv .: "name"
+                opS <- cv .: "op"
+                cmp <- case parseComparatorName opS of
+                    Just c  -> pure c
+                    Nothing -> fail ("Unknown comparator '" ++ opS ++ "' in compare_var")
+                (do v <- cv .: "value"
+                    pure (CompareVar n cmp v))
+                  <|> (do otherVar <- cv .: "var" <|> cv .: "other_var"
+                          pure (Compare (VRVariable n) cmp (VRVariable otherVar))))
+        -- Phase 7a: standing sugar -> CompareVar on the "faction.<id>" variable.
+        --   Input-only alias: ToJSON stays the canonical compare_var form, so
+        --   saved worlds round-trip through the existing CompareVar branch.
+        <|> (do st   <- o .: "standing"
+                fid  <- st .: "faction"
+                let var = "faction." ++ fid
+                (   (CompareVar var CGte <$> st .: "at_least")
+                 <|> (CompareVar var CLte <$> st .: "at_most")
+                 <|> (CompareVar var CEq  <$> st .: "equals")
+                 <|> fail "standing: expected at_least, at_most, or equals" ))
+        -- Card game synergy sugar: card_in_hand / cards_in_hand / combo
+        <|> (do c <- o .: "card_in_hand"
+                pure (EntityHasState c "in_hand"))
+        <|> (do cs <- o .: "cards_in_hand"
+                pure (PAll [EntityHasState c "in_hand" | c <- cs]))
+        <|> (do val <- o .: "combo"
+                case val of
+                    Array arr -> do
+                        cs <- mapM parseJSON (Foldable.toList arr)
+                        pure (PAll [EntityHasState c "in_hand" | c <- cs])
+                    String s -> pure (EntityHasState (T.unpack s) "in_hand")
+                    _        -> fail "Expected card id or list of card ids for combo")
+        <|> fail "Unknown predicate"
+
+-- | Music command queued by the pure engine for the frontend (Audio Phase 2).
+data MusicCommand = MusicStart FilePath | MusicStop
+    deriving (Show, Eq, Generic)
+
+instance ToJSON MusicCommand
+instance FromJSON MusicCommand
+
+-- | Action Outcome representing the result of an interaction
+--   This is the engine-level Effect-DSL: a compact, composable set of
+--   effect constructors that replace the previous 30-specific Effect
+--   variants. The Worldbuilder compiles its higher-level shorthands into
+--   these Effects.
+data Effect
+    = Sequence [Effect]                          -- ^ Do many effects in order
+    | Conditional Predicate Effect Effect         -- ^ Branch: if (pred) then this else that
+    | RandomChoice [(Int, Effect)]               -- ^ Weighted random pick from candidates
+    | SetValue ValueRef EffectValue                     -- ^ Set any value (flag, variable, property)
+    | ModifyValue ValueRef Int                    -- ^ Modify a numeric value (hp, skill, prop, etc.)
+    | MoveEntity EntityID Location                -- ^ Move an entity to a location
+    | SendMessage String                          -- ^ Show a message to the player
+    | ApplyCondition String Int (Maybe Effect) (Maybe Effect) -- ^ Name, turns, tick, end effects
+    | ClearCondition String                       -- ^ Remove a condition by name
+    | RaiseEvent String                           -- ^ P1-20: fire `OnCustomEvent name`
+    | ModifySkill SkillID Int                     -- ^ Change a skill by delta
+    | QuestOp QuestOp String                      -- ^ Quest lifecycle operation
+    | GameEnd GameOverReason String               -- ^ End the game with a reason
+    | Narrative [String] Effect                   -- ^ Lines to show, then follow-up (stored as pendingNarrative)
+    | PlayClip ClipID                             -- ^ Phase H/H4: queue a cutscene clip (pendingCutscene)
+    | PlaySfx FilePath                            -- ^ Audio Phase 1: queue a sound effect for the frontend
+    | PlayMusic FilePath                          -- ^ Audio Phase 2: start/switch background music loop
+    | StopMusic                                   -- ^ Audio Phase 2: stop background music
+    | SetExit RoomID Direction Exit               -- ^ Rogue Phase 3: open/rewire a dynamic exit
+    | RemoveExit RoomID Direction                 -- ^ Rogue Phase 3: close a dynamic exit
+    | ComputeValue ValueRef Expr                  -- ^ Phase 1A: dynamically compute an expression and assign to ValueRef
+    | DrawCards Int                               -- ^ Phase 2A: draw n cards into hand
+    | DiscardHand                                 -- ^ Phase 2A: discard active hand
+    | DiscardCard CardID                          -- ^ Phase 2A: discard specific card from hand
+    | ExhaustCard CardID                          -- ^ Phase 2A: exhaust card from hand/play
+    | AddCardToDeck CardID DeckDestination        -- ^ Phase 2A: add card to draw/discard/hand
+    | ShuffleDeck                                 -- ^ Phase 2A: shuffle draw pile
+    | GenerateRoom RoomID String String RoomID Direction Direction -- ^ Phase 3A: id, name, description, fromRoom, toDir, returnDir
+    | Noop                                        -- ^ Do nothing
+    deriving (Show, Eq, Generic)
+
+-- | Identity effect for defaulted parsers.
+noopEffect :: Effect
+noopEffect = Noop
+
+
+-- ---------------------------------------------------------------------------
+-- Procedural Sandbox & Runtime Worldgen (Schritt 3 / Phase 3A)
+-- ---------------------------------------------------------------------------
+
+-- | Definition of a biome template for procedural sandbox generation.
+data BiomeTemplate = BiomeTemplate
+    { btId            :: String               -- ^ Unique biome identifier (e.g. "forest")
+    , btWeight        :: Int                  -- ^ Relative frequency weight
+    , btNamePattern   :: String               -- ^ e.g. "Dichter Nadelwald ({x}, {y})"
+    , btDescription   :: CondText             -- ^ Room description with conditional variants
+    , btTags          :: [String]             -- ^ e.g. ["forest", "outdoor"]
+    , btAsciiArt      :: AsciiArt             -- ^ ASCII art landscape (emptyAscii if none)
+    , btPassableDirs  :: [Direction]          -- ^ Open directions (e.g. [North, South, East, West])
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON BiomeTemplate where
+    toJSON bt = object $
+        [ "id"            .= btId bt
+        , "weight"        .= btWeight bt
+        , "name_pattern"  .= btNamePattern bt
+        , "description"   .= btDescription bt
+        , "tags"          .= btTags bt
+        ] ++ asciiPair "ascii_art" (btAsciiArt bt)
+          ++ [ "passable_dirs" .= btPassableDirs bt ]
+
+instance FromJSON BiomeTemplate where
+    parseJSON = withObject "BiomeTemplate" $ \o -> BiomeTemplate
+        <$> o .: "id"
+        <*> o .:? "weight" .!= 1
+        <*> o .:? "name_pattern" .!= "Wildnis ({x}, {y})"
+        <*> o .:? "description" .!= plainText "Unberührte Wildnis."
+        <*> o .:? "tags" .!= []
+        <*> o .:? "ascii_art" .!= emptyAscii
+        <*> o .:? "passable_dirs" .!= [North, South, East, West]
+
+-- | Definition of an infinite procedural sandbox zone.
+data SandboxZone = SandboxZone
+    { szId            :: String               -- ^ Zone id (e.g. "wildnis")
+    , szOrigin        :: (Int, Int, Int)      -- ^ Entry coordinates (x, y, z)
+    , szBiomes        :: [BiomeTemplate]      -- ^ Available biomes in this zone
+    , szDefaultFloor  :: Maybe Int            -- ^ Floor index for minimap (default: Just 1)
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON SandboxZone where
+    toJSON sz = object $
+        [ "id"     .= szId sz
+        , "origin" .= szOrigin sz
+        , "biomes" .= szBiomes sz
+        ] ++ [ "floor" .= fl | Just fl <- [szDefaultFloor sz] ]
+
+instance FromJSON SandboxZone where
+    parseJSON = withObject "SandboxZone" $ \o -> SandboxZone
+        <$> o .: "id"
+        <*> o .:? "origin" .!= (0, 0, 0)
+        <*> o .:? "biomes" .!= []
+        <*> o .:? "floor"
+
+-- | Clip IDs are plain strings; the compiled world carries the clip map.
+type ClipID = String
+
+-- | Quest operations for the Effect DSL
+data QuestOp = StartQuest | AdvanceQuest | CompleteQuest
+    deriving (Show, Eq, Generic)
+
+instance ToJSON QuestOp
+instance FromJSON QuestOp
+
+-- | A runtime value that can be stored via SetValue.
+data EffectValue
+    = EVInt Int
+    | EVString String
+    | EVBool Bool
+    deriving (Show, Eq, Generic)
+
+instance ToJSON EffectValue
+instance FromJSON EffectValue
+
+-- | Typed location for MoveEntity.
+data Location
+    = InRoom RoomID
+    | CarriedBy ActorRef
+    | InContainer EntityID
+    | EquippedBy ActorRef
+    | Removed
+    deriving (Show, Eq, Generic)
+
+instance ToJSON Location where
+    toJSON (InRoom r)       = object [ "tag" .= ("InRoom" :: T.Text), "contents" .= r ]
+    toJSON (CarriedBy a)    = object [ "tag" .= ("CarriedBy" :: T.Text), "contents" .= toJSON a ]
+    toJSON (InContainer c)  = object [ "tag" .= ("InContainer" :: T.Text), "contents" .= c ]
+    toJSON (EquippedBy a)   = object [ "tag" .= ("EquippedBy" :: T.Text), "contents" .= toJSON a ]
+    toJSON Removed          = object [ "tag" .= ("Removed" :: T.Text) ]
+
+instance FromJSON Location where
+    parseJSON (String s) = pure (InRoom (T.unpack s))
+    parseJSON v = withObject "Location" (\o -> do
+        tag <- o .: "tag" :: Parser T.Text
+        case tag of
+            "InRoom"      -> InRoom <$> o .: "contents"
+            "CarriedBy"   -> do
+                c <- o .: "contents"
+                CarriedBy <$> parseJSON c
+            "InContainer" -> InContainer <$> o .: "contents"
+            "EquippedBy"  -> do
+                c <- o .: "contents"
+                EquippedBy <$> parseJSON c
+            "Removed"     -> pure Removed
+            _             -> fail ("Unknown Location tag: " ++ T.unpack tag)) v
+
+-- ---------------------------------------------------------------------------
+-- Conditionally selected text (Phase 3g)
+-- ---------------------------------------------------------------------------
+
+-- | A text variant with a predicate condition: first matching variant wins.
+data TextVariant = TextVariant
+    { tvWhen :: Predicate
+    , tvText :: String
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON TextVariant
+instance FromJSON TextVariant
+
+-- | A text with conditional variants and a default fallback.
+data CondText = CondText
+    { ctDefault  :: String
+    , ctVariants :: [TextVariant]
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON CondText where
+    toJSON (CondText def vars) = object
+        [ "default"  .= def
+        , "variants" .= vars
+        ]
+
+-- Accept either an object {default, variants} or a plain string (shorthand).
+instance FromJSON CondText where
+    parseJSON v = case v of
+        String s -> pure (CondText (T.unpack s) [])
+        _ -> withObject "CondText" (\o -> CondText
+                <$> o .:  "default"
+                <*> o .:? "variants" .!= []) v
+
+-- | Smart constructor: a plain string becomes CondText with just a default.
+plainText :: String -> CondText
+plainText s = CondText s []
+
+-- | Is a CondText empty (no default, no variants)?
+isEmptyCond :: CondText -> Bool
+isEmptyCond ct = null (ctDefault ct) && null (ctVariants ct)
+
+-- | A marker in ASCII art that binds to a target entity (Phase E). The glyph
+--   is what the player sees; the target is an item or NPC id. Numbers (the
+--   index in `aaHotspots`, 1-based) address the marker, so a glyph must not be
+--   a digit (see the worldbuilder validation).
+data Hotspot = Hotspot
+    { hsGlyph  :: Char      -- ^ marker character in the art
+    , hsTarget :: String    -- ^ item or NPC id
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON Hotspot where
+    toJSON h = object
+        [ "glyph"  .= hsGlyph h
+        , "target" .= hsTarget h
+        ]
+
+instance FromJSON Hotspot where
+    parseJSON = withObject "Hotspot" $ \o -> Hotspot
+        <$> o .: "glyph"
+        <*> o .: "target"
+
+-- | ASCII art: state-dependent base text plus an optional animation (Phase D)
+--   and optional hotspots (Phase E).
+--
+--   * `aaStatic` is the conditional art of Phase B. It is rendered when there
+--     are no frames (or when passive animation is disabled).
+--   * `aaFrames` are animation frames, each itself a `CondText` so a frame can
+--     depend on the game state as well.
+--   * `aaEvery` is the number of turns per passive frame. `0` (or fewer)
+--     disables the passive tick; the frames are then only shown by `watch`.
+--   * `aaAmbient` is the timed loop of Phase H (H1): frames plus the art's own
+--     playback rate (`fps`). The pure core hands both to the frontend; nothing
+--     in the core waits.
+--   * `aaHotspots` are marker glyphs bound to targets, addressed by number.
+data AsciiArt = AsciiArt
+    { aaStatic   :: CondText
+    , aaFrames   :: [CondText]
+    , aaEvery    :: Int
+    , aaHotspots :: [Hotspot]
+    , aaAmbient  :: Maybe Ambient
+    } deriving (Show, Eq, Generic)
+
+-- | An ambient loop (Phase H, H1): inline frames plus the rate they repeat
+--   at. Frames are plain strings (no condition per frame); 4–30 frames per
+--   the plan.
+data Ambient = Ambient
+    { ambFrames :: [String]
+    , ambFps    :: Int
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON Ambient where
+    toJSON (Ambient frames fps) = object
+        [ "frames" .= frames
+        , "fps"    .= fps
+        ]
+instance FromJSON Ambient where
+    parseJSON = withObject "Ambient" (\o ->
+        Ambient <$> o .: "frames" <*> o .: "fps")
+
+-- | No art at all. `aaEvery = 1` matches the decoder default so a static art
+--   round-trips through JSON unchanged.
+emptyAscii :: AsciiArt
+emptyAscii = AsciiArt (CondText "" []) [] 1 [] Nothing
+
+-- | Is the art empty (no static text, no frames, no ambient loop)?
+isEmptyAscii :: AsciiArt -> Bool
+isEmptyAscii a =
+    null (aaFrames a) && isEmptyCond (aaStatic a)
+    && case aaAmbient a of
+        Nothing          -> True
+        Just amb -> null (ambFrames amb)
+
+-- Accept a plain string (shorthand), a `{default, variants}` CondText (Phase B
+-- shape) or an animated `{default?, variants?, frames, every}` object.
+instance FromJSON AsciiArt where
+    parseJSON v = case v of
+        String s -> pure (AsciiArt (CondText (T.unpack s) []) [] 0 [] Nothing)
+        _ -> withObject "AsciiArt" (\o -> do
+                stat <- CondText <$> o .:? "default" .!= "" <*> o .:? "variants" .!= []
+                frames <- o .:? "frames" .!= []
+                every <- o .:? "every" .!= 1
+                spots <- o .:? "hotspots" .!= []
+                amb <- o .:? "ambient" .!= Nothing
+                pure (AsciiArt stat frames every spots amb)) v
+
+-- A frame- and hotspot-less art keeps the exact Phase B JSON (a CondText
+-- object), so worlds without animation/hotspots keep their historical encoding
+-- and checksum.
+instance ToJSON AsciiArt where
+    toJSON a
+        | null (aaFrames a), null (aaHotspots a), isNothing (aaAmbient a)
+        = toJSON (aaStatic a)
+        | otherwise = object $
+            [ "default"  .= ctDefault (aaStatic a)
+            , "variants" .= ctVariants (aaStatic a)
+            , "frames"   .= aaFrames a
+            , "every"    .= aaEvery a
+            ]
+            ++ [ "ambient" .= amb | Just amb <- [aaAmbient a] ]
+            ++ [ "hotspots" .= aaHotspots a | not (null (aaHotspots a)) ]
+
+-- | Encode an ASCII art field only when it carries something. An empty art is
+--   omitted, so worlds without art keep their historical JSON and therefore
+--   their `computeWorldChecksum` (no spurious "different world version" warning
+--   when loading an old save).
+asciiPair :: Key -> AsciiArt -> [Pair]
+asciiPair k art
+    | isEmptyAscii art = []
+    | otherwise        = [k .= art]
+
+instance ToJSON Effect
+instance FromJSON Effect
+
+-- ---------------------------------------------------------------------------
+-- JSON helpers for compound Map keys
+-- ---------------------------------------------------------------------------
+
+-- | Encode a Map with (Verb, String) keys as `[{verb, state, effect}, …]`.
+verbStateMapToJSON :: Map.Map (Verb, String) Effect -> Value
+verbStateMapToJSON m =
+    toJSON [ object [ "verb" .= show v, "state" .= s, "effect" .= e ]
+           | ((v, s), e) <- Map.toList m ]
+
+verbStateMapFromJSON :: Value -> Parser (Map.Map (Verb, String) Effect)
+verbStateMapFromJSON v =
+    (do xs <- parseJSON v :: Parser [Value]
+        Map.fromList <$> mapM entry xs)
+    <|> verbStateMapFromLegacyJSON v
+  where
+    entry = withObject "verb-state entry" $ \o -> do
+        vTxt <- o .: "verb"
+        s    <- o .: "state"
+        e    <- o .: "effect"
+        case reads vTxt of
+            [(verb, "")] -> pure ((verb, s), e)
+            _            -> fail ("Bad verb encoding: " ++ vTxt)
+
+-- | Legacy form: one string key per entry, `"VTake:intact"`. Only the first
+--   `:` separates verb and state, so a state containing `:` used to be
+--   corrupted (P2-9); kept for reading old `world.json` files.
+verbStateMapFromLegacyJSON :: Value -> Parser (Map.Map (Verb, String) Effect)
+verbStateMapFromLegacyJSON v = do
+    m <- parseJSON v :: Parser (Map.Map String Effect)
+    let parsePair k = case break (== ':') k of
+            (vStr, ':':sStr) -> case reads vStr of
+                [(verb, "")] -> Right ((verb, sStr), ())
+                _            -> Left $ "Bad verb: " ++ vStr
+            _                -> Left $ "Bad key format: " ++ k
+    case mapM (\(k, val) -> case parsePair k of
+                Right ((verb, st), _) -> Right ((verb, st), val)
+                Left err              -> Left err
+              ) (Map.toList m) of
+        Right parsedPairs -> pure $ Map.fromList parsedPairs
+        Left err    -> fail err
+
+-- | Encode a Map with (String, String) tuple keys as objects.
+tupleMapToJSON :: Map.Map (String, String) (String, String) -> Value
+tupleMapToJSON m =
+    toJSON [ object [ "a" .= a, "b" .= b, "value" .= [v1, v2] ]
+           | ((a, b), (v1, v2)) <- Map.toList m ]
+
+tupleMapFromJSON :: Value -> Parser (Map.Map (String, String) (String, String))
+tupleMapFromJSON v =
+    (do xs <- parseJSON v :: Parser [Value]
+        Map.fromList <$> mapM entry xs)
+    <|> tupleMapFromLegacyJSON v
+  where
+    entry = withObject "interaction entry" $ \o -> do
+        a   <- o .: "a"
+        b   <- o .: "b"
+        val <- o .: "value"
+        case val of
+            [v1, v2] -> pure ((a, b), (v1, v2))
+            _        -> fail "interaction value must be a 2-element array"
+
+-- | Legacy form: `"a|b"` string keys (P2-9).
+tupleMapFromLegacyJSON :: Value -> Parser (Map.Map (String, String) (String, String))
+tupleMapFromLegacyJSON v = do
+    m <- parseJSON v :: Parser (Map.Map String [String])
+    let parsePair k = case break (== '|') k of
+            (a, '|':b) -> Right (a, b)
+            _          -> Left $ "Bad key format: " ++ k
+    case mapM (\(k, val) -> case (parsePair k, val) of
+                (Right (a, b), [v1, v2]) -> Right ((a, b), (v1, v2))
+                (Left err, _)            -> Left err
+                _                        -> Left $ "Bad value for key: " ++ k
+              ) (Map.toList m) of
+        Right parsedPairs -> pure $ Map.fromList parsedPairs
+        Left err    -> fail err
+
+-- ---------------------------------------------------------------------------
+-- Items
+-- ---------------------------------------------------------------------------
+
+-- | Static item definition (loaded from JSON)
+data ItemDef = ItemDef
+    { itemId            :: ItemID
+        , itemName          :: String
+        , itemDescription   :: CondText
+        , itemKeywords      :: [String]
+        , itemTags          :: Set.Set String        -- ^ e.g. "lightsource", "weapon", "key"
+        , itemEquipSlot     :: Maybe EquipSlot       -- ^ Nothing = not equippable
+        , itemEquipEffects  :: [EquipEffect]         -- ^ Passive bonuses while equipped
+        , itemHidden        :: Bool                  -- ^ Hidden until discovered via `search`
+        , itemDiscoverText  :: Maybe String          -- ^ Message shown on discovery
+        , itemPortable      :: Bool                  -- ^ Can the player pick this up?
+        , itemTakeFailure   :: Maybe String          -- ^ Message when take fails (non-portable)
+        , itemVerbMap       :: Map.Map (Verb, String) Effect
+        , itemAscii         :: AsciiArt              -- ^ Optional state-dependent, animated ASCII art
+        } deriving (Show, Eq)
+
+instance ToJSON ItemDef where
+    toJSON def = object $
+        [ "itemId"           .= itemId def
+        , "itemName"         .= itemName def
+        , "itemDescription"  .= itemDescription def
+        , "itemKeywords"     .= itemKeywords def
+        , "itemTags"         .= itemTags def
+        , "itemEquipSlot"    .= itemEquipSlot def
+        , "itemEquipEffects" .= itemEquipEffects def
+        , "itemHidden"       .= itemHidden def
+        , "itemDiscoverText" .= itemDiscoverText def
+        , "itemPortable"     .= itemPortable def
+        , "itemTakeFailure"  .= itemTakeFailure def
+        , "itemVerbMap"      .= verbStateMapToJSON (itemVerbMap def)
+        ] ++ asciiPair "itemAscii" (itemAscii def)
+
+instance FromJSON ItemDef where
+    parseJSON = withObject "ItemDef" $ \o -> ItemDef
+        <$> o .:  "itemId"
+        <*> o .:  "itemName"
+        <*> o .:  "itemDescription"
+        <*> o .:  "itemKeywords"
+        <*> o .:? "itemTags"         .!= Set.empty
+        <*> o .:? "itemEquipSlot"    .!= Nothing
+        <*> o .:? "itemEquipEffects" .!= []
+        <*> o .:? "itemHidden"       .!= False
+        <*> o .:? "itemDiscoverText" .!= Nothing
+        <*> o .:? "itemPortable"     .!= True
+        <*> o .:? "itemTakeFailure"  .!= Nothing
+        <*> (o .: "itemVerbMap" >>= verbStateMapFromJSON)
+        <*> o .:? "itemAscii"        .!= emptyAscii
+
+-- | Dynamic item state
+data ItemState = ItemState
+    { itemLocation    :: Location
+    , itemStatus      :: String  -- ^ e.g., "intact", "burned", "open"
+    , itemProps       :: Map.Map String Int
+    , itemDiscovered  :: Bool    -- ^ Has a hidden item been found?
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON ItemState
+instance FromJSON ItemState where
+    parseJSON = withObject "ItemState" $ \o -> ItemState
+        <$> o .:  "itemLocation"
+        <*> o .:  "itemStatus"
+        <*> o .:? "itemProps"      .!= Map.empty
+        <*> o .:? "itemDiscovered" .!= False
+
+-- ---------------------------------------------------------------------------
+-- Dialogue
+-- ---------------------------------------------------------------------------
+
+-- | A single selectable reply inside a dialogue node
+data DialogueChoice = DialogueChoice
+    { dcText     :: String          -- ^ What the player says (shown as option)
+    , dcNextNode :: Maybe String    -- ^ Next node in current tree (Nothing = exit dialogue)
+    , dcVisible  :: Maybe Predicate -- ^ Optional gate: choice only shown if predicate holds
+    , dcOutcome  :: Effect   -- ^ Outcome applied when chosen
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON DialogueChoice where
+    toJSON c = object
+        [ "dcText"     .= dcText c
+        , "dcNextNode" .= dcNextNode c
+        , "dcVisible"  .= dcVisible c
+        , "dcOutcome"  .= dcOutcome c
+        ]
+
+instance FromJSON DialogueChoice where
+    parseJSON = withObject "DialogueChoice" $ \o -> DialogueChoice
+        <$> o .:  "dcText"
+        <*> o .:? "dcNextNode" .!= Nothing
+        <*> o .:? "dcVisible"  .!= Nothing
+        <*> o .:? "dcOutcome"  .!= SendMessage ""
+
+-- | One node (= one NPC utterance plus replies)
+data DialogueNode = DialogueNode
+    { dnId      :: String
+    , dnText    :: String
+    , dnChoices :: [DialogueChoice]
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON DialogueNode
+instance FromJSON DialogueNode
+
+-- | A complete branching conversation
+data DialogueTree = DialogueTree
+    { dtEntry :: String                        -- ^ Starting node id
+    , dtNodes :: Map.Map String DialogueNode
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON DialogueTree
+instance FromJSON DialogueTree
+
+-- ---------------------------------------------------------------------------
+-- NPCs
+-- ---------------------------------------------------------------------------
+
+-- | Static NPC definition
+data NPCDef = NPCDef
+    { npcId            :: NPCID
+    , npcName          :: String
+    , npcDescription   :: CondText
+    , npcDialogueTrees :: Map.Map String DialogueTree  -- ^ Status -> branching dialogue
+    , npcKeywords      :: [String]
+    , npcMaxHealth     :: Maybe Int
+    , npcAttackBase    :: Int
+    , npcDefenseBase   :: Int
+    , npcVerbMap       :: Map.Map (Verb, String) Effect
+    , npcAscii         :: AsciiArt              -- ^ Optional state-dependent, animated ASCII art
+    } deriving (Show, Eq)
+
+instance ToJSON NPCDef where
+    toJSON def = object $
+        [ "npcId"            .= npcId def
+        , "npcName"          .= npcName def
+        , "npcDescription"   .= npcDescription def
+        , "npcDialogueTrees" .= npcDialogueTrees def
+        , "npcKeywords"      .= npcKeywords def
+        , "npcMaxHealth"     .= npcMaxHealth def
+        , "npcAttackBase"    .= npcAttackBase def
+        , "npcDefenseBase"   .= npcDefenseBase def
+        , "npcVerbMap"       .= verbStateMapToJSON (npcVerbMap def)
+        ] ++ asciiPair "npcAscii" (npcAscii def)
+
+instance FromJSON NPCDef where
+    parseJSON = withObject "NPCDef" $ \o -> NPCDef
+        <$> o .:  "npcId"
+        <*> o .:  "npcName"
+        <*> o .:  "npcDescription"
+        <*> o .:? "npcDialogueTrees" .!= Map.empty
+        <*> o .:  "npcKeywords"
+        <*> o .:  "npcMaxHealth"
+        <*> o .:  "npcAttackBase"
+        <*> o .:  "npcDefenseBase"
+        <*> (o .: "npcVerbMap" >>= verbStateMapFromJSON)
+        <*> o .:? "npcAscii"         .!= emptyAscii
+
+-- | Dynamic NPC state
+data NPCState = NPCState
+    { npcLocation  :: Location
+    , npcStatus    :: String    -- ^ e.g., "alive", "dead", "sleeping"
+    , npcHealth    :: Maybe Int
+    , npcProps     :: Map.Map String Int
+    , npcDialogueNode :: Maybe String  -- ^ Current node inside the active tree
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON NPCState
+instance FromJSON NPCState where
+    parseJSON = withObject "NPCState" $ \o -> NPCState
+        <$> o .:  "npcLocation"
+        <*> o .:  "npcStatus"
+        <*> o .:  "npcHealth"
+        <*> o .:? "npcProps"         .!= Map.empty
+        <*> o .:? "npcDialogueNode"  .!= Nothing
+
+-- | Persistent state of an openable/closeable container.
+data ContainerState = ContainerState
+    { containerOpen     :: Bool
+    , containerLocked   :: Bool
+    , containerCapacity :: Maybe Int
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON ContainerState
+instance FromJSON ContainerState
+
+-- ---------------------------------------------------------------------------
+-- Player
+-- ---------------------------------------------------------------------------
+
+-- | Player with combat statistics and skills.
+--   The health/attack/defense fields are *base* values; equipment bonuses are
+--   applied on lookup. Skills are plain named values (lockpick, stealth, ...).
+data Player = Player
+    { playerHealth    :: Int
+    , playerMaxHealth :: Int
+    , playerAttack    :: Int
+    , playerDefense   :: Int
+    , playerSkills    :: Map.Map SkillID Int
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON Player
+instance FromJSON Player where
+    parseJSON = withObject "Player" $ \o -> Player
+        <$> o .:  "playerHealth"
+        <*> o .:  "playerMaxHealth"
+        <*> o .:  "playerAttack"
+        <*> o .:  "playerDefense"
+        <*> o .:? "playerSkills" .!= Map.empty
+
+-- ---------------------------------------------------------------------------
+-- Conditions (status effects)
+-- ---------------------------------------------------------------------------
+
+-- | A timed status effect on the player.
+--   Ticks once per turn; when the remaining turns reach 0 the effect ends.
+data Condition = Condition
+    { condName        :: String
+    , condRemaining   :: Int                -- ^ Turns until it expires
+    , condTickOutcome :: Maybe Effect -- ^ Fired every turn while active
+    , condEndOutcome  :: Maybe Effect -- ^ Fired once when it expires
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON Condition
+instance FromJSON Condition
+
+-- ---------------------------------------------------------------------------
+-- Quests
+-- ---------------------------------------------------------------------------
+
+-- | One stage of a quest. Stages advance in order.
+data QuestStage = QuestStage
+    { qsId   :: String
+    , qsText :: String                          -- ^ Shown in the journal
+    , qsHint :: Maybe String                    -- ^ Optional nudge for the player
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON QuestStage
+instance FromJSON QuestStage
+
+-- | A quest: an ordered list of stages plus a completion reward.
+data Quest = Quest
+    { questId          :: QuestID
+    , questName        :: String
+    , questDescription :: String
+    , questPrereqs     :: Map.Map FlagID String -- ^ Flags that must match before StartQuest works
+    , questStages      :: [QuestStage]
+    , questReward      :: Maybe Effect
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON Quest
+instance FromJSON Quest
+
+
+-- ---------------------------------------------------------------------------
+-- Rooms
+-- ---------------------------------------------------------------------------
+
+-- | Room with connections and static data.
+--   Note: `roomVisited` lives in SaveState (dynamic), not here.
+data Room = Room
+    { roomId              :: RoomID
+    , roomName            :: String
+    , roomDescription     :: CondText
+    , roomConnections     :: Map.Map Direction Exit
+    , roomTags            :: Set.Set String            -- ^ "dark", "safe", "vehicle", ...
+    , roomLightFlag       :: Maybe FlagID              -- ^ when "true", a "dark" room is lit
+    , roomDarkMsg         :: Maybe String              -- ^ optional override for dark message (Phase 0.3)
+    , roomOnEnter         :: Maybe Effect
+    , roomOnLook          :: Maybe Effect
+    , roomOnExit          :: Maybe Effect
+    , roomSearchOutcome   :: Maybe Effect
+    , roomAscii           :: AsciiArt                  -- ^ Optional ASCII art banner (state-dependent since Phase B, animated since Phase D)
+    , roomIntro           :: Maybe String              -- ^ Clip id played once when entering (Phase H/H4)
+    , roomFloor           :: Maybe Int                 -- ^ Optional floor / dungeon level index (Phase 4b)
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON Room where
+    toJSON r = object $
+        [ "roomId"              .= roomId r
+        , "roomName"            .= roomName r
+        , "roomDescription"     .= roomDescription r
+        , "roomConnections"     .= roomConnections r
+        , "roomTags"            .= roomTags r
+        , "roomLightFlag"       .= roomLightFlag r
+        , "roomOnEnter"         .= roomOnEnter r
+        , "roomOnLook"          .= roomOnLook r
+        , "roomOnExit"          .= roomOnExit r
+        , "roomSearchOutcome"   .= roomSearchOutcome r
+        ] ++ asciiPair "roomAscii" (roomAscii r)
+          ++ [ "roomIntro" .= i | Just i <- [roomIntro r] ]
+          ++ [ "roomFloor" .= fl | Just fl <- [roomFloor r] ]
+          ++ [ "roomDarkMsg" .= dm | Just dm <- [roomDarkMsg r] ]
+
+instance FromJSON Room where
+    parseJSON = withObject "Room" $ \o -> Room
+        <$> o .:  "roomId"
+        <*> o .:  "roomName"
+        <*> o .:  "roomDescription"
+        <*> o .:  "roomConnections"
+        <*> o .:? "roomTags"            .!= Set.empty
+        <*> o .:? "roomLightFlag"       .!= Nothing
+        <*> (do m1 <- o .:? "roomDarkMsg"
+                case m1 of
+                    Just _  -> pure m1
+                    Nothing -> do
+                        m2 <- o .:? "dark_msg"
+                        case m2 of
+                            Just _  -> pure m2
+                            Nothing -> o .:? "dark_message")
+        <*> o .:? "roomOnEnter"         .!= Nothing
+        <*> o .:? "roomOnLook"          .!= Nothing
+        <*> o .:? "roomOnExit"          .!= Nothing
+        <*> o .:? "roomSearchOutcome"   .!= Nothing
+        <*> o .:? "roomAscii"           .!= emptyAscii
+        <*> o .:? "roomIntro"           .!= Nothing
+        <*> (do mf <- o .:? "roomFloor"
+                case mf of
+                    Just _  -> pure mf
+                    Nothing -> o .:? "floor")
+
+-- | Player inventory
+type Inventory = [ItemID]
+
+-- ---------------------------------------------------------------------------
+-- World & save state
+-- ---------------------------------------------------------------------------
+
+-- | Event type that triggers rules: what happened in the game world.
+data EventType
+    = OnEnter RoomID
+    | OnLeave RoomID
+    | OnLook RoomID
+    | OnTake ItemID
+    | OnDrop ItemID
+    | OnUse ItemID
+    | OnSearch RoomID
+    | OnStateChange String
+    | OnCustomEvent String
+    | OnTurn
+    | OnCommand String                 -- ^ verb name (e.g. "activate")
+    deriving (Show, Eq, Generic)
+
+instance ToJSON EventType
+instance FromJSON EventType
+
+-- | A trigger rule: when event matches conditions, fire effects.
+data TriggerDef = TriggerDef
+    { trId         :: String
+    , trEvent      :: EventType
+    , trCondition  :: Maybe Predicate
+    , trEffects    :: [Effect]
+    , trOnce       :: Bool
+    , trCooldown   :: Int              -- ^ turns between re-firing (0 = no cooldown)
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON TriggerDef
+instance FromJSON TriggerDef
+
+-- | Runtime state of a trigger rule.
+data TriggerState = TriggerState
+    { tsFired           :: Bool
+    , tsCooldownRemaining :: Int
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON TriggerState
+instance FromJSON TriggerState
+
+-- | Static world definition containing blueprint/map data
+data GameWorld = GameWorld
+    { rooms              :: Map.Map RoomID Room
+    , itemDefs           :: Map.Map ItemID ItemDef
+    , npcDefs            :: Map.Map NPCID NPCDef
+    , entityInteractions :: Map.Map (String, String) (String, String)
+    , itemInteractions   :: Map.Map (String, String) Effect  -- ^ (Item, Item) -> outcome
+    , questDefs          :: Map.Map QuestID Quest                    -- ^ Static quest definitions
+    , vehicleDefs        :: Map.Map VehicleID VehicleDef             -- ^ Static vehicle definitions (Phase 3)
+    , verbDefs           :: Map.Map String VerbDef                   -- ^ Adventure-declared verbs (Phase 3a)
+    , varDefs            :: Map.Map String VarDef                    -- ^ Adventure-declared variables (Phase 3b)
+    , triggerDefs        :: [TriggerDef]                              -- ^ Trigger rules (Phase 3f)
+    , combatProfile      :: CombatProfile                            -- ^ combat policy (Phase 7f)
+    , worldName          :: String                                   -- ^ adventure title (`name:`), shown as the game banner
+    , abilities          :: Map.Map String PlayerAbility             -- ^ Player abilities (Phase 7f-3, step A3)
+    , worldEndArt        :: Map.Map String AsciiArt                  -- ^ "death"/"victory"/custom reason -> banner (Phase G)
+    , worldTitleArt      :: AsciiArt                                 -- ^ Optional title banner replacing the `bannerFor` default (Phase G)
+    , worldClips         :: Map.Map String Clip                      -- ^ Cutscene clips, embedded at compile time (Phase H/H4, D14)
+    , worldGamePolicy    :: GamePolicy                               -- ^ roguelike policy (Rogue Phase 1; default = unchanged behaviour)
+    , cardDefs           :: Map.Map CardID Card                      -- ^ Card definitions for deckbuilder / card games (Genre 5)
+    , sandboxZones       :: Map.Map String SandboxZone               -- ^ Procedural infinite sandbox zones (Genre 3)
+    } deriving (Show, Eq)
+
+-- | A cutscene clip (Phase H/H4): a frame sequence played once at its own
+
+-- | A cutscene clip (Phase H/H4): a frame sequence played once at its own
+--   rate. Clips live in the compiled world (D14: companion files are embedded
+--   by the Worldbuilder, so runtime needs no extra file access).
+data Clip = Clip
+    { clipFrames :: [String]
+    , clipFps    :: Int
+    } deriving (Show, Eq)
+
+instance ToJSON Clip where
+    toJSON (Clip frames fps) = object
+        [ "frames" .= frames
+        , "fps"    .= fps
+        ]
+
+instance FromJSON Clip where
+    parseJSON = withObject "Clip" (\o ->
+        Clip <$> o .: "frames" <*> o .: "fps")
+
+
+
+instance ToJSON GameWorld where
+    toJSON gw = object $
+        [ "rooms"              .= rooms gw
+        , "itemDefs"           .= itemDefs gw
+        , "npcDefs"            .= npcDefs gw
+        , "entityInteractions" .= tupleMapToJSON (entityInteractions gw)
+        , "itemInteractions"   .= itemInteractionsToJSON (itemInteractions gw)
+        , "questDefs"          .= questDefs gw
+        , "vehicleDefs"        .= vehicleDefs gw
+        , "verbDefs"           .= verbDefs gw
+        , "varDefs"            .= varDefs gw
+        , "triggerDefs"       .= triggerDefs gw
+        , "combatProfile"      .= combatProfile gw
+        , "worldName"          .= worldName gw
+        , "abilities"          .= abilities gw
+        ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair ++ sandboxPair
+      where
+        endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
+        titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
+        clipPair = [ "clips" .= worldClips gw | not (Map.null (worldClips gw)) ]
+        -- Rogue Phase 1 (M2): the policy field is only emitted when it differs
+        -- from the default, otherwise every world's checksum would change and
+        -- all existing saves would report "world mismatch!".
+        policyPair = [ "game" .= worldGamePolicy gw
+                     | worldGamePolicy gw /= defaultGamePolicy ]
+        cardPair = [ "cards" .= cardDefs gw | not (Map.null (cardDefs gw)) ]
+        sandboxPair = [ "sandboxZones" .= sandboxZones gw | not (Map.null (sandboxZones gw)) ]
+        endArt = Map.filter (not . isEmptyAscii) (worldEndArt gw)
+        titleArt = worldTitleArt gw
+
+-- | Author-defined game policy for roguelike/roguelite adventures. All
+--   defaults preserve today's behaviour ('defaultGamePolicy'), and the
+--   JSON encoding emits the field only when it differs from the default
+--   (M2: keeps the world checksum — and with it every existing save file —
+--   bit-identical).
+data GamePolicy = GamePolicy
+    { gpPermadeath :: Bool      -- ^ death offers no undo/load, only restart/quit
+    , gpAllowUndo  :: Bool      -- ^ 'undo' command globally disabled
+    , gpIronman    :: Bool       -- ^ saves only in savezones (one checkpoint slot,
+                                 -- ^ deleted on death); load disabled
+    , gpSaveZones  :: [RoomID]  -- ^ rooms where ironman saves are allowed
+    , gpMetaSlug   :: Maybe String -- ^ explicit slug for the meta file (Rogue Phase 2, M8)
+    } deriving (Show, Eq, Generic)
+
+-- | Today's behaviour: nothing changes unless the author opts in.
+defaultGamePolicy :: GamePolicy
+defaultGamePolicy = GamePolicy False True False [] Nothing
+
+instance ToJSON GamePolicy where
+    toJSON p = object $
+        [ "permadeath" .= gpPermadeath p
+        , "allow_undo" .= gpAllowUndo p
+        , "ironman"    .= gpIronman p
+        , "save_zones" .= gpSaveZones p
+        ] ++ [ "meta_slug" .= s | Just s <- [gpMetaSlug p] ]
+
+instance FromJSON GamePolicy where
+    parseJSON = withObject "GamePolicy" $ \o -> GamePolicy
+        <$> o .:? "permadeath" .!= False
+        <*> o .:? "allow_undo" .!= True
+        <*> o .:? "ironman"    .!= False
+        <*> o .:? "save_zones" .!= []
+        <*> o .:? "meta_slug"
+
+instance FromJSON GameWorld where
+    parseJSON = withObject "GameWorld" $ \o -> GameWorld
+        <$> o .:  "rooms"
+        <*> o .:  "itemDefs"
+        <*> o .:  "npcDefs"
+        <*> (o .: "entityInteractions" >>= tupleMapFromJSON)
+        <*> (o .:? "itemInteractions" >>= maybe (pure Map.empty) parseItemInteractions)
+        <*> o .:? "questDefs" .!= Map.empty
+        <*> o .:? "vehicleDefs" .!= Map.empty
+        <*> o .:? "verbDefs" .!= Map.empty
+        <*> o .:? "varDefs"  .!= Map.empty
+        <*> o .:? "triggerDefs" .!= []
+        <*> o .:? "combatProfile" .!= CombatClassic Nothing
+        <*> o .:? "worldName" .!= ""
+        <*> o .:? "abilities" .!= Map.empty
+        <*> o .:? "endArt" .!= Map.empty
+        <*> o .:? "titleArt" .!= emptyAscii
+        <*> o .:? "clips" .!= Map.empty
+        <*> o .:? "game" .!= defaultGamePolicy
+        <*> o .:? "cards" .!= Map.empty
+        <*> o .:? "sandboxZones" .!= Map.empty
+
+-- | Encode item-on-item outcomes as objects (P2-9).
+itemInteractionsToJSON :: Map.Map (String, String) Effect -> Value
+itemInteractionsToJSON m =
+    toJSON [ object [ "a" .= a, "b" .= b, "effect" .= e ]
+           | ((a, b), e) <- Map.toList m ]
+
+parseItemInteractions :: Value -> Parser (Map.Map (String, String) Effect)
+parseItemInteractions v =
+    (do xs <- parseJSON v :: Parser [Value]
+        Map.fromList <$> mapM entry xs)
+    <|> legacy
+  where
+    entry = withObject "item interaction entry" $ \o -> do
+        a <- o .: "a"
+        b <- o .: "b"
+        e <- o .: "effect"
+        pure ((a, b), e)
+    -- Legacy form: `"a|b"` string keys.
+    legacy = do
+        m <- parseJSON v :: Parser (Map.Map String Effect)
+        case mapM parseKey (Map.toList m) of
+            Right kvs -> pure (Map.fromList kvs)
+            Left err  -> fail err
+    parseKey (k, e) = case break (== '|') k of
+        (a, '|':b) -> Right ((a, b), e)
+        _          -> Left ("Bad item interaction key: " ++ k)
+
+-- | Dynamic state of an active playthrough
+data SaveState = SaveState
+    { player             :: Player
+    , currentRoom        :: RoomID
+    , inventory          :: Inventory
+    , itemStates         :: Map.Map ItemID ItemState
+    , npcStates          :: Map.Map NPCID NPCState
+    , entityStates       :: Map.Map String String
+    , flags              :: Map.Map FlagID String
+    , turnCount          :: Int
+    , gameOver           :: Bool
+    , gameOverReason     :: Maybe GameOverReason
+    , visitedRooms       :: Set.Set RoomID
+    , equipment          :: Map.Map EquipSlot ItemID
+    , conditions         :: Map.Map String Condition          -- ^ Active status effects
+    , activeQuests       :: Map.Map QuestID Int               -- ^ Quest -> current stage index (0-based)
+    , completedQuests    :: Set.Set QuestID
+    , vehicleStates      :: Map.Map VehicleID VehicleState    -- ^ Dynamic vehicle state (Phase 3)
+    , currentVehicle     :: Maybe VehicleID                   -- ^ Vehicle the player is inside (Phase 3)
+    , activeDialogue     :: Maybe NPCID                       -- ^ Currently engaged dialogue NPC (Phase 4.6)
+    , rngState           :: Word64                            -- ^ Explicit RNG state for deterministic random outcomes (Phase 1)
+    , variables          :: Map.Map String VariableValue       -- ^ Adventure-declared variables (Phase 3b)
+    , triggerStates      :: Map.Map String TriggerState      -- ^ Runtime state of trigger rules (fired/cooldown)
+    , exitOverrides      :: Map.Map (RoomID, Direction) (Maybe Exit)
+        -- ^ Rogue Phase 3: dynamic exits written by `SetExit`/`RemoveExit`
+        -- ^ effects. `Just exit` = replacement connection, `Nothing` = exit
+        -- ^ removed (even if statically present). Empty = static world (M2:
+        -- ^ the ToJSON instance omits it entirely, keeping every existing
+        -- ^ save's encoding bit-identical).
+    , deckState          :: Maybe DeckState                  -- ^ Runtime deckbuilder state (Genre 5)
+    , dynamicRooms       :: Map.Map RoomID Room              -- ^ Dynamically generated runtime rooms (Genre 3)
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON SaveState where
+    toJSON ss = object $
+        [ "player"          .= player ss
+        , "currentRoom"     .= currentRoom ss
+        , "inventory"       .= inventory ss
+        , "itemStates"      .= itemStates ss
+        , "npcStates"       .= npcStates ss
+        , "entityStates"    .= entityStates ss
+        , "flags"           .= flags ss
+        , "turnCount"       .= turnCount ss
+        , "gameOver"        .= gameOver ss
+        , "gameOverReason"  .= gameOverReason ss
+        , "visitedRooms"    .= visitedRooms ss
+        , "equipment"       .= equipment ss
+        , "conditions"      .= conditions ss
+        , "activeQuests"    .= activeQuests ss
+        , "completedQuests" .= completedQuests ss
+        , "vehicleStates"   .= vehicleStates ss
+        , "currentVehicle"  .= currentVehicle ss
+        , "activeDialogue"  .= activeDialogue ss
+        , "rngState"        .= rngState ss
+        , "variables"       .= variables ss
+        , "triggerStates"   .= triggerStates ss
+        ] ++ exitOverridePair ++ deckPair ++ dynamicRoomsPair
+      where
+        -- Rogue Phase 3 (M2): only emitted when non-empty — the encoding of
+        -- untouched adventures stays bit-identical.
+        exitOverridePair =
+            [ "exitOverrides" .= exitOverridesToJSON (exitOverrides ss)
+            | not (Map.null (exitOverrides ss)) ]
+        deckPair = case deckState ss of
+            Nothing -> []
+            Just ds -> [ "deckState" .= ds ]
+        dynamicRoomsPair =
+            [ "dynamicRooms" .= dynamicRooms ss
+            | not (Map.null (dynamicRooms ss)) ]
+
+instance FromJSON SaveState where
+    parseJSON = withObject "SaveState" $ \o -> SaveState
+        <$> o .:  "player"
+        <*> o .:  "currentRoom"
+        <*> o .:  "inventory"
+        <*> o .:  "itemStates"
+        <*> o .:  "npcStates"
+        <*> o .:  "entityStates"
+        <*> o .:? "flags"           .!= Map.empty
+        <*> o .:? "turnCount"       .!= 0
+        <*> o .:  "gameOver"
+        <*> o .:? "gameOverReason"  .!= Nothing
+        <*> o .:? "visitedRooms"    .!= Set.empty
+        <*> o .:? "equipment"       .!= Map.empty
+        <*> o .:? "conditions"      .!= Map.empty
+        <*> o .:? "activeQuests"    .!= Map.empty
+        <*> o .:? "completedQuests" .!= Set.empty
+        <*> o .:? "vehicleStates"   .!= Map.empty
+        <*> o .:? "currentVehicle"  .!= Nothing
+        <*> o .:? "activeDialogue"  .!= Nothing
+        <*> o .:? "rngState"        .!= 0
+        <*> o .:? "variables"       .!= Map.empty
+        <*> o .:? "triggerStates"   .!= Map.empty
+        <*> (o .:? "exitOverrides" >>= maybe (pure Map.empty) parseExitOverrides)
+        <*> o .:? "deckState"
+        <*> o .:? "dynamicRooms"   .!= Map.empty
+
+-- | Encode exit overrides as a list of {room, dir, exit} objects — the same
+--   shape as 'itemInteractionsToJSON': tuple-keyed maps have no JSON object
+--   form, so we write (and read) an object list instead. `exit: null` encodes
+--   a removed exit ('Nothing').
+exitOverridesToJSON :: Map.Map (RoomID, Direction) (Maybe Exit) -> Value
+exitOverridesToJSON m =
+    toJSON [ object [ "room" .= r, "dir" .= d, "exit" .= me ]
+           | ((r, d), me) <- Map.toList m ]
+
+parseExitOverrides :: Value -> Parser (Map.Map (RoomID, Direction) (Maybe Exit))
+parseExitOverrides v = do
+    xs <- parseJSON v :: Parser [Value]
+    Map.fromList <$> mapM entry xs
+  where
+    entry = withObject "exit override" $ \o -> do
+        r <- o .: "room"
+        d <- o .: "dir"
+        e <- o .:? "exit"  -- Nothing = removed exit
+        pure ((r, d), e)
+
+-- | Save file wrapper with metadata for save slots
+data SaveFile = SaveFile
+    { saveVersion    :: Int
+    , saveTimestamp  :: String
+    , worldChecksum  :: String
+    , saveName       :: String
+    , saveData       :: SaveState
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON SaveFile
+instance FromJSON SaveFile
+
+-- | Combined game state holding both world and save
+data GameState = GameState
+    { world :: GameWorld
+    , save  :: SaveState
+    , pendingNarrative :: Maybe ([String], Effect)  -- ^ Narrative lines + follow-up (Phase 4.4)
+    , pendingAnimation :: Maybe ([String], Int)    -- ^ Frames + rate in µs (Phase D/H1, runtime only)
+    , pendingCutscene :: Maybe ([String], Int)      -- ^ Cutscene frames + rate in µs, played once (Phase H/H4, runtime only)
+    , pendingSfx :: [FilePath]  -- ^ SFX files queued for playback (Audio Phase 1, runtime only)
+    , pendingMusic :: Maybe MusicCommand           -- ^ Music command for the frontend (Audio Phase 2, runtime only)
+    , diagnostics :: [String]                      -- ^ Engine-level findings for the author (P2-23)
+    } deriving (Show, Eq)
+
+-- NOTE: `GameState` deliberately has **no** JSON instance — only `SaveState`
+-- and `GameWorld` are serialized. `diagnostics` is therefore runtime-only by
+-- construction: nothing has to be excluded from a save file, and a loaded
+-- session simply starts with an empty list. It carries engine findings that a
+-- *content* error produced (currently the outcome-depth guard), which must reach
+-- the author but never the player's text.
+
+-- ---------------------------------------------------------------------------
+-- Explicit deterministic RNG state (Phase 1f)
+-- ---------------------------------------------------------------------------
+
+-- | Initial seed for a fresh playthrough (golden-ratio constant, nonzero).
+initialRngState :: Word64
+initialRngState = 0x9E3779B97F4A7C15
+
+-- ---------------------------------------------------------------------------
+-- Adventure slug (Rogue Phase 0)
+-- ---------------------------------------------------------------------------
+
+-- | Deterministic file-system slug for adventure-bound file names. The
+--   Roguelike/Roguelite extension (Rogue Phase 2) will use it for
+--   @saves/<slug>_meta.json@: lowercase ASCII letters, digits, @-@ and @_@
+--   survive; every other character becomes @_@ (runs of them collapse via
+--   'words'); a name without a single surviving character falls back to
+--   @"default"@ so file names stay well-formed even for worlds with an empty
+--   or purely non-ASCII @worldName@.
+--
+--   Deliberately simple: no transliteration (umlauts become @_@), so the
+--   result is stable across locales — and remember M8: adventures that want
+--   meta-progression to survive a title change will get an explicit
+--   @game.meta_slug@ override later.
+slugify :: String -> String
+slugify name
+    | null slug = "default"
+    | otherwise = slug
+  where
+    slug = intercalate "_" (words (map mapChar (map toLower name)))
+    mapChar c | isKept c  = c
+              | otherwise = ' '
+    isKept c = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+               || c == '_' || c == '-'
+
+-- | Advance the explicit RNG state (linear congruential generator).
+nextRng :: Word64 -> Word64
+nextRng w = w * 6364136223846793005 + 1
+
+-- ---------------------------------------------------------------------------
+-- Sandbox & Runtime-Worldgen Primitives (Genre 3 / Phase 3B)
+-- ---------------------------------------------------------------------------
+
+-- | SplitMix64 64-bit mixer.
+splitMix64Mix :: Word64 -> Word64
+splitMix64Mix s =
+    let z1 = (s `xor` (s `shiftR` 30)) * 0xBF58476D1CE4E5B9
+        z2 = (z1 `xor` (z1 `shiftR` 27)) * 0x94D049BB133111EB
+    in z2 `xor` (z2 `shiftR` 31)
+
+-- | Derive a deterministic cell seed from base seed, zone name, and coordinates.
+deriveCellSeed :: Word64 -> String -> Int -> Int -> Int -> Word64
+deriveCellSeed baseSeed zone x y z =
+    let h1 = splitMix64Mix (baseSeed + fromIntegral x * 73856093)
+        h2 = splitMix64Mix (h1 + fromIntegral y * 19349663)
+        h3 = splitMix64Mix (h2 + fromIntegral z * 83492791)
+        zoneHash = foldl' (\h c -> h * 31 + fromIntegral (fromEnum c)) (fromIntegral (length zone)) zone
+    in splitMix64Mix (h3 + zoneHash)
+
+-- | Construct canonical sandbox room ID: "sandbox_<zone>_<x>_<y>_<z>"
+sandboxRoomId :: String -> Int -> Int -> Int -> RoomID
+sandboxRoomId zone x y z = "sandbox_" ++ zone ++ "_" ++ show x ++ "_" ++ show y ++ "_" ++ show z
+
+-- | Parse a sandbox room ID into (zone, x, y, z).
+parseSandboxRoomId :: RoomID -> Maybe (String, Int, Int, Int)
+parseSandboxRoomId rid = do
+    rest <- stripPrefix "sandbox_" rid
+    let parts = splitOnChar '_' rest
+    guard (length parts >= 4)
+    let zPart = last parts
+        yPart = parts !! (length parts - 2)
+        xPart = parts !! (length parts - 3)
+        zoneParts = take (length parts - 3) parts
+        zone = intercalate "_" zoneParts
+    guard (not (null zone))
+    x <- readSignedInt xPart
+    y <- readSignedInt yPart
+    z <- readSignedInt zPart
+    pure (zone, x, y, z)
+  where
+    splitOnChar _ [] = [""]
+    splitOnChar c (x:xs)
+        | x == c    = "" : splitOnChar c xs
+        | otherwise = case splitOnChar c xs of
+            []    -> [[x]]
+            (h:t) -> (x:h) : t
+
+    readSignedInt ('-':ds) | not (null ds) && all isDigit ds = negate <$> readMaybe ds
+    readSignedInt ds       | not (null ds) && all isDigit ds = readMaybe ds
+    readSignedInt _                                          = Nothing
+
+-- | Direction vector delta in (dx, dy, dz).
+directionDelta :: Direction -> (Int, Int, Int)
+directionDelta North     = (0, 1, 0)
+directionDelta South     = (0, -1, 0)
+directionDelta East      = (1, 0, 0)
+directionDelta West      = (-1, 0, 0)
+directionDelta Up        = (0, 0, 1)
+directionDelta Down      = (0, 0, -1)
+directionDelta Northeast = (1, 1, 0)
+directionDelta Northwest = (-1, 1, 0)
+directionDelta Southeast = (1, -1, 0)
+directionDelta Southwest = (-1, -1, 0)
+
+-- | Opposite compass direction.
+oppositeDirection :: Direction -> Direction
+oppositeDirection North     = South
+oppositeDirection South     = North
+oppositeDirection East      = West
+oppositeDirection West      = East
+oppositeDirection Up        = Down
+oppositeDirection Down      = Up
+oppositeDirection Northeast = Southwest
+oppositeDirection Southwest = Northeast
+oppositeDirection Northwest = Southeast
+oppositeDirection Southeast = Northwest
+
+-- | Check whether an exit destination refers to a declared sandbox zone.
+isSandboxTarget :: RoomID -> GameWorld -> Bool
+isSandboxTarget target gw =
+    Map.member target (sandboxZones gw)
+    || case stripPrefix "sandbox_" target of
+        Just zone | Map.member zone (sandboxZones gw) -> True
+        _ -> case parseSandboxRoomId target of
+            Just (zone, _, _, _) -> Map.member zone (sandboxZones gw)
+            Nothing              -> False
+

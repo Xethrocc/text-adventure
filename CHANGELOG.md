@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Refactoring: Monolithisches `Types.hs` aufgeteilt (Phase 0.6)
+
+- Das 2184 Zeilen lange Modul `src/Types.hs` wurde in vier fokussierte Submodule mit vollständigen, expliziten Exportlisten aufgeteilt:
+  - `Types.Core` (`src/Types/Core.hs`): Basis-Typen, ID-Aliase, Zustände, World, Engine-Events, Expressions/Predicates und Hilfsfunktionen.
+  - `Types.Cards` (`src/Types/Cards.hs`): Kartentypen, Kartenziele, Deck-Ziele, `Card` und `DeckState`.
+  - `Types.Vehicles` (`src/Types/Vehicles.hs`): Fahrzeugtypen, Haltestellen, Kraftstoff-Spezifikationen, `VehicleDef` und `VehicleState`.
+  - `Types.Combat` (`src/Types/Combat.hs`): Kampfsysteme (`CombatProfile`, `NarrativeCombat`, `TacticalCombat`), Kampfbildschirme, Initiativregeln, Aktionen und Spieler-Fähigkeiten (`PlayerAbility`).
+- **Re-Export-Fassade:** `src/Types.hs` bleibt als Re-Export-Fassade erhalten (`module Types (module Types.Core, module Types.Cards, module Types.Vehicles, module Types.Combat)`). Alle bisherigen Konsumenten können weiterhin unverändert `import Types` verwenden.
+- **Zyklusfreie Boot-Auflösung:** Die gegenseitige Rekursion zwischen `Types.Core` und den spezialisierten Modulen wird sauber über `src/Types/Core.hs-boot` aufgelöst.
+- **Vollständige Semantik- und Format-Invarianz:** Keine veränderten JSON-Formate, Savegame-Strukturen oder Checksummen; alle 41 E2E-Playthroughs und 354+ Engine-Tests laufen unverändert durch.
+
 ### Aufräumen: sieben ungenutzte Engine-Funktionen entfernt (Phase 0.5)
 
 - Ohne jeden Aufrufer in Engine, Tests, Worldbuilder, CLI und TUI — geprüft per

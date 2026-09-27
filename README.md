@@ -155,7 +155,7 @@ no own state file. Their state lives in the existing `VarMap`
   adding code paths.
 - **State lives in the existing `SaveState`**, preferably as `VarMap` entries,
   so no feature needs its own save file or state silo.
-- Main modules: `Types.hs` (shared data), `Game.hs` (state, lookups, party,
+- Main modules: `Types.hs` (re-export facade) / `Types/{Core,Cards,Vehicles,Combat}.hs`, `Game.hs` (state, lookups, party,
   inventory, base deck mutators), `Parser.hs` (command dispatch + interact
   handlers), `Effects.hs` (outcome interpreter, triggers, room transitions,
   conditions), `Quests.hs`, `Vehicles.hs`, `Cards.hs`, `Combat.hs`,
