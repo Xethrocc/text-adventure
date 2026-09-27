@@ -18,7 +18,7 @@ die getroffenen Entscheidungen und den Stufenplan zusammen.
 | 2.6 Disambiguation | first-match; zusätzlich 2 Bugs (s.u.) |
 | 2.7 Timer | `apply_condition` **ist** ein Named Timer; fehlt: Abfrage, Restzeit, `hidden` |
 | 2.8 Welt-Physik | kein Gewicht/Limit/Liquids; Licht nur „getragen + Tag“; Licht-Leck (s.u.) |
-| 2.9 I18n | zusätzlich ~82 hartkodierte englische Engine-Meldungen |
+| 2.9 I18n | zusätzlich ~80–130 hartkodierte englische Engine-Meldungen (genaue Zahl in 1.1) |
 | 2.10–2.12 | stimmen; Architektur aber vorbereitet (`Frontend`-Record, pures `applyLoopCommand`, JSON überall) |
 | Zahlen | veraltet: 26 Adventures, 328/165/20 Tests, 40 `.in`/`.expect`-Playthroughs (+ Worldgen-/Run-Regenerations-Checks), CI grün |
 | `Text`-Empfehlung | verworfen — widerspricht dokumentierter, gemessener Entscheidung (`Types.hs:23–39`) |
@@ -41,18 +41,24 @@ Alle Befunde im Code nachgeprüft:
 | Punkt | Prüfergebnis |
 |---|---|
 | B1 | bestätigt — `findItemIdByAlias` sucht über `Map.elems (itemDefs (world state))`, also global |
-| B2 | bestätigt — `allReachableItems = roomItems ++ invItems` (`Parser.hs:838`) |
+| B2 | bestätigt — `allReachableItems = roomItems ++ invItems` (`Parser.hs:849`) |
 | B3 | bestätigt — nur drei `isDark`-Prüfungen: `look` (456), `watch` (634), `map` (656) |
 | B4 | bestätigt — im `VTake`-Zweig wird das `vmLookup`-Outcome *zusätzlich* nach `pickupItem` angewendet |
-| `ContainerState` | bestätigt — nur Deklaration/JSON in `Types.hs`, je eine Erwähnung in `Effects.hs:102` und `Validate.hs:514`, keine Spielverdrahtung |
+| `ContainerState` | bestätigt — kommt außerhalb von `Types.hs` **gar nicht** vor. (`Effects.hs:102` und `Validate.hs:514` betreffen die *Location* `InContainer`: Ablehnung von `MoveEntity … InContainer` bzw. `InvalidContainer`-Check.) |
 | 2.1 / 2.2 / 2.7 | bestätigt — `RaiseEvent`/`OnCustomEvent` parameterlos; `formatStringWith` mit `{var:+}`/`{gold:6}`; `ApplyCondition` existiert, **kein** `HasCondition`-Prädikat |
 | Zahlen | bestätigt — 26 Adventures (2 + 9 Genres + 15 Module), 328/165/20 Tests |
-| Meldungszahl ~82 | **nicht bestätigt** — grobe Zählung ergibt 116 unique großgeschriebene Literale in den Kernmodulen; exakte Zahl erst nach Klassifikation (siehe 1.1) |
-| `verb_map` mit `take` in Beispielen | bestätigt: **keiner** — die Migration in 4.2 trifft keinen Bestandsinhalt |
+| Meldungszahl ~82 | **nicht bestätigt** — grobe Zählungen ergeben 102–130 unique großgeschriebene Literale (je nach Modulauswahl, inkl. Überschriften/Labels); exakte Zahl erst nach Klassifikation (siehe 1.1) |
+| `verb_map` mit `take` in Beispielen | **drei** Einträge, alle siegentscheidend: `take,intact:` in `genres/fantasy.yaml:161`, `genres/space-opera.yaml:144`, `genres/cyberpunk.yaml:122` (jeweils `game_end: victory`) — die Migration in 4.2 trifft Bestandsinhalt und E2E-Siegpfade |
+| README-Zahlen | in `435c056` bereits korrigiert (six suites, 26 Adventures, 40 Playthroughs = 28 + 12, plus Worldgen-/Run-Regeneration-Checks) |
 
 Aus dem Gegenlesen ergänzt: 0.6 (`Types.hs`-Split, Review §5, fehlte im Plan),
 Aufwandstabelle und Nicht-Ziele (Abschnitt 4), Styling-Modell in 1.2,
-Protokoll-Spezifikation in 1.4, WASM-Spike in 5.1, Doku-Lieferung in Phase 3.
+Protokoll-Spezifikation in 1.4, WASM-Spike (jetzt 1.0), Doku-Lieferung in Phase 3.
+
+Zweites Gegenlesen (2026-09-27): `take`-Befund korrigiert (drei Bestandseinträge),
+`ContainerState`-/B2-Belege präzisiert, 0.5 auf Rest reduziert, 0.6 direkt nach 0.5
+festgelegt, WASM-Spike von 5.1 nach 1.0 vorgezogen, Rekursionsverbot für Procedures,
+zählbasiertes Inventarlimit gegen Welt-Physik-Nicht-Ziel abgegrenzt.
 
 ---
 
@@ -99,14 +105,15 @@ Protokoll aus Phase 1 macht dieses Batching möglich.
 | 0.2 | **Verbabhängige Suchreihenfolge:** `drop`/`use`/`equip` Inventar zuerst, `take` Raum zuerst → **fixt B2**. | Test für `drop key` mit Namensvetter im Raum |
 | 0.3 | **Licht-Leck schließen** (B3): `take`/`examine`/`search`/`use` auf nicht-getragene Ziele im Dunkeln verweigern; Meldung konfigurierbar vorbereiten. | Tests + ggf. E2E-Anpassung prüfen |
 | 0.4 | **Validierungs-Warnungen:** Keyword-Kollision zwischen Items/NPCs im selben Raum; unbekannte `{name}`-Platzhalter in Texten. | Worldbuilder-Tests |
-| 0.5 | Aufräumen: `cleanedTgt` in `matchesNPCTarget` nutzen oder entfernen; **README-Zahlen korrigieren** — `README.md:56-57` nennt „all four test suites" (es sind 6), „22 shipped adventures" (26) und „32 scripted playthroughs" (28 Happy-Path + 12 Non-Victory); zusätzlich die E2E-Zählweise eindeutig formulieren. `ContainerState` bleibt (Phase 4.4). | — |
-| 0.6 | **`Types.hs`-Split** (Review §5, im Plan bisher nicht enthalten): 2177 Zeilen aufteilen, z. B. `Types.Core`/`Types.Combat`/`Types.Cards`/`Types.Vehicles`. Reiner Umzug, keine Semantikänderung. Größe M — unabhängig verschiebbar, muss aber vor Phase 4 stehen. | `scripts/ci.sh` grün, E2E byte-identisch |
+| 0.5 | Aufräumen: `cleanedTgt` in `matchesNPCTarget` nutzen oder entfernen. `ContainerState` bleibt (Phase 4.4). *(README-Zahlen und E2E-Zählweise bereits in `435c056` erledigt: 40 Playthroughs + Worldgen-/Run-Regeneration-Checks.)* | — |
+| 0.6 | **`Types.hs`-Split** (Review §5): 2177 Zeilen aufteilen entlang der vorhandenen Abschnitte, z. B. `Types.Core`/`Types.Cards` (ab Z. 567)/`Types.Vehicles` (ab Z. 1350)/`Types.Combat` (ab Z. 1636). `Types` bleibt als **Re-Export-Fassade**, damit kein `import Types` geändert werden muss. Reiner Umzug, keine Semantikänderung. Größe M. **Direkt nach 0.5**, vor Phase 1 — Phasen 1/2 fügen viele neue Typen hinzu (`OutputEvent`, Protokoll, `OnBefore`, `Block`), ein späterer Split erzeugt unnötige Merge-Konflikte. | `scripts/ci.sh` grün, E2E byte-identisch |
 
 ### Phase 1 — Ausgabe- & Loop-Architektur *(Haskell, Fundament für WebUI und I18n)*
 
 | Stufe | Inhalt | Abnahme |
 |---|---|---|
-| 1.1 | **Message-Katalog:** zuerst **Inventar** aller hartkodierten Meldungen anlegen (Zahl belegen — grobe Zählung nennt 116, der Plan bisher ~82), dann auf stabile Keys (`MsgId`) + Argumente umstellen; englischer Default-Katalog als Daten. Rendern via `formatStringWith`. | E2E byte-identisch; Inventar-Liste im Commit |
+| 1.0 | **WASM-Machbarkeits-Spike:** Kern-Module (`Types`, `Game`, `Parser`, `Effects`, … ohne `haskeline`/`process`/`directory`) mit dem GHC-WASM-Backend bauen, ein `applyLoopCommand` im Browser ausführen. Zeitlich begrenzt, kein Produktionscode. Liegt **vor 1.4**, damit Protokoll und Frontend nicht auf einer ungeprüften Annahme aufsetzen; Erkenntnisse (z.B. IO-Abhängigkeiten, Paketprobleme) fließen in 1.3/1.4 ein. | Spike-Notiz: machbar ja/nein, Blocker, Aufwand für 5.1 |
+| 1.1 | **Message-Katalog:** zuerst **Inventar** aller hartkodierten Meldungen anlegen (Zahl belegen — grobe Zählungen ergeben 102–130 Literale inkl. Überschriften/Labels, der Plan nannte ~82), dann auf stabile Keys (`MsgId`) + Argumente umstellen; englischer Default-Katalog als Daten. Rendern via `formatStringWith`. | E2E byte-identisch; Inventar-Liste im Commit |
 | 1.2 | **Strukturierte Ausgabe:** `data OutputEvent` (z.B. `EvMessage MsgId Args`, `EvText String`, `EvRoomChanged`, `EvQuestUpdate`, `EvDialogue [Choice]`, `EvCombat …`, `EvSfx`, `EvMusic`, `EvArt`, `EvGameOver`). `applyLoopCommand` liefert `[OutputEvent]`; CLI/TUI rendern daraus Text. **Zwingend mitentscheiden: Styling-Modell** — heute stecken ANSI-Codes in den Ausgabestrings (`ansiFilter` filtert nur am Rand nach `isTty`/`--no-color`); die Events brauchen Style-/Span-Information und strukturierte Art-/Hotspot-Payloads, sonst muss die WebUI ANSI parsen oder verliert Farbe. | E2E byte-identisch; TUI-Tests grün; Styling-Entscheidung dokumentiert |
 | 1.3 | **Purer Session-Automat:** Save/Load/Restart/GameOver/Death/Victory aus `loopGame`/`deathLoop`/`victoryLoop` als pure Übergänge, die IO-Wünsche (`ReqSave slot`, `ReqLoad slot`, `ReqPersistMeta`, `ReqPause`) zurückgeben. `loopGame` wird dünner Interpreter. | E2E byte-identisch; neue Unit-Tests für Übergänge |
 | 1.4 | **Protokoll v1:** JSON-Nachrichten `ClientMsg` (`command`, `choose`, `continue`, `load_world`, `save`/`load`) und `ServerMsg` (`events`, `snapshot` für HUD/Map/Quests). Versioniert, Golden-JSON-Tests. Kein Transport — nur Typen + Codec. | Golden-Tests + **Protokoll-Spezifikation in `docs/`** (Nachrichten, Event-Katalog, Versionierung) |
@@ -119,11 +126,11 @@ Protokoll aus Phase 1 macht dieses Batching möglich.
 | 2.2 | **Veto Stufe 1 (D3):** Event `OnBefore verb`, Effekt `Block (Maybe msg) consumesTurn`, Variablen `cmd.target`/`cmd.target_kind` vor Ausführung gebunden; Exit-Variante mit `when:`-Predicate + Fehltext. Semantik: alle passenden Before-Regeln laufen in Definitionsreihenfolge, erster `block` stoppt die Aktion, verbleibende Before-Regeln laufen nicht. | Unit + E2E (Wächter, Traglast) |
 | 2.3 | **Disambiguation:** `Ambiguous`-Ergebnis aus 0.1 → Event `EvDisambiguate [..]`, Rückfrage „Which do you mean: [1] …, [2] …?“; Antwort per Zahl oder unterscheidendem Wort; kostet keinen Zug. | Unit + E2E |
 | 2.4 | **Text-Erweiterung:** Inline-Bedingung `{if <flag/var-cond>|a|b}` (begrenzte Syntax), Ausdrücke `{= gold * 2}` via vorhandenem `Expr`-Parser, Props `{item.torch.fuel}`. | Unit-Tests |
+| 2.5 | **Procedures (D2):** `procedures:`-Block, `call:`, Effekt `CallProc`, Parameter-Stack im `GameState` (nicht im Save persistiert, da nur während Ausführung), Compiler-Checks (unbekannte Procedure, Arity, **Rekursion statisch verboten**: Zyklen im Call-Graph sind Compile-Fehler; `maxOutcomeDepth` bleibt Laufzeit-Schutz), Doku in `adventure-schema.md`. Protokoll: Procedure-Aufrufe erscheinen nicht als eigene Events (nur deren Effekte). | Unit (Scope, verschachtelte Aufrufe, Arity-/Zyklus-Fehler) + E2E-Fixture |
 
-**Vorschlag aus dem Gegenlesen (Entscheidung offen):** Procedures (4.1) sind reines
-Haskell, und die Review rankt sie als Tier 1 #1 (beste Impact/Aufwand-Ratio). Sie
-könnten als 2.5 hierher vorgezogen werden — der Editor-Tab folgt dann in Phase 4.
-Der Plan legt sie bisher hinter die WebUI.
+**Entscheidung (2026-09-27):** Procedures sind aus Phase 4 als **2.5** vorgezogen —
+reines Haskell (weniger Wechsel), Review-Tier 1 #1. Preis: WebUI v1 startet eine
+M–L-Stufe später. Der Editor-Teil bleibt in 4.1.
 
 ### Phase 3 — WebUI v1 *(überwiegend Frontend, dünner Haskell-Server)*
 
@@ -144,10 +151,10 @@ Jede Stufe: **erst Haskell komplett**, dann UI am Stück.
 
 | Stufe | Engine | Editor/WebUI |
 |---|---|---|
-| 4.1 | **Procedures (D2):** `procedures:`-Block, `call:`, `CallProc`, Parameter-Stack im `GameState` (nicht im Save persistiert, da nur während Ausführung), Compiler-Checks (unbekannt, Arity, Rekursionstiefe), Doku. | Procedure-Liste, „wird verwendet in…“ |
-| 4.2 | **Veto Stufe 2 (D3):** `verb_map`-Shorthand `before:`/`instead:` pro Item/NPC; `take`-Semantik klären → **fixt B4** (Migration: bestehende `take`-Einträge als `after` behandeln, Warnung). | Regel-Ansicht pro Objekt |
+| 4.1 | **Procedures:** Engine bereits in 2.5 umgesetzt; hier nur ggf. Nachschärfungen aus der Editor-Arbeit (z.B. Metadaten wie `desc:` für Parameter). | Procedure-Liste, Parameter-Signatur, „wird verwendet in…“ |
+| 4.2 | **Veto Stufe 2 (D3):** `verb_map`-Shorthand `before:`/`instead:` pro Item/NPC; `take`-Semantik klären → **fixt B4**. Migration: bestehende `take`-Einträge (auch `take,<state>:`) laufen **weiterhin als `after`** — betrifft die siegentscheidenden Einträge in `fantasy`, `space-opera`, `cyberpunk`; Veto/Ersetzen nur über die neuen `before:`/`instead:`-Schlüssel. Alternativ die drei Dateien im selben Commit umstellen. | Regel-Ansicht pro Objekt; E2E-Siegpfade der drei Genres unverändert grün | Regel-Ansicht pro Objekt |
 | 4.3 | **Sprachpakete (D4):** `language: de`, Katalog `de` + deutsche Verb-/Richtungs-Aliase, `messages:`-Overrides, `article:`/`gender:` an Items/NPCs. | Tab „Texte“: fehlende/überschriebene Keys |
-| 4.4 | **Container:** `ContainerState` in `SaveState` verdrahten; `open`/`close`/`lock`/`unlock`, `take X from Y`, `put X in Y`; Inhalt offener Container im Scope; Verschachtelung; Kapazität; einfaches Inventarlimit (Kern + Veto). | Item-Platzierung im Map-Editor |
+| 4.4 | **Container:** `ContainerState` in `SaveState` verdrahten; `open`/`close`/`lock`/`unlock`, `take X from Y`, `put X in Y`; Inhalt offener Container im Scope; Verschachtelung; Kapazität; einfaches Inventarlimit (Kern + Veto) — beides **zählbasiert** (Anzahl Items), kein Gewicht/Volumen. | Item-Platzierung im Map-Editor |
 | 4.5 | **Konversation:** `ask/tell X about Y` mit Topic-Tabelle pro NPC, Event `OnTalk`, Barks (kontextuelle Einzeiler mit Cooldown). | Dialog-Graph-Editor |
 | 4.6 | **Map- & Quest-Editor:** grafische Räume/Exits, Quests/Stages. Vorher entscheiden: strukturelles YAML-Schreiben mit Kommentarerhalt vs. W5 Stufe 2 (exakte Positionen via Event-Parser). | Map- und Quest-Tab |
 
@@ -155,29 +162,28 @@ Jede Stufe: **erst Haskell komplett**, dann UI am Stück.
 
 | Stufe | Inhalt |
 |---|---|
-| 5.1 | **WASM-Build:** *zuerst ein Machbarkeits-Spike* (GHC-WASM mit dem IO-freien Kern), damit Protokoll- und Frontend-Arbeit nicht auf einer ungeprüften Annahme aufsetzt. Dann: Kern-Library von IO-Abhängigkeiten (`process`, `directory`, `haskeline`) trennen; GHC-WASM-Backend; gleiches Protokoll wie 1.4 → Web-Export eines Adventures als statische Seite. |
+| 5.1 | **WASM-Build** (nur bei positivem Spike aus 1.0): Kern-Library von IO-Abhängigkeiten (`process`, `directory`, `haskeline`) trennen; GHC-WASM-Backend; gleiches Protokoll wie 1.4 → Web-Export eines Adventures als statische Seite. |
 | 5.2 | **Synth-Tab:** zuerst Designphase (Sounds/Musik als Daten im Adventure? Rendern im Browser vs. Export als Datei für CLI/TUI?), dann Umsetzung über die vorhandene Audio-Abstraktion (`PlaySfx`/`PlayMusic`). |
 | 5.3 | **Include & Pakete:** `include:` für YAML, Procedure-Bibliotheken und Sprachpakete als wiederverwendbare Pakete. |
 
 ### Aufwand & Haltepunkte
 
 Grobe Größen (Vorschlag, keine Schätzung aus der Review): Phase 0 **S–M** (0.6 = M),
-Phase 1 **L** (1.1–1.4 je M–L), Phase 2 **M** je Stufe, Phase 3 **L** (3.1/3.2 = L,
+Phase 1 **L** (1.0 = S, 1.1–1.4 je M–L), Phase 2 **M** je Stufe (2.5 = M–L), Phase 3 **L** (3.1/3.2 = L,
 3.3/3.4 = M), Phase 4 **L** je Stufe, Phase 5 **XL**.
 
 Haltepunkte, an denen neu entschieden wird statt weiterzubauen:
 
 - vor **3.0**: Stack-/Packaging-Entscheidung (Windows-Release mitdenken)
-- vor **4.1**: Procedures in Phase 2 vorgezogen oder wie geplant in Phase 4?
-- vor **5.1**: WASM-Spike-Ergebnis — fällt es negativ aus, entfällt der WASM-Strang, nicht die WebUI
+- nach **1.0**: WASM-Spike-Ergebnis — fällt es negativ aus, entfällt 5.1 (Web-Export), nicht die WebUI; das Protokoll bleibt trotzdem transportunabhängig
 - nach jeder Phase: `scripts/ci.sh` grün, CHANGELOG und README-Zahlen aktuell
 
 ### Nicht-Ziele
 
 - Kein `Text`-statt-`String`-Umbau (dokumentierte Entscheidung `Types.hs:23-39`)
-- Keine Turing-vollständige Skriptsprache — Procedures ersetzen Wiederholung, nicht Kontrollfluss
+- Keine Turing-vollständige Skriptsprache — Procedures ersetzen Wiederholung, nicht Kontrollfluss (daher Rekursionsverbot in 2.5, keine Schleifen-Effekte)
 - Keine Multi-Language-Voll-Lokalisierung in diesem Plan (D4 bleibt Architektur, Ausbau später)
-- Keine Welt-Physik (Gewicht, Licht-Propagation, Liquids) — siehe „Später / optional"
+- Keine Welt-Physik (Gewicht, Volumen, Licht-Propagation, Liquids) — siehe „Später / optional". Zählbasierte Container-Kapazität und Inventarlimits (4.4) sind davon ausgenommen.
 - Kein Umbau der Kampf-, Karten- oder Worldgen-Systeme
 
 ### Später / optional
@@ -192,10 +198,9 @@ Haltepunkte, an denen neu entschieden wird statt weiterzubauen:
 
 ## 5. Offene Punkte zum jeweiligen Stufenbeginn
 
-- 0.5: E2E-Zählweise (40 `.in`/`.expect`-Playthroughs vs. 41 inkl. Worldgen-Playthrough)
-- 0.6: Umfang des `Types.hs`-Splits (welche Module, jetzt oder später)
+- 0.6: Modulschnitt des `Types.hs`-Splits (Zeitpunkt entschieden: direkt nach 0.5)
+- 1.0: WASM-Spike — Ergebnis entscheidet über 5.1
 - 1.2: Styling-Modell der `OutputEvent`s (Spans/Tags statt eingebetteter ANSI-Codes)
-- 2.5 / 4.1: Procedures in Phase 2 vorziehen oder in Phase 4 belassen
 - 3.0: Frontend-Stack, Server-Bibliothek, Packaging
 - 4.6: YAML-Schreibstrategie der Editoren (Kommentarerhalt) vs. W5 Stufe 2
 - 5.2: Datenmodell und Render-Ort des Synths
