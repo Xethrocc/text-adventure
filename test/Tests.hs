@@ -848,17 +848,20 @@ testPredicateLocationJsonRoundTrip = do
 -- | R1: an unknown entity in a `Predicate.Location` (e.g. `at: palyer` typo) is reported as a MissingEntity error.
 testValidateTypoInPredicateLocation :: IO Bool
 testValidateTypoInPredicateLocation = do
-    let Just typoPred = Aeson.decode (BLC.pack "{\"at\":\"palyer\",\"room\":\"start\"}") :: Maybe Predicate
-        Just okPred   = Aeson.decode (BLC.pack "{\"at\":\"player\",\"room\":\"start\"}") :: Maybe Predicate
-        gwTypo = (world initSampleGame)
-            { triggerDefs = [ TriggerDef "t" OnTurn (Just typoPred) [SendMessage "ok"] False 0 ] }
-        gwOk = (world initSampleGame)
-            { triggerDefs = [ TriggerDef "t" OnTurn (Just okPred) [SendMessage "ok"] False 0 ] }
-    r1 <- expectTrue "'at: palyer' fixture produces MissingEntity validation error"
-              (MissingEntity "palyer" "property" `elem` validateWorld gwTypo)
-    r2 <- expectTrue "'at: player' does not produce validation error"
-              (MissingEntity "player" "property" `notElem` validateWorld gwOk)
-    pure (r1 && r2)
+    let decodedTypo = Aeson.decode (BLC.pack "{\"at\":\"palyer\",\"room\":\"start\"}") :: Maybe Predicate
+        decodedOk   = Aeson.decode (BLC.pack "{\"at\":\"player\",\"room\":\"start\"}") :: Maybe Predicate
+    case (decodedTypo, decodedOk) of
+        (Just typoPred, Just okPred) -> do
+            let gwTypo = (world initSampleGame)
+                    { triggerDefs = [ TriggerDef "t" OnTurn (Just typoPred) [SendMessage "ok"] False 0 ] }
+                gwOk = (world initSampleGame)
+                    { triggerDefs = [ TriggerDef "t" OnTurn (Just okPred) [SendMessage "ok"] False 0 ] }
+            r1 <- expectTrue "'at: palyer' fixture produces MissingEntity validation error"
+                      (MissingEntity "palyer" "property" `elem` validateWorld gwTypo)
+            r2 <- expectTrue "'at: player' does not produce validation error"
+                      (MissingEntity "player" "property" `notElem` validateWorld gwOk)
+            pure (r1 && r2)
+        _ -> expectTrue "R1 fixtures decode into a Predicate" False
 
 -- | `exit` is the quit alias, `disembark` leaves a vehicle — the help text has
 --   to say the same, otherwise players quit the game instead of leaving a ship.
