@@ -6244,6 +6244,50 @@ testDarkRoomAllowsCarriedItemInteractions = do
 
     pure (r1 && r2 && r3 && r4 && r5 && r6)
 
+-- | Phase 0.3: In darkness, carried items are prioritized for 'examine' so unseeable
+--   room items sharing the same keyword do not shadow carried items.
+testDarkRoomCarriedItemNotShadowedByRoomItem :: IO Bool
+testDarkRoomCarriedItemNotShadowedByRoomItem = do
+    let gw = world initSampleGame
+        myKeyDef = (itemDefs gw Map.! "key")
+            { itemId = "my_key"
+            , itemName = "my key"
+            , itemKeywords = ["key", "my key"]
+            , itemDescription = plainText "A small shiny personal key."
+            }
+        gw' = gw { itemDefs = Map.insert "my_key" myKeyDef (itemDefs gw) }
+        ist0 = itemStates (save initSampleGame)
+        -- Player in dark hallway carrying my_key; 'key' (brass key) is on the hallway floor
+        sv = (save initSampleGame)
+            { currentRoom = "hallway"
+            , itemStates = Map.insert "my_key" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) ist0
+            }
+        st = initSampleGame { world = gw', save = sv }
+
+    -- 1. 'examine key' examines carried 'my_key', not the unseeable room 'key'
+    let (_, msgExamine) = executeCommand (Interact VLookAt "key") st
+    r1 <- expectEqual "A small shiny personal key." msgExamine
+
+    -- 2. 'examine brass key' (only matches the floor key) is refused due to darkness
+    let (_, msgFloorKey) = executeCommand (Interact VLookAt "brass key") st
+    r2 <- expectEqual defaultDarkMessage msgFloorKey
+
+    -- 3. 'take key' is refused due to darkness (room item 'key' cannot be taken in the dark)
+    let (_, msgTake) = executeCommand (Interact VTake "key") st
+    r3 <- expectEqual defaultDarkMessage msgTake
+
+    -- 4. In a lit room ("start"), 'examine key' prioritizes the room item over inventory (Phase 0.2 / B2)
+    let svLit = (save initSampleGame)
+            { currentRoom = "start"
+            , itemStates = Map.insert "key" (ItemState (InRoom "start") "intact" Map.empty False)
+                            (Map.insert "my_key" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) ist0)
+            }
+        stLit = initSampleGame { world = gw', save = svLit }
+        (_, msgLitExamine) = executeCommand (Interact VLookAt "key") stLit
+    r4 <- expectEqual "A small brass key." msgLitExamine
+
+    pure (r1 && r2 && r3 && r4)
+
 -- | Phase 0.3 (B3): Illumination by carrying a light source or by room light_flag
 --   restores all normal interactions in a room tagged "dark".
 testDarkRoomIlluminationRestoresInteraction :: IO Bool
@@ -6374,6 +6418,7 @@ main = do
         , runTest "dark room refuses examine and search (Phase 0.3, B3)" testDarkRoomRefusesExamineAndSearch
         , runTest "dark room refuses use on room entities (Phase 0.3, B3)" testDarkRoomRefusesUseOnRoomEntities
         , runTest "dark room allows carried item interactions (Phase 0.3, B3)" testDarkRoomAllowsCarriedItemInteractions
+        , runTest "dark room examine prioritizes carried over room item (Phase 0.3)" testDarkRoomCarriedItemNotShadowedByRoomItem
         , runTest "dark room illumination restores all interactions (Phase 0.3, B3)" testDarkRoomIlluminationRestoresInteraction
         , runTest "room-level dark_msg overrides default message (Phase 0.3)" testConfigurableDarkMessage
         , runTest "roomDarkMsg JSON round-trip and legacy keys (Phase 0.3)" testRoomDarkMsgJsonRoundTrip

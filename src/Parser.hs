@@ -989,7 +989,7 @@ resolveTarget verb targetStr state
             invCandidateIds  = nub (map itemId matchingInvItems)
 
             (primaryCandidates, secondaryCandidates) =
-                if preferInventoryTarget verb
+                if preferInventoryTarget verb || (isCurrentRoomDark state && verbCanonicalName verb == "examine")
                 then (invCandidateIds, roomCandidateIds)
                 else (roomCandidateIds, invCandidateIds)
 
