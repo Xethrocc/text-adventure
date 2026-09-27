@@ -59,10 +59,6 @@ data Command
     | Unknown String
     deriving (Show, Eq)
 
--- | Parse an input verb word against the unified registry (core + custom).
---   Backwards-compatible alias for Verbs.resolveVerb with no custom defs.
-parseVerb :: String -> Maybe Verb
-parseVerb = resolveVerb Map.empty
 
 -- | Resolve an input verb word against the registry: core verbs first, then
 --   adventure-declared custom verbs.  Delegates to Verbs.resolveVerb.
@@ -278,9 +274,6 @@ parseSimpleCommandWith defs tokens input = case tokens of
     [v] | Just verb <- parseVerbWith defs v -> Interact verb ""
     _ -> Unknown input
 
--- | Keep the original name for backward compatibility in tests
-parseSimpleCommand :: [String] -> String -> Command
-parseSimpleCommand = parseSimpleCommandWith Map.empty
 
 parseDirection :: String -> String -> Command
 parseDirection dir input = case dir of

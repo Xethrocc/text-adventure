@@ -60,11 +60,6 @@ formatSaveEntry currentChecksum sf =
 savesDir :: IO FilePath
 savesDir = maybe "saves" id <$> lookupEnv "TA_SAVES_DIR"
 
--- | Directory for one specific purpose, honouring `TA_SAVES_DIR`. The variant
---   the meta-progression layer (Rogue Phase 2) will use, kept next to its
---   sibling so the path scheme stays in one place.
-savesDirFor :: String -> IO FilePath
-savesDirFor base = (</> base) <$> savesDir
 
 ironmanCheckpointSlot :: String
 ironmanCheckpointSlot = "checkpoint"

@@ -255,11 +255,6 @@ getItemsInLocation loc state =
     , not (itemHidden def) || itemDiscovered st
     ]
 
--- | All items in a location, including hidden ones (used internally)
-getAllItemsInLocation :: Location -> GameState -> [ItemDef]
-getAllItemsInLocation loc state =
-    let itemIds = Map.keys $ Map.filter (\s -> itemLocation s == loc) (itemStates (save state))
-    in [def | iId <- itemIds, Just def <- [Map.lookup iId (itemDefs (world state))]]
 
 -- | Check if player has an item in inventory
 hasItem :: ItemID -> GameState -> Bool
@@ -360,9 +355,6 @@ dropItem iId state = relocateItem iId (InRoom (currentRoom (save state))) state
 giveItem :: ItemID -> GameState -> GameState
 giveItem iId state = relocateItem iId (CarriedBy ActorPlayer) state
 
--- | Move an item to a specific room (e.g., loot drop)
-moveItemToRoom :: ItemID -> RoomID -> GameState -> GameState
-moveItemToRoom iId targetRoom state = relocateItem iId (InRoom targetRoom) state
 
 -- | Consume an item, removing it from play entirely
 consumeItem :: ItemID -> GameState -> GameState
@@ -432,9 +424,6 @@ unequipItem iId state =
     let newEquip = Map.filter (/= iId) (equipment (save state))
     in state { save = (save state) { equipment = newEquip } }
 
--- | Unequip whatever occupies a slot
-unequipSlot :: EquipSlot -> GameState -> GameState
-unequipSlot slot state = state { save = (save state) { equipment = Map.delete slot (equipment (save state)) } }
 
 -- | Sum a numeric projection over all equipped items
 sumEquipBonus :: (EquipEffect -> Maybe Int) -> GameState -> Int

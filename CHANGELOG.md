@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Aufräumen: sieben ungenutzte Engine-Funktionen entfernt (Phase 0.5)
+
+- Ohne jeden Aufrufer in Engine, Tests, Worldbuilder, CLI und TUI — geprüft per
+  Referenzzählung über alle `.hs`-Dateien: `getAllItemsInLocation`, `moveItemToRoom`
+  und `unequipSlot` (`src/Game.hs`), `parseSimpleCommand` und `parseVerb`
+  (`src/Parser.hs` — dünne Wrapper um die `…With`-Varianten, die weiter genutzt
+  werden), `savesDirFor` (`src/SaveLoad.hs`, durch `metaDir` abgelöst) sowie
+  `computeVar` (`src/Types.hs`).
+- Der im Plan unter 0.5 genannte Punkt „`cleanedTgt` in `matchesNPCTarget` nutzen
+  oder entfernen" war gegenstandslos: `cleanedTgt` wird dort verwendet
+  (`src/Cards.hs:46,48`).
+- Ursache für die Langlebigkeit des toten Codes: `Parser.hs`, `Game.hs`,
+  `SaveLoad.hs` und `Types.hs` haben keine Exportliste, deshalb warnt `-Wall` dort
+  nicht vor ungenutzten Top-Level-Bindungen.
+
 ### Fix: `ffmpegAvailable` warf bei fehlendem ffmpeg eine Ausnahme
 
 - `readProcessWithExitCode` **wirft** eine `IOException`, wenn die Exe nicht auf dem

@@ -679,9 +679,6 @@ data Effect
     | Noop                                        -- ^ Do nothing
     deriving (Show, Eq, Generic)
 
--- | Helper: compute an expression and write the result to a variable
-computeVar :: String -> Expr -> Effect
-computeVar name expr = ComputeValue (VRVariable name) expr
 
 -- | Static card definition in GameWorld.
 data Card = Card
