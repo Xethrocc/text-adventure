@@ -6391,6 +6391,137 @@ testRoomDarkMsgJsonRoundTrip = do
 
     pure (r1 && r2 && r3 && r4 && r5)
 
+-- | Phase 0.3 (B3): items tagged "feelable" stay reachable in an unlit room.
+--   The author decides per item what can be found and handled by touch.
+testFeelableItemReachableInDark :: IO Bool
+testFeelableItemReachableInDark = do
+    let st = feelableHallwayState
+
+    -- 1. the feelable key can be taken in the dark
+    let (stAfterTake, msgTake) = executeCommand (Interact VTake "iron key") st
+    r1 <- expectTrue "feelable item is taken in the dark" (hasItem "feel_key" stAfterTake)
+    r2 <- expectTrue "take message reports the item" ("You take the iron key." `isPrefixOf` msgTake)
+
+    -- 2. untagged room items stay refused
+    let (stAfterPlain, msgPlain) = executeCommand (Interact VTake "relic") st
+    r3 <- expectEqual defaultDarkMessage msgPlain
+    r4 <- expectTrue "untagged room item stays untouchable" (not (hasItem "plain_relic" stAfterPlain))
+
+    -- 3. examine and use work on a feelable room item
+    let (_, msgExamine) = executeCommand (Interact VLookAt "iron key") st
+    r5 <- expectEqual "A cold iron key." msgExamine
+    let (_, msgUse) = executeCommand (Interact VUse "iron key") st
+    r6 <- expectTrue "use on feelable item is not blocked" (msgUse /= defaultDarkMessage)
+
+    -- 4. NPCs are never feelable
+    let (_, msgNpc) = executeCommand (Interact VLookAt "goblin") st
+    r7 <- expectEqual defaultDarkMessage msgNpc
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | Phase 0.3 (B3): in the dark, 'take all' picks up only the feelable items.
+testTakeAllInDarkTakesOnlyFeelable :: IO Bool
+testTakeAllInDarkTakesOnlyFeelable = do
+    let st = feelableHallwayState
+        (stAfter, msg) = executeCommand TakeAll st
+    r1 <- expectTrue "feelable item was picked up by take all" (hasItem "feel_key" stAfter)
+    r2 <- expectTrue "untagged item was left on the floor" (not (hasItem "plain_relic" stAfter))
+    r3 <- expectTrue "message is not the darkness message" (msg /= defaultDarkMessage)
+    r4 <- expectTrue "message reports the taken item" ("You take the iron key." `isInfixOf` msg)
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 0.3 (B3): 'search' stays blocked in the dark for the room and for
+--   untagged targets, but works on a feelable target.
+testSearchFeelableTargetInDark :: IO Bool
+testSearchFeelableTargetInDark = do
+    let st = feelableHallwayState
+    -- 1. room-wide search stays blocked
+    let (_, msgRoom) = executeCommand (SearchCmd Nothing) st
+    r1 <- expectEqual defaultDarkMessage msgRoom
+    -- 2. untagged target stays blocked
+    let (_, msgPlain) = executeCommand (SearchCmd (Just "relic")) st
+    r2 <- expectEqual defaultDarkMessage msgPlain
+    -- 3. feelable target is allowed
+    let (_, msgFeel) = executeCommand (SearchCmd (Just "iron key")) st
+    r3 <- expectTrue "search on feelable target is not blocked" (msgFeel /= defaultDarkMessage)
+    pure (r1 && r2 && r3)
+
+-- | Phase 0.3 (B3): 'use <carried> on <room entity>' works when the entity is feelable.
+testFeelableUseOnInDark :: IO Bool
+testFeelableUseOnInDark = do
+    let st = pickupItem "potion_healing" feelableHallwayState
+    -- 1. feelable room entity is usable
+    let (_, msgFeel) = executeCommand (InteractWith VUseOn "potion_healing" "iron key") st
+    r1 <- expectTrue "use-on a feelable entity is not blocked" (msgFeel /= defaultDarkMessage)
+    -- 2. NPC target stays blocked
+    let (_, msgNpc) = executeCommand (InteractWith VUseOn "potion_healing" "goblin") st
+    r2 <- expectEqual defaultDarkMessage msgNpc
+    pure (r1 && r2)
+
+-- | Phase 0.3 (B3): ambiguity is resolved in the dark only when every candidate is
+--   reachable (carried or feelable).
+testFeelableAmbiguityInDark :: IO Bool
+testFeelableAmbiguityInDark = do
+    -- 1. both candidates feelable -> not blocked
+    let stBoth = tokensHallwayState True
+        (_, msgBoth) = executeCommand (Interact VTake "token") stBoth
+    r1 <- expectTrue "ambiguity of feelable items is not blocked" (msgBoth /= defaultDarkMessage)
+    -- 2. one candidate untagged -> blocked
+    let stMixed = tokensHallwayState False
+        (_, msgMixed) = executeCommand (Interact VTake "token") stMixed
+    r2 <- expectEqual defaultDarkMessage msgMixed
+    pure (r1 && r2)
+
+-- | Shared fixture: dark hallway holding a feelable "feel_key" and an untagged
+--   "plain_relic".
+feelableHallwayState :: GameState
+feelableHallwayState =
+    let gw = world initSampleGame
+        keyDef = itemDefs gw Map.! "key"
+        feelDef = keyDef
+            { itemId = "feel_key"
+            , itemName = "iron key"
+            , itemKeywords = ["iron key", "iron"]
+            , itemDescription = plainText "A cold iron key."
+            , itemTags = Set.insert "feelable" (itemTags keyDef)
+            }
+        relicDef = keyDef
+            { itemId = "plain_relic"
+            , itemName = "stone relic"
+            , itemKeywords = ["relic"]
+            , itemDescription = plainText "A dull stone relic."
+            }
+        gw' = gw { itemDefs = Map.insert "feel_key" feelDef
+                             (Map.insert "plain_relic" relicDef (itemDefs gw)) }
+        ist0 = itemStates (save initSampleGame)
+        ist1 = Map.insert "plain_relic" (ItemState (InRoom "hallway") "intact" Map.empty False) ist0
+        ist2 = Map.insert "feel_key" (ItemState (InRoom "hallway") "intact" Map.empty False) ist1
+        sv = (save initSampleGame) { currentRoom = "hallway", itemStates = ist2 }
+    in initSampleGame { world = gw', save = sv }
+
+-- | Shared fixture: dark hallway with two items sharing the keyword "token";
+--   either both are feelable or only one of them is.
+tokensHallwayState :: Bool -> GameState
+tokensHallwayState bothFeelable =
+    let gw = world initSampleGame
+        keyDef = itemDefs gw Map.! "key"
+        base iId nm =
+            keyDef { itemId = iId, itemName = nm, itemKeywords = ["token"]
+                   , itemDescription = plainText ("A " ++ nm ++ ".") }
+        defA = (base "token_a" "brass token")
+        defB = (base "token_b" "silver token")
+                  { itemTags = if bothFeelable then Set.insert "feelable" (itemTags keyDef)
+                                               else itemTags keyDef }
+        defA' = defA { itemTags = Set.insert "feelable" (itemTags keyDef) }
+        gw' = gw { itemDefs = Map.insert "token_a" defA'
+                             (Map.insert "token_b" defB (itemDefs gw)) }
+        ist0 = itemStates (save initSampleGame)
+        ist1 = Map.insert "token_b" (ItemState (InRoom "hallway") "intact" Map.empty False) ist0
+        ist2 = Map.insert "token_a" (ItemState (InRoom "hallway") "intact" Map.empty False) ist1
+        sv = (save initSampleGame) { currentRoom = "hallway", itemStates = ist2 }
+    in initSampleGame { world = gw', save = sv }
+
+
 main :: IO ()
 main = do
     results <- sequence
@@ -6422,6 +6553,12 @@ main = do
         , runTest "dark room illumination restores all interactions (Phase 0.3, B3)" testDarkRoomIlluminationRestoresInteraction
         , runTest "room-level dark_msg overrides default message (Phase 0.3)" testConfigurableDarkMessage
         , runTest "roomDarkMsg JSON round-trip and legacy keys (Phase 0.3)" testRoomDarkMsgJsonRoundTrip
+        -- Phase 0.3: feelable — Autoren entscheiden, was im Dunkeln erreichbar ist
+        , runTest "feelable item stays reachable in the dark (Phase 0.3, B3)" testFeelableItemReachableInDark
+        , runTest "take all in the dark picks up only feelable items (Phase 0.3)" testTakeAllInDarkTakesOnlyFeelable
+        , runTest "search in the dark: room and untagged blocked, feelable allowed (Phase 0.3)" testSearchFeelableTargetInDark
+        , runTest "use on a feelable room entity in the dark (Phase 0.3)" testFeelableUseOnInDark
+        , runTest "ambiguity in the dark needs all candidates reachable (Phase 0.3)" testFeelableAmbiguityInDark
         , runTest "parse look at multi-word target" testParseLookAtMultiWord
         , runTest "parse use-on multi-word target" testParseUseOnMultiWord
         , runTest "parse take multi-word target" testParseTakeMultiWord

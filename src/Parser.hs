@@ -612,13 +612,15 @@ executeCommand UnequipAllCmd state
 
 executeCommand TakeAll state = case getCurrentRoom state of
     Nothing -> (state, "There's nothing here to take.")
-    Just room
-        | isDark room state -> (state, darkRoomMessage room)
-        | otherwise ->
-            let roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
-            in if null roomItems
-               then (state, "There's nothing here to take.")
-               else let (finalState, msgs) = foldl' (\(s, ms) item ->
+    Just room ->
+        let inRoom = getItemsInLocation (InRoom (currentRoom (save state))) state
+            -- Phase 0.3 (B3): in the dark only feelable items can be picked up.
+            roomItems = if isDark room state then filter itemIsFeelable inRoom else inRoom
+        in if null roomItems
+           then (state, if isDark room state
+                        then darkRoomMessage room
+                        else "There's nothing here to take.")
+           else let (finalState, msgs) = foldl' (\(s, ms) item ->
                             let (s', m) = executeCommand (Interact VTake (itemId item)) s
                             in (s', ms ++ [m])) (state, []) roomItems
                     in (finalState, intercalate "\n" msgs)
@@ -641,7 +643,9 @@ executeCommand (CompoundCommand cmds) state =
 executeCommand (SearchCmd maybeTarget) state = case getCurrentRoom state of
     Nothing -> (state, "You're in a void. There's nothing to search.")
     Just room
-        | isDark room state -> (state, darkRoomMessage room)
+        | isDark room state
+        , not (maybe False (targetIsFeelable state) maybeTarget) ->
+            (state, darkRoomMessage room)
         | otherwise ->
             case maybeTarget of
                 Nothing -> searchRoom state
@@ -714,7 +718,8 @@ executeCommand (Interact verb targetStr) state =
             | isDarkRestricted verb
             , Just room <- getCurrentRoom stateWithVars
             , isDark room stateWithVars
-            , not (hasItem (itemId item) stateWithVars) ->
+            , not (hasItem (itemId item) stateWithVars)
+            , not (itemIsFeelable item) ->
                 (stateWithVars, darkRoomMessage room)
             | otherwise ->
                 interactItem verb item mSt targetStr stateWithVars
@@ -750,7 +755,7 @@ executeCommand (Interact verb targetStr) state =
             | isDarkRestricted verb
             , Just room <- getCurrentRoom stateWithVars
             , isDark room stateWithVars
-            , not (all (`hasItem` stateWithVars) ids) ->
+            , not (all (itemReachableInDark stateWithVars) ids) ->
                 (stateWithVars, darkRoomMessage room)
             | otherwise ->
                 interactAmbiguous ids stateWithVars
@@ -763,12 +768,16 @@ executeCommand (InteractWith VUseOn itemStr entityStr) state =
         maybeItem = find (matchesItemTarget itemTarget) inventoryItems
         maybeVehicle = findVehicle entityStr state
         entityInInventory = any (matchesItemTarget entityTarget) inventoryItems
+        -- Phase 0.3 (B3): a feelable room entity stays usable in the dark.
+        entityIsFeelable = any (\i -> matchesItemTarget entityTarget i && itemIsFeelable i)
+                               (getItemsInLocation (InRoom (currentRoom (save state))) state)
     in case maybeItem of
         Nothing -> (state, "You need to be carrying '" ++ itemStr ++ "' to use it.")
         Just item
             | Just room <- getCurrentRoom state
             , isDark room state
-            , not entityInInventory ->
+            , not entityInInventory
+            , not entityIsFeelable ->
                 (state, darkRoomMessage room)
             | otherwise ->
                 if entityTarget `elem` reachableEntityAliases state
@@ -1192,6 +1201,24 @@ isDarkRestricted v = case verbCanonicalName v of
     "search"  -> True
     "use"     -> True
     _         -> False
+
+-- | Phase 0.3 (B3): an item tagged @feelable@ can be found and handled by touch,
+--   so the darkness restriction does not apply to it. The author decides per item
+--   what is reachable in an unlit room — a torch, a key, a lever, anything.
+itemIsFeelable :: ItemDef -> Bool
+itemIsFeelable item = Set.member "feelable" (itemTags item)
+
+-- | Item is reachable in darkness: carried, or its definition is tagged @feelable@.
+itemReachableInDark :: GameState -> String -> Bool
+itemReachableInDark st iId =
+    hasItem iId st
+        || maybe False itemIsFeelable (Map.lookup iId (itemDefs (world st)))
+
+-- | Does the target string match a @feelable@ item in the current room?
+targetIsFeelable :: GameState -> String -> Bool
+targetIsFeelable st t =
+    any (\i -> matchesItemTarget t i && itemIsFeelable i)
+        (getItemsInLocation (InRoom (currentRoom (save st))) st)
 
 -- | Pick the room description: resolve CondText variants against game state.
 resolveDescription :: Room -> GameState -> String

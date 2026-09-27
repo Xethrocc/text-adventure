@@ -39,7 +39,7 @@ Das war's. Der Worldbuilder füllt den Rest mit Defaults.
 | `search` | [AActionOutcome] | — | Effekte bei `search` |
 | `ascii` | String / Object | — | Zustandsabhängige ASCII-Kunst (String = fester Banner, Object = CondText; siehe unten) |
 
-### Dunkelheit (`dark`, `light_flag`, `dark_msg`)
+### Dunkelheit (`dark`, `light_flag`, `dark_msg`, `feelable`)
 
 Ein Raum mit dem Tag `"dark"` gilt als dunkel, solange der Spieler kein getragenes
 Item mit dem Tag `"lightsource"` besitzt und das im Raum konfigurierte `light_flag`
@@ -50,7 +50,12 @@ Im Dunkeln gilt:
   bzw. der konfigurierte Text aus `dark_msg` / `dark_message`).
 - Interaktionen auf Objekte im Raum (`take <item>`, `take all`, `examine <item/npc>`,
   `search`, `use <item>`, `use <getragen> on <raum-objekt>`) werden blockiert und geben
-  die Dunkelheitsmeldung zurück.
+  die Dunkelheitsmeldung zurück — **außer** das Ziel trägt den Tag `"feelable"`.
+- **`feelable`:** Ein Item mit diesem Tag lässt sich im Dunkeln ertasten und daher
+  normal behandeln (`take`, `examine`, `search`, `use`). Der Autor entscheidet damit
+  pro Item, was in einem unbeleuchteten Raum erreichbar ist — Fackel, Schlüssel, Hebel,
+  gleich welches. `take all` nimmt im Dunkeln nur die `feelable`-Items mit; ziel-loses
+  `search` sowie Interaktionen mit NPCs und Fahrzeugen bleiben gesperrt.
 - Getragene Items im Inventar können weiterhin untersucht (`examine`), benutzt (`use`),
   kombiniert (`use X on Y`) und abgelegt (`drop`) werden.
 
@@ -340,7 +345,7 @@ description:
 | `name` | String | **required** | Anzeigename |
 | `description` | String / Object | `""` | CondText (siehe Room) |
 | `keys` | [String] | `[]` | Aliase für Autovervollständigung |
-| `tags` | [String] | `[]` | `lightsource`, `weapon`, `vehicle`, … |
+| `tags` | [String] | `[]` | `lightsource`, `feelable`, `weapon`, `vehicle`, … |
 | `location` | String | `"start"` | Start-Raum-ID |
 | `state` | String | `"intact"` | Start-Status |
 | `equip_slot` | String | — | `weapon`, `body`, `accessory` |

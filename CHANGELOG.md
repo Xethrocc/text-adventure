@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Feature: `feelable` — Autoren entscheiden, was im Dunkeln erreichbar ist (Phase 0.3-Ergänzung)
+
+- **Neuer Item-Tag `"feelable"` (`src/Parser.hs`):** Ein Item mit diesem Tag lässt sich
+  im Dunkeln ertasten und ist damit von der Dunkelheits-Sperre ausgenommen. Der Autor
+  entscheidet pro Objekt, was in einem unbeleuchteten Raum erreichbar ist — Fackel,
+  Schlüssel, Hebel, gleich welches. Ohne den Tag bleibt die 0.3-Regel unverändert.
+- Betroffene Stellen: `ITItem`-Wache in `executeCommand (Interact …)`, der
+  Mehrdeutigkeits-Pfad `ITAmbiguous` (Ausnahme nur, wenn alle Kandidaten getragen oder
+  `feelable` sind), `use <getragen> on <raum-objekt>` sowie `take all` (nimmt im Dunkeln
+  nur die `feelable`-Items) und `search <ziel>` (ziel-loses `search` bleibt gesperrt).
+- **Tests:** 5 neue Engine-Tests (jetzt 357 Engine-Tests gesamt):
+  `testFeelableItemReachableInDark`, `testTakeAllInDarkTakesOnlyFeelable`,
+  `testSearchFeelableTargetInDark`, `testFeelableUseOnInDark`,
+  `testFeelableAmbiguityInDark`.
+- **Fixture & Doku:** Neues E2E-Fixture `examples/fixtures/dark-feelable.yaml` mit
+  `ci/e2e/dark-feelable.{in,expect}` (Stufe 4 in `scripts/ci.sh`, damit 41
+  Playthroughs): dunkler Raum, `take relic` (ohne Tag) wird verweigert, `take torch`
+  und `use lever` (beide `feelable`, der Hebel ungetragen) funktionieren und der Hebel
+  erhellt den Raum über `light_flag`. `docs/adventure-schema.md` dokumentiert den Tag,
+  `README.md` nennt die neue Playthrough-Zahl.
+
 ### Bugfix & Feature: Licht-Leck schließen und konfigurierbare Dunkelheitsmeldung (Phase 0.3, Bug B3)
 
 - **Licht-Leck schließen (Bug B3) (`src/Parser.hs`, `src/GameLoop.hs`):**
@@ -18,7 +39,7 @@
   - JSON-Serialisierung: Default-Invariante gewahrt (`Nothing` wird in JSON weggelassen). Abwärtskompatibel zu `"roomDarkMsg"`, `"dark_msg"` und `"dark_message"`.
   - Worldbuilder: Unterstützt `dark_msg` und `dark_message` im Raum-Schema von YAML-Dateien mit Validierung in `knownKeys EntRoom`.
 - **Tests & Schema (`test/Tests.hs`, `worldbuilder/test/Tests.hs`, `docs/adventure-schema.md`):**
-  - 8 neue Engine-Tests in `test/Tests.hs` (jetzt 354 Engine-Tests gesamt):
+  - 8 neue Engine-Tests in `test/Tests.hs` (damit 352 Engine-Tests gesamt):
     - `testDarkRoomRefusesTakeAndTakeAll`: Verweigerung von `take` und `take all` im Dunkeln.
     - `testDarkRoomRefusesExamineAndSearch`: Verweigerung von `examine` (Item & NPC) sowie `search` im Dunkeln; Unterdrückung von `OnSearch` und `OnLook`.
     - `testDarkRoomRefusesUseOnRoomEntities`: Verweigerung von `use` auf Raum-Items und `use X on Y` auf Raum-Ziele.

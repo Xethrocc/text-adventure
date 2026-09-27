@@ -1,0 +1,43 @@
+name: Dark Room Feelable Test
+start_room: cellar
+
+# Phase 0.3 (B3): in a room tagged `dark`, only what the author marks as
+# `feelable` can be found and handled by touch. This fixture pins that:
+#   - `relic` (untagged) stays untouchable,
+#   - `torch` (feelable) can be taken,
+#   - `lever` (feelable, NOT carried) can be used, which lights the room.
+# Without the tag the room would be a dead end the author created, not an
+# engine limitation.
+
+rooms:
+  - id: cellar
+    name: Cellar
+    desc: A windowless cellar. Shelves line the walls.
+    tags: [dark]
+    light_flag: cellar_lit
+    exits: {}
+
+items:
+  - id: torch
+    name: torch
+    desc: A pitch-soaked torch.
+    keys: [torch]
+    location: cellar
+    tags: [feelable]
+
+  - id: lever
+    name: iron lever
+    desc: A cold iron lever set into the wall.
+    keys: [lever, iron lever]
+    location: cellar
+    tags: [feelable]
+    verb_map:
+      use,intact:
+        - {set_flag: cellar_lit, val: "true"}
+        - {msg: "The lever groans, and the cellar springs into view."}
+
+  - id: relic
+    name: stone relic
+    desc: A dull stone relic.
+    keys: [relic]
+    location: cellar
