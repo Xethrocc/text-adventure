@@ -53,8 +53,9 @@ In-game saves are written to `saves/<slot>.json`. The directory can be
 redirected with `--saves-dir DIR` or the `TA_SAVES_DIR` environment variable
 (the flag wins) — used by tests and CI for hermetic runs.
 
-Whole pipeline — build, all four test suites, validation of 22 shipped
-adventures, 32 scripted playthroughs (23 happy paths + 9 non-victory runs):
+Whole pipeline — build, all six test suites, validation of 26 shipped
+adventures, 40 scripted playthroughs (28 happy paths + 12 non-victory runs),
+plus the worldgen and run-regeneration checks:
 
 ```bash
 bash scripts/ci.sh
