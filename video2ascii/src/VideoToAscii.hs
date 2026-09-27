@@ -51,8 +51,10 @@ module VideoToAscii
   , extractFrame
   , extractFrames
   , ffmpegAvailable
+  , commandAvailable
   ) where
 
+import Control.Exception (IOException, try)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as BS
 import Data.Char (chr, isDigit, ord)
@@ -222,16 +224,29 @@ data VideoInfo = VideoInfo
     , viDuration :: Double   -- ^ seconds (0 when unknown)
     } deriving (Show, Eq)
 
+-- | Can this external command be run? @False@ when the binary is missing or
+--   exits non-zero.
+--
+--   @readProcessWithExitCode@ **throws** an 'IOException' when the executable is
+--   not on the PATH — it does not come back with a non-zero exit code. Without
+--   the 'try' below, callers on a machine without the tool crash instead of
+--   learning @False@.
+commandAvailable :: String -> [String] -> IO Bool
+commandAvailable cmd args = do
+    result <- try (readProcessWithExitCode cmd args "")
+        :: IO (Either IOException (ExitCode, String, String))
+    pure $ case result of
+        Left _                  -> False
+        Right (code, _, _)      -> code == ExitSuccess
+
 -- | True when both external tools are on the PATH (test gating).
+--   Total: on a machine without ffmpeg this returns 'False' instead of raising,
+--   so the integration tests can skip rather than fail.
 ffmpegAvailable :: IO Bool
 ffmpegAvailable = do
-    okFfmpeg <- probe "ffmpeg" ["-version"]
-    okProbe <- probe "ffprobe" ["-version"]
+    okFfmpeg <- commandAvailable "ffmpeg" ["-version"]
+    okProbe <- commandAvailable "ffprobe" ["-version"]
     pure (okFfmpeg && okProbe)
-  where
-    probe cmd args = do
-        (code, _, _) <- readProcessWithExitCode cmd args ""
-        pure (code == ExitSuccess)
 
 -- | Probe geometry, frame rate and duration via ffprobe.
 probeVideo :: FilePath -> IO (Either String VideoInfo)

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Fix: `ffmpegAvailable` warf bei fehlendem ffmpeg eine Ausnahme
+
+- `readProcessWithExitCode` **wirft** eine `IOException`, wenn die Exe nicht auf dem
+  PATH liegt — es liefert keinen Exit-Code zurück. `ffmpegAvailable` (`video2ascii`)
+  hat das nicht abgefangen und stürzte auf Rechnern ohne ffmpeg ab, statt `False` zu
+  liefern. Die Testsuiten konnten dadurch **nicht** wie vorgesehen überspringen: die
+  `video2ascii`-Testsuite ließ jeden GitHub-CI-Lauf seit dem 22.09. rot werden, obwohl
+  das Gate lokal grün war (hier ist ffmpeg installiert).
+- Neu: `commandAvailable :: String -> [String] -> IO Bool` fängt die Ausnahme ab und
+  ist exportiert; `ffmpegAvailable` baut darauf auf und ist damit total. Neuer Test
+  `testMissingCommandIsNotAvailable` prüft ein nicht existierendes Binary.
+
 ### Feature: Validierungs-Warnungen im Worldbuilder (Phase 0.4)
 
 - **Drei neue nicht-fatale Compiler-Warnungen (`worldbuilder/src/Worldbuilder/Compile.hs`):**

@@ -6,8 +6,9 @@
 module Main (main) where
 
 import VideoToAscii
-    ( CharSet (..), VConfig (..), VideoInfo (..), defaultConfig
-    , ambientYaml, clipYaml, extractFrames, ffmpegAvailable, frameDistance
+    ( VConfig (..), VideoInfo (..), defaultConfig
+    , ambientYaml, clipYaml, commandAvailable, extractFrames, ffmpegAvailable
+    , frameDistance
     , grayToAscii, loopTimes, probeVideo, rowsForWidth, sceneTimes
     , seamStats, toJsonStringArray
     )
@@ -44,6 +45,18 @@ expectTrue msg False = do
 mkFrame :: Int -> Int -> (Int -> Int -> Int) -> BS.ByteString
 mkFrame w h f = BS.pack [ fromIntegral (f x y) | y <- [0 .. h - 1], x <- [0 .. w - 1] ]
 
+-- | A binary that is not on the PATH has to report False. 'readProcessWithExitCode'
+--   throws for a missing executable, so this pins the total behaviour that keeps
+--   the integration part of this suite skipping instead of failing on machines
+--   (and CI runners) without ffmpeg.
+testMissingCommandIsNotAvailable :: IO Bool
+testMissingCommandIsNotAvailable = do
+    missing <- commandAvailable "text-adventure-no-such-binary-xyz" ["-version"]
+    r1 <- expectTrue "missing command reports False instead of throwing" (not missing)
+    -- Calling the real probe must not raise either, whatever this machine has.
+    _ <- ffmpegAvailable
+    pure r1
+
 main :: IO ()
 main = do
     ffmpeg <- ffmpegAvailable
@@ -59,6 +72,7 @@ main = do
         , runTest "toJsonStringArray escapes JSON specials" testJson
         , runTest "ambientYaml: block scalars and fps" testAmbientYaml
         , runTest "clipYaml: clip declaration shape" testClipYaml
+        , runTest "missing external command reports False, does not throw" testMissingCommandIsNotAvailable
         ]
     ffmpegResults <- if not wantIntegration
         then do
