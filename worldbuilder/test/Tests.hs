@@ -2740,6 +2740,10 @@ tests =
     , ("schema: top-level typo produces warning with suggestion (Phase 1)", testTopLevelTypoWarning)
     -- Phase 0.3: dark_msg and dark_message schema support
     , ("schema: dark_msg and dark_message compile without warnings (Phase 0.3)", testRoomDarkMsgYamlParsing)
+    -- Phase 0.4: validation warnings (keyword collisions, unknown placeholders, dark room dead ends)
+    , ("warnings: keyword collision between entities in the same room (Phase 0.4)", testWarningKeywordCollision)
+    , ("warnings: unknown variable placeholder in texts (Phase 0.4)", testWarningUnknownPlaceholder)
+    , ("warnings: dark room dead end without feelable or lightsource (Phase 0.4)", testWarningDarkRoomDeadEnd)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -4391,6 +4395,209 @@ testRoomDarkMsgYamlParsing = do
                 r2 <- expectEqual (Just "Pitch black darkness.") (rm1 >>= E.roomDarkMsg)
                 r3 <- expectEqual (Just "Total gloom.") (rm2 >>= E.roomDarkMsg)
                 pure (r1 && r2 && r3)
+
+-- ---------------------------------------------------------------------------
+-- Phase 0.4: Validation warnings tests
+-- ---------------------------------------------------------------------------
+
+-- | Phase 0.4: Keyword collision between items/NPCs in the same room is a non-fatal warning
+testWarningKeywordCollision :: IO Bool
+testWarningKeywordCollision = do
+    -- Two items in the same room with the same keyword
+    let r0 = minRoom "loc_0"
+        i1 = (minItem "key_gold") { aiKeywords = ["key", "gold"] }
+        i2 = (minItem "key_silver") { aiKeywords = ["key", "silver"] }
+        advItemsClash = (minAdventure r0) { advItems = [i1, i2] }
+    r1 <- case compileAdventure advItemsClash of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "KeywordCollision") (crWarnings cr)
+            rA <- expectEqual 1 (length warns)
+            rB <- expectEqual (Just SWarning) (ciSeverity <$> listToMaybe warns)
+            rC <- expectEqual (Just "rooms.loc_0") (ciPath <$> listToMaybe warns)
+            pure (rA && rB && rC)
+
+    -- Item and NPC in the same room with the same keyword
+    let n1 = (partySquire Nothing) { anId = "sentry", anKeywords = ["guard"] }
+        iBadge = (minItem "badge") { aiKeywords = ["guard"] }
+        advNpcItemClash = (minAdventure r0) { advItems = [iBadge], advNPCs = [n1] }
+    r2 <- case compileAdventure advNpcItemClash of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "KeywordCollision") (crWarnings cr)
+            rA <- expectEqual 1 (length warns)
+            rB <- expectEqual (Just "rooms.loc_0") (ciPath <$> listToMaybe warns)
+            pure (rA && rB)
+
+    -- Same keyword across different rooms produces zero warnings
+    let r1Loc = minRoom "loc_1"
+        iRoom0 = (minItem "key_gold") { aiLocation = "loc_0", aiKeywords = ["key"] }
+        iRoom1 = (minItem "key_silver") { aiLocation = "loc_1", aiKeywords = ["key"] }
+        advDiffRooms = (minAdventure r0) { advRooms = [r0, r1Loc], advItems = [iRoom0, iRoom1] }
+    r3 <- case compileAdventure advDiffRooms of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "KeywordCollision") (crWarnings cr)
+            expectTrue "no keyword collision across different rooms" (null warns)
+
+    -- One item in inventory does not collide with room item
+    let iInv = (minItem "key_silver") { aiLocation = "inventory", aiKeywords = ["key"] }
+        advInv = (minAdventure r0) { advItems = [iRoom0, iInv] }
+    r4 <- case compileAdventure advInv of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "KeywordCollision") (crWarnings cr)
+            expectTrue "inventory item does not collide with room item" (null warns)
+
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 0.4: Unknown variable placeholders in texts emit non-fatal warnings
+testWarningUnknownPlaceholder :: IO Bool
+testWarningUnknownPlaceholder = do
+    -- Unknown placeholder in room description
+    let r0 = (minRoom "loc_0") { arTexts = ACondText "Du hast {unknown_variable} Gold." [] }
+        advDesc = minAdventure r0
+    r1 <- case compileAdventure advDesc of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "UnknownPlaceholder") (crWarnings cr)
+            rA <- expectEqual 1 (length warns)
+            rB <- expectEqual (Just "rooms.loc_0.desc") (ciPath <$> listToMaybe warns)
+            rC <- expectEqual (Just SWarning) (ciSeverity <$> listToMaybe warns)
+            pure (rA && rB && rC)
+
+    -- Unknown placeholder in outcome message
+    let r0Outcome = (minRoom "loc_0") { arOnEnter = Just [AOMessage "Willkommen {player_title}!"] }
+        advOutcome = minAdventure r0Outcome
+    r2 <- case compileAdventure advOutcome of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "UnknownPlaceholder") (crWarnings cr)
+            rA <- expectEqual 1 (length warns)
+            rB <- expectEqual (Just "rooms.loc_0") (ciPath <$> listToMaybe warns)
+            pure (rA && rB)
+
+    -- Declared variables, modifiers ({gold:6}), and system variables emit zero warnings
+    let r0Known = (minRoom "loc_0")
+            { arTexts = ACondText "Gold: {gold:6}, HP: {player.hp}, Turns: {turn.count}, Arg: {cmd.arg1}." [] }
+        vGold = AVariable "gold" "int" (Just (Aeson.Number 50)) Nothing Nothing
+        advKnown = (minAdventure r0Known) { advVariables = [vGold] }
+    r3 <- case compileAdventure advKnown of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "UnknownPlaceholder") (crWarnings cr)
+            expectTrue "known variables produce 0 placeholder warnings" (null warns)
+
+    -- Escaped braces are not treated as placeholders
+    let r0Escaped = (minRoom "loc_0")
+            { arTexts = ACondText "Ascii pattern: {{foo}} and \\{bar\\}." [] }
+        advEscaped = minAdventure r0Escaped
+    r4 <- case compileAdventure advEscaped of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "UnknownPlaceholder") (crWarnings cr)
+            expectTrue "escaped braces produce 0 placeholder warnings" (null warns)
+
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 0.4: Dark room with items but without feelable/light_flag/lightsource emits warning
+testWarningDarkRoomDeadEnd :: IO Bool
+testWarningDarkRoomDeadEnd = do
+    -- Dark room with item, no light flag, no feelable tag, no lightsource anywhere
+    let rDark = (minRoom "loc_0") { arTags = ["dark"] }
+        iNormal = minItem "sword"
+        advDeadEnd = (minAdventure rDark) { advItems = [iNormal] }
+    r1 <- case compileAdventure advDeadEnd of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "DarkRoomDeadEnd") (crWarnings cr)
+            rA <- expectEqual 1 (length warns)
+            rB <- expectEqual (Just "rooms.loc_0") (ciPath <$> listToMaybe warns)
+            rC <- expectEqual (Just SWarning) (ciSeverity <$> listToMaybe warns)
+            pure (rA && rB && rC)
+
+    -- Feelable item in dark room prevents dead end
+    let iFeelable = (minItem "sword") { aiTags = ["feelable"] }
+        advFeelable = (minAdventure rDark) { advItems = [iFeelable] }
+    r2 <- case compileAdventure advFeelable of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "DarkRoomDeadEnd") (crWarnings cr)
+            expectTrue "feelable item prevents dead-end warning" (null warns)
+
+    -- light_flag on dark room prevents dead end
+    let rWithFlag = rDark { arLightFlag = Just "cave_lit" }
+        advFlag = (minAdventure rWithFlag) { advItems = [iNormal] }
+    r3 <- case compileAdventure advFlag of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "DarkRoomDeadEnd") (crWarnings cr)
+            expectTrue "light_flag prevents dead-end warning" (null warns)
+
+    -- Reachable lightsource item prevents dead end
+    let rLitStart = minRoom "loc_0"
+        rDarkEast = (minRoom "loc_1")
+            { arTags = ["dark"]
+            , arExits = Map.fromList [("west", AExitRef "loc_0" Nothing)] }
+        rLitStart' = rLitStart
+            { arExits = Map.fromList [("east", AExitRef "loc_1" Nothing)] }
+        torch = (minItem "torch") { aiLocation = "loc_0", aiTags = ["lightsource"] }
+        gem = (minItem "gem") { aiLocation = "loc_1" }
+        advWithTorch = (minAdventure rLitStart')
+            { advRooms = [rLitStart', rDarkEast]
+            , advItems = [torch, gem] }
+    r4 <- case compileAdventure advWithTorch of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "DarkRoomDeadEnd") (crWarnings cr)
+            expectTrue "reachable lightsource prevents dead-end warning" (null warns)
+
+    -- Lightsource in player inventory prevents dead end
+    let torchInv = (minItem "torch") { aiLocation = "inventory", aiTags = ["lightsource"] }
+        advWithTorchInv = (minAdventure rDark) { advItems = [torchInv, iNormal] }
+    r5 <- case compileAdventure advWithTorchInv of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "DarkRoomDeadEnd") (crWarnings cr)
+            expectTrue "carried lightsource prevents dead-end warning" (null warns)
+
+    -- Dark room without any items does not produce dead-end warning
+    let advEmptyDark = minAdventure rDark
+    r6 <- case compileAdventure advEmptyDark of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "DarkRoomDeadEnd") (crWarnings cr)
+            expectTrue "empty dark room produces no dead-end warning" (null warns)
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
 
 -- helpers -------------------------------------------------------------------
 

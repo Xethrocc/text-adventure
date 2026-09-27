@@ -58,6 +58,12 @@ Im Dunkeln gilt:
   `search` sowie Interaktionen mit NPCs und Fahrzeugen bleiben gesperrt.
 - Getragene Items im Inventar können weiterhin untersucht (`examine`), benutzt (`use`),
   kombiniert (`use X on Y`) und abgelegt (`drop`) werden.
+- **Validierungs-Warnung (`DarkRoomDeadEnd`):** Wenn ein Raum als dunkel (`dark: true` oder Tag `"dark"`)
+  deklariert ist und Items enthält (oder erreichbare dunkle Nebenräume Items enthalten), aber weder ein
+  `light_flag` am Raum gesetzt ist, noch ein erreichbares Item mit dem Tag `"lightsource"` existiert und
+  kein Item im Raum als `"feelable"` markiert ist, meldet der Worldbuilder eine nicht-fatale Warnung
+  (`DarkRoomDeadEnd`). Dies warnt Autoren vor potenziellen Sackgassen, in denen Items unbeleuchtet und
+  unertastbar gefangen sind.
 
 ### ASCII-Kunst (`ascii`)
 
@@ -357,6 +363,8 @@ description:
 | `verb_map` | Object | `{}` | `{ "verb,state": [effects] }` |
 | `ascii` | String / Object | — | Zustandsabhängige ASCII-Kunst (CondText, siehe Room) |
 
+- **Validierungs-Warnung (`KeywordCollision`):** Teilen sich zwei Gegenstände oder ein Gegenstand und ein NPC im selben Raum dieselben Keywords (Namen, IDs oder `keys`-Aliase), meldet der Worldbuilder eine nicht-fatale Warnung (`KeywordCollision`). Dadurch wird frühzeitig auf mehrdeutige Spielerbefehle wie `take <name>` oder `examine <name>` hingewiesen.
+
 ---
 
 ## AActionOutcome (Effekte im YAML)
@@ -650,6 +658,10 @@ ASCII-Art können dynamisch Variablen und Spielwerte einbetten:
   - `{room.name}` / `{room.id}`: Name und ID des aktuellen Raums.
 - **Escaping:** Geschweifte Klammern können mit `\{literal\}` oder `{{literal}}`
   maskiert werden.
+- **Validierungs-Warnung (`UnknownPlaceholder`):** Enthält ein Text Platzhalter wie `{foo}` oder `{var:foo}`,
+  die weder als Variable (`variables`), Quest (`quests`) noch als bekannte Systemvariable (`player.*`, `turn.*`,
+  `room.*`, `cmd.*`, `{x}`, `{y}`, `{z}`) deklariert sind und nicht via `\{foo\}` oder `{{foo}}` maskiert
+  wurden, erzeugt der Worldbuilder eine nicht-fatale Warnung (`UnknownPlaceholder`).
 
 ### Praxisbeispiele aus `economy_hamurabi.yaml`
 
@@ -1641,4 +1653,22 @@ rules:
       - set_state: { entity: erzader, state: rich }
       - msg: "Durch Gebirgsdruck sind neue Erzkristalle an der Ader zutage getreten!"
 ```
+
+---
+
+## Validierungs-Warnungen (Compiler-Diagnosen)
+
+Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity = SError`) und **nicht-fatalen Warnungen** (`ciSeverity = SWarning`):
+- **Harte Fehler** (z. B. Syntaxfehler, unbekannte Raum-IDs in Exits, ungültige Item-Referenzen) verhindern das Kompilieren und lassen `worldbuilder validate` bzw. `worldbuilder compile` mit Exit-Code 1 abbrechen.
+- **Nicht-fatale Warnungen** weisen Autoren auf potenzielle logische Probleme, Mehrdeutigkeiten oder Sackgassen hin. Sie führen zu verständlichen Hinweisen und Reparatur-Vorschlägen im Terminal, brechen die Validierung/Kompilierung aber **nicht** ab (Exit-Code 0).
+
+Übersicht stabiler Warn-Codes (`ciCode`):
+
+| Warn-Code | Ursache | Reparatur-Empfehlung |
+|---|---|---|
+| `KeywordCollision` | Zwei Items oder ein Item und ein NPC im selben Raum teilen sich dieselben Keywords (`keys`, `id`, `name`). | Namen oder `keys` der Entitäten im Raum eindeutig machen, um Mehrdeutigkeiten bei Spielerbefehlen zu vermeiden. |
+| `UnknownPlaceholder` | Ein `{name}`- oder `{var:name}`-Platzhalter in Texten referenziert eine nicht deklarierte Variable. | Variable in `variables:` deklarieren, Schreibfehler korrigieren oder wörtliche geschweifte Klammern maskieren (`\{...\}`, `{{...}}`). |
+| `DarkRoomDeadEnd` | Ein dunkler Raum (`dark: true` oder Tag `"dark"`) enthält Items, hat aber weder ein `light_flag`, noch existiert eine erreichbare Lichtquelle (`lightsource`), noch ist ein Item als `feelable` getaggt. | Raum mit `light_flag:` versehen, ein erreichbares Item als `tags: [lightsource]` deklarieren oder ertastbare Items mit `tags: [feelable]` kennzeichnen. |
+| `IronmanWithoutSavezones` | `ironman: true` ist im `game:`-Block aktiviert, aber `save_zones` ist leer. | `save_zones: [room1, ...]` angeben oder den Hardcore-Modus (ohne Speichermöglichkeit) bewusst beibehalten. |
+
 

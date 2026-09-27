@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Feature: Validierungs-Warnungen im Worldbuilder (Phase 0.4)
+
+- **Drei neue nicht-fatale Compiler-Warnungen (`worldbuilder/src/Worldbuilder/Compile.hs`):**
+  - **`KeywordCollision`:** Prüft pro Raum, ob Items und/oder NPCs identische Identifikatoren (ID, Name oder `keys`-Aliase) besitzen. Warnt vor potenziell mehrdeutigen Spielerkommandos wie `take <name>` oder `examine <name>`.
+  - **`UnknownPlaceholder`:** Durchsucht alle Textinhalte (Beschreibungen von Räumen, Items, Quests, Karten, Dialogen, Raumnachrichten, Verbbeschreibungen, ASCII-Art und Aktionsergebnisse wie `msg`, `shout`, `teleport`, etc.) nach `{name}`- oder `{var:name}`-Platzhaltern. Gleicht diese mit deklarierten `variables`, Quests sowie bekannten Engine-Variablen (`player.*`, `turn.*`, `room.*`, `cmd.*`, `{x}`, `{y}`, `{z}`) ab. Maskierte Klammern (`\{...\}` bzw. `{{...}}`) werden ignoriert.
+  - **`DarkRoomDeadEnd`:** Erkennt potenzielle Autoren-Sackgassen in dunklen Räumen (`dark: true` oder Tag `"dark"`). Warnt, wenn in einer dunklen Raumkomponente Items liegen, aber weder ein `light_flag` am Raum definiert ist, noch eine erreichbare Lichtquelle (`tags: [lightsource]`) existiert und kein Item im Raum als `feelable` gekennzeichnet ist.
+- **Nicht-fatale Compiler-Diagnosen:** Alle drei Prüfungen sind als Warnungen mit `ciSeverity = SWarning` und stabilen `ciCode`-Strings realisiert. Weder `worldbuilder validate` noch `worldbuilder compile` schlagen fehl (Exit-Code 0 bleibt erhalten).
+- **Reparatur-Hinweise (`worldbuilder/src/Worldbuilder/CLI.hs`):** Spezifische `repairHint`-Meldungen für alle drei neuen Warn-Codes unterstützen Autoren bei der schnellen Behebung im Terminal.
+- **Tests & Qualitätssicherung (`worldbuilder/test/Tests.hs`):** 3 neue Worldbuilder-Tests (`testWarningKeywordCollision`, `testWarningUnknownPlaceholder`, `testWarningDarkRoomDeadEnd`), Gesamtanzahl der Worldbuilder-Tests steigt von 166 auf 169 (alle bestanden). Alle 26 mitgelieferten Adventures validieren und kompilieren ohne jede Warnung.
+- **Dokumentation (`docs/adventure-schema.md`):** Detaillierte Abschnitte und tabellarische Übersicht über Compiler-Warnungen und Reparaturhinweise ergänzt.
+
 ### Feature: `feelable` — Autoren entscheiden, was im Dunkeln erreichbar ist (Phase 0.3-Ergänzung)
 
 - **Neuer Item-Tag `"feelable"` (`src/Parser.hs`):** Ein Item mit diesem Tag lässt sich

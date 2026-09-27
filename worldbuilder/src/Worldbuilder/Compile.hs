@@ -7,6 +7,8 @@ module Worldbuilder.Compile
     , compileAdventure
     , CompileIssue(..)
     , Severity(..)
+    , ciError
+    , ciWarning
     , compileAActionOutcome
     , allWorldEffects
     , EntityType(..)
@@ -14,6 +16,9 @@ module Worldbuilder.Compile
     , checkUnknownYamlKeys
     , levenshtein
     , formatUnknownKey
+    , checkKeywordCollisions
+    , checkUnknownPlaceholders
+    , checkDarkRoomDeadEnds
     ) where
 
 import Worldbuilder.Types
@@ -25,9 +30,9 @@ import qualified Types as E
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Char (toLower, isDigit, isSpace)
-import Data.List (nub, stripPrefix, isPrefixOf, minimumBy)
+import Data.List (nub, stripPrefix, isPrefixOf, minimumBy, intercalate)
 import Data.Ord (comparing)
-import Data.Maybe (mapMaybe, fromMaybe, catMaybes)
+import Data.Maybe (mapMaybe, fromMaybe, catMaybes, isNothing)
 import Data.Either (partitionEithers)
 import Text.Read (readMaybe)
 import qualified Data.Aeson as Aeson
@@ -59,6 +64,10 @@ data CompileIssue = CompileIssue
 -- | Build an error diagnostic
 ciError :: String -> String -> String -> CompileIssue
 ciError path code msg = CompileIssue path SError code msg
+
+-- | Build a warning diagnostic
+ciWarning :: String -> String -> String -> CompileIssue
+ciWarning path code msg = CompileIssue path SWarning code msg
 
 -- | Rogue Phase 1: build an engine GamePolicy from the authored `game:` block.
 --   Absent block (or absent fields) keeps 'E.defaultGamePolicy' — the
@@ -142,24 +151,24 @@ checkSetExitRefs roomKeys adv =
             Just _  -> "set_exit"
             Nothing -> "remove_exit"
         toRooms = maybe [] (:[]) mTo
-    -- Alle autorenbaren Outcome-Container (Spiegel von 'allWorldEffects',
-    -- aber auf dem Rohtext-Level — wichtig fuer die Richtungs-Pruefung).
-    allAOutcomes :: Adventure -> [AActionOutcome]
-    allAOutcomes a =
-        let roomOutcomes r = concat (catMaybes [ arOnEnter r, arOnLook r, arOnExit r, arSearch r ])
-            itemOutcomes i = maybe [] id (aiOnTake i) ++ concat (Map.elems (aiVerbMap i))
-            interactions = case advInteractions a of
-                Just ai -> concatMap aiiEffects (aiItem ai)
-                Nothing -> []
-        in concat
-            [ concatMap roomOutcomes (advRooms a)
-            , concatMap atEffects (advTriggers a)
-            , concatMap itemOutcomes (advItems a)
-            , concatMap (concat . Map.elems . anVerbMap) (advNPCs a)
-            , interactions
-            , concatMap (maybe [] id . aqReward) (advQuests a)
-            , concatMap acdOutcomes (advCards a)
-            ]
+-- Alle autorenbaren Outcome-Container (Spiegel von 'allWorldEffects',
+-- aber auf dem Rohtext-Level — wichtig fuer die Richtungs-Pruefung).
+allAOutcomes :: Adventure -> [AActionOutcome]
+allAOutcomes a =
+    let roomOutcomes r = concat (catMaybes [ arOnEnter r, arOnLook r, arOnExit r, arSearch r ])
+        itemOutcomes i = maybe [] id (aiOnTake i) ++ concat (Map.elems (aiVerbMap i))
+        interactions = case advInteractions a of
+            Just ai -> concatMap aiiEffects (aiItem ai)
+            Nothing -> []
+    in concat
+        [ concatMap roomOutcomes (advRooms a)
+        , concatMap atEffects (advTriggers a)
+        , concatMap itemOutcomes (advItems a)
+        , concatMap (concat . Map.elems . anVerbMap) (advNPCs a)
+        , interactions
+        , concatMap (maybe [] id . aqReward) (advQuests a)
+        , concatMap acdOutcomes (advCards a)
+        ]
 collisions :: Ord a => [(String, a)] -> [(a, [String])]
 collisions pairs =
     [ (k, keys)
@@ -355,7 +364,11 @@ compileAdventure adv =
                 yamlKeyWarns = case advRawValue adv of
                     Just v  -> checkUnknownYamlKeys v
                     Nothing -> []
-            in Right (CompileResult gw startSave (gameWarns ++ yamlKeyWarns))
+                keywordWarns = checkKeywordCollisions adv
+                placeholderWarns = checkUnknownPlaceholders adv allVarDefs
+                darkRoomWarns = checkDarkRoomDeadEnds adv
+                allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ darkRoomWarns
+            in Right (CompileResult gw startSave allWarns)
   where
     -- Every locked exit starts locked in entityStates
     initialEntityStates rooms =
@@ -2236,3 +2249,228 @@ compileSandboxZones zones =
                 , E.btPassableDirs = goodDirs
                 }
            else Left allErrs
+
+-- ---------------------------------------------------------------------------
+-- Validation warnings (Phase 0.4)
+-- ---------------------------------------------------------------------------
+
+-- | Phase 0.4: warn when two entities (items, NPCs) placed in the same room share a keyword.
+checkKeywordCollisions :: Adventure -> [CompileIssue]
+checkKeywordCollisions adv =
+    let roomItems =
+            [ (aiLocation i, "item '" ++ aiId i ++ "'", kw)
+            | i <- advItems adv
+            , aiLocation i /= "inventory"
+            , isNothing (aiInContainer i)
+            , kw <- nub (map (map toLower . trimSpaces) (aiKeywords i))
+            , not (null kw)
+            ]
+        roomNPCs =
+            [ (anLocation n, "npc '" ++ anId n ++ "'", kw)
+            | n <- advNPCs adv
+            , kw <- nub (map (map toLower . trimSpaces) (anKeywords n))
+            , not (null kw)
+            ]
+        allEntries = roomItems ++ roomNPCs
+        byRoom = Map.fromListWith (++) [ (r, [(ent, kw)]) | (r, ent, kw) <- allEntries ]
+        issuesForRoom (r, ents) =
+            let byKw = Map.fromListWith (++) [ (kw, [ent]) | (ent, kw) <- ents ]
+            in [ ciWarning ("rooms." ++ r) "KeywordCollision"
+                    ("keyword '" ++ kw ++ "' in room '" ++ r ++ "' is shared by " ++ formatEntities (nub (reverse es)))
+               | (kw, es) <- Map.toList byKw
+               , length (nub es) > 1
+               ]
+        formatEntities [e1, e2] = e1 ++ " and " ++ e2
+        formatEntities es = intercalate ", " es
+        trimSpaces = dropWhile isSpace . reverse . dropWhile isSpace . reverse
+    in concatMap issuesForRoom (Map.toList byRoom)
+
+-- | Phase 0.4: warn when texts reference an unknown variable placeholder '{name}'.
+checkUnknownPlaceholders :: Adventure -> Map.Map String E.VarDef -> [CompileIssue]
+checkUnknownPlaceholders adv varDefs =
+    let writtenVars = concatMap outcomeWrittenVars (allAOutcomes adv)
+        allKnown = Set.unions
+            [ Map.keysSet varDefs
+            , Set.fromList writtenVars
+            , Set.fromList (map avbVarName (advVariables adv))
+            , Map.keysSet (advInitialVariables adv)
+            ]
+        texts = allAdventureTexts adv
+        checkText (path, str) =
+            let placeholders = extractPlaceholders str
+                unknowns = filter (not . isKnownPlaceholder allKnown) placeholders
+            in [ ciWarning path "UnknownPlaceholder"
+                    ("text references unknown variable placeholder '{" ++ p ++ "}'")
+               | p <- nub unknowns ]
+    in concatMap checkText texts
+  where
+    isKnownPlaceholder declared name
+        | name `Set.member` declared = True
+        | name `Set.member` systemVars = True
+        | name `Set.member` commandVars = True
+        | "cmd.arg" `isPrefixOf` name = True
+        | "combat." `isPrefixOf` name = True
+        | name `elem` ["x", "y", "z"] = True
+        | otherwise = False
+
+    systemVars = Set.fromList
+        [ "player.hp", "player.health", "player.max_hp", "player.max_health"
+        , "turn.count", "turns"
+        , "hand.count", "cards_in_hand"
+        , "deck.count", "draw_pile.count"
+        , "discard.count", "discard_pile.count"
+        , "exhaust.count", "exhaust_pile.count"
+        , "room.name", "current_room.name"
+        , "room.id", "current_room.id", "room"
+        ]
+    commandVars = Set.fromList
+        [ "cmd.verb", "cmd.count", "cmd.raw_args", "cmd.target", "cmd.target_kind" ]
+
+    extractPlaceholders [] = []
+    extractPlaceholders ('\\':'{':cs) = extractPlaceholders cs
+    extractPlaceholders ('\\':'}':cs) = extractPlaceholders cs
+    extractPlaceholders ('{':'{':cs) = extractPlaceholders cs
+    extractPlaceholders ('}':'}':cs) = extractPlaceholders cs
+    extractPlaceholders ('{':cs) =
+        case span (/= '}') cs of
+            (inside, '}':rest) ->
+                let clean = if "var:" `isPrefixOf` inside
+                            then drop 4 inside
+                            else inside
+                    varName = case break (== ':') clean of
+                        (n, _) -> n
+                    trimmed = dropWhile isSpace (reverse (dropWhile isSpace (reverse varName)))
+                in if not (null trimmed) && not (any isSpace trimmed)
+                   then trimmed : extractPlaceholders rest
+                   else extractPlaceholders rest
+            _ -> extractPlaceholders cs
+    extractPlaceholders (_:cs) = extractPlaceholders cs
+
+    outcomeWrittenVars ao = case ao of
+        AOSetVar name _           -> [name]
+        AOSetTextVar name _       -> [name]
+        AOAddVar name _           -> [name]
+        AOComputeVar name _       -> [name]
+        AOConditional _ ts es     -> concatMap outcomeWrittenVars (ts ++ es)
+        AONarrative _ follow      -> concatMap outcomeWrittenVars follow
+        AORandomChoice cs         -> concatMap (concatMap outcomeWrittenVars . snd) cs
+        AOApplyCondition _ _ ts es -> concatMap outcomeWrittenVars (ts ++ es)
+        _                         -> []
+
+    condTextStrings ct = actDefault ct : map atvText (actVariants ct)
+    asciiStrings aa = concatMap condTextStrings (asaStatic aa : asaFrames aa)
+
+    allAdventureTexts a = concat
+        [ -- Rooms
+          concat [ [ ("rooms." ++ arId r ++ ".desc", s) | s <- condTextStrings (arTexts r) ]
+                 ++ [ ("rooms." ++ arId r ++ ".ascii", s) | s <- asciiStrings (arAscii r) ]
+                 ++ maybe [] (\m -> [("rooms." ++ arId r ++ ".dark_msg", m)]) (arDarkMsg r)
+                 ++ concatMap (outcomeTexts ("rooms." ++ arId r))
+                              (concat (catMaybes [arOnEnter r, arOnLook r, arOnExit r, arSearch r]))
+                 | r <- advRooms a ]
+          -- Items
+        , concat [ [ ("items." ++ aiId i ++ ".desc", s) | s <- condTextStrings (aiTexts i) ]
+                 ++ [ ("items." ++ aiId i ++ ".ascii", s) | s <- asciiStrings (aiAscii i) ]
+                 ++ maybe [] (\m -> [("items." ++ aiId i ++ ".discover", m)]) (aiDiscover i)
+                 ++ maybe [] (\m -> [("items." ++ aiId i ++ ".take_failure", m)]) (aiTakeFailure i)
+                 ++ concatMap (outcomeTexts ("items." ++ aiId i ++ ".on_take")) (fromMaybe [] (aiOnTake i))
+                 ++ concatMap (outcomeTexts ("items." ++ aiId i ++ ".verb_map")) (concat (Map.elems (aiVerbMap i)))
+                 | i <- advItems a ]
+          -- NPCs
+        , concat [ [ ("npcs." ++ anId n ++ ".desc", s) | s <- condTextStrings (anTexts n) ]
+                 ++ [ ("npcs." ++ anId n ++ ".ascii", s) | s <- asciiStrings (anAscii n) ]
+                 ++ [ ("npcs." ++ anId n ++ ".dialogue", adnText node)
+                    | tree <- Map.elems (anDialogue n)
+                    , node <- Map.elems (adtNodes tree) ]
+                 ++ [ ("npcs." ++ anId n ++ ".dialogue", adcText c)
+                    | tree <- Map.elems (anDialogue n)
+                    , node <- Map.elems (adtNodes tree)
+                    , c <- adnChoices node ]
+                 ++ concatMap (outcomeTexts ("npcs." ++ anId n ++ ".verb_map")) (concat (Map.elems (anVerbMap n)))
+                 | n <- advNPCs a ]
+          -- Rules
+        , concat [ concatMap (outcomeTexts ("rules." ++ atId t)) (atEffects t)
+                 | t <- advTriggers a ]
+          -- Quests
+        , concat [ [ ("quests." ++ aqId q ++ ".desc", aqDesc q) ]
+                 ++ concatMap (outcomeTexts ("quests." ++ aqId q ++ ".reward")) (maybe [] id (aqReward q))
+                 ++ concat [ [ ("quests." ++ aqId q ++ ".stages." ++ aqsId st ++ ".desc", aqsDesc st) ]
+                             ++ maybe [] (\h -> [ ("quests." ++ aqId q ++ ".stages." ++ aqsId st ++ ".hint", h) ]) (aqsHint st)
+                           | st <- aqStages q ]
+                 | q <- advQuests a ]
+          -- Cards
+        , concat [ [ ("cards." ++ acdId c ++ ".desc", acdDescription c) ]
+                 ++ concatMap (outcomeTexts ("cards." ++ acdId c)) (acdOutcomes c)
+                 | c <- advCards a ]
+          -- Sandbox zones
+        , concat [ [ ("sandbox_zones." ++ aszId z ++ ".biomes." ++ abtId b ++ ".desc", s)
+                   | s <- condTextStrings (abtDescription b) ]
+                 ++ [ ("sandbox_zones." ++ aszId z ++ ".biomes." ++ abtId b ++ ".ascii", s)
+                    | s <- maybe [] asciiStrings (abtAsciiArt b) ]
+                 | z <- advSandboxZones a, b <- aszBiomes z ]
+        ]
+
+    outcomeTexts path ao = case ao of
+        AOMessage s                -> [(path, s)]
+        AOGameEnd _ (Just s)       -> [(path, s)]
+        AOConditional _ ts es      -> concatMap (outcomeTexts path) (ts ++ es)
+        AONarrative ls follow      -> [ (path, l) | l <- ls ] ++ concatMap (outcomeTexts path) follow
+        AORandomChoice cs          -> concatMap (concatMap (outcomeTexts path) . snd) cs
+        AOApplyCondition _ _ ts es -> concatMap (outcomeTexts path) (ts ++ es)
+        _                          -> []
+
+-- | Phase 0.4: warn when a dark room contains items but has no light_flag,
+--   no feelable items, and no reachable lightsource (potential author dead-end).
+checkDarkRoomDeadEnds :: Adventure -> [CompileIssue]
+checkDarkRoomDeadEnds adv =
+    let rooms = advRooms adv
+        roomMap = Map.fromList [ (arId r, r) | r <- rooms ]
+        items = advItems adv
+        startRoomId = advStartRoom adv
+        reachable = Set.fromList (reachableRoomIds startRoomId rooms)
+
+        carriedLightsource =
+            any (\i -> aiLocation i == "inventory" && "lightsource" `elem` aiTags i) items
+
+        canPickUpLightsource item =
+            case Map.lookup (aiLocation item) roomMap of
+                Nothing -> False
+                Just rm -> "dark" `notElem` arTags rm
+                           || "feelable" `elem` aiTags item
+                           || maybe False (not . null) (arLightFlag rm)
+
+        hasReachableLightsource =
+            carriedLightsource ||
+            any (\i -> "lightsource" `elem` aiTags i
+                       && aiLocation i /= "inventory"
+                       && isNothing (aiInContainer i)
+                       && aiLocation i `Set.member` reachable
+                       && canPickUpLightsource i) items
+
+        checkRoom r
+            | "dark" `elem` arTags r =
+                let rId = arId r
+                    rItems = [ i | i <- items, aiLocation i == rId, isNothing (aiInContainer i) ]
+                    hasItems = not (null rItems)
+                    hasFeelable = any (\i -> "feelable" `elem` aiTags i) rItems
+                    hasLightFlag = maybe False (not . null) (arLightFlag r)
+                in if hasItems && not hasFeelable && not hasLightFlag && not hasReachableLightsource
+                   then [ ciWarning ("rooms." ++ rId) "DarkRoomDeadEnd"
+                            ("dark room '" ++ rId ++ "' contains items but has no light_flag, no feelable items, and no reachable lightsource (potential author dead-end)") ]
+                   else []
+            | otherwise = []
+    in concatMap checkRoom rooms
+  where
+    reachableRoomIds start rms =
+        let rMap = Map.fromList [ (arId r, r) | r <- rms ]
+            go visited [] = Set.toList visited
+            go visited (curr:rest)
+                | curr `Set.member` visited = go visited rest
+                | otherwise =
+                    let targets = case Map.lookup curr rMap of
+                            Just rm -> map aeTarget (Map.elems (arExits rm))
+                            Nothing -> []
+                        validTargets = filter (`Map.member` rMap) targets
+                        newQ = rest ++ filter (`Set.notMember` visited) validTargets
+                    in go (Set.insert curr visited) newQ
+        in go Set.empty [start]

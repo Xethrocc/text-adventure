@@ -134,6 +134,12 @@ repairHint code = case code of
         "Condition names starting with 'cooldown_' belong to the engine — rename the condition."
     "UnknownCommandVerb" ->
         "Use a core command (look, take, drop, use, ...) or declare the verb under verbs:."
+    "KeywordCollision" ->
+        "Give colliding items or NPCs in the same room distinct keywords in 'keys:'."
+    "UnknownPlaceholder" ->
+        "Declare the variable under 'variables:' or check for a typo in the placeholder name."
+    "DarkRoomDeadEnd" ->
+        "Add 'tags: [feelable]' to an item, configure a 'light_flag', or provide a reachable 'lightsource'."
     _ -> ""
 
 -- | Render validation errors (ValidationError derives Show)
