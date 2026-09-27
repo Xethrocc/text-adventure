@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+### Bugfix & Verhaltensänderung: Verbabhängige Suchreihenfolge (Phase 0.2, Bug B2)
+
+- **Verbabhängige Suchreihenfolge `preferInventoryTarget` (`src/Parser.hs`):**
+  - Behebt Bug B2: `drop`/`use`/`equip` (sowie `wear`, `wield`, `unequip`, `remove`) priorisieren nun das Spielerinventar vor dem aktuellen Raum. `take` priorisiert wie gewohnt den Raum vor dem Inventar; sonstige Interaktionsverben (`look at`, `examine`, `attack`, etc.) priorisieren ebenfalls den Raum.
+  - Befindet sich mindestens ein Treffer im primären Scope, wird der sekundäre Scope gar nicht erst durchsucht. Dadurch scheitert z. B. `drop key` nicht mehr daran, dass ein namensgleicher Gegenstand im Raum liegt (oder dass eine Mehrdeutigkeits-Rückfrage gestellt wird).
+  - Findet sich im primären Scope kein Treffer, fällt die Zielauflösung auf den sekundären Scope zurück, sodass kontextbezogene Rückmeldungen („You already have the brass key.“ bei `take key` oder „You need to be carrying the ...“ bei `equip`) erhalten bleiben.
+  - `EquipCmd` und `UnequipCmd` in `Parser.executeCommand` wurden an `resolveTarget` angebunden:
+    - Befehls-Variablen (`cmd.verb`, `cmd.arg1`, etc.) werden via `bindCommandVars` gebunden.
+    - Mehrdeutige Treffer bei `unequip` werden anhand von `isEquipped` gefiltert: ist genau ein Kandidat ausgerüstet, wird dieser direkt abgelegt ohne unnötige Rückfrage zu im Rucksack getragenen Namensvettern. Sind mehrere ausgerüstet, beschränkt sich die Rückfrage auf die ausgerüsteten Gegenstände.
+    - Mehrdeutige Treffer bei `equip` werden nach Ausrüstbarkeit (`itemEquipSlot`) gefiltert, sodass nicht ausrüstbare Gegenstände mit selbem Alias (z. B. Klingenöl vs. Stahlklinge) keine störende Rückfrage erzwingen.
+- **Tests (`test/Tests.hs`):**
+  - 10 neue Testgruppen (jetzt 344 Engine-Tests):
+    - `testResolveTargetSearchOrderDirect`: Direkte Prüfung von `preferInventoryTarget` und Auflösung je Verb.
+    - `testDropKeyWithRoomNamensvetterFixB2`: `drop key` lässt carried key fallen, wenn Namensvetter im Raum liegt; `OnDrop`-Trigger feuert korrekt.
+    - `testTakeKeyWithInventoryNamensvetterFixB2`: `take key` nimmt Raum-Item, wenn Namensvetter im Inventar getragen wird; `OnTake`-Trigger feuert korrekt.
+    - `testUseKeyWithRoomNamensvetterFixB2`: `use key` nutzt Inventar-Item vor Raum-Item; `OnUse`-Trigger feuert korrekt.
+    - `testEquipWithRoomNamensvetterFixB2`: `equip blade` rüstet getragene Waffe aus, auch wenn Namensvetter im Raum liegt.
+    - `testUnequipWithRoomNamensvetterFixB2`: `unequip blade` legt getragene Waffe ab, auch wenn Namensvetter im Raum liegt.
+    - `testUnequipAmbiguityFiltersEquipped`: `unequip` filtert Mehrdeutigkeiten nach `isEquipped`-Status.
+    - `testEquipAmbiguityFiltersEquippable`: `equip` filtert Mehrdeutigkeiten nach Ausrüstbarkeit.
+    - `testSearchOrderFallbacks`: Rückfall auf sekundären Scope liefert saubere Fehlermeldungen bei nicht erfüllten Vorbedingungen.
+    - `testSearchOrderAmbiguityScoped`: Disambiguierungs-Fragen für `drop`, `take`, `use` und `equip` beschränken sich auf die Treffer des primären Scopes und schließen irrelevante Namensvetter aus.
+
+### Bugfix & Refactor: Zentrale Zielauflösung `resolveTarget` (Phase 0.1, Bug B1)
+
+- **Zentrale Zielauflösung `resolveTarget` (`src/Parser.hs`):**
+  - Neuer Typ `TargetResolution` (`ResolvedItem`, `ResolvedNPC`, `ResolvedVehicle`, `Ambiguous`, `NotFound`, `BareVerb`) mit Pattern-Synonyms (`TargetItem`, `TargetVehicle`, `TargetAmbiguous`, etc.).
+  - `resolveTarget :: Verb -> String -> GameState -> TargetResolution` löst Zielobjekte einheitlich über sichtbare/erreichbare Items im aktuellen Raum und Inventar sowie NPCs im Raum und attackierbare Fahrzeuge auf.
+  - Mehrdeutige Treffer liefern strukturiert `Ambiguous [EntityID]`, was den Spieler via `Which do you mean:` zur Präzisierung auffordert. Mehrdeutige Fahrzeuge auf `VAttack` werden ebenfalls als `Ambiguous` erkannt.
+  - `TakeAll` und `DropAll` wurden darauf umgestellt, die eindeutige `itemId` statt `itemName` bei der rekursiven Interaktionsausführung zu nutzen, sodass Räume oder Inventare mit namensgleichen Gegenständen nicht fälschlich in `Ambiguous`-Rückfragen verfallen.
+- **B1 behoben (`src/GameLoop.hs`):**
+  - `commandEvents` (`takeDropUseEvents`) nutzte zuvor das globale `findItemIdByAlias`, das unbesehen das erste Item der gesamten Welt mit passendem Alias lieferte. Haben zwei Items in verschiedenen Räumen denselben Alias, wurden `OnTake`/`OnDrop`-Events für das falsche Item gefeuert oder `OnUse` fehlgeleitet.
+  - Ersetzt durch `resolvedItemId`, das `resolveTarget` auf `before`- (und Fallback auf `after`-)Zustand anwendet.
+  - `findItemIdByAlias` entfernt.
+- **Tests (`test/Tests.hs`):**
+  - 6 neue Testgruppen/Suiten (8 neue Engine-Tests gesamt, jetzt 336 Engine-Tests): direkte Zielauflösung (`testResolveTargetDirect`), B1 OnTake-Fix mit identischen Keywords in zwei Räumen (`testResolveTargetFixesB1OnTake`), Disambiguation im GameLoop (`testResolveTargetAmbiguousCommandExecution`), Drop/Use-Auflösung und End-to-End Trigger-Ausführung bei weltweitem Namensvetter (`testResolveTargetDropAndUseFixB1`), `TakeAll`/`DropAll` mit geteilten Keywords (`testTakeAllAndDropAllWithSharedAliases`), Mehrdeutigkeit bei Fahrzeug-Angriff (`testResolveTargetVehicleAmbiguity`).
+
 ### Refactor: Code-Hygiene R1–R4 — Parser-Dispatcher, `Game.hs`-Split, `ActorRef`
 
 - **R4 — Modul-Leitfaden auditiert** (`docs/modules.md`): Erlaubnisfall für

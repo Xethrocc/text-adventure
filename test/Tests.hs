@@ -1,3 +1,4 @@
+{-# LANGUAGE PatternSynonyms #-}
 module Main where
 
 import Control.Monad (when)
@@ -22,7 +23,9 @@ import GameLoop (LoopState (..), initLoopState, applyLoopCommand,
                  handleGameOver, saveBlockedMessage, loadBlockedMessage)
 import Frontend (Frontend (..), commandCompletion)
 import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText, bindCommandVars,
-               InteractTarget (..), resolveInteractTarget)
+               InteractTarget (..), resolveInteractTarget,
+               TargetResolution (..), resolveTarget, preferInventoryTarget,
+               pattern TargetItem, pattern TargetVehicle, pattern TargetAmbiguous, pattern TargetNotFound, pattern TargetBare)
 import Verbs (verbAliasMap)
 import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombat, shipAbsorb)
 import Validate (ValidationError (..), validateWorld, validateGameState, idsFromOutcomeRoom)
@@ -5507,12 +5510,653 @@ testInteractItemContract = do
     r8 <- expectTrue "take message is present" ("You take the key." `isPrefixOf` msgKey)
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
 
+-- | Helper to create a test key item definition (Phase 0.1).
+mkTestKey :: String -> String -> ItemDef
+mkTestKey iid name = ItemDef
+    { itemId = iid
+    , itemName = name
+    , itemDescription = plainText ("A " ++ name ++ ".")
+    , itemKeywords = ["key", name]
+    , itemTags = Set.empty
+    , itemEquipSlot = Nothing
+    , itemEquipEffects = []
+    , itemHidden = False
+    , itemDiscoverText = Nothing
+    , itemPortable = True
+    , itemTakeFailure = Nothing
+    , itemVerbMap = Map.empty
+    , itemAscii = emptyAscii
+    }
+
+-- | Phase 0.1: Test central resolveTarget for Item, NPC, Vehicle, Bare, NotFound, and Ambiguous
+testResolveTargetDirect :: IO Bool
+testResolveTargetDirect = do
+    let st = initSampleGame  -- player in "start", torch in "start", oldman in "start"
+    -- 1. Unique item in room resolves to ResolvedItem / TargetItem
+    let tItem = resolveTarget VLookAt "torch" st
+    r1 <- case tItem of
+        ResolvedItem iid -> expectEqual "torch" iid
+        _                -> expectTrue "expected ResolvedItem for torch" False
+    r2 <- case tItem of
+        TargetItem iid -> expectEqual "torch" iid
+        _              -> expectTrue "expected TargetItem pattern synonym for torch" False
+
+    -- 2. NPC in room resolves to ResolvedNPC
+    let tNpc = resolveTarget VTalk "old man" st
+    r3 <- case tNpc of
+        ResolvedNPC nid -> expectEqual "oldman" nid
+        _               -> expectTrue "expected ResolvedNPC for old man" False
+
+    -- 3. Vehicle attack candidate resolves to ResolvedVehicle / TargetVehicle
+    let tVeh = resolveTarget VAttack "carriage" st
+    r4 <- case tVeh of
+        ResolvedVehicle vid -> expectEqual "carriage" vid
+        _                   -> expectTrue "expected ResolvedVehicle for carriage attack" False
+    r5 <- case tVeh of
+        TargetVehicle vid -> expectEqual "carriage" vid
+        _                 -> expectTrue "expected TargetVehicle pattern synonym for carriage attack" False
+
+    -- 4. Bare verb with empty target resolves to BareVerb / TargetBare
+    let tBare = resolveTarget (VCustom "defend") "" st
+    r6 <- expectEqual BareVerb tBare
+    r7 <- expectEqual TargetBare tBare
+
+    -- 5. Non-existent entity resolves to NotFound / TargetNotFound
+    let tNotFound = resolveTarget VLookAt "ghost" st
+    r8 <- expectEqual (NotFound "ghost") tNotFound
+    r9 <- expectEqual (TargetNotFound "ghost") tNotFound
+
+    -- 6. Two items with shared keyword in the SAME room resolve to Ambiguous
+    let brassKey = mkTestKey "brass_key" "brass key"
+        ironKey = mkTestKey "iron_key" "iron key"
+        stWithTwoKeys = st
+            { world = (world st)
+                { itemDefs = Map.insert "brass_key" brassKey $ Map.insert "iron_key" ironKey (itemDefs (world st)) }
+            , save = (save st)
+                { itemStates = Map.insert "brass_key" (ItemState (InRoom "start") "intact" Map.empty False) $
+                               Map.insert "iron_key" (ItemState (InRoom "start") "intact" Map.empty False) (itemStates (save st)) }
+            }
+        tAmbiguous = resolveTarget VTake "key" stWithTwoKeys
+    r10 <- case tAmbiguous of
+        Ambiguous ids -> expectTrue "ambiguous contains both keys" ("brass_key" `elem` ids && "iron_key" `elem` ids)
+        _             -> expectTrue "expected Ambiguous for shared keyword in same room" False
+    r11 <- case tAmbiguous of
+        TargetAmbiguous ids -> expectTrue "TargetAmbiguous pattern synonym works" ("brass_key" `elem` ids && "iron_key" `elem` ids)
+        _                   -> expectTrue "expected TargetAmbiguous pattern synonym" False
+
+    -- 7. Specific alias in the presence of ambiguous keyword resolves uniquely
+    let tSpecific = resolveTarget VTake "brass key" stWithTwoKeys
+    r12 <- case tSpecific of
+        ResolvedItem iid -> expectEqual "brass_key" iid
+        _                -> expectTrue "expected ResolvedItem for specific brass key" False
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12)
+
+-- | Phase 0.1 (B1): Two items with keyword 'key' in different rooms.
+--   OnTake fires for the actually taken item (not swallowed due to global alias lookup).
+testResolveTargetFixesB1OnTake :: IO Bool
+testResolveTargetFixesB1OnTake = do
+    let st0 = initSampleGame
+        brassKey = mkTestKey "brass_key" "brass key"
+        ironKey = mkTestKey "iron_key" "iron key"
+        triggers =
+            [ TriggerDef "trig_iron" (OnTake "iron_key") Nothing [SendMessage "TRIGGER_IRON_KEY"] False 0
+            , TriggerDef "trig_brass" (OnTake "brass_key") Nothing [SendMessage "TRIGGER_BRASS_KEY"] False 0
+            ]
+        cleanDefs = Map.delete "key" (itemDefs (world st0))
+        cleanStates = Map.delete "key" (itemStates (save st0))
+        baseSt = st0
+            { world = (world st0)
+                { itemDefs = Map.insert "brass_key" brassKey $ Map.insert "iron_key" ironKey cleanDefs
+                , triggerDefs = triggerDefs (world st0) ++ triggers
+                }
+            , save = (save st0)
+                { itemStates = Map.insert "brass_key" (ItemState (InRoom "start") "intact" Map.empty False) $
+                               Map.insert "iron_key" (ItemState (InRoom "hallway") "intact" Map.empty False) cleanStates
+                }
+            }
+
+    -- Case 1: Player in "hallway" takes "key". Only iron_key is in "hallway".
+    -- Under Bug B1, findItemIdByAlias picked "brass_key" (first globally), swallowing OnTake.
+    let stInHallway = baseSt { save = (save baseSt) { currentRoom = "hallway" } }
+        (loopHallway, msgHallway) = applyLoopCommand (Interact VTake "key") (initLoopState stInHallway)
+        stAfterHallway = lsCurrent loopHallway
+    r1 <- expectTrue "iron key is in inventory" (hasItem "iron_key" stAfterHallway)
+    r2 <- expectTrue "brass key remains in start" (not (hasItem "brass_key" stAfterHallway))
+    r3 <- expectTrue "OnTake trigger for iron key fired" (isInfixOf "TRIGGER_IRON_KEY" msgHallway)
+    r4 <- expectTrue "OnTake trigger for brass key did NOT fire" (not (isInfixOf "TRIGGER_BRASS_KEY" msgHallway))
+    let evsHallway = commandEvents (Interact VTake "key") stInHallway stAfterHallway
+    r5 <- expectEqual [OnTake "iron_key", OnCommand "take", OnTurn] evsHallway
+
+    -- Case 2: Mirror test — Player in "start" takes "key". Only brass_key is in "start".
+    let stInStart = baseSt { save = (save baseSt) { currentRoom = "start" } }
+        (loopStart, msgStart) = applyLoopCommand (Interact VTake "key") (initLoopState stInStart)
+        stAfterStart = lsCurrent loopStart
+    r6 <- expectTrue "brass key is in inventory" (hasItem "brass_key" stAfterStart)
+    r7 <- expectTrue "iron key remains in hallway" (not (hasItem "iron_key" stAfterStart))
+    r8 <- expectTrue "OnTake trigger for brass key fired" (isInfixOf "TRIGGER_BRASS_KEY" msgStart)
+    r9 <- expectTrue "OnTake trigger for iron key did NOT fire" (not (isInfixOf "TRIGGER_IRON_KEY" msgStart))
+    let evsStart = commandEvents (Interact VTake "key") stInStart stAfterStart
+    r10 <- expectEqual [OnTake "brass_key", OnCommand "take", OnTurn] evsStart
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10)
+
+-- | Phase 0.1: Executing an ambiguous command when multiple items match in the same room.
+testResolveTargetAmbiguousCommandExecution :: IO Bool
+testResolveTargetAmbiguousCommandExecution = do
+    let st0 = initSampleGame
+        brassKey = mkTestKey "brass_key" "brass key"
+        ironKey = mkTestKey "iron_key" "iron key"
+        stBothInStart = st0
+            { world = (world st0)
+                { itemDefs = Map.insert "brass_key" brassKey $ Map.insert "iron_key" ironKey (itemDefs (world st0)) }
+            , save = (save st0)
+                { itemStates = Map.insert "brass_key" (ItemState (InRoom "start") "intact" Map.empty False) $
+                               Map.insert "iron_key" (ItemState (InRoom "start") "intact" Map.empty False) (itemStates (save st0)) }
+            }
+        (stAfter, msg) = executeCommand (Interact VTake "key") stBothInStart
+    r1 <- expectTrue "msg asks which one" (isInfixOf "Which do you mean:" msg)
+    r2 <- expectTrue "msg mentions brass key" (isInfixOf "brass key" msg)
+    r3 <- expectTrue "msg mentions iron key" (isInfixOf "iron key" msg)
+    r4 <- expectTrue "neither key was taken" (not (hasItem "brass_key" stAfter) && not (hasItem "iron_key" stAfter))
+    -- commandEvents raises no OnTake for ambiguous command
+    let evs = commandEvents (Interact VTake "key") stBothInStart stAfter
+    r5 <- expectEqual [OnCommand "take", OnTurn] evs
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Phase 0.1 (B1): OnDrop and OnUse fire for the carried item even when an item with
+--   the same keyword exists elsewhere in the world.
+testResolveTargetDropAndUseFixB1 :: IO Bool
+testResolveTargetDropAndUseFixB1 = do
+    let st0 = initSampleGame
+        brassKey = mkTestKey "brass_key" "brass key"
+        ironKey = mkTestKey "iron_key" "iron key"
+        triggers =
+            [ TriggerDef "trig_drop_iron" (OnDrop "iron_key") Nothing [SendMessage "TRIGGER_DROP_IRON"] False 0
+            , TriggerDef "trig_drop_brass" (OnDrop "brass_key") Nothing [SendMessage "TRIGGER_DROP_BRASS"] False 0
+            , TriggerDef "trig_use_iron" (OnUse "iron_key") Nothing [SendMessage "TRIGGER_USE_IRON"] False 0
+            , TriggerDef "trig_use_brass" (OnUse "brass_key") Nothing [SendMessage "TRIGGER_USE_BRASS"] False 0
+            ]
+        cleanDefs = Map.delete "key" (itemDefs (world st0))
+        cleanStates = Map.delete "key" (itemStates (save st0))
+        stCarryingIron = st0
+            { world = (world st0)
+                { itemDefs = Map.insert "brass_key" brassKey $ Map.insert "iron_key" ironKey cleanDefs
+                , triggerDefs = triggerDefs (world st0) ++ triggers
+                }
+            , save = (save st0)
+                { itemStates = Map.insert "brass_key" (ItemState (InRoom "hallway") "intact" Map.empty False) $
+                               Map.insert "iron_key" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) cleanStates }
+            }
+    -- 1. Drop key via applyLoopCommand: OnDrop fires for carried iron_key, not for brass_key in hallway
+    let (loopDrop, msgDrop) = applyLoopCommand (Interact VDrop "key") (initLoopState stCarryingIron)
+        stAfterDrop = lsCurrent loopDrop
+    r1 <- expectTrue "msg drops iron key" (isInfixOf "You drop the iron key." msgDrop)
+    r2 <- expectTrue "iron key is no longer carried" (not (hasItem "iron_key" stAfterDrop))
+    r3 <- expectTrue "OnDrop trigger for iron key fired" (isInfixOf "TRIGGER_DROP_IRON" msgDrop)
+    r4 <- expectTrue "OnDrop trigger for brass key did NOT fire" (not (isInfixOf "TRIGGER_DROP_BRASS" msgDrop))
+    let evsDrop = commandEvents (Interact VDrop "key") stCarryingIron stAfterDrop
+    r5 <- expectEqual [OnDrop "iron_key", OnCommand "drop", OnTurn] evsDrop
+
+    -- 2. Use key via applyLoopCommand: OnUse fires for carried iron_key, not for brass_key in hallway
+    let (loopUse, msgUse) = applyLoopCommand (Interact VUse "key") (initLoopState stCarryingIron)
+    r6 <- expectTrue "OnUse trigger for iron key fired" (isInfixOf "TRIGGER_USE_IRON" msgUse)
+    r7 <- expectTrue "OnUse trigger for brass key did NOT fire" (not (isInfixOf "TRIGGER_USE_BRASS" msgUse))
+    let evsUse = commandEvents (Interact VUse "key") stCarryingIron (lsCurrent loopUse)
+    r8 <- expectEqual [OnUse "iron_key", OnCommand "use", OnTurn] evsUse
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- | Phase 0.1: take all and drop all succeed without ambiguous prompts when items share keywords
+testTakeAllAndDropAllWithSharedAliases :: IO Bool
+testTakeAllAndDropAllWithSharedAliases = do
+    let st0 = initSampleGame
+        key1 = mkTestKey "brass_key_1" "brass key"
+        key2 = mkTestKey "brass_key_2" "brass key"
+        cleanDefs = Map.delete "key" (itemDefs (world st0))
+        cleanStates = Map.delete "key" (itemStates (save st0))
+        stBothInStart = st0
+            { world = (world st0)
+                { itemDefs = Map.insert "brass_key_1" key1 $ Map.insert "brass_key_2" key2 cleanDefs }
+            , save = (save st0)
+                { itemStates = Map.insert "brass_key_1" (ItemState (InRoom "start") "intact" Map.empty False) $
+                               Map.insert "brass_key_2" (ItemState (InRoom "start") "intact" Map.empty False) cleanStates }
+            }
+    -- 1. Take all should pick up both keys using unique item IDs
+    let (stAfterTake, msgTake) = executeCommand TakeAll stBothInStart
+    r1 <- expectTrue "brass_key_1 taken" (hasItem "brass_key_1" stAfterTake)
+    r2 <- expectTrue "brass_key_2 taken" (hasItem "brass_key_2" stAfterTake)
+    r3 <- expectTrue "no ambiguous prompt in take all" (not (isInfixOf "Which do you mean" msgTake))
+
+    -- 2. Drop all should drop both keys
+    let (stAfterDrop, msgDrop) = executeCommand DropAll stAfterTake
+    r4 <- expectTrue "brass_key_1 dropped" (not (hasItem "brass_key_1" stAfterDrop))
+    r5 <- expectTrue "brass_key_2 dropped" (not (hasItem "brass_key_2" stAfterDrop))
+    r6 <- expectTrue "no ambiguous prompt in drop all" (not (isInfixOf "Which do you mean" msgDrop))
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | Phase 0.1: Multi-vehicle ambiguity resolution on attack
+testResolveTargetVehicleAmbiguity :: IO Bool
+testResolveTargetVehicleAmbiguity = do
+    let st0 = initSampleGame
+        baseVeh = head (Map.elems (vehicleDefs (world st0)))
+        v1 = baseVeh { vehicleId = "ship_scout", vehicleName = "Scout Ship", vehicleKeywords = ["ship", "vessel"] }
+        v2 = baseVeh { vehicleId = "ship_raider", vehicleName = "Raider Ship", vehicleKeywords = ["ship", "vessel"] }
+        stWithShips = st0
+            { world = (world st0)
+                { vehicleDefs = Map.insert "ship_scout" v1 $ Map.insert "ship_raider" v2 (vehicleDefs (world st0)) }
+            }
+    let res = resolveTarget VAttack "ship" stWithShips
+    case res of
+        Ambiguous ids -> do
+            r1 <- expectTrue "contains scout" ("ship_scout" `elem` ids)
+            r2 <- expectTrue "contains raider" ("ship_raider" `elem` ids)
+            pure (r1 && r2)
+        _ -> expectTrue "expected Ambiguous for multiple vehicles matching target" False
+
+-- | Helper to create a test equipment item definition (Phase 0.2).
+mkTestEquip :: String -> String -> EquipSlot -> ItemDef
+mkTestEquip iid name slot = ItemDef
+    { itemId = iid
+    , itemName = name
+    , itemDescription = plainText ("A " ++ name ++ ".")
+    , itemKeywords = [name, "blade"]
+    , itemTags = Set.empty
+    , itemEquipSlot = Just slot
+    , itemEquipEffects = []
+    , itemHidden = False
+    , itemDiscoverText = Nothing
+    , itemPortable = True
+    , itemTakeFailure = Nothing
+    , itemVerbMap = Map.empty
+    , itemAscii = emptyAscii
+    }
+
+-- | Phase 0.2: Direct test of search order and preferInventoryTarget predicate
+testResolveTargetSearchOrderDirect :: IO Bool
+testResolveTargetSearchOrderDirect = do
+    let st0 = initSampleGame
+        brassKey = mkTestKey "brass_key" "brass key"
+        ironKey = mkTestKey "iron_key" "iron key"
+        cleanDefs = Map.delete "key" (itemDefs (world st0))
+        cleanStates = Map.delete "key" (itemStates (save st0))
+        st = st0
+            { world = (world st0)
+                { itemDefs = Map.insert "brass_key" brassKey $ Map.insert "iron_key" ironKey cleanDefs }
+            , save = (save st0)
+                { itemStates = Map.insert "brass_key" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) $
+                               Map.insert "iron_key" (ItemState (InRoom "start") "intact" Map.empty False) cleanStates }
+            }
+    -- 1. preferInventoryTarget matches drop, use, equip, wear, wield, unequip, remove
+    r1 <- expectTrue "drop prefers inventory" (preferInventoryTarget VDrop)
+    r2 <- expectTrue "use prefers inventory" (preferInventoryTarget VUse)
+    r3 <- expectTrue "use-on prefers inventory" (preferInventoryTarget VUseOn)
+    r4 <- expectTrue "custom equip prefers inventory" (preferInventoryTarget (VCustom "equip"))
+    r5 <- expectTrue "custom wear prefers inventory" (preferInventoryTarget (VCustom "wear"))
+    r6 <- expectTrue "take does NOT prefer inventory" (not (preferInventoryTarget VTake))
+    r7 <- expectTrue "examine does NOT prefer inventory" (not (preferInventoryTarget VLookAt))
+
+    -- 2. resolveTarget with brass_key carried and iron_key in room:
+    -- drop resolves to carried brass_key
+    r8 <- case resolveTarget VDrop "key" st of
+        ResolvedItem iid -> expectEqual "brass_key" iid
+        _                -> expectTrue "expected ResolvedItem brass_key for drop" False
+
+    -- use resolves to carried brass_key
+    r9 <- case resolveTarget VUse "key" st of
+        ResolvedItem iid -> expectEqual "brass_key" iid
+        _                -> expectTrue "expected ResolvedItem brass_key for use" False
+
+    -- take resolves to room iron_key
+    r10 <- case resolveTarget VTake "key" st of
+        ResolvedItem iid -> expectEqual "iron_key" iid
+        _                -> expectTrue "expected ResolvedItem iron_key for take" False
+
+    -- look at resolves to room iron_key
+    r11 <- case resolveTarget VLookAt "key" st of
+        ResolvedItem iid -> expectEqual "iron_key" iid
+        _                -> expectTrue "expected ResolvedItem iron_key for look at" False
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11)
+
+-- | Phase 0.2 (B2): drop key drops the carried key even when another key is in the room.
+testDropKeyWithRoomNamensvetterFixB2 :: IO Bool
+testDropKeyWithRoomNamensvetterFixB2 = do
+    let st0 = initSampleGame
+        brassKey = mkTestKey "brass_key" "brass key"
+        ironKey = mkTestKey "iron_key" "iron key"
+        triggers =
+            [ TriggerDef "trig_drop_brass" (OnDrop "brass_key") Nothing [SendMessage "TRIGGER_DROP_BRASS"] False 0
+            , TriggerDef "trig_drop_iron" (OnDrop "iron_key") Nothing [SendMessage "TRIGGER_DROP_IRON"] False 0
+            ]
+        cleanDefs = Map.delete "key" (itemDefs (world st0))
+        cleanStates = Map.delete "key" (itemStates (save st0))
+        stBothInStart = st0
+            { world = (world st0)
+                { itemDefs = Map.insert "brass_key" brassKey $ Map.insert "iron_key" ironKey cleanDefs
+                , triggerDefs = triggerDefs (world st0) ++ triggers
+                }
+            , save = (save st0)
+                { itemStates = Map.insert "brass_key" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) $
+                               Map.insert "iron_key" (ItemState (InRoom "start") "intact" Map.empty False) cleanStates }
+            }
+    -- Drop key via applyLoopCommand: player drops the brass key from inventory without error
+    let (loopDrop, msgDrop) = applyLoopCommand (Interact VDrop "key") (initLoopState stBothInStart)
+        stAfterDrop = lsCurrent loopDrop
+    r1 <- expectTrue "msg drops brass key" (isInfixOf "You drop the brass key." msgDrop)
+    r2 <- expectTrue "brass key is no longer carried" (not (hasItem "brass_key" stAfterDrop))
+    r3 <- expectTrue "iron key remains in room" (not (hasItem "iron_key" stAfterDrop))
+    r4 <- expectTrue "OnDrop trigger for brass key fired" (isInfixOf "TRIGGER_DROP_BRASS" msgDrop)
+    r5 <- expectTrue "OnDrop trigger for iron key did NOT fire" (not (isInfixOf "TRIGGER_DROP_IRON" msgDrop))
+    r6 <- expectTrue "no ambiguous question asked" (not (isInfixOf "Which do you mean" msgDrop))
+    let evsDrop = commandEvents (Interact VDrop "key") stBothInStart stAfterDrop
+    r7 <- expectEqual [OnDrop "brass_key", OnCommand "drop", OnTurn] evsDrop
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | Phase 0.2: take key takes the room key when another key is already in inventory.
+testTakeKeyWithInventoryNamensvetterFixB2 :: IO Bool
+testTakeKeyWithInventoryNamensvetterFixB2 = do
+    let st0 = initSampleGame
+        brassKey = mkTestKey "brass_key" "brass key"
+        ironKey = mkTestKey "iron_key" "iron key"
+        triggers =
+            [ TriggerDef "trig_take_iron" (OnTake "iron_key") Nothing [SendMessage "TRIGGER_TAKE_IRON"] False 0
+            , TriggerDef "trig_take_brass" (OnTake "brass_key") Nothing [SendMessage "TRIGGER_TAKE_BRASS"] False 0
+            ]
+        cleanDefs = Map.delete "key" (itemDefs (world st0))
+        cleanStates = Map.delete "key" (itemStates (save st0))
+        stCarryingBrass = st0
+            { world = (world st0)
+                { itemDefs = Map.insert "brass_key" brassKey $ Map.insert "iron_key" ironKey cleanDefs
+                , triggerDefs = triggerDefs (world st0) ++ triggers
+                }
+            , save = (save st0)
+                { itemStates = Map.insert "brass_key" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) $
+                               Map.insert "iron_key" (ItemState (InRoom "start") "intact" Map.empty False) cleanStates }
+            }
+    -- Take key via applyLoopCommand: player takes iron key from room
+    let (loopTake, msgTake) = applyLoopCommand (Interact VTake "key") (initLoopState stCarryingBrass)
+        stAfterTake = lsCurrent loopTake
+    r1 <- expectTrue "msg takes iron key" (isInfixOf "You take the iron key." msgTake)
+    r2 <- expectTrue "iron key is now carried" (hasItem "iron_key" stAfterTake)
+    r3 <- expectTrue "brass key is still carried" (hasItem "brass_key" stAfterTake)
+    r4 <- expectTrue "OnTake trigger for iron key fired" (isInfixOf "TRIGGER_TAKE_IRON" msgTake)
+    r5 <- expectTrue "OnTake trigger for brass key did NOT fire" (not (isInfixOf "TRIGGER_TAKE_BRASS" msgTake))
+    r6 <- expectTrue "no ambiguous question asked" (not (isInfixOf "Which do you mean" msgTake))
+    let evsTake = commandEvents (Interact VTake "key") stCarryingBrass stAfterTake
+    r7 <- expectEqual [OnTake "iron_key", OnCommand "take", OnTurn] evsTake
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | Phase 0.2: use key fires trigger on carried key when another key is in room.
+testUseKeyWithRoomNamensvetterFixB2 :: IO Bool
+testUseKeyWithRoomNamensvetterFixB2 = do
+    let st0 = initSampleGame
+        brassKey = mkTestKey "brass_key" "brass key"
+        ironKey = mkTestKey "iron_key" "iron key"
+        triggers =
+            [ TriggerDef "trig_use_brass" (OnUse "brass_key") Nothing [SendMessage "TRIGGER_USE_BRASS"] False 0
+            , TriggerDef "trig_use_iron" (OnUse "iron_key") Nothing [SendMessage "TRIGGER_USE_IRON"] False 0
+            ]
+        cleanDefs = Map.delete "key" (itemDefs (world st0))
+        cleanStates = Map.delete "key" (itemStates (save st0))
+        stBoth = st0
+            { world = (world st0)
+                { itemDefs = Map.insert "brass_key" brassKey $ Map.insert "iron_key" ironKey cleanDefs
+                , triggerDefs = triggerDefs (world st0) ++ triggers
+                }
+            , save = (save st0)
+                { itemStates = Map.insert "brass_key" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) $
+                               Map.insert "iron_key" (ItemState (InRoom "start") "intact" Map.empty False) cleanStates }
+            }
+    let (loopUse, msgUse) = applyLoopCommand (Interact VUse "key") (initLoopState stBoth)
+    r1 <- expectTrue "OnUse trigger for brass key fired" (isInfixOf "TRIGGER_USE_BRASS" msgUse)
+    r2 <- expectTrue "OnUse trigger for iron key did NOT fire" (not (isInfixOf "TRIGGER_USE_IRON" msgUse))
+    r3 <- expectTrue "no ambiguous question asked" (not (isInfixOf "Which do you mean" msgUse))
+    let evsUse = commandEvents (Interact VUse "key") stBoth (lsCurrent loopUse)
+    r4 <- expectEqual [OnUse "brass_key", OnCommand "use", OnTurn] evsUse
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 0.2: equip blade equips the carried blade when another blade is in room.
+testEquipWithRoomNamensvetterFixB2 :: IO Bool
+testEquipWithRoomNamensvetterFixB2 = do
+    let st0 = initSampleGame
+        steelBlade = mkTestEquip "steel_blade" "steel blade" Weapon
+        rustyBlade = mkTestEquip "rusty_blade" "rusty blade" Weapon
+        st = st0
+            { world = (world st0)
+                { itemDefs = Map.insert "steel_blade" steelBlade $ Map.insert "rusty_blade" rustyBlade (itemDefs (world st0)) }
+            , save = (save st0)
+                { itemStates = Map.insert "steel_blade" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) $
+                               Map.insert "rusty_blade" (ItemState (InRoom "start") "intact" Map.empty False) (itemStates (save st0)) }
+            }
+    let (st', msg) = executeCommand (EquipCmd "blade") st
+    r1 <- expectEqual (Just "steel_blade") (Map.lookup Weapon (equipment (save st')))
+    r2 <- expectTrue "msg confirms steel blade equipped" (isInfixOf "steel blade" msg)
+    r3 <- expectTrue "no ambiguous prompt" (not (isInfixOf "Which do you mean" msg))
+    pure (r1 && r2 && r3)
+
+-- | Phase 0.2: Fallback to secondary location produces accurate feedback messages.
+testSearchOrderFallbacks :: IO Bool
+testSearchOrderFallbacks = do
+    let st0 = initSampleGame
+        ironKey = mkTestKey "iron_key" "iron key"
+        brassKey = mkTestKey "brass_key" "brass key"
+        rustyBlade = mkTestEquip "rusty_blade" "rusty blade" Weapon
+        cleanDefs = Map.delete "key" (itemDefs (world st0))
+        cleanStates = Map.delete "key" (itemStates (save st0))
+
+    -- 1. drop key when player carries NO key, but room has iron_key
+    let stOnlyRoom = st0
+            { world = (world st0) { itemDefs = Map.insert "iron_key" ironKey cleanDefs }
+            , save = (save st0) { itemStates = Map.insert "iron_key" (ItemState (InRoom "start") "intact" Map.empty False) cleanStates }
+            }
+        (_, msgDrop) = executeCommand (Interact VDrop "key") stOnlyRoom
+    r1 <- expectTrue "drop fallback resolves to room item and mentions iron key" (isInfixOf "iron key" msgDrop)
+
+    -- 2. take key when room has NO key, but player carries brass_key
+    let stOnlyInv = st0
+            { world = (world st0) { itemDefs = Map.insert "brass_key" brassKey cleanDefs }
+            , save = (save st0) { itemStates = Map.insert "brass_key" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) cleanStates }
+            }
+        (_, msgTake) = executeCommand (Interact VTake "key") stOnlyInv
+    r2 <- expectTrue "take fallback tells player item is already carried" (isInfixOf "You already have the brass key." msgTake)
+
+    -- 3. equip blade when player carries NO blade, but room has rusty_blade
+    let cleanBladeDefs = Map.delete "sword_rusty" (itemDefs (world st0))
+        cleanBladeStates = Map.delete "sword_rusty" (itemStates (save st0))
+        stOnlyRoomBlade = st0
+            { world = (world st0) { itemDefs = Map.insert "rusty_blade" rustyBlade cleanBladeDefs }
+            , save = (save st0) { itemStates = Map.insert "rusty_blade" (ItemState (InRoom "start") "intact" Map.empty False) cleanBladeStates }
+            }
+        (_, msgEquip) = executeCommand (EquipCmd "blade") stOnlyRoomBlade
+    r3 <- expectTrue "equip fallback tells player item must be carried" (isInfixOf "You need to be carrying the rusty blade." msgEquip)
+
+    pure (r1 && r2 && r3)
+
+-- | Phase 0.2: Ambiguity questions are scoped strictly to the primary search location.
+testSearchOrderAmbiguityScoped :: IO Bool
+testSearchOrderAmbiguityScoped = do
+    let st0 = initSampleGame
+        brassKey = mkTestKey "brass_key" "brass key"
+        silverKey = mkTestKey "silver_key" "silver key"
+        ironKey = mkTestKey "iron_key" "iron key"
+        cleanDefs = Map.delete "key" (itemDefs (world st0))
+        cleanStates = Map.delete "key" (itemStates (save st0))
+
+    -- Case 1: Two keys in inventory (brass, silver), one in room (iron).
+    -- 'drop key' should ask only between carried keys (brass, silver), excluding room key (iron).
+    let stTwoInInv = st0
+            { world = (world st0)
+                { itemDefs = Map.insert "brass_key" brassKey $
+                             Map.insert "silver_key" silverKey $
+                             Map.insert "iron_key" ironKey cleanDefs }
+            , save = (save st0)
+                { itemStates = Map.insert "brass_key" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) $
+                               Map.insert "silver_key" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) $
+                               Map.insert "iron_key" (ItemState (InRoom "start") "intact" Map.empty False) cleanStates }
+            }
+        (_, msgDrop) = executeCommand (Interact VDrop "key") stTwoInInv
+    r1 <- expectTrue "drop asks which one" (isInfixOf "Which do you mean:" msgDrop)
+    r2 <- expectTrue "drop mentions brass key" (isInfixOf "brass key" msgDrop)
+    r3 <- expectTrue "drop mentions silver key" (isInfixOf "silver key" msgDrop)
+    r4 <- expectTrue "drop does NOT mention iron key" (not (isInfixOf "iron key" msgDrop))
+
+    -- Case 1b: 'use key' should also ask only between carried keys (brass, silver), excluding room key (iron).
+    let (_, msgUse) = executeCommand (Interact VUse "key") stTwoInInv
+    r4a <- expectTrue "use asks which one" (isInfixOf "Which do you mean:" msgUse)
+    r4b <- expectTrue "use mentions brass key" (isInfixOf "brass key" msgUse)
+    r4c <- expectTrue "use mentions silver key" (isInfixOf "silver key" msgUse)
+    r4d <- expectTrue "use does NOT mention iron key" (not (isInfixOf "iron key" msgUse))
+
+    -- Case 1c: 'equip blade' with two carried blades, one room blade asks only between carried blades.
+    let steelBlade = mkTestEquip "steel_blade" "steel blade" Weapon
+        ironBlade = mkTestEquip "iron_blade" "iron blade" Weapon
+        roomBlade = mkTestEquip "room_blade" "room blade" Weapon
+        stBlades = st0
+            { world = (world st0)
+                { itemDefs = Map.insert "steel_blade" steelBlade $
+                             Map.insert "iron_blade" ironBlade $
+                             Map.insert "room_blade" roomBlade (itemDefs (world st0)) }
+            , save = (save st0)
+                { itemStates = Map.insert "steel_blade" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) $
+                               Map.insert "iron_blade" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) $
+                               Map.insert "room_blade" (ItemState (InRoom "start") "intact" Map.empty False) cleanStates }
+            }
+        (_, msgEquip) = executeCommand (EquipCmd "blade") stBlades
+    r4e <- expectTrue "equip asks which one" (isInfixOf "Which do you mean:" msgEquip)
+    r4f <- expectTrue "equip mentions steel blade" (isInfixOf "steel blade" msgEquip)
+    r4g <- expectTrue "equip mentions iron blade" (isInfixOf "iron blade" msgEquip)
+    r4h <- expectTrue "equip does NOT mention room blade" (not (isInfixOf "room blade" msgEquip))
+
+    -- Case 2: Two keys in room (iron, silver), one in inventory (brass).
+    -- 'take key' should ask only between room keys (iron, silver), excluding carried key (brass).
+    let stTwoInRoom = st0
+            { world = (world st0)
+                { itemDefs = Map.insert "brass_key" brassKey $
+                             Map.insert "silver_key" silverKey $
+                             Map.insert "iron_key" ironKey cleanDefs }
+            , save = (save st0)
+                { itemStates = Map.insert "iron_key" (ItemState (InRoom "start") "intact" Map.empty False) $
+                               Map.insert "silver_key" (ItemState (InRoom "start") "intact" Map.empty False) $
+                               Map.insert "brass_key" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) cleanStates }
+            }
+        (_, msgTake) = executeCommand (Interact VTake "key") stTwoInRoom
+    r5 <- expectTrue "take asks which one" (isInfixOf "Which do you mean:" msgTake)
+    r6 <- expectTrue "take mentions iron key" (isInfixOf "iron key" msgTake)
+    r7 <- expectTrue "take mentions silver key" (isInfixOf "silver key" msgTake)
+    r8 <- expectTrue "take does NOT mention brass key" (not (isInfixOf "brass key" msgTake))
+
+    pure (r1 && r2 && r3 && r4 && r4a && r4b && r4c && r4d && r4e && r4f && r4g && r4h && r5 && r6 && r7 && r8)
+
+-- | Phase 0.2: unequip blade unequips the carried equipped blade when another blade is in room.
+testUnequipWithRoomNamensvetterFixB2 :: IO Bool
+testUnequipWithRoomNamensvetterFixB2 = do
+    let st0 = initSampleGame
+        steelBlade = mkTestEquip "steel_blade" "steel blade" Weapon
+        rustyBlade = mkTestEquip "rusty_blade" "rusty blade" Weapon
+        st = st0
+            { world = (world st0)
+                { itemDefs = Map.insert "steel_blade" steelBlade $ Map.insert "rusty_blade" rustyBlade (itemDefs (world st0)) }
+            , save = (save st0)
+                { itemStates = Map.insert "steel_blade" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) $
+                               Map.insert "rusty_blade" (ItemState (InRoom "start") "intact" Map.empty False) (itemStates (save st0))
+                , equipment = Map.singleton Weapon "steel_blade"
+                }
+            }
+    let (st', msg) = executeCommand (UnequipCmd "blade") st
+    r1 <- expectEqual Nothing (Map.lookup Weapon (equipment (save st')))
+    r2 <- expectTrue "msg confirms steel blade unequipped" (isInfixOf "steel blade" msg)
+    r3 <- expectTrue "no ambiguous prompt" (not (isInfixOf "Which do you mean" msg))
+    r4 <- expectTrue "rusty blade is still in room" ((itemLocation <$> Map.lookup "rusty_blade" (itemStates (save st'))) == Just (InRoom "start"))
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 0.2: unequip filters ambiguous candidates by equipped status.
+testUnequipAmbiguityFiltersEquipped :: IO Bool
+testUnequipAmbiguityFiltersEquipped = do
+    let st0 = initSampleGame
+        steelBlade = mkTestEquip "steel_blade" "steel blade" Weapon
+        rustyBlade = mkTestEquip "rusty_blade" "rusty blade" Weapon
+        -- Case 1: Player carries both blades, but only steel_blade is equipped.
+        -- 'unequip blade' should unequip steel_blade directly without asking.
+        stOneEquipped = st0
+            { world = (world st0)
+                { itemDefs = Map.insert "steel_blade" steelBlade $ Map.insert "rusty_blade" rustyBlade (itemDefs (world st0)) }
+            , save = (save st0)
+                { itemStates = Map.insert "steel_blade" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) $
+                               Map.insert "rusty_blade" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) (itemStates (save st0))
+                , equipment = Map.singleton Weapon "steel_blade"
+                }
+            }
+    let (st1, msg1) = executeCommand (UnequipCmd "blade") stOneEquipped
+    r1 <- expectEqual Nothing (Map.lookup Weapon (equipment (save st1)))
+    r2 <- expectTrue "msg confirms steel blade unequipped" (isInfixOf "steel blade" msg1)
+    r3 <- expectTrue "no ambiguous prompt when only one is equipped" (not (isInfixOf "Which do you mean" msg1))
+
+    -- Case 2: Player has two daggers equipped (Weapon, Offhand). 'unequip dagger' should ask only between equipped daggers.
+    let daggerGold = (mkTestEquip "dagger_gold" "gold dagger" Weapon) { itemKeywords = ["dagger", "gold"] }
+        daggerSilver = (mkTestEquip "dagger_silver" "silver dagger" Offhand) { itemKeywords = ["dagger", "silver"] }
+        daggerIron = (mkTestEquip "dagger_iron" "iron dagger" Weapon) { itemKeywords = ["dagger", "iron"] }
+        stTwoEquipped = st0
+            { world = (world st0)
+                { itemDefs = Map.insert "dagger_gold" daggerGold $
+                             Map.insert "dagger_silver" daggerSilver $
+                             Map.insert "dagger_iron" daggerIron (itemDefs (world st0)) }
+            , save = (save st0)
+                { itemStates = Map.insert "dagger_gold" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) $
+                               Map.insert "dagger_silver" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) $
+                               Map.insert "dagger_iron" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) (itemStates (save st0))
+                , equipment = Map.insert Weapon "dagger_gold" $ Map.insert Offhand "dagger_silver" Map.empty
+                }
+            }
+    let (_, msg2) = executeCommand (UnequipCmd "dagger") stTwoEquipped
+    r4 <- expectTrue "unequip asks which dagger" (isInfixOf "Which do you mean:" msg2)
+    r5 <- expectTrue "mentions gold dagger" (isInfixOf "gold dagger" msg2)
+    r6 <- expectTrue "mentions silver dagger" (isInfixOf "silver dagger" msg2)
+    r7 <- expectTrue "does NOT mention unequipped iron dagger" (not (isInfixOf "iron dagger" msg2))
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | Phase 0.2: equip filters ambiguous candidates by equippability.
+testEquipAmbiguityFiltersEquippable :: IO Bool
+testEquipAmbiguityFiltersEquippable = do
+    let st0 = initSampleGame
+        steelBlade = mkTestEquip "steel_blade" "steel blade" Weapon
+        bladeOil = (mkTestKey "blade_oil" "blade oil")
+            { itemKeywords = ["blade", "oil"] }
+        st = st0
+            { world = (world st0)
+                { itemDefs = Map.insert "steel_blade" steelBlade $ Map.insert "blade_oil" bladeOil (itemDefs (world st0)) }
+            , save = (save st0)
+                { itemStates = Map.insert "steel_blade" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) $
+                               Map.insert "blade_oil" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False) (itemStates (save st0)) }
+            }
+    let (st', msg) = executeCommand (EquipCmd "blade") st
+    r1 <- expectEqual (Just "steel_blade") (Map.lookup Weapon (equipment (save st')))
+    r2 <- expectTrue "msg confirms steel blade equipped" (isInfixOf "steel blade" msg)
+    r3 <- expectTrue "no ambiguous prompt between equippable and non-equippable" (not (isInfixOf "Which do you mean" msg))
+    pure (r1 && r2 && r3)
+
 main :: IO ()
 main = do
     results <- sequence
         -- Parser tests
         [ runTest "resolveInteractTarget resolves all target categories (R3)" testResolveInteractTarget
         , runTest "interactItem preserves take/use contract (R3)" testInteractItemContract
+        , runTest "resolveTarget direct resolution and pattern synonyms (Phase 0.1)" testResolveTargetDirect
+        , runTest "resolveTarget fixes B1 OnTake with shared keyword (Phase 0.1)" testResolveTargetFixesB1OnTake
+        , runTest "resolveTarget ambiguous command execution in same room (Phase 0.1)" testResolveTargetAmbiguousCommandExecution
+        , runTest "resolveTarget fixes B1 OnDrop and OnUse with shared keyword (Phase 0.1)" testResolveTargetDropAndUseFixB1
+        , runTest "take all and drop all handle items with shared keywords (Phase 0.1)" testTakeAllAndDropAllWithSharedAliases
+        , runTest "resolveTarget detects multi-vehicle ambiguity on attack (Phase 0.1)" testResolveTargetVehicleAmbiguity
+        , runTest "resolveTarget verb search order direct and predicate (Phase 0.2)" testResolveTargetSearchOrderDirect
+        , runTest "resolveTarget drop key with room namesake fixes B2 (Phase 0.2)" testDropKeyWithRoomNamensvetterFixB2
+        , runTest "resolveTarget take key with inventory namesake (Phase 0.2)" testTakeKeyWithInventoryNamensvetterFixB2
+        , runTest "resolveTarget use key with room namesake (Phase 0.2)" testUseKeyWithRoomNamensvetterFixB2
+        , runTest "resolveTarget equip blade with room namesake (Phase 0.2)" testEquipWithRoomNamensvetterFixB2
+        , runTest "resolveTarget unequip blade with room namesake (Phase 0.2)" testUnequipWithRoomNamensvetterFixB2
+        , runTest "resolveTarget unequip ambiguity filters equipped status (Phase 0.2)" testUnequipAmbiguityFiltersEquipped
+        , runTest "resolveTarget equip ambiguity filters equippable items (Phase 0.2)" testEquipAmbiguityFiltersEquippable
+        , runTest "resolveTarget search order fallback error messages (Phase 0.2)" testSearchOrderFallbacks
+        , runTest "resolveTarget ambiguity scoped to primary search order (Phase 0.2)" testSearchOrderAmbiguityScoped
         , runTest "parse look at multi-word target" testParseLookAtMultiWord
         , runTest "parse use-on multi-word target" testParseUseOnMultiWord
         , runTest "parse take multi-word target" testParseTakeMultiWord

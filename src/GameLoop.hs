@@ -290,16 +290,31 @@ commandEvents cmd before after = concat
         -- P1-15: derive take/drop events from the actual state change, not from
         -- the command. A failed `take` (not portable / already carried) or a
         -- `drop` of something not held must not fire `OnTake`/`OnDrop`.
+        -- Phase 0.1 (B1): resolve target against reachable entities via resolveTarget
+        -- so executeCommand and commandEvents agree on the target ID.
         Interact VTake t ->
-            [ OnTake iid | Just iid <- [findItemIdByAlias t after]
+            [ OnTake iid | Just iid <- [resolvedItemId VTake t before after]
                          , itemLoc iid before /= Just (CarriedBy ActorPlayer)
                          , itemLoc iid after  == Just (CarriedBy ActorPlayer) ]
         Interact VDrop t ->
-            [ OnDrop iid | Just iid <- [findItemIdByAlias t after]
+            [ OnDrop iid | Just iid <- [resolvedItemId VDrop t before after]
                          , itemLoc iid before == Just (CarriedBy ActorPlayer)
                          , itemLoc iid after  /= Just (CarriedBy ActorPlayer) ]
         -- `use` has no state criterion (its effect is up to the author).
-        Interact VUse t  -> [OnUse iid | Just iid <- [findItemIdByAlias t after]]
+        Interact VUse t  -> [OnUse iid | Just iid <- [resolvedItemId VUse t before after]]
+        ActionWithArgs VTake args ->
+            let t = unwords args
+            in [ OnTake iid | Just iid <- [resolvedItemId VTake t before after]
+                            , itemLoc iid before /= Just (CarriedBy ActorPlayer)
+                            , itemLoc iid after  == Just (CarriedBy ActorPlayer) ]
+        ActionWithArgs VDrop args ->
+            let t = unwords args
+            in [ OnDrop iid | Just iid <- [resolvedItemId VDrop t before after]
+                            , itemLoc iid before == Just (CarriedBy ActorPlayer)
+                            , itemLoc iid after  /= Just (CarriedBy ActorPlayer) ]
+        ActionWithArgs VUse args ->
+            let t = unwords args
+            in [ OnUse iid | Just iid <- [resolvedItemId VUse t before after] ]
         _ -> []
     itemLoc i st = itemLocation <$> Map.lookup i (itemStates (save st))
     lookSearchEvents = case cmd of
@@ -307,15 +322,16 @@ commandEvents cmd before after = concat
         SearchCmd _     -> [OnSearch (currentRoom (save after)) | isJust (lookupRoom (currentRoom (save after)) after)]
         _               -> []
 
--- | Look up an item ID by alias. Returns `Nothing` when no declared item matches
---   (P1-15: the old fallback to the raw input invented events for item IDs that
---   do not exist, e.g. `take blubb` -> `OnTake "blubb"`).
-findItemIdByAlias :: String -> GameState -> Maybe String
-findItemIdByAlias alias state =
-    let allItems = Map.elems (itemDefs (world state))
-    in case [itemId i | i <- allItems, normalizeText alias `elem` itemAliases i] of
-        (iId:_) -> Just iId
-        []      -> Nothing
+-- | Resolve an item ID for command triggers using central target resolution (Phase 0.1).
+--   Prefers resolving against 'before' (the state when the command was issued),
+--   falling back to 'after' (e.g. for synthetic test transitions).
+resolvedItemId :: Verb -> String -> GameState -> GameState -> Maybe String
+resolvedItemId verb t before after =
+    case resolveTarget verb t before of
+        TargetItem iid -> Just iid
+        _              -> case resolveTarget verb t after of
+            TargetItem iid -> Just iid
+            _              -> Nothing
 
 -- | Extract a canonical verb name for OnCommand triggers.
 commandVerbName :: Command -> String

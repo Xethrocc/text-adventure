@@ -1,4 +1,4 @@
-{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TupleSections, PatternSynonyms #-}
 
 -- | Command parsing and processing for the text adventure engine
 module Parser where
@@ -563,19 +563,48 @@ executeCommand (ChooseCmd idx) state =
                                                in (stateFinal, fullMsg)
 
 executeCommand (EquipCmd targetStr) state =
-    case findMatchingItem targetStr state of
-        Nothing -> (state, "You don't have '" ++ targetStr ++ "'.")
-        Just item ->
-            case equipItem (itemId item) state of
-                Left err -> (state, err)
-                Right state' -> (state', "You equip the " ++ itemName item ++ ".")
+    let stateWithVars = bindCommandVars (EquipCmd targetStr) state
+    in case resolveTarget (VCustom "equip") targetStr stateWithVars of
+        TargetItem iid ->
+            case Map.lookup iid (itemDefs (world stateWithVars)) of
+                Just item ->
+                    case equipItem iid stateWithVars of
+                        Left err     -> (stateWithVars, err)
+                        Right state' -> (state', "You equip the " ++ itemName item ++ ".")
+                Nothing -> (stateWithVars, "You don't have '" ++ targetStr ++ "'.")
+        TargetAmbiguous ids ->
+            let equippableIds = filter (\i -> maybe False (isJust . itemEquipSlot) (Map.lookup i (itemDefs (world stateWithVars)))) ids
+            in case equippableIds of
+                [singleEquippable] ->
+                    case Map.lookup singleEquippable (itemDefs (world stateWithVars)) of
+                        Just item ->
+                            case equipItem singleEquippable stateWithVars of
+                                Left err     -> (stateWithVars, err)
+                                Right state' -> (state', "You equip the " ++ itemName item ++ ".")
+                        Nothing -> interactAmbiguous ids stateWithVars
+                (e1:e2:es) -> interactAmbiguous (e1:e2:es) stateWithVars
+                []         -> interactAmbiguous ids stateWithVars
+        _                   -> (stateWithVars, "You don't have '" ++ targetStr ++ "'.")
 
 executeCommand (UnequipCmd targetStr) state =
-    case findMatchingItem targetStr state of
-        Nothing -> (state, "You don't have '" ++ targetStr ++ "'.")
-        Just item
-            | isEquipped (itemId item) state -> (unequipItem (itemId item) state, "You unequip the " ++ itemName item ++ ".")
-            | otherwise -> (state, "The " ++ itemName item ++ " is not equipped.")
+    let stateWithVars = bindCommandVars (UnequipCmd targetStr) state
+    in case resolveTarget (VCustom "unequip") targetStr stateWithVars of
+        TargetItem iid ->
+            case Map.lookup iid (itemDefs (world stateWithVars)) of
+                Just item
+                    | isEquipped iid stateWithVars -> (unequipItem iid stateWithVars, "You unequip the " ++ itemName item ++ ".")
+                    | otherwise                    -> (stateWithVars, "The " ++ itemName item ++ " is not equipped.")
+                Nothing -> (stateWithVars, "You don't have '" ++ targetStr ++ "'.")
+        TargetAmbiguous ids ->
+            let equippedIds = filter (`isEquipped` stateWithVars) ids
+            in case equippedIds of
+                [singleEquipped] ->
+                    case Map.lookup singleEquipped (itemDefs (world stateWithVars)) of
+                        Just item -> (unequipItem singleEquipped stateWithVars, "You unequip the " ++ itemName item ++ ".")
+                        Nothing   -> interactAmbiguous ids stateWithVars
+                (e1:e2:es)       -> interactAmbiguous (e1:e2:es) stateWithVars
+                []               -> interactAmbiguous ids stateWithVars
+        _                   -> (stateWithVars, "You don't have '" ++ targetStr ++ "'.")
 
 executeCommand UnequipAllCmd state
     | Map.null (equipment (save state)) = (state, "You have nothing equipped.")
@@ -586,7 +615,7 @@ executeCommand TakeAll state =
     in if null roomItems
        then (state, "There's nothing here to take.")
        else let (finalState, msgs) = foldl' (\(s, ms) item ->
-                    let (s', m) = executeCommand (Interact VTake (itemName item)) s
+                    let (s', m) = executeCommand (Interact VTake (itemId item)) s
                     in (s', ms ++ [m])) (state, []) roomItems
             in (finalState, intercalate "\n" msgs)
 
@@ -595,7 +624,7 @@ executeCommand DropAll state =
     in if null invItems
        then (state, "You're not carrying anything to drop.")
        else let (finalState, msgs) = foldl' (\(s, ms) item ->
-                    let (s', m) = executeCommand (Interact VDrop (itemName item)) s
+                    let (s', m) = executeCommand (Interact VDrop (itemId item)) s
                     in (s', ms ++ [m])) (state, []) invItems
             in (finalState, intercalate "\n" msgs)
 
@@ -678,6 +707,7 @@ executeCommand (Interact verb targetStr) state =
         ITVehicle veh    -> interactVehicle verb veh targetStr stateWithVars
         ITBareVerb       -> interactBare verb stateWithVars
         ITNotFound str   -> interactNotFound verb str stateWithVars
+        ITAmbiguous ids  -> interactAmbiguous ids stateWithVars
 
 -- | Handle "use <item> on <entity>" with weapon→attack fallback
 executeCommand (InteractWith VUseOn itemStr entityStr) state =
@@ -832,26 +862,122 @@ data InteractTarget
     | ITVehicle VehicleDef                    -- ^ Vehicle attack candidate
     | ITBareVerb                              -- ^ Bare verb with no target (e.g. defend, flee, custom command)
     | ITNotFound String                       -- ^ Target not found
+    | ITAmbiguous [String]                    -- ^ Target is ambiguous between multiple candidates
     deriving (Show, Eq)
 
--- | Resolve what entity an interaction verb is targeting.
-resolveInteractTarget :: Verb -> String -> GameState -> InteractTarget
-resolveInteractTarget verb targetStr state
-    | null targetStr = ITBareVerb
-    | Just item <- targetItem = ITItem item maybeItemState
-    | Just npc  <- targetNPC  = ITNpc npc maybeNpcState
-    | verb == VAttack, Just veh <- findVehicle targetStr state = ITVehicle veh
-    | otherwise = ITNotFound targetStr
+-- | Result of central target resolution (Phase 0.1).
+data TargetResolution
+    = ResolvedItem String       -- ^ Item ID
+    | ResolvedNPC String        -- ^ NPC ID
+    | ResolvedVehicle String    -- ^ Vehicle ID
+    | Ambiguous [String]        -- ^ Candidate IDs when ambiguous
+    | NotFound String           -- ^ Target string not found
+    | BareVerb                  -- ^ Bare verb without target
+    deriving (Show, Eq)
+
+pattern TargetItem :: String -> TargetResolution
+pattern TargetItem x = ResolvedItem x
+
+pattern TargetVehicle :: String -> TargetResolution
+pattern TargetVehicle x = ResolvedVehicle x
+
+pattern TargetAmbiguous :: [String] -> TargetResolution
+pattern TargetAmbiguous xs = Ambiguous xs
+
+pattern TargetNotFound :: String -> TargetResolution
+pattern TargetNotFound s = NotFound s
+
+pattern TargetBare :: TargetResolution
+pattern TargetBare = BareVerb
+
+-- | Check if a target string matches a vehicle definition by ID, name, or keywords.
+matchesVehicleTarget :: String -> VehicleDef -> Bool
+matchesVehicleTarget tgt v
+    | null (words tgt) = False
+    | otherwise        = normalizeText tgt `elem` aliases
   where
-    resolvedTarget = resolveHotspotTarget targetStr state
-    roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
-    invItems = getItemsInLocation (CarriedBy ActorPlayer) state
-    allReachableItems = roomItems ++ invItems
-    roomNPCs = getNPCsInRoom (currentRoom (save state)) state
-    targetItem = find (matchesItemTarget resolvedTarget) allReachableItems
-    targetNPC = find (matchesNPCTarget resolvedTarget) roomNPCs
-    maybeItemState = targetItem >>= \i -> Map.lookup (itemId i) (itemStates (save state))
-    maybeNpcState = targetNPC >>= \n -> Map.lookup (npcId n) (npcStates (save state))
+    aliases = nub (map normalizeText (vehicleId v : vehicleName v : vehicleKeywords v))
+
+-- | Check if a verb prioritizes inventory over room entities during target resolution (Phase 0.2, Bug B2).
+preferInventoryTarget :: Verb -> Bool
+preferInventoryTarget verb = case verbCanonicalName verb of
+    "drop"    -> True
+    "use"     -> True
+    "equip"   -> True
+    "wear"    -> True
+    "wield"   -> True
+    "unequip" -> True
+    "remove"  -> True
+    _         -> False
+
+-- | Central target resolution (Phase 0.1, Phase 0.2).
+--   Resolves an interaction verb's target string against reachable entities
+--   with verb-dependent search order (Phase 0.2, Bug B2):
+--   - 'drop', 'use', 'equip' prioritize inventory items first, falling back to room.
+--   - 'take' prioritizes room items first, falling back to inventory.
+--   - other verbs prioritize room entities first, falling back to inventory.
+resolveTarget :: Verb -> String -> GameState -> TargetResolution
+resolveTarget verb targetStr state
+    | null (words targetStr) = BareVerb
+    | otherwise =
+        let resolved = resolveHotspotTarget targetStr state
+            roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
+            invItems  = getItemsInLocation (CarriedBy ActorPlayer) state
+            roomNPCs  = getNPCsInRoom (currentRoom (save state)) state
+
+            matchingRoomItems = filter (matchesItemTarget resolved) roomItems
+            matchingInvItems  = filter (matchesItemTarget resolved) invItems
+            matchingNPCs      = filter (matchesNPCTarget resolved) roomNPCs
+            matchingVehicles  = if verb == VAttack
+                                then filter (\v -> matchesVehicleTarget resolved v || matchesVehicleTarget targetStr v)
+                                            (Map.elems (vehicleDefs (world state)))
+                                else []
+
+            roomCandidateIds = nub (map itemId matchingRoomItems ++ map npcId matchingNPCs ++ map vehicleId matchingVehicles)
+            invCandidateIds  = nub (map itemId matchingInvItems)
+
+            (primaryCandidates, secondaryCandidates) =
+                if preferInventoryTarget verb
+                then (invCandidateIds, roomCandidateIds)
+                else (roomCandidateIds, invCandidateIds)
+
+            allCandidates = if null primaryCandidates
+                            then secondaryCandidates
+                            else primaryCandidates
+
+            allVehIds = map vehicleId matchingVehicles
+            allNpcIds = map npcId matchingNPCs
+        in case allCandidates of
+            [] -> NotFound targetStr
+            [singleId]
+                | singleId `elem` allVehIds -> ResolvedVehicle singleId
+                | singleId `elem` allNpcIds -> ResolvedNPC singleId
+                | otherwise                 -> ResolvedItem singleId
+            _  -> Ambiguous allCandidates
+
+-- | Resolve what entity an interaction verb is targeting.
+--   Thin adapter delegating to central 'resolveTarget'.
+resolveInteractTarget :: Verb -> String -> GameState -> InteractTarget
+resolveInteractTarget verb targetStr state = case resolveTarget verb targetStr state of
+    ResolvedItem iid ->
+        case Map.lookup iid (itemDefs (world state)) of
+            Just item ->
+                let mSt = Map.lookup iid (itemStates (save state))
+                in ITItem item mSt
+            Nothing   -> ITNotFound targetStr
+    ResolvedNPC nid ->
+        case Map.lookup nid (npcDefs (world state)) of
+            Just npc ->
+                let mSt = Map.lookup nid (npcStates (save state))
+                in ITNpc npc mSt
+            Nothing  -> ITNotFound targetStr
+    ResolvedVehicle vid ->
+        case Map.lookup vid (vehicleDefs (world state)) of
+            Just veh -> ITVehicle veh
+            Nothing  -> ITNotFound targetStr
+    Ambiguous ids -> ITAmbiguous ids
+    NotFound s    -> ITNotFound s
+    BareVerb      -> ITBareVerb
 
 -- | Execute interaction on an item.
 interactItem :: Verb -> ItemDef -> Maybe ItemState -> String -> GameState -> CommandResult
@@ -945,6 +1071,23 @@ interactNotFound verb targetStr state
     | hasOnCommandTrigger verb state = (state, "")
     | verb == VAttack, Just res <- tryAttackVehicle targetStr state = res
     | otherwise = (state, "You don't see '" ++ targetStr ++ "' here.")
+
+-- | Fallback interaction when multiple entities match the target.
+interactAmbiguous :: [String] -> GameState -> CommandResult
+interactAmbiguous ids state =
+    let names = map (entityDisplayName state) ids
+    in (state, "Which do you mean: " ++ intercalate ", " names ++ "?")
+
+-- | Display name of an entity (item name, NPC name, or vehicle name).
+entityDisplayName :: GameState -> String -> String
+entityDisplayName state eid =
+    case Map.lookup eid (itemDefs (world state)) of
+        Just item -> itemName item
+        Nothing -> case Map.lookup eid (npcDefs (world state)) of
+            Just npc -> npcName npc
+            Nothing  -> case Map.lookup eid (vehicleDefs (world state)) of
+                Just veh -> vehicleName veh
+                Nothing  -> eid
 
 -- | Display name of a hotspot target (item first, then NPC, else the id).
 hotspotLabel :: GameState -> Hotspot -> String
