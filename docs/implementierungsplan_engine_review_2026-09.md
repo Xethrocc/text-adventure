@@ -89,6 +89,11 @@ Protokoll aus Phase 1 macht dieses Batching möglich.
   2.3 (Disambiguation) und 4.2 (`take`-Semantik). Diese dürfen `.expect` anpassen; die
   Änderung wird im selben Commit begründet und im CHANGELOG als Verhaltensänderung
   ausgewiesen.
+- Warnungsgate in `scripts/ci.sh`: Das Muster für Test-Komponenten war auf das alte
+  GHC-Format zugeschnitten (`warning: [-W…]`), GHC 9.6 schreibt `warning: [GHC-…]` —
+  Warnungen aus Test-Komponenten rutschten dadurch durch. Muster auf
+  `warning: [(-W|GHC-)` erweitert (2026-09-27); das Gate greift wieder.
+
 - Save-Kompatibilität: neue Felder mit `.:?`-Defaults, Round-Trip-Test je neuem Typ.
 - Jede Stufe: Unit-Tests, ggf. neues E2E-Fixture, Update `docs/adventure-schema.md`,
   `CHANGELOG.md`, README-Zahlen.
@@ -103,8 +108,8 @@ Protokoll aus Phase 1 macht dieses Batching möglich.
 |---|---|---|
 | 0.1 | **Zentrale Zielauflösung:** eine Funktion `resolveTarget :: Verb -> String -> GameState -> TargetResolution` (Item-/NPC-/Vehicle-ID oder `Ambiguous [..]`/`NotFound`). `executeCommand` und `commandEvents` nutzen dieselbe aufgelöste ID → **fixt B1**. | Test: zwei Items mit Keyword `key`, `OnTake` feuert für das tatsächlich genommene |
 | 0.2 | **Verbabhängige Suchreihenfolge:** `drop`/`use`/`equip` Inventar zuerst, `take` Raum zuerst → **fixt B2**. | Test für `drop key` mit Namensvetter im Raum |
-| 0.3 | **Licht-Leck schließen** (B3): `take`/`examine`/`search`/`use` auf nicht-getragene Ziele im Dunkeln verweigern; Meldung konfigurierbar vorbereiten. *(Erledigt: `roomDarkMsg` / `dark_msg` / `dark_message`, Blockade für Raumobjekte im Dunkeln, Unit- & Schema-Tests)* | Tests + ggf. E2E-Anpassung prüfen *(erledigt)* |
-| 0.4 | **Validierungs-Warnungen:** Keyword-Kollision zwischen Items/NPCs im selben Raum; unbekannte `{name}`-Platzhalter in Texten. | Worldbuilder-Tests |
+| 0.3 | **Licht-Leck schließen** (B3): `take`/`examine`/`search`/`use` auf nicht-getragene Ziele im Dunkeln verweigern; Meldung konfigurierbar vorbereiten. *(Erledigt: `roomDarkMsg` / `dark_msg` / `dark_message`, Blockade für Raumobjekte im Dunkeln, Unit- & Schema-Tests)* **Nachtrag (2026-09-27) — `feelable`:** Autoren entscheiden pro Item, was im Dunkeln ertastbar ist. `take`/`examine`/`search`/`use` auf `feelable`-Zielen sind erlaubt, `take all` nimmt im Dunkeln nur ertastbare Items, ziel-loses `search` sowie NPCs und Fahrzeuge bleiben gesperrt. Hint-Kanal im Dunkeln ist `on_enter` (Raum-Hook und `on: enter`-Event laufen ohne Dunkelheits-Prüfung), `on_look` fällt weg. *(Erledigt: `aa9cc3a`)* | Tests + ggf. E2E-Anpassung prüfen *(erledigt)* — E2E-Fixture `dark-feelable` pinnt, dass eine Sackgasse Autorenentscheidung ist: ohne Tag ist das Item im Dunkeln nicht erreichbar |
+| 0.4 | **Validierungs-Warnungen:** Keyword-Kollision zwischen Items/NPCs im selben Raum; unbekannte `{name}`-Platzhalter in Texten; **dunkler Raum mit erreichbaren Items, aber ohne `light_flag`, ohne `lightsource`-Pfad und ohne `feelable`-Item** (potenzielle Autoren-Sackgasse — siehe 0.3) | Worldbuilder-Tests |
 | 0.5 | Aufräumen: `cleanedTgt` in `matchesNPCTarget` nutzen oder entfernen. `ContainerState` bleibt (Phase 4.4). *(README-Zahlen und E2E-Zählweise bereits in `435c056` erledigt: 40 Playthroughs + Worldgen-/Run-Regeneration-Checks.)* | — |
 | 0.6 | **`Types.hs`-Split** (Review §5): 2177 Zeilen aufteilen entlang der vorhandenen Abschnitte, z. B. `Types.Core`/`Types.Cards` (ab Z. 567)/`Types.Vehicles` (ab Z. 1350)/`Types.Combat` (ab Z. 1636). `Types` bleibt als **Re-Export-Fassade**, damit kein `import Types` geändert werden muss. Reiner Umzug, keine Semantikänderung. Größe M. **Direkt nach 0.5**, vor Phase 1 — Phasen 1/2 fügen viele neue Typen hinzu (`OutputEvent`, Protokoll, `OnBefore`, `Block`), ein späterer Split erzeugt unnötige Merge-Konflikte. | `scripts/ci.sh` grün, E2E byte-identisch |
 
