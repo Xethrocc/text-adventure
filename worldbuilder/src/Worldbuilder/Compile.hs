@@ -609,6 +609,7 @@ compileRoom r =
             , E.roomConnections = Map.fromList goodPairs
             , E.roomTags = Set.fromList (arTags r)
             , E.roomLightFlag = arLightFlag r
+            , E.roomDarkMsg = arDarkMsg r
             , E.roomOnEnter = compileMaybeOutcomes (arOnEnter r)
             , E.roomOnLook = compileMaybeOutcomes (arOnLook r)
             , E.roomOnExit = compileMaybeOutcomes (arOnExit r)

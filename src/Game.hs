@@ -203,6 +203,7 @@ generateSandboxRoom sz x y z fromRoom fromDir st =
             , roomConnections   = finalExits
             , roomTags          = Set.fromList ("sandbox" : zone : btTags biome)
             , roomLightFlag     = Nothing
+            , roomDarkMsg       = Nothing
             , roomOnEnter       = Nothing
             , roomOnLook        = Nothing
             , roomOnExit        = Nothing

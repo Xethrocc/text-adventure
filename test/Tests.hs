@@ -25,6 +25,7 @@ import Frontend (Frontend (..), commandCompletion)
 import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText, bindCommandVars,
                InteractTarget (..), resolveInteractTarget,
                TargetResolution (..), resolveTarget, preferInventoryTarget,
+               defaultDarkMessage,
                pattern TargetItem, pattern TargetVehicle, pattern TargetAmbiguous, pattern TargetNotFound, pattern TargetBare)
 import Verbs (verbAliasMap)
 import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombat, shipAbsorb)
@@ -2378,7 +2379,7 @@ testSampleWorldIsValid = do
 testDanglingExitDetected :: IO Bool
 testDanglingExitDetected = do
     let roomA = Room "roomA" "Room A" (plainText "desc.") (Map.singleton North (Open "roomZ")) Set.empty Nothing
-            Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing
+            Nothing Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing
         gw = (world initSampleGame) { rooms = Map.singleton "roomA" roomA }
         errors = validateWorld gw
     expectTrue "dangling exit detected" (DanglingExit "roomA" North "roomZ" `elem` errors)
@@ -2387,7 +2388,7 @@ testDuplicateIDsBetweenItemsAndRooms :: IO Bool
 testDuplicateIDsBetweenItemsAndRooms = do
     let gw = (world initSampleGame)
                 { rooms = Map.insert "key" (Room "key" "Duplicate" (plainText "desc.") Map.empty Set.empty Nothing
-                    Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing) (rooms (world initSampleGame)) }
+                    Nothing Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing) (rooms (world initSampleGame)) }
         errors = validateWorld gw
     expectTrue "duplicate key found" (any isDup errors)
   where
@@ -2397,7 +2398,7 @@ testDuplicateIDsBetweenItemsAndRooms = do
 testUnreachableRoomDetected :: IO Bool
 testUnreachableRoomDetected = do
     let roomIsolated = Room "isolated" "Isolated" (plainText "Alone.") Map.empty Set.empty Nothing
-            Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing
+            Nothing Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing
         gw = (world initSampleGame)
                 { rooms = Map.insert "isolated" roomIsolated (rooms (world initSampleGame)) }
         -- Reachability is checked where the real start room is known, i.e. in
@@ -4795,7 +4796,7 @@ testSaveStateDynamicRoomsM2Invariant = do
     -- "dynamicRooms" must not appear in JSON when dynamicRooms is empty
     r1 <- expectEqual False (isInfixOf "\"dynamicRooms\"" (BLC.unpack enc))
     -- Round-trip with dynamicRooms populated
-    let dynRoom = Room "dyn_1" "Dynamischer Raum" (plainText "Ein magischer Raum.") Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing
+    let dynRoom = Room "dyn_1" "Dynamischer Raum" (plainText "Ein magischer Raum.") Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing
         ssWithDyn = ss { dynamicRooms = Map.singleton "dyn_1" dynRoom }
         encWithDyn = Aeson.encode ssWithDyn
     r2 <- expectTrue "dynamicRooms key present when non-empty" (isInfixOf "\"dynamicRooms\"" (BLC.unpack encWithDyn))
@@ -4856,7 +4857,7 @@ testMoveIntoSandboxGeneratesRoom = do
     let bForest = BiomeTemplate "forest" 10 "Dichter Wald [{x}, {y}]" (plainText "Tiefer Wald.") ["forest"] emptyAscii [North, South, East, West]
         sz = SandboxZone "wildnis" (0, 0, 0) [bForest] (Just 1)
         gw = emptyGameWorld
-            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Schlosstor") (Map.singleton North (Open "sandbox_wildnis")) Set.empty Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing)
+            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Schlosstor") (Map.singleton North (Open "sandbox_wildnis")) Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing)
             , sandboxZones = Map.singleton "wildnis" sz
             }
         st0 = emptyGameState { world = gw, save = (save emptyGameState) { currentRoom = "gate" } }
@@ -4880,7 +4881,7 @@ testReciprocalExitWiring = do
     let bForest = BiomeTemplate "forest" 10 "Wald [{x}, {y}]" (plainText "Wald.") ["forest"] emptyAscii [North, South, East, West]
         sz = SandboxZone "wildnis" (0, 0, 0) [bForest] (Just 1)
         gw = emptyGameWorld
-            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Schlosstor") (Map.singleton North (Open "sandbox_wildnis_0_0_0")) Set.empty Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing)
+            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Schlosstor") (Map.singleton North (Open "sandbox_wildnis_0_0_0")) Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing)
             , sandboxZones = Map.singleton "wildnis" sz
             }
         st0 = emptyGameState { world = gw, save = (save emptyGameState) { currentRoom = "gate" } }
@@ -4992,7 +4993,7 @@ testBiomeAsciiArtVariantsDayNight = do
         bForest = BiomeTemplate "forest" 10 "Wald [{x}, {y}]" (plainText "Dichter Wald.") ["forest"] artVariants [North, South, East, West]
         sz = SandboxZone "wildnis" (0, 0, 0) [bForest] (Just 1)
         gw = emptyGameWorld
-            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Tor") (Map.singleton North (Open "sandbox_wildnis")) Set.empty Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing)
+            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Tor") (Map.singleton North (Open "sandbox_wildnis")) Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing)
             , sandboxZones = Map.singleton "wildnis" sz
             }
         st0 = emptyGameState { world = gw, save = (save emptyGameState) { currentRoom = "gate" } }
@@ -5501,7 +5502,8 @@ testInteractItemContract = do
     r4 <- expectEqual "It's bolted down!" (snd resNonPortable)
     r5 <- expectTrue "non-portable item remains not carried" (not (hasItem "torch" (fst resNonPortable)))
     -- taking item with on_take outcome (like 'key' in hallway)
-    let stInHallway = st0 { save = (save st0) { currentRoom = "hallway" } }
+    -- hallway is tagged 'dark', so player carries a torch to illuminate it (Phase 0.3, Bug B3)
+    let stInHallway = pickupItem "torch" (st0 { save = (save st0) { currentRoom = "hallway" } })
         resKey = executeCommand (Interact VTake "key") stInHallway
         stAfterKey = fst resKey
         msgKey = snd resKey
@@ -5618,7 +5620,8 @@ testResolveTargetFixesB1OnTake = do
 
     -- Case 1: Player in "hallway" takes "key". Only iron_key is in "hallway".
     -- Under Bug B1, findItemIdByAlias picked "brass_key" (first globally), swallowing OnTake.
-    let stInHallway = baseSt { save = (save baseSt) { currentRoom = "hallway" } }
+    -- Hallway is tagged 'dark', so player carries torch (lightsource) to take the key (Phase 0.3, Bug B3).
+    let stInHallway = pickupItem "torch" (baseSt { save = (save baseSt) { currentRoom = "hallway" } })
         (loopHallway, msgHallway) = applyLoopCommand (Interact VTake "key") (initLoopState stInHallway)
         stAfterHallway = lsCurrent loopHallway
     r1 <- expectTrue "iron key is in inventory" (hasItem "iron_key" stAfterHallway)
@@ -6135,6 +6138,215 @@ testEquipAmbiguityFiltersEquippable = do
     r3 <- expectTrue "no ambiguous prompt between equippable and non-equippable" (not (isInfixOf "Which do you mean" msg))
     pure (r1 && r2 && r3)
 
+-- ---------------------------------------------------------------------------
+-- Phase 0.3: Licht-Leck schließen (B3) & konfigurierbare Dunkelheitsmeldung
+-- ---------------------------------------------------------------------------
+
+-- | Phase 0.3 (B3): In a dark room without a light source, 'take' on a room item
+--   and 'take all' are refused with darkRoomMessage.
+testDarkRoomRefusesTakeAndTakeAll :: IO Bool
+testDarkRoomRefusesTakeAndTakeAll = do
+    let stInHallway = initSampleGame { save = (save initSampleGame) { currentRoom = "hallway" } }
+    -- hallway is tagged 'dark', key is in hallway, player has no torch
+    -- 1. take key is refused with darkness message
+    let (stAfterTake, msgTake) = executeCommand (Interact VTake "key") stInHallway
+    r1 <- expectEqual defaultDarkMessage msgTake
+    r2 <- expectTrue "key was not taken into inventory" (not (hasItem "key" stAfterTake))
+    r3 <- expectEqual (Just (InRoom "hallway")) (itemLocation <$> Map.lookup "key" (itemStates (save stAfterTake)))
+
+    -- 2. take all is refused with darkness message
+    let (stAfterTakeAll, msgTakeAll) = executeCommand TakeAll stInHallway
+    r4 <- expectEqual defaultDarkMessage msgTakeAll
+    r5 <- expectTrue "no items picked up by take all" (null (getItemsInLocation (CarriedBy ActorPlayer) stAfterTakeAll))
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Phase 0.3 (B3): In a dark room without a light source, 'examine' on room items/NPCs
+--   and 'search' (room or target) are refused with darkRoomMessage.
+testDarkRoomRefusesExamineAndSearch :: IO Bool
+testDarkRoomRefusesExamineAndSearch = do
+    let stInHallway = initSampleGame { save = (save initSampleGame) { currentRoom = "hallway" } }
+    -- 1. examine room item ('key')
+    let (_, msgExamineItem) = executeCommand (Interact VLookAt "key") stInHallway
+    r1 <- expectEqual defaultDarkMessage msgExamineItem
+
+    -- 2. examine room NPC ('goblin')
+    let (_, msgExamineNPC) = executeCommand (Interact VLookAt "goblin") stInHallway
+    r2 <- expectEqual defaultDarkMessage msgExamineNPC
+
+    -- 3. search room
+    let (stAfterSearch, msgSearch) = executeCommand (SearchCmd Nothing) stInHallway
+    r3 <- expectEqual defaultDarkMessage msgSearch
+    -- hidden note_old is NOT discovered
+    let noteDiscovered = maybe False itemDiscovered (Map.lookup "note_old" (itemStates (save stAfterSearch)))
+    r4 <- expectTrue "hidden note not discovered in dark search" (not noteDiscovered)
+    -- room search outcome hook flag torch_lit was NOT set
+    r5 <- expectEqual Nothing (getFlag "torch_lit" stAfterSearch)
+    -- OnSearch event does not fire in darkness
+    let evsSearch = commandEvents (SearchCmd Nothing) stInHallway stAfterSearch
+    r6 <- expectTrue "OnSearch event suppressed in dark room" (null [() | OnSearch _ <- evsSearch])
+
+    -- 4. search target in room
+    let (_, msgSearchTarget) = executeCommand (SearchCmd (Just "key")) stInHallway
+    r7 <- expectEqual defaultDarkMessage msgSearchTarget
+    let (_, msgSearchVerb) = executeCommand (Interact VSearch "key") stInHallway
+    r8 <- expectEqual defaultDarkMessage msgSearchVerb
+
+    -- 5. OnLook event suppressed in dark room
+    let (stAfterLook, msgLook) = executeCommand Look stInHallway
+    r9 <- expectEqual defaultDarkMessage msgLook
+    let evsLook = commandEvents Look stInHallway stAfterLook
+    r10 <- expectTrue "OnLook event suppressed in dark room" (null [() | OnLook _ <- evsLook])
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10)
+
+-- | Phase 0.3 (B3): In a dark room without a light source, 'use' on a room entity
+--   and 'use <carried> on <room entity>' are refused with darkRoomMessage.
+testDarkRoomRefusesUseOnRoomEntities :: IO Bool
+testDarkRoomRefusesUseOnRoomEntities = do
+    -- Player in hallway carrying a healing potion; 'key' and 'goblin' are in the dark hallway
+    let st0 = initSampleGame { save = (save initSampleGame) { currentRoom = "hallway" } }
+        stWithPotion = pickupItem "potion_healing" st0
+    -- 1. 'use key' (key in dark room, not carried) is refused
+    let (stAfterUseRoom, msgUseRoom) = executeCommand (Interact VUse "key") stWithPotion
+    r1 <- expectEqual defaultDarkMessage msgUseRoom
+    let evsUseRoom = commandEvents (Interact VUse "key") stWithPotion stAfterUseRoom
+    r2 <- expectTrue "OnUse event suppressed for room item in dark room" (null [() | OnUse _ <- evsUseRoom])
+
+    -- 2. 'use potion on goblin' (potion carried, goblin in dark room) is refused
+    let (stAfterUseOn, msgUseOn) = executeCommand (InteractWith VUseOn "potion_healing" "goblin") stWithPotion
+    r3 <- expectEqual defaultDarkMessage msgUseOn
+    -- potion was not consumed
+    r4 <- expectTrue "potion remains in inventory" (hasItem "potion_healing" stAfterUseOn)
+
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 0.3 (B3): Carried items CAN still be examined, used, and dropped in a dark room.
+testDarkRoomAllowsCarriedItemInteractions :: IO Bool
+testDarkRoomAllowsCarriedItemInteractions = do
+    -- Player in hallway carrying potion_healing (not a lightsource)
+    let stInHallway = pickupItem "potion_healing" (initSampleGame { save = (save initSampleGame) { currentRoom = "hallway" } })
+
+    -- 1. examine carried item succeeds and gives item description
+    let (_, msgExamine) = executeCommand (Interact VLookAt "potion") stInHallway
+    r1 <- expectTrue "can examine carried item in dark" ("bubbling" `isInfixOf` msgExamine && msgExamine /= defaultDarkMessage)
+
+    -- 2. use carried item succeeds
+    let (stAfterUse, msgUse) = executeCommand (Interact VUse "potion") stInHallway
+    r2 <- expectTrue "can use carried item in dark" (msgUse /= defaultDarkMessage)
+    let evsUse = commandEvents (Interact VUse "potion") stInHallway stAfterUse
+    r3 <- expectTrue "OnUse fires for carried item in dark" (OnUse "potion_healing" `elem` evsUse)
+
+    -- 3. drop carried item succeeds and places it in room
+    let (stAfterDrop, msgDrop) = executeCommand (Interact VDrop "potion") stInHallway
+    r4 <- expectTrue "can drop carried item in dark" ("You drop the" `isInfixOf` msgDrop)
+    r5 <- expectTrue "potion is no longer carried" (not (hasItem "potion_healing" stAfterDrop))
+    r6 <- expectEqual (Just (InRoom "hallway")) (itemLocation <$> Map.lookup "potion_healing" (itemStates (save stAfterDrop)))
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | Phase 0.3 (B3): Illumination by carrying a light source or by room light_flag
+--   restores all normal interactions in a room tagged "dark".
+testDarkRoomIlluminationRestoresInteraction :: IO Bool
+testDarkRoomIlluminationRestoresInteraction = do
+    let stInHallway = initSampleGame { save = (save initSampleGame) { currentRoom = "hallway" } }
+
+    -- 1. Carrying torch (tagged "lightsource") restores take and examine
+    let withTorch = pickupItem "torch" stInHallway
+    let (stAfterTake, msgTake) = executeCommand (Interact VTake "key") withTorch
+    r1 <- expectTrue "take succeeds with torch" (hasItem "key" stAfterTake)
+    r2 <- expectTrue "msg indicates key taken" ("You take the key." `isPrefixOf` msgTake)
+    let (_, msgExamineNpc) = executeCommand (Interact VLookAt "goblin") withTorch
+    r3 <- expectTrue "examine npc succeeds with torch" ("goblin" `isInfixOf` msgExamineNpc)
+
+    -- 2. Setting room light_flag ("torch_lit") to "true" restores interaction even without carrying torch
+    let litState = setFlag "torch_lit" "true" stInHallway
+    let (stAfterLitTake, msgLitTake) = executeCommand (Interact VTake "key") litState
+    r4 <- expectTrue "take succeeds when room light_flag is active" (hasItem "key" stAfterLitTake)
+    r5 <- expectTrue "msg indicates key taken when lit" ("You take the key." `isPrefixOf` msgLitTake)
+
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Phase 0.3: Room-level configurable dark message (roomDarkMsg / dark_msg)
+--   overrides defaultDarkMessage for all blocked dark room interactions.
+testConfigurableDarkMessage :: IO Bool
+testConfigurableDarkMessage = do
+    let customDark = "You cannot see a thing in the shadowy gloom."
+        st0 = initSampleGame
+        baseHallway = rooms (world st0) Map.! "hallway"
+        customHallway = baseHallway { roomDarkMsg = Just customDark }
+        stCustom = pickupItem "potion_healing" $ st0
+            { world = (world st0) { rooms = Map.insert "hallway" customHallway (rooms (world st0)) }
+            , save = (save st0) { currentRoom = "hallway" }
+            }
+
+    -- 1. Look returns custom dark message
+    let (_, msgLook) = executeCommand Look stCustom
+    r1 <- expectEqual customDark msgLook
+
+    -- 2. Take room item returns custom dark message
+    let (_, msgTake) = executeCommand (Interact VTake "key") stCustom
+    r2 <- expectEqual customDark msgTake
+
+    -- 3. TakeAll returns custom dark message
+    let (_, msgTakeAll) = executeCommand TakeAll stCustom
+    r3 <- expectEqual customDark msgTakeAll
+
+    -- 4. Search returns custom dark message
+    let (_, msgSearch) = executeCommand (SearchCmd Nothing) stCustom
+    r4 <- expectEqual customDark msgSearch
+
+    -- 5. Examine room item returns custom dark message
+    let (_, msgExamine) = executeCommand (Interact VLookAt "key") stCustom
+    r5 <- expectEqual customDark msgExamine
+
+    -- 6. Use room item returns custom dark message
+    let (_, msgUse) = executeCommand (Interact VUse "key") stCustom
+    r6 <- expectEqual customDark msgUse
+
+    -- 7. Use carried item on room entity returns custom dark message
+    let (_, msgUseOn) = executeCommand (InteractWith VUseOn "potion_healing" "goblin") stCustom
+    r7 <- expectEqual customDark msgUseOn
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | Phase 0.3: Room JSON serialization and deserialization preserves roomDarkMsg
+--   and supports legacy keys 'dark_msg' and 'dark_message'.
+testRoomDarkMsgJsonRoundTrip :: IO Bool
+testRoomDarkMsgJsonRoundTrip = do
+    let baseRoom = Room "dark_chamber" "Dunkle Kammer" (plainText "Ein dunkler Ort.")
+                        Map.empty (Set.singleton "dark") Nothing Nothing Nothing Nothing Nothing Nothing
+                        emptyAscii Nothing Nothing
+    -- 1. Default invariant: roomDarkMsg Nothing is omitted from JSON
+    let rNothing = baseRoom { roomDarkMsg = Nothing }
+        encNothing = BLC.unpack (Aeson.encode rNothing)
+    r1 <- expectTrue "roomDarkMsg Nothing is omitted from JSON"
+            (not ("\"roomDarkMsg\"" `isInfixOf` encNothing) &&
+             not ("\"dark_msg\"" `isInfixOf` encNothing) &&
+             not ("\"dark_message\"" `isInfixOf` encNothing))
+
+    -- 2. Round-trip with roomDarkMsg Just
+    let rJust = baseRoom { roomDarkMsg = Just "Es ist stockfinster hier." }
+        encJust = Aeson.encode rJust
+    r2 <- expectTrue "roomDarkMsg serialized into JSON"
+            (isInfixOf "\"roomDarkMsg\":\"Es ist stockfinster hier.\"" (BLC.unpack encJust))
+    r3 <- case Aeson.decode encJust :: Maybe Room of
+        Just dec -> expectEqual (Just "Es ist stockfinster hier.") (roomDarkMsg dec)
+        Nothing  -> expectTrue "decode room with roomDarkMsg failed" False
+
+    -- 3. Legacy JSON compatibility: "dark_msg" key
+    let jsonDarkMsg = BLC.pack "{\"roomId\":\"r1\",\"roomName\":\"R1\",\"roomDescription\":\"D\",\"roomConnections\":[],\"dark_msg\":\"Legacy dark message\"}"
+    r4 <- case Aeson.eitherDecode jsonDarkMsg of
+        Right dec -> expectEqual (Just "Legacy dark message") (roomDarkMsg dec)
+        Left _    -> expectTrue "decode legacy dark_msg failed" False
+
+    -- 4. Legacy JSON compatibility: "dark_message" key
+    let jsonDarkMessage = BLC.pack "{\"roomId\":\"r2\",\"roomName\":\"R2\",\"roomDescription\":\"D\",\"roomConnections\":[],\"dark_message\":\"Another legacy msg\"}"
+    r5 <- case Aeson.eitherDecode jsonDarkMessage of
+        Right dec -> expectEqual (Just "Another legacy msg") (roomDarkMsg dec)
+        Left _    -> expectTrue "decode legacy dark_message failed" False
+
+    pure (r1 && r2 && r3 && r4 && r5)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -6157,6 +6369,14 @@ main = do
         , runTest "resolveTarget equip ambiguity filters equippable items (Phase 0.2)" testEquipAmbiguityFiltersEquippable
         , runTest "resolveTarget search order fallback error messages (Phase 0.2)" testSearchOrderFallbacks
         , runTest "resolveTarget ambiguity scoped to primary search order (Phase 0.2)" testSearchOrderAmbiguityScoped
+        -- Phase 0.3: Licht-Leck schließen (B3) & konfigurierbare Dunkelheitsmeldung
+        , runTest "dark room refuses take and take all (Phase 0.3, B3)" testDarkRoomRefusesTakeAndTakeAll
+        , runTest "dark room refuses examine and search (Phase 0.3, B3)" testDarkRoomRefusesExamineAndSearch
+        , runTest "dark room refuses use on room entities (Phase 0.3, B3)" testDarkRoomRefusesUseOnRoomEntities
+        , runTest "dark room allows carried item interactions (Phase 0.3, B3)" testDarkRoomAllowsCarriedItemInteractions
+        , runTest "dark room illumination restores all interactions (Phase 0.3, B3)" testDarkRoomIlluminationRestoresInteraction
+        , runTest "room-level dark_msg overrides default message (Phase 0.3)" testConfigurableDarkMessage
+        , runTest "roomDarkMsg JSON round-trip and legacy keys (Phase 0.3)" testRoomDarkMsgJsonRoundTrip
         , runTest "parse look at multi-word target" testParseLookAtMultiWord
         , runTest "parse use-on multi-word target" testParseUseOnMultiWord
         , runTest "parse take multi-word target" testParseTakeMultiWord

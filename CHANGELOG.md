@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Bugfix & Feature: Licht-Leck schließen und konfigurierbare Dunkelheitsmeldung (Phase 0.3, Bug B3)
+
+- **Licht-Leck schließen (Bug B3) (`src/Parser.hs`, `src/GameLoop.hs`):**
+  - Befindet sich der Spieler in einem dunklen Raum (`isDark room state == True`), werden Aktionen auf nicht-getragene Raum-Objekte (`take <item>`, `take all`, `examine <item/npc>`, `search`, `use <item im Raum>`, `use <getragen> on <raum-objekt>`) konsequent verweigert und liefern die Dunkelheitsmeldung.
+  - Auch nicht-existente oder ungetragene mehrdeutige Ziele im Dunkeln lecken keine Rauminformationen (kein „You don't see any ..." oder Disambiguierungs-Prompt), sondern geben direkt die Dunkelheitsmeldung zurück.
+  - `GameLoop.commandEvents`: Die Events `OnLook` und `OnSearch` werden im Dunkeln unterdrückt; `OnUse` feuert im Dunkeln nur noch für tatsächlich getragene Inventar-Items.
+  - Das Durchsuchen (`search` / `searchRoom`) im Dunkeln deckt keine versteckten Items auf und führt den Raum-Search-Hook nicht aus.
+  - Getragene Items im Inventar können im Dunkeln weiterhin gefahrlos untersucht (`examine`), benutzt (`use`), kombiniert (`use X on Y`) oder abgelegt (`drop`) werden.
+  - Erhellung: Tragen eines Gegenstands mit Tag `"lightsource"` oder Aktivierung des konfigurierten `light_flag` des Raums auf `"true"` stellt die vollständige Interaktionsfähigkeit wieder her.
+- **Konfigurierbare Dunkelheitsmeldung (`src/Types.hs`, `worldbuilder/`):**
+  - Neues Feld `roomDarkMsg :: Maybe String` am `Room`-Record.
+  - Fallback-Kette: Verwendet `roomDarkMsg room`, andernfalls den Default `"It's pitch black. You can't see anything."`.
+  - JSON-Serialisierung: Default-Invariante gewahrt (`Nothing` wird in JSON weggelassen). Abwärtskompatibel zu `"roomDarkMsg"`, `"dark_msg"` und `"dark_message"`.
+  - Worldbuilder: Unterstützt `dark_msg` und `dark_message` im Raum-Schema von YAML-Dateien mit Validierung in `knownKeys EntRoom`.
+- **Tests & Schema (`test/Tests.hs`, `worldbuilder/test/Tests.hs`, `docs/adventure-schema.md`):**
+  - 7 neue Engine-Tests in `test/Tests.hs` (jetzt 353 Engine-Tests gesamt):
+    - `testDarkRoomRefusesTakeAndTakeAll`: Verweigerung von `take` und `take all` im Dunkeln.
+    - `testDarkRoomRefusesExamineAndSearch`: Verweigerung von `examine` (Item & NPC) sowie `search` im Dunkeln; Unterdrückung von `OnSearch` und `OnLook`.
+    - `testDarkRoomRefusesUseOnRoomEntities`: Verweigerung von `use` auf Raum-Items und `use X on Y` auf Raum-Ziele.
+    - `testDarkRoomAllowsCarriedItemInteractions`: `examine`, `use` und `drop` auf getragene Inventar-Items funktionieren auch im Dunkeln.
+    - `testDarkRoomIlluminationRestoresInteraction`: Erhellung via `lightsource`-Item oder `light_flag` stellt Interaktion wieder her.
+    - `testConfigurableDarkMessage`: Eigene Raumnachricht `roomDarkMsg` greift bei allen blockierten Aktionen.
+    - `testRoomDarkMsgJsonRoundTrip`: JSON Round-Trip und Abwärtskompatibilität für `dark_msg` / `dark_message`.
+  - 1 neuer Test in `worldbuilder/test/Tests.hs` (jetzt 166 Worldbuilder-Tests gesamt):
+    - `testRoomDarkMsgYamlParsing`: YAML-Parsing und Kompilierung von `dark_msg` und `dark_message` ohne Warnungen.
+  - Dokumentation von `dark_msg` / `dark_message` und der Dunkelheits-Regeln in `docs/adventure-schema.md`.
+
 ### Bugfix & Verhaltensänderung: Verbabhängige Suchreihenfolge (Phase 0.2, Bug B2)
 
 - **Verbabhängige Suchreihenfolge `preferInventoryTarget` (`src/Parser.hs`):**

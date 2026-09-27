@@ -208,6 +208,7 @@ applyOutcomeWith depth salt outcome targetId state
                 , roomConnections = Map.singleton returnDir (Open fromId)
                 , roomTags = Set.empty
                 , roomLightFlag = Nothing
+                , roomDarkMsg = Nothing
                 , roomOnEnter = Nothing
                 , roomOnLook = Nothing
                 , roomOnExit = Nothing

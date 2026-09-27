@@ -1467,6 +1467,7 @@ data Room = Room
     , roomConnections     :: Map.Map Direction Exit
     , roomTags            :: Set.Set String            -- ^ "dark", "safe", "vehicle", ...
     , roomLightFlag       :: Maybe FlagID              -- ^ when "true", a "dark" room is lit
+    , roomDarkMsg         :: Maybe String              -- ^ optional override for dark message (Phase 0.3)
     , roomOnEnter         :: Maybe Effect
     , roomOnLook          :: Maybe Effect
     , roomOnExit          :: Maybe Effect
@@ -1491,6 +1492,7 @@ instance ToJSON Room where
         ] ++ asciiPair "roomAscii" (roomAscii r)
           ++ [ "roomIntro" .= i | Just i <- [roomIntro r] ]
           ++ [ "roomFloor" .= fl | Just fl <- [roomFloor r] ]
+          ++ [ "roomDarkMsg" .= dm | Just dm <- [roomDarkMsg r] ]
 
 instance FromJSON Room where
     parseJSON = withObject "Room" $ \o -> Room
@@ -1500,6 +1502,14 @@ instance FromJSON Room where
         <*> o .:  "roomConnections"
         <*> o .:? "roomTags"            .!= Set.empty
         <*> o .:? "roomLightFlag"       .!= Nothing
+        <*> (do m1 <- o .:? "roomDarkMsg"
+                case m1 of
+                    Just _  -> pure m1
+                    Nothing -> do
+                        m2 <- o .:? "dark_msg"
+                        case m2 of
+                            Just _  -> pure m2
+                            Nothing -> o .:? "dark_message")
         <*> o .:? "roomOnEnter"         .!= Nothing
         <*> o .:? "roomOnLook"          .!= Nothing
         <*> o .:? "roomOnExit"          .!= Nothing

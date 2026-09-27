@@ -454,7 +454,7 @@ executeCommand Look state = case getCurrentRoom state of
     Nothing -> (state, "You're in a void. There's nothing here.")
     Just room
         | isDark room state ->
-            (state, "It's pitch black. You can't see anything.")
+            (state, darkRoomMessage room)
         | otherwise ->
             let vIdOverride = case currentVehicle (save state) of
                     Just vId -> Map.lookup (currentRoom (save state))
@@ -610,14 +610,18 @@ executeCommand UnequipAllCmd state
     | Map.null (equipment (save state)) = (state, "You have nothing equipped.")
     | otherwise = (state { save = (save state) { equipment = Map.empty } }, "You remove all equipment.")
 
-executeCommand TakeAll state =
-    let roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
-    in if null roomItems
-       then (state, "There's nothing here to take.")
-       else let (finalState, msgs) = foldl' (\(s, ms) item ->
-                    let (s', m) = executeCommand (Interact VTake (itemId item)) s
-                    in (s', ms ++ [m])) (state, []) roomItems
-            in (finalState, intercalate "\n" msgs)
+executeCommand TakeAll state = case getCurrentRoom state of
+    Nothing -> (state, "There's nothing here to take.")
+    Just room
+        | isDark room state -> (state, darkRoomMessage room)
+        | otherwise ->
+            let roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
+            in if null roomItems
+               then (state, "There's nothing here to take.")
+               else let (finalState, msgs) = foldl' (\(s, ms) item ->
+                            let (s', m) = executeCommand (Interact VTake (itemId item)) s
+                            in (s', ms ++ [m])) (state, []) roomItems
+                    in (finalState, intercalate "\n" msgs)
 
 executeCommand DropAll state =
     let invItems = getItemsInLocation (CarriedBy ActorPlayer) state
@@ -634,33 +638,37 @@ executeCommand (CompoundCommand cmds) state =
         in (s', if null msgs then msg else msgs ++ "\n" ++ msg)
     ) (state, "") cmds
 
-executeCommand (SearchCmd maybeTarget) state =
-    case maybeTarget of
-        Nothing -> searchRoom state
-        Just targetStr ->
-            -- `search <thing>`: try a matching item/NPC's VSearch verb first
-            let roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
-                roomNPCs = getNPCsInRoom (currentRoom (save state)) state
-            in case find (matchesItemTarget targetStr) roomItems of
-                Just item ->
-                    let iId = itemId item
-                        currentStatus = maybe "unknown" itemStatus (Map.lookup iId (itemStates (save state)))
-                    in case Map.lookup (VSearch, currentStatus) (itemVerbMap item) of
-                        Just outcome -> applyOutcome outcome iId state
-                        Nothing -> (state, "You find nothing special about the " ++ itemName item ++ ".")
-                Nothing -> case find (matchesNPCTarget targetStr) roomNPCs of
-                    Just npc ->
-                        let nId = npcId npc
-                            currentStatus = maybe "unknown" npcStatus (Map.lookup nId (npcStates (save state)))
-                        in case Map.lookup (VSearch, currentStatus) (npcVerbMap npc) of
-                            Just outcome -> applyOutcome outcome nId state
-                            Nothing -> (state, "You find nothing on " ++ npcName npc ++ ".")
-                    Nothing -> (state, "You don't see '" ++ targetStr ++ "' here.")
+executeCommand (SearchCmd maybeTarget) state = case getCurrentRoom state of
+    Nothing -> (state, "You're in a void. There's nothing to search.")
+    Just room
+        | isDark room state -> (state, darkRoomMessage room)
+        | otherwise ->
+            case maybeTarget of
+                Nothing -> searchRoom state
+                Just targetStr ->
+                    -- `search <thing>`: try a matching item/NPC's VSearch verb first
+                    let roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
+                        roomNPCs = getNPCsInRoom (currentRoom (save state)) state
+                    in case find (matchesItemTarget targetStr) roomItems of
+                        Just item ->
+                            let iId = itemId item
+                                currentStatus = maybe "unknown" itemStatus (Map.lookup iId (itemStates (save state)))
+                            in case Map.lookup (VSearch, currentStatus) (itemVerbMap item) of
+                                Just outcome -> applyOutcome outcome iId state
+                                Nothing -> (state, "You find nothing special about the " ++ itemName item ++ ".")
+                        Nothing -> case find (matchesNPCTarget targetStr) roomNPCs of
+                            Just npc ->
+                                let nId = npcId npc
+                                    currentStatus = maybe "unknown" npcStatus (Map.lookup nId (npcStates (save state)))
+                                in case Map.lookup (VSearch, currentStatus) (npcVerbMap npc) of
+                                    Just outcome -> applyOutcome outcome nId state
+                                    Nothing -> (state, "You find nothing on " ++ npcName npc ++ ".")
+                            Nothing -> (state, "You don't see '" ++ targetStr ++ "' here.")
 
 executeCommand (WatchCmd maybeTarget) state = case getCurrentRoom state of
     Nothing -> (state, "You're in a void. There's nothing to watch.")
     Just room
-        | isDark room state -> (state, "It's pitch black. You can't watch anything.")
+        | isDark room state -> (state, fromMaybe "It's pitch black. You can't watch anything." (roomDarkMsg room))
         | otherwise -> case maybeTarget of
             Nothing -> watchArt (roomAscii room) "the room"
             Just targetStr ->
@@ -682,7 +690,7 @@ executeCommand (WatchCmd maybeTarget) state = case getCurrentRoom state of
 executeCommand MapCmd state = case getCurrentRoom state of
     Nothing -> (state, "You're in a void. There's nothing to map.")
     Just room
-        | isDark room state -> (state, "It's pitch black. You can't see a map.")
+        | isDark room state -> (state, fromMaybe "It's pitch black. You can't see a map." (roomDarkMsg room))
         | otherwise ->
             let art = roomAscii room
                 spots = aaHotspots art
@@ -702,12 +710,50 @@ executeCommand (ActionWithArgs verb args) state =
 executeCommand (Interact verb targetStr) state =
     let stateWithVars = bindCommandVars (Interact verb targetStr) state
     in case resolveInteractTarget verb targetStr stateWithVars of
-        ITItem item mSt  -> interactItem verb item mSt targetStr stateWithVars
-        ITNpc npc mSt    -> interactNpc verb npc mSt targetStr stateWithVars
-        ITVehicle veh    -> interactVehicle verb veh targetStr stateWithVars
-        ITBareVerb       -> interactBare verb stateWithVars
-        ITNotFound str   -> interactNotFound verb str stateWithVars
-        ITAmbiguous ids  -> interactAmbiguous ids stateWithVars
+        ITItem item mSt
+            | isDarkRestricted verb
+            , Just room <- getCurrentRoom stateWithVars
+            , isDark room stateWithVars
+            , not (hasItem (itemId item) stateWithVars) ->
+                (stateWithVars, darkRoomMessage room)
+            | otherwise ->
+                interactItem verb item mSt targetStr stateWithVars
+        ITNpc npc mSt
+            | isDarkRestricted verb
+            , Just room <- getCurrentRoom stateWithVars
+            , isDark room stateWithVars ->
+                (stateWithVars, darkRoomMessage room)
+            | otherwise ->
+                interactNpc verb npc mSt targetStr stateWithVars
+        ITVehicle veh
+            | isDarkRestricted verb
+            , Just room <- getCurrentRoom stateWithVars
+            , isDark room stateWithVars ->
+                (stateWithVars, darkRoomMessage room)
+            | otherwise ->
+                interactVehicle verb veh targetStr stateWithVars
+        ITBareVerb
+            | isDarkRestricted verb
+            , Just room <- getCurrentRoom stateWithVars
+            , isDark room stateWithVars ->
+                (stateWithVars, darkRoomMessage room)
+            | otherwise ->
+                interactBare verb stateWithVars
+        ITNotFound str
+            | isDarkRestricted verb
+            , Just room <- getCurrentRoom stateWithVars
+            , isDark room stateWithVars ->
+                (stateWithVars, darkRoomMessage room)
+            | otherwise ->
+                interactNotFound verb str stateWithVars
+        ITAmbiguous ids
+            | isDarkRestricted verb
+            , Just room <- getCurrentRoom stateWithVars
+            , isDark room stateWithVars
+            , not (all (`hasItem` stateWithVars) ids) ->
+                (stateWithVars, darkRoomMessage room)
+            | otherwise ->
+                interactAmbiguous ids stateWithVars
 
 -- | Handle "use <item> on <entity>" with weapon→attack fallback
 executeCommand (InteractWith VUseOn itemStr entityStr) state =
@@ -716,10 +762,16 @@ executeCommand (InteractWith VUseOn itemStr entityStr) state =
         inventoryItems = getItemsInLocation (CarriedBy ActorPlayer) state
         maybeItem = find (matchesItemTarget itemTarget) inventoryItems
         maybeVehicle = findVehicle entityStr state
+        entityInInventory = any (matchesItemTarget entityTarget) inventoryItems
     in case maybeItem of
         Nothing -> (state, "You need to be carrying '" ++ itemStr ++ "' to use it.")
-        Just item ->
-            if entityTarget `elem` reachableEntityAliases state
+        Just item
+            | Just room <- getCurrentRoom state
+            , isDark room state
+            , not entityInInventory ->
+                (state, darkRoomMessage room)
+            | otherwise ->
+                if entityTarget `elem` reachableEntityAliases state
             then
                 let itemKeys = nub (itemTarget : itemAliases item)
                     entityKeys = resolveEntityCandidates entityTarget state
@@ -1104,6 +1156,10 @@ findMatchingItem targetStr state =
         invItems = getItemsInLocation (CarriedBy ActorPlayer) state
     in find (matchesItemTarget targetStr) (invItems ++ roomItems)
 
+-- | Default message when an action cannot be performed in darkness.
+defaultDarkMessage :: String
+defaultDarkMessage = "It's pitch black. You can't see anything."
+
 -- | Is the room dark?
 --   A room tagged "dark" stays dark unless the player carries a light source
 --   or the room's `lightFlag` has been switched on (e.g. by a `search` outcome).
@@ -1116,6 +1172,26 @@ isDark room state =
     litByFlag = case roomLightFlag room of
         Nothing  -> False
         Just flg -> getFlag flg state == Just "true"
+
+-- | Is the player's current room dark?
+isCurrentRoomDark :: GameState -> Bool
+isCurrentRoomDark state = case getCurrentRoom state of
+    Just room -> isDark room state
+    Nothing   -> False
+
+-- | Message when darkness prevents seeing or interacting with non-carried entities.
+--   Uses the room's custom dark message if configured, falling back to 'defaultDarkMessage'.
+darkRoomMessage :: Room -> String
+darkRoomMessage room = fromMaybe defaultDarkMessage (roomDarkMsg room)
+
+-- | Verbs that cannot be performed on non-carried targets in darkness (Phase 0.3, Bug B3).
+isDarkRestricted :: Verb -> Bool
+isDarkRestricted v = case verbCanonicalName v of
+    "take"    -> True
+    "examine" -> True
+    "search"  -> True
+    "use"     -> True
+    _         -> False
 
 -- | Pick the room description: resolve CondText variants against game state.
 resolveDescription :: Room -> GameState -> String
@@ -1140,26 +1216,28 @@ combatArtMsg nId st = case Map.lookup nId (npcDefs (world st)) of
 
 -- | `search` — reveal hidden items and run the room's search outcome
 searchRoom :: GameState -> CommandResult
-searchRoom state =
-    let rId = currentRoom (save state)
-        -- hidden items currently in this room
-        hidden = [ iId
-                 | (iId, st) <- Map.toList (itemStates (save state))
-                 , itemLocation st == InRoom rId
-                 , Just def <- [Map.lookup iId (itemDefs (world state))]
-                 , itemHidden def
-                 , not (itemDiscovered st)
-                 ]
-        stateAfterReveal = foldr discoverItem state hidden
-        discoveredMsgs = [ maybe ("You find the " ++ iId ++ ".") id
-                             (Map.lookup iId (itemDefs (world state)) >>= itemDiscoverText)
-                         | iId <- hidden ]
-        (stateFinal, hookMsg) =
-            case lookupRoom rId state >>= roomSearchOutcome of
-                Nothing -> (stateAfterReveal, "")
-                Just outcome -> applyOutcome outcome "" stateAfterReveal
-        full = intercalate "\n" (filter (not . null) (discoveredMsgs ++ [hookMsg]))
-    in (stateFinal, if null full then "You find nothing of interest." else full)
+searchRoom state = case getCurrentRoom state of
+    Just room | isDark room state -> (state, darkRoomMessage room)
+    _ ->
+        let rId = currentRoom (save state)
+            -- hidden items currently in this room
+            hidden = [ iId
+                     | (iId, st) <- Map.toList (itemStates (save state))
+                     , itemLocation st == InRoom rId
+                     , Just def <- [Map.lookup iId (itemDefs (world state))]
+                     , itemHidden def
+                     , not (itemDiscovered st)
+                     ]
+            stateAfterReveal = foldr discoverItem state hidden
+            discoveredMsgs = [ maybe ("You find the " ++ iId ++ ".") id
+                                 (Map.lookup iId (itemDefs (world state)) >>= itemDiscoverText)
+                             | iId <- hidden ]
+            (stateFinal, hookMsg) =
+                case lookupRoom rId state >>= roomSearchOutcome of
+                    Nothing -> (stateAfterReveal, "")
+                    Just outcome -> applyOutcome outcome "" stateAfterReveal
+            full = intercalate "\n" (filter (not . null) (discoveredMsgs ++ [hookMsg]))
+        in (stateFinal, if null full then "You find nothing of interest." else full)
 
 -- | Item-on-item interaction (crafting).
 --   Returns Nothing if no interaction is defined, so callers can keep their

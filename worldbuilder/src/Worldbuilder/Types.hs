@@ -343,6 +343,7 @@ data ARoom = ARoom
     , arExits       :: Map.Map String AExitRef
     , arTags        :: [String]
     , arLightFlag   :: Maybe String
+    , arDarkMsg     :: Maybe String               -- ^ optional override for dark message (Phase 0.3)
     , arOnEnter     :: Maybe [AActionOutcome]
     , arOnLook      :: Maybe [AActionOutcome]
     , arOnExit      :: Maybe [AActionOutcome]
@@ -360,6 +361,14 @@ instance FromJSON ARoom where
         <*> o .:? "exits"     .!= Map.empty
         <*> o .:? "tags"      .!= []
         <*> o .:? "light_flag"
+        <*> (do m1 <- o .:? "dark_msg"
+                case m1 of
+                    Just _  -> pure m1
+                    Nothing -> do
+                        m2 <- o .:? "dark_message"
+                        case m2 of
+                            Just _  -> pure m2
+                            Nothing -> o .:? "roomDarkMsg")
         <*> o .:? "on_enter"
         <*> o .:? "on_look"
         <*> o .:? "on_exit"
@@ -1317,6 +1326,7 @@ knownKeys EntAdventure = Set.fromList
     ]
 knownKeys EntRoom = Set.fromList
     [ "id", "name", "desc", "description", "exits", "tags", "light_flag"
+    , "dark_msg", "dark_message", "roomDarkMsg"
     , "on_enter", "on_look", "on_exit", "search", "ascii", "intro", "floor"
     ]
 knownKeys EntExitRef = Set.fromList

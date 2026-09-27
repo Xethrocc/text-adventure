@@ -35,7 +35,7 @@ import Validate (validateWorld, validateGameState, ValidationError (..))
 minWorld :: E.GameWorld
 minWorld = E.GameWorld
     { rooms = Map.fromList
-        [ ("room_0", E.Room "room_0" "Room 0" (E.CondText "test" []) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing (E.AsciiArt (E.CondText "" []) [] 0 [] Nothing) Nothing Nothing)
+        [ ("room_0", E.Room "room_0" "Room 0" (E.CondText "test" []) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing Nothing (E.AsciiArt (E.CondText "" []) [] 0 [] Nothing) Nothing Nothing)
         ]
     , itemDefs = Map.empty
     , npcDefs = Map.empty
@@ -142,6 +142,7 @@ minRoom rid = ARoom
     , arExits = Map.empty
     , arTags = []
     , arLightFlag = Nothing
+    , arDarkMsg = Nothing
     , arOnEnter = Nothing
     , arOnLook = Nothing
     , arOnExit = Nothing
@@ -2737,6 +2738,8 @@ tests =
     , ("schema: room key typo produces warning with suggestion (Phase 1)", testRoomTypoWarning)
     , ("schema: unknown key without close match produces warning (Phase 1)", testUnknownKeyNoSuggestion)
     , ("schema: top-level typo produces warning with suggestion (Phase 1)", testTopLevelTypoWarning)
+    -- Phase 0.3: dark_msg and dark_message schema support
+    , ("schema: dark_msg and dark_message compile without warnings (Phase 0.3)", testRoomDarkMsgYamlParsing)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -3496,7 +3499,7 @@ testGenMultiLevelRoomFloors = case generateDungeon multiLevelTemplate 42 of
 testRoomFloorJsonDefaultInvariant :: IO Bool
 testRoomFloorJsonDefaultInvariant = do
     let rNoFloor = E.Room "r1" "Room 1" (E.plainText "desc") Map.empty Set.empty Nothing
-                    Nothing Nothing Nothing Nothing E.emptyAscii Nothing Nothing
+                    Nothing Nothing Nothing Nothing Nothing E.emptyAscii Nothing Nothing
         rWithFloor = rNoFloor { E.roomFloor = Just 2 }
         sNoFloor = BLC.unpack (Aeson.encode rNoFloor)
         sWithFloor = BLC.unpack (Aeson.encode rWithFloor)
@@ -4349,6 +4352,45 @@ testTopLevelTypoWarning = do
                         r2 <- expectEqual "quest" (ciPath w)
                         r3 <- expectEqual "'quest' is not a known key - did you mean 'quests'?" (ciMessage w)
                         pure (r1 && r2 && r3)
+
+-- | Phase 0.3: Room dark message (dark_msg / dark_message) compiles cleanly with zero warnings
+testRoomDarkMsgYamlParsing :: IO Bool
+testRoomDarkMsgYamlParsing = do
+    let yaml = unlines
+            [ "start_room: room1"
+            , "rooms:"
+            , "  - id: room1"
+            , "    name: Dark Room 1"
+            , "    desc: Pitch dark."
+            , "    tags: [dark]"
+            , "    dark_msg: 'Pitch black darkness.'"
+            , "    exits:"
+            , "      north: room2"
+            , "  - id: room2"
+            , "    name: Dark Room 2"
+            , "    desc: Pitch dark again."
+            , "    tags: [dark]"
+            , "    dark_message: 'Total gloom.'"
+            , "    exits:"
+            , "      south: room1"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ show errs
+                pure False
+            Right cr -> do
+                let keyWarns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
+                r1 <- expectTrue ("expected 0 unknown key warnings, got " ++ show (length keyWarns)) (null keyWarns)
+                let gw = crWorld cr
+                    rm1 = Map.lookup "room1" (E.rooms gw)
+                    rm2 = Map.lookup "room2" (E.rooms gw)
+                r2 <- expectEqual (Just "Pitch black darkness.") (rm1 >>= E.roomDarkMsg)
+                r3 <- expectEqual (Just "Total gloom.") (rm2 >>= E.roomDarkMsg)
+                pure (r1 && r2 && r3)
 
 -- helpers -------------------------------------------------------------------
 

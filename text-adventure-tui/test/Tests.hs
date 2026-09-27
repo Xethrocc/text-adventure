@@ -426,15 +426,15 @@ testHudMapSandbox = do
     let bForest = BiomeTemplate "forest" 10 "Wald [{x}, {y}]" (plainText "Wald.") ["forest"] emptyAscii [North, South, East, West]
         sz = SandboxZone "wildnis" (0, 0, 0) [bForest] (Just 1)
         gw = emptyGameWorld
-            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Schlosstor") (Map.singleton North (Open "sandbox_wildnis_0_0_0")) Set.empty Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing (Just 1))
+            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Schlosstor") (Map.singleton North (Open "sandbox_wildnis_0_0_0")) Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing (Just 1))
             , sandboxZones = Map.singleton "wildnis" sz
             }
         dynRoom0 = Room "sandbox_wildnis_0_0_0" "Wald [0, 0]" (plainText "Wald.")
                         (Map.fromList [(South, Open "gate"), (East, Open "sandbox_wildnis_1_0_0")])
-                        (Set.fromList ["sandbox", "wildnis", "forest"]) Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing (Just 1)
+                        (Set.fromList ["sandbox", "wildnis", "forest"]) Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing (Just 1)
         dynRoom1 = Room "sandbox_wildnis_1_0_0" "Wald [1, 0]" (plainText "Wald.")
                         (Map.singleton West (Open "sandbox_wildnis_0_0_0"))
-                        (Set.fromList ["sandbox", "wildnis", "forest"]) Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing (Just 1)
+                        (Set.fromList ["sandbox", "wildnis", "forest"]) Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing (Just 1)
         dyns = Map.fromList [("sandbox_wildnis_0_0_0", dynRoom0), ("sandbox_wildnis_1_0_0", dynRoom1)]
         st = emptyGameState
             { world = gw

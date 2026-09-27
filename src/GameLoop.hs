@@ -301,7 +301,10 @@ commandEvents cmd before after = concat
                          , itemLoc iid before == Just (CarriedBy ActorPlayer)
                          , itemLoc iid after  /= Just (CarriedBy ActorPlayer) ]
         -- `use` has no state criterion (its effect is up to the author).
-        Interact VUse t  -> [OnUse iid | Just iid <- [resolvedItemId VUse t before after]]
+        -- Phase 0.3 (B3): in darkness, use on non-carried targets is refused, so OnUse does not fire.
+        Interact VUse t  ->
+            [ OnUse iid | Just iid <- [resolvedItemId VUse t before after]
+                        , not (isCurrentRoomDark before && itemLoc iid before /= Just (CarriedBy ActorPlayer)) ]
         ActionWithArgs VTake args ->
             let t = unwords args
             in [ OnTake iid | Just iid <- [resolvedItemId VTake t before after]
@@ -314,12 +317,13 @@ commandEvents cmd before after = concat
                             , itemLoc iid after  /= Just (CarriedBy ActorPlayer) ]
         ActionWithArgs VUse args ->
             let t = unwords args
-            in [ OnUse iid | Just iid <- [resolvedItemId VUse t before after] ]
+            in [ OnUse iid | Just iid <- [resolvedItemId VUse t before after]
+                           , not (isCurrentRoomDark before && itemLoc iid before /= Just (CarriedBy ActorPlayer)) ]
         _ -> []
     itemLoc i st = itemLocation <$> Map.lookup i (itemStates (save st))
     lookSearchEvents = case cmd of
-        Look            -> [OnLook (currentRoom (save after)) | isJust (lookupRoom (currentRoom (save after)) after)]
-        SearchCmd _     -> [OnSearch (currentRoom (save after)) | isJust (lookupRoom (currentRoom (save after)) after)]
+        Look            -> [OnLook (currentRoom (save after)) | not (isCurrentRoomDark before), isJust (lookupRoom (currentRoom (save after)) after)]
+        SearchCmd _     -> [OnSearch (currentRoom (save after)) | not (isCurrentRoomDark before), isJust (lookupRoom (currentRoom (save after)) after)]
         _               -> []
 
 -- | Resolve an item ID for command triggers using central target resolution (Phase 0.1).

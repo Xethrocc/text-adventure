@@ -30,13 +30,29 @@ Das war's. Der Worldbuilder füllt den Rest mit Defaults.
 | `name` | String | **required** | Anzeigename |
 | `description` | String / Object | `""` | Raumbeschreibung. String → `{default: ...}`; Object → `{default, variants}` (siehe CondText) |
 | `exits` | Object | `{}` | `{ richtung: zielraum }` oder `{ richtung: { to: ziel, locked_by: entity } }` |
-| `tags` | [String] | `[]` | `"dark"`, `"safe"`, `"vehicle", benutzbar in Predicates |
+| `tags` | [String] | `[]` | `"dark"`, `"safe"`, `"vehicle"`, benutzbar in Predicates |
 | `light_flag` | String | — | Wenn gesetzt und `"true"`, wird ein `dark`-Raum erhellt |
+| `dark_msg` / `dark_message` | String | — | Eigene Meldung bei Dunkelheit (Default: `"It's pitch black. You can't see anything."`) |
 | `on_enter` | [AActionOutcome] | — | Effekte beim Betreten |
 | `on_look` | [AActionOutcome] | — | Effekte beim Anschauen |
 | `on_exit` | [AActionOutcome] | — | Effekte beim Verlassen |
 | `search` | [AActionOutcome] | — | Effekte bei `search` |
 | `ascii` | String / Object | — | Zustandsabhängige ASCII-Kunst (String = fester Banner, Object = CondText; siehe unten) |
+
+### Dunkelheit (`dark`, `light_flag`, `dark_msg`)
+
+Ein Raum mit dem Tag `"dark"` gilt als dunkel, solange der Spieler kein getragenes
+Item mit dem Tag `"lightsource"` besitzt und das im Raum konfigurierte `light_flag`
+nicht auf `"true"` gesetzt ist.
+
+Im Dunkeln gilt:
+- `look` zeigt die Dunkelheitsmeldung (Standard: `"It's pitch black. You can't see anything."`
+  bzw. der konfigurierte Text aus `dark_msg` / `dark_message`).
+- Interaktionen auf Objekte im Raum (`take <item>`, `take all`, `examine <item/npc>`,
+  `search`, `use <item>`, `use <getragen> on <raum-objekt>`) werden blockiert und geben
+  die Dunkelheitsmeldung zurück.
+- Getragene Items im Inventar können weiterhin untersucht (`examine`), benutzt (`use`),
+  kombiniert (`use X on Y`) und abgelegt (`drop`) werden.
 
 ### ASCII-Kunst (`ascii`)
 
