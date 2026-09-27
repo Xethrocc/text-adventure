@@ -154,16 +154,20 @@ no own state file. Their state lives in the existing `VarMap`
   adding code paths.
 - **State lives in the existing `SaveState`**, preferably as `VarMap` entries,
   so no feature needs its own save file or state silo.
-- Main modules: `Types.hs`, `Game.hs`, `GameLoop.hs`, `Parser.hs`, `Combat.hs`,
-  `Validate.hs`, `SaveLoad.hs`, `Verbs.hs`, `World.hs`, `Sample.hs`, `Ansi.hs`
+- Main modules: `Types.hs` (shared data), `Game.hs` (state, lookups, party,
+  inventory, base deck mutators), `Parser.hs` (command dispatch + interact
+  handlers), `Effects.hs` (outcome interpreter, triggers, room transitions,
+  conditions), `Quests.hs`, `Vehicles.hs`, `Cards.hs`, `Combat.hs`,
+  `GameLoop.hs`, `Frontend.hs`, `Completion.hs`, `Validate.hs`, `SaveLoad.hs`,
+  `Verbs.hs`, `World.hs`, `Sample.hs`, `Audio.hs`, `Ansi.hs`
   plus `worldbuilder/src/Worldbuilder/{Types,Compile,CLI,ParseFile}.hs`.
 
 ## Development
 
 ```bash
 cabal build all
-cabal test all --test-show-details=direct    # 259 engine tests, 83 worldbuilder tests, plus the img2ascii/text2ascii tool suites
-bash scripts/ci.sh                           # build + tests + validation + 32 E2E playthroughs
+cabal test all --test-show-details=direct    # 328 engine tests, 165 worldbuilder tests, 20 TUI tests, plus the img2ascii/text2ascii tool suites
+bash scripts/ci.sh                           # build + tests + validation + 40 E2E playthroughs
 cabal run worldbuilder -- check examples/thefog.yaml   # content statistics
 ```
 

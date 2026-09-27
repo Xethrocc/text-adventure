@@ -451,7 +451,7 @@ patrol:
       attack: [ { damage: 2 } ]
 ```
 
-- **Ein Schritt pro Zug, nicht pro Trigger.** `fireTriggerList` (`Game.hs`)
+- **Ein Schritt pro Zug, nicht pro Trigger.** `fireTriggerList` (`Effects.hs`)
   wertet die Bedingungen *live* in einem linearen Fold aus. Flache Regeln
   „Index == k" würden deshalb kaskadieren: Schritt k setzt k+1, Schritt k+1
   trifft im selben Zug zu, und der NPC reißt seinen ganzen Rundkurs in einem Zug

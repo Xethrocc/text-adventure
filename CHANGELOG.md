@@ -1,8 +1,30 @@
 # Changelog
 
-# Changelog
-
 ## Unreleased
+
+### Refactor: Code-Hygiene R1–R4 — Parser-Dispatcher, `Game.hs`-Split, `ActorRef`
+
+- **R4 — Modul-Leitfaden auditiert** (`docs/modules.md`): Erlaubnisfall für
+  Teilmengen (Card, Audio) dokumentiert, Namensraum-Disziplin als Grundsatz
+  ergänzt (reservierter Präfix + Clash-Check im selben Pass), Stufe-5-Liste im
+  CI-Abschnitt nachgezogen (`9d2ac93`).
+- **R3 — `Parser.executeCommand` entflechtet:** die `Interact`-Klausel ist jetzt
+  ein Dispatcher über `resolveInteractTarget` mit `interactItem`/`interactNpc`/
+  `interactVehicle`/`interactBare`/`interactNotFound`. Neue Tests pinnen die
+  Zielauflösung und den „Basisaktion **und** Effekt"-Vertrag von `take`
+  (`5435ec6`).
+- **R2 — `Game.hs` aufgeteilt**, von ~2.400 auf 1.345 Zeilen, in vier Etappen:
+  `Quests.hs` (`8820570`), `Vehicles.hs` (`2e393a8`), `Effects.hs` (`626d7ce`),
+  `Cards.hs` (`b6e8651`). Die Basis-Schicht (Zustand, Lookups, Party, VarMap,
+  Entity-States) bleibt in `Game.hs`.
+- **R1 — `Location` und `Predicate.Location` typisiert:** `CarriedBy`/`EquippedBy`
+  und `Predicate.Location` tragen `ActorRef` statt freier Entity-ID-Strings;
+  der Worldbuilder kompiliert `AOEquipItem`/`AOGiveItem` zu `E.ActorPlayer`.
+  **Kein Save-Bump** — `currentSaveVersion` bleibt 3, Legacy-`"player"` wird beim
+  Dekodieren gemappt, das YAML-Format für Autoren ist unverändert. Neue
+  Round-Trip- und Typo-Tests (`c7ed1b1`).
+- **Keine Verhaltensänderung:** `scripts/ci.sh` nach jeder Etappe grün,
+  E2E-Playthroughs byte-identisch.
 
 ### Feature: Multi-Panel-TUI — Karte, Status-HUD, Kampf-Panel (Rogue Phase 5)
 
