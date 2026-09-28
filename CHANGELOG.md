@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Timer abfragbar: Predicate has_condition, ValueRef condition_turns, hidden Condition (Phase 2.1)
+
+- **Predicate `has_condition: <name>`** (`src/Types/Core.hs`, `src/Game.hs`):
+  - Neues Prädikat `HasCondition String` im Core-AST, JSON-Repräsentation `{"has_condition": "<name>"}`.
+  - Autoren-Schnittstelle in `when:`, `if:`, `visible_when:` (z. B. `{ has_condition: bomb }`).
+  - Evaluierung prüft, ob die angegebene Condition im aktuellen `conditions (save st)` aktiv ist.
+- **ValueRef `condition_turns: <name>`** (`src/Types/Core.hs`, `src/Game.hs`):
+  - Neuer Konstruktor `VRConditionTurns String` im `ValueRef`-Typ, JSON-Repräsentation `{"condition_turns": "<name>"}` und String-Punktsyntax `"condition_turns.<name>"`.
+  - Auflösung in `resolveValueRef` liefert die verbleibenden Züge einer aktiven Condition, oder `0` wenn die Condition inaktiv oder abgelaufen ist.
+  - Verwendbar in `compare:`-Prädikaten (z. B. `compare: { lhs: { condition_turns: bomb }, op: "<=", rhs: 2 }`) sowie `condition_turns:`-Shorthand.
+  - `CompareVar` und `VRVariable` unterstützen `"condition_turns.<name>"` als Fallback.
+  - `Comparator` unterstützt neben String-Symbolen (`<=`, `>=`, `==` etc.) auch die Konstruktornamen (`CLte`, `CGt` etc.) für vollständige JSON-Round-Trips.
+- **Feld `hidden: true` für Conditions** (`src/Types/Core.hs`, `worldbuilder/src/Worldbuilder/Types.hs`, `src/Parser.hs`, `src/Types/Protocol.hs`, `text-adventure-tui/src/TextAdventure/Tui/Hud.hs`):
+  - `Condition` um `condHidden :: Bool` erweitert.
+  - `ApplyCondition` im `Effect`-Typ um `Bool` erweitert mit abwärtskompatiblem 4-Feld-Fallback beim JSON-Dekodieren.
+  - `hidden: true` unterdrückt die Condition in der Spieler-Statusanzeige (`stats`-Befehl), im `PlayerSnapshot` des Protokolls (`psConditions`) und in der TUI-HUD-Anzeige.
+  - Abwärtskompatible Aeson-Serialisierung: `condHidden: false` wird beim Kodieren weggelassen (Projektprinzip: kein Diff auf bestehenden Saves und Welten, World-Checksum bleibt stabil). Ältere Saves ohne `condHidden` dekodieren mit Default `False`.
+- **E2E-Fixture Bombe (`examples/fixtures/bomb.yaml`)**:
+  - Bildet ein Entschärfungsszenario ab: versteckte Bombe (`hidden: true`, 4 Züge), Entschärfer prüft `has_condition: bomb` vor `clear_condition: bomb`, und Warnregel triggert auf `condition_turns <= 2` erst nach Scharfschaltung.
+  - In `scripts/ci.sh` (Stufe 4 Playthroughs) registriert (`ci/e2e/bomb.in`, `ci/e2e/bomb.expect`).
+- **Tests & Qualität**:
+  - 4 neue Unit-Tests in `test/Tests.hs` (**382 Tests** gesamt, vorher 378).
+  - Vorher-Stand-Save und -Welt verifiziert: Save lädt ohne Checksum-Warnung, World-Checksumme identisch.
+  - `scripts/ci.sh` grün (alle Stufen PASS, 42 bestehende E2E-Läufe byte-identisch).
+  - 0 Compiler-Warnungen (`cabal clean && ./scripts/ci.sh`).
+
 ### Protokoll v1: Typen, Codec, Golden-Tests und Spezifikation (Phase 1.4)
 
 - **Protokoll v1 als Typen und Codec ohne Transport** (`src/Types/Protocol.hs`):
