@@ -14,6 +14,7 @@ module Frontend
   ) where
 
 import Types (GameState)
+import Messages (renderMsg)
 import Completion (completionFor)
 import Control.Concurrent (threadDelay)
 import Control.Monad (void)
@@ -59,7 +60,7 @@ haskelineFrontend f = Frontend
     , feEmitRaw     = putStr . f
     , feReadInput   = \st p -> runInputT (haskelineSettings st) (getInputLine p)
     , feReadPlain   = \_st p -> runInputT defaultSettings (getInputLine p)
-    , feReadPause   = putStr (f "  [Press Enter to continue]") >> void getLine
+    , feReadPause   = putStr (f (renderMsg "ui.press_enter" [])) >> void getLine
     , fePlayFrames  = \micros -> mapM_ (\fr -> putStrLn (f fr) >> threadDelay micros)
     , feDiagnostics = mapM_ (hPutStrLn stderr)
     , fePlaySfx     = \_ -> pure ()  -- Audio Phase 1: no-op default; overridden by Main when audio helpers are available

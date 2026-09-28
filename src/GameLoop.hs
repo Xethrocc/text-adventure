@@ -24,6 +24,7 @@ module GameLoop
 
 import Types
 import Game
+import Messages (renderMsg)
 import Effects
 import Parser
 import Verbs (verbCanonicalName)
@@ -104,11 +105,11 @@ applyLoopCommand Undo loopState
     -- Rogue Phase 1: the author can disable undo globally (gpAllowUndo). The
     -- state stays untouched — the command is refused, nothing to tick.
     | not (gpAllowUndo (worldGamePolicy (world (lsCurrent loopState)))) =
-        (loopState, "Undo is disabled in this adventure.")
+        (loopState, renderMsg "undo.disabled" [])
     | otherwise = case lsHistory loopState of
-        [] -> (loopState, "Nothing to undo.")
+        [] -> (loopState, renderMsg "undo.nothing" [])
         previous : rest ->
-            (loopState { lsCurrent = previous, lsHistory = rest }, "Undone.")
+            (loopState { lsCurrent = previous, lsHistory = rest }, renderMsg "undo.done" [])
 applyLoopCommand Quit loopState =
     let (newState, message) = executeCommand Quit (lsCurrent loopState)
     in (loopState { lsCurrent = newState }, message)
@@ -191,7 +192,7 @@ runRestart fe loopState = do
     let (restarted, msg) = applyLoopCommand Restart loopState
         fresh = restarted { lsCurrent = reseedRng seed . bumpMetaRuns $ lsCurrent restarted }
     persistMeta (lsCurrent fresh)
-    feEmitLine fe "Starting a new game...\n"
+    feEmitLine fe (renderMsg "game.restart_start" [])
     feEmitLine fe msg
     loopGame fe fresh
 
@@ -218,7 +219,7 @@ saveBlockedMessage :: GameState -> Maybe String
 saveBlockedMessage st
     | not (gpIronman policy) = Nothing
     | currentRoom (save st) `elem` gpSaveZones policy = Nothing
-    | otherwise = Just "You can only rest at a savezone."
+    | otherwise = Just (renderMsg "save.savezone_only" [])
   where
     policy = worldGamePolicy (world st)
 
@@ -227,15 +228,15 @@ saveBlockedMessage st
 --   to make final.
 loadBlockedMessage :: GameState -> Maybe String
 loadBlockedMessage st
-    | gpIronman (worldGamePolicy (world st)) = Just "Loading is disabled in ironman mode."
+    | gpIronman (worldGamePolicy (world st)) = Just (renderMsg "load.ironman_blocked" [])
     | otherwise = Nothing
 
 -- | The menu line under the death screen. Permadeath (and ironman, which
 --   deletes the checkpoint) offer no undo/load, only restart or quit.
 deathMenuText :: GamePolicy -> String
 deathMenuText policy
-    | gpPermadeath policy || gpIronman policy = "  [R]estart  |  [Q]uit"
-    | otherwise = "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit"
+    | gpPermadeath policy || gpIronman policy = renderMsg "menu.restart_quit" []
+    | otherwise = renderMsg "menu.death_full" []
 
 -- | Rogue Phase 2 (pure, testable): carry the old run's meta.* variables into
 --   the fresh state — souls earned survive the restart, everything else
@@ -456,7 +457,7 @@ loopGame fe loopState
                         listSaves (world state)
                         loopGame fe loopState
                     Restart -> do
-                        feEmitLine fe "Starting a new game...\n"
+                        feEmitLine fe (renderMsg "game.restart_start" [])
                         let (restarted, msg) = applyLoopCommand Restart loopState
                         feEmitLine fe msg
                         loopGame fe restarted
@@ -525,9 +526,9 @@ handleGameOver fe loopState = do
     case gameOverReason (save state) of
         Just Death -> do
             emitEndArt fe state Death
-                [ "========================================="
-                , "  YOU HAVE DIED"
-                , "========================================="
+                [ renderMsg "end.rule_line" []
+                , renderMsg "death.title" []
+                , renderMsg "end.rule_line" []
                 ]
             -- Rogue Phase 1 (M1/M2-Entscheidung): in ironman mode the run's
             -- checkpoint dies with the run — exactly one slot, tracked by
@@ -540,15 +541,15 @@ handleGameOver fe loopState = do
             deathLoop fe loopState
         Just Victory -> do
             emitEndArt fe state Victory
-                [ "========================================="
-                , "  VICTORY!"
-                , "========================================="
+                [ renderMsg "end.rule_line" []
+                , renderMsg "victory.title" []
+                , renderMsg "end.rule_line" []
                 ]
-            feEmitLine fe "  [R]estart  |  [Q]uit"
+            feEmitLine fe (renderMsg "menu.restart_quit" [])
             victoryLoop fe loopState
         Just (Custom msg) -> do
-            emitEndArt fe state (Custom msg) [ "Game Over: " ++ msg ]
-            feEmitLine fe "  [R]estart  |  [Q]uit"
+            emitEndArt fe state (Custom msg) [ renderMsg "gameover.custom" [("msg", msg)] ]
+            feEmitLine fe (renderMsg "menu.restart_quit" [])
             victoryLoop fe loopState
         Nothing -> return ()  -- Quit without reason
   where
@@ -579,18 +580,18 @@ deathLoop fe loopState = do
     case map toLower . fromMaybe "q" <$> pure inputResult of
         Just "u"
             | gpPermadeath policy -> do
-                feEmitLine fe "No undo after death (permadeath)."
+                feEmitLine fe (renderMsg "undo.permadeath" [])
                 deathLoop fe loopState
             | gpIronman policy -> do
-                feEmitLine fe "No undo in ironman mode."
+                feEmitLine fe (renderMsg "undo.ironman" [])
                 deathLoop fe loopState
             | not (gpAllowUndo policy) -> do
-                feEmitLine fe "Undo is disabled in this adventure."
+                feEmitLine fe (renderMsg "undo.disabled" [])
                 deathLoop fe loopState
             | otherwise ->
                 case lsHistory loopState of
                     [] -> do
-                        feEmitLine fe "Nothing to undo."
+                        feEmitLine fe (renderMsg "undo.nothing" [])
                         deathLoop fe loopState
                     _ -> do
                         let (restored, msg) = applyLoopCommand Undo loopState
@@ -598,13 +599,13 @@ deathLoop fe loopState = do
                         loopGame fe restored
         Just "l"
             | gpPermadeath policy -> do
-                feEmitLine fe "No load after death (permadeath)."
+                feEmitLine fe (renderMsg "load.permadeath" [])
                 deathLoop fe loopState
             | gpIronman policy -> do
-                feEmitLine fe "Loading is disabled in ironman mode."
+                feEmitLine fe (renderMsg "load.ironman_blocked" [])
                 deathLoop fe loopState
             | otherwise -> do
-                feEmitLine fe "Enter save name to load (or press Enter for 'savegame'):"
+                feEmitLine fe (renderMsg "load.prompt" [])
                 nameResult <- feReadPlain fe state "> "
                 let name = case nameResult of
                         Just n | not (null n) -> n
@@ -617,7 +618,7 @@ deathLoop fe loopState = do
                         loopGame fe (initLoopState s')
                     Nothing -> deathLoop fe loopState
         Just "r" -> runRestart fe loopState
-        Just "q" -> feEmitLine fe "Thanks for playing!"
+        Just "q" -> feEmitLine fe (renderMsg "quit.thanks" [])
         _ -> do
             feEmitLine fe (deathMenuText policy)
             deathLoop fe loopState
@@ -630,7 +631,7 @@ victoryLoop fe loopState = do
     inputResult <- feReadPlain fe (lsCurrent loopState) "> "
     case map toLower . fromMaybe "q" <$> pure inputResult of
         Just "r" -> runRestart fe loopState
-        Just "q" -> feEmitLine fe "Thanks for playing!"
+        Just "q" -> feEmitLine fe (renderMsg "quit.thanks" [])
         _ -> do
-            feEmitLine fe "  [R]estart  |  [Q]uit"
+            feEmitLine fe (renderMsg "menu.restart_quit" [])
             victoryLoop fe loopState

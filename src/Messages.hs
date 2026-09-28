@@ -136,6 +136,24 @@ catalogEntries =
     , ("repair.nothing_broken", "There is nothing broken about the {vehicle} that matches '{target}'.")
     , ("repair.problems",     " Problems: {list}.")
     , ("repair.ok",           "You repair the {vehicle} ({problem}).")
+    -- -- game loop / menus (GameLoop.hs, Frontend.hs) ------------------------
+    , ("undo.disabled",       "Undo is disabled in this adventure.")
+    , ("undo.done",           "Undone.")
+    , ("undo.permadeath",     "No undo after death (permadeath).")
+    , ("undo.ironman",        "No undo in ironman mode.")
+    , ("load.permadeath",     "No load after death (permadeath).")
+    , ("load.ironman_blocked", "Loading is disabled in ironman mode.")
+    , ("load.prompt",         "Enter save name to load (or press Enter for 'savegame'):")
+    , ("save.savezone_only",  "You can only rest at a savezone.")
+    , ("game.restart_start",  "Starting a new game...\n")
+    , ("quit.thanks",         "Thanks for playing!")
+    , ("ui.press_enter",      "  [Press Enter to continue]")
+    , ("menu.restart_quit",   "  [R]estart  |  [Q]uit")
+    , ("menu.death_full",     "  [U]ndo  |  [L]oad last save  |  [R]estart  |  [Q]uit")
+    , ("end.rule_line",       "=========================================")
+    , ("death.title",         "  YOU HAVE DIED")
+    , ("victory.title",       "  VICTORY!")
+    , ("gameover.custom",     "Game Over: {msg}")
     ]
 
 -- | The full help screen, byte-identical to the former inline intercalate
