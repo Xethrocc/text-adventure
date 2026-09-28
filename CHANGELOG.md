@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Veto Stufe 1 (D3): OnBefore, Block, cmd.target und Guarded Exit (Phase 2.2)
+
+- **Event `OnBefore verb` und `Block`-Effekt** (`src/Types/Core.hs`, `src/Effects.hs`, `src/Parser.hs`, `src/GameLoop.hs`):
+  - Neuer Event-Typ `OnBefore String` in `EventType`, der vor der Ausführung eines Befehls getriggert wird.
+  - Neuer Effekt `Block (Maybe String) Bool` im `Effect`-Typ mit opt-in `consumesTurn`-Flag (`block: "msg"`, `block: true`, `block: false`, oder Objektform `block: { msg: "...", turn: true }`).
+  - Veto-Zustand `lastVeto :: Maybe Bool` im `GameState` (reiner Laufzeitzustand, nicht in Saves persistiert).
+  - Veto-Semantik: Alle passenden Before-Regeln laufen in Definitionsreihenfolge. Der erste `Block`-Effekt setzt das Veto; nachfolgende Effekte der blockierenden Regel und alle verbleibenden Before-Regeln werden sofort gestoppt.
+  - Zugverbrauch bei Veto: Standardmäßig verbraucht ein geblocktes Kommando keinen Zug (`consumesTurn = False`), d. h. der Rundenzähler bleibt unverändert, Conditions ticken nicht und NPCs bewegen sich nicht. Mit `turn: true` verbraucht die geblockte Aktion einen Zug und lässt die Ticks voranschreiten.
+- **Variablen `cmd.target` und `cmd.target_kind`** (`src/Parser.hs`):
+  - Vor der Regelauswertung und vor der Befehlsausführung bindet `bindCommandVars` (über `resolveCmdTarget`) die Ziel-Informationen des Spielers:
+    - `cmd.target`: aufgelöste Entity-ID (z. B. `"relic"` oder Zielraum bei Bewegung) bzw. rohe Eingabe.
+    - `cmd.target_kind`: Art des Ziels (`"item"`, `"npc"`, `"vehicle"`, `"room"`, `"choice"`, `"all"`, `"ambiguous"`, `"none"`).
+- **Guarded Exit mit `when:`-Prädikat und Fehltext** (`src/Types/Core.hs`, `src/Parser.hs`, `src/Validate.hs`, `src/Types/Protocol.hs`, `worldbuilder/src/Worldbuilder/Compile.hs`, `worldbuilder/src/Worldbuilder/Types.hs`, `text-adventure-tui/src/TextAdventure/Tui/Hud.hs`):
+  - Neuer Ausgangs-Konstruktor `Guarded String Predicate (Maybe String)` in `Exit`.
+  - Bewegungsauswertung in `Parser.dispatchCommandEv (Go dir)`: Bei erfülltem Prädikat gelingt der Raumwechsel; andernfalls wird die Bewegung blockiert und der konfigurierte Fehltext `msg:` (bzw. `message:`, oder der Katalog-Default `move.blocked`) ausgegeben.
+  - Aeson-Serialisierung und Validierung voll integriert; Snapshots und TUI melden `Guarded` als verriegelt (`locked: true`).
+- **Worldbuilder & Schema**:
+  - `AExitRef` um `aeWhen :: Maybe Predicate` und `aeMsg :: Maybe String` erweitert.
+  - `AOBlock (Maybe String) Bool` in `AActionOutcome` mit String-, Bool- und Objekt-Syntax.
+  - `knownKeys EntExitRef` um `"when"`, `"msg"`, `"message"` ergänzt.
+  - Autoren-Dokumentation in `docs/adventure-schema.md` auf Englisch gepflegt.
+- **E2E-Fixtures Wächter und Traglast**:
+  - `examples/fixtures/waechter.yaml`, `ci/e2e/waechter.in`, `ci/e2e/waechter.expect`: Testet Guarded Exit (`when: has_flag pass_granted`, `msg: ...`) und `on: before take` mit `block:`.
+  - `examples/fixtures/traglast.yaml`, `ci/e2e/traglast.in`, `ci/e2e/traglast.expect`: Testet Traglast-Limitierung über `on: before take` mit `cmd.target`/`cmd.target_kind`, Kapazitätscheck mit Veto, sowie `block: { turn: true }`.
+  - Beide Fixtures in `scripts/ci.sh` (Stufe 4 Playthroughs) mit eindeutigen, ausgangszustands-fremden Markern registriert.
+- **Tests & Qualität**:
+  - 5 neue Unit-Tests in `test/Tests.hs` (**385 Engine-Tests** gemessen, vorher 380).
+  - 2 neue Unit-Tests in `worldbuilder/test/Tests.hs` (**171 Worldbuilder-Tests** gemessen, vorher 169).
+  - Abwärtskompatibilität verifiziert: Mit dem Vorher-Stand kompilierte Welt (`thefog`) und Save (`save.json`) laden mit dem neuen Stand byte-identisch ohne Checksum-Warnung (`BYTE-IDENTICAL`).
+  - `scripts/ci.sh` grün (alle 44 E2E-Läufe erfolgreich und bisherige 42 Eingaben unverändert).
+  - Message-Katalog unverändert (182 Keys, `check-msg-catalog.sh` PASS).
+  - 0 Compiler-Warnungen (`cabal clean && cabal build all --enable-tests`).
+
 ### Timer abfragbar: Predicate has_condition, ValueRef condition_turns, hidden Condition (Phase 2.1)
 
 - **Predicate `has_condition: <name>`** (`src/Types/Core.hs`, `src/Game.hs`):
