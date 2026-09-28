@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Message-Katalog (Phase 1.1)
+
+- Neues Blatt-Modul `src/Messages.hs`: alle player-facing Engine-Meldungen sind
+  in einen zentralen Katalog mit stabilen dotted Keys (`area.name`) gezogen —
+  **186 Keys** (Inventar belegt: ~158 großgeschriebene Literale + ~30 klein-
+  geschriebene Fragmente; zusammengesetzte Meldungen in Teil-Templates zerlegt).
+  Das ist die Datengrundlage für Sprachpakete (`language: de`, `messages:`-
+  Overrides, Phase 4.3) und für strukturierte Events (1.2).
+- `Messages.renderMsg` rendert Templates über `formatStringWith` (aus `Game.hs`
+  hierher verlagert, `Game.formatWithVars` unverändert): `{arg}`-Substitution mit
+  denselben Modifikatoren wie bei YAML-Texten; unbekannte Keys rendern laut als
+  `<msg:key>`; Engine-Templates interpolieren bewusst **keine** Spielvariablen.
+  `type MsgId = String` (Katalog bleibt offen für YAML-Overlays).
+- Umgestellt (je Teil-Commit nach Golden-Vergleich): `Parser.hs` (76 Keys),
+  `GameLoop.hs`/`Frontend.hs` (18), `Cards.hs`/`Combat.hs` narrativ (41),
+  `Vehicles.hs`/`Effects.hs`/`Quests.hs`/`Game.hs` (32), `SaveLoad.hs`/`World.hs`
+  (19).
+- Inventar mit Klassifikation: `docs/message-catalog.md` (generierte Tabelle aus
+  `catalogEntries`). Bewusst nicht katalogisiert: Kampf-/Karten-**Screen**-Art
+  (Boxen, HP-Balken, `combatScreenDefaults` — zieht in 1.2 in strukturierte
+  Payloads), Worldgen-Content-Templates, interne `error`-Assertions, JSON-Tags,
+  Env-Varnamen, `Sample.hs` (Adventure-Content).
+- **Keine Verhaltensänderung:** alle E2E-Playthroughs wurden vor und nach dem
+  Refactor gespielt und byte-identisch geprüft (39 Golden-Ausgaben pro Teil-
+  Commit gegen den Vorher-Stand, `diff -r` leer); 359 Engine-Tests (2 neue
+  Katalog-Invarianten-/renderMsg-Tests), 0 Warnungen, Save-/World-Formate
+  unverändert.
+- Hinweis: GHC 9.6.7 meldet einen unqualifizierten `Data.List.lookup`-Import
+  fälschlich als redundant (`-Wunused-imports`) — `renderMsg` nutzt daher
+  `List.lookup` qualifiziert.
+
 ### Refactor: Explizite Exportlisten für die vier Kernmodule (Phase 0.7)
 
 - `Parser.hs`, `SaveLoad.hs`, `World.hs` und `Game.hs` haben jetzt eine
