@@ -2316,6 +2316,11 @@ checkUnknownPlaceholders adv varDefs =
         | name `Set.member` commandVars = True
         | "cmd.arg" `isPrefixOf` name = True
         | "combat." `isPrefixOf` name = True
+        | "item." `isPrefixOf` name = True
+        | "npc." `isPrefixOf` name = True
+        | "flag." `isPrefixOf` name = True
+        | "flag:" `isPrefixOf` name = True
+        | "condition_turns." `isPrefixOf` name = True
         | name `elem` ["x", "y", "z"] = True
         | otherwise = False
 
@@ -2346,7 +2351,10 @@ checkUnknownPlaceholders adv varDefs =
                     varName = case break (== ':') clean of
                         (n, _) -> n
                     trimmed = dropWhile isSpace (reverse (dropWhile isSpace (reverse varName)))
-                in if not (null trimmed) && not (any isSpace trimmed)
+                in if not (null trimmed)
+                      && not (any isSpace trimmed)
+                      && not ("if" `isPrefixOf` trimmed)
+                      && not ("=" `isPrefixOf` trimmed)
                    then trimmed : extractPlaceholders rest
                    else extractPlaceholders rest
             _ -> extractPlaceholders cs

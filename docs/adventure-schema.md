@@ -728,11 +728,32 @@ ASCII-Art können dynamisch Variablen und Spielwerte einbetten:
   - `{player.hp}` / `{player.max_hp}`: Aktuelle und maximale Lebenspunkte.
   - `{turn.count}`: Bisher vergangene Züge.
   - `{room.name}` / `{room.id}`: Name und ID des aktuellen Raums.
+- **Entity Properties (`{item.<id>.<prop>}` / `{npc.<id>.<prop>}`):**
+  - Read integer state properties of items or NPCs, e.g. `{item.torch.fuel}`, `{npc.guard.mood}`, `{npc.guard.hp}`.
+- **Inline Conditionals (`{if <cond>|a|b}` / `{if <cond>|a}`):**
+  - Branching inside text templates based on flags or variable comparisons.
+  - Syntax: `{if <flag/var-cond>|then_branch|else_branch}` (if else branch is omitted, defaults to empty).
+  - Flag conditions: `{if has_torch|Lit!|Darkness.}` or `{if !has_torch|Darkness.|Lit!}`.
+  - Variable comparisons: `{if gold > 0|Coins: {gold}|Broke}`, `{if gold >= 100|Wealthy|Average}`, `{if weather == rain|Raining|Clear}`. Supported operators: `==`, `!=`, `/=`, `>=`, `<=`, `>`, `<`, `=`.
+  - Nested expressions and placeholders in branches are recursively evaluated. Use `\|` for literal pipes.
+- **Expressions (`{= <expr>}`):**
+  - Dynamic mathematical calculations via the engine's `Expr` parser: `{= gold * 2}`, `{= (gold + bonus) * 2}`, `{= item.torch.fuel + 5}`.
+  - Built-in functions: `min(a, b)`, `max(a, b)`, `clamp(lo, hi, val)`.
+  - Format modifiers can be appended: `{= gold * 2:+}` (forces sign), `{= gold * 2:6}` (padded width). Division by zero returns `0`.
+- **Deterministic Error Handling:**
+  - Missing prop on item: `<error: unknown prop '<prop>' on item '<item>'>`
+  - Missing item: `<error: unknown item '<item>'>`
+  - Missing prop on NPC: `<error: unknown prop '<prop>' on npc '<npc>'>`
+  - Missing NPC: `<error: unknown npc '<npc>'>`
+  - Unknown variable in expression: `<error: unknown variable '<name>'>`
+  - Expression parse error: `<error: expr: <reason>>`
+  - Malformed if syntax: `<error: invalid if syntax: expected {if <cond>|a|b}>`
+  - Malformed if condition: `<error: invalid if condition: <condition>>`
 - **Escaping:** Geschweifte Klammern können mit `\{literal\}` oder `{{literal}}`
   maskiert werden.
 - **Validierungs-Warnung (`UnknownPlaceholder`):** Enthält ein Text Platzhalter wie `{foo}` oder `{var:foo}`,
   die weder als Variable (`variables`), Quest (`quests`) noch als bekannte Systemvariable (`player.*`, `turn.*`,
-  `room.*`, `cmd.*`, `{x}`, `{y}`, `{z}`) deklariert sind und nicht via `\{foo\}` oder `{{foo}}` maskiert
+  `room.*`, `cmd.*`, `item.*`, `npc.*`, `{x}`, `{y}`, `{z}`) deklariert sind und nicht via `\{foo\}` oder `{{foo}}` maskiert
   wurden, erzeugt der Worldbuilder eine nicht-fatale Warnung (`UnknownPlaceholder`).
 
 ### Praxisbeispiele aus `economy_hamurabi.yaml`

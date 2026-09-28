@@ -75,6 +75,7 @@ module Game
     , evalPredicate
     , resolveValueRef
     , formatWithVars
+    , lookupVarForFormat
     , setPlayerHP
     , updatePlayerHealth
     , addDiagnostic
@@ -1039,6 +1040,10 @@ resolveValueRef (VRVariable name) st =
             "exhaust.count"     -> maybe 0 (length . exhaustPile) (deckState (save st))
             _ | Just cn <- stripPrefix "condition_turns." name ->
                 resolveValueRef (VRConditionTurns cn) st
+              | Just rest <- stripPrefix "item." name, (itId, '.':prop) <- break (== '.') rest ->
+                resolveValueRef (VRItemProp itId prop) st
+              | Just rest <- stripPrefix "npc." name, (nId, '.':prop) <- break (== '.') rest ->
+                resolveValueRef (VRActorProp (ActorNPC nId) (PCustom prop)) st
               | otherwise -> case reads name of
                   [(n, "")] -> n
                   _         -> 0
@@ -1128,6 +1133,36 @@ lookupVarForFormat :: GameState -> String -> Maybe String
 lookupVarForFormat st name
     | Just val <- Map.lookup name (variables (save st)) =
         Just (varToString val)
+    | Just fName <- stripPrefix "flag:" name <|> stripPrefix "flag." name =
+        case Map.lookup fName (flags (save st)) of
+            Just v  -> Just v
+            Nothing -> Just "false"
+    | Just v <- Map.lookup name (flags (save st)) =
+        Just v
+    | Just rest <- stripPrefix "item." name =
+        case break (== '.') rest of
+            (itId, '.':prop) ->
+                case Map.lookup itId (itemStates (save st)) of
+                    Nothing -> Just ("<error: unknown item '" ++ itId ++ "'>")
+                    Just is -> case Map.lookup prop (itemProps is) of
+                        Nothing -> Just ("<error: unknown prop '" ++ prop ++ "' on item '" ++ itId ++ "'>")
+                        Just val -> Just (show val)
+            _ -> Nothing
+    | Just rest <- stripPrefix "npc." name =
+        case break (== '.') rest of
+            (nId, '.':prop) ->
+                let actualId = resolveActorNpcId nId st
+                in case Map.lookup actualId (npcStates (save st)) of
+                    Nothing -> Just ("<error: unknown npc '" ++ nId ++ "'>")
+                    Just ns -> case prop of
+                        "health" -> Just (show (fromMaybe 0 (npcHealth ns)))
+                        "hp"     -> Just (show (fromMaybe 0 (npcHealth ns)))
+                        _        -> case Map.lookup prop (npcProps ns) of
+                            Nothing -> Just ("<error: unknown prop '" ++ prop ++ "' on npc '" ++ nId ++ "'>")
+                            Just val -> Just (show val)
+            _ -> Nothing
+    | Just cName <- stripPrefix "condition_turns." name =
+        Just (show (resolveValueRef (VRConditionTurns cName) st))
     | name `elem` ["player.hp", "player.health"] =
         Just (show (playerHealth (player (save st))))
     | name `elem` ["player.max_hp", "player.max_health"] =

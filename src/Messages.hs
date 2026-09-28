@@ -16,16 +16,22 @@ module Messages
     , catalogEntries
     , defaultCatalog
     , formatStringWith
+    , evalCondition
+    , handleExpr
+    , splitIfPipes
+    , matchBrace
     , msgPayload
     , evMsg
     ) where
 
-import Data.Char (isDigit)
+import Data.Char (isDigit, isSpace, isAlphaNum)
 import Data.List (intercalate, isPrefixOf)
 import qualified Data.List as List (lookup)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Text.Read (readMaybe)
 import Types.Output (MsgPayload (..), OutputEvent (..))
+import Types.Core (Expr (..), parseExpr)
 
 -- | Stable message key. Plain alias: the catalog is data, and Phase 4.3
 --   overlays YAML-provided keys on the same namespace.
@@ -361,8 +367,217 @@ applyVarModifier str modif =
             in replicate (max 0 (w - length signedStr)) ' ' ++ signedStr
         _ -> signedStr
 
--- | Interpolate @{var}@ / @{var:mod}@ through a resolver; @\\{@, @\\}@ and
---   doubled braces escape. Verbatim from Game.hs (Phase 1.1 move).
+-- | Find the matching '}' for an opening '{', taking into account nested braces
+--   and escaped braces ('\{', '\}', '{{', '}}').
+matchBrace :: String -> Maybe (String, String)
+matchBrace str = go (1 :: Int) [] str
+  where
+    go 0 acc rest = Just (reverse acc, rest)
+    go _ _   []   = Nothing
+    go d acc ('\\':'{':rest) = go d ('{':'\\':acc) rest
+    go d acc ('\\':'}':rest) = go d ('}':'\\':acc) rest
+    go d acc ('{':'{':rest)  = go d ('{':'{':acc) rest
+    go d acc ('}':'}':rest)  = go d ('}':'}':acc) rest
+    go d acc ('{':rest)      = go (d + 1) ('{':acc) rest
+    go d acc ('}':rest)
+        | d == 1             = Just (reverse acc, rest)
+        | otherwise          = go (d - 1) ('}':acc) rest
+    go d acc (c:rest)        = go d (c:acc) rest
+
+-- | Split the body of an '{if ...}' expression by unescaped pipes ('|') at brace depth 0.
+splitIfPipes :: String -> [String]
+splitIfPipes str = go (0 :: Int) [] [] str
+  where
+    go _ current parts [] = reverse (reverse current : parts)
+    go d current parts ('\\':'|':rest) = go d ('|':current) parts rest
+    go d current parts ('\\':'{':rest) = go d ('{':'\\':current) parts rest
+    go d current parts ('\\':'}':rest) = go d ('}':'\\':current) parts rest
+    go d current parts ('{':'{':rest)  = go d ('{':'{':current) parts rest
+    go d current parts ('}':'}':rest)  = go d ('}':'}':current) parts rest
+    go d current parts ('{':rest)      = go (d + 1) ('{':current) parts rest
+    go d current parts ('}':rest)
+        | d > 0     = go (d - 1) ('}':current) parts rest
+        | otherwise = go d ('}':current) parts rest
+    go 0 current parts ('|':rest)      = go (0 :: Int) [] (reverse current : parts) rest
+    go d current parts (c:rest)        = go d (c:current) parts rest
+
+trimStr :: String -> String
+trimStr = dropWhile isSpace . reverse . dropWhile isSpace . reverse
+
+stripQuotes :: String -> String
+stripQuotes str =
+    let t = trimStr str
+    in case t of
+        ('"':rest) | not (null rest) && last rest == '"' -> init rest
+        ('\'':rest) | not (null rest) && last rest == '\'' -> init rest
+        _ -> t
+
+-- | Evaluate an inline condition: supports comparisons ('==', '!=', '/=', '>=', '<=', '>', '<', '='),
+--   negation ('!cond'), or single flag/variable truthiness.
+evalCondition :: String -> (String -> Maybe String) -> Either String Bool
+evalCondition rawCond env =
+    let cond = trimStr rawCond
+    in if null cond
+        then Left "<error: invalid if condition: empty condition>"
+        else if "!" `isPrefixOf` cond
+            then let inner = trimStr (drop 1 cond)
+                 in if null inner
+                     then Left "<error: invalid if condition: empty negated condition>"
+                     else not <$> evalCondition inner env
+            else case findCondOperator cond of
+                Just (rawLhs, opStr, rawRhs) -> do
+                    let lhsStr = trimStr rawLhs
+                        rhsStr = trimStr rawRhs
+                    if null lhsStr || null rhsStr
+                        then Left ("<error: invalid if condition: " ++ cond ++ ">")
+                        else do
+                            valLhs <- resolveOperand lhsStr env
+                            valRhs <- resolveOperand rhsStr env
+                            evalComparison valLhs opStr valRhs
+                Nothing ->
+                    if any (\c -> not (isAlphaNum c || c `elem` "._:! ")) cond
+                        then Left ("<error: invalid if condition: " ++ cond ++ ">")
+                        else evalTruthiness cond env
+
+findCondOperator :: String -> Maybe (String, String, String)
+findCondOperator str = search (0 :: Int) [] str
+  where
+    ops = [">=", "<=", "==", "!=", "/=", "=", ">", "<"]
+    search _ _ [] = Nothing
+    search d acc s@(c:cs)
+        | c == '{'  = search (d + 1) (c:acc) cs
+        | c == '}'  = search (max 0 (d - 1)) (c:acc) cs
+        | d == 0    = case [op | op <- ops, op `isPrefixOf` s] of
+            (op:_) -> Just (reverse acc, op, drop (length op) s)
+            []     -> search d (c:acc) cs
+        | otherwise = search d (c:acc) cs
+
+resolveOperand :: String -> (String -> Maybe String) -> Either String String
+resolveOperand tok env =
+    let clean = stripQuotes tok
+    in case env clean of
+        Just v
+            | "<error:" `isPrefixOf` v -> Left v
+            | otherwise -> Right v
+        Nothing -> Right clean
+
+evalComparison :: String -> String -> String -> Either String Bool
+evalComparison v1 op v2 =
+    case (readMaybe v1 :: Maybe Int, readMaybe v2 :: Maybe Int) of
+        (Just n1, Just n2) -> case op of
+            "==" -> Right (n1 == n2)
+            "="  -> Right (n1 == n2)
+            "!=" -> Right (n1 /= n2)
+            "/=" -> Right (n1 /= n2)
+            ">=" -> Right (n1 >= n2)
+            "<=" -> Right (n1 <= n2)
+            ">"  -> Right (n1 > n2)
+            "<"  -> Right (n1 < n2)
+            _    -> Left ("<error: unknown operator: " ++ op ++ ">")
+        _ -> case op of
+            "==" -> Right (v1 == v2)
+            "="  -> Right (v1 == v2)
+            "!=" -> Right (v1 /= v2)
+            "/=" -> Right (v1 /= v2)
+            ">=" -> Right (v1 >= v2)
+            "<=" -> Right (v1 <= v2)
+            ">"  -> Right (v1 > v2)
+            "<"  -> Right (v1 < v2)
+            _    -> Left ("<error: unknown operator: " ++ op ++ ">")
+
+evalTruthiness :: String -> (String -> Maybe String) -> Either String Bool
+evalTruthiness tok env =
+    case env tok of
+        Nothing -> Right False
+        Just v
+            | "<error:" `isPrefixOf` v -> Left v
+            | v == "true"              -> Right True
+            | v == "false"             -> Right False
+            | otherwise -> case (readMaybe v :: Maybe Int) of
+                Just n  -> Right (n /= 0)
+                Nothing -> Right (not (null v))
+
+handleIf :: String -> (String -> Maybe String) -> String
+handleIf body env =
+    case splitIfPipes body of
+        []  -> "<error: invalid if syntax: expected {if <cond>|a|b}>"
+        [_] -> "<error: invalid if syntax: expected {if <cond>|a|b}>"
+        (rawCond : thenBranch : rest) ->
+            let elseBranch = case rest of
+                    []    -> ""
+                    (e:_) -> e
+            in case evalCondition rawCond env of
+                Left err    -> err
+                Right True  -> formatStringWith thenBranch env
+                Right False -> formatStringWith elseBranch env
+
+-- | Evaluate an expression string against the environment, returning either formatted
+--   result or an error string.
+handleExpr :: String -> (String -> Maybe String) -> String
+handleExpr content env
+    | null (trimStr content) = "<error: expr: empty expression>"
+    | otherwise =
+        let (rawExpr, modif) = splitExprModifier (trimStr content)
+        in case parseExpr rawExpr of
+            Left err -> "<error: expr: " ++ err ++ ">"
+            Right expr -> case evalExprEnv env expr of
+                Left err -> "<error: " ++ err ++ ">"
+                Right val -> applyVarModifier (show val) modif
+
+splitExprModifier :: String -> (String, String)
+splitExprModifier s =
+    case parseExpr s of
+        Right _ -> (s, "")
+        Left _  -> case breakLastColon s of
+            Just (beforeCol, modif)
+                | not (null modif) && (modif == "+" || all isDigit (dropWhile (== '-') modif)) ->
+                    case parseExpr (trimStr beforeCol) of
+                        Right _ -> (trimStr beforeCol, modif)
+                        Left _  -> (s, "")
+            _ -> (s, "")
+
+breakLastColon :: String -> Maybe (String, String)
+breakLastColon s =
+    case break (== ':') (reverse s) of
+        (revAfter, ':':revBefore) -> Just (reverse revBefore, reverse revAfter)
+        _                         -> Nothing
+
+evalExprEnv :: (String -> Maybe String) -> Expr -> Either String Int
+evalExprEnv env expr = case expr of
+    ELit n -> Right n
+    EVar v -> case env v of
+        Nothing -> Left ("unknown variable '" ++ v ++ "'")
+        Just s
+            | "<error:" `isPrefixOf` s ->
+                let inner = drop 8 s
+                    cleaned = if not (null inner) && last inner == '>' then init inner else inner
+                in Left cleaned
+            | otherwise -> case readMaybe s of
+                Just n  -> Right n
+                Nothing -> Left ("variable '" ++ v ++ "' is not an integer: " ++ s)
+    EAdd a b -> (+) <$> evalExprEnv env a <*> evalExprEnv env b
+    ESub a b -> (-) <$> evalExprEnv env a <*> evalExprEnv env b
+    EMul a b -> (*) <$> evalExprEnv env a <*> evalExprEnv env b
+    EDiv a b -> do
+        va <- evalExprEnv env a
+        vb <- evalExprEnv env b
+        if vb == 0 then Right 0 else Right (va `div` vb)
+    EMod a b -> do
+        va <- evalExprEnv env a
+        vb <- evalExprEnv env b
+        if vb == 0 then Right 0 else Right (va `mod` vb)
+    EMin a b -> min <$> evalExprEnv env a <*> evalExprEnv env b
+    EMax a b -> max <$> evalExprEnv env a <*> evalExprEnv env b
+    EClamp mn mx v -> do
+        l <- evalExprEnv env mn
+        h <- evalExprEnv env mx
+        val <- evalExprEnv env v
+        let low = min l h
+            high = max l h
+        Right (max low (min high val))
+
+-- | Interpolate @{var}@ / @{var:mod}@, @{if cond|a|b}@, @{= expr}@ through a resolver;
+--   @\\{@, @\\}@ and doubled braces escape.
 formatStringWith :: String -> (String -> Maybe String) -> String
 formatStringWith [] _ = []
 formatStringWith ('\\':'{':cs) env = '{' : formatStringWith cs env
@@ -370,18 +585,35 @@ formatStringWith ('\\':'}':cs) env = '}' : formatStringWith cs env
 formatStringWith ('{':'{':cs) env = '{' : formatStringWith cs env
 formatStringWith ('}':'}':cs) env = '}' : formatStringWith cs env
 formatStringWith ('{':cs) env =
-    case span (/= '}') cs of
-        (inside, '}':rest) ->
-            let (isExplicitVar, clean) = if "var:" `isPrefixOf` inside
-                                        then (True, drop 4 inside)
-                                        else (False, inside)
-                (varName, modif) = case break (== ':') clean of
-                    (name, ':':m) -> (name, m)
-                    (name, _)     -> (name, "")
-            in case env varName of
-                Just val -> applyVarModifier val modif ++ formatStringWith rest env
-                Nothing
-                    | isExplicitVar -> applyVarModifier "0" modif ++ formatStringWith rest env
-                    | otherwise     -> '{' : inside ++ "}" ++ formatStringWith rest env
-        _ -> '{' : formatStringWith cs env
+    case matchBrace cs of
+        Just (inside, rest) ->
+            let stripped = trimStr inside
+            in if stripped == "if" || "if " `isPrefixOf` stripped || "if:" `isPrefixOf` stripped || "if|" `isPrefixOf` stripped
+                then
+                    let ifBody = case stripped of
+                            'i':'f':':':r -> trimStr r
+                            'i':'f':'|':r -> '|' : r
+                            'i':'f':' ':r -> trimStr r
+                            'i':'f':r     -> trimStr r
+                            _             -> stripped
+                    in handleIf ifBody env ++ formatStringWith rest env
+                else if "=" `isPrefixOf` stripped
+                    then
+                        let exprBody = trimStr (drop 1 stripped)
+                        in handleExpr exprBody env ++ formatStringWith rest env
+                    else
+                        let (isExplicitVar, clean) = if "var:" `isPrefixOf` inside
+                                                    then (True, drop 4 inside)
+                                                    else (False, inside)
+                            (varName, modif) = case break (== ':') clean of
+                                (name, ':':m) -> (name, m)
+                                (name, _)     -> (name, "")
+                        in case env varName of
+                            Just val
+                                | "<error:" `isPrefixOf` val -> val ++ formatStringWith rest env
+                                | otherwise                  -> applyVarModifier val modif ++ formatStringWith rest env
+                            Nothing
+                                | isExplicitVar -> applyVarModifier "0" modif ++ formatStringWith rest env
+                                | otherwise     -> '{' : inside ++ "}" ++ formatStringWith rest env
+        Nothing -> '{' : formatStringWith cs env
 formatStringWith (c:cs) env = c : formatStringWith cs env

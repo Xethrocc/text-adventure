@@ -1174,6 +1174,147 @@ testDisambiguationTurnCost = do
                 == Just (CarriedBy ActorPlayer))
     pure (r1 && r2 && r3 && r4 && r5)
 
+-- ---------------------------------------------------------------------------
+-- Phase 2.4: Text-Erweiterung (Inline-Bedingungen, Ausdrücke, Props, Fehlerfälle)
+-- ---------------------------------------------------------------------------
+
+-- | Phase 2.4: Inline condition {if <flag/var-cond>|a|b}
+testInterpolationInlineConditions :: IO Bool
+testInterpolationInlineConditions = do
+    let st0 = initSampleGame
+        st1 = setFlag "has_torch" "true" st0
+        st2 = setVariable "gold" (VVInt 50) st1
+        st3 = setVariable "weather" (VVText "rain") st2
+    -- Flag truthiness (true vs unset/false)
+    r1 <- expectEqual "It is bright." (formatWithVars "{if has_torch|It is bright.|It is pitch black.}" st3)
+    r2 <- expectEqual "It is pitch black." (formatWithVars "{if has_torch|It is bright.|It is pitch black.}" st0)
+    -- Negated flag (!flag)
+    r3 <- expectEqual "You need a light source." (formatWithVars "{if !has_torch|You need a light source.|All good.}" st0)
+    r4 <- expectEqual "All good." (formatWithVars "{if !has_torch|You need a light source.|All good.}" st3)
+    -- Numeric variable comparisons (>, >=, ==, !=, <=, <)
+    r5 <- expectEqual "Rich" (formatWithVars "{if gold > 10|Rich|Poor}" st3)
+    r6 <- expectEqual "Poor" (formatWithVars "{if gold < 10|Rich|Poor}" st3)
+    r7 <- expectEqual "Fifty" (formatWithVars "{if gold == 50|Fifty|Other}" st3)
+    r8 <- expectEqual "Not zero" (formatWithVars "{if gold != 0|Not zero|Zero}" st3)
+    r9 <- expectEqual "GTE" (formatWithVars "{if gold >= 50|GTE|Less}" st3)
+    r10 <- expectEqual "LTE" (formatWithVars "{if gold <= 50|LTE|More}" st3)
+    -- Text variable comparison
+    r11 <- expectEqual "Wet" (formatWithVars "{if weather == rain|Wet|Dry}" st3)
+    r12 <- expectEqual "Not sunny" (formatWithVars "{if weather != sun|Not sunny|Sunny}" st3)
+    -- Single branch: else defaults to empty string
+    r13 <- expectEqual "Lit!" (formatWithVars "{if has_torch|Lit!}" st3)
+    r14 <- expectEqual "" (formatWithVars "{if has_lantern|Lit!}" st3)
+    -- Nested interpolation inside selected branch
+    r15 <- expectEqual "You have 50 coins." (formatWithVars "{if gold > 0|You have {gold} coins.|None.}" st3)
+    -- Nested conditional
+    r16 <- expectEqual "Wet and bright." (formatWithVars "{if has_torch|{if weather == rain|Wet and bright.|Dry and bright.}|Dark.}" st3)
+    -- Escaped pipe \| inside branch
+    r17 <- expectEqual "A | B" (formatWithVars "{if has_torch|A \\| B|C}" st3)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13 && r14 && r15 && r16 && r17)
+
+-- | Phase 2.4: Expressions {= <expr>} via existing Expr parser
+testInterpolationExpressions :: IO Bool
+testInterpolationExpressions = do
+    let st0 = initSampleGame
+        st1 = setVariable "gold" (VVInt 42) st0
+        st2 = setVariable "bonus" (VVInt 8) st1
+        st3 = setVariable "hp" (VVInt 20) st2
+    -- Basic arithmetic with variables and literals
+    r1 <- expectEqual "84" (formatWithVars "{= gold * 2}" st3)
+    r2 <- expectEqual "50" (formatWithVars "{= gold + bonus}" st3)
+    -- Operator precedence and parentheses
+    r3 <- expectEqual "100" (formatWithVars "{= (gold + bonus) * 2}" st3)
+    r4 <- expectEqual "58" (formatWithVars "{= gold + bonus * 2}" st3)
+    -- Functions: min, max, clamp
+    r5 <- expectEqual "10" (formatWithVars "{= min(10, gold)}" st3)
+    r6 <- expectEqual "42" (formatWithVars "{= max(10, gold)}" st3)
+    r7 <- expectEqual "30" (formatWithVars "{= clamp(0, 30, gold)}" st3)
+    -- Modifiers on expressions (:+, :6)
+    r8 <- expectEqual "+84" (formatWithVars "{= gold * 2:+}" st3)
+    r9 <- expectEqual "    84" (formatWithVars "{= gold * 2:6}" st3)
+    -- Division-by-zero safety
+    r10 <- expectEqual "0" (formatWithVars "{= gold / 0}" st3)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10)
+
+-- | Phase 2.4: Props {item.torch.fuel} and {npc.<id>.<prop>}
+testInterpolationProps :: IO Bool
+testInterpolationProps = do
+    let st0 = initSampleGame
+        -- Setup item with props: torch with fuel = 7
+        torchState = ItemState (CarriedBy ActorPlayer) "intact" (Map.fromList [("fuel", 7), ("weight", 2)]) False
+        st1 = st0 { save = (save st0) { itemStates = Map.insert "torch" torchState (itemStates (save st0)) } }
+        -- Setup NPC with props: guard with mood = 3
+        guardState = NPCState (InRoom "start") "alive" (Just 100) (Map.fromList [("mood", 3)]) Nothing
+        st2 = st1 { save = (save st1) { npcStates = Map.insert "guard" guardState (npcStates (save st1)) } }
+    -- Item prop direct interpolation
+    r1 <- expectEqual "Torch has 7 fuel." (formatWithVars "Torch has {item.torch.fuel} fuel." st2)
+    -- Item prop with modifier
+    r2 <- expectEqual "Fuel: +7" (formatWithVars "Fuel: {item.torch.fuel:+}" st2)
+    -- Item prop in expression
+    r3 <- expectEqual "Double fuel: 14." (formatWithVars "Double fuel: {= item.torch.fuel * 2}." st2)
+    -- Item prop in conditional
+    r4 <- expectEqual "Torch is burning!" (formatWithVars "{if item.torch.fuel > 0|Torch is burning!|Torch is out.}" st2)
+    -- NPC prop direct interpolation
+    r5 <- expectEqual "Guard mood: 3." (formatWithVars "Guard mood: {npc.guard.mood}." st2)
+    -- NPC health prop
+    r6 <- expectEqual "Guard HP: 100." (formatWithVars "Guard HP: {npc.guard.hp}." st2)
+    -- ValueRef resolution for item prop
+    r7 <- expectEqual 7 (resolveValueRef (VRVariable "item.torch.fuel") st2)
+    r8 <- expectEqual 3 (resolveValueRef (VRVariable "npc.guard.mood") st2)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- | Phase 2.4: Error handling for props, expressions, and conditionals (Constraint 3)
+testInterpolationErrorHandling :: IO Bool
+testInterpolationErrorHandling = do
+    let st0 = initSampleGame
+        torchState = ItemState (CarriedBy ActorPlayer) "intact" (Map.fromList [("fuel", 5)]) False
+        st1 = st0 { save = (save st0) { itemStates = Map.insert "torch" torchState (itemStates (save st0)) } }
+    -- 1. Unknown prop on existing item
+    r1 <- expectEqual "<error: unknown prop 'durability' on item 'torch'>"
+            (formatWithVars "{item.torch.durability}" st1)
+    -- 2. Unknown item
+    r2 <- expectEqual "<error: unknown item 'missing_item'>"
+            (formatWithVars "{item.missing_item.fuel}" st1)
+    -- 3. Unknown prop on existing NPC
+    let guardState = NPCState (InRoom "start") "alive" (Just 50) Map.empty Nothing
+        st2 = st1 { save = (save st1) { npcStates = Map.insert "guard" guardState (npcStates (save st1)) } }
+    r3 <- expectEqual "<error: unknown prop 'mana' on npc 'guard'>"
+            (formatWithVars "{npc.guard.mana}" st2)
+    -- 4. Unknown NPC
+    r4 <- expectEqual "<error: unknown npc 'ghost'>"
+            (formatWithVars "{npc.ghost.mood}" st2)
+    -- 5. Syntactically broken {if}: missing branches
+    r5 <- expectEqual "<error: invalid if syntax: expected {if <cond>|a|b}>"
+            (formatWithVars "{if gold > 0}" st2)
+    r6 <- expectEqual "<error: invalid if syntax: expected {if <cond>|a|b}>"
+            (formatWithVars "{if}" st2)
+    -- 6. Syntactically broken {if}: empty condition
+    r7 <- expectEqual "<error: invalid if condition: empty condition>"
+            (formatWithVars "{if |then|else}" st2)
+    -- 7. Syntactically broken {if}: invalid condition operator
+    r8 <- expectEqual "<error: invalid if condition: gold @@ 10>"
+            (formatWithVars "{if gold @@ 10|then|else}" st2)
+    -- 8. Unknown variable in expression
+    r9 <- expectEqual "<error: unknown variable 'unknown_var'>"
+            (formatWithVars "{= unknown_var * 2}" st2)
+    -- 9. Syntax error in expression (unexpected token / unparseable)
+    r10 <- expectEqual "<error: expr: Unexpected token: TokMul>"
+            (formatWithVars "{= 10 + * 2}" st2)
+    r11 <- expectEqual "<error: expr: Unexpected character in expression: @>"
+            (formatWithVars "{= 10 + @@@}" st2)
+    -- 10. Empty expression
+    r12 <- expectEqual "<error: expr: empty expression>"
+            (formatWithVars "{=}" st2)
+    -- 11. Unknown prop propagated inside expression and condition
+    r13 <- expectEqual "<error: unknown prop 'durability' on item 'torch'>"
+            (formatWithVars "{= item.torch.durability + 1}" st1)
+    r14 <- expectEqual "<error: unknown item 'missing_item'>"
+            (formatWithVars "{if item.missing_item.fuel > 0|Yes|No}" st1)
+    -- 12. Standard unknown placeholder stays intact (backward compatibility)
+    r15 <- expectEqual "{completely_unknown}"
+            (formatWithVars "{completely_unknown}" st2)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13 && r14 && r15)
+
 -- | Phase 1.1: catalog invariants — no duplicate keys (Map.fromList would drop
 --   them silently), no empty keys/templates, no template containing the
 --   missing-key marker.
@@ -7798,6 +7939,11 @@ main = do
         , runTest "disambiguation: answer by distinguishing word (Phase 2.3)" testDisambiguationByWord
         , runTest "disambiguation: non-answer runs normally and closes the question (Phase 2.3)" testDisambiguationFallback
         , runTest "disambiguation: the answer costs no turn and fires no on: turn (Phase 2.3)" testDisambiguationTurnCost
+        -- Phase 2.4: Text-Erweiterung (Inline-Bedingungen, Ausdrücke, Props, Fehlerbehandlung)
+        , runTest "interpolation: inline conditions {if cond|a|b} (Phase 2.4)" testInterpolationInlineConditions
+        , runTest "interpolation: expressions {= expr} (Phase 2.4)" testInterpolationExpressions
+        , runTest "interpolation: item and npc props (Phase 2.4)" testInterpolationProps
+        , runTest "interpolation: error handling and propagation (Phase 2.4)" testInterpolationErrorHandling
         , runTest "message catalog invariants (Phase 1.1)" testMessageCatalogInvariants
         , runTest "renderMsg substitutes and escapes args (Phase 1.1)" testRenderMsgArgs
         , runTest "output events: fragment algebra is byte-identical (Phase 1.2)" testOutputFragmentAlgebra
