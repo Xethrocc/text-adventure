@@ -4,6 +4,7 @@
 #   1. build all packages
 #   2. run the unit test suites (engine, worldbuilder, img2ascii, text2ascii,
 #      video2ascii)
+#   2b. message catalog gate (no unused key, no key missing from the catalog)
 #   3. validate every shipped adventure (demo, thefog, 6 genre + 14 module fixtures)
 #   4. E2E: compile each fixture and drive it to a known ending
 #
@@ -42,6 +43,14 @@ if grep -qE 'warning: \[(-W|GHC-)' "$test_log"; then
     exit 1
 fi
 rm -f "$test_log"
+
+echo "== 2b. message catalog gate =="
+# Phase 1.1 follow-up: the catalog is the single source of truth for player-facing
+# engine text, but two failure modes are invisible to the unit tests — a key that
+# no call site renders (dead catalog entry) and a call site whose key is missing
+# from the catalog (renders the loud '<msg:key>' fallback instead of a message).
+# POSIX shell only: this script also runs on the Windows runner (Git Bash).
+./scripts/check-msg-catalog.sh
 
 echo "== 3. validate adventures =="
 adv=(examples/demo.yaml examples/thefog.yaml)

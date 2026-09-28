@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Aufräumen: vier ungenutzte Katalog-Keys entfernt + Katalog-Gate (Phase 1.1-Nachtrag)
+
+- `map.dark`, `watch.dark`, `map.legend_header` und `card.play.on` standen im
+  Katalog, wurden aber von keiner Aufrufstelle gerendert: im Dunkeln liefern
+  `map`/`watch` die autorenkonfigurierbare `darkRoomEv`-Meldung, und die beiden
+  anderen sind Dubletten bewusst geteilter Inline-Fragmente
+  (`nl2 ++ evRaw "Legend:\n"` bzw. `evRaw (" on " ++ target)`). Der Katalog hat
+  damit **182 Keys**; verdrahtet wurde bewusst nichts — das hätte eine
+  Verhaltensänderung bzw. einen anderen Event-Strom bedeutet.
+- Neues Gate `scripts/check-msg-catalog.sh`, eingehängt als CI-Stufe **2b**:
+  es meldet (a) Katalog-Keys ohne Aufrufstelle und (b) Aufrufstellen mit
+  unbekanntem Key — letzteres rendert sonst still den lauten `<msg:key>`-Fallback.
+  Beide Richtungen mit gepflanzten Fehlern belegt (Gate rot, danach grün).
+  POSIX-Shell, damit es auch auf dem Windows-Runner läuft.
+- `docs/message-catalog.md`: die versprochene Katalog-Tabelle fehlte komplett —
+  die Datei endete mit den hineingerutschten Shell-Zeilen des Generator-Versuchs
+  (`EOF`, `cat >> …`). Jetzt erzeugt `scripts/gen-msg-catalog.py` die Tabelle
+  (182 Zeilen, überlange Templates gekürzt) und hält die Kopfzahl synchron;
+  Belegzahlen auf gemessen korrigiert (42 E2E-Eingaben statt 39, 363 statt 359).
+- README: Worldbuilder-Testzahl 166 → **169** (gemessen).
+- **Build wieder warnungsfrei:** Phase 1.1/1.2 hinterließ **17 Warnungen** —
+  14 im Engine-Build (12 tote Import-Einträge bzw. `Types.Output`-Importe doppelt
+  neben der `Types`-Fassade, dazu zwei durch den Umbau verwaiste Bindungen
+  `Parser.withAscii` und `GameLoop.combineMessages`) und 3 im Test-Build (zwei
+  redundante Importe, ein ungenutztes `ls1`). Sie blieben unentdeckt, weil der
+  letzte `ci.sh`-Lauf des Batches auf dem Doku-Commit saß: `cabal` kompilierte
+  nichts neu, also meldete der Warnungs-Gate nichts. Erst ein erzwungener
+  Neuaufbau (`find . -name '*.hs' -exec touch {} +` vor dem Build) zeigt sie —
+  der Gate greift eben nur, wenn wirklich kompiliert wird.
+- Keine Verhaltensänderung: 363 Engine-Tests, 169 Worldbuilder, 20 TUI, CI grün.
+
 ### Strukturierte Ausgabe: OutputEvents + Styling-Modell (Phase 1.2)
 
 - Neues Blatt-Modul `src/Types/Output.hs` (über die `Types`-Fassade exportiert):
