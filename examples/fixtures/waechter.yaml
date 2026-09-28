@@ -1,0 +1,60 @@
+name: Waechter Fixture
+start_room: courtyard
+
+rooms:
+  - id: courtyard
+    name: Castle Courtyard
+    desc: A stone courtyard before the grand inner keep. A stoic guard stands vigil by the northern archway.
+    exits:
+      north:
+        to: throne_room
+        when:
+          has_flag: pass_granted
+        msg: "The castle guard blocks the northern archway: 'Halt! No entry without a royal permit.'"
+      east: guardhouse
+
+  - id: guardhouse
+    name: Guardhouse
+    desc: A small stone chamber where records and travel permits are kept.
+    exits:
+      west: courtyard
+
+  - id: throne_room
+    name: Grand Throne Room
+    desc: The majestic seat of the realm with banners hanging from tall pillars.
+    exits:
+      south: courtyard
+    on_enter:
+      - msg: "The royal throne room shines with majestic splendour!"
+      - game_end: victory
+
+items:
+  - id: relic
+    name: sacred relic
+    desc: A priceless ancient relic resting upon a stone pedestal.
+    keys: [relic, sacred relic]
+    location: courtyard
+
+  - id: permit
+    name: royal permit
+    desc: An official document bearing the King's golden wax seal.
+    keys: [permit, royal permit]
+    location: guardhouse
+
+rules:
+  - id: guard_protects_relic
+    on: before take
+    when:
+      var: cmd.target
+      is: "relic"
+    effects:
+      - block: "The guard firmly grasps your arm: 'Touch not the sacred relic!'"
+
+  - id: show_permit
+    on: before use
+    when:
+      var: cmd.target
+      is: "permit"
+    effects:
+      - set_flag: pass_granted
+      - block: "You present the royal permit. The guard inspects the seal and stands at attention, clearing the path north."

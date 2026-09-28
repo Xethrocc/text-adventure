@@ -193,6 +193,7 @@ emptyGameState = GameState
     , pendingSfx = []
     , pendingMusic = Nothing
     , diagnostics = []
+    , lastVeto = Nothing
     }
 
 -- ---------------------------------------------------------------------------
@@ -441,8 +442,9 @@ effectiveConnections state rId =
                 connsWithCanon = Map.map canonExit (roomConnections room)
             in Map.foldlWithKey step connsWithCanon overrides
   where
-    canonExit (Open to)     = Open (canonicalRoomId (world state) to)
-    canonExit (Locked to k) = Locked (canonicalRoomId (world state) to) k
+    canonExit (Open to)          = Open (canonicalRoomId (world state) to)
+    canonExit (Locked to k)      = Locked (canonicalRoomId (world state) to) k
+    canonExit (Guarded to p msg) = Guarded (canonicalRoomId (world state) to) p msg
     step acc (_, dir) (Just exit) = Map.insert dir (canonExit exit) acc
     step acc (_, dir) Nothing     = Map.delete dir acc
 

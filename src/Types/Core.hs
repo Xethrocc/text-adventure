@@ -245,19 +245,6 @@ instance FromJSON Direction
 instance ToJSONKey Direction
 instance FromJSONKey Direction
 
--- | Exit connection between rooms
-data Exit
-    = Open String             -- ^ Destination room name
-    | Locked String String    -- ^ Destination room name, Entity name
-    deriving (Show, Eq, Generic)
-
-instance ToJSON Exit
-instance FromJSON Exit
-
--- | Target RoomID of an Exit (Open or Locked).
-exitRoomID :: Exit -> RoomID
-exitRoomID (Open r) = r
-exitRoomID (Locked r _) = r
 
 -- | Verb for dynamic actions. Core verbs are built in; adventures may
 --   declare additional verbs (e.g. cast, hack, dock) via the world's verb
@@ -745,6 +732,22 @@ instance FromJSON Predicate where
                     _        -> fail "Expected card id or list of card ids for combo")
         <|> fail "Unknown predicate"
 
+-- | Exit connection between rooms
+data Exit
+    = Open String                             -- ^ Destination room name
+    | Locked String String                    -- ^ Destination room name, Entity name
+    | Guarded String Predicate (Maybe String) -- ^ Destination room name, condition to pass, optional failure message (Phase 2.2)
+    deriving (Show, Eq, Generic)
+
+instance ToJSON Exit
+instance FromJSON Exit
+
+-- | Target RoomID of an Exit (Open, Locked, or Guarded).
+exitRoomID :: Exit -> RoomID
+exitRoomID (Open r) = r
+exitRoomID (Locked r _) = r
+exitRoomID (Guarded r _ _) = r
+
 -- | Music command queued by the pure engine for the frontend (Audio Phase 2).
 data MusicCommand = MusicStart FilePath | MusicStop
     deriving (Show, Eq, Generic)
@@ -786,6 +789,7 @@ data Effect
     | AddCardToDeck CardID DeckDestination        -- ^ Phase 2A: add card to draw/discard/hand
     | ShuffleDeck                                 -- ^ Phase 2A: shuffle draw pile
     | GenerateRoom RoomID String String RoomID Direction Direction -- ^ Phase 3A: id, name, description, fromRoom, toDir, returnDir
+    | Block (Maybe String) Bool                   -- ^ Phase 2.2: veto command execution (optional message, consumesTurn)
     | Noop                                        -- ^ Do nothing
     deriving (Show, Eq, Generic)
 
@@ -1508,6 +1512,7 @@ data EventType
     | OnCustomEvent String
     | OnTurn
     | OnCommand String                 -- ^ verb name (e.g. "activate")
+    | OnBefore String                  -- ^ verb name before execution (Phase 2.2)
     deriving (Show, Eq, Generic)
 
 instance ToJSON EventType
@@ -1832,6 +1837,7 @@ data GameState = GameState
     , pendingSfx :: [FilePath]  -- ^ SFX files queued for playback (Audio Phase 1, runtime only)
     , pendingMusic :: Maybe MusicCommand           -- ^ Music command for the frontend (Audio Phase 2, runtime only)
     , diagnostics :: [String]                      -- ^ Engine-level findings for the author (P2-23)
+    , lastVeto :: Maybe Bool                       -- ^ Phase 2.2: Nothing = not vetoed, Just consumesTurn = vetoed
     } deriving (Show, Eq)
 
 -- NOTE: `GameState` deliberately has **no** JSON instance — only `SaveState`

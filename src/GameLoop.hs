@@ -150,39 +150,65 @@ applyLoopCommandEv Help loopState = (loopState, evMsg "help.text" [])
 applyLoopCommandEv (Save _) loopState = (loopState, [])
 applyLoopCommandEv (Load _) loopState = (loopState, [])
 applyLoopCommandEv ListSaves loopState = (loopState, [])
-applyLoopCommandEv command loopState
-    | not (consumesTurnIn (lsCurrent loopState) command) =
-        let (newState, message) = executeCommandEv command (lsCurrent loopState)
-            (stateAfterTriggers, triggerMsg) = fireCommandTriggers command (lsCurrent loopState) newState
-            combined = joinEv message triggerMsg ++ sideEvents (lsCurrent loopState) stateAfterTriggers
-        in (loopState { lsCurrent = stateAfterTriggers }, combined)
+applyLoopCommandEv command loopState =
+    case checkBeforeVeto command (lsCurrent loopState) of
+        Left (stBlocked, msgs, False) ->
+            -- Vetoed without turn consumption (Phase 2.2 default)
+            (loopState { lsCurrent = stBlocked }
+            , msgs ++ sideEvents (lsCurrent loopState) stBlocked)
 
-    | otherwise =
-        let oldState = lsCurrent loopState
-            policy = worldGamePolicy (world oldState)
-            -- Rogue Phase 1: with undo disabled the history is not tracked at
-            -- all (saves memory; the command is rejected before use anyway).
-            history' = if gpAllowUndo policy
-                       then take maxUndoHistory (oldState : lsHistory loopState)
-                       else lsHistory loopState
-            stateWithTurn = incrementTurnCount oldState
-            (stateAfterTick, tickMsgs) = tickConditions stateWithTurn
-            (stateAfterVehicleTick, vehicleTickMsg) = vehicleConditionTick stateAfterTick
-            allTickMsgs = tickMsgs ++ (if null (renderEvents vehicleTickMsg) then [] else [vehicleTickMsg])
-            tickText = unlinesEv allTickMsgs
-        in if gameOver (save stateAfterVehicleTick)
-           then
-               -- L11: the condition tick ended the game before the command ran
-               -- (the tick pipeline runs first). The player is already dead, so
-               -- the command is dropped — only the tick messages are reported.
-               (loopState { lsCurrent = stateAfterVehicleTick, lsHistory = history' },
-                   tickText ++ sideEvents oldState stateAfterVehicleTick)
-           else
-               let (newState, message) = executeCommandEv command stateAfterVehicleTick
-                   (stateAfterTriggers, triggerMsg) = fireCommandTriggers command stateAfterVehicleTick newState
-                   fullMessage = if null allTickMsgs then message else tickText ++ message
-               in (loopState { lsCurrent = stateAfterTriggers, lsHistory = history' },
-                   joinEv fullMessage triggerMsg ++ sideEvents oldState stateAfterTriggers)
+        Left (stBlocked, msgs, True) ->
+            -- Vetoed with consumesTurn = True: command action dropped, but turn ticks advance!
+            let oldState = lsCurrent loopState
+                policy = worldGamePolicy (world oldState)
+                history' = if gpAllowUndo policy
+                           then take maxUndoHistory (oldState : lsHistory loopState)
+                           else lsHistory loopState
+                stateWithTurn = incrementTurnCount stBlocked
+                (stateAfterTick, tickMsgs) = tickConditions stateWithTurn
+                (stateAfterVehicleTick, vehicleTickMsg) = vehicleConditionTick stateAfterTick
+                allTickMsgs = tickMsgs ++ (if null (renderEvents vehicleTickMsg) then [] else [vehicleTickMsg])
+                tickText = unlinesEv allTickMsgs
+                (stateAfterTurnTriggers, turnTrigMsg) = fireTriggers OnTurn stateAfterVehicleTick
+                fullMsg = if null allTickMsgs then msgs else tickText ++ msgs
+            in (loopState { lsCurrent = stateAfterTurnTriggers, lsHistory = history' }
+               , joinEv fullMsg turnTrigMsg ++ sideEvents oldState stateAfterTurnTriggers)
+
+        Right (stAfterBefore, beforeMsgs)
+            | not (consumesTurnIn (lsCurrent loopState) command) ->
+                let (newState, message) = dispatchCommandEv command stAfterBefore
+                    (stateAfterTriggers, triggerMsg) = fireCommandTriggers command (lsCurrent loopState) newState
+                    cmdMsg = joinBeforeAndCmd beforeMsgs message
+                    combined = joinEv cmdMsg triggerMsg ++ sideEvents (lsCurrent loopState) stateAfterTriggers
+                in (loopState { lsCurrent = stateAfterTriggers }, combined)
+
+            | otherwise ->
+                let oldState = lsCurrent loopState
+                    policy = worldGamePolicy (world oldState)
+                    -- Rogue Phase 1: with undo disabled the history is not tracked at
+                    -- all (saves memory; the command is rejected before use anyway).
+                    history' = if gpAllowUndo policy
+                               then take maxUndoHistory (oldState : lsHistory loopState)
+                               else lsHistory loopState
+                    stateWithTurn = incrementTurnCount stAfterBefore
+                    (stateAfterTick, tickMsgs) = tickConditions stateWithTurn
+                    (stateAfterVehicleTick, vehicleTickMsg) = vehicleConditionTick stateAfterTick
+                    allTickMsgs = tickMsgs ++ (if null (renderEvents vehicleTickMsg) then [] else [vehicleTickMsg])
+                    tickText = unlinesEv allTickMsgs
+                in if gameOver (save stateAfterVehicleTick)
+                   then
+                       -- L11: the condition tick ended the game before the command ran
+                       -- (the tick pipeline runs first). The player is already dead, so
+                       -- the command is dropped — only the tick messages are reported.
+                       (loopState { lsCurrent = stateAfterVehicleTick, lsHistory = history' },
+                           tickText ++ sideEvents oldState stateAfterVehicleTick)
+                   else
+                       let (newState, message) = dispatchCommandEv command stateAfterVehicleTick
+                           (stateAfterTriggers, triggerMsg) = fireCommandTriggers command stateAfterVehicleTick newState
+                           cmdMsg = joinBeforeAndCmd beforeMsgs message
+                           fullMessage = if null allTickMsgs then cmdMsg else tickText ++ cmdMsg
+                       in (loopState { lsCurrent = stateAfterTriggers, lsHistory = history' },
+                           joinEv fullMessage triggerMsg ++ sideEvents oldState stateAfterTriggers)
 
 -- | Phase 1.2: additive side events derived from the state transition —
 --   they contribute no text ('evTextOf' = ""), so the CLI/TUI rendering is

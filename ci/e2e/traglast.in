@@ -1,0 +1,9 @@
+take boulder
+take feather
+take gold_sack
+take iron_bar
+drop feather
+take iron_bar
+use rusty_lever
+north
+quit

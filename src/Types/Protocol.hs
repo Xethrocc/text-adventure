@@ -775,8 +775,9 @@ makeSnapshot state = Snapshot
         step acc (_, dir) (Just exit) = Map.insert dir exit acc
         step acc (_, dir) Nothing     = Map.delete dir acc
 
-    exitSnapshot (dir, Open dest)     = ExitSnapshot (show dir) dest False
-    exitSnapshot (dir, Locked dest _) = ExitSnapshot (show dir) dest True
+    exitSnapshot (dir, Open dest)        = ExitSnapshot (show dir) dest False
+    exitSnapshot (dir, Locked dest _)    = ExitSnapshot (show dir) dest True
+    exitSnapshot (dir, Guarded dest _ _) = ExitSnapshot (show dir) dest True
 
     rSnap = RoomSnapshot
         { rsId          = curRoomId

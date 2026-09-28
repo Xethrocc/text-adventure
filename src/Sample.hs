@@ -421,4 +421,5 @@ initSampleGame = GameState
     , pendingSfx = []
     , pendingMusic = Nothing
     , diagnostics = []
+    , lastVeto = Nothing
     }

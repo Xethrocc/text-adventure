@@ -1116,7 +1116,7 @@ buildExits plan roomIds lockEntity =
                 dir = deDir e
             in if deOneway e
                 then Map.insertWith Map.union a
-                        (Map.singleton dir (AExitRef idB Nothing)) acc
+                        (Map.singleton dir (AExitRef idB Nothing Nothing Nothing)) acc
                 else
                     -- both ends of a bidirectional edge lead into the
                     -- treasure when that end is the treasure cell: edges are
@@ -1124,8 +1124,8 @@ buildExits plan roomIds lockEntity =
                     -- treasure can be either deFrom or deTo — lock whichever
                     -- AExitRef points at it (approach side); the exit inside
                     -- the treasure room itself stays open
-                    let fwd  = Map.singleton dir (AExitRef idB (lockFor b))
-                        back = Map.singleton (reverseDir dir) (AExitRef idA (lockFor a))
+                    let fwd  = Map.singleton dir (AExitRef idB (lockFor b) Nothing Nothing)
+                        back = Map.singleton (reverseDir dir) (AExitRef idA (lockFor a) Nothing Nothing)
                     in Map.insertWith Map.union b back
                            (Map.insertWith Map.union a fwd acc)
     in foldl step Map.empty (dpEdges plan)

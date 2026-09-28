@@ -377,19 +377,23 @@ instance FromJSON ARoom where
         <*> o .:? "intro"     .!= Nothing
         <*> o .:? "floor"     .!= Nothing
 
--- | Exit reference: target room + optional lock entity
+-- | Exit reference: target room + optional lock entity, when predicate, and failure message (Phase 2.2)
 data AExitRef = AExitRef
     { aeTarget :: String
     , aeLocked :: Maybe String
+    , aeWhen   :: Maybe E.Predicate
+    , aeMsg    :: Maybe String
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AExitRef where
     -- Plain string "hallway" -> Open "hallway"
-    parseJSON (String s) = pure (AExitRef (T.unpack s) Nothing)
-    -- Object { to: ..., locked_by: ... }
+    parseJSON (String s) = pure (AExitRef (T.unpack s) Nothing Nothing Nothing)
+    -- Object { to: ..., locked_by: ..., when: ..., msg/message: ... }
     parseJSON v = withObject "AExitRef" (\o -> AExitRef
         <$> o .:  "to"
-        <*> o .:? "locked_by") v
+        <*> o .:? "locked_by"
+        <*> o .:? "when"
+        <*> (o .:? "msg" <|> o .:? "message")) v
 
 -- ---------------------------------------------------------------------------
 -- Procedural Sandbox Zones (Schritt 3 / Phase 3E)
@@ -1145,6 +1149,7 @@ data AActionOutcome
     -- Schritt 3 / Phase 3E: Dynamic room generation
     | AOGenerateRoom String String String String String String
       -- ^ id, name, desc, connect_from, direction, return_direction
+    | AOBlock (Maybe String) Bool      -- ^ block: "msg" or block: { msg: "...", turn: true } (Phase 2.2)
     deriving (Show, Eq, Generic)
 
 -- Parse an outcome from an object with a single recognized key
@@ -1277,6 +1282,16 @@ instance FromJSON AActionOutcome where
                           <*> se .: "to"  <*> se .:? "locked_by")
         <|> (do re <- o .: "remove_exit"
                 AORemoveExit <$> re .: "from" <*> re .: "dir")
+        <|> (do bVal <- o .: "block"
+                case bVal of
+                    String s -> pure (AOBlock (Just (T.unpack s)) False)
+                    Bool True -> pure (AOBlock Nothing False)
+                    Bool False -> pure (AOBlock Nothing False)
+                    Object bObj -> do
+                        mMsg <- bObj .:? "msg" <|> bObj .:? "message" <|> bObj .:? "text"
+                        turn <- bObj .:? "turn" .!= False
+                        pure (AOBlock mMsg turn)
+                    _ -> fail "block must be string, bool, or object")
         <|> fail "Unknown outcome type. Use one of: msg, heal, damage, give, consume, set_flag, start_quest, etc."
         ) v
 
@@ -1331,7 +1346,7 @@ knownKeys EntRoom = Set.fromList
     , "on_enter", "on_look", "on_exit", "search", "ascii", "intro", "floor"
     ]
 knownKeys EntExitRef = Set.fromList
-    [ "to", "locked_by" ]
+    [ "to", "locked_by", "when", "msg", "message" ]
 knownKeys EntItem = Set.fromList
     [ "id", "name", "desc", "description", "ascii", "keys", "tags"
     , "location", "state", "slot", "effects", "hidden", "discover"

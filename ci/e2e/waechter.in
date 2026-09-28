@@ -1,0 +1,8 @@
+north
+take relic
+east
+take permit
+west
+use permit
+north
+quit

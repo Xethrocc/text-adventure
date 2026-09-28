@@ -113,8 +113,9 @@ buildHud = buildHudWithFloor Nothing
 
 exitDest :: Exit -> Maybe RoomID
 exitDest ex = case ex of
-    Open dest  -> Just dest
-    Locked d _ -> Just d
+    Open dest     -> Just dest
+    Locked d _    -> Just d
+    Guarded d _ _ -> Just d
 
 -- | Default minimap: follows the player's current floor.
 mapGrid :: Int -> Int -> GameState -> Maybe MapGrid

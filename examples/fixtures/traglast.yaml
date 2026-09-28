@@ -1,0 +1,130 @@
+name: Traglast Fixture
+start_room: depot
+
+variables:
+  - name: weight
+    type: int
+    initial: 0
+    min: 0
+    max: 100
+
+rooms:
+  - id: depot
+    name: Supply Depot
+    desc: A storage depot with crates and equipment for field couriers.
+    exits:
+      north:
+        to: treasury
+        when:
+          has_item: gold_sack
+        msg: "The vault door remains sealed until the gold sack is brought in!"
+
+  - id: treasury
+    name: Royal Treasury Vault
+    desc: A heavily fortified vault chamber.
+    exits:
+      south: depot
+    on_enter:
+      - msg: "Gold successfully secured in the royal treasury vault!"
+      - game_end: victory
+
+items:
+  - id: boulder
+    name: heavy boulder
+    desc: An enormous granite rock sitting in the corner.
+    keys: [boulder, rock, heavy boulder]
+    location: depot
+
+  - id: feather
+    name: phoenix feather
+    desc: A light glowing feather.
+    keys: [feather, phoenix feather]
+    location: depot
+
+  - id: gold_sack
+    name: sack of gold
+    desc: A hefty sack full of gold sovereigns.
+    keys: [gold_sack, sack, gold, sack of gold]
+    location: depot
+
+  - id: iron_bar
+    name: iron bar
+    desc: A dense iron bar on the workbench.
+    keys: [iron_bar, iron, bar]
+    location: depot
+
+  - id: rusty_lever
+    name: rusty lever
+    desc: A stiff iron lever protruding from the wall.
+    keys: [rusty_lever, lever, rusty lever]
+    location: depot
+
+rules:
+  # 1. Boulder immovable using cmd.target and cmd.target_kind
+  - id: boulder_immovable
+    on: before take
+    when:
+      all:
+        - var: cmd.target
+          is: "boulder"
+        - var: cmd.target_kind
+          is: "item"
+    effects:
+      - block:
+          msg: "The massive boulder is far too heavy to lift!"
+          turn: false
+
+  # 2. Encumbrance capacity check: weight >= 10 blocks further takes
+  - id: encumbrance_limit
+    on: before take
+    when:
+      compare_var:
+        name: weight
+        op: ">="
+        value: 10
+    effects:
+      - block: "You cannot carry anything more! Your pack is already full to capacity."
+
+  # 3. Block with turn: true test
+  - id: lever_trap
+    on: before use
+    when:
+      var: cmd.target
+      is: "rusty_lever"
+    effects:
+      - block:
+          msg: "The rusted lever jams painfully against your fingers, wasting precious time!"
+          turn: true
+
+  # Weight tracking on take and drop
+  - id: take_feather
+    on: take feather
+    effects:
+      - add_var:
+          var: weight
+          delta: 2
+      - msg: "Current carried load: {weight} / 10 kg."
+
+  - id: take_gold
+    on: take gold_sack
+    effects:
+      - add_var:
+          var: weight
+          delta: 8
+      - msg: "Current carried load: {weight} / 10 kg."
+
+  - id: drop_feather
+    on: drop feather
+    effects:
+      - add_var:
+          var: weight
+          delta: -2
+      - msg: "Current carried load: {weight} / 10 kg."
+
+  - id: take_iron
+    on: take iron_bar
+    effects:
+      - add_var:
+          var: weight
+          delta: 2
+      - msg: "Current carried load: {weight} / 10 kg."

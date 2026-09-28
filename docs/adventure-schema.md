@@ -29,7 +29,7 @@ Das war's. Der Worldbuilder füllt den Rest mit Defaults.
 | `id` | String | **required** | Eindeutige ID, Referenzen in exits |
 | `name` | String | **required** | Anzeigename |
 | `description` | String / Object | `""` | Raumbeschreibung. String → `{default: ...}`; Object → `{default, variants}` (siehe CondText) |
-| `exits` | Object | `{}` | `{ richtung: zielraum }` oder `{ richtung: { to: ziel, locked_by: entity } }` |
+| `exits` | Object | `{}` | `{ richtung: zielraum }`, `{ richtung: { to: ziel, locked_by: entity } }`, or `{ richtung: { to: ziel, when: predicate, msg: failure_text } }` (Guarded Exit, Phase 2.2) |
 | `tags` | [String] | `[]` | `"dark"`, `"safe"`, `"vehicle"`, benutzbar in Predicates |
 | `light_flag` | String | — | Wenn gesetzt und `"true"`, wird ein `dark`-Raum erhellt |
 | `dark_msg` / `dark_message` | String | — | Eigene Meldung bei Dunkelheit (Default: `"It's pitch black. You can't see anything."`) |
@@ -38,6 +38,26 @@ Das war's. Der Worldbuilder füllt den Rest mit Defaults.
 | `on_exit` | [AActionOutcome] | — | Effekte beim Verlassen |
 | `search` | [AActionOutcome] | — | Effekte bei `search` |
 | `ascii` | String / Object | — | Zustandsabhängige ASCII-Kunst (String = fester Banner, Object = CondText; siehe unten) |
+
+### Guarded Exits (`when:`, `msg:` / `message:`, Phase 2.2)
+
+Exits can be dynamically guarded by an authored predicate condition and custom failure message:
+
+```yaml
+rooms:
+  - id: courtyard
+    exits:
+      north:
+        to: throne_room
+        when:
+          has_flag: pass_granted
+        msg: "The castle guard blocks the northern archway: 'Halt! No entry without a royal permit.'"
+```
+
+- If `when:` evaluates to `true`, the player moves to the target room (`to:`).
+- If `when:` evaluates to `false`, movement is blocked, the player stays in the current room, and the custom `msg` (or `message:`, or default `move.blocked`) is displayed.
+- The failure message supports `{placeholder}` variable interpolations.
+- In protocol snapshots, guarded exits are reported as locked (`locked: true`).
 
 ### Dunkelheit (`dark`, `light_flag`, `dark_msg`, `feelable`)
 
@@ -400,6 +420,7 @@ description:
 | `{ sfx: "pfad/datei.wav" }` | PlaySfx — Sound-Effekt einmalig asynchron abspielen (Audio Phase 1) |
 | `{ music: "pfad/datei.xm" }` | PlayMusic — Hintergrundmusik-Loop starten/wechseln (Audio Phase 2; `.xm`, `.mid`, `.wav/.ogg/.mp3`) |
 | `{ stop_music: true }` | StopMusic — Hintergrundmusik stoppen (Audio Phase 2) |
+| `{ block: "reason" }`, `{ block: true }`, or `{ block: { msg: "…", turn: true } }` | Block — Veto a command before execution (Phase 2.2). Stops command action. Default: `turn: false` (no turn consumed). Opt-in `turn: true` advances turn and ticks conditions. |
 
 Flags sind für Prädikate faktisch boolesch: `has_flag` prüft, ob ein Flag gesetzt
 ist (`"true"`). Ein Vergleich gegen einen *anderen* String-Wert ist über Flags
@@ -827,7 +848,51 @@ rules:
     once: true
 ```
 
-Events: `enter room`, `leave room`, `look room`, `search room`, `take item`, `drop item`, `use item`, `state entity`, `command verb`, `custom name`, `turn`.
+Events: `enter room`, `leave room`, `look room`, `search room`, `take item`, `drop item`, `use item`, `state entity`, `command verb`, `before verb`, `custom name`, `turn`.
+
+### Command Veto and `before <verb>` Rules (Phase 2.2)
+
+Rules can intercept player commands before they are executed using `on: before <verb>` (e.g. `before take`, `before go`, `before use`, or custom verbs):
+
+```yaml
+rules:
+  - id: guard_stops_theft
+    on: before take
+    when:
+      all:
+        - var: cmd.target
+          is: "royal_crown"
+        - var: cmd.target_kind
+          is: "item"
+    effects:
+      - block: "The guard firmly grasps your arm: 'Hands off the crown!'"
+```
+
+#### Pre-Execution Command Variables
+
+Before a command is executed, the engine automatically extracts arguments and resolves the target, binding them to `cmd.*` variables:
+
+- `cmd.target` — The resolved target entity ID or raw input string (e.g. `"royal_crown"` for an item/NPC, or `"throne_room"` for a room exit).
+- `cmd.target_kind` — The type of the resolved target: `"item"`, `"npc"`, `"vehicle"`, `"room"`, `"choice"`, `"all"`, `"ambiguous"`, or `"none"`.
+- `cmd.verb` — The canonical verb name (e.g. `"take"`, `"go"`, `"use"`).
+- `cmd.raw_args` — The unparsed arguments string following the verb.
+- `cmd.count` — The number of argument tokens (integer).
+- `cmd.arg1..N` — Individual argument tokens (integer if numeric, otherwise text).
+
+#### Veto Semantics and Execution Order
+
+- All matching `before <verb>` rules execute in definition order.
+- The first `block` outcome stops command execution immediately.
+- Trailing effects within the blocking rule and any remaining `before` rules do **not** run.
+- By default, a blocked command consumes no turn (`turn: false`): the turn counter does not advance, condition timers do not tick, and patrol enemies do not move.
+- To make a blocked action consume a turn, specify `turn: true`:
+  ```yaml
+  effects:
+    - block:
+        msg: "The jammed lever resists your pull, wasting precious time!"
+        turn: true
+  ```
+
 
 ## Dynamische Ausgaenge: `set_exit` / `remove_exit` (Rogue Phase 3)
 

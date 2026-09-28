@@ -634,9 +634,11 @@ compileRoom r =
        else Left allErrs
   where
     compileExitInner :: AExitRef -> E.Exit
-    compileExitInner ref = case aeLocked ref of
-        Nothing -> E.Open (aeTarget ref)
-        Just entity -> E.Locked (aeTarget ref) entity
+    compileExitInner ref = case aeWhen ref of
+        Just p  -> E.Guarded (aeTarget ref) p (aeMsg ref)
+        Nothing -> case aeLocked ref of
+            Nothing     -> E.Open (aeTarget ref)
+            Just entity -> E.Locked (aeTarget ref) entity
 
 tagVehicleAr :: ARoom -> ARoom
 tagVehicleAr r = r { arTags = "vehicle" : arTags r }
@@ -1358,6 +1360,7 @@ allWorldPredicates :: E.GameWorld -> [E.Predicate]
 allWorldPredicates gw = concat
     [ [ p | Just p <- map dcVisible (worldDialogueChoices gw) ]
     , [ p | Just p <- map trCondition (E.triggerDefs gw) ]
+    , [ p | r <- Map.elems (E.rooms gw), E.Guarded _ p _ <- Map.elems (E.roomConnections r) ]
     , concatMap condTextPreds (map roomDescription (Map.elems (E.rooms gw)))
     , concatMap condTextPreds (map itemDescription (Map.elems (E.itemDefs gw)))
     , concatMap condTextPreds (map npcDescription (Map.elems (E.npcDefs gw)))
@@ -1838,6 +1841,7 @@ compileAActionOutcome ao = case ao of
                 _         -> E.DestDraw
         in E.AddCardToDeck cid dest
     AOShuffleDeck -> E.ShuffleDeck
+    AOBlock mMsg turn -> E.Block mMsg turn
     AOGenerateRoom rId rName rDesc fromR toDirStr retDirStr ->
         let toDir = dirOf toDirStr
             retDir = if null retDirStr
@@ -1972,15 +1976,16 @@ checkTriggerIds ts =
 checkCommandVerbRefs :: Map.Map String E.VerbDef -> [ATrigger] -> [CompileIssue]
 checkCommandVerbRefs registry triggers =
     [ ciError ("rules." ++ atId t) "UnknownCommandVerb"
-        ("rule '" ++ atId t ++ "' listens on 'command " ++ v
+        ("rule '" ++ atId t ++ "' listens on '" ++ prefix ++ " " ++ v
          ++ "', which is neither a core command nor a declared custom verb")
     | t <- triggers
-    , Just v <- [commandVerbOf (atOn t)]
+    , Just (prefix, v) <- [commandVerbOf (atOn t)]
     , not (Set.member (map toLower v) known) ]
   where
     known = Set.fromList (map (map toLower) (Verbs.coreCommandVerbs ++ Map.keys registry))
     commandVerbOf s = case words s of
-        ["command", v] -> Just v
+        ["command", v] -> Just ("command", v)
+        ["before", v]  -> Just ("before", v)
         _              -> Nothing
 
 -- | A stop `cost.item` must be a declared item id (P1-19) — otherwise the fare
@@ -1997,7 +2002,7 @@ checkStopCostItems vehicles gw =
 -- | Parse the `on` string into an EventType.
 --   Supported: "enter <room>", "leave <room>", "look <room>", "search <room>",
 --   "take <item>", "drop <item>", "use <item>", "state <entity>", "custom <name>",
---   "command <verb>", "turn".
+--   "command <verb>", "before <verb>", "turn".
 compileAtOn :: String -> Either String E.EventType
 compileAtOn s =
     case words (map toLower s) of
@@ -2012,6 +2017,7 @@ compileAtOn s =
         ["state", e]                 -> Right (E.OnStateChange e)
         ["custom", n]                -> Right (E.OnCustomEvent n)
         ["command", v]               -> Right (E.OnCommand v)
+        ["before", v]                -> Right (E.OnBefore v)
         _                            -> Left ("Unsupported trigger event '" ++ s ++ "'")
 
 -- ---------------------------------------------------------------------------
@@ -2365,6 +2371,8 @@ checkUnknownPlaceholders adv varDefs =
           concat [ [ ("rooms." ++ arId r ++ ".desc", s) | s <- condTextStrings (arTexts r) ]
                  ++ [ ("rooms." ++ arId r ++ ".ascii", s) | s <- asciiStrings (arAscii r) ]
                  ++ maybe [] (\m -> [("rooms." ++ arId r ++ ".dark_msg", m)]) (arDarkMsg r)
+                 ++ [ ("rooms." ++ arId r ++ ".exits." ++ dir ++ ".msg", m)
+                    | (dir, ref) <- Map.toList (arExits r), Just m <- [aeMsg ref] ]
                  ++ concatMap (outcomeTexts ("rooms." ++ arId r))
                               (concat (catMaybes [arOnEnter r, arOnLook r, arOnExit r, arSearch r]))
                  | r <- advRooms a ]
@@ -2412,6 +2420,7 @@ checkUnknownPlaceholders adv varDefs =
 
     outcomeTexts path ao = case ao of
         AOMessage s                -> [(path, s)]
+        AOBlock (Just s) _         -> [(path, s)]
         AOGameEnd _ (Just s)       -> [(path, s)]
         AOConditional _ ts es      -> concatMap (outcomeTexts path) (ts ++ es)
         AONarrative ls follow      -> [ (path, l) | l <- ls ] ++ concatMap (outcomeTexts path) follow

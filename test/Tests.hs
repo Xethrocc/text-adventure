@@ -920,6 +920,163 @@ testConditionJsonCompatibility = do
     r8 <- expectEqual (Just eff) (Aeson.decode (Aeson.encode eff))
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
 
+-- | Phase 2.2: OnBefore triggers run in definition order; the first Block stops
+--   the action, and remaining effects/Before-triggers do NOT run.
+testOnBeforeVetoOrderAndStop :: IO Bool
+testOnBeforeVetoOrderAndStop = do
+    let trig1 = TriggerDef "trig1" (OnBefore "take")
+                    (Just (VarIs "cmd.target" "torch"))
+                    [ Block (Just "The torch is magnetized to the table!") False
+                    , SetValue (VRFlag "trig1_extra") (EVString "ran")
+                    ]
+                    False 0
+        trig2 = TriggerDef "trig2" (OnBefore "take")
+                    (Just (VarIs "cmd.target" "torch"))
+                    [ SendMessage "Second trigger should never run"
+                    , SetValue (VRFlag "trig2_flag") (EVString "ran")
+                    ]
+                    False 0
+        st0 = initSampleGame
+        stTrigs = st0 { world = (world st0) { triggerDefs = [trig1, trig2] } }
+
+    -- 1. Execute "take torch": vetoed by trig1
+    let (stAfterTake, msgTake) = executeCommand (Interact VTake "torch") stTrigs
+    r1 <- expectEqual "The torch is magnetized to the table!\n" msgTake
+    r2 <- expectTrue "torch was not picked up" (not (hasItem "torch" stAfterTake))
+    r3 <- expectTrue "trig1 trailing effect did not run" (getFlag "trig1_extra" stAfterTake == Nothing)
+    r4 <- expectTrue "trig2 did not run" (getFlag "trig2_flag" stAfterTake == Nothing)
+
+    -- 2. Execute "take rusty sword" (not vetoed): runs normally
+    let (stAfterSword, msgSword) = executeCommand (Interact VTake "rusty sword") stTrigs
+    r5 <- expectTrue "sword was picked up" (hasItem "sword_rusty" stAfterSword)
+    r6 <- expectTrue "take sword message succeeded" ("You take the rusty sword." `isPrefixOf` msgSword)
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | Phase 2.2: cmd.target and cmd.target_kind are bound before command execution.
+testCmdTargetBinding :: IO Bool
+testCmdTargetBinding = do
+    let st0 = initSampleGame
+
+    -- 1. Go direction (with valid exit to "hallway")
+    let stGo = bindCommandVars (Go North) st0
+        varsGo = variables (save stGo)
+    r1 <- expectEqual (Just (VVText "hallway")) (Map.lookup "cmd.target" varsGo)
+    r2 <- expectEqual (Just (VVText "room")) (Map.lookup "cmd.target_kind" varsGo)
+
+    -- 2. Go direction with no exit (West has no exit from "start")
+    let stGoNone = bindCommandVars (Go West) st0
+        varsGoNone = variables (save stGoNone)
+    r3 <- expectEqual (Just (VVText "west")) (Map.lookup "cmd.target" varsGoNone)
+    r4 <- expectEqual (Just (VVText "none")) (Map.lookup "cmd.target_kind" varsGoNone)
+
+    -- 3. Interact VTake on room item "torch"
+    let stTake = bindCommandVars (Interact VTake "torch") st0
+        varsTake = variables (save stTake)
+    r5 <- expectEqual (Just (VVText "torch")) (Map.lookup "cmd.target" varsTake)
+    r6 <- expectEqual (Just (VVText "item")) (Map.lookup "cmd.target_kind" varsTake)
+
+    -- 4. Interact VLookAt on room NPC "goblin" (in hallway)
+    let stHallway = st0 { save = (save st0) { currentRoom = "hallway" } }
+        stNpc = bindCommandVars (Interact VLookAt "goblin") stHallway
+        varsNpc = variables (save stNpc)
+    r7 <- expectEqual (Just (VVText "goblin")) (Map.lookup "cmd.target" varsNpc)
+    r8 <- expectEqual (Just (VVText "npc")) (Map.lookup "cmd.target_kind" varsNpc)
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- | Phase 2.2: Guarded exit gates movement with a predicate and optional failure message.
+testGuardedExit :: IO Bool
+testGuardedExit = do
+    let customMsg = "The portcullis is down. The guard shakes his head."
+        guardedExit = Guarded "hallway" (HasFlag "guard_bribed") (Just customMsg)
+        st0 = initSampleGame
+        startRoom = (rooms (world st0)) Map.! "start"
+        startRoomWithGuarded = startRoom
+            { roomConnections = Map.insert North guardedExit (roomConnections startRoom) }
+        stGuarded = st0 { world = (world st0) { rooms = Map.insert "start" startRoomWithGuarded (rooms (world st0)) } }
+
+    -- 1. Predicate false: blocked with custom message
+    let (stBlocked, msgBlocked) = executeCommand (Go North) stGuarded
+    r1 <- expectEqual customMsg msgBlocked
+    r2 <- expectEqual "start" (currentRoom (save stBlocked))
+
+    -- 2. Predicate false with Nothing: blocked with default move.blocked message
+    let guardedExitNoMsg = Guarded "hallway" (HasFlag "guard_bribed") Nothing
+        startRoomNoMsg = startRoom
+            { roomConnections = Map.insert North guardedExitNoMsg (roomConnections startRoom) }
+        stGuardedNoMsg = st0 { world = (world st0) { rooms = Map.insert "start" startRoomNoMsg (rooms (world st0)) } }
+        (stBlockedDef, msgBlockedDef) = executeCommand (Go North) stGuardedNoMsg
+    r3 <- expectEqual (renderMsg "move.blocked" []) msgBlockedDef
+    r4 <- expectEqual "start" (currentRoom (save stBlockedDef))
+
+    -- 3. Predicate true: movement allowed
+    let stAllowed0 = setFlag "guard_bribed" "true" stGuarded
+        (stAllowed, msgAllowed) = executeCommand (Go North) stAllowed0
+    r5 <- expectEqual "hallway" (currentRoom (save stAllowed))
+    r6 <- expectTrue "move.ok message rendered" ("You move North." `isPrefixOf` msgAllowed)
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | Phase 2.2: Veto with consumesTurn=False does not advance turns or tick conditions;
+--   consumesTurn=True advances turn and ticks conditions.
+testVetoTurnCost :: IO Bool
+testVetoTurnCost = do
+    let trigFree = TriggerDef "trigFree" (OnBefore "take")
+                    (Just (VarIs "cmd.target" "heavy_rock"))
+                    [ Block (Just "Too heavy, you do not even budge it.") False ]
+                    False 0
+        trigCost = TriggerDef "trigCost" (OnBefore "take")
+                    (Just (VarIs "cmd.target" "trap_chest"))
+                    [ Block (Just "The chest shocks you, wasting your turn!") True ]
+                    False 0
+        st0 = applyCondition "poison" 5 Nothing Nothing initSampleGame
+        stWithTrigs = st0 { world = (world st0) { triggerDefs = [trigFree, trigCost] } }
+        ls0 = initLoopState stWithTrigs
+
+    -- 1. Veto with consumesTurn = False
+    let (ls1, _evs1) = applyLoopCommandEv (Interact VTake "heavy_rock") ls0
+        st1 = lsCurrent ls1
+    r1 <- expectEqual 0 (turnCount (save st1))
+    r2 <- expectEqual 5 (resolveValueRef (VRConditionTurns "poison") st1)
+
+    -- 2. Veto with consumesTurn = True
+    let (ls2, _evs2) = applyLoopCommandEv (Interact VTake "trap_chest") ls0
+        st2 = lsCurrent ls2
+    r3 <- expectEqual 1 (turnCount (save st2))
+    r4 <- expectEqual 4 (resolveValueRef (VRConditionTurns "poison") st2)
+
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 2.2: Exit, Effect, and EventType JSON round-trip and backward compatibility.
+testExitAndEffectJsonCompatibility :: IO Bool
+testExitAndEffectJsonCompatibility = do
+    -- 1. Exit round-trip
+    let exOpen = Open "hallway"
+        exLocked = Locked "hallway" "iron_key"
+        exGuarded = Guarded "hallway" (HasFlag "unlocked") (Just "Barred!")
+    r1 <- expectEqual (Just exOpen) (Aeson.decode (Aeson.encode exOpen))
+    r2 <- expectEqual (Just exLocked) (Aeson.decode (Aeson.encode exLocked))
+    r3 <- expectEqual (Just exGuarded) (Aeson.decode (Aeson.encode exGuarded))
+
+    -- 2. Legacy Exit JSON (exact decoding backward compatibility)
+    let legacyOpenJson = BLC.pack "{\"tag\":\"Open\",\"contents\":\"hallway\"}"
+        legacyLockedJson = BLC.pack "{\"tag\":\"Locked\",\"contents\":[\"hallway\",\"iron_key\"]}"
+    r4 <- expectEqual (Just exOpen) (Aeson.decode legacyOpenJson)
+    r5 <- expectEqual (Just exLocked) (Aeson.decode legacyLockedJson)
+
+    -- 3. Effect Block round-trip
+    let effBlockMsg = Block (Just "Blocked") False
+        effBlockTurn = Block Nothing True
+    r6 <- expectEqual (Just effBlockMsg) (Aeson.decode (Aeson.encode effBlockMsg))
+    r7 <- expectEqual (Just effBlockTurn) (Aeson.decode (Aeson.encode effBlockTurn))
+
+    -- 4. EventType OnBefore round-trip
+    let evBefore = OnBefore "take"
+    r8 <- expectEqual (Just evBefore) (Aeson.decode (Aeson.encode evBefore))
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
 -- | Phase 1.1: catalog invariants — no duplicate keys (Map.fromList would drop
 --   them silently), no empty keys/templates, no template containing the
 --   missing-key marker.
@@ -7530,6 +7687,12 @@ main = do
         , runTest "condition_turns ValueRef evaluation and comparisons (Phase 2.1)" testPredicateConditionTurns
         , runTest "hidden condition omitted from stats and snapshot (Phase 2.1)" testConditionHidden
         , runTest "condition JSON backward-compatible decoding and serialization (Phase 2.1)" testConditionJsonCompatibility
+        -- Phase 2.2: Veto Stufe 1 (D3) - OnBefore, Block, cmd.target, Guarded exit
+        , runTest "OnBefore veto order and stop semantics (Phase 2.2)" testOnBeforeVetoOrderAndStop
+        , runTest "cmd.target and cmd.target_kind binding (Phase 2.2)" testCmdTargetBinding
+        , runTest "Guarded exit movement gating and messages (Phase 2.2)" testGuardedExit
+        , runTest "Veto turn cost respects consumesTurn flag (Phase 2.2)" testVetoTurnCost
+        , runTest "Exit, Effect, and EventType JSON round-trip and backward compat (Phase 2.2)" testExitAndEffectJsonCompatibility
         , runTest "message catalog invariants (Phase 1.1)" testMessageCatalogInvariants
         , runTest "renderMsg substitutes and escapes args (Phase 1.1)" testRenderMsgArgs
         , runTest "output events: fragment algebra is byte-identical (Phase 1.2)" testOutputFragmentAlgebra

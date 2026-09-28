@@ -63,11 +63,19 @@ applyOutcomeWith depth salt outcome targetId state
     -- Authored YAML text: raw prose (no catalog key).
     SendMessage msg -> (state, evRaw (formatWithVars msg state), salt)
 
+    Block mMsg consumesTurn ->
+        let mEv = maybe [] (\m -> evRaw (formatWithVars m state)) mMsg
+            state' = state { lastVeto = Just consumesTurn }
+        in (state', mEv, salt)
+
     Sequence outcomes ->
-        let (st', msg', salt') = foldl' (\(st, acc, s) o ->
-                let (st2, m2, s2) = applyOutcomeWith (depth + 1) s o targetId st
-                in (st2, joinEv acc m2, s2))
-                (state, [], salt) outcomes
+        let step (st, acc, s) o =
+                case lastVeto st of
+                    Just _  -> (st, acc, s)
+                    Nothing ->
+                        let (st2, m2, s2) = applyOutcomeWith (depth + 1) s o targetId st
+                        in (st2, joinEv acc m2, s2)
+            (st', msg', salt') = foldl' step (state, [], salt) outcomes
         in (st', msg', salt')
 
     SetValue vr ev ->
@@ -469,19 +477,22 @@ fireTriggerList depth triggers state =
     foldl' fireOne (state, []) triggers
   where
     fireOne (st, acc) tr =
-        let tId = trId tr
-            tState = Map.lookup tId (triggerStates (save st))
-            alreadyFired = maybe False tsFired tState
-            cooldownRemaining = maybe 0 tsCooldownRemaining tState
-        in if trOnce tr && alreadyFired
-           then (st, acc)
-           else if cooldownRemaining > 0
-           then (decrementCooldown tId st, acc)
-           else case trCondition tr of
-                Just p  -> if evalPredicate p st
-                           then applyTrigEffects tId tr st acc
-                           else (st, acc)
-                Nothing -> applyTrigEffects tId tr st acc
+        case lastVeto st of
+            Just _  -> (st, acc)
+            Nothing ->
+                let tId = trId tr
+                    tState = Map.lookup tId (triggerStates (save st))
+                    alreadyFired = maybe False tsFired tState
+                    cooldownRemaining = maybe 0 tsCooldownRemaining tState
+                in if trOnce tr && alreadyFired
+                   then (st, acc)
+                   else if cooldownRemaining > 0
+                   then (decrementCooldown tId st, acc)
+                   else case trCondition tr of
+                        Just p  -> if evalPredicate p st
+                                   then applyTrigEffects tId tr st acc
+                                   else (st, acc)
+                        Nothing -> applyTrigEffects tId tr st acc
 
     decrementCooldown tId st =
         let newTs = Map.adjust (\s -> s { tsCooldownRemaining = max 0 (tsCooldownRemaining s - 1) }) tId (triggerStates (save st))
@@ -490,9 +501,16 @@ fireTriggerList depth triggers state =
     -- Byte-identical to the pre-1.2 string fold: every effect appended its
     -- message plus one "\n" — even when the message was empty.
     applyTrigEffects tId tr st acc =
-        let (st', msgs) = foldl' (\(s, a) e ->
-                let (s', m, _) = applyOutcomeWith (depth + 1) 0 e "" s
-                in (s', a ++ m ++ nl)) (st { save = (save st) { triggerStates = updatedTs } }, acc) (trEffects tr)
+        let step (s, a) e =
+                case lastVeto s of
+                    Just _  -> (s, a)
+                    Nothing ->
+                        let (s', m, _) = applyOutcomeWith (depth + 1) 0 e "" s
+                            effNl = case e of
+                                Block Nothing _ -> []
+                                _               -> nl
+                        in (s', a ++ m ++ effNl)
+            (st', msgs) = foldl' step (st { save = (save st) { triggerStates = updatedTs } }, acc) (trEffects tr)
             updatedTs = Map.insert tId (TriggerState True (trCooldown tr)) (triggerStates (save st))
         in (st', msgs)
 

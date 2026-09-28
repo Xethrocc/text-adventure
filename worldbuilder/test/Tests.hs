@@ -4,7 +4,7 @@
 module Main where
 
 import Control.Monad (forM, when)
-import Data.List (isInfixOf, nub)
+import Data.List (isInfixOf, nub, find)
 import qualified Data.Aeson as Aeson
 import Data.Maybe (listToMaybe)
 import qualified Data.ByteString.Lazy.Char8 as BLC
@@ -259,7 +259,7 @@ testSetExitCompiles = do
                     [ AOSetExit "loc_0" "east" "loc_b" Nothing
                     , AOSetExit "loc_0" "west" "loc_b" (Just "seal")
                     , AORemoveExit "loc_0" "north" ] }
-                , (minRoom "loc_b") { arExits = Map.fromList [("west", AExitRef "loc_0" Nothing)] }
+                , (minRoom "loc_b") { arExits = Map.fromList [("west", AExitRef "loc_0" Nothing Nothing Nothing)] }
                 ] }
     r1 <- case compileAdventure advOk of
             Left errs -> expectTrue ("set_exit compiles, got: " ++ show errs) False
@@ -307,16 +307,16 @@ testSetExitCompiles = do
 testAllDirectionsCompile :: IO Bool
 testAllDirectionsCompile = do
     let exits = Map.fromList
-            [ ("north", AExitRef "loc_a" Nothing)
-            , ("south", AExitRef "loc_a" Nothing)
-            , ("east", AExitRef "loc_a" Nothing)
-            , ("west", AExitRef "loc_a" Nothing)
-            , ("up", AExitRef "loc_a" Nothing)
-            , ("down", AExitRef "loc_a" Nothing)
-            , ("northeast", AExitRef "loc_a" Nothing)
-            , ("northwest", AExitRef "loc_a" Nothing)
-            , ("southeast", AExitRef "loc_a" Nothing)
-            , ("southwest", AExitRef "loc_a" Nothing)
+            [ ("north", AExitRef "loc_a" Nothing Nothing Nothing)
+            , ("south", AExitRef "loc_a" Nothing Nothing Nothing)
+            , ("east", AExitRef "loc_a" Nothing Nothing Nothing)
+            , ("west", AExitRef "loc_a" Nothing Nothing Nothing)
+            , ("up", AExitRef "loc_a" Nothing Nothing Nothing)
+            , ("down", AExitRef "loc_a" Nothing Nothing Nothing)
+            , ("northeast", AExitRef "loc_a" Nothing Nothing Nothing)
+            , ("northwest", AExitRef "loc_a" Nothing Nothing Nothing)
+            , ("southeast", AExitRef "loc_a" Nothing Nothing Nothing)
+            , ("southwest", AExitRef "loc_a" Nothing Nothing Nothing)
             ]
         room = (minRoom "loc_0") { arExits = exits }
         adv = minAdventure room
@@ -333,10 +333,10 @@ testAllDirectionsCompile = do
 testDirectionAliases :: IO Bool
 testDirectionAliases = do
     let exits = Map.fromList
-            [ ("ne", AExitRef "loc_a" Nothing)
-            , ("nw", AExitRef "loc_a" Nothing)
-            , ("se", AExitRef "loc_a" Nothing)
-            , ("sw", AExitRef "loc_a" Nothing)
+            [ ("ne", AExitRef "loc_a" Nothing Nothing Nothing)
+            , ("nw", AExitRef "loc_a" Nothing Nothing Nothing)
+            , ("se", AExitRef "loc_a" Nothing Nothing Nothing)
+            , ("sw", AExitRef "loc_a" Nothing Nothing Nothing)
             ]
         room = (minRoom "loc_0") { arExits = exits }
     case compileAdventure (minAdventure room) of
@@ -349,7 +349,7 @@ testDirectionAliases = do
 
 testUnknownDirectionFails :: IO Bool
 testUnknownDirectionFails = do
-    let exits = Map.fromList [("noth", AExitRef "loc_a" Nothing)]
+    let exits = Map.fromList [("noth", AExitRef "loc_a" Nothing Nothing Nothing)]
         room = (minRoom "loc_0") { arExits = exits }
     case compileAdventure (minAdventure room) of
         Left errs -> do
@@ -547,8 +547,8 @@ testDialogueChoiceStringNoQuotes = do
 testDuplicateDirectionFails :: IO Bool
 testDuplicateDirectionFails = do
     let exits = Map.fromList
-            [ ("se", AExitRef "loc_a" Nothing)
-            , ("southeast", AExitRef "loc_b" Nothing)
+            [ ("se", AExitRef "loc_a" Nothing Nothing Nothing)
+            , ("southeast", AExitRef "loc_b" Nothing Nothing Nothing)
             ]
         room = (minRoom "loc_0") { arExits = exits }
     case compileAdventure (minAdventure room) of
@@ -579,7 +579,7 @@ testDuplicateVerbKeyFails = do
 -- | Der Compile-Fehler trägt den exakten YAML-Pfad (rooms.<id>.exits.<dir>)
 testIssuePathPointsAtField :: IO Bool
 testIssuePathPointsAtField = do
-    let exits = Map.fromList [("noth", AExitRef "loc_a" Nothing)]
+    let exits = Map.fromList [("noth", AExitRef "loc_a" Nothing Nothing Nothing)]
         room = (minRoom "loc_0") { arExits = exits }
     case compileAdventure (minAdventure room) of
         Left [issue] -> do
@@ -2748,6 +2748,9 @@ tests =
     , ("warnings: keyword collision between entities in the same room (Phase 0.4)", testWarningKeywordCollision)
     , ("warnings: unknown variable placeholder in texts (Phase 0.4)", testWarningUnknownPlaceholder)
     , ("warnings: dark room dead end without feelable or lightsource (Phase 0.4)", testWarningDarkRoomDeadEnd)
+    -- Phase 2.2: Guarded exit with when-predicate and failure msg; on: before <verb> and block: outcomes
+    , ("schema: guarded exit with when predicate and msg compiles (Phase 2.2)", testGuardedExitCompilation)
+    , ("schema: on before verb and block outcomes compile (Phase 2.2)", testOnBeforeAndBlockCompilation)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -4564,9 +4567,9 @@ testWarningDarkRoomDeadEnd = do
     let rLitStart = minRoom "loc_0"
         rDarkEast = (minRoom "loc_1")
             { arTags = ["dark"]
-            , arExits = Map.fromList [("west", AExitRef "loc_0" Nothing)] }
+            , arExits = Map.fromList [("west", AExitRef "loc_0" Nothing Nothing Nothing)] }
         rLitStart' = rLitStart
-            { arExits = Map.fromList [("east", AExitRef "loc_1" Nothing)] }
+            { arExits = Map.fromList [("east", AExitRef "loc_1" Nothing Nothing Nothing)] }
         torch = (minItem "torch") { aiLocation = "loc_0", aiTags = ["lightsource"] }
         gem = (minItem "gem") { aiLocation = "loc_1" }
         advWithTorch = (minAdventure rLitStart')
@@ -4602,6 +4605,99 @@ testWarningDarkRoomDeadEnd = do
             expectTrue "empty dark room produces no dead-end warning" (null warns)
 
     pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | Phase 2.2: Guarded exit with when-predicate and failure msg compiles to E.Guarded.
+testGuardedExitCompilation :: IO Bool
+testGuardedExitCompilation = do
+    let yaml = unlines
+            [ "name: Guarded Exit Test"
+            , "start_room: room_a"
+            , "rooms:"
+            , "  - id: room_a"
+            , "    name: Room A"
+            , "    desc: First room."
+            , "    exits:"
+            , "      north:"
+            , "        to: room_b"
+            , "        when:"
+            , "          has_flag: unlocked"
+            , "        msg: 'The gate is barred.'"
+            , "  - id: room_b"
+            , "    name: Room B"
+            , "    desc: Second room."
+            , "    exits:"
+            , "      south: room_a"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ show errs
+                pure False
+            Right cr -> do
+                let rA = (E.rooms (crWorld cr)) Map.! "room_a"
+                case Map.lookup E.North (E.roomConnections rA) of
+                    Just (E.Guarded "room_b" (E.HasFlag "unlocked") (Just "The gate is barred.")) ->
+                        pure True
+                    other -> do
+                        putStrLn $ "  unexpected exit: " ++ show other
+                        pure False
+
+-- | Phase 2.2: on: before <verb> and block: outcomes compile to E.OnBefore and E.Block.
+testOnBeforeAndBlockCompilation :: IO Bool
+testOnBeforeAndBlockCompilation = do
+    let yaml = unlines
+            [ "name: Before and Block Test"
+            , "start_room: room_a"
+            , "rooms:"
+            , "  - id: room_a"
+            , "    name: Room A"
+            , "    desc: A room."
+            , "rules:"
+            , "  - id: r1"
+            , "    on: before take"
+            , "    effects:"
+            , "      - block: 'Stop right there!'"
+            , "  - id: r2"
+            , "    on: before use"
+            , "    effects:"
+            , "      - block:"
+            , "          msg: 'Jammed'"
+            , "          turn: true"
+            , "  - id: r3"
+            , "    on: before drop"
+            , "    effects:"
+            , "      - block: true"
+            , "  - id: r4"
+            , "    on: before look"
+            , "    effects:"
+            , "      - block: false"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ show errs
+                pure False
+            Right cr -> do
+                let trigs = E.triggerDefs (crWorld cr)
+                    t1 = find (\t -> E.trId t == "r1") trigs
+                    t2 = find (\t -> E.trId t == "r2") trigs
+                    t3 = find (\t -> E.trId t == "r3") trigs
+                    t4 = find (\t -> E.trId t == "r4") trigs
+                r1 <- expectEqual (Just (E.OnBefore "take")) (E.trEvent <$> t1)
+                r2 <- expectEqual (Just [E.Block (Just "Stop right there!") False]) (E.trEffects <$> t1)
+                r3 <- expectEqual (Just (E.OnBefore "use")) (E.trEvent <$> t2)
+                r4 <- expectEqual (Just [E.Block (Just "Jammed") True]) (E.trEffects <$> t2)
+                r5 <- expectEqual (Just (E.OnBefore "drop")) (E.trEvent <$> t3)
+                r6 <- expectEqual (Just [E.Block Nothing False]) (E.trEffects <$> t3)
+                r7 <- expectEqual (Just (E.OnBefore "look")) (E.trEvent <$> t4)
+                r8 <- expectEqual (Just [E.Block Nothing False]) (E.trEffects <$> t4)
+                pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
 
 -- helpers -------------------------------------------------------------------
 

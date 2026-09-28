@@ -91,6 +91,7 @@ idsFromOutcomeRoom outcome = case outcome of
     -- Rogue Phase 3: `from` (and a `set_exit` target room) must exist.
     SetExit from _ (Open to)                                    -> [from, to]
     SetExit from _ (Locked to _)                                -> [from, to]
+    SetExit from _ (Guarded to _ _)                             -> [from, to]
     RemoveExit from _                                           -> [from]
     GenerateRoom _ _ _ from _ _                                 -> if from `elem` ["current", "current_room"] then [] else [from]
     Sequence os                                              -> concatMap idsFromOutcomeRoom os
@@ -113,14 +114,16 @@ dynamicExitTargets gw =
     in Set.union direct nested
   where
     exitTarget :: Effect -> Maybe RoomID
-    exitTarget (SetExit _ _ (Open to))        = Just to
-    exitTarget (SetExit _ _ (Locked to _))    = Just to
-    exitTarget (GenerateRoom newId _ _ _ _ _) = Just newId
-    exitTarget _                              = Nothing
+    exitTarget (SetExit _ _ (Open to))          = Just to
+    exitTarget (SetExit _ _ (Locked to _))      = Just to
+    exitTarget (SetExit _ _ (Guarded to _ _))   = Just to
+    exitTarget (GenerateRoom newId _ _ _ _ _)   = Just newId
+    exitTarget _                                = Nothing
     -- effects inside containers (Conditional/Random/Narrative/ApplyCondition)
     nestedTargets :: Effect -> [RoomID]
-    nestedTargets (SetExit _ _ (Open to))        = [to]
-    nestedTargets (SetExit _ _ (Locked to _))    = [to]
+    nestedTargets (SetExit _ _ (Open to))          = [to]
+    nestedTargets (SetExit _ _ (Locked to _))      = [to]
+    nestedTargets (SetExit _ _ (Guarded to _ _))   = [to]
     nestedTargets (GenerateRoom newId _ _ _ _ _) = [newId]
     nestedTargets (Sequence os)                  = concatMap nestedTargets os
     nestedTargets (RandomChoice os)              = concatMap (nestedTargets . snd) os
@@ -335,8 +338,9 @@ allOutcomes gw = concat
 --   worldbuilder's `allWorldPredicates` so both packages see one reference set.
 allPredicates :: GameWorld -> [Predicate]
 allPredicates gw = concat
-    [ [ p | TriggerDef { trCondition = Just p } <- triggerDefs gw ]
-    , catMaybes (map dcVisible (worldDialogueChoices gw))
+     [ [ p | TriggerDef { trCondition = Just p } <- triggerDefs gw ]
+     , [ p | room <- Map.elems (rooms gw), Guarded _ p _ <- Map.elems (roomConnections room) ]
+     , catMaybes (map dcVisible (worldDialogueChoices gw))
     , concatMap (map tvWhen . ctVariants) (map roomDescription (Map.elems (rooms gw)))
     , concatMap (map tvWhen . ctVariants) (map itemDescription (Map.elems (itemDefs gw)))
     , concatMap (map tvWhen . ctVariants) (map npcDescription (Map.elems (npcDefs gw)))
