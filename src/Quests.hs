@@ -12,8 +12,7 @@ module Quests
     ) where
 
 import Types
-import Types.Output (OutputEvent (..), evRaw, joinAllEv, unlinesEv, renderEvents)
-import Messages (renderMsg, evMsg)
+import Messages (evMsg)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 

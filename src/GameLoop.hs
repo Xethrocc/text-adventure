@@ -26,8 +26,7 @@ module GameLoop
 
 import Types
 import Game
-import Types.Output (OutputEvent (..), styledText, evText, evRaw, nl, joinEv, joinAllEv, evIntercalate, unlinesEv, renderEvents, MsgPayload (..))
-import Messages (renderMsg, evMsg, msgPayload)
+import Messages (renderMsg, evMsg)
 import Effects
 import Parser
 import Verbs (verbCanonicalName)
@@ -251,11 +250,6 @@ newRngSeedIO :: IO Word64
 newRngSeedIO = do
     t <- getPOSIXTime
     pure (floor (t * 1000))
-
--- | Combine two message fragments for trigger output. Same rule as
---   'Game.joinMessages' — empty fragments contribute nothing.
-combineMessages :: String -> String -> String
-combineMessages = joinMessages
 
 -- ---------------------------------------------------------------------------
 -- Policy gates (Rogue Phase 1)

@@ -21,7 +21,6 @@ module Vehicles
     ) where
 
 import Types
-import Types.Output (OutputEvent (..), styledText, evText, evRaw, nl, joinEv, renderEvents)
 import Messages (renderMsg, evMsg)
 import Game (followParty, hasItem, consumeItem)
 import Data.List (intercalate, find, elemIndex, foldl')

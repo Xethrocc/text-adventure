@@ -13,13 +13,8 @@ import Data.Either (isLeft)
 import System.Timeout (timeout)
 import Control.Exception (bracket, evaluate, try, SomeException)
 import Game
-import Types.Output (OutputEvent (..), Style (..), StyledText (..), Span (..), Color (..),
-                      MsgPayload (..), ArtPayload (..), ArtHotspot (..),
-                      plainStyle, styledText, styleToAnsi, renderStyled, renderEvents,
-                      evText, evRaw, nl, joinEv, joinAllEv, evIntercalate, unlinesEv)
 import Vehicles
 import Effects
-import Effects (applyOutcomeEv)
 import Quests
 import Cards
 import GameLoop (LoopState (..), initLoopState, applyLoopCommand, applyLoopCommandEv,
@@ -935,9 +930,8 @@ testOutputEventKeys = do
 testOutputSideEvents :: IO Bool
 testOutputSideEvents = do
     -- room change: go north from the sample start
-    let (ls1, evs1) = applyLoopCommandEv (Go North) (initLoopState initSampleGame)
+    let (_, evs1) = applyLoopCommandEv (Go North) (initLoopState initSampleGame)
         roomEvs = [ r | EvRoomChanged r <- evs1 ]
-        _ = ls1
     r1 <- expectEqual ["hallway"] roomEvs
     -- game over + sfx/music: endGame via a GameEnd effect, audio via pending fields
     let st0 = initSampleGame

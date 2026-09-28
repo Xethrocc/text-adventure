@@ -23,8 +23,7 @@ module Combat
     ) where
 
 import Types
-import Types.Output (OutputEvent (..), styledText, evText, evRaw, nl, joinEv, unlinesEv, renderEvents, MsgPayload (..), ArtPayload (..), ArtHotspot (..))
-import Messages (renderMsg, evMsg)
+import Messages (evMsg)
 import Vehicles (getVehicleState)
 import Game (effectiveAttack, effectiveDefense, getVariable,
             resolveAsciiArt,

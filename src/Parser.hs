@@ -41,8 +41,7 @@ module Parser
 
 import Types
 import Game
-import Types.Output (OutputEvent (..), styledText, evText, evRaw, nl, nl2, joinEv, joinAllEv, evIntercalate, unlinesEv, renderEvents, MsgPayload (..), ArtPayload (..), ArtHotspot (..))
-import Messages (renderMsg, evMsg, msgPayload)
+import Messages (renderMsg, evMsg)
 import Vehicles
 import Effects
 import Quests
@@ -1291,12 +1290,6 @@ targetIsFeelable st t =
 -- | Pick the room description: resolve CondText variants against game state.
 resolveDescription :: Room -> GameState -> String
 resolveDescription room state = resolveCondText (roomDescription room) state
-
--- | Prepend state-resolved ASCII art (when present) above a message.
-withAscii :: String -> String -> String
-withAscii art msg
-    | null art  = msg
-    | otherwise = art ++ "\n" ++ msg
 
 -- | An enemy's art as a message, empty when it has none. It is rendered *after*
 --   the round's effects have been applied on purpose: a lethal hit has already

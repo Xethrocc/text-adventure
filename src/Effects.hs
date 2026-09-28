@@ -29,8 +29,7 @@ module Effects
 
 import Types
 import Game
-import Messages (renderMsg, evMsg)
-import Types.Output (OutputEvent (..), StyledText (..), styledText, evText, evRaw, nl, joinEv, joinAllEv, evIntercalate, unlinesEv, renderEvents)
+import Messages (evMsg)
 import Quests (canStartQuest, startQuest, advanceQuest, completeQuestWith)
 import Vehicles (vehicleConditionTickWith)
 import Data.List (intercalate, foldl')

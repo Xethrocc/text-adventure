@@ -21,7 +21,6 @@ module Cards
 
 import Types
 import Game
-import Types.Output (OutputEvent (..), styledText, evText, evRaw, nl, joinEv, evIntercalate, unlinesEv, renderEvents, ArtPayload (..))
 import Messages (renderMsg, evMsg)
 import Effects (applyOutcomeEv)
 import Ansi (stripAnsi)
