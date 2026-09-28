@@ -25,6 +25,7 @@ module GameLoop
   , bumpMetaRuns
   , SessionRequest (..)
   , IoRequest
+  , RequestOutcome (..)
   , SessionState (..)
   , transitionSave
   , transitionLoad
@@ -518,17 +519,13 @@ loopGame fe loopState
                     Load name -> do
                         let (loopState', reqs, msgs) = transitionLoad name loopState
                         mapM_ (feEmitLine fe) msgs
-                        if null reqs
-                            then loopGame fe loopState'
-                            else do
-                                mbLoaded <- loadGame (lsCurrent loopState) name
-                                case mbLoaded of
-                                    Just loadedState -> do
-                                        diskMeta <- loadMeta (world loadedState)
-                                        let (freshLoop, lookLines) = transitionLoadSuccess diskMeta loadedState
-                                        mapM_ (feEmitLine fe) lookLines
-                                        loopGame fe freshLoop
-                                    Nothing -> loopGame fe loopState'
+                        outcome <- firstLoadOutcome <$> mapM (executeRequest fe (lsCurrent loopState')) reqs
+                        case outcome of
+                            Just (Loaded loadedState diskMeta) -> do
+                                let (freshLoop, lookLines) = transitionLoadSuccess diskMeta loadedState
+                                mapM_ (feEmitLine fe) lookLines
+                                loopGame fe freshLoop
+                            Nothing -> loopGame fe loopState'
                     ListSaves -> do
                         let (_, reqs, _) = transitionListSaves loopState
                         mapM_ (executeRequest fe (lsCurrent loopState)) reqs
@@ -578,6 +575,14 @@ data SessionRequest
 -- | Alias for SessionRequest (Plan 1.3 terminology).
 type IoRequest = SessionRequest
 
+-- | Result of executing a session request that produces a value. Only 'ReqLoad'
+--   has one: the state read from disk plus the meta variables of that world, so
+--   the caller can feed both into 'transitionLoadSuccess' without repeating the
+--   file IO.
+data RequestOutcome
+    = Loaded GameState (Map.Map String VariableValue)
+    deriving (Show)
+
 -- | Session automaton states for the pure game loop transitions.
 data SessionState
     = SessionPlaying LoopState
@@ -587,14 +592,29 @@ data SessionState
     | SessionEnded
     deriving (Show, Eq)
 
--- | Thin IO interpreter for session requests.
-executeRequest :: Frontend -> GameState -> SessionRequest -> IO ()
-executeRequest _fe st (ReqSave slot)        = saveGame st slot
-executeRequest _fe _st (ReqLoad _slot)       = pure ()
-executeRequest _fe st ReqPersistMeta        = persistMeta st
-executeRequest fe _st ReqPause              = feReadPause fe
-executeRequest _fe _st (ReqDeleteSave slot)  = deleteSaveSlot slot
-executeRequest _fe st ReqListSaves          = listSaves (world st)
+-- | Thin IO interpreter for session requests. Requests that produce a value
+--   return it ('ReqLoad'); the rest report 'Nothing' and act through their side
+--   effect.
+executeRequest :: Frontend -> GameState -> SessionRequest -> IO (Maybe RequestOutcome)
+executeRequest _fe st (ReqSave slot)        = saveGame st slot >> pure Nothing
+executeRequest _fe st (ReqLoad slot)        = do
+    mbLoaded <- loadGame st slot
+    case mbLoaded of
+        Nothing           -> pure Nothing
+        Just loadedState  -> do
+            diskMeta <- loadMeta (world loadedState)
+            pure (Just (Loaded loadedState diskMeta))
+executeRequest _fe st ReqPersistMeta        = persistMeta st >> pure Nothing
+executeRequest fe _st ReqPause              = feReadPause fe >> pure Nothing
+executeRequest _fe _st (ReqDeleteSave slot)  = deleteSaveSlot slot >> pure Nothing
+executeRequest _fe st ReqListSaves          = listSaves (world st) >> pure Nothing
+
+-- | The first value-producing outcome of a request batch (there is at most one
+--   today — only 'ReqLoad' reports one).
+firstLoadOutcome :: [Maybe RequestOutcome] -> Maybe RequestOutcome
+firstLoadOutcome outcomes = case [o | Just o <- outcomes] of
+    (o:_) -> Just o
+    []    -> Nothing
 
 -- | Pure transition for the 'save' command. Checks the save policy
 --   (ironman savezones) and yields an IO request on success.
@@ -810,12 +830,10 @@ deathLoop fe loopState = do
                 then deathLoop fe loopState
                 else do
                     nameResult <- feReadPlain fe (lsCurrent loopState) "> "
-                    let (slot, req) = transitionDeathLoadSlot nameResult
-                    executeRequest fe (lsCurrent loopState) req
-                    mbLoaded <- loadGame (lsCurrent loopState) slot
-                    case mbLoaded of
-                        Just loadedState -> do
-                            diskMeta <- loadMeta (world loadedState)
+                    let (_, req) = transitionDeathLoadSlot nameResult
+                    outcome <- executeRequest fe (lsCurrent loopState) req
+                    case outcome of
+                        Just (Loaded loadedState diskMeta) -> do
                             let (freshLoop, lookLines) = transitionLoadSuccess diskMeta loadedState
                             mapM_ (feEmitLine fe) lookLines
                             loopGame fe freshLoop

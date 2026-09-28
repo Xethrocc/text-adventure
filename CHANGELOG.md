@@ -23,14 +23,13 @@
   [String])`, `transitionDeathCanLoad :: … -> (Bool, [String])`,
   `transitionDeathLoadSlot :: … -> (String, SessionRequest)`). Die Session-Schicht
   nutzt bewusst noch nicht den `[OutputEvent]`-Strom aus 1.2.
-- **Bekannte Abweichung (dokumentiert, nicht behoben):** `ReqLoad` führt der
-  Interpreter nicht aus (`executeRequest … (ReqLoad _) = pure ()`). Das Laden
-  passiert weiterhin inline in `loopGame` und `deathLoop` (je `loadGame` +
-  `loadMeta`), wo die Request-Liste nur als Gate dient. Save, PersistMeta,
-  Pause, DeleteSave und ListSaves laufen dagegen vollständig über den
-  Interpreter. Das Verhalten ist dadurch unverändert (E2E byte-identisch), aber
-  die Lade-Logik liegt doppelt in den Loops und müsste von einem zweiten
-  Frontend nachgebaut werden.
+- **`ReqLoad` wird jetzt wirklich ausgeführt.** `executeRequest` liefert ein
+  Ergebnis (`data RequestOutcome = Loaded GameState (Map String VariableValue)`,
+  exportiert), sodass der Interpreter den Slot selbst lädt (`loadGame` plus
+  `loadMeta` des geladenen World). Die Loops reichen die Antwort an
+  `transitionLoadSuccess` weiter — der zuvor inline duplizierte Ladeblock in
+  `loopGame` und `deathLoop` ist entfallen. Alle sechs Wünsche laufen damit über
+  denselben Ausführer, und die IO-Antwort ist Teil der testbaren Schnittstelle.
 - Spiel-Logik (Save/Load-Regeln, Death/Victory-Menü-Auswahl, Pause-Sequenzen bei Narrativen) ist vollständig ohne IO unit-testbar.
 - **7 neue Unit-Tests** in `test/Tests.hs` für alle puren Übergänge; **370 Engine-Tests** (vorher 363, alle PASS).
 - **Akzeptanzkriterium erfüllt:** alle **42 E2E-Fixtures** (`ci/e2e/*.in`) vor und nach dem Umbau gegen isolierte `TA_SAVES_DIR` durchgespielt; vollständige stdout sowie persistierte `world.json`/`save.json` sind **byte-identisch** (`diff -r` leer).
