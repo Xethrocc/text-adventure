@@ -16,20 +16,20 @@
   - `ServerMsg` mit Nachrichtenarten:
     - `events`: Liste strukturierter Ausgabeevents (`events: [OutputEvent]`)
     - `snapshot`: Kompakter Zustands-Snapshot fuer UI-HUD, Map, Quests und Dialoge
-    - `error`: Protokollfehler (`code`, `message`, `details`) mit standardisierten Fehlercodes (`ERR_VERSION_MISMATCH`, `ERR_MALFORMED`, `ERR_UNKNOWN_TYPE`, `ERR_INVALID_COMMAND`, `ERR_INTERNAL`)
-  - Strukturierte Snapshots fuer Frontends: `Snapshot`, `PlayerSnapshot` (HP, MaxHP, Location, Carried Items, Equipped Weapons/Armor/Offhand, Gold, Flags, Engine Variables), `RoomSnapshot` (ID, Name, Exits mit Zielen und Lock-Status, Items, NPCs), `ConditionSnapshot`, `QuestSnapshot`, `DialogueSnapshot` mit auswaehlbaren Optionen (`choices`), `CombatSnapshot` (Gegner-HP, Rundenstatus), `GameOverSnapshot` (Grund).
+    - `error`: Protokollfehler (`code`, `message` — ein `details`-Feld gibt es nicht) mit vier Fehlercodes als snake_case-Werte: `version_mismatch`, `unknown_type`, `malformed_payload`, `session_error`
+  - Strukturierte Snapshots fuer Frontends: `Snapshot` mit `turn`, `player`, `room`, `quests`, `dialogue`, `combat`, `game_over` und `visited_rooms`; darunter `PlayerSnapshot` (health/max_health/attack/defense, optional gold, conditions, equipment, inventory), `RoomSnapshot` (id, name, description, exits samt Lock-Status, items, npcs, vehicle), `ConditionSnapshot` (name, remaining turns), `QuestSnapshot` (aktive und abgeschlossene Quests), `DialogueSnapshot` (NPC, Knoten, Text, Auswahl-Optionen), `CombatSnapshot` (`engaged`) und `GameOverSnapshot` (`reason`, `menu`).
   - Extraktionsfunktion `makeSnapshot :: GameState -> Snapshot` fuer den Praesentations-Tier.
-  - Striktes Parsing mit Versionsvalidierung (`decodeClientMsg`, `decodeServerMsg`): abweichende oder fehlende Versionen werden mit standardisiertem Fehler `ERR_VERSION_MISMATCH` bzw. `ERR_MALFORMED` zurueckgewiesen.
+  - Striktes Parsing mit Versionsvalidierung (`decodeClientMsg`, `decodeServerMsg`): abweichende oder fehlende Versionen werden mit `version_mismatch` zurueckgewiesen, unbekannte Nachrichtentypen mit `unknown_type`, strukturell falsche Nutzlast mit `malformed_payload`.
 - **Deterministische Golden-Tests:**
   - `encodeSorted` garantiert stabile Bytes auf allen Verschachtelungsebenen via `aeson-pretty` (`confCompare = compare`).
   - 9 Golden-JSON-Referenzdateien in `test/golden/protocol/` (`client_command.json`, `client_choose.json`, `client_continue.json`, `client_load_world.json`, `client_save.json`, `client_load.json`, `server_events.json`, `server_snapshot.json`, `server_error.json`).
-  - Deterministische Byte-Stabilitaet im Test explizit belegt (`run1 == run2` und Byte-Vergleich gegen Plattendateien).
+  - Byte-Stabilitaet belegt der Test durch den Vergleich der kodierten Bytes gegen die 9 Golden-Dateien auf der Platte (Determinismus ueber Prozessgrenzen hinweg). Der zusaetzliche `run1 == run2`-Vergleich im Test kodiert dagegen **nicht** zweimal — beide Bindungen teilen denselben Thunk — und traegt nichts bei.
 - **Aeson-Serialisierung fuer alle 12 Ausgabeevents** (`src/Types/Output.hs`):
   - `ToJSON` und `FromJSON` Instanzen fuer `OutputEvent` (`message`, `text`, `art`, `anim`, `sfx`, `music_start`, `music_stop`, `room_changed`, `quest_update`, `dialogue`, `combat`, `game_over`).
   - Serialisierung fuer `Style`, `Span`, `StyledText`, `Color`, `MsgPayload`, `ArtHotspot` und `ArtPayload`.
 - **Session-Uebergangs-Bruecke (Constraint 6):**
   - Session-Uebergaenge aus Phase 1.3 (`transitionSave`, `transitionLoad`, `transitionRestart`, `transitionGameOver`, `advanceNarrative`) liefern intern `[String]`.
-  - An der Protokollgrenze werden diese Zeilen durch `sessionLinesToEvents :: [String] -> [OutputEvent]` als `EvText (plainStyledText line)` eingekleidet, sodass das Wire-Format einheitlich `[OutputEvent]` bleibt (dokumentiert in `docs/protocol-v1.md`).
+  - An der Protokollgrenze werden diese Zeilen durch `sessionLinesToEvents :: [String] -> [OutputEvent]` als `EvText (styledText line)` eingekleidet, sodass das Wire-Format einheitlich `[OutputEvent]` bleibt (dokumentiert in `docs/protocol-v1.md`).
 - **Protokoll-Spezifikation** (`docs/protocol-v1.md`):
   - Vollstaendiges englisches Referenzdokument fuer Frontend- und Backend-Autoren (Nachrichten, vollstaendiger 12-Event-Katalog, Snapshot-Schema, Fehlercodes und Versionierungsrichtlinien).
 - **Test- und Build-Nachweise:**
