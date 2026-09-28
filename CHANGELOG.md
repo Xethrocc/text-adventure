@@ -10,8 +10,8 @@
   - `Types.Vehicles` (`src/Types/Vehicles.hs`): Fahrzeugtypen, Haltestellen, Kraftstoff-Spezifikationen, `VehicleDef` und `VehicleState`.
   - `Types.Combat` (`src/Types/Combat.hs`): Kampfsysteme (`CombatProfile`, `NarrativeCombat`, `TacticalCombat`), Kampfbildschirme, Initiativregeln, Aktionen und Spieler-Fähigkeiten (`PlayerAbility`).
 - **Re-Export-Fassade:** `src/Types.hs` bleibt als Re-Export-Fassade erhalten (`module Types (module Types.Core, module Types.Cards, module Types.Vehicles, module Types.Combat)`). Alle bisherigen Konsumenten können weiterhin unverändert `import Types` verwenden.
-- **Zyklusfreie Boot-Auflösung:** Die gegenseitige Rekursion zwischen `Types.Core` und den spezialisierten Modulen wird sauber über `src/Types/Core.hs-boot` aufgelöst.
-- **Vollständige Semantik- und Format-Invarianz:** Keine veränderten JSON-Formate, Savegame-Strukturen oder Checksummen; alle 41 E2E-Playthroughs und 354+ Engine-Tests laufen unverändert durch.
+- **Zyklusauflösung über eine Boot-Datei:** Die gegenseitige Rekursion zwischen `Types.Core` und den spezialisierten Modulen wird über `src/Types/Core.hs-boot` plus drei `import {-# SOURCE #-}` aufgelöst. Das kompiliert korrekt, hat aber Kosten: über eine `SOURCE`-Grenze inlinet GHC nicht, und die Boot-Datei muss bei Änderungen an `Effect`, `AsciiArt` oder den ID-Aliasen manuell synchron gehalten werden. Zyklusfreie Alternative für später: ein `Types.Base` mit nur IDs/`Effect`/`AsciiArt`, das Core und die Submodule gemeinsam importieren. Als Folge der Boot-Auflösung wurde `noopEffect` als Alias ergänzt (Konstruktoren sind über eine Boot-Datei nicht verfügbar) — keine Verhaltensänderung.
+- **Vollständige Semantik- und Format-Invarianz:** Keine veränderten JSON-Formate, Savegame-Strukturen oder Checksummen; alle 41 E2E-Playthroughs und **357 Engine-Tests** (357 PASS / 0 FAIL, vor dem Split wie danach gemessen) laufen unverändert durch. Unabhängig belegt: `world.json`/`save.json` von `thefog` und `world.json` von `demo` sind gegen einen Worktree auf `f941b46` byte-identisch.
 
 ### Aufräumen: sieben ungenutzte Engine-Funktionen entfernt (Phase 0.5)
 
