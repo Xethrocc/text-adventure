@@ -21,6 +21,7 @@ module Cards
 
 import Types
 import Game
+import Messages (renderMsg)
 import Effects (applyOutcome)
 import Ansi (stripAnsi)
 import Data.Char (toLower)
@@ -63,7 +64,8 @@ checkResourceCosts costs st =
             let (_, cur) = resolveVar res
             in if cur >= req
                then Right ()
-               else Left ("Not enough " ++ res ++ " (need " ++ show req ++ ", have " ++ show cur ++ ").")
+               else Left (renderMsg "card.cost_insufficient"
+                            [("res", res), ("need", show req), ("have", show cur)])
     in case mapM_ checkOne costList of
         Left err -> Left err
         Right () ->
@@ -85,38 +87,38 @@ validateTarget targetReq mTarget st =
             Right ("player", setVariableChecked "cmd.target" (VVText "player") st)
         TargetAllEnemies ->
             if null livingEnemies
-            then Left "There are no living enemies here to target."
+            then Left (renderMsg "card.no_enemies" [])
             else Right ("all enemies", setVariableChecked "cmd.target" (VVText "all") st)
         TargetSingleEnemy ->
             if null livingEnemies
-            then Left "There are no living enemies here to target."
+            then Left (renderMsg "card.no_enemies" [])
             else case mTarget of
                 Nothing ->
                     if length livingEnemies == 1
                     then let sole = head livingEnemies
                          in Right (npcName sole, setVariableChecked "cmd.target" (VVText (npcId sole)) st)
-                    else Left ("Please specify a target (e.g. 'play <n> <target>'). Available: "
-                               ++ intercalate ", " (map npcName livingEnemies))
+                    else Left (renderMsg "card.specify_target"
+                                [("names", intercalate ", " (map npcName livingEnemies))])
                 Just tStr ->
                     let matches = filter (matchesNPCTarget tStr) livingEnemies
                     in case matches of
-                        [] -> Left ("No living enemy matches '" ++ tStr ++ "'.")
+                        [] -> Left (renderMsg "card.no_match" [("target", tStr)])
                         (targetNpc:_) ->
                             Right (npcName targetNpc, setVariableChecked "cmd.target" (VVText (npcId targetNpc)) st)
 
 -- | Play a card from hand by 1-based index, with optional target.
 playCard :: Int -> Maybe String -> GameState -> CommandResult
 playCard idx mTarget st = case deckState (save st) of
-    Nothing -> (st, "You don't have a deck to play cards from.")
+    Nothing -> (st, renderMsg "card.no_deck_play" [])
     Just ds ->
         let curHand = hand ds
         in if idx < 1 || idx > length curHand
-           then (st, "Invalid card number " ++ show idx ++ ". You have "
-                     ++ show (length curHand) ++ " card(s) in hand.")
+           then (st, renderMsg "card.invalid_number"
+                     [("idx", show idx), ("n", show (length curHand))])
            else
                let cId = curHand !! (idx - 1)
                in case Map.lookup cId (cardDefs (world st)) of
-                   Nothing -> (st, "Unknown card: '" ++ cId ++ "'.")
+                   Nothing -> (st, renderMsg "card.unknown" [("id", cId)])
                    Just card ->
                        case validateTarget (cardTarget card) mTarget st of
                            Left err -> (st, err)
@@ -137,9 +139,9 @@ playCard idx mTarget st = case deckState (save st) of
                                                let (s', m) = applyOutcome eff "" sAcc
                                                in (s', if null m then msgsAcc else msgsAcc ++ [m])
                                                ) (stAfterCard, []) (cardEffects card)
-                                           header = "You play " ++ cardName card
-                                                    ++ (if null targetLabel then "" else " on " ++ targetLabel)
-                                                    ++ (if cardExhaust card then " (Exhausted)." else ".")
+                                           header = renderMsg "card.play" [("card", cardName card)]
+                                                    ++ (if null targetLabel then "" else renderMsg "card.play.on" [("target", targetLabel)])
+                                                    ++ (if cardExhaust card then renderMsg "card.play.exhausted" [] else ".")
                                            allMsg = intercalate "\n" (filter (not . null) (header : effectMsgs))
                                        in (stFinal, allMsg)
 
@@ -150,7 +152,7 @@ playCard idx mTarget st = case deckState (save st) of
 --   - Draws cards (default: 5 or player.draw_per_turn)
 endTurn :: GameState -> CommandResult
 endTurn st = case deckState (save st) of
-    Nothing -> (st, "You don't have a deck to end your turn.")
+    Nothing -> (st, renderMsg "card.no_deck_endturn" [])
     Just _ds ->
         let st1 = discardHand st
             st2 = setVariableChecked "player.block" (VVInt 0)
@@ -172,8 +174,7 @@ endTurn st = case deckState (save st) of
                     Just (VVInt d) -> d
                     _              -> 5
             st4 = drawCards drawCount st3
-            msg = "Turn ended. Energy restored to " ++ show maxE
-                  ++ ". Drew " ++ show drawCount ++ " cards."
+            msg = renderMsg "card.turn_ended" [("max", show maxE), ("n", show drawCount)]
         in (st4, msg)
 
 -- | Visible width of a string, ignoring ANSI CSI escape sequences.
@@ -352,12 +353,12 @@ renderDeckCombatHud st ds =
 -- | Display the current hand in horizontal tile layout with combat HUD.
 showHand :: GameState -> CommandResult
 showHand st = case deckState (save st) of
-    Nothing -> (st, "You don't have a deck.")
+    Nothing -> (st, renderMsg "card.no_deck" [])
     Just ds ->
         let curHand = hand ds
             hudLines = renderDeckCombatHud st ds
         in if null curHand
-           then (st, intercalate "\n" (hudLines ++ ["Your hand is empty."]))
+           then (st, intercalate "\n" (hudLines ++ [renderMsg "card.hand_empty" []]))
            else
                let lookupCardBox idx cId = case Map.lookup cId (cardDefs (world st)) of
                        Just c  -> renderCardBox idx c
@@ -377,7 +378,7 @@ showHand st = case deckState (save st) of
 -- | Display draw pile summary.
 showDeck :: GameState -> CommandResult
 showDeck st = case deckState (save st) of
-    Nothing -> (st, "You don't have a deck.")
+    Nothing -> (st, renderMsg "card.no_deck" [])
     Just ds ->
         let curDraw = drawPile ds
             curHand = hand ds
@@ -388,27 +389,29 @@ showDeck st = case deckState (save st) of
                 Just c  -> cardName c
                 Nothing -> cId
             cardCounts = Map.toList (Map.fromListWith (+) [(nameOf cId, 1 :: Int) | cId <- curDraw])
-            cardLines = [ "  - " ++ name ++ (if cnt > 1 then " (x" ++ show cnt ++ ")" else "")
+            cardLines = [ renderMsg "card.pile_line" [("name", name)]
+                            ++ (if cnt > 1 then renderMsg "card.count_suffix" [("count", show cnt)] else "")
                         | (name, cnt) <- cardCounts ]
-            header = "=== Draw Pile (" ++ show (length curDraw) ++ "/" ++ show total ++ " cards) ==="
-            body = if null cardLines then ["  (Empty)"] else cardLines
-            footer = "Hand: " ++ show (length curHand)
-                     ++ " | Discard: " ++ show (length curDisc)
-                     ++ " | Exhaust: " ++ show (length curExh)
+            header = renderMsg "card.draw_pile_header" [("n", show (length curDraw)), ("total", show total)]
+            body = if null cardLines then [renderMsg "card.pile_empty" []] else cardLines
+            footer = renderMsg "card.piles_footer"
+                     [("hand", show (length curHand)), ("discard", show (length curDisc)),
+                      ("exhaust", show (length curExh))]
         in (st, intercalate "\n" ([header] ++ body ++ [footer]))
 
 -- | Display discard pile contents.
 showDiscard :: GameState -> CommandResult
 showDiscard st = case deckState (save st) of
-    Nothing -> (st, "You don't have a deck.")
+    Nothing -> (st, renderMsg "card.no_deck" [])
     Just ds ->
         let curDisc = discardPile ds
             nameOf cId = case Map.lookup cId (cardDefs (world st)) of
                 Just c  -> cardName c
                 Nothing -> cId
             cardCounts = Map.toList (Map.fromListWith (+) [(nameOf cId, 1 :: Int) | cId <- curDisc])
-            cardLines = [ "  - " ++ name ++ (if cnt > 1 then " (x" ++ show cnt ++ ")" else "")
+            cardLines = [ renderMsg "card.pile_line" [("name", name)]
+                            ++ (if cnt > 1 then renderMsg "card.count_suffix" [("count", show cnt)] else "")
                         | (name, cnt) <- cardCounts ]
-            header = "=== Discard Pile (" ++ show (length curDisc) ++ " cards) ==="
-            body = if null cardLines then ["  (Empty)"] else cardLines
+            header = renderMsg "card.discard_pile_header" [("n", show (length curDisc))]
+            body = if null cardLines then [renderMsg "card.pile_empty" []] else cardLines
         in (st, intercalate "\n" ([header] ++ body))
