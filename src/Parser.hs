@@ -41,6 +41,7 @@ module Parser
 
 import Types
 import Game
+import Messages (renderMsg)
 import Vehicles
 import Effects
 import Quests
@@ -468,19 +469,21 @@ executeCommand (Go dir) state
     | canMove dir state = case getExitInDirection dir state of
         Just (Open destinationRoom) ->
             let (st', hookMsg) = transitionToRoom destinationRoom (clearActiveDialogue state)
-                fullMsg = intercalate "\n" (filter (not . null) ["You move " ++ show dir ++ ".", hookMsg])
+                fullMsg = intercalate "\n" (filter (not . null)
+                             [renderMsg "move.ok" [("dir", show dir)], hookMsg])
             in (st', fullMsg)
         Just (Locked destinationRoom entityTarget)
             | getEntityState entityTarget state == Just "unlocked" ->
                 let (st', hookMsg) = transitionToRoom destinationRoom (clearActiveDialogue state)
-                    fullMsg = intercalate "\n" (filter (not . null) ["You move " ++ show dir ++ ".", hookMsg])
+                    fullMsg = intercalate "\n" (filter (not . null)
+                                 [renderMsg "move.ok" [("dir", show dir)], hookMsg])
                 in (st', fullMsg)
-            | otherwise -> (state, "The door is locked.")
-        Nothing -> (state, "There's nothing in that direction.")
-    | otherwise = (state, "You can't go that way.")
+            | otherwise -> (state, renderMsg "move.door_locked" [])
+        Nothing -> (state, renderMsg "move.no_exit" [])
+    | otherwise = (state, renderMsg "move.blocked" [])
 
 executeCommand Look state = case getCurrentRoom state of
-    Nothing -> (state, "You're in a void. There's nothing here.")
+    Nothing -> (state, renderMsg "look.void" [])
     Just room
         | isDark room state ->
             (state, darkRoomMessage room)
@@ -498,17 +501,17 @@ executeCommand Look state = case getCurrentRoom state of
                 livingHere = [ n | n <- npcsHere, not (isDeadNPC (npcId n) state) ]
                 corpsesHere = [ n | n <- npcsHere, isDeadNPC (npcId n) state ]
                 itemDesc = if null itemsInRoom
-                           then "\nYou see nothing of interest."
-                           else "\nYou see: " ++ intercalate ", " (map itemName itemsInRoom) ++ "."
+                           then renderMsg "look.see_nothing" []
+                           else renderMsg "look.items" [("names", intercalate ", " (map itemName itemsInRoom))]
                 npcDesc = if null livingHere
                           then ""
-                          else "\nAlso here: " ++ intercalate ", " (map npcName livingHere) ++ "."
+                          else renderMsg "look.npcs" [("names", intercalate ", " (map npcName livingHere))]
                 -- A body is nobody to talk to, but it is still lying there: it
                 -- gets its own line, so `look at <name>` has something to point at.
                 corpseDesc = case map npcName corpsesHere of
                     []  -> ""
-                    [c] -> "\nThe body of " ++ c ++ " lies here."
-                    cs  -> "\nBodies lie here: " ++ intercalate ", " cs ++ "."
+                    [c] -> renderMsg "look.corpse_one" [("name", c)]
+                    cs  -> renderMsg "look.corpse_many" [("names", intercalate ", " cs)]
                 (state', hookMsg) = runRoomHook roomOnLook (currentRoom (save state)) state
                 vehicleMsg = vehicleLookAddon state'
                 asciiArt = renderArtForLook (roomAscii room) state
@@ -519,8 +522,8 @@ executeCommand Look state = case getCurrentRoom state of
 executeCommand Inventory state =
     let invItems = getItemsInLocation (CarriedBy ActorPlayer) state
     in if null invItems
-       then (state, "You're not carrying anything.")
-       else (state, "Inventory: " ++ intercalate ", " (map itemName invItems))
+       then (state, renderMsg "inv.empty" [])
+       else (state, renderMsg "inv.header" [("items", intercalate ", " (map itemName invItems))])
 
 executeCommand StatsCmd state =
     let p = player (save state)
@@ -528,22 +531,22 @@ executeCommand StatsCmd state =
         skillList = Map.toList (playerSkills p)
         skillDesc = if null skillList
                     then ""
-                    else "Skills: " ++ intercalate ", " [n ++ " " ++ show v | (n, v) <- skillList] ++ "\n"
+                    else renderMsg "stats.skills" [("skills", intercalate ", " [n ++ " " ++ show v | (n, v) <- skillList])]
         condDesc = if null condList
                    then ""
-                   else "Conditions: " ++ intercalate ", "
+                   else renderMsg "stats.conditions" [("conds", intercalate ", "
                         [ condName c ++ " (" ++ show (condRemaining c) ++ " turns)"
-                        | c <- condList ] ++ "\n"
+                        | c <- condList ])]
         msg = unlines
-            [ "Health:  " ++ show (playerHealth p) ++ " / " ++ show (effectiveMaxHealth state)
-            , "Attack:  " ++ show (effectiveAttack state) ++ " (base " ++ show (playerAttack p) ++ ")"
-            , "Defense: " ++ show (effectiveDefense state) ++ " (base " ++ show (playerDefense p) ++ ")"
+            [ renderMsg "stats.health" [("hp", show (playerHealth p)), ("max", show (effectiveMaxHealth state))]
+            , renderMsg "stats.attack" [("atk", show (effectiveAttack state)), ("base", show (playerAttack p))]
+            , renderMsg "stats.defense" [("def", show (effectiveDefense state)), ("base", show (playerDefense p))]
             , skillDesc ++ condDesc ++ equipmentSummary state
             ]
     in (state, msg)
 
 executeCommand JournalCmd state = (state, journalText state)
-executeCommand Undo state = (state, "Nothing to undo.")
+executeCommand Undo state = (state, renderMsg "undo.nothing" [])
 
 -- Card & Deck commands (Phase 2B)
 executeCommand (PlayCardCmd idx target) state = playCard idx target state
@@ -554,22 +557,22 @@ executeCommand EndTurnCmd state = endTurn state
 
 executeCommand (ChooseCmd idx) state =
     case activeDialogue (save state) of
-        Nothing -> (state, "You are not in a conversation right now.")
+        Nothing -> (state, renderMsg "dialogue.none_active" [])
         Just nId -> case Map.lookup nId (npcDefs (world state)) of
-            Nothing -> (clearActiveDialogue state, "The person you were talking to is gone.")
+            Nothing -> (clearActiveDialogue state, renderMsg "dialogue.partner_gone" [])
             Just npc ->
                 let st = Map.lookup nId (npcStates (save state))
                     status = maybe "alive" npcStatus st
                 in case Map.lookup status (npcDialogueTrees npc) of
-                    Nothing -> (clearActiveDialogue state, npcName npc ++ " has nothing more to say.")
+                    Nothing -> (clearActiveDialogue state, renderMsg "dialogue.nothing_more" [("name", npcName npc)])
                     Just tree ->
                         let nodeId = fromMaybe (dtEntry tree) (st >>= npcDialogueNode)
                         in case Map.lookup nodeId (dtNodes tree) of
-                            Nothing -> (clearActiveDialogue state, npcName npc ++ " has nothing more to say.")
+                            Nothing -> (clearActiveDialogue state, renderMsg "dialogue.nothing_more" [("name", npcName npc)])
                             Just node ->
                                 let choices = visibleChoices state node
                                 in if idx < 1 || idx > length choices
-                                   then (state, "Invalid choice. Please select a number from 1 to " ++ show (length choices) ++ ".")
+                                   then (state, renderMsg "choice.invalid" [("max", show (length choices))])
                                    else
                                        let choice = choices !! (idx - 1)
                                            outcome = dcOutcome choice
@@ -579,7 +582,7 @@ executeCommand (ChooseCmd idx) state =
                                                -- Dialogue ends
                                                let stateFinal = clearActiveDialogue (setDialogueNode nId Nothing stateAfterOutcome)
                                                    msg = if null outcomeMsg
-                                                         then "Dialogue ended."
+                                                         then renderMsg "dialogue.ended" []
                                                          else outcomeMsg
                                                in (stateFinal, msg)
                                            Just nextNodeId ->
@@ -599,8 +602,8 @@ executeCommand (EquipCmd targetStr) state =
                 Just item ->
                     case equipItem iid stateWithVars of
                         Left err     -> (stateWithVars, err)
-                        Right state' -> (state', "You equip the " ++ itemName item ++ ".")
-                Nothing -> (stateWithVars, "You don't have '" ++ targetStr ++ "'.")
+                        Right state' -> (state', renderMsg "equip.ok" [("item", itemName item)])
+                Nothing -> (stateWithVars, renderMsg "target.not_carried" [("target", targetStr)])
         TargetAmbiguous ids ->
             let equippableIds = filter (\i -> maybe False (isJust . itemEquipSlot) (Map.lookup i (itemDefs (world stateWithVars)))) ids
             in case equippableIds of
@@ -609,11 +612,11 @@ executeCommand (EquipCmd targetStr) state =
                         Just item ->
                             case equipItem singleEquippable stateWithVars of
                                 Left err     -> (stateWithVars, err)
-                                Right state' -> (state', "You equip the " ++ itemName item ++ ".")
+                                Right state' -> (state', renderMsg "equip.ok" [("item", itemName item)])
                         Nothing -> interactAmbiguous ids stateWithVars
                 (e1:e2:es) -> interactAmbiguous (e1:e2:es) stateWithVars
                 []         -> interactAmbiguous ids stateWithVars
-        _                   -> (stateWithVars, "You don't have '" ++ targetStr ++ "'.")
+        _                   -> (stateWithVars, renderMsg "target.not_carried" [("target", targetStr)])
 
 executeCommand (UnequipCmd targetStr) state =
     let stateWithVars = bindCommandVars (UnequipCmd targetStr) state
@@ -621,26 +624,26 @@ executeCommand (UnequipCmd targetStr) state =
         TargetItem iid ->
             case Map.lookup iid (itemDefs (world stateWithVars)) of
                 Just item
-                    | isEquipped iid stateWithVars -> (unequipItem iid stateWithVars, "You unequip the " ++ itemName item ++ ".")
-                    | otherwise                    -> (stateWithVars, "The " ++ itemName item ++ " is not equipped.")
-                Nothing -> (stateWithVars, "You don't have '" ++ targetStr ++ "'.")
+                    | isEquipped iid stateWithVars -> (unequipItem iid stateWithVars, renderMsg "unequip.ok" [("item", itemName item)])
+                    | otherwise                    -> (stateWithVars, renderMsg "unequip.not_equipped" [("item", itemName item)])
+                Nothing -> (stateWithVars, renderMsg "target.not_carried" [("target", targetStr)])
         TargetAmbiguous ids ->
             let equippedIds = filter (`isEquipped` stateWithVars) ids
             in case equippedIds of
                 [singleEquipped] ->
                     case Map.lookup singleEquipped (itemDefs (world stateWithVars)) of
-                        Just item -> (unequipItem singleEquipped stateWithVars, "You unequip the " ++ itemName item ++ ".")
+                        Just item -> (unequipItem singleEquipped stateWithVars, renderMsg "unequip.ok" [("item", itemName item)])
                         Nothing   -> interactAmbiguous ids stateWithVars
                 (e1:e2:es)       -> interactAmbiguous (e1:e2:es) stateWithVars
                 []               -> interactAmbiguous ids stateWithVars
-        _                   -> (stateWithVars, "You don't have '" ++ targetStr ++ "'.")
+        _                   -> (stateWithVars, renderMsg "target.not_carried" [("target", targetStr)])
 
 executeCommand UnequipAllCmd state
-    | Map.null (equipment (save state)) = (state, "You have nothing equipped.")
-    | otherwise = (state { save = (save state) { equipment = Map.empty } }, "You remove all equipment.")
+    | Map.null (equipment (save state)) = (state, renderMsg "equip.nothing" [])
+    | otherwise = (state { save = (save state) { equipment = Map.empty } }, renderMsg "unequip.all" [])
 
 executeCommand TakeAll state = case getCurrentRoom state of
-    Nothing -> (state, "There's nothing here to take.")
+    Nothing -> (state, renderMsg "take.none_here" [])
     Just room ->
         let inRoom = getItemsInLocation (InRoom (currentRoom (save state))) state
             -- Phase 0.3 (B3): in the dark only feelable items can be picked up.
@@ -648,7 +651,7 @@ executeCommand TakeAll state = case getCurrentRoom state of
         in if null roomItems
            then (state, if isDark room state
                         then darkRoomMessage room
-                        else "There's nothing here to take.")
+                        else renderMsg "take.none_here" [])
            else let (finalState, msgs) = foldl' (\(s, ms) item ->
                             let (s', m) = executeCommand (Interact VTake (itemId item)) s
                             in (s', ms ++ [m])) (state, []) roomItems
@@ -657,7 +660,7 @@ executeCommand TakeAll state = case getCurrentRoom state of
 executeCommand DropAll state =
     let invItems = getItemsInLocation (CarriedBy ActorPlayer) state
     in if null invItems
-       then (state, "You're not carrying anything to drop.")
+       then (state, renderMsg "drop.nothing" [])
        else let (finalState, msgs) = foldl' (\(s, ms) item ->
                     let (s', m) = executeCommand (Interact VDrop (itemId item)) s
                     in (s', ms ++ [m])) (state, []) invItems
@@ -670,7 +673,7 @@ executeCommand (CompoundCommand cmds) state =
     ) (state, "") cmds
 
 executeCommand (SearchCmd maybeTarget) state = case getCurrentRoom state of
-    Nothing -> (state, "You're in a void. There's nothing to search.")
+    Nothing -> (state, renderMsg "search.void" [])
     Just room
         | isDark room state
         , not (maybe False (targetIsFeelable state) maybeTarget) ->
@@ -688,20 +691,20 @@ executeCommand (SearchCmd maybeTarget) state = case getCurrentRoom state of
                                 currentStatus = maybe "unknown" itemStatus (Map.lookup iId (itemStates (save state)))
                             in case Map.lookup (VSearch, currentStatus) (itemVerbMap item) of
                                 Just outcome -> applyOutcome outcome iId state
-                                Nothing -> (state, "You find nothing special about the " ++ itemName item ++ ".")
+                                Nothing -> (state, renderMsg "search.nothing_item" [("item", itemName item)])
                         Nothing -> case find (matchesNPCTarget targetStr) roomNPCs of
                             Just npc ->
                                 let nId = npcId npc
                                     currentStatus = maybe "unknown" npcStatus (Map.lookup nId (npcStates (save state)))
                                 in case Map.lookup (VSearch, currentStatus) (npcVerbMap npc) of
                                     Just outcome -> applyOutcome outcome nId state
-                                    Nothing -> (state, "You find nothing on " ++ npcName npc ++ ".")
-                            Nothing -> (state, "You don't see '" ++ targetStr ++ "' here.")
+                                    Nothing -> (state, renderMsg "search.nothing_npc" [("npc", npcName npc)])
+                            Nothing -> (state, renderMsg "target.not_seen" [("target", targetStr)])
 
 executeCommand (WatchCmd maybeTarget) state = case getCurrentRoom state of
-    Nothing -> (state, "You're in a void. There's nothing to watch.")
+    Nothing -> (state, renderMsg "watch.void" [])
     Just room
-        | isDark room state -> (state, fromMaybe "It's pitch black. You can't watch anything." (roomDarkMsg room))
+        | isDark room state -> (state, fromMaybe (renderMsg "watch.dark" []) (roomDarkMsg room))
         | otherwise -> case maybeTarget of
             Nothing -> watchArt (roomAscii room) "the room"
             Just targetStr ->
@@ -709,32 +712,32 @@ executeCommand (WatchCmd maybeTarget) state = case getCurrentRoom state of
                     Just item -> watchArt (itemAscii item) (itemName item)
                     Nothing -> case find (matchesNPCTarget targetStr) roomNPCs of
                         Just npc -> watchArt (npcAscii npc) (npcName npc)
-                        Nothing  -> (state, "You don't see '" ++ targetStr ++ "' here.")
+                        Nothing  -> (state, renderMsg "target.not_seen" [("target", targetStr)])
   where
     allReachableItems = getItemsInLocation (InRoom (currentRoom (save state))) state
                         ++ getItemsInLocation (CarriedBy ActorPlayer) state
     roomNPCs = getNPCsInRoom (currentRoom (save state)) state
     watchArt art label = case asciiPlayback art state of
-        ([], _)            -> (state, "There is nothing to watch about " ++ label ++ ".")
+        ([], _)            -> (state, renderMsg "watch.nothing" [("label", label)])
         (frames, micros) ->
             (state { pendingAnimation = Just (frames, micros) },
-             "Watching " ++ label ++ "...")
+             renderMsg "watch.start" [("label", label)])
 
 executeCommand MapCmd state = case getCurrentRoom state of
-    Nothing -> (state, "You're in a void. There's nothing to map.")
+    Nothing -> (state, renderMsg "map.void" [])
     Just room
-        | isDark room state -> (state, fromMaybe "It's pitch black. You can't see a map." (roomDarkMsg room))
+        | isDark room state -> (state, fromMaybe (renderMsg "map.dark" []) (roomDarkMsg room))
         | otherwise ->
             let art = roomAscii room
                 spots = aaHotspots art
             in if null spots
-               then (state, "There is nothing marked on the map.")
+               then (state, renderMsg "map.no_marks" [])
                else
                    let numbered = foldl' (\s (i, h) -> replaceChar (hsGlyph h) (show i) s)
                                           (resolveAsciiArt art state) (zip [1 :: Int ..] spots)
-                       legend = [ "  " ++ show i ++ ": " ++ hotspotLabel state h
+                       legend = [ renderMsg "map.legend_line" [("i", show i), ("label", hotspotLabel state h)]
                                 | (i, h) <- zip [1 :: Int ..] spots ]
-                   in (state, numbered ++ "\n\nLegend:\n" ++ unlines legend)
+                   in (state, numbered ++ renderMsg "map.legend_header" [] ++ unlines legend)
 
 executeCommand (ActionWithArgs verb args) state =
     let stateWithVars = bindCommandVars (ActionWithArgs verb args) state
@@ -801,7 +804,7 @@ executeCommand (InteractWith VUseOn itemStr entityStr) state =
         entityIsFeelable = any (\i -> matchesItemTarget entityTarget i && itemIsFeelable i)
                                (getItemsInLocation (InRoom (currentRoom (save state))) state)
     in case maybeItem of
-        Nothing -> (state, "You need to be carrying '" ++ itemStr ++ "' to use it.")
+        Nothing -> (state, renderMsg "use.not_carried" [("item", itemStr)])
         Just item
             | Just room <- getCurrentRoom state
             , isDark room state
@@ -835,7 +838,7 @@ executeCommand (InteractWith VUseOn itemStr entityStr) state =
                         Nothing ->
                             case maybeVehicle of
                                 Just _ -> tryRefuelByItem item state
-                                Nothing -> (state, "You can't reach '" ++ entityStr ++ "' from here.")
+                                Nothing -> (state, renderMsg "use.unreachable" [("entity", entityStr)])
   where
     -- Vehicle refuelling: `use <fuel item> on <vehicle>` adds the item's
     -- "fuel" prop value (default 1) to the vehicle's tank, consuming the item.
@@ -845,24 +848,24 @@ executeCommand (InteractWith VUseOn itemStr entityStr) state =
             Just vId ->
                 let amount = fromMaybe 1 (Map.lookup "fuel" . itemProps =<< Map.lookup (itemId item) (itemStates (save st)))
                 in case refuelVehicle vId amount st1 of
-                    Nothing -> (st1, "The " ++ entityStr ++ " doesn't need fuel.")
+                    Nothing -> (st1, renderMsg "refuel.not_needed" [("vehicle", entityStr)])
                     Just (st2, msg) ->
-                        (consumeItem (itemId item) st2, "You use the " ++ itemName item ++ ". " ++ msg)
-            Nothing -> (st1, "Nothing happens.")
+                        (consumeItem (itemId item) st2, renderMsg "use.ok" [("item", itemName item), ("msg", msg)])
+            Nothing -> (st1, renderMsg "use.nothing" [])
     findVehicleTarget st = case currentVehicle (save st) of
         Just vId | isJust (lookupVehicle vId st) -> Just vId
         _ -> case findVehicle entityStr st of
             Just v -> Just (vehicleId v)
             Nothing -> Nothing
 
-executeCommand (InteractWith _ _ _) state = (state, "Nothing happens.")
+executeCommand (InteractWith _ _ _) state = (state, renderMsg "use.nothing" [])
 
 executeCommand Restart state = (state, "")
 executeCommand ListSaves state = (state, "")
 
 executeCommand Help state = (state, helpText)
-executeCommand Quit state = (endGame (Custom "quit") state, "Goodbye!")
-executeCommand (Unknown cmd) state = (state, "I don't understand '" ++ cmd ++ "'. Type 'help' for available commands.")
+executeCommand Quit state = (endGame (Custom "quit") state, renderMsg "quit.bye" [])
+executeCommand (Unknown cmd) state = (state, renderMsg "parse.unknown" [("input", cmd)])
 executeCommand (Save _) state = (state, "")
 executeCommand (Load _) state = (state, "")
 
@@ -872,7 +875,7 @@ executeCommand (Load _) state = (state, "")
 
 executeCommand (EnterVehicleCmd targetStr) state =
     case findVehicle targetStr state of
-        Nothing -> (state, "You don't see '" ++ targetStr ++ "' here to enter.")
+        Nothing -> (state, renderMsg "enter.not_seen" [("target", targetStr)])
         Just v -> case enterVehicle (vehicleId v) state of
             Left err -> (state, err)
             Right (st', msg) -> (st', msg)
@@ -884,7 +887,7 @@ executeCommand ExitVehicleCmd state =
 
 executeCommand (DriveToCmd targetStr) state =
     case currentVehicle (save state) of
-        Nothing -> (state, "You are not in a vehicle.")
+        Nothing -> (state, renderMsg "vehicle.not_in" [])
         Just vId -> case driveVehicle vId targetStr state of
             Left err -> (state, err)
             Right (st', msg) -> (st', msg)
@@ -901,23 +904,23 @@ executeCommand (RefuelCmd targetStr) state =
             then currentVehicle (save state) >>= \vId -> lookupVehicle vId state
             else findVehicle targetStr state
     in case v of
-        Nothing -> (state, "There is no vehicle to refuel.")
+        Nothing -> (state, renderMsg "refuel.no_vehicle" [])
         Just veh ->
             let vId = vehicleId veh
                 vState = getVehicleState vId state
                 fuelStatus = case (vehicleFuelProp veh, vsFuel vState) of
-                    (Nothing, _) -> "The " ++ vehicleName veh ++ " doesn't need fuel."
+                    (Nothing, _) -> renderMsg "refuel.not_needed" [("vehicle", vehicleName veh)]
                     (Just fs, Just f) ->
-                        vehicleName veh ++ " fuel (" ++ fsItem fs ++ "): " ++ show f ++ "/" ++ show (fsMax fs)
+                        renderMsg "fuel.status" [("vehicle", vehicleName veh), ("item", fsItem fs), ("f", show f), ("max", show (fsMax fs))]
                     (Just fs, Nothing) ->
-                        vehicleName veh ++ " fuel (" ++ fsItem fs ++ "): 0/" ++ show (fsMax fs)
+                        renderMsg "fuel.status_zero" [("vehicle", vehicleName veh), ("item", fsItem fs), ("max", show (fsMax fs))]
             in (state, fuelStatus)
 
 -- | Repair: `repair <condition>` clears a matching vehicle condition on the
 --   current vehicle.
 executeCommand (RepairCmd targetStr) state =
     case currentVehicle (save state) of
-        Nothing -> (state, "You are not in a vehicle.")
+        Nothing -> (state, renderMsg "vehicle.not_in" [])
         Just vId ->
             let vState = getVehicleState vId state
                 target = normalizeText targetStr
@@ -926,13 +929,12 @@ executeCommand (RepairCmd targetStr) state =
                           , target `elem` [map toLower c, "the " ++ map toLower c] ]
                 vName = maybe vId vehicleName v
             in if null matches
-               then (state, "There is nothing broken about the " ++ vName
-                            ++ " that matches '" ++ targetStr ++ "'."
+               then (state, renderMsg "repair.nothing_broken" [("vehicle", vName), ("target", targetStr)]
                             ++ (if Set.null (vsActiveConditions vState)
-                                then "" else " Problems: " ++ intercalate ", " (Set.toList (vsActiveConditions vState)) ++ "."))
+                                then "" else renderMsg "repair.problems" [("list", intercalate ", " (Set.toList (vsActiveConditions vState)))]))
                else let c = head matches
                         st' = clearVehicleCondition vId c state
-                    in (st', "You repair the " ++ vName ++ " (" ++ c ++ ").")
+                    in (st', renderMsg "repair.ok" [("vehicle", vName), ("problem", c)])
 
 -- | Resolve a vehicle by name/keyword among all vehicles in the world
 findVehicle :: String -> GameState -> Maybe VehicleDef
@@ -1080,23 +1082,23 @@ interactItem verb item maybeItemState targetStr state =
         -- Taking: enforce portability, then pick up AND run on_take.
         (VTake, _)
             | not notCarried ->
-                (state, "You already have the " ++ itemName item ++ ".")
+                (state, renderMsg "take.already" [("item", itemName item)])
             | otherwise ->
                 case itemPortable item of
-                    False -> (state, fromMaybe ("You can't take the " ++ itemName item ++ ".")
+                    False -> (state, fromMaybe (renderMsg "take.not_portable" [("item", itemName item)])
                                              (itemTakeFailure item))
                     True ->
                         let (st', extra) = case vmLookup of
                                 Just outcome -> applyOutcome outcome iId state
                                 Nothing      -> (state, "")
-                            takeMsg = "You take the " ++ itemName item ++ "."
+                            takeMsg = renderMsg "take.ok" [("item", itemName item)]
                         in (pickupItem iId st',
                             if null extra then takeMsg else takeMsg ++ "\n" ++ extra)
         _ -> case vmLookup of
             Just outcome -> applyOutcome outcome iId state
             Nothing ->
                 if verb == VDrop && hasItem iId state
-                then (dropItem iId state, "You drop the " ++ itemName item ++ ".")
+                then (dropItem iId state, renderMsg "drop.ok" [("item", itemName item)])
                 else if verb == VLookAt
                 then (state, withAscii (renderArtForLook (itemAscii item) state)
                                       (resolveCondText (itemDescription item) state))
@@ -1104,7 +1106,7 @@ interactItem verb item maybeItemState targetStr state =
                     Just res -> res
                     Nothing
                         | hasOnCommandTrigger verb state -> (state, "")
-                        | otherwise -> (state, "You can't do that to the " ++ itemName item ++ " right now.")
+                        | otherwise -> (state, renderMsg "item.cant_do" [("item", itemName item)])
 
 -- | Execute interaction on an NPC.
 interactNpc :: Verb -> NPCDef -> Maybe NPCState -> String -> GameState -> CommandResult
@@ -1118,22 +1120,22 @@ interactNpc verb npc maybeNpcState targetStr state =
             -- A body can be looked at, searched and targeted by authored
             -- verbs, but it neither fights nor talks.
             | isCorpse, verb == VAttack ->
-                (state, "The " ++ npcName npc ++ " is already dead.")
+                (state, renderMsg "npc.already_dead" [("npc", npcName npc)])
             | isCorpse, verb == VTalk ->
-                (state, "The " ++ npcName npc ++ " is dead and says nothing.")
+                (state, renderMsg "npc.dead_silent" [("npc", npcName npc)])
             | verb == VTalk -> talkTo npc maybeNpcState state
             | verb == VAttack -> executeAttack npc maybeNpcState targetStr state
             | verb == VLookAt -> (state, withAscii (renderArtForLook (npcAscii npc) state)
                                                   (resolveCondText (npcDescription npc) state))
             | hasOnCommandTrigger verb state -> (state, "")
-            | otherwise -> (state, "You can't do that to " ++ npcName npc ++ ".")
+            | otherwise -> (state, renderMsg "npc.cant_do" [("npc", npcName npc)])
 
 -- | Execute interaction on a vehicle.
 interactVehicle :: Verb -> VehicleDef -> String -> GameState -> CommandResult
 interactVehicle verb _veh targetStr state
     | hasOnCommandTrigger verb state = (state, "")
     | verb == VAttack, Just res <- tryAttackVehicle targetStr state = res
-    | otherwise = (state, "You don't see '" ++ targetStr ++ "' here.")
+    | otherwise = (state, renderMsg "target.not_seen" [("target", targetStr)])
 
 -- | Execute a bare interaction command without a target string.
 interactBare :: Verb -> GameState -> CommandResult
@@ -1147,7 +1149,7 @@ interactBare verb state
     = executeTacticalAction ca state
     | VCustom vn <- verb
     , vn `elem` ["defend", "flee"]
-    = (state, "You are not in combat.")
+    = (state, renderMsg "combat.not_engaged" [])
     | otherwise = (state, "")   -- bare verb (e.g. custom command); triggers carry the message
 
 -- | Fallback interaction when target was not found.
@@ -1160,13 +1162,13 @@ interactNotFound verb targetStr state
     = executeTacticalAction (CAAbility targetStr) state
     | hasOnCommandTrigger verb state = (state, "")
     | verb == VAttack, Just res <- tryAttackVehicle targetStr state = res
-    | otherwise = (state, "You don't see '" ++ targetStr ++ "' here.")
+    | otherwise = (state, renderMsg "target.not_seen" [("target", targetStr)])
 
 -- | Fallback interaction when multiple entities match the target.
 interactAmbiguous :: [String] -> GameState -> CommandResult
 interactAmbiguous ids state =
     let names = map (entityDisplayName state) ids
-    in (state, "Which do you mean: " ++ intercalate ", " names ++ "?")
+    in (state, renderMsg "disambiguate.prompt" [("names", intercalate ", " names)])
 
 -- | Display name of an entity (item name, NPC name, or vehicle name).
 entityDisplayName :: GameState -> String -> String
@@ -1196,7 +1198,7 @@ findMatchingItem targetStr state =
 
 -- | Default message when an action cannot be performed in darkness.
 defaultDarkMessage :: String
-defaultDarkMessage = "It's pitch black. You can't see anything."
+defaultDarkMessage = renderMsg "dark.default" []
 
 -- | Is the room dark?
 --   A room tagged "dark" stays dark unless the player carries a light source
@@ -1285,7 +1287,7 @@ searchRoom state = case getCurrentRoom state of
                      , not (itemDiscovered st)
                      ]
             stateAfterReveal = foldr discoverItem state hidden
-            discoveredMsgs = [ maybe ("You find the " ++ iId ++ ".") id
+            discoveredMsgs = [ maybe (renderMsg "search.reveal" [("item", iId)]) id
                                  (Map.lookup iId (itemDefs (world state)) >>= itemDiscoverText)
                              | iId <- hidden ]
             (stateFinal, hookMsg) =
@@ -1293,7 +1295,7 @@ searchRoom state = case getCurrentRoom state of
                     Nothing -> (stateAfterReveal, "")
                     Just outcome -> applyOutcome outcome "" stateAfterReveal
             full = intercalate "\n" (filter (not . null) (discoveredMsgs ++ [hookMsg]))
-        in (stateFinal, if null full then "You find nothing of interest." else full)
+        in (stateFinal, if null full then renderMsg "search.nothing" [] else full)
 
 -- | Item-on-item interaction (crafting).
 --   Returns Nothing if no interaction is defined, so callers can keep their
@@ -1316,7 +1318,7 @@ talkTo npc maybeNpcState state =
     let status = maybe "alive" npcStatus maybeNpcState
     in case Map.lookup status (npcDialogueTrees npc) of
         Just tree -> renderDialogue npc tree maybeNpcState state
-        Nothing -> (clearActiveDialogue state, npcName npc ++ " has nothing to say.")
+        Nothing -> (clearActiveDialogue state, renderMsg "dialogue.nothing_to_say" [("name", npcName npc)])
 
 -- | Choices of a node that pass their optional `visible_when` predicate.
 --   Used by both rendering and `choose N` so numbering stays consistent.
@@ -1358,14 +1360,14 @@ renderDialogue npc tree maybeNpcState state =
     let nodeId = fromMaybe (dtEntry tree) (maybeNpcState >>= npcDialogueNode)
         maybeNode = Map.lookup nodeId (dtNodes tree)
     in case maybeNode of
-        Nothing -> (clearActiveDialogue state, npcName npc ++ " has nothing to say.")
+        Nothing -> (clearActiveDialogue state, renderMsg "dialogue.nothing_to_say" [("name", npcName npc)])
         Just node ->
-            let header = npcName npc ++ ": \"" ++ formatWithVars (dnText node) state ++ "\""
+            let header = renderMsg "dialogue.line" [("name", npcName npc), ("text", formatWithVars (dnText node) state)]
                 choices = visibleChoices state node
                 body = if null choices
                        then header
                        else header ++ "\n\n" ++ unlines
-                            [ "  [" ++ show i ++ "] " ++ formatWithVars (dcText c) state
+                            [ renderMsg "dialogue.choice_line" [("i", show i), ("text", formatWithVars (dcText c) state)]
                             | (i, c) <- zip [1 :: Int ..] choices ]
                 -- store the node so a follow-up `choose N` can resolve it
                 stateWithNode = setDialogueNode (npcId npc) (Just nodeId) state
@@ -1433,9 +1435,9 @@ tryAttackVehicle targetStr state = case findVehicle targetStr state of
             vehStop = vsCurrentStop (getVehicleState vId state)
             isAboardTarget = currentVehicle (save state) == Just vId
         in if isAboardTarget || vehStop /= outsideStop
-           then Just (state, "You don't see '" ++ targetStr ++ "' here.")
+           then Just (state, renderMsg "target.not_seen" [("target", targetStr)])
            else case targetShipSystems (TargetShip vId targetStr) state of
-               Nothing -> Just (state, "You can't attack the " ++ targetStr ++ ".")
+               Nothing -> Just (state, renderMsg "attack.cant_target" [("target", targetStr)])
                Just _  -> Just (executeAttackShip veh targetStr state)
     Nothing -> Nothing
 
@@ -1493,71 +1495,13 @@ executeTacticalAction action state =
                         (st', effectMsg) = applyOutcomes effects vId state
                         body = combineMsgs (effectMsg : msgs)
                     in if null body then (st', "") else (st', body)
-                [] -> (state, "There's nothing to fight here.")
+                [] -> (state, renderMsg "attack.none_here" [])
 
 -- ---------------------------------------------------------------------------
 -- Help text
 -- ---------------------------------------------------------------------------
 
--- | Formatted help text
+-- | Formatted help text (Phase 1.1: template lebt im Message-Katalog,
+--   Key help.text — byte-identisch zum bisherigen intercalate-Block).
 helpText :: String
-helpText = intercalate "\n"
-    [ "=== Available Commands ==="
-    , ""
-    , "Movement:"
-    , "  go/move/walk <direction>   - Move north/south/east/west/up/down"
-    , "  <direction>                - Shorthand (e.g., just 'north')"
-    , ""
-    , "Interaction:"
-    , "  look                       - Examine current room"
-    , "  look at / examine <target> - Examine an item or NPC"
-    , "  look at <n>                - Examine the n-th marked object (`map`)"
-    , "  watch [target]             - Play an item's/NPC's animation frames"
-    , "  map / legend               - Show the art with numbered marked objects"
-    , "  search                     - Search the room for hidden things"
-    , "  take / get / grab <item>   - Pick up an item"
-    , "  take all                   - Pick up all items in the room"
-    , "  drop <item>                - Drop an item"
-    , "  drop all                   - Drop everything you're carrying"
-    , "  use <item>                 - Use an item from inventory"
-    , "  use <item> on <target>     - Use an item on something"
-    , "  talk to / speak with <npc> - Talk to a character"
-    , "  choose <n> / <n>           - Select a dialogue option"
-    , "  attack / hit <npc>         - Attack an enemy"
-    , ""
-    , "Equipment:"
-    , "  equip / wear / wield <item>- Equip an item"
-    , "  unequip / remove <item>    - Unequip an item"
-    , "  unequip all                - Remove all equipment"
-    , "  stats                      - Show health, attack, defense and equipment"
-    , ""
-    , "Cards & Decks:"
-    , "  hand / karten              - View cards in hand"
-    , "  play <n> [target]          - Play the n-th card (e.g. 'play 1 goblin')"
-    , "  deck                       - View draw pile"
-    , "  discard / ablage           - View discard pile"
-    , "  end turn / pass            - End combat turn"
-    , ""
-    , "Vehicles:"
-    , "  enter / board <vehicle>    - Board a vehicle at your stop"
-    , "  disembark                  - Leave the current vehicle ('exit' quits!)"
-    , "  drive to <station>         - Steer (PlayerControlled, from the cockpit)"
-    , "  wait                       - Advance to the next stop (AutomaticRoute)"
-    , "  refuel [vehicle]           - Show fuel status"
-    , "  repair <problem>           - Fix a vehicle condition"
-    , ""
-    , "Multi-item:"
-    , "  take <item> and <item>     - Take multiple items"
-    , ""
-    , "System:"
-    , "  inventory / inv / i        - Check what you're carrying"
-    , "  undo                       - Restore the previous game state (up to 50)"
-    , "  save [name]                - Save game (default: savegame)"
-    , "  load [name]                - Load a saved game"
-    , "  saves                      - List all saved games"
-    , "  restart                    - Start a new game"
-    , "  help                       - Show this help"
-    , "  quit / exit / q            - Exit the game"
-    , ""
-    , "Tip: Press Tab to auto-complete commands and targets."
-    ]
+helpText = renderMsg "help.text" []
