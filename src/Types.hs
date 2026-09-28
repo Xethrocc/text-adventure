@@ -5,6 +5,7 @@ module Types
     , module Types.Cards
     , module Types.Vehicles
     , module Types.Combat
+    , module Types.Protocol
     ) where
 
 import Types.Output
@@ -12,3 +13,4 @@ import Types.Core
 import Types.Cards
 import Types.Vehicles
 import Types.Combat
+import Types.Protocol

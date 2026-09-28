@@ -1,0 +1,87 @@
+{
+    "events": [
+        {
+            "payload": {
+                "args": [
+                    {
+                        "key": "room",
+                        "val": "Entrance Hall"
+                    }
+                ],
+                "key": "game.look",
+                "text": "You are in an entrance hall."
+            },
+            "type": "message"
+        },
+        {
+            "styled": {
+                "spans": [
+                    {
+                        "length": 10,
+                        "start": 2,
+                        "style": {
+                            "bold": true,
+                            "color": "blue",
+                            "dim": false,
+                            "italic": false,
+                            "underline": false
+                        }
+                    }
+                ],
+                "text": "A cold draft blows from the north."
+            },
+            "type": "text"
+        },
+        {
+            "payload": {
+                "hotspots": [
+                    {
+                        "glyph": "@",
+                        "index": 1,
+                        "target": "torch"
+                    }
+                ],
+                "raw": "  +---+\n  | @ |\n  +---+"
+            },
+            "type": "art"
+        },
+        {
+            "delay_micros": 50000,
+            "frames": [
+                "frame1",
+                "frame2"
+            ],
+            "type": "anim"
+        },
+        {
+            "path": "sounds/door.wav",
+            "type": "sfx"
+        },
+        {
+            "path": "music/ambient.ogg",
+            "type": "music_start"
+        },
+        {
+            "type": "music_stop"
+        },
+        {
+            "room_id": "dungeon",
+            "type": "room_changed"
+        },
+        {
+            "type": "quest_update"
+        },
+        {
+            "type": "dialogue"
+        },
+        {
+            "engaged": true,
+            "type": "combat"
+        },
+        {
+            "type": "game_over"
+        }
+    ],
+    "type": "events",
+    "version": 1
+}

@@ -10,7 +10,7 @@ license:             MIT
 build-type:          Simple
 
 library
-  exposed-modules:   Types, Types.Output, Types.Core, Types.Cards, Types.Vehicles, Types.Combat,
+  exposed-modules:   Types, Types.Output, Types.Core, Types.Cards, Types.Vehicles, Types.Combat, Types.Protocol,
                      Verbs, Game, GameLoop, Parser, Combat, Quests, Vehicles, Effects,
                      Cards, Completion, Ansi, Sample, Frontend, SaveLoad, World, Messages
   hs-source-dirs:    ../src

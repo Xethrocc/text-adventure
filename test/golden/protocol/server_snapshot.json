@@ -1,0 +1,84 @@
+{
+    "snapshot": {
+        "combat": {
+            "engaged": false
+        },
+        "dialogue": null,
+        "game_over": null,
+        "player": {
+            "attack": 10,
+            "conditions": [],
+            "defense": 5,
+            "equipment": [],
+            "gold": null,
+            "health": 100,
+            "inventory": [],
+            "max_health": 100
+        },
+        "quests": {
+            "active": [],
+            "completed": []
+        },
+        "room": {
+            "description": "You are in a small stone chamber with torches on the walls. There are exits to the north and east. The east door looks sturdy and has a keyhole.",
+            "exits": [
+                {
+                    "direction": "North",
+                    "locked": false,
+                    "target": "hallway"
+                },
+                {
+                    "direction": "South",
+                    "locked": false,
+                    "target": "meadow"
+                },
+                {
+                    "direction": "East",
+                    "locked": true,
+                    "target": "treasure"
+                }
+            ],
+            "id": "start",
+            "items": [
+                {
+                    "description": "Supple boiled leather, well worn.",
+                    "id": "leather_armor",
+                    "name": "leather armor"
+                },
+                {
+                    "description": "A small vial filled with a bubbling red liquid.",
+                    "id": "potion_healing",
+                    "name": "healing potion"
+                },
+                {
+                    "description": "A plain bronze band that feels warm.",
+                    "id": "ring_vigor",
+                    "name": "ring of vigor"
+                },
+                {
+                    "description": "A pitted blade, but it will do.",
+                    "id": "sword_rusty",
+                    "name": "rusty sword"
+                },
+                {
+                    "description": "A burning torch that provides light.",
+                    "id": "torch",
+                    "name": "torch"
+                }
+            ],
+            "name": "Starting Room",
+            "npcs": [
+                {
+                    "alive": true,
+                    "id": "oldman",
+                    "name": "old man"
+                }
+            ],
+            "vehicle": null
+        },
+        "turn": 0,
+        "visited_rooms": []
+    },
+    "type": "snapshot",
+    "version": 1
+}

@@ -1,3 +1,6 @@
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Structured output events (Phase 1.2).
 --
 --   The engine's pure core produces an event stream instead of a flat text:
@@ -48,7 +51,23 @@ module Types.Output
     , unlinesEv
     ) where
 
+import Control.Applicative ((<|>))
+import qualified Data.Foldable as F
 import Data.List (intersperse, sortOn)
+import qualified Data.Text as T
+import Data.Aeson
+    ( ToJSON (..)
+    , FromJSON (..)
+    , Value (..)
+    , object
+    , (.=)
+    , (.:)
+    , (.:?)
+    , (.!=)
+    , withObject
+    , withText
+    )
+import GHC.Generics (Generic)
 
 -- ---------------------------------------------------------------------------
 -- Styling model
@@ -58,7 +77,32 @@ import Data.List (intersperse, sortOn)
 data Color
     = CDefault | CBlack | CRed | CGreen | CYellow
     | CBlue | CMagenta | CCyan | CWhite
-    deriving (Show, Eq)
+    deriving (Show, Eq, Generic)
+
+instance ToJSON Color where
+    toJSON c = case c of
+        CDefault -> "default"
+        CBlack   -> "black"
+        CRed     -> "red"
+        CGreen   -> "green"
+        CYellow  -> "yellow"
+        CBlue    -> "blue"
+        CMagenta -> "magenta"
+        CCyan    -> "cyan"
+        CWhite   -> "white"
+
+instance FromJSON Color where
+    parseJSON = withText "Color" $ \t -> case T.toLower t of
+        "default" -> pure CDefault
+        "black"   -> pure CBlack
+        "red"     -> pure CRed
+        "green"   -> pure CGreen
+        "yellow"  -> pure CYellow
+        "blue"    -> pure CBlue
+        "magenta" -> pure CMagenta
+        "cyan"    -> pure CCyan
+        "white"   -> pure CWhite
+        other     -> fail ("Unknown color: " ++ T.unpack other)
 
 -- | Character style of a span. Absent fields mean "unchanged".
 data Style = Style
@@ -67,7 +111,24 @@ data Style = Style
     , stDim       :: Bool
     , stItalic    :: Bool
     , stUnderline :: Bool
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON Style where
+    toJSON st = object
+        [ "color"     .= stColor st
+        , "bold"      .= stBold st
+        , "dim"       .= stDim st
+        , "italic"    .= stItalic st
+        , "underline" .= stUnderline st
+        ]
+
+instance FromJSON Style where
+    parseJSON = withObject "Style" $ \o -> Style
+        <$> o .:? "color"
+        <*> o .:? "bold" .!= False
+        <*> o .:? "dim" .!= False
+        <*> o .:? "italic" .!= False
+        <*> o .:? "underline" .!= False
 
 -- | The neutral style: no colour, no attributes.
 plainStyle :: Style
@@ -79,14 +140,38 @@ data Span = Span
     { spStart  :: Int
     , spLength :: Int
     , spStyle  :: Style
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON Span where
+    toJSON sp = object
+        [ "start"  .= spStart sp
+        , "length" .= spLength sp
+        , "style"  .= spStyle sp
+        ]
+
+instance FromJSON Span where
+    parseJSON = withObject "Span" $ \o -> Span
+        <$> o .: "start"
+        <*> o .: "length"
+        <*> o .: "style"
 
 -- | Prose text with optional style spans. Invariant: spans are
 --   non-overlapping and refer to indices within 'stText'.
 data StyledText = StyledText
     { stText  :: String
     , stSpans :: [Span]
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON StyledText where
+    toJSON st = object
+        [ "text"  .= stText st
+        , "spans" .= stSpans st
+        ]
+
+instance FromJSON StyledText where
+    parseJSON = withObject "StyledText" $ \o -> StyledText
+        <$> o .: "text"
+        <*> o .:? "spans" .!= []
 
 -- | Plain text without styling.
 styledText :: String -> StyledText
@@ -141,14 +226,52 @@ data MsgPayload = MsgPayload
     { mpKey  :: Maybe String
     , mpArgs :: [(String, String)]
     , mpText :: String
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON MsgPayload where
+    toJSON mp = object
+        [ "key"  .= mpKey mp
+        , "args" .= [ object ["key" .= k, "val" .= v] | (k, v) <- mpArgs mp ]
+        , "text" .= mpText mp
+        ]
+
+instance FromJSON MsgPayload where
+    parseJSON = withObject "MsgPayload" $ \o -> do
+        k <- o .:? "key"
+        mArgsVal <- o .:? "args"
+        args <- case mArgsVal of
+            Just (Array arr) -> mapM parsePair (F.toList arr)
+            _                -> pure []
+        t <- o .: "text"
+        pure (MsgPayload k args t)
+      where
+        parsePair (Object obj) = (,) <$> obj .: "key" <*> (obj .: "val" <|> obj .: "value")
+        parsePair (Array arr)  | [String k, String v] <- F.toList arr = pure (T.unpack k, T.unpack v)
+        parsePair _ = fail "Expected key-value object or pair for argument"
 
 -- | One clickable/hoverable anchor inside an art block.
 data ArtHotspot = ArtHotspot
     { ahIndex  :: Int     -- ^ 1-based number shown in the legend
     , ahGlyph  :: Char    -- ^ the glyph in the art that is the anchor
     , ahTarget :: String  -- ^ item/NPC id the hotspot points at
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON ArtHotspot where
+    toJSON ah = object
+        [ "index"  .= ahIndex ah
+        , "glyph"  .= [ahGlyph ah]
+        , "target" .= ahTarget ah
+        ]
+
+instance FromJSON ArtHotspot where
+    parseJSON = withObject "ArtHotspot" $ \o -> do
+        idx <- o .: "index"
+        glyphStr <- o .: "glyph"
+        let g = case (glyphStr :: String) of
+                (c:_) -> c
+                []    -> ' '
+        tgt <- o .: "target"
+        pure (ArtHotspot idx g tgt)
 
 -- | An art block: the raw (monospace, possibly ANSI) rendering as the CLI
 --   prints it today, plus structured hotspot anchors for graphical
@@ -158,7 +281,18 @@ data ArtHotspot = ArtHotspot
 data ArtPayload = ArtPayload
     { apRaw      :: String
     , apHotspots :: [ArtHotspot]
-    } deriving (Show, Eq)
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON ArtPayload where
+    toJSON ap = object
+        [ "raw"      .= apRaw ap
+        , "hotspots" .= apHotspots ap
+        ]
+
+instance FromJSON ArtPayload where
+    parseJSON = withObject "ArtPayload" $ \o -> ArtPayload
+        <$> o .: "raw"
+        <*> o .:? "hotspots" .!= []
 
 -- ---------------------------------------------------------------------------
 -- Events
@@ -178,7 +312,40 @@ data OutputEvent
     | EvDialogue                      -- ^ a dialogue became active (snapshot carries choices)
     | EvCombat Bool                   -- ^ combat engaged flag changed (new value)
     | EvGameOver                      -- ^ the game ended this command (reason in snapshot)
-    deriving (Show, Eq)
+    deriving (Show, Eq, Generic)
+
+instance ToJSON OutputEvent where
+    toJSON ev = case ev of
+        EvMessage p       -> object [ "type" .= ("message" :: String), "payload" .= p ]
+        EvText t          -> object [ "type" .= ("text" :: String), "styled" .= t ]
+        EvArt a           -> object [ "type" .= ("art" :: String), "payload" .= a ]
+        EvAnim d frames   -> object [ "type" .= ("anim" :: String), "delay_micros" .= d, "frames" .= frames ]
+        EvSfx path        -> object [ "type" .= ("sfx" :: String), "path" .= path ]
+        EvMusicStart path -> object [ "type" .= ("music_start" :: String), "path" .= path ]
+        EvMusicStop       -> object [ "type" .= ("music_stop" :: String) ]
+        EvRoomChanged rId -> object [ "type" .= ("room_changed" :: String), "room_id" .= rId ]
+        EvQuestUpdate     -> object [ "type" .= ("quest_update" :: String) ]
+        EvDialogue        -> object [ "type" .= ("dialogue" :: String) ]
+        EvCombat eng      -> object [ "type" .= ("combat" :: String), "engaged" .= eng ]
+        EvGameOver        -> object [ "type" .= ("game_over" :: String) ]
+
+instance FromJSON OutputEvent where
+    parseJSON = withObject "OutputEvent" $ \o -> do
+        t <- o .: "type" <|> o .: "tag"
+        case (t :: String) of
+            "message"      -> EvMessage <$> o .: "payload"
+            "text"         -> EvText <$> (o .: "styled" <|> (styledText <$> o .: "text"))
+            "art"          -> EvArt <$> o .: "payload"
+            "anim"         -> EvAnim <$> (o .: "delay_micros" <|> o .: "delayMicros") <*> o .: "frames"
+            "sfx"          -> EvSfx <$> o .: "path"
+            "music_start"  -> EvMusicStart <$> o .: "path"
+            "music_stop"   -> pure EvMusicStop
+            "room_changed" -> EvRoomChanged <$> (o .: "room_id" <|> o .: "roomId")
+            "quest_update" -> pure EvQuestUpdate
+            "dialogue"     -> pure EvDialogue
+            "combat"       -> EvCombat <$> o .: "engaged"
+            "game_over"    -> pure EvGameOver
+            other          -> fail ("Unknown OutputEvent type: " ++ other)
 
 -- ---------------------------------------------------------------------------
 -- Fragment algebra

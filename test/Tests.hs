@@ -1212,6 +1212,141 @@ testSessionAdvanceNarrative = do
     r9 <- expectTrue "no narrative yields Nothing" (isNothing (advanceNarrative st2))
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9)
 
+-- ===========================================================================
+-- Phase 1.4: Protocol v1 (Types, Codec, Golden Tests, Versioning)
+-- ===========================================================================
+
+-- | Phase 1.4: ClientMsg round-trip encoding and decoding for all message types
+testProtocolClientMsgRoundTrip :: IO Bool
+testProtocolClientMsgRoundTrip = do
+    let msgs =
+            [ ClientCommand 1 "look"
+            , ClientChoose 1 2
+            , ClientContinue 1
+            , ClientLoadWorld 1 "examples/thefog.yaml"
+            , ClientSave 1 "slot1"
+            , ClientLoad 1 "slot1"
+            ]
+    results <- mapM (\m -> expectEqual (Right m) (decodeClientMsg (encodeSorted m))) msgs
+    pure (and results)
+
+-- | Phase 1.4: ServerMsg round-trip encoding and decoding for all message types
+testProtocolServerMsgRoundTrip :: IO Bool
+testProtocolServerMsgRoundTrip = do
+    let sampleEvents =
+            [ EvMessage (MsgPayload (Just "game.look") [("room", "Entrance Hall")] "You are in an entrance hall.")
+            , EvText (StyledText "A cold draft blows from the north." [Span 2 10 (Style (Just CBlue) True False False False)])
+            , EvArt (ArtPayload "  +---+\n  | @ |\n  +---+" [ArtHotspot 1 '@' "torch"])
+            , EvAnim 50000 ["frame1", "frame2"]
+            , EvSfx "sounds/door.wav"
+            , EvMusicStart "music/ambient.ogg"
+            , EvMusicStop
+            , EvRoomChanged "dungeon"
+            , EvQuestUpdate
+            , EvDialogue
+            , EvCombat True
+            , EvGameOver
+            ]
+        msgs =
+            [ ServerEvents 1 sampleEvents
+            , ServerSnapshot 1 (makeSnapshot initSampleGame)
+            , ServerError 1 (ProtocolError ErrVersionMismatch "Unsupported protocol version 2, expected 1")
+            ]
+    results <- mapM (\m -> expectEqual (Right m) (decodeServerMsg (encodeSorted m))) msgs
+    pure (and results)
+
+-- | Phase 1.4: Golden JSON tests are deterministic — running encoding twice produces
+--   byte-identical output matching the golden files on disk (Plan 1.4, constraint 4).
+testProtocolGoldenDeterministic :: IO Bool
+testProtocolGoldenDeterministic = do
+    let sampleEvents =
+            [ EvMessage (MsgPayload (Just "game.look") [("room", "Entrance Hall")] "You are in an entrance hall.")
+            , EvText (StyledText "A cold draft blows from the north." [Span 2 10 (Style (Just CBlue) True False False False)])
+            , EvArt (ArtPayload "  +---+\n  | @ |\n  +---+" [ArtHotspot 1 '@' "torch"])
+            , EvAnim 50000 ["frame1", "frame2"]
+            , EvSfx "sounds/door.wav"
+            , EvMusicStart "music/ambient.ogg"
+            , EvMusicStop
+            , EvRoomChanged "dungeon"
+            , EvQuestUpdate
+            , EvDialogue
+            , EvCombat True
+            , EvGameOver
+            ]
+        makeCases =
+            [ ("client_command.json", encodeSorted (cmdCommand "look"))
+            , ("client_choose.json", encodeSorted (cmdChoose 2))
+            , ("client_continue.json", encodeSorted cmdContinue)
+            , ("client_load_world.json", encodeSorted (cmdLoadWorld "examples/thefog.yaml"))
+            , ("client_save.json", encodeSorted (cmdSave "slot1"))
+            , ("client_load.json", encodeSorted (cmdLoad "slot1"))
+            , ("server_events.json", encodeSorted (msgEvents sampleEvents))
+            , ("server_snapshot.json", encodeSorted (msgSnapshot (makeSnapshot initSampleGame)))
+            , ("server_error.json", encodeSorted (msgError ErrVersionMismatch "Unsupported protocol version 2, expected 1"))
+            ]
+    let run1 = makeCases
+        run2 = makeCases
+    detOk <- expectEqual run1 run2
+    goldenOk <- mapM (\(fn, b) -> do
+        diskBytes <- BLC.readFile ("test/golden/protocol/" ++ fn)
+        expectEqual diskBytes b) run1
+    pure (detOk && and goldenOk)
+
+-- | Phase 1.4: Protocol version mismatch and missing version error handling (constraint 5).
+testProtocolVersionMismatch :: IO Bool
+testProtocolVersionMismatch = do
+    let cV2 = BLC.pack "{\"version\":2,\"type\":\"command\",\"command\":\"look\"}"
+    r1 <- expectEqual (Left (ProtocolError ErrVersionMismatch "Unsupported protocol version 2, expected 1"))
+                      (decodeClientMsg cV2)
+
+    let cV0 = BLC.pack "{\"version\":0,\"type\":\"continue\"}"
+    r2 <- expectEqual (Left (ProtocolError ErrVersionMismatch "Unsupported protocol version 0, expected 1"))
+                      (decodeClientMsg cV0)
+
+    let cMissing = BLC.pack "{\"type\":\"continue\"}"
+    r3 <- expectEqual (Left (ProtocolError ErrMalformedPayload "Missing required 'version' field"))
+                      (decodeClientMsg cMissing)
+
+    let sV3 = BLC.pack "{\"version\":3,\"type\":\"events\",\"events\":[]}"
+    r4 <- expectEqual (Left (ProtocolError ErrVersionMismatch "Unsupported protocol version 3, expected 1"))
+                      (decodeServerMsg sV3)
+
+    let sMissing = BLC.pack "{\"type\":\"events\",\"events\":[]}"
+    r5 <- expectEqual (Left (ProtocolError ErrMalformedPayload "Missing required 'version' field"))
+                      (decodeServerMsg sMissing)
+
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Phase 1.4: Session transition lines bridged to protocol wire events (constraint 6).
+testProtocolSessionBridge :: IO Bool
+testProtocolSessionBridge = do
+    let sessionLines = ["Game saved successfully.", "Slot: quicksave"]
+        events = sessionLinesToEvents sessionLines
+        expected = [EvText (styledText "Game saved successfully."), EvText (styledText "Slot: quicksave")]
+    r1 <- expectEqual expected events
+    let wireMsg = msgEvents events
+        encoded = encodeSorted wireMsg
+        decoded = decodeServerMsg encoded
+    r2 <- expectEqual (Right wireMsg) decoded
+    pure (r1 && r2)
+
+-- | Phase 1.4: makeSnapshot extracts consistent presentation-tier state from GameState.
+testProtocolMakeSnapshot :: IO Bool
+testProtocolMakeSnapshot = do
+    let snap = makeSnapshot initSampleGame
+    r1 <- expectEqual 100 (psHealth (snapPlayer snap))
+    r2 <- expectEqual 100 (psMaxHealth (snapPlayer snap))
+    r3 <- expectEqual 10 (psAttack (snapPlayer snap))
+    r4 <- expectEqual 5 (psDefense (snapPlayer snap))
+    r5 <- expectEqual "start" (rsId (snapRoom snap))
+    r6 <- expectEqual 3 (length (rsExits (snapRoom snap)))
+    r7 <- expectEqual False (csEngaged (snapCombat snap))
+    r8 <- expectEqual Nothing (snapDialogue snap)
+    r9 <- expectEqual Nothing (snapGameOver snap)
+    r10 <- expectEqual 0 (snapTurn snap)
+    r11 <- expectEqual [] (snapVisitedRooms snap)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11)
+
 testValidateTypoInPredicateLocation :: IO Bool
 testValidateTypoInPredicateLocation = do
     let decodedTypo = Aeson.decode (BLC.pack "{\"at\":\"palyer\",\"room\":\"start\"}") :: Maybe Predicate
@@ -7321,5 +7456,12 @@ main = do
         , runTest "session: pure death menu transitions (Phase 1.3)" testSessionTransitionDeath
         , runTest "session: pure victory menu transitions (Phase 1.3)" testSessionTransitionVictory
         , runTest "session: advanceNarrative yields ReqPause for intermediate lines (Phase 1.3)" testSessionAdvanceNarrative
+        -- Phase 1.4: Protocol v1 (Types, Codec, Golden Tests, Versioning)
+        , runTest "protocol: ClientMsg round-trip encoding and decoding (Phase 1.4)" testProtocolClientMsgRoundTrip
+        , runTest "protocol: ServerMsg round-trip encoding and decoding (Phase 1.4)" testProtocolServerMsgRoundTrip
+        , runTest "protocol: deterministic golden tests with stable bytes (Phase 1.4)" testProtocolGoldenDeterministic
+        , runTest "protocol: version mismatch and error handling (Phase 1.4)" testProtocolVersionMismatch
+        , runTest "protocol: session lines bridged to wire events (Phase 1.4)" testProtocolSessionBridge
+        , runTest "protocol: makeSnapshot extracts presentation-tier state (Phase 1.4)" testProtocolMakeSnapshot
         ]
     when (not (and results)) exitFailure
