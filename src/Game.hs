@@ -1,6 +1,122 @@
 {-# LANGUAGE LambdaCase #-}
 -- | Core game state and manipulation for the text adventure engine
-module Game where
+--
+--   Explicit export list (Phase 0.7): 27 internal helpers stay private so
+--   @-Wall@ can report them as unused once they become dead.
+-- | Core game state and manipulation for the text adventure engine
+--
+--   Explicit export list (Phase 0.7): 27 internal helpers stay private so
+--   @-Wall@ can report them as unused once they become dead.
+module Game
+    (
+      -- * State, rooms and movement
+      emptyGameState
+    , emptyGameWorld
+    , ensureRoomExists
+    , lookupRoom
+    , getCurrentRoom
+    , canonicalRoomId
+    , moveToRoom
+    , canMove
+    , getExitInDirection
+    , effectiveConnections
+    , markCurrentRoomVisited
+    , isRoomVisited
+    , setRoomVisited
+    , incrementTurnCount
+      -- * Lookups and text normalisation
+    , getItemsInLocation
+    , getNPCsInRoom
+    , hasItem
+    , playerHasTaggedItem
+    , isLivingNPCInRoom
+    , isDeadNPC
+    , isPlayerDead
+    , itemAliases
+    , npcAliases
+    , matchesItemTarget
+    , normalizeText
+      -- * Inventory and equipment
+    , pickupItem
+    , dropItem
+    , giveItem
+    , consumeItem
+    , equipItem
+    , unequipItem
+    , isEquipped
+    , equipmentSummary
+    , syncInventory
+    , discoverItem
+    , modifyItemProp
+      -- * NPCs, skills and the party
+    , updateNPCState
+    , modifyNPCProp
+    , clampNPCHealth
+    , moveNPCToRoom
+    , followParty
+    , isInParty
+    , partyMembersInRoom
+    , getSkill
+    , modifySkill
+    , resolveActorNpcId
+    , getEntityState
+    , setEntityState
+      -- * Flags, variables, conditions and predicates
+    , getFlag
+    , setFlag
+    , getVariable
+    , setVariable
+    , setVariableChecked
+    , hasCondition
+    , applyCondition
+    , clearCondition
+    , evalExpr
+    , evalPredicate
+    , formatWithVars
+    , setPlayerHP
+    , updatePlayerHealth
+    , addDiagnostic
+      -- * Combat
+    , effectiveAttack
+    , effectiveDefense
+    , effectiveMaxHealth
+    , combatRound
+    , setCombatRound
+    , combatRoundKey
+    , combatEngagedKey
+    , setCombatEngaged
+    , isCombatEngaged
+    , combatAbilityKey
+    , combatActionKey
+    , combatInitiativeKey
+    , combatInitiativePlayerKey
+    , combatVarPrefix
+      -- * Cards and deck
+    , drawCards
+    , discardCard
+    , discardHand
+    , addCardToDeck
+    , exhaustCard
+    , shuffleDeck
+    , shuffleList
+      -- * Art, text and rendering helpers
+    , asciiPlayback
+    , asciiFrames
+    , defaultFrameMicros
+    , renderArtForLook
+    , endArtFor
+    , resolveAsciiArt
+    , resolveCondText
+    , resolveHotspotTarget
+    , replaceChar
+    , removeAt
+      -- * Dialogue
+    , setActiveDialogue
+    , clearActiveDialogue
+    , setDialogueNode
+      -- * Game end
+    , endGame
+    ) where
 
 import Types
 import Data.List (foldl', isPrefixOf, nub, stripPrefix)
