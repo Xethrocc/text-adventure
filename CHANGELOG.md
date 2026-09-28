@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Refactor: Explizite Exportlisten für die vier Kernmodule (Phase 0.7)
+
+- `Parser.hs`, `SaveLoad.hs`, `World.hs` und `Game.hs` haben jetzt eine
+  vollständige Exportliste: **139 Funktionen** sind öffentlich,
+  **79 interne Helfer** und der Typ `MetaFile` sind es nicht mehr.
+- **Warum das mehr ist als Kosmetik:** `-Wunused-top-binds` gehört zu `-Wall`,
+  meldet aber nur *nicht* exportierte Bindungen. Solange die Module alles
+  exportierten, war toter Code dort strukturell unsichtbar — in Phase 0.5 fielen
+  sieben ungenutzte Funktionen deshalb erst beim manuellen Suchen auf.
+- `Worldbuilder.Types` bleibt bewusst ohne Liste (100 von 125 Namen werden von
+  außen gebraucht; eine Liste dort verbirgt praktisch nichts).
+- Keine Verhaltensänderung: 357 Engine-Tests, 19 Worldbuilder-Suiten, 41
+  Playthroughs und Worldgen unverändert grün, 0 Warnungen.
+
+### Fix: WASM-Spike-Treiber `run.sh` war nicht reproduzierbar
+
+- `run.sh` exportierte `$HOME/.ghc-wasm/bin` — dieses Verzeichnis existiert nicht,
+  `wasm32-wasi-cabal` und `wasmtime` wurden also nie gefunden. Jetzt wird
+  `~/.ghc-wasm/env` gesourct, mit klaren Fehlermeldungen und einer Prüfung auf
+  `data/`.
+- Kopfkommentar von `copy.sh` korrigiert: erster Versuch, obsolet — und die
+  Behauptung, `haskeline`/`directory` fehlten unter WASI, war falsch.
+- Spike-Notiz: gemessene Modulgröße (5,9 MB) statt Schätzung, Abschnitt
+  „Reproduktion“ ergänzt.
+
 ### WASM-Machbarkeits-Spike (Phase 1.0)
 
 - Neues, nicht produktionelles Verzeichnis `wasm-spike/`: baut die Engine mit dem
