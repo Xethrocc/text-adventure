@@ -16,7 +16,7 @@
   - `ServerMsg` mit Nachrichtenarten:
     - `events`: Liste strukturierter Ausgabeevents (`events: [OutputEvent]`)
     - `snapshot`: Kompakter Zustands-Snapshot fuer UI-HUD, Map, Quests und Dialoge
-    - `error`: Protokollfehler (`code`, `message` — ein `details`-Feld gibt es nicht) mit vier Fehlercodes als snake_case-Werte: `version_mismatch`, `unknown_type`, `malformed_payload`, `session_error`
+    - `error`: Protokollfehler (`code`, `message` — ein `details`-Feld gibt es nicht) mit vier Fehlercodes als snake_case-Werte: `version_mismatch`, `unknown_type`, `malformed_payload`, `session_error`. Ein unbekannter `type`-Diskriminator wird als `unknown_type` gemeldet (in beiden Richtungen getestet), ein bekannter Typ mit kaputter Nutzlast bleibt `malformed_payload`; `session_error` ist reserviert und hat noch keinen Produzenten.
   - Strukturierte Snapshots fuer Frontends: `Snapshot` mit `turn`, `player`, `room`, `quests`, `dialogue`, `combat`, `game_over` und `visited_rooms`; darunter `PlayerSnapshot` (health/max_health/attack/defense, optional gold, conditions, equipment, inventory), `RoomSnapshot` (id, name, description, exits samt Lock-Status, items, npcs, vehicle), `ConditionSnapshot` (name, remaining turns), `QuestSnapshot` (aktive und abgeschlossene Quests), `DialogueSnapshot` (NPC, Knoten, Text, Auswahl-Optionen), `CombatSnapshot` (`engaged`) und `GameOverSnapshot` (`reason`, `menu`).
   - Extraktionsfunktion `makeSnapshot :: GameState -> Snapshot` fuer den Praesentations-Tier.
   - Striktes Parsing mit Versionsvalidierung (`decodeClientMsg`, `decodeServerMsg`): abweichende oder fehlende Versionen werden mit `version_mismatch` zurueckgewiesen, unbekannte Nachrichtentypen mit `unknown_type`, strukturell falsche Nutzlast mit `malformed_payload`.
@@ -34,6 +34,7 @@
   - Vollstaendiges englisches Referenzdokument fuer Frontend- und Backend-Autoren (Nachrichten, vollstaendiger 12-Event-Katalog, Snapshot-Schema, Fehlercodes und Versionierungsrichtlinien).
 - **Test- und Build-Nachweise:**
   - 6 neue Unit- und Golden-Tests in `test/Tests.hs` (**376 Tests** gesamt, vorher 370).
+  - Nachtrag (2026-09-28): unbekannte `type`-Diskriminatoren werden als `unknown_type` klassifiziert statt als generische kaputte Nutzlast — drei neue Zusicherungen im Fehlertest (Client, Server, Gegenprobe „bekannter Typ mit kaputter Nutzlast"), per Fehlerinjektion als wirksam belegt. Der vakuume `run1 == run2`-Vergleich im Golden-Test ist entfernt: er kodierte nur einmal (geteilter Thunk).
   - `cabal clean && cabal build all --enable-tests` mit **0 Warnungen**.
   - `scripts/ci.sh` vollstaendig gruen (alle 8 Stufen PASS).
 

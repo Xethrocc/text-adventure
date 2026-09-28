@@ -1255,8 +1255,11 @@ testProtocolServerMsgRoundTrip = do
     results <- mapM (\m -> expectEqual (Right m) (decodeServerMsg (encodeSorted m))) msgs
     pure (and results)
 
--- | Phase 1.4: Golden JSON tests are deterministic — running encoding twice produces
---   byte-identical output matching the golden files on disk (Plan 1.4, constraint 4).
+-- | Phase 1.4: Golden JSON tests. The bytes written by this encoder must match the
+--   golden files on disk byte for byte (Plan 1.4, constraint 4). Those files came
+--   from an earlier process, so the comparison is the cross-process determinism
+--   check; an in-process `encodeSorted x == encodeSorted x` would not be one
+--   (both sides share a single thunk and can never differ).
 testProtocolGoldenDeterministic :: IO Bool
 testProtocolGoldenDeterministic = do
     let sampleEvents =
@@ -1284,13 +1287,10 @@ testProtocolGoldenDeterministic = do
             , ("server_snapshot.json", encodeSorted (msgSnapshot (makeSnapshot initSampleGame)))
             , ("server_error.json", encodeSorted (msgError ErrVersionMismatch "Unsupported protocol version 2, expected 1"))
             ]
-    let run1 = makeCases
-        run2 = makeCases
-    detOk <- expectEqual run1 run2
     goldenOk <- mapM (\(fn, b) -> do
         diskBytes <- BLC.readFile ("test/golden/protocol/" ++ fn)
-        expectEqual diskBytes b) run1
-    pure (detOk && and goldenOk)
+        expectEqual diskBytes b) makeCases
+    pure (and goldenOk)
 
 -- | Phase 1.4: Protocol version mismatch and missing version error handling (constraint 5).
 testProtocolVersionMismatch :: IO Bool
@@ -1315,7 +1315,21 @@ testProtocolVersionMismatch = do
     r5 <- expectEqual (Left (ProtocolError ErrMalformedPayload "Missing required 'version' field"))
                       (decodeServerMsg sMissing)
 
-    pure (r1 && r2 && r3 && r4 && r5)
+    -- An unrecognized discriminator gets its own code (spec 2.3), so a client
+    -- built against a newer protocol learns why it was rejected instead of
+    -- seeing a generic malformed payload.
+    let codeOf = either (Left . peCode) Right
+        cUnknown = BLC.pack "{\"version\":1,\"type\":\"teleport\"}"
+        sUnknown = BLC.pack "{\"version\":1,\"type\":\"telemetry\"}"
+        cBroken  = BLC.pack "{\"version\":1,\"type\":\"choose\"}"
+    r6 <- expectTrue "unknown client type -> unknown_type"
+              (codeOf (decodeClientMsg cUnknown) == Left ErrUnknownType)
+    r7 <- expectTrue "unknown server type -> unknown_type"
+              (codeOf (decodeServerMsg sUnknown) == Left ErrUnknownType)
+    r8 <- expectTrue "known type with broken payload stays malformed_payload"
+              (codeOf (decodeClientMsg cBroken) == Left ErrMalformedPayload)
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
 
 -- | Phase 1.4: Session transition lines bridged to protocol wire events (constraint 6).
 testProtocolSessionBridge :: IO Bool

@@ -43,7 +43,7 @@ Similarly, client decoders validate `version == 1` upon receiving server message
 | Code | Meaning | Emitted by the v1 codec? |
 |---|---|---|
 | `"version_mismatch"` | Message carries an unsupported protocol version. | yes |
-| `"unknown_type"` | The `"type"` discriminator is not recognized. | **no — reserved.** An unrecognized discriminator currently surfaces as `"malformed_payload"`, because the payload parser fails after the version check. |
+| `"unknown_type"` | The `"type"` discriminator is not recognized. | yes — an unrecognized discriminator is reported as this code, not as a malformed payload. |
 | `"malformed_payload"` | The JSON structure does not match the schema for the declared type. | yes |
 | `"session_error"` | Action rejected due to session state or game policy (e.g. save blocked in Ironman mode). | **no — reserved.** No session layer is wired to the codec yet (the engine has no transport; Phase 3 connects one). |
 

@@ -647,6 +647,20 @@ instance FromJSON ServerMsg where
 encodeSorted :: ToJSON a => a -> BLC.ByteString
 encodeSorted = Pretty.encodePretty' (Pretty.defConfig { Pretty.confCompare = compare })
 
+-- | Message type discriminators this protocol version understands, per direction.
+clientMsgTypes, serverMsgTypes :: [T.Text]
+clientMsgTypes = ["command", "choose", "continue", "load_world", "save", "load"]
+serverMsgTypes = ["events", "snapshot", "error"]
+
+-- | Classify a payload that failed to parse. An unrecognized @type@
+--   discriminator gets its own code, so a client built against a newer protocol
+--   hears *why* it was rejected instead of a generic 'ErrMalformedPayload'
+--   (forward compatibility; spec section 2.3).
+payloadErrorCode :: [T.Text] -> KeyMap.KeyMap Aeson.Value -> ProtocolErrorCode
+payloadErrorCode known obj = case KeyMap.lookup "type" obj of
+    Just (Aeson.String t) | t `notElem` known -> ErrUnknownType
+    _                                         -> ErrMalformedPayload
+
 -- | Decode a client message from JSON bytes, enforcing the protocol version.
 decodeClientMsg :: BL.ByteString -> Either ProtocolError ClientMsg
 decodeClientMsg bs = case Aeson.eitherDecode bs of
@@ -659,7 +673,7 @@ decodeClientMsg bs = case Aeson.eitherDecode bs of
                         Left (ProtocolError ErrVersionMismatch
                                 ("Unsupported protocol version " ++ show (v :: Int)
                                  ++ ", expected " ++ show currentProtocolVersion))
-                    | otherwise -> Left (ProtocolError ErrMalformedPayload err)
+                    | otherwise -> Left (ProtocolError (payloadErrorCode clientMsgTypes obj) err)
                 Aeson.Error _ ->
                     Left (ProtocolError ErrMalformedPayload "Invalid 'version' field format")
             Nothing -> Left (ProtocolError ErrMalformedPayload "Missing required 'version' field")
@@ -677,7 +691,7 @@ decodeServerMsg bs = case Aeson.eitherDecode bs of
                         Left (ProtocolError ErrVersionMismatch
                                 ("Unsupported protocol version " ++ show (v :: Int)
                                  ++ ", expected " ++ show currentProtocolVersion))
-                    | otherwise -> Left (ProtocolError ErrMalformedPayload err)
+                    | otherwise -> Left (ProtocolError (payloadErrorCode serverMsgTypes obj) err)
                 Aeson.Error _ ->
                     Left (ProtocolError ErrMalformedPayload "Invalid 'version' field format")
             Nothing -> Left (ProtocolError ErrMalformedPayload "Missing required 'version' field")
