@@ -13,7 +13,7 @@ mkdir -p src-gen/Types
 
 for m in Types.hs Types/Core.hs Types/Core.hs-boot Types/Cards.hs Types/Vehicles.hs Types/Combat.hs \
          Verbs.hs Game.hs GameLoop.hs Parser.hs Combat.hs Quests.hs Vehicles.hs \
-         Effects.hs Cards.hs Completion.hs Ansi.hs Sample.hs; do
+         Effects.hs Cards.hs Completion.hs Ansi.hs Sample.hs Messages.hs; do
     cp "../src/$m" "src-gen/$m"
 done
 

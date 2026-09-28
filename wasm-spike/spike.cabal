@@ -12,7 +12,7 @@ build-type:          Simple
 library
   exposed-modules:   Types, Types.Core, Types.Cards, Types.Vehicles, Types.Combat,
                      Verbs, Game, GameLoop, Parser, Combat, Quests, Vehicles, Effects,
-                     Cards, Completion, Ansi, Sample, Frontend, SaveLoad, World
+                     Cards, Completion, Ansi, Sample, Frontend, SaveLoad, World, Messages
   hs-source-dirs:    ../src
   build-depends:     base,
                      containers,

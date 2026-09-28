@@ -22,6 +22,7 @@ import GameLoop (LoopState (..), initLoopState, applyLoopCommand,
                  commandEvents, consumesTurn, consumesTurnIn, runGameWithFrontend,
                  handleGameOver, saveBlockedMessage, loadBlockedMessage)
 import Frontend (Frontend (..), commandCompletion)
+import Messages (renderMsg, formatStringWith, catalogEntries, defaultCatalog)
 import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText, bindCommandVars,
                InteractTarget (..), resolveInteractTarget,
                TargetResolution (..), resolveTarget, preferInventoryTarget,
@@ -844,6 +845,32 @@ testPredicateLocationJsonRoundTrip = do
     let legacyNpc = Aeson.decode (BLC.pack "{\"at\":\"goblin\",\"room\":\"hallway\"}")
     r4 <- expectEqual (Just pNpc) legacyNpc
     pure (r1 && r2 && r3 && r4)
+
+-- | Phase 1.1: catalog invariants — no duplicate keys (Map.fromList would drop
+--   them silently), no empty keys/templates, no template containing the
+--   missing-key marker.
+testMessageCatalogInvariants :: IO Bool
+testMessageCatalogInvariants = do
+    let keys = map fst catalogEntries
+        r1 = expectEqual' (length catalogEntries) (Map.size defaultCatalog)
+        r2 = not (any null keys)
+        r3 = not (any (null . snd) catalogEntries)
+        r4 = not (any ("<msg:" `isPrefixOf`) (map snd catalogEntries))
+        expectEqual' a b = a == b
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 1.1: renderMsg flags unknown keys loudly; {arg} substitution and
+--   modifiers come from the moved formatStringWith. Catalog-backed rendering
+--   is pinned by the converted modules (e.g. dark.blocked_anything).
+testRenderMsgArgs :: IO Bool
+testRenderMsgArgs = do
+    r1 <- expectEqual "<msg:no.such.key>" (renderMsg "no.such.key" [])
+    r2 <- expectEqual "You take the rusty sword."
+                (formatStringWith "You take the {item}." (`lookup` [("item", "rusty sword")]))
+    r3 <- expectEqual "{unknown}" (formatStringWith "{unknown}" (\_ -> Nothing))
+    r4 <- expectEqual "+5" (formatStringWith "{n:+}" (`lookup` [("n", "5")]))
+    r5 <- expectEqual "  7" (formatStringWith "{n:3}" (`lookup` [("n", "7")]))
+    pure (r1 && r2 && r3 && r4 && r5)
 
 -- | R1: an unknown entity in a `Predicate.Location` (e.g. `at: palyer` typo) is reported as a MissingEntity error.
 testValidateTypoInPredicateLocation :: IO Bool
@@ -6941,5 +6968,7 @@ main = do
         , runTest "Location round-trip and backward-compatible decoding (R1)" testLocationJsonRoundTrip
         , runTest "Predicate.Location round-trip and backward-compatible decoding (R1)" testPredicateLocationJsonRoundTrip
         , runTest "at: palyer typo fixture produces validation error (R1)" testValidateTypoInPredicateLocation
+        , runTest "message catalog invariants (Phase 1.1)" testMessageCatalogInvariants
+        , runTest "renderMsg substitutes and escapes args (Phase 1.1)" testRenderMsgArgs
         ]
     when (not (and results)) exitFailure

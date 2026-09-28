@@ -119,6 +119,7 @@ module Game
     ) where
 
 import Types
+import Messages (formatStringWith)
 import Data.List (foldl', isPrefixOf, nub, stripPrefix)
 import Data.Bits (shiftR)
 import Data.Char (toLower, isDigit, isSpace)
@@ -1132,49 +1133,11 @@ lookupVarForFormat st name
     varToString (VVBool b) = if b then "true" else "false"
     varToString (VVText s) = s
 
-applyVarModifier :: String -> String -> String
-applyVarModifier str modif =
-    let forceSign = '+' `elem` modif
-        widthPart = filter (/= '+') modif
-        signedStr = if forceSign
-                    then case str of
-                        ('-':_) -> str
-                        _       -> '+' : str
-                    else str
-    in case widthPart of
-        ('-':digits) | not (null digits) && all isDigit digits ->
-            let w = read digits :: Int
-            in signedStr ++ replicate (max 0 (w - length signedStr)) ' '
-        digits | not (null digits) && all isDigit digits ->
-            let w = read digits :: Int
-            in replicate (max 0 (w - length signedStr)) ' ' ++ signedStr
-        _ -> signedStr
-
-formatStringWith :: String -> (String -> Maybe String) -> String
-formatStringWith [] _ = []
-formatStringWith ('\\':'{':cs) env = '{' : formatStringWith cs env
-formatStringWith ('\\':'}':cs) env = '}' : formatStringWith cs env
-formatStringWith ('{':'{':cs) env = '{' : formatStringWith cs env
-formatStringWith ('}':'}':cs) env = '}' : formatStringWith cs env
-formatStringWith ('{':cs) env =
-    case span (/= '}') cs of
-        (inside, '}':rest) ->
-            let (isExplicitVar, clean) = if "var:" `isPrefixOf` inside
-                                        then (True, drop 4 inside)
-                                        else (False, inside)
-                (varName, modif) = case break (== ':') clean of
-                    (name, ':':m) -> (name, m)
-                    (name, _)     -> (name, "")
-            in case env varName of
-                Just val -> applyVarModifier val modif ++ formatStringWith rest env
-                Nothing
-                    | isExplicitVar -> applyVarModifier "0" modif ++ formatStringWith rest env
-                    | otherwise     -> '{' : inside ++ "}" ++ formatStringWith rest env
-        _ -> '{' : formatStringWith cs env
-formatStringWith (c:cs) env = c : formatStringWith cs env
-
 -- ---------------------------------------------------------------------------
 -- Conditional text (Phase 3g)
+--
+--   formatStringWith/applyVarModifier moved to Messages.hs (Phase 1.1);
+--   imported there. formatWithVars stays: it is the var-resolver bridge.
 -- ---------------------------------------------------------------------------
 
 -- | Resolve a CondText: first variant whose predicate holds wins; otherwise
