@@ -1,0 +1,4 @@
+packages: .
+
+-- aeson & co. come from Hackage; keep reproducible-ish.
+index-state: 2026-09-28T00:24:03Z

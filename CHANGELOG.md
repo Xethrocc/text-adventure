@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### WASM-Machbarkeits-Spike (Phase 1.0)
+
+- Neues, nicht produktionelles Verzeichnis `wasm-spike/`: baut die Engine mit dem
+  GHC-WASM-Backend und führt `applyLoopCommand` in einem WASI-Runtime aus
+  (wasmtime und Node.js). Abnahme-Dokument: `docs/wasm-spike-2026-09.md`.
+- **Kernbefund: machbar, besser als geplant.** Nicht nur die puren Kern-Module —
+  die **unveränderte Produktions-Library** (alle 20 Module inkl. `Frontend` mit
+  Haskeline, `SaveLoad`, `Audio`, `World`) kompiliert und läuft unter GHC 9.14
+  (wasm32-wasi): die Ausgaben des Fahrprogramms (Sample-Spiel + kompiliertes
+  `dark-feelable`-Adventure mit aeson-Deserialisierung von `world.json`/`save.json`)
+  sind **byte-identisch** zu einem nativen GHC-9.6.7-Lauf.
+- Die Bindist bringt `directory`, `filepath`, `process` und `haskeline`
+  (WASI-gepatcht) bereits mit; ergänzt wurden nur `aeson`/`aeson-pretty` von Hackage.
+- Blocker für den Web-Export (5.1) bleiben dokumentiert: Save/Load braucht im
+  Browser JS-FFI statt WASI-Dateisystem, `Audio.hs` (process/ffplay) wird dort
+  nicht gelinkt (Web Audio, Phase 5.2), Modulgröße 6 MB unkomprimiert.
+- Aufwandskorrektur für 5.1: **eher M als XL** — das Spike-Risiko ist entfallen,
+  es bleibt I/O-Glue über das Protokoll aus 1.4.
+- Keine Änderung an Engine, Tests oder Adventures; CI unverändert grün.
+
 ### Refactoring: Monolithisches `Types.hs` aufgeteilt (Phase 0.6)
 
 - Das 2184 Zeilen lange Modul `src/Types.hs` wurde in vier fokussierte Submodule mit vollständigen, expliziten Exportlisten aufgeteilt:

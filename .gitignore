@@ -20,3 +20,5 @@ docs/detailplan_endlos_sandbox_worldgen.md
 docs/detailplan_kartenspiel_deckbuilder.md
 docs/detailplan_wirtschaft_und_formeln.md
 docs/special_genres_masterplan.md
+/wasm-spike/dist-newstyle
+/wasm-spike/data
