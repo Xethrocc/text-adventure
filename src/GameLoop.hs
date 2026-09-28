@@ -15,6 +15,7 @@ module GameLoop
   , consumesTurnIn
   , handleGameOver
   , deathLoop
+  , victoryLoop
   , saveBlockedMessage
   , loadBlockedMessage
   , deathMenuText
@@ -22,6 +23,23 @@ module GameLoop
   , persistMeta
   , reseedRng
   , bumpMetaRuns
+  , SessionRequest (..)
+  , IoRequest
+  , SessionState (..)
+  , transitionSave
+  , transitionLoad
+  , transitionLoadSuccess
+  , transitionListSaves
+  , transitionRestart
+  , transitionGameOver
+  , transitionDeathUndo
+  , transitionDeathCanLoad
+  , transitionDeathLoadSlot
+  , transitionDeathInput
+  , transitionVictoryInput
+  , advanceNarrative
+  , executeRequest
+  , endScreenLines
   ) where
 
 import Types
@@ -33,7 +51,6 @@ import Verbs (verbCanonicalName)
 import SaveLoad
 import Sample (initSampleGame)
 import Frontend
-import Control.Monad (when)
 import Data.Char (toLower)
 import Data.List (foldl', isPrefixOf)
 import Data.Maybe (isJust, fromMaybe)
@@ -238,11 +255,9 @@ bumpMetaRuns st
 runRestart :: Frontend -> LoopState -> IO ()
 runRestart fe loopState = do
     seed <- newRngSeedIO
-    let (restarted, msg) = applyLoopCommand Restart loopState
-        fresh = restarted { lsCurrent = reseedRng seed . bumpMetaRuns $ lsCurrent restarted }
-    persistMeta (lsCurrent fresh)
-    feEmitLine fe (renderMsg "game.restart_start" [])
-    feEmitLine fe msg
+    let (fresh, reqs, lines') = transitionRestart seed loopState
+    mapM_ (executeRequest fe (lsCurrent fresh)) reqs
+    mapM_ (feEmitLine fe) lines'
     loopGame fe fresh
 
 -- | IO-side seed derivation for restarts (M6: clock stays in the IO path).
@@ -451,6 +466,35 @@ emitNewDiagnostics fe before after =
 gameLoop :: GameState -> IO ()
 gameLoop = loopGame (haskelineFrontend id) . initLoopState
 
+-- | Dispatch presentation audio and cutscenes, returning the updated state.
+dispatchAudioAndCutscene :: Frontend -> LoopState -> IO LoopState
+dispatchAudioAndCutscene fe loopState = do
+    let cur = lsCurrent loopState
+    mapM_ (fePlaySfx fe) (pendingSfx cur)
+    let curA = cur { pendingSfx = [] }
+    case pendingMusic curA of
+        Just (MusicStart path) -> feStartMusic fe path
+        Just MusicStop         -> feStopMusic fe
+        Nothing                -> pure ()
+    let curB = curA { pendingMusic = Nothing }
+    curAfterCutscene <- case pendingCutscene curB of
+        Just (frames, micros) -> do
+            fePlayFrames fe micros frames
+            pure (curB { pendingCutscene = Nothing })
+        Nothing -> pure curB
+    pure (loopState { lsCurrent = curAfterCutscene })
+
+-- | Play narrative lines sequentially, emitting pauses for intermediate lines.
+playNarrativeLines :: Frontend -> GameState -> [SessionRequest] -> [String] -> IO ()
+playNarrativeLines fe st reqs allLines =
+    case reqs of
+        [] -> mapM_ (feEmitLine fe) allLines
+        _  -> do
+            let numPauses = length reqs
+                (pausedLines, restLines) = splitAt numPauses allLines
+            mapM_ (\l -> feEmitLine fe l >> executeRequest fe st ReqPause) pausedLines
+            mapM_ (feEmitLine fe) restLines
+
 -- | Interactive game loop with an in-memory undo history. All I/O goes
 --   through the frontend record (Phase V): the loop itself is presentation-
 --   agnostic and drives the shared policy functions only.
@@ -467,44 +511,29 @@ loopGame fe loopState
             Just input ->
                 case parseCommandWith (verbDefs (world state)) input of
                     Save name -> do
-                        -- Rogue Phase 1: ironman restricts saving to savezones
-                        -- and routes it into one checkpoint slot; normal games
-                        -- save wherever the player asks (unchanged).
-                        let policy = worldGamePolicy (world state)
-                            slotName = if gpIronman policy
-                                       then ironmanCheckpointSlot else name
-                        case saveBlockedMessage state of
-                            Just msg -> do
-                                feEmitLine fe msg
-                                loopGame fe loopState
-                            Nothing -> do
-                                saveGame state slotName
-                                loopGame fe loopState { lsSaveSlot = Just slotName }
+                        let (loopState', reqs, msgs) = transitionSave name loopState
+                        mapM_ (executeRequest fe (lsCurrent loopState')) reqs
+                        mapM_ (feEmitLine fe) msgs
+                        loopGame fe loopState'
                     Load name -> do
-                        case loadBlockedMessage state of
-                            Just msg -> do
-                                feEmitLine fe msg
-                                loopGame fe loopState
-                            Nothing -> do
-                                result <- loadGame state name
-                                case result of
+                        let (loopState', reqs, msgs) = transitionLoad name loopState
+                        mapM_ (feEmitLine fe) msgs
+                        if null reqs
+                            then loopGame fe loopState'
+                            else do
+                                mbLoaded <- loadGame (lsCurrent loopState) name
+                                case mbLoaded of
                                     Just loadedState -> do
-                                        -- Rogue Phase 2 (M5): the meta file is
-                                        -- the authoritative progress store —
-                                        -- a slot's snapshot never overrides it.
-                                        loadedState' <- mergeMetaFromDisk loadedState
-                                        let (_, msg) = executeCommand Look loadedState'
-                                        feEmitLine fe msg
-                                        loopGame fe (initLoopState loadedState')
-                                    Nothing -> loopGame fe loopState
+                                        diskMeta <- loadMeta (world loadedState)
+                                        let (freshLoop, lookLines) = transitionLoadSuccess diskMeta loadedState
+                                        mapM_ (feEmitLine fe) lookLines
+                                        loopGame fe freshLoop
+                                    Nothing -> loopGame fe loopState'
                     ListSaves -> do
-                        listSaves (world state)
+                        let (_, reqs, _) = transitionListSaves loopState
+                        mapM_ (executeRequest fe (lsCurrent loopState)) reqs
                         loopGame fe loopState
-                    Restart -> do
-                        feEmitLine fe (renderMsg "game.restart_start" [])
-                        let (restarted, msg) = applyLoopCommand Restart loopState
-                        feEmitLine fe msg
-                        loopGame fe restarted
+                    Restart -> runRestart fe loopState
                     Help -> do
                         feEmitLine fe helpText
                         loopGame fe loopState
@@ -515,100 +544,244 @@ loopGame fe loopState
                         -- played once at the clip's own rate), then the other
                         -- pending presentations (animation, narrative).
                         feEmitLine fe message
-                        -- Audio Phase 1: drain queued SFX (fire-and-forget).
-                        mapM_ (fePlaySfx fe) (pendingSfx (lsCurrent loopState'))
-                        let loopState'a = loopState' { lsCurrent = (lsCurrent loopState') { pendingSfx = [] } }
-                        -- Audio Phase 2: dispatch pending music command.
-                        case pendingMusic (lsCurrent loopState'a) of
-                            Just (MusicStart path) -> feStartMusic fe path
-                            Just MusicStop         -> feStopMusic fe
-                            Nothing                -> pure ()
-                        let loopState'b = loopState'a { lsCurrent = (lsCurrent loopState'a) { pendingMusic = Nothing } }
-                        curAfterCutscene <- case pendingCutscene (lsCurrent loopState'b) of
+                        loopStateAfterAudio <- dispatchAudioAndCutscene fe loopState'
+                        case pendingAnimation (lsCurrent loopStateAfterAudio) of
                             Just (frames, micros) -> do
                                 fePlayFrames fe micros frames
-                                pure ((lsCurrent loopState'b) { pendingCutscene = Nothing })
-                            Nothing -> pure (lsCurrent loopState'b)
-                        let loopState'' = loopState'b { lsCurrent = curAfterCutscene }
-                        case pendingAnimation (lsCurrent loopState'') of
-                            Just (frames, micros) -> do
-                                fePlayFrames fe micros frames
-                                let cleared = (lsCurrent loopState'') { pendingAnimation = Nothing }
-                                loopGame fe (loopState'' { lsCurrent = cleared })
+                                let cleared = (lsCurrent loopStateAfterAudio) { pendingAnimation = Nothing }
+                                loopGame fe (loopStateAfterAudio { lsCurrent = cleared })
                             Nothing ->
-                                case pendingNarrative (lsCurrent loopState'') of
+                                case advanceNarrative (lsCurrent loopStateAfterAudio) of
                                     Nothing ->
-                                        loopGame fe loopState''
-                                    Just (nls, followUp) -> do
-                                        case nls of
-                                            [] -> return ()
-                                            [single] -> feEmitLine fe single
-                                            _ -> do
-                                                mapM_ (\l -> feEmitLine fe l >> feReadPause fe)
-                                                    (init nls)
-                                                feEmitLine fe (last nls)
-                                        let (finalState, followMsg) = applyOutcome followUp "" (lsCurrent loopState'')
-                                            clearedState = finalState { pendingNarrative = Nothing }
-                                        if null followMsg
-                                            then loopGame fe (loopState'' { lsCurrent = clearedState })
-                                            else do feEmitLine fe followMsg
-                                                    loopGame fe (loopState'' { lsCurrent = clearedState })
+                                        loopGame fe loopStateAfterAudio
+                                    Just (clearedState, reqs, narrativeLines) -> do
+                                        playNarrativeLines fe (lsCurrent loopStateAfterAudio) reqs narrativeLines
+                                        loopGame fe (loopStateAfterAudio { lsCurrent = clearedState })
   where
     state = lsCurrent loopState
 
 -- ---------------------------------------------------------------------------
--- Game over screens
+-- Session automaton types and pure transitions (Plan 1.3)
+-- ---------------------------------------------------------------------------
+
+-- | IO requests produced by pure session transitions and executed by the
+--   game loop interpreter (Plan 1.3).
+data SessionRequest
+    = ReqSave String           -- ^ Request saving current state to a slot name
+    | ReqLoad String           -- ^ Request loading state from a slot name
+    | ReqPersistMeta           -- ^ Request persisting meta.* variables to disk
+    | ReqPause                 -- ^ Request narrative continuation pause (Enter)
+    | ReqDeleteSave String     -- ^ Request deleting an ironman checkpoint slot
+    | ReqListSaves             -- ^ Request listing all saved games
+    deriving (Show, Eq)
+
+-- | Alias for SessionRequest (Plan 1.3 terminology).
+type IoRequest = SessionRequest
+
+-- | Session automaton states for the pure game loop transitions.
+data SessionState
+    = SessionPlaying LoopState
+    | SessionDeath LoopState
+    | SessionDeathPromptLoad LoopState
+    | SessionVictory LoopState GameOverReason
+    | SessionEnded
+    deriving (Show, Eq)
+
+-- | Thin IO interpreter for session requests.
+executeRequest :: Frontend -> GameState -> SessionRequest -> IO ()
+executeRequest _fe st (ReqSave slot)        = saveGame st slot
+executeRequest _fe _st (ReqLoad _slot)       = pure ()
+executeRequest _fe st ReqPersistMeta        = persistMeta st
+executeRequest fe _st ReqPause              = feReadPause fe
+executeRequest _fe _st (ReqDeleteSave slot)  = deleteSaveSlot slot
+executeRequest _fe st ReqListSaves          = listSaves (world st)
+
+-- | Pure transition for the 'save' command. Checks the save policy
+--   (ironman savezones) and yields an IO request on success.
+transitionSave :: String -> LoopState -> (LoopState, [SessionRequest], [String])
+transitionSave name loopState =
+    let st = lsCurrent loopState
+        policy = worldGamePolicy (world st)
+        slotName = if gpIronman policy then ironmanCheckpointSlot else name
+    in case saveBlockedMessage st of
+        Just msg -> (loopState, [], [msg])
+        Nothing  -> (loopState { lsSaveSlot = Just slotName }, [ReqSave slotName], [])
+
+-- | Pure transition for the 'load' command. Checks the load policy
+--   (ironman disabled) and yields an IO request on success.
+transitionLoad :: String -> LoopState -> (LoopState, [SessionRequest], [String])
+transitionLoad name loopState =
+    let st = lsCurrent loopState
+    in case loadBlockedMessage st of
+        Just msg -> (loopState, [], [msg])
+        Nothing  -> (loopState, [ReqLoad name], [])
+
+-- | Pure state update after a successful game load: merges disk meta.* variables
+--   over the loaded state and executes a fresh 'look'.
+transitionLoadSuccess :: Map.Map String VariableValue -> GameState -> (LoopState, [String])
+transitionLoadSuccess diskMeta loadedState =
+    let loadedState' = loadedState
+            { save = (save loadedState)
+                { variables = mergeMetaVars diskMeta (variables (save loadedState)) } }
+        (_, lookMsg) = executeCommand Look loadedState'
+    in (initLoopState loadedState', [lookMsg])
+
+-- | Pure transition for the 'list saves' command.
+transitionListSaves :: LoopState -> (LoopState, [SessionRequest], [String])
+transitionListSaves ls = (ls, [ReqListSaves], [])
+
+-- | Pure transition for restarting the adventure: derives initial state,
+--   carries meta variables, reseeds RNG with the given seed, increments
+--   meta.runs, and requests disk persistence of the meta state.
+transitionRestart :: Word64 -> LoopState -> (LoopState, [SessionRequest], [String])
+transitionRestart seed loopState =
+    let (restarted, lookMsg) = applyLoopCommand Restart loopState
+        freshCurrent = reseedRng seed . bumpMetaRuns $ lsCurrent restarted
+        freshLoop = restarted { lsCurrent = freshCurrent }
+        lines' = [renderMsg "game.restart_start" [], lookMsg]
+    in (freshLoop, [ReqPersistMeta], lines')
+
+-- | Pure formatting of end-game screen lines: blank line, resolved end art
+--   (or built-in banner fallback), followed by a blank line.
+endScreenLines :: GameState -> GameOverReason -> [String]
+endScreenLines st reason =
+    let fallback = case reason of
+            Death ->
+                [ renderMsg "end.rule_line" []
+                , renderMsg "death.title" []
+                , renderMsg "end.rule_line" []
+                ]
+            Victory ->
+                [ renderMsg "end.rule_line" []
+                , renderMsg "victory.title" []
+                , renderMsg "end.rule_line" []
+                ]
+            Custom msg ->
+                [ renderMsg "gameover.custom" [("msg", msg)] ]
+        artLines = case endArtFor reason st of
+            Just art -> [resolveAsciiArt art st]
+            Nothing  -> fallback
+    in [""] ++ artLines ++ [""]
+
+-- | Pure transition when 'gameOver' is detected: requests meta persistence,
+--   checkpoint deletion in ironman mode, produces the end screen and menu lines,
+--   and transitions to the appropriate session state (Death, Victory, Ended).
+transitionGameOver :: LoopState -> (SessionState, [SessionRequest], [String])
+transitionGameOver loopState =
+    let st = lsCurrent loopState
+        policy = worldGamePolicy (world st)
+        mbReason = gameOverReason (save st)
+        reqs = case mbReason of
+            Just Death ->
+                ReqPersistMeta : [ReqDeleteSave slot | gpIronman policy, Just slot <- [lsSaveSlot loopState]]
+            Just _ -> [ReqPersistMeta]
+            Nothing -> [ReqPersistMeta]
+        (nextSession, promptLine) = case mbReason of
+            Just Death -> (SessionDeath loopState, [deathMenuText policy])
+            Just Victory -> (SessionVictory loopState Victory, [renderMsg "menu.restart_quit" []])
+            Just (Custom msg) -> (SessionVictory loopState (Custom msg), [renderMsg "menu.restart_quit" []])
+            Nothing -> (SessionEnded, [])
+        lines' = case mbReason of
+            Just reason -> endScreenLines st reason ++ promptLine
+            Nothing     -> []
+    in (nextSession, reqs, lines')
+
+-- | Pure transition for the death screen 'undo' option: checks policy
+--   and history, restoring the previous state on success.
+transitionDeathUndo :: LoopState -> (SessionState, [SessionRequest], [String])
+transitionDeathUndo loopState =
+    let st = lsCurrent loopState
+        policy = worldGamePolicy (world st)
+    in if gpPermadeath policy
+       then (SessionDeath loopState, [], [renderMsg "undo.permadeath" []])
+       else if gpIronman policy
+       then (SessionDeath loopState, [], [renderMsg "undo.ironman" []])
+       else if not (gpAllowUndo policy)
+       then (SessionDeath loopState, [], [renderMsg "undo.disabled" []])
+       else case lsHistory loopState of
+           [] -> (SessionDeath loopState, [], [renderMsg "undo.nothing" []])
+           _  ->
+               let (restored, msg) = applyLoopCommand Undo loopState
+               in (SessionPlaying restored, [], [msg])
+
+-- | Pure check whether loading from the death screen is permitted.
+transitionDeathCanLoad :: LoopState -> (Bool, [String])
+transitionDeathCanLoad loopState =
+    let policy = worldGamePolicy (world (lsCurrent loopState))
+    in if gpPermadeath policy
+       then (False, [renderMsg "load.permadeath" []])
+       else if gpIronman policy
+       then (False, [renderMsg "load.ironman_blocked" []])
+       else (True, [renderMsg "load.prompt" []])
+
+-- | Pure determination of slot name and load request for death menu load.
+transitionDeathLoadSlot :: Maybe String -> (String, SessionRequest)
+transitionDeathLoadSlot nameResult =
+    let slot = case nameResult of
+            Just n | not (null n) -> n
+            _                     -> "savegame"
+    in (slot, ReqLoad slot)
+
+-- | Pure transition for death screen choices: 'u' (undo), 'l' (load),
+--   'r' (restart), 'q' (quit), or invalid input.
+transitionDeathInput :: Word64 -> Maybe String -> LoopState -> (SessionState, [SessionRequest], [String])
+transitionDeathInput seed inputResult loopState =
+    let policy = worldGamePolicy (world (lsCurrent loopState))
+        choice = map toLower (fromMaybe "q" inputResult)
+    in case choice of
+        "u" -> transitionDeathUndo loopState
+        "r" ->
+            let (freshLoop, reqs, lines') = transitionRestart seed loopState
+            in (SessionPlaying freshLoop, reqs, lines')
+        "q" -> (SessionEnded, [], [renderMsg "quit.thanks" []])
+        "l" ->
+            let (canLoad, msgs) = transitionDeathCanLoad loopState
+            in if canLoad
+               then (SessionDeathPromptLoad loopState, [], msgs)
+               else (SessionDeath loopState, [], msgs)
+        _   -> (SessionDeath loopState, [], [deathMenuText policy])
+
+-- | Pure transition for victory screen choices: 'r' (restart), 'q' (quit),
+--   or invalid input.
+transitionVictoryInput :: Word64 -> Maybe String -> LoopState -> GameOverReason -> (SessionState, [SessionRequest], [String])
+transitionVictoryInput seed inputResult loopState reason =
+    let choice = map toLower (fromMaybe "q" inputResult)
+    in case choice of
+        "r" ->
+            let (freshLoop, reqs, lines') = transitionRestart seed loopState
+            in (SessionPlaying freshLoop, reqs, lines')
+        "q" -> (SessionEnded, [], [renderMsg "quit.thanks" []])
+        _   -> (SessionVictory loopState reason, [], [renderMsg "menu.restart_quit" []])
+
+-- | Pure narrative step: advances pending narrative lines with pauses (ReqPause)
+--   between lines, executes the follow-up outcome, and clears pendingNarrative.
+advanceNarrative :: GameState -> Maybe (GameState, [SessionRequest], [String])
+advanceNarrative st = case pendingNarrative st of
+    Nothing -> Nothing
+    Just (nls, followUp) ->
+        let (finalState, followMsg) = applyOutcome followUp "" st
+            clearedState = finalState { pendingNarrative = Nothing }
+            followLines = if null followMsg then [] else [followMsg]
+            (reqs, lines') = case nls of
+                [] -> ([], followLines)
+                [single] -> ([], single : followLines)
+                _ -> (replicate (length (init nls)) ReqPause, nls ++ followLines)
+        in Just (clearedState, reqs, lines')
+
+-- ---------------------------------------------------------------------------
+-- Game over screens (interpreter)
 -- ---------------------------------------------------------------------------
 
 -- | Handle game-over screen based on reason
 handleGameOver :: Frontend -> LoopState -> IO ()
 handleGameOver fe loopState = do
-    -- Rogue Phase 2: meta.* persists through game over — victory, death,
-    -- custom end and quit alike (a quit mid-run keeps the souls collected so
-    -- far). Written before anything else so the loop below cannot lose it.
-    persistMeta state
-    case gameOverReason (save state) of
-        Just Death -> do
-            emitEndArt fe state Death
-                [ renderMsg "end.rule_line" []
-                , renderMsg "death.title" []
-                , renderMsg "end.rule_line" []
-                ]
-            -- Rogue Phase 1 (M1/M2-Entscheidung): in ironman mode the run's
-            -- checkpoint dies with the run — exactly one slot, tracked by
-            -- 'lsSaveSlot' since the last in-zone save. The `--save` start
-            -- file is never touched (neutral re-entry point).
-            let policy = worldGamePolicy (world state)
-            when (gpIronman policy) $
-                maybe (pure ()) deleteSaveSlot (lsSaveSlot loopState)
-            feEmitLine fe (deathMenuText policy)
-            deathLoop fe loopState
-        Just Victory -> do
-            emitEndArt fe state Victory
-                [ renderMsg "end.rule_line" []
-                , renderMsg "victory.title" []
-                , renderMsg "end.rule_line" []
-                ]
-            feEmitLine fe (renderMsg "menu.restart_quit" [])
-            victoryLoop fe loopState
-        Just (Custom msg) -> do
-            emitEndArt fe state (Custom msg) [ renderMsg "gameover.custom" [("msg", msg)] ]
-            feEmitLine fe (renderMsg "menu.restart_quit" [])
-            victoryLoop fe loopState
-        Nothing -> return ()  -- Quit without reason
-  where
-    state = lsCurrent loopState
-
--- | Print the end screen: a blank line, the world's `end_art` for this reason
---   when present, otherwise the built-in frame, then a blank line. The control
---   hints are printed by the caller so the input loop stays reachable either way.
-emitEndArt :: Frontend -> GameState -> GameOverReason -> [String] -> IO ()
-emitEndArt fe st reason fallback = do
-    feEmitLine fe ""
-    case endArtFor reason st of
-        Just art -> feEmitLine fe (resolveAsciiArt art st)
-        Nothing  -> mapM_ (feEmitLine fe) fallback
-    feEmitLine fe ""
+    let (nextSession, reqs, lines') = transitionGameOver loopState
+    mapM_ (executeRequest fe (lsCurrent loopState)) reqs
+    mapM_ (feEmitLine fe) lines'
+    case nextSession of
+        SessionDeath ls     -> deathLoop fe ls
+        SessionVictory ls _ -> victoryLoop fe ls
+        _                   -> return ()
 
 -- | Death screen input loop. Policy gates (Rogue Phase 1):
 --   * permadeath: no undo/load at all — only restart or quit;
@@ -619,63 +792,47 @@ emitEndArt fe st reason fallback = do
 --   actually restore, and it needs an unspent history entry).
 deathLoop :: Frontend -> LoopState -> IO ()
 deathLoop fe loopState = do
-    inputResult <- feReadPlain fe state "> "
-    let policy = worldGamePolicy (world state)
-    case map toLower . fromMaybe "q" <$> pure inputResult of
-        Just "u"
-            | gpPermadeath policy -> do
-                feEmitLine fe (renderMsg "undo.permadeath" [])
-                deathLoop fe loopState
-            | gpIronman policy -> do
-                feEmitLine fe (renderMsg "undo.ironman" [])
-                deathLoop fe loopState
-            | not (gpAllowUndo policy) -> do
-                feEmitLine fe (renderMsg "undo.disabled" [])
-                deathLoop fe loopState
-            | otherwise ->
-                case lsHistory loopState of
-                    [] -> do
-                        feEmitLine fe (renderMsg "undo.nothing" [])
-                        deathLoop fe loopState
-                    _ -> do
-                        let (restored, msg) = applyLoopCommand Undo loopState
-                        feEmitLine fe msg
-                        loopGame fe restored
-        Just "l"
-            | gpPermadeath policy -> do
-                feEmitLine fe (renderMsg "load.permadeath" [])
-                deathLoop fe loopState
-            | gpIronman policy -> do
-                feEmitLine fe (renderMsg "load.ironman_blocked" [])
-                deathLoop fe loopState
-            | otherwise -> do
-                feEmitLine fe (renderMsg "load.prompt" [])
-                nameResult <- feReadPlain fe state "> "
-                let name = case nameResult of
-                        Just n | not (null n) -> n
-                        _                     -> "savegame"
-                result <- loadGame state name
-                case result of
-                    Just loadedState -> do
-                        let (s', msg) = executeCommand Look loadedState
-                        feEmitLine fe msg
-                        loopGame fe (initLoopState s')
-                    Nothing -> deathLoop fe loopState
-        Just "r" -> runRestart fe loopState
-        Just "q" -> feEmitLine fe (renderMsg "quit.thanks" [])
+    inputResult <- feReadPlain fe (lsCurrent loopState) "> "
+    let policy = worldGamePolicy (world (lsCurrent loopState))
+    case map toLower (fromMaybe "q" inputResult) of
+        "u" -> do
+            let (nextSession, reqs, lines') = transitionDeathUndo loopState
+            mapM_ (executeRequest fe (lsCurrent loopState)) reqs
+            mapM_ (feEmitLine fe) lines'
+            case nextSession of
+                SessionPlaying ls -> loopGame fe ls
+                SessionDeath ls   -> deathLoop fe ls
+                _                 -> return ()
+        "l" -> do
+            let (canPrompt, msgs) = transitionDeathCanLoad loopState
+            mapM_ (feEmitLine fe) msgs
+            if not canPrompt
+                then deathLoop fe loopState
+                else do
+                    nameResult <- feReadPlain fe (lsCurrent loopState) "> "
+                    let (slot, req) = transitionDeathLoadSlot nameResult
+                    executeRequest fe (lsCurrent loopState) req
+                    mbLoaded <- loadGame (lsCurrent loopState) slot
+                    case mbLoaded of
+                        Just loadedState -> do
+                            diskMeta <- loadMeta (world loadedState)
+                            let (freshLoop, lookLines) = transitionLoadSuccess diskMeta loadedState
+                            mapM_ (feEmitLine fe) lookLines
+                            loopGame fe freshLoop
+                        Nothing -> deathLoop fe loopState
+        "r" -> runRestart fe loopState
+        "q" -> feEmitLine fe (renderMsg "quit.thanks" [])
         _ -> do
             feEmitLine fe (deathMenuText policy)
             deathLoop fe loopState
-  where
-    state = lsCurrent loopState
 
 -- | Victory/custom game-over input loop
 victoryLoop :: Frontend -> LoopState -> IO ()
 victoryLoop fe loopState = do
     inputResult <- feReadPlain fe (lsCurrent loopState) "> "
-    case map toLower . fromMaybe "q" <$> pure inputResult of
-        Just "r" -> runRestart fe loopState
-        Just "q" -> feEmitLine fe (renderMsg "quit.thanks" [])
+    case map toLower (fromMaybe "q" inputResult) of
+        "r" -> runRestart fe loopState
+        "q" -> feEmitLine fe (renderMsg "quit.thanks" [])
         _ -> do
             feEmitLine fe (renderMsg "menu.restart_quit" [])
             victoryLoop fe loopState

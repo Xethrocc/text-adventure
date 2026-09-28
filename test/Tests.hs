@@ -20,7 +20,12 @@ import Cards
 import GameLoop (LoopState (..), initLoopState, applyLoopCommand, applyLoopCommandEv,
                  sideEvents, bumpMetaRuns, reseedRng,
                  commandEvents, consumesTurn, consumesTurnIn, runGameWithFrontend,
-                 handleGameOver, saveBlockedMessage, loadBlockedMessage)
+                 handleGameOver, saveBlockedMessage, loadBlockedMessage, deathMenuText,
+                 SessionRequest (..), SessionState (..),
+                 transitionSave, transitionLoad, transitionLoadSuccess,
+                 transitionRestart, transitionGameOver,
+                 transitionDeathInput, transitionDeathLoadSlot,
+                 transitionVictoryInput, advanceNarrative)
 import Frontend (Frontend (..), commandCompletion)
 import Messages (renderMsg, formatStringWith, catalogEntries, defaultCatalog)
 import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText, bindCommandVars,
@@ -945,8 +950,268 @@ testOutputSideEvents = do
         r3 = EvQuestUpdate `elem` evs3
     pure (r1 && r2 && r3)
 
+-- | Phase 1.3: pure save transition — checks ironman savezone policy and yields ReqSave
+testSessionTransitionSave :: IO Bool
+testSessionTransitionSave = do
+    let normalSt = initSampleGame
+        normalLoop = initLoopState normalSt
+        (l1, reqs1, msgs1) = transitionSave "slot1" normalLoop
+    r1 <- expectEqual [ReqSave "slot1"] reqs1
+    r2 <- expectEqual (Just "slot1") (lsSaveSlot l1)
+    r3 <- expectTrue "normal save produces no extra messages" (null msgs1)
 
--- | R1: an unknown entity in a `Predicate.Location` (e.g. `at: palyer` typo) is reported as a MissingEntity error.
+    -- ironman outside savezone is rejected
+    let ironSt = normalSt
+            { world = (world normalSt)
+                { worldGamePolicy = defaultGamePolicy
+                    { gpIronman = True, gpSaveZones = ["safe_room"] } } }
+        ironLoop = initLoopState ironSt
+        (l2, reqs2, msgs2) = transitionSave "slot2" ironLoop
+    r4 <- expectTrue "ironman save rejected outside savezone" (null reqs2)
+    r5 <- expectEqual Nothing (lsSaveSlot l2)
+    r6 <- expectEqual [renderMsg "save.savezone_only" []] msgs2
+
+    -- ironman inside savezone routes to checkpoint slot
+    let ironInZoneSt = ironSt
+            { save = (save ironSt) { currentRoom = "safe_room" } }
+        ironInZoneLoop = initLoopState ironInZoneSt
+        (l3, reqs3, msgs3) = transitionSave "slot3" ironInZoneLoop
+    r7 <- expectEqual [ReqSave "checkpoint"] reqs3
+    r8 <- expectEqual (Just "checkpoint") (lsSaveSlot l3)
+    r9 <- expectTrue "ironman save in zone produces no extra messages" (null msgs3)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9)
+
+-- | Phase 1.3: pure load transition and load success — checks ironman and merges meta
+testSessionTransitionLoad :: IO Bool
+testSessionTransitionLoad = do
+    let normalSt = initSampleGame
+        normalLoop = initLoopState normalSt
+        (_, reqs1, msgs1) = transitionLoad "slot1" normalLoop
+    r1 <- expectEqual [ReqLoad "slot1"] reqs1
+    r2 <- expectTrue "normal load produces no immediate messages" (null msgs1)
+
+    -- ironman rejects load
+    let ironSt = normalSt
+            { world = (world normalSt)
+                { worldGamePolicy = defaultGamePolicy { gpIronman = True } } }
+        ironLoop = initLoopState ironSt
+        (_, reqs2, msgs2) = transitionLoad "slot2" ironLoop
+    r3 <- expectTrue "ironman load produces no requests" (null reqs2)
+    r4 <- expectEqual [renderMsg "load.ironman_blocked" []] msgs2
+
+    -- load success merges disk meta variables and executes Look
+    let loadedSt = normalSt
+            { save = (save normalSt)
+                { variables = Map.singleton "gold" (VVInt 10) } }
+        diskMeta = Map.singleton "meta.souls" (VVInt 42)
+        (freshLoop, lookLines) = transitionLoadSuccess diskMeta loadedSt
+        freshVars = variables (save (lsCurrent freshLoop))
+    r5 <- expectEqual (Just (VVInt 42)) (Map.lookup "meta.souls" freshVars)
+    r6 <- expectEqual (Just (VVInt 10)) (Map.lookup "gold" freshVars)
+    r7 <- expectTrue "lookLines non-empty" (not (null lookLines))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | Phase 1.3: pure restart transition — reseeds RNG, increments meta.runs, requests ReqPersistMeta
+testSessionTransitionRestart :: IO Bool
+testSessionTransitionRestart = do
+    let metaSt = initSampleGame
+            { world = (world initSampleGame)
+                { varDefs = Map.singleton "meta.runs" (VarDef "Runs" (VTInt Nothing Nothing) (VVInt 0)) }
+            , save = (save initSampleGame)
+                { rngState = 1234
+                , variables = Map.singleton "meta.runs" (VVInt 3) }
+            }
+        loop0 = initLoopState metaSt
+        seed = 987654321
+        (freshLoop, reqs, lines') = transitionRestart seed loop0
+        freshSt = lsCurrent freshLoop
+    r1 <- expectEqual [ReqPersistMeta] reqs
+    r2 <- expectEqual seed (rngState (save freshSt))
+    r3 <- expectEqual (Just (VVInt 4)) (Map.lookup "meta.runs" (variables (save freshSt)))
+    r4 <- expectEqual [renderMsg "game.restart_start" []] (take 1 lines')
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 1.3: pure game-over transition — yields ReqPersistMeta, checkpoint deletion, menu lines
+testSessionTransitionGameOver :: IO Bool
+testSessionTransitionGameOver = do
+    -- Death in normal mode
+    let deadSt = initSampleGame
+            { save = (save initSampleGame) { gameOver = True, gameOverReason = Just Death } }
+        deadLoop = (initLoopState deadSt) { lsSaveSlot = Just "slotA" }
+        (sess1, reqs1, lines1) = transitionGameOver deadLoop
+    r1 <- case sess1 of
+        SessionDeath _ -> pure True
+        _              -> expectTrue "session enters SessionDeath" False
+    r2 <- expectEqual [ReqPersistMeta] reqs1
+    r3 <- expectTrue "death title included in lines"
+              (any (renderMsg "death.title" [] `isInfixOf`) lines1)
+    r4 <- expectEqual (Just (deathMenuText defaultGamePolicy))
+              (case lines1 of [] -> Nothing; xs -> Just (last xs))
+
+    -- Death in ironman mode deletes checkpoint
+    let ironPolicy = defaultGamePolicy { gpIronman = True }
+        ironDeadSt = deadSt { world = (world deadSt) { worldGamePolicy = ironPolicy } }
+        ironDeadLoop = (initLoopState ironDeadSt) { lsSaveSlot = Just "checkpoint" }
+        (_, reqs2, lines2) = transitionGameOver ironDeadLoop
+    r5 <- expectEqual [ReqPersistMeta, ReqDeleteSave "checkpoint"] reqs2
+    r6 <- expectEqual (Just (deathMenuText ironPolicy))
+              (case lines2 of [] -> Nothing; xs -> Just (last xs))
+
+    -- Victory
+    let winSt = initSampleGame
+            { save = (save initSampleGame) { gameOver = True, gameOverReason = Just Victory } }
+        winLoop = initLoopState winSt
+        (sess3, reqs3, lines3) = transitionGameOver winLoop
+    r7 <- case sess3 of
+        SessionVictory _ Victory -> pure True
+        _                        -> expectTrue "session enters SessionVictory" False
+    r8 <- expectEqual [ReqPersistMeta] reqs3
+    r9 <- expectTrue "victory title included in lines"
+              (any (renderMsg "victory.title" [] `isInfixOf`) lines3)
+    r10 <- expectEqual (Just (renderMsg "menu.restart_quit" []))
+              (case lines3 of [] -> Nothing; xs -> Just (last xs))
+
+    -- Custom reason
+    let customSt = initSampleGame
+            { save = (save initSampleGame) { gameOver = True, gameOverReason = Just (Custom "The end.") } }
+        customLoop = initLoopState customSt
+        (sess4, reqs4, lines4) = transitionGameOver customLoop
+    r11 <- case sess4 of
+        SessionVictory _ (Custom "The end.") -> pure True
+        _                                    -> expectTrue "session enters SessionVictory custom" False
+    r12 <- expectEqual [ReqPersistMeta] reqs4
+    r13 <- expectTrue "custom gameover message in lines"
+              (any ("The end." `isInfixOf`) lines4)
+
+    -- Quit (no reason)
+    let quitSt = initSampleGame
+            { save = (save initSampleGame) { gameOver = True, gameOverReason = Nothing } }
+        quitLoop = initLoopState quitSt
+        (sess5, reqs5, lines5) = transitionGameOver quitLoop
+    r14 <- expectEqual SessionEnded sess5
+    r15 <- expectEqual [ReqPersistMeta] reqs5
+    r16 <- expectTrue "quit without reason produces no end lines" (null lines5)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13 && r14 && r15 && r16)
+
+-- | Phase 1.3: pure death menu transitions — undo, load, restart, quit
+testSessionTransitionDeath :: IO Bool
+testSessionTransitionDeath = do
+    let deadSt = initSampleGame
+            { save = (save initSampleGame) { gameOver = True, gameOverReason = Just Death } }
+        deadLoop = initLoopState deadSt
+
+    -- 'u' with empty history fails
+    let (sess1, _, msgs1) = transitionDeathInput 0 (Just "u") deadLoop
+    r1 <- expectEqual (SessionDeath deadLoop) sess1
+    r2 <- expectEqual [renderMsg "undo.nothing" []] msgs1
+
+    -- 'u' with history restores previous state
+    let aliveSt = initSampleGame
+        deadLoopWithHist = deadLoop { lsHistory = [aliveSt] }
+        (sess2, _, _) = transitionDeathInput 0 (Just "u") deadLoopWithHist
+    r3 <- case sess2 of
+        SessionPlaying ls -> expectEqual aliveSt (lsCurrent ls)
+        _                 -> expectTrue "undo enters SessionPlaying" False
+
+    -- 'u' with permadeath rejected
+    let permaDeadLoop = deadLoop
+            { lsHistory = [aliveSt]
+            , lsCurrent = deadSt { world = (world deadSt) { worldGamePolicy = defaultGamePolicy { gpPermadeath = True } } } }
+        (sess3, _, msgs3) = transitionDeathInput 0 (Just "u") permaDeadLoop
+    r4 <- expectEqual (SessionDeath permaDeadLoop) sess3
+    r5 <- expectEqual [renderMsg "undo.permadeath" []] msgs3
+
+    -- 'l' in normal mode prompts for save
+    let (sess4, _, msgs4) = transitionDeathInput 0 (Just "l") deadLoop
+    r6 <- expectEqual (SessionDeathPromptLoad deadLoop) sess4
+    r7 <- expectEqual [renderMsg "load.prompt" []] msgs4
+
+    -- 'l' with slot name returns ReqLoad
+    let (slotA, reqA) = transitionDeathLoadSlot (Just "slotA")
+        (slotDef, reqDef) = transitionDeathLoadSlot Nothing
+    r8 <- expectEqual ("slotA", ReqLoad "slotA") (slotA, reqA)
+    r9 <- expectEqual ("savegame", ReqLoad "savegame") (slotDef, reqDef)
+
+    -- 'r' restarts
+    let (sess5, reqs5, msgs5) = transitionDeathInput 55555 (Just "r") deadLoop
+    r10 <- case sess5 of
+        SessionPlaying ls -> expectEqual 55555 (rngState (save (lsCurrent ls)))
+        _                 -> expectTrue "restart enters SessionPlaying" False
+    r11 <- expectEqual [ReqPersistMeta] reqs5
+    r12 <- expectEqual [renderMsg "game.restart_start" []] (take 1 msgs5)
+
+    -- 'q' quits
+    let (sess6, _, msgs6) = transitionDeathInput 0 (Just "q") deadLoop
+    r13 <- expectEqual SessionEnded sess6
+    r14 <- expectEqual [renderMsg "quit.thanks" []] msgs6
+
+    -- invalid input shows death menu
+    let (sess7, _, msgs7) = transitionDeathInput 0 (Just "invalid") deadLoop
+    r15 <- expectEqual (SessionDeath deadLoop) sess7
+    r16 <- expectEqual [deathMenuText defaultGamePolicy] msgs7
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13 && r14 && r15 && r16)
+
+-- | Phase 1.3: pure victory menu transitions — restart, quit, invalid
+testSessionTransitionVictory :: IO Bool
+testSessionTransitionVictory = do
+    let winSt = initSampleGame
+            { save = (save initSampleGame) { gameOver = True, gameOverReason = Just Victory } }
+        winLoop = initLoopState winSt
+
+    -- 'r' restarts
+    let (sess1, reqs1, _) = transitionVictoryInput 77777 (Just "r") winLoop Victory
+    r1 <- case sess1 of
+        SessionPlaying ls -> expectEqual 77777 (rngState (save (lsCurrent ls)))
+        _                 -> expectTrue "restart enters SessionPlaying" False
+    r2 <- expectEqual [ReqPersistMeta] reqs1
+
+    -- 'q' quits
+    let (sess2, _, msgs2) = transitionVictoryInput 0 (Just "q") winLoop Victory
+    r3 <- expectEqual SessionEnded sess2
+    r4 <- expectEqual [renderMsg "quit.thanks" []] msgs2
+
+    -- invalid input shows restart/quit menu
+    let (sess3, _, msgs3) = transitionVictoryInput 0 (Just "bad") winLoop Victory
+    r5 <- expectEqual (SessionVictory winLoop Victory) sess3
+    r6 <- expectEqual [renderMsg "menu.restart_quit" []] msgs3
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | Phase 1.3: advanceNarrative yields ReqPause for intermediate lines and applies follow-up
+testSessionAdvanceNarrative :: IO Bool
+testSessionAdvanceNarrative = do
+    -- multi-line narrative yields ReqPause for intermediate lines
+    let st0 = initSampleGame
+            { pendingNarrative = Just (["Line 1", "Line 2", "Line 3"], SetValue (VRFlag "narrative_done") (EVString "true")) }
+    (r1, r2, r3, r4) <- case advanceNarrative st0 of
+        Just (clearedSt, reqs, lines') -> do
+            chk1 <- expectEqual [ReqPause, ReqPause] reqs
+            chk2 <- expectEqual Nothing (pendingNarrative clearedSt)
+            chk3 <- expectEqual (Just "true") (Map.lookup "narrative_done" (flags (save clearedSt)))
+            chk4 <- expectEqual ["Line 1", "Line 2", "Line 3"] lines'
+            pure (chk1, chk2, chk3, chk4)
+        Nothing -> do
+            chk <- expectTrue "advanceNarrative multi-line yields Just" False
+            pure (chk, False, False, False)
+
+    -- single-line narrative yields no pauses
+    let st1 = initSampleGame
+            { pendingNarrative = Just (["Only Line"], SetValue (VRFlag "single_done") (EVString "true")) }
+    (r5, r6, r7, r8) <- case advanceNarrative st1 of
+        Just (clearedSt1, reqs1, lines1) -> do
+            chk1 <- expectEqual [] reqs1
+            chk2 <- expectEqual Nothing (pendingNarrative clearedSt1)
+            chk3 <- expectEqual (Just "true") (Map.lookup "single_done" (flags (save clearedSt1)))
+            chk4 <- expectEqual ["Only Line"] lines1
+            pure (chk1, chk2, chk3, chk4)
+        Nothing -> do
+            chk <- expectTrue "advanceNarrative single-line yields Just" False
+            pure (chk, False, False, False)
+
+    -- no narrative yields Nothing
+    let st2 = initSampleGame { pendingNarrative = Nothing }
+    r9 <- expectTrue "no narrative yields Nothing" (isNothing (advanceNarrative st2))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9)
+
 testValidateTypoInPredicateLocation :: IO Bool
 testValidateTypoInPredicateLocation = do
     let decodedTypo = Aeson.decode (BLC.pack "{\"at\":\"palyer\",\"room\":\"start\"}") :: Maybe Predicate
@@ -7048,5 +7313,13 @@ main = do
         , runTest "output events: styling model renders spans to ANSI (Phase 1.2)" testOutputStylingModel
         , runTest "output events: EvMessage carries key+args through the loop (Phase 1.2)" testOutputEventKeys
         , runTest "output events: side events for room/quest/gameover/sfx (Phase 1.2)" testOutputSideEvents
+        -- Phase 1.3: Purer Session-Automat
+        , runTest "session: pure save transition checks policy and yields ReqSave (Phase 1.3)" testSessionTransitionSave
+        , runTest "session: pure load transition checks policy and merges meta (Phase 1.3)" testSessionTransitionLoad
+        , runTest "session: pure restart transition reseeds and persists meta (Phase 1.3)" testSessionTransitionRestart
+        , runTest "session: pure game-over transition routes death and victory (Phase 1.3)" testSessionTransitionGameOver
+        , runTest "session: pure death menu transitions (Phase 1.3)" testSessionTransitionDeath
+        , runTest "session: pure victory menu transitions (Phase 1.3)" testSessionTransitionVictory
+        , runTest "session: advanceNarrative yields ReqPause for intermediate lines (Phase 1.3)" testSessionAdvanceNarrative
         ]
     when (not (and results)) exitFailure
