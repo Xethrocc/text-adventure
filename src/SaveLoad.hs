@@ -35,6 +35,7 @@ module SaveLoad
 
 import Types
 import Game (syncInventory)
+import Messages (renderMsg)
 import Control.Exception (try, SomeException)
 import Control.Monad (when, unless)
 import Data.Bits (shiftR, xor)
@@ -74,11 +75,11 @@ computeWorldChecksum gw =
 --   instead of once per file.
 formatSaveEntry :: String -> SaveFile -> String
 formatSaveEntry currentChecksum sf =
-    "  " ++ saveName sf ++ " — " ++ saveTimestamp sf
-        ++ " (" ++ compat ++ ")"
+    renderMsg "save.entry"
+        [("name", saveName sf), ("timestamp", saveTimestamp sf), ("compat", compat)]
   where
-    compat | worldChecksum sf == currentChecksum = "compatible"
-           | otherwise                           = "world mismatch!"
+    compat | worldChecksum sf == currentChecksum = renderMsg "save.compatible" []
+           | otherwise                           = renderMsg "save.world_mismatch" []
 
 -- | The directory save slots live in. Default: `saves` relative to the
 --   working directory (unchanged behaviour, Rogue Phase 0). The environment
@@ -213,12 +214,12 @@ loadMetaForSlug slug = do
         result <- try (BL.readFile path) :: IO (Either SomeException BL.ByteString)
         case result of
             Left _ -> do
-                putStrLn ("Warning: meta file '" ++ path ++ "' is unreadable — starting fresh.")
+                putStrLn (renderMsg "meta.unreadable" [("path", path)])
                 return Map.empty
             Right contents -> case Aeson.decode contents of
                 Just mf  -> return (metaVars (mfVars mf))
                 Nothing -> do
-                    putStrLn ("Warning: meta file '" ++ path ++ "' is corrupted — starting fresh.")
+                    putStrLn (renderMsg "meta.corrupted" [("path", path)])
                     return Map.empty
 
 -- | Load the persisted meta.* variables for a GameWorld.
@@ -248,7 +249,7 @@ saveGame state slotName = do
             }
     filepath <- saveSlotPath slotName
     BL.writeFile filepath (encodePretty saveFile)
-    putStrLn $ "Game saved to " ++ filepath ++ " (" ++ timestamp ++ ")."
+    putStrLn $ renderMsg "save.saved" [("path", filepath), ("timestamp", timestamp)]
 
 -- | Load game from a named slot, with checksum validation
 loadGame :: GameState -> String -> IO (Maybe GameState)
@@ -263,32 +264,33 @@ loadGame state slotName = do
         if legacyExists
         then loadLegacySave state legacyPath
         else do
-            putStrLn $ "Error: Save file '" ++ filepath ++ "' not found."
+            putStrLn $ renderMsg "save.not_found" [("path", filepath)]
             return Nothing
     else do
         result <- try (BL.readFile filepath) :: IO (Either SomeException BL.ByteString)
         case result of
             Left _ -> do
-                putStrLn $ "Error: Could not read file '" ++ filepath ++ "'."
+                putStrLn $ renderMsg "save.unreadable" [("path", filepath)]
                 return Nothing
             Right contents -> case Aeson.decode contents of
                 Just sf -> do
                     let currentChecksum = computeWorldChecksum (world state)
                     if worldChecksum sf /= currentChecksum
-                    then putStrLn "Warning: This save was made with a different world version. Results may be unpredictable."
+                    then putStrLn (renderMsg "save.version_warning" [])
                     else return ()
                     let loadedState = state { save = syncInventory (saveData sf) }
-                    putStrLn $ "Game loaded from " ++ filepath ++ " (saved: " ++ saveTimestamp sf ++ ")."
+                    putStrLn $ renderMsg "save.loaded"
+                        [("path", filepath), ("timestamp", saveTimestamp sf)]
                     return (Just loadedState)
                 Nothing -> do
                     -- Try loading as legacy bare SaveState
                     case Aeson.decode contents of
                         Just loadedSave -> do
-                            putStrLn "Game loaded (legacy format)."
+                            putStrLn (renderMsg "save.loaded_legacy" [])
                             let loadedState = state { save = syncInventory loadedSave }
                             return (Just loadedState)
                         Nothing -> do
-                            putStrLn "Error: Save file is corrupted or incompatible."
+                            putStrLn (renderMsg "save.corrupted" [])
                             return Nothing
 
 -- | Delete one save slot from disk (Rogue Phase 0). Missing files count as
@@ -302,8 +304,8 @@ deleteSaveSlot slotName = do
     when exists $ do
         result <- try (removeFile filepath) :: IO (Either SomeException ())
         case result of
-            Right () -> putStrLn $ "Save slot deleted: " ++ filepath
-            Left _   -> putStrLn $ "Warning: could not delete save slot " ++ filepath ++ "."
+            Right () -> putStrLn $ renderMsg "save.slot_deleted" [("path", filepath)]
+            Left _   -> putStrLn $ renderMsg "save.slot_delete_failed" [("path", filepath)]
 
 -- | Load a legacy save file (bare SaveState, no wrapper)
 loadLegacySave :: GameState -> FilePath -> IO (Maybe GameState)
@@ -313,7 +315,7 @@ loadLegacySave state filepath = do
         Left _ -> return Nothing
         Right contents -> case Aeson.decode contents of
             Just loadedSave -> do
-                putStrLn "Game loaded from legacy format."
+                putStrLn (renderMsg "save.loaded_legacy2" [])
                 let loadedState = state { save = syncInventory loadedSave }
                 return (Just loadedState)
             Nothing -> return Nothing
@@ -326,9 +328,9 @@ listSaves gw = do
     files <- listDirectory dir
     let jsonFiles = filter (\f -> length f > 5 && drop (length f - 5) f == ".json") files
     if null jsonFiles
-    then putStrLn "No saved games found."
+    then putStrLn (renderMsg "save.none_found" [])
     else do
-        putStrLn "=== Saved Games ==="
+        putStrLn (renderMsg "save.list_header" [])
         -- P2-10: computed once for all files, not once per file inside the loop.
         let currentChecksum = computeWorldChecksum gw
         entries <- mapM (loadSaveEntry currentChecksum) jsonFiles

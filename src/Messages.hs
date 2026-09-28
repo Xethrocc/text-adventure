@@ -234,6 +234,26 @@ catalogEntries =
     , ("equip.slot_occupied",     "You already have the {item} equipped there. Unequip it first.")
     , ("equip.header",            "Equipment:\n")
     , ("equip.line",              "  {slot}: {name}")
+    -- -- save / meta / world files (SaveLoad.hs, World.hs) -------------------
+    , ("meta.unreadable",   "Warning: meta file '{path}' is unreadable — starting fresh.")
+    , ("meta.corrupted",    "Warning: meta file '{path}' is corrupted — starting fresh.")
+    , ("save.saved",        "Game saved to {path} ({timestamp}).")
+    , ("save.not_found",    "Error: Save file '{path}' not found.")
+    , ("save.unreadable",   "Error: Could not read file '{path}'.")
+    , ("save.version_warning", "Warning: This save was made with a different world version. Results may be unpredictable.")
+    , ("save.loaded",       "Game loaded from {path} (saved: {timestamp}).")
+    , ("save.loaded_legacy",   "Game loaded (legacy format).")
+    , ("save.loaded_legacy2",  "Game loaded from legacy format.")
+    , ("save.corrupted",    "Error: Save file is corrupted or incompatible.")
+    , ("save.slot_deleted", "Save slot deleted: {path}")
+    , ("save.slot_delete_failed", "Warning: could not delete save slot {path}.")
+    , ("save.none_found",   "No saved games found.")
+    , ("save.list_header",  "=== Saved Games ===")
+    , ("save.entry",        "  {name} — {timestamp} ({compat})")
+    , ("save.compatible",   "compatible")
+    , ("save.world_mismatch", "world mismatch!")
+    , ("world.file_unreadable",   "Could not read world file '{path}': {err}")
+    , ("world.save_unreadable",   "Could not read save file '{path}': {err}")
     ]
 
 -- | The full help screen, byte-identical to the former inline intercalate

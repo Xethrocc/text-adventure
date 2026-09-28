@@ -21,6 +21,7 @@ module World
 
 import Types
 import Game (syncInventory)
+import Messages (renderMsg)
 import Control.Exception (try, SomeException)
 import Data.Aeson (eitherDecode)
 import qualified Data.ByteString.Lazy as BL
@@ -34,7 +35,7 @@ loadGameWorld :: FilePath -> IO (Either String GameWorld)
 loadGameWorld path = do
     result <- try (BL.readFile path) :: IO (Either SomeException BL.ByteString)
     pure $ case result of
-        Left err -> Left ("Could not read world file '" ++ path ++ "': " ++ show err)
+        Left err -> Left (renderMsg "world.file_unreadable" [("path", path), ("err", show err)])
         Right contents -> eitherDecode contents
 
 -- | Load a SaveState from a JSON file
@@ -42,7 +43,7 @@ loadSaveState :: FilePath -> IO (Either String SaveState)
 loadSaveState path = do
     result <- try (BL.readFile path) :: IO (Either SomeException BL.ByteString)
     pure $ case result of
-        Left err -> Left ("Could not read save file '" ++ path ++ "': " ++ show err)
+        Left err -> Left (renderMsg "world.save_unreadable" [("path", path), ("err", show err)])
         Right contents -> fmap syncInventory (eitherDecode contents)
 
 -- | The save state a world should start with: an explicit `--save` wins;
