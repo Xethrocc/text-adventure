@@ -7,6 +7,7 @@
 #   2b. message catalog gate (no unused key, no key missing from the catalog)
 #   3. validate every shipped adventure (demo, thefog, 6 genre + 14 module fixtures)
 #   4. E2E: compile each fixture and drive it to a known ending
+#   8. save/load round-trip (the persistence wiring no .in fixture exercises)
 #
 # Usage: scripts/ci.sh
 set -euo pipefail
@@ -219,6 +220,45 @@ else
     echo "FAIL run-2-meta (meta.runs != 2 after run 2)"
     exit 1
 fi
+
+echo "== 8. save/load round-trip =="
+# Coverage gap (found in the Phase 1.3 review): no stage-4/5 fixture ever issues
+# `save` or `load`, so the persistence wiring — loopGame's save/load branch and
+# the death menu's load branch — had no end-to-end coverage at all. Each case
+# drives it in two runs against one isolated saves dir: run 1 writes the slot,
+# run 2 loads it and has to report the load.
+save_load_case() {
+    local name="$1" src="$2" saves="$tmp/$1-saves" run_dir="$tmp/$1" out marker failed=0
+    mkdir -p "$saves" "$run_dir"
+    "${WORLDBUILDER[@]}" compile "$src" -o "$run_dir" >/dev/null
+    TA_SAVES_DIR="$saves" "${GAME[@]}" \
+        --world "$run_dir/world.json" --save "$run_dir/save.json" \
+        < "ci/e2e/$name-write.in" >/dev/null 2>&1 || true
+    if [ -f "$saves/myslot.json" ]; then
+        echo "OK   $name-write (myslot.json written)"
+    else
+        echo "FAIL $name-write (no myslot.json in $saves)"
+        exit 1
+    fi
+    out="$(TA_SAVES_DIR="$saves" "${GAME[@]}" \
+            --world "$run_dir/world.json" --save "$run_dir/save.json" \
+            < "ci/e2e/$name-read.in" 2>&1 || true)"
+    while IFS= read -r marker; do
+        [ -n "$marker" ] || continue
+        if grep -qF "$marker" <<<"$out"; then
+            echo "OK   $name-read (reached: $marker)"
+        else
+            echo "FAIL $name-read (expected: $marker)"
+            echo "---- last output ----"
+            tail -20 <<<"$out"
+            failed=1
+        fi
+    done < "ci/e2e/$name.expect"
+    [ "$failed" -eq 0 ] || exit 1
+}
+
+save_load_case save-load examples/thefog.yaml
+save_load_case save-load-death examples/modules/patrol.yaml
 
 echo
 echo "All checks passed."

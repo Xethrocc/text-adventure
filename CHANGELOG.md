@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### CI: save/load-Rundlauf als Stufe 8
+
+- **Befund aus der 1.3-Prüfung:** kein einziges E2E-Fixture nutzt `save` oder
+  `load`. Die Persistenz-Verdrahtung (Save-/Load-Zweig in `loopGame`, Lade-Zweig
+  des Todesmenüs) hatte damit keine End-to-End-Abdeckung — die Byte-Vergleiche
+  über `ci/e2e/*.in` berühren sie nicht.
+- Stufe 8 fährt je Fall **zwei** Läufe gegen ein isoliertes `TA_SAVES_DIR`:
+  Lauf 1 schreibt den Slot, Lauf 2 lädt ihn. Fälle: `thefog` (normaler
+  Ladebefehl) und `patrol` (Tod → `l` im Todesmenü → laden).
+- Die Marker sind absichtlich zustandsabhängig: `Game loaded from` **plus**
+  `Inventory: map` (gespeichert nach `take map`). Ein Raumname hätte auch im
+  frisch gestarteten Spiel gematcht — belegt durch Fehlerinjektion: mit einem
+  nicht ladenden `ReqLoad` fallen beide Marker und die Stufe bricht ab.
+
 ### Purer Session-Automat: Save/Load/Restart/GameOver/Death/Victory (Phase 1.3)
 
 - Session-Logik aus den interaktiven Loops (`loopGame`, `deathLoop`, `victoryLoop`, `runRestart`)
