@@ -28,11 +28,11 @@ module Parser
     , reachableExitEntities
       -- * Execution
     , executeCommand
+    , executeCommandEv
     , executeAttack
     , interactItem
     , bindCommandVars
       -- * Messages, darkness and help
-    , darkRoomMessage
     , defaultDarkMessage
     , isCurrentRoomDark
     , helpText
@@ -41,12 +41,13 @@ module Parser
 
 import Types
 import Game
-import Messages (renderMsg)
+import Types.Output (OutputEvent (..), styledText, evText, evRaw, nl, nl2, joinEv, joinAllEv, evIntercalate, unlinesEv, renderEvents, MsgPayload (..), ArtPayload (..), ArtHotspot (..))
+import Messages (renderMsg, evMsg, msgPayload)
 import Vehicles
 import Effects
 import Quests
 import Cards
-import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombat, targetShipSystems)
+import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombatEv, targetShipSystems)
 import Control.Applicative ((<|>))
 import Data.Char (toLower, isDigit)
 import Data.List (find, intercalate, nub, foldl', dropWhileEnd, isPrefixOf)
@@ -412,7 +413,7 @@ bindCommandVars cmd st =
     in st { save = (save st) { variables = finalVars } }
   where
     parseArgVal s = case reads s of
-        [(n, "")] -> VVInt n
+        [(n, [])] -> VVInt n
         _         -> VVText s
 
 -- | Extract canonical verb name, raw argument string, and token list from a command.
@@ -463,30 +464,28 @@ extractCommandArgs cmd = case cmd of
 -- ---------------------------------------------------------------------------
 
 -- | Execute a command and return updated game state and message
-executeCommand :: Command -> GameState -> CommandResult
+executeCommandEv :: Command -> GameState -> (GameState, [OutputEvent])
 
-executeCommand (Go dir) state
+executeCommandEv (Go dir) state
     | canMove dir state = case getExitInDirection dir state of
         Just (Open destinationRoom) ->
             let (st', hookMsg) = transitionToRoom destinationRoom (clearActiveDialogue state)
-                fullMsg = intercalate "\n" (filter (not . null)
-                             [renderMsg "move.ok" [("dir", show dir)], hookMsg])
+                fullMsg = joinAllEv [evMsg "move.ok" [("dir", show dir)], hookMsg]
             in (st', fullMsg)
         Just (Locked destinationRoom entityTarget)
             | getEntityState entityTarget state == Just "unlocked" ->
                 let (st', hookMsg) = transitionToRoom destinationRoom (clearActiveDialogue state)
-                    fullMsg = intercalate "\n" (filter (not . null)
-                                 [renderMsg "move.ok" [("dir", show dir)], hookMsg])
+                    fullMsg = joinAllEv [evMsg "move.ok" [("dir", show dir)], hookMsg]
                 in (st', fullMsg)
-            | otherwise -> (state, renderMsg "move.door_locked" [])
-        Nothing -> (state, renderMsg "move.no_exit" [])
-    | otherwise = (state, renderMsg "move.blocked" [])
+            | otherwise -> (state, evMsg "move.door_locked" [])
+        Nothing -> (state, evMsg "move.no_exit" [])
+    | otherwise = (state, evMsg "move.blocked" [])
 
-executeCommand Look state = case getCurrentRoom state of
-    Nothing -> (state, renderMsg "look.void" [])
+executeCommandEv Look state = case getCurrentRoom state of
+    Nothing -> (state, evMsg "look.void" [])
     Just room
         | isDark room state ->
-            (state, darkRoomMessage room)
+            (state, darkRoomEv room)
         | otherwise ->
             let vIdOverride = case currentVehicle (save state) of
                     Just vId -> Map.lookup (currentRoom (save state))
@@ -501,109 +500,119 @@ executeCommand Look state = case getCurrentRoom state of
                 livingHere = [ n | n <- npcsHere, not (isDeadNPC (npcId n) state) ]
                 corpsesHere = [ n | n <- npcsHere, isDeadNPC (npcId n) state ]
                 itemDesc = if null itemsInRoom
-                           then renderMsg "look.see_nothing" []
-                           else renderMsg "look.items" [("names", intercalate ", " (map itemName itemsInRoom))]
+                           then evMsg "look.see_nothing" []
+                           else evMsg "look.items" [("names", intercalate ", " (map itemName itemsInRoom))]
                 npcDesc = if null livingHere
-                          then ""
-                          else renderMsg "look.npcs" [("names", intercalate ", " (map npcName livingHere))]
+                          then []
+                          else evMsg "look.npcs" [("names", intercalate ", " (map npcName livingHere))]
                 -- A body is nobody to talk to, but it is still lying there: it
                 -- gets its own line, so `look at <name>` has something to point at.
                 corpseDesc = case map npcName corpsesHere of
-                    []  -> ""
-                    [c] -> renderMsg "look.corpse_one" [("name", c)]
-                    cs  -> renderMsg "look.corpse_many" [("names", intercalate ", " cs)]
+                    []  -> []
+                    [c] -> evMsg "look.corpse_one" [("name", c)]
+                    cs  -> evMsg "look.corpse_many" [("names", intercalate ", " cs)]
                 (state', hookMsg) = runRoomHook roomOnLook (currentRoom (save state)) state
                 vehicleMsg = vehicleLookAddon state'
                 asciiArt = renderArtForLook (roomAscii room) state
-                full = intercalate "\n" (filter (not . null)
-                        [asciiArt, desc, itemDesc, npcDesc, corpseDesc, hookMsg, fromMaybe "" vehicleMsg])
+                -- Phase 1.2: the room's art travels as a structured payload
+                -- (hotspots for graphical frontends), the prose as messages.
+                artFrags = if null asciiArt
+                           then []
+                           else [EvArt (ArtPayload asciiArt
+                                   [ ArtHotspot i (hsGlyph h) (hsTarget h)
+                                   | (i, h) <- zip [1 :: Int ..] (aaHotspots (roomAscii room)) ])]
+                full = joinAllEv
+                        [ artFrags, evRaw desc, itemDesc, npcDesc, corpseDesc, hookMsg,
+                          maybe [] evRaw vehicleMsg ]
             in (state', full)
 
-executeCommand Inventory state =
+executeCommandEv Inventory state =
     let invItems = getItemsInLocation (CarriedBy ActorPlayer) state
     in if null invItems
-       then (state, renderMsg "inv.empty" [])
-       else (state, renderMsg "inv.header" [("items", intercalate ", " (map itemName invItems))])
+       then (state, evMsg "inv.empty" [])
+       else (state, evMsg "inv.header" [("items", intercalate ", " (map itemName invItems))])
 
-executeCommand StatsCmd state =
+executeCommandEv StatsCmd state =
     let p = player (save state)
         condList = Map.elems (conditions (save state))
         skillList = Map.toList (playerSkills p)
         skillDesc = if null skillList
-                    then ""
-                    else renderMsg "stats.skills" [("skills", intercalate ", " [n ++ " " ++ show v | (n, v) <- skillList])]
+                    then []
+                    else evMsg "stats.skills" [("skills", intercalate ", " [n ++ " " ++ show v | (n, v) <- skillList])]
         condDesc = if null condList
-                   then ""
-                   else renderMsg "stats.conditions" [("conds", intercalate ", "
+                   then []
+                   else evMsg "stats.conditions" [("conds", intercalate ", "
                         [ condName c ++ " (" ++ show (condRemaining c) ++ " turns)"
                         | c <- condList ])]
-        msg = unlines
-            [ renderMsg "stats.health" [("hp", show (playerHealth p)), ("max", show (effectiveMaxHealth state))]
-            , renderMsg "stats.attack" [("atk", show (effectiveAttack state)), ("base", show (playerAttack p))]
-            , renderMsg "stats.defense" [("def", show (effectiveDefense state)), ("base", show (playerDefense p))]
-            , skillDesc ++ condDesc ++ equipmentSummary state
+        -- Byte-identical to the former unlines: every line gets its "\n" —
+        -- including the last, and the 4th piece concatenates without one.
+        msg = unlinesEv
+            [ evMsg "stats.health" [("hp", show (playerHealth p)), ("max", show (effectiveMaxHealth state))]
+            , evMsg "stats.attack" [("atk", show (effectiveAttack state)), ("base", show (playerAttack p))]
+            , evMsg "stats.defense" [("def", show (effectiveDefense state)), ("base", show (playerDefense p))]
+            , joinAllEv [skillDesc, condDesc, evRaw (equipmentSummary state)]
             ]
     in (state, msg)
 
-executeCommand JournalCmd state = (state, journalText state)
-executeCommand Undo state = (state, renderMsg "undo.nothing" [])
+executeCommandEv JournalCmd state = (state, journalTextEv state)
+executeCommandEv Undo state = (state, evMsg "undo.nothing" [])
 
 -- Card & Deck commands (Phase 2B)
-executeCommand (PlayCardCmd idx target) state = playCard idx target state
-executeCommand HandCmd state = showHand state
-executeCommand DeckCmd state = showDeck state
-executeCommand DiscardCmd state = showDiscard state
-executeCommand EndTurnCmd state = endTurn state
+executeCommandEv (PlayCardCmd idx target) state = playCard idx target state
+executeCommandEv HandCmd state = showHand state
+executeCommandEv DeckCmd state = showDeck state
+executeCommandEv DiscardCmd state = showDiscard state
+executeCommandEv EndTurnCmd state = endTurn state
 
-executeCommand (ChooseCmd idx) state =
+executeCommandEv (ChooseCmd idx) state =
     case activeDialogue (save state) of
-        Nothing -> (state, renderMsg "dialogue.none_active" [])
+        Nothing -> (state, evMsg "dialogue.none_active" [])
         Just nId -> case Map.lookup nId (npcDefs (world state)) of
-            Nothing -> (clearActiveDialogue state, renderMsg "dialogue.partner_gone" [])
+            Nothing -> (clearActiveDialogue state, evMsg "dialogue.partner_gone" [])
             Just npc ->
                 let st = Map.lookup nId (npcStates (save state))
                     status = maybe "alive" npcStatus st
                 in case Map.lookup status (npcDialogueTrees npc) of
-                    Nothing -> (clearActiveDialogue state, renderMsg "dialogue.nothing_more" [("name", npcName npc)])
+                    Nothing -> (clearActiveDialogue state, evMsg "dialogue.nothing_more" [("name", npcName npc)])
                     Just tree ->
                         let nodeId = fromMaybe (dtEntry tree) (st >>= npcDialogueNode)
                         in case Map.lookup nodeId (dtNodes tree) of
-                            Nothing -> (clearActiveDialogue state, renderMsg "dialogue.nothing_more" [("name", npcName npc)])
+                            Nothing -> (clearActiveDialogue state, evMsg "dialogue.nothing_more" [("name", npcName npc)])
                             Just node ->
                                 let choices = visibleChoices state node
                                 in if idx < 1 || idx > length choices
-                                   then (state, renderMsg "choice.invalid" [("max", show (length choices))])
+                                   then (state, evMsg "choice.invalid" [("max", show (length choices))])
                                    else
                                        let choice = choices !! (idx - 1)
                                            outcome = dcOutcome choice
-                                           (stateAfterOutcome, outcomeMsg) = applyOutcome outcome nId state
+                                           (stateAfterOutcome, outcomeMsg) = applyOutcomeEv outcome nId state
                                        in case dcNextNode choice of
                                            Nothing ->
                                                -- Dialogue ends
                                                let stateFinal = clearActiveDialogue (setDialogueNode nId Nothing stateAfterOutcome)
-                                                   msg = if null outcomeMsg
-                                                         then renderMsg "dialogue.ended" []
+                                                   msg = if null (renderEvents outcomeMsg)
+                                                         then evMsg "dialogue.ended" []
                                                          else outcomeMsg
                                                in (stateFinal, msg)
                                            Just nextNodeId ->
                                                let stateWithNext = setDialogueNode nId (Just nextNodeId) stateAfterOutcome
                                                    st' = Map.lookup nId (npcStates (save stateWithNext))
                                                    (stateFinal, nextDialogue) = renderDialogue npc tree st' stateWithNext
-                                                   fullMsg = if null outcomeMsg
+                                                   fullMsg = if null (renderEvents outcomeMsg)
                                                              then nextDialogue
-                                                             else outcomeMsg ++ "\n\n" ++ nextDialogue
+                                                             else outcomeMsg ++ nl2 ++ nextDialogue
                                                in (stateFinal, fullMsg)
 
-executeCommand (EquipCmd targetStr) state =
+executeCommandEv (EquipCmd targetStr) state =
     let stateWithVars = bindCommandVars (EquipCmd targetStr) state
     in case resolveTarget (VCustom "equip") targetStr stateWithVars of
         TargetItem iid ->
             case Map.lookup iid (itemDefs (world stateWithVars)) of
                 Just item ->
                     case equipItem iid stateWithVars of
-                        Left err     -> (stateWithVars, err)
-                        Right state' -> (state', renderMsg "equip.ok" [("item", itemName item)])
-                Nothing -> (stateWithVars, renderMsg "target.not_carried" [("target", targetStr)])
+                        Left err     -> (stateWithVars, evRaw err)
+                        Right state' -> (state', evMsg "equip.ok" [("item", itemName item)])
+                Nothing -> (stateWithVars, evMsg "target.not_carried" [("target", targetStr)])
         TargetAmbiguous ids ->
             let equippableIds = filter (\i -> maybe False (isJust . itemEquipSlot) (Map.lookup i (itemDefs (world stateWithVars)))) ids
             in case equippableIds of
@@ -611,73 +620,73 @@ executeCommand (EquipCmd targetStr) state =
                     case Map.lookup singleEquippable (itemDefs (world stateWithVars)) of
                         Just item ->
                             case equipItem singleEquippable stateWithVars of
-                                Left err     -> (stateWithVars, err)
-                                Right state' -> (state', renderMsg "equip.ok" [("item", itemName item)])
+                                Left err     -> (stateWithVars, evRaw err)
+                                Right state' -> (state', evMsg "equip.ok" [("item", itemName item)])
                         Nothing -> interactAmbiguous ids stateWithVars
                 (e1:e2:es) -> interactAmbiguous (e1:e2:es) stateWithVars
                 []         -> interactAmbiguous ids stateWithVars
-        _                   -> (stateWithVars, renderMsg "target.not_carried" [("target", targetStr)])
+        _                   -> (stateWithVars, evMsg "target.not_carried" [("target", targetStr)])
 
-executeCommand (UnequipCmd targetStr) state =
+executeCommandEv (UnequipCmd targetStr) state =
     let stateWithVars = bindCommandVars (UnequipCmd targetStr) state
     in case resolveTarget (VCustom "unequip") targetStr stateWithVars of
         TargetItem iid ->
             case Map.lookup iid (itemDefs (world stateWithVars)) of
                 Just item
-                    | isEquipped iid stateWithVars -> (unequipItem iid stateWithVars, renderMsg "unequip.ok" [("item", itemName item)])
-                    | otherwise                    -> (stateWithVars, renderMsg "unequip.not_equipped" [("item", itemName item)])
-                Nothing -> (stateWithVars, renderMsg "target.not_carried" [("target", targetStr)])
+                    | isEquipped iid stateWithVars -> (unequipItem iid stateWithVars, evMsg "unequip.ok" [("item", itemName item)])
+                    | otherwise                    -> (stateWithVars, evMsg "unequip.not_equipped" [("item", itemName item)])
+                Nothing -> (stateWithVars, evMsg "target.not_carried" [("target", targetStr)])
         TargetAmbiguous ids ->
             let equippedIds = filter (`isEquipped` stateWithVars) ids
             in case equippedIds of
                 [singleEquipped] ->
                     case Map.lookup singleEquipped (itemDefs (world stateWithVars)) of
-                        Just item -> (unequipItem singleEquipped stateWithVars, renderMsg "unequip.ok" [("item", itemName item)])
+                        Just item -> (unequipItem singleEquipped stateWithVars, evMsg "unequip.ok" [("item", itemName item)])
                         Nothing   -> interactAmbiguous ids stateWithVars
                 (e1:e2:es)       -> interactAmbiguous (e1:e2:es) stateWithVars
                 []               -> interactAmbiguous ids stateWithVars
-        _                   -> (stateWithVars, renderMsg "target.not_carried" [("target", targetStr)])
+        _                   -> (stateWithVars, evMsg "target.not_carried" [("target", targetStr)])
 
-executeCommand UnequipAllCmd state
-    | Map.null (equipment (save state)) = (state, renderMsg "equip.nothing" [])
-    | otherwise = (state { save = (save state) { equipment = Map.empty } }, renderMsg "unequip.all" [])
+executeCommandEv UnequipAllCmd state
+    | Map.null (equipment (save state)) = (state, evMsg "equip.nothing" [])
+    | otherwise = (state { save = (save state) { equipment = Map.empty } }, evMsg "unequip.all" [])
 
-executeCommand TakeAll state = case getCurrentRoom state of
-    Nothing -> (state, renderMsg "take.none_here" [])
+executeCommandEv TakeAll state = case getCurrentRoom state of
+    Nothing -> (state, evMsg "take.none_here" [])
     Just room ->
         let inRoom = getItemsInLocation (InRoom (currentRoom (save state))) state
             -- Phase 0.3 (B3): in the dark only feelable items can be picked up.
             roomItems = if isDark room state then filter itemIsFeelable inRoom else inRoom
         in if null roomItems
            then (state, if isDark room state
-                        then darkRoomMessage room
-                        else renderMsg "take.none_here" [])
+                        then darkRoomEv room
+                        else evMsg "take.none_here" [])
            else let (finalState, msgs) = foldl' (\(s, ms) item ->
-                            let (s', m) = executeCommand (Interact VTake (itemId item)) s
+                            let (s', m) = executeCommandEv (Interact VTake (itemId item)) s
                             in (s', ms ++ [m])) (state, []) roomItems
-                    in (finalState, intercalate "\n" msgs)
+                    in (finalState, evIntercalate msgs)
 
-executeCommand DropAll state =
+executeCommandEv DropAll state =
     let invItems = getItemsInLocation (CarriedBy ActorPlayer) state
     in if null invItems
-       then (state, renderMsg "drop.nothing" [])
+       then (state, evMsg "drop.nothing" [])
        else let (finalState, msgs) = foldl' (\(s, ms) item ->
-                    let (s', m) = executeCommand (Interact VDrop (itemId item)) s
+                    let (s', m) = executeCommandEv (Interact VDrop (itemId item)) s
                     in (s', ms ++ [m])) (state, []) invItems
-            in (finalState, intercalate "\n" msgs)
+            in (finalState, evIntercalate msgs)
 
-executeCommand (CompoundCommand cmds) state =
+executeCommandEv (CompoundCommand cmds) state =
     foldl' (\(s, msgs) cmd ->
-        let (s', msg) = executeCommand cmd s
-        in (s', if null msgs then msg else msgs ++ "\n" ++ msg)
-    ) (state, "") cmds
+        let (s', msg) = executeCommandEv cmd s
+        in (s', joinEv msgs msg)
+    ) (state, []) cmds
 
-executeCommand (SearchCmd maybeTarget) state = case getCurrentRoom state of
-    Nothing -> (state, renderMsg "search.void" [])
+executeCommandEv (SearchCmd maybeTarget) state = case getCurrentRoom state of
+    Nothing -> (state, evMsg "search.void" [])
     Just room
         | isDark room state
         , not (maybe False (targetIsFeelable state) maybeTarget) ->
-            (state, darkRoomMessage room)
+            (state, darkRoomEv room)
         | otherwise ->
             case maybeTarget of
                 Nothing -> searchRoom state
@@ -690,21 +699,21 @@ executeCommand (SearchCmd maybeTarget) state = case getCurrentRoom state of
                             let iId = itemId item
                                 currentStatus = maybe "unknown" itemStatus (Map.lookup iId (itemStates (save state)))
                             in case Map.lookup (VSearch, currentStatus) (itemVerbMap item) of
-                                Just outcome -> applyOutcome outcome iId state
-                                Nothing -> (state, renderMsg "search.nothing_item" [("item", itemName item)])
+                                Just outcome -> applyOutcomeEv outcome iId state
+                                Nothing -> (state, evMsg "search.nothing_item" [("item", itemName item)])
                         Nothing -> case find (matchesNPCTarget targetStr) roomNPCs of
                             Just npc ->
                                 let nId = npcId npc
                                     currentStatus = maybe "unknown" npcStatus (Map.lookup nId (npcStates (save state)))
                                 in case Map.lookup (VSearch, currentStatus) (npcVerbMap npc) of
-                                    Just outcome -> applyOutcome outcome nId state
-                                    Nothing -> (state, renderMsg "search.nothing_npc" [("npc", npcName npc)])
-                            Nothing -> (state, renderMsg "target.not_seen" [("target", targetStr)])
+                                    Just outcome -> applyOutcomeEv outcome nId state
+                                    Nothing -> (state, evMsg "search.nothing_npc" [("npc", npcName npc)])
+                            Nothing -> (state, evMsg "target.not_seen" [("target", targetStr)])
 
-executeCommand (WatchCmd maybeTarget) state = case getCurrentRoom state of
-    Nothing -> (state, renderMsg "watch.void" [])
+executeCommandEv (WatchCmd maybeTarget) state = case getCurrentRoom state of
+    Nothing -> (state, evMsg "watch.void" [])
     Just room
-        | isDark room state -> (state, fromMaybe (renderMsg "watch.dark" []) (roomDarkMsg room))
+        | isDark room state -> (state, darkRoomEv room)
         | otherwise -> case maybeTarget of
             Nothing -> watchArt (roomAscii room) "the room"
             Just targetStr ->
@@ -712,38 +721,43 @@ executeCommand (WatchCmd maybeTarget) state = case getCurrentRoom state of
                     Just item -> watchArt (itemAscii item) (itemName item)
                     Nothing -> case find (matchesNPCTarget targetStr) roomNPCs of
                         Just npc -> watchArt (npcAscii npc) (npcName npc)
-                        Nothing  -> (state, renderMsg "target.not_seen" [("target", targetStr)])
+                        Nothing  -> (state, evMsg "target.not_seen" [("target", targetStr)])
   where
     allReachableItems = getItemsInLocation (InRoom (currentRoom (save state))) state
                         ++ getItemsInLocation (CarriedBy ActorPlayer) state
     roomNPCs = getNPCsInRoom (currentRoom (save state)) state
     watchArt art label = case asciiPlayback art state of
-        ([], _)            -> (state, renderMsg "watch.nothing" [("label", label)])
+        ([], _)            -> (state, evMsg "watch.nothing" [("label", label)])
         (frames, micros) ->
             (state { pendingAnimation = Just (frames, micros) },
-             renderMsg "watch.start" [("label", label)])
+             evMsg "watch.start" [("label", label)])
 
-executeCommand MapCmd state = case getCurrentRoom state of
-    Nothing -> (state, renderMsg "map.void" [])
+executeCommandEv MapCmd state = case getCurrentRoom state of
+    Nothing -> (state, evMsg "map.void" [])
     Just room
-        | isDark room state -> (state, fromMaybe (renderMsg "map.dark" []) (roomDarkMsg room))
+        | isDark room state -> (state, darkRoomEv room)
         | otherwise ->
             let art = roomAscii room
                 spots = aaHotspots art
             in if null spots
-               then (state, renderMsg "map.no_marks" [])
+               then (state, evMsg "map.no_marks" [])
                else
                    let numbered = foldl' (\s (i, h) -> replaceChar (hsGlyph h) (show i) s)
                                           (resolveAsciiArt art state) (zip [1 :: Int ..] spots)
-                       legend = [ renderMsg "map.legend_line" [("i", show i), ("label", hotspotLabel state h)]
-                                | (i, h) <- zip [1 :: Int ..] spots ]
-                   in (state, numbered ++ renderMsg "map.legend_header" [] ++ unlines legend)
+                       legendLines = [ evMsg "map.legend_line" [("i", show i), ("label", hotspotLabel state h)]
+                                     | (i, h) <- zip [1 :: Int ..] spots ]
+                       -- Byte-identical: numbered ++ "\n\nLegend:\n" ++ unlines legend
+                       mapFrags = [EvArt (ArtPayload numbered
+                                      [ ArtHotspot i (hsGlyph h) (hsTarget h)
+                                      | (i, h) <- zip [1 :: Int ..] spots ])]
+                                  ++ nl2 ++ evRaw "Legend:\n" ++ unlinesEv legendLines
+                   in (state, mapFrags)
 
-executeCommand (ActionWithArgs verb args) state =
+executeCommandEv (ActionWithArgs verb args) state =
     let stateWithVars = bindCommandVars (ActionWithArgs verb args) state
-    in executeCommand (Interact verb (unwords args)) stateWithVars
+    in executeCommandEv (Interact verb (unwords args)) stateWithVars
 
-executeCommand (Interact verb targetStr) state =
+executeCommandEv (Interact verb targetStr) state =
     let stateWithVars = bindCommandVars (Interact verb targetStr) state
     in case resolveInteractTarget verb targetStr stateWithVars of
         ITItem item mSt
@@ -752,35 +766,35 @@ executeCommand (Interact verb targetStr) state =
             , isDark room stateWithVars
             , not (hasItem (itemId item) stateWithVars)
             , not (itemIsFeelable item) ->
-                (stateWithVars, darkRoomMessage room)
+                (stateWithVars, darkRoomEv room)
             | otherwise ->
                 interactItem verb item mSt targetStr stateWithVars
         ITNpc npc mSt
             | isDarkRestricted verb
             , Just room <- getCurrentRoom stateWithVars
             , isDark room stateWithVars ->
-                (stateWithVars, darkRoomMessage room)
+                (stateWithVars, darkRoomEv room)
             | otherwise ->
                 interactNpc verb npc mSt targetStr stateWithVars
         ITVehicle veh
             | isDarkRestricted verb
             , Just room <- getCurrentRoom stateWithVars
             , isDark room stateWithVars ->
-                (stateWithVars, darkRoomMessage room)
+                (stateWithVars, darkRoomEv room)
             | otherwise ->
                 interactVehicle verb veh targetStr stateWithVars
         ITBareVerb
             | isDarkRestricted verb
             , Just room <- getCurrentRoom stateWithVars
             , isDark room stateWithVars ->
-                (stateWithVars, darkRoomMessage room)
+                (stateWithVars, darkRoomEv room)
             | otherwise ->
                 interactBare verb stateWithVars
         ITNotFound str
             | isDarkRestricted verb
             , Just room <- getCurrentRoom stateWithVars
             , isDark room stateWithVars ->
-                (stateWithVars, darkRoomMessage room)
+                (stateWithVars, darkRoomEv room)
             | otherwise ->
                 interactNotFound verb str stateWithVars
         ITAmbiguous ids
@@ -788,12 +802,12 @@ executeCommand (Interact verb targetStr) state =
             , Just room <- getCurrentRoom stateWithVars
             , isDark room stateWithVars
             , not (all (itemReachableInDark stateWithVars) ids) ->
-                (stateWithVars, darkRoomMessage room)
+                (stateWithVars, darkRoomEv room)
             | otherwise ->
                 interactAmbiguous ids stateWithVars
 
 -- | Handle "use <item> on <entity>" with weapon→attack fallback
-executeCommand (InteractWith VUseOn itemStr entityStr) state =
+executeCommandEv (InteractWith VUseOn itemStr entityStr) state =
     let itemTarget = normalizeText itemStr
         entityTarget = normalizeText entityStr
         inventoryItems = getItemsInLocation (CarriedBy ActorPlayer) state
@@ -804,13 +818,13 @@ executeCommand (InteractWith VUseOn itemStr entityStr) state =
         entityIsFeelable = any (\i -> matchesItemTarget entityTarget i && itemIsFeelable i)
                                (getItemsInLocation (InRoom (currentRoom (save state))) state)
     in case maybeItem of
-        Nothing -> (state, renderMsg "use.not_carried" [("item", itemStr)])
+        Nothing -> (state, evMsg "use.not_carried" [("item", itemStr)])
         Just item
             | Just room <- getCurrentRoom state
             , isDark room state
             , not entityInInventory
             , not entityIsFeelable ->
-                (state, darkRoomMessage room)
+                (state, darkRoomEv room)
             | otherwise ->
                 if entityTarget `elem` reachableEntityAliases state
             then
@@ -822,23 +836,23 @@ executeCommand (InteractWith VUseOn itemStr entityStr) state =
                     Just (newState, msg) ->
                         let resolvedEntity = maybe entityTarget snd interactionKey
                             state' = setEntityState resolvedEntity newState state
-                        in (state', msg)
+                        in (state', evRaw msg)
                     Nothing
                         | isLivingNPCInRoom entityTarget state ->
-                            executeCommand (Interact VAttack entityTarget) state
+                            executeCommandEv (Interact VAttack entityTarget) state
                         | otherwise ->
                             case tryItemOnItem (itemId item) entityTarget state of
                                 Just result -> result
                                 Nothing -> tryRefuelByItem item state
             else
                 if isLivingNPCInRoom entityTarget state
-                then executeCommand (Interact VAttack entityTarget) state
+                then executeCommandEv (Interact VAttack entityTarget) state
                 else case tryItemOnItem (itemId item) entityTarget state of
                         Just result -> result
                         Nothing ->
                             case maybeVehicle of
                                 Just _ -> tryRefuelByItem item state
-                                Nothing -> (state, renderMsg "use.unreachable" [("entity", entityStr)])
+                                Nothing -> (state, evMsg "use.unreachable" [("entity", entityStr)])
   where
     -- Vehicle refuelling: `use <fuel item> on <vehicle>` adds the item's
     -- "fuel" prop value (default 1) to the vehicle's tank, consuming the item.
@@ -848,79 +862,81 @@ executeCommand (InteractWith VUseOn itemStr entityStr) state =
             Just vId ->
                 let amount = fromMaybe 1 (Map.lookup "fuel" . itemProps =<< Map.lookup (itemId item) (itemStates (save st)))
                 in case refuelVehicle vId amount st1 of
-                    Nothing -> (st1, renderMsg "refuel.not_needed" [("vehicle", entityStr)])
-                    Just (st2, msg) ->
-                        (consumeItem (itemId item) st2, renderMsg "use.ok" [("item", itemName item), ("msg", msg)])
-            Nothing -> (st1, renderMsg "use.nothing" [])
+                    Nothing -> (st1, evMsg "refuel.not_needed" [("vehicle", entityStr)])
+                    Just (st2, fuelMsgs) ->
+                        (consumeItem (itemId item) st2,
+                         joinEv (evMsg "use.ok" [("item", itemName item)]) fuelMsgs)
+            Nothing -> (st1, evMsg "use.nothing" [])
     findVehicleTarget st = case currentVehicle (save st) of
         Just vId | isJust (lookupVehicle vId st) -> Just vId
         _ -> case findVehicle entityStr st of
             Just v -> Just (vehicleId v)
             Nothing -> Nothing
 
-executeCommand (InteractWith _ _ _) state = (state, renderMsg "use.nothing" [])
+executeCommandEv (InteractWith _ _ _) state = (state, evMsg "use.nothing" [])
 
-executeCommand Restart state = (state, "")
-executeCommand ListSaves state = (state, "")
+executeCommandEv Restart state = (state, [])
+executeCommandEv ListSaves state = (state, [])
 
-executeCommand Help state = (state, helpText)
-executeCommand Quit state = (endGame (Custom "quit") state, renderMsg "quit.bye" [])
-executeCommand (Unknown cmd) state = (state, renderMsg "parse.unknown" [("input", cmd)])
-executeCommand (Save _) state = (state, "")
-executeCommand (Load _) state = (state, "")
+executeCommandEv Help state = (state, evMsg "help.text" [])
+executeCommandEv Quit state = (endGame (Custom "quit") state, evMsg "quit.bye" [])
+executeCommandEv (Unknown cmd) state = (state, evMsg "parse.unknown" [("input", cmd)])
+executeCommandEv (Save _) state = (state, [])
+executeCommandEv (Load _) state = (state, [])
+
 
 -- ---------------------------------------------------------------------
 -- Vehicles (Phase 3)
 -- ---------------------------------------------------------------------
 
-executeCommand (EnterVehicleCmd targetStr) state =
+executeCommandEv (EnterVehicleCmd targetStr) state =
     case findVehicle targetStr state of
-        Nothing -> (state, renderMsg "enter.not_seen" [("target", targetStr)])
+        Nothing -> (state, evMsg "enter.not_seen" [("target", targetStr)])
         Just v -> case enterVehicle (vehicleId v) state of
-            Left err -> (state, err)
+            Left err -> (state, evRaw err)
             Right (st', msg) -> (st', msg)
 
-executeCommand ExitVehicleCmd state =
+executeCommandEv ExitVehicleCmd state =
     case exitVehicle state of
-        Left err -> (state, err)
+        Left err -> (state, evRaw err)
         Right (st', msg) -> (st', msg)
 
-executeCommand (DriveToCmd targetStr) state =
+executeCommandEv (DriveToCmd targetStr) state =
     case currentVehicle (save state) of
-        Nothing -> (state, renderMsg "vehicle.not_in" [])
+        Nothing -> (state, evMsg "vehicle.not_in" [])
         Just vId -> case driveVehicle vId targetStr state of
-            Left err -> (state, err)
+            Left err -> (state, evRaw err)
             Right (st', msg) -> (st', msg)
 
-executeCommand WaitCmd state =
+executeCommandEv WaitCmd state =
     case advanceVehicleRoute state of
-        Left err -> (state, err)
+        Left err -> (state, evRaw err)
         Right (st', msg) -> (st', msg)
 
 -- | Refuel: `refuel` or `refuel <vehicle>`. Actual fuelling happens via
 --   `use <fuel item> on <vehicle>`; plain `refuel` reports the status.
-executeCommand (RefuelCmd targetStr) state =
+executeCommandEv (RefuelCmd targetStr) state =
     let v = if null targetStr
             then currentVehicle (save state) >>= \vId -> lookupVehicle vId state
             else findVehicle targetStr state
     in case v of
-        Nothing -> (state, renderMsg "refuel.no_vehicle" [])
+        Nothing -> (state, evMsg "refuel.no_vehicle" [])
         Just veh ->
             let vId = vehicleId veh
                 vState = getVehicleState vId state
                 fuelStatus = case (vehicleFuelProp veh, vsFuel vState) of
-                    (Nothing, _) -> renderMsg "refuel.not_needed" [("vehicle", vehicleName veh)]
+                    (Nothing, _) -> evMsg "refuel.not_needed" [("vehicle", vehicleName veh)]
                     (Just fs, Just f) ->
-                        renderMsg "fuel.status" [("vehicle", vehicleName veh), ("item", fsItem fs), ("f", show f), ("max", show (fsMax fs))]
+                        evMsg "fuel.status" [("vehicle", vehicleName veh), ("item", fsItem fs), ("f", show f), ("max", show (fsMax fs))]
                     (Just fs, Nothing) ->
-                        renderMsg "fuel.status_zero" [("vehicle", vehicleName veh), ("item", fsItem fs), ("max", show (fsMax fs))]
+                        evMsg "fuel.status_zero" [("vehicle", vehicleName veh), ("item", fsItem fs), ("max", show (fsMax fs))]
             in (state, fuelStatus)
 
 -- | Repair: `repair <condition>` clears a matching vehicle condition on the
 --   current vehicle.
-executeCommand (RepairCmd targetStr) state =
+executeCommandEv (RepairCmd targetStr) state =
     case currentVehicle (save state) of
-        Nothing -> (state, renderMsg "vehicle.not_in" [])
+        Nothing -> (state, evMsg "vehicle.not_in" [])
         Just vId ->
             let vState = getVehicleState vId state
                 target = normalizeText targetStr
@@ -929,12 +945,13 @@ executeCommand (RepairCmd targetStr) state =
                           , target `elem` [map toLower c, "the " ++ map toLower c] ]
                 vName = maybe vId vehicleName v
             in if null matches
-               then (state, renderMsg "repair.nothing_broken" [("vehicle", vName), ("target", targetStr)]
-                            ++ (if Set.null (vsActiveConditions vState)
-                                then "" else renderMsg "repair.problems" [("list", intercalate ", " (Set.toList (vsActiveConditions vState)))]))
+               then (state, joinAllEv
+                            [ evMsg "repair.nothing_broken" [("vehicle", vName), ("target", targetStr)]
+                            , if Set.null (vsActiveConditions vState)
+                                then [] else evMsg "repair.problems" [("list", intercalate ", " (Set.toList (vsActiveConditions vState)))] ])
                else let c = head matches
                         st' = clearVehicleCondition vId c state
-                    in (st', renderMsg "repair.ok" [("vehicle", vName), ("problem", c)])
+                    in (st', evMsg "repair.ok" [("vehicle", vName), ("problem", c)])
 
 -- | Resolve a vehicle by name/keyword among all vehicles in the world
 findVehicle :: String -> GameState -> Maybe VehicleDef
@@ -1072,7 +1089,7 @@ resolveInteractTarget verb targetStr state = case resolveTarget verb targetStr s
     BareVerb      -> ITBareVerb
 
 -- | Execute interaction on an item.
-interactItem :: Verb -> ItemDef -> Maybe ItemState -> String -> GameState -> CommandResult
+interactItem :: Verb -> ItemDef -> Maybe ItemState -> String -> GameState -> (GameState, [OutputEvent])
 interactItem verb item maybeItemState targetStr state =
     let iId = itemId item
         currentStatus = maybe "unknown" itemStatus maybeItemState
@@ -1082,63 +1099,61 @@ interactItem verb item maybeItemState targetStr state =
         -- Taking: enforce portability, then pick up AND run on_take.
         (VTake, _)
             | not notCarried ->
-                (state, renderMsg "take.already" [("item", itemName item)])
+                (state, evMsg "take.already" [("item", itemName item)])
             | otherwise ->
                 case itemPortable item of
-                    False -> (state, fromMaybe (renderMsg "take.not_portable" [("item", itemName item)])
-                                             (itemTakeFailure item))
+                    False -> (state, fromMaybe (evMsg "take.not_portable" [("item", itemName item)])
+                                             (fmap evRaw (itemTakeFailure item)))
                     True ->
                         let (st', extra) = case vmLookup of
-                                Just outcome -> applyOutcome outcome iId state
-                                Nothing      -> (state, "")
-                            takeMsg = renderMsg "take.ok" [("item", itemName item)]
+                                Just outcome -> applyOutcomeEv outcome iId state
+                                Nothing      -> (state, [])
+                            takeMsg = evMsg "take.ok" [("item", itemName item)]
                         in (pickupItem iId st',
-                            if null extra then takeMsg else takeMsg ++ "\n" ++ extra)
+                            joinEv takeMsg extra)
         _ -> case vmLookup of
-            Just outcome -> applyOutcome outcome iId state
+            Just outcome -> applyOutcomeEv outcome iId state
             Nothing ->
                 if verb == VDrop && hasItem iId state
-                then (dropItem iId state, renderMsg "drop.ok" [("item", itemName item)])
+                then (dropItem iId state, evMsg "drop.ok" [("item", itemName item)])
                 else if verb == VLookAt
-                then (state, withAscii (renderArtForLook (itemAscii item) state)
-                                      (resolveCondText (itemDescription item) state))
+                then (state, lookWithArtEv (itemAscii item) state (resolveCondText (itemDescription item) state))
                 else case if verb == VAttack then tryAttackVehicle targetStr state else Nothing of
                     Just res -> res
                     Nothing
-                        | hasOnCommandTrigger verb state -> (state, "")
-                        | otherwise -> (state, renderMsg "item.cant_do" [("item", itemName item)])
+                        | hasOnCommandTrigger verb state -> (state, [])
+                        | otherwise -> (state, evMsg "item.cant_do" [("item", itemName item)])
 
 -- | Execute interaction on an NPC.
-interactNpc :: Verb -> NPCDef -> Maybe NPCState -> String -> GameState -> CommandResult
+interactNpc :: Verb -> NPCDef -> Maybe NPCState -> String -> GameState -> (GameState, [OutputEvent])
 interactNpc verb npc maybeNpcState targetStr state =
     let nId = npcId npc
         currentStatus = maybe "unknown" npcStatus maybeNpcState
         isCorpse = isDeadNPC nId state
     in case Map.lookup (verb, currentStatus) (npcVerbMap npc) of
-        Just outcome -> applyOutcome outcome nId state
+        Just outcome -> applyOutcomeEv outcome nId state
         Nothing
             -- A body can be looked at, searched and targeted by authored
             -- verbs, but it neither fights nor talks.
             | isCorpse, verb == VAttack ->
-                (state, renderMsg "npc.already_dead" [("npc", npcName npc)])
+                (state, evMsg "npc.already_dead" [("npc", npcName npc)])
             | isCorpse, verb == VTalk ->
-                (state, renderMsg "npc.dead_silent" [("npc", npcName npc)])
+                (state, evMsg "npc.dead_silent" [("npc", npcName npc)])
             | verb == VTalk -> talkTo npc maybeNpcState state
             | verb == VAttack -> executeAttack npc maybeNpcState targetStr state
-            | verb == VLookAt -> (state, withAscii (renderArtForLook (npcAscii npc) state)
-                                                  (resolveCondText (npcDescription npc) state))
-            | hasOnCommandTrigger verb state -> (state, "")
-            | otherwise -> (state, renderMsg "npc.cant_do" [("npc", npcName npc)])
+            | verb == VLookAt -> (state, lookWithArtEv (npcAscii npc) state (resolveCondText (npcDescription npc) state))
+            | hasOnCommandTrigger verb state -> (state, [])
+            | otherwise -> (state, evMsg "npc.cant_do" [("npc", npcName npc)])
 
 -- | Execute interaction on a vehicle.
-interactVehicle :: Verb -> VehicleDef -> String -> GameState -> CommandResult
+interactVehicle :: Verb -> VehicleDef -> String -> GameState -> (GameState, [OutputEvent])
 interactVehicle verb _veh targetStr state
-    | hasOnCommandTrigger verb state = (state, "")
+    | hasOnCommandTrigger verb state = (state, [])
     | verb == VAttack, Just res <- tryAttackVehicle targetStr state = res
-    | otherwise = (state, renderMsg "target.not_seen" [("target", targetStr)])
+    | otherwise = (state, evMsg "target.not_seen" [("target", targetStr)])
 
 -- | Execute a bare interaction command without a target string.
-interactBare :: Verb -> GameState -> CommandResult
+interactBare :: Verb -> GameState -> (GameState, [OutputEvent])
 interactBare verb state
     -- Phase 7f-3, A2: bare `defend` / `flee` during a tactical fight
     -- route through the combat resolver with the corresponding action.
@@ -1149,26 +1164,26 @@ interactBare verb state
     = executeTacticalAction ca state
     | VCustom vn <- verb
     , vn `elem` ["defend", "flee"]
-    = (state, renderMsg "combat.not_engaged" [])
-    | otherwise = (state, "")   -- bare verb (e.g. custom command); triggers carry the message
+    = (state, evMsg "combat.not_engaged" [])
+    | otherwise = (state, [])   -- bare verb (e.g. custom command); triggers carry the message
 
 -- | Fallback interaction when target was not found.
-interactNotFound :: Verb -> String -> GameState -> CommandResult
+interactNotFound :: Verb -> String -> GameState -> (GameState, [OutputEvent])
 interactNotFound verb targetStr state
     -- Phase 7f-3, A3: `use-ability <id>` during a tactical fight
     | not (null targetStr), VCustom vn <- verb
     , vn `elem` ["use-ability", "ability"]
     , CombatTactical _ <- combatProfile (world state)
     = executeTacticalAction (CAAbility targetStr) state
-    | hasOnCommandTrigger verb state = (state, "")
+    | hasOnCommandTrigger verb state = (state, [])
     | verb == VAttack, Just res <- tryAttackVehicle targetStr state = res
-    | otherwise = (state, renderMsg "target.not_seen" [("target", targetStr)])
+    | otherwise = (state, evMsg "target.not_seen" [("target", targetStr)])
 
 -- | Fallback interaction when multiple entities match the target.
-interactAmbiguous :: [String] -> GameState -> CommandResult
+interactAmbiguous :: [String] -> GameState -> (GameState, [OutputEvent])
 interactAmbiguous ids state =
     let names = map (entityDisplayName state) ids
-    in (state, renderMsg "disambiguate.prompt" [("names", intercalate ", " names)])
+    in (state, evMsg "disambiguate.prompt" [("names", intercalate ", " names)])
 
 -- | Display name of an entity (item name, NPC name, or vehicle name).
 entityDisplayName :: GameState -> String -> String
@@ -1221,8 +1236,30 @@ isCurrentRoomDark state = case getCurrentRoom state of
 
 -- | Message when darkness prevents seeing or interacting with non-carried entities.
 --   Uses the room's custom dark message if configured, falling back to 'defaultDarkMessage'.
-darkRoomMessage :: Room -> String
-darkRoomMessage room = fromMaybe defaultDarkMessage (roomDarkMsg room)
+-- | Phase 1.2: the darkness refusal as event fragments — authored
+--   `dark_msg` stays raw prose, the default keeps its catalog key.
+darkRoomEv :: Room -> [OutputEvent]
+darkRoomEv room = case roomDarkMsg room of
+    Just authored -> evRaw authored
+    Nothing       -> evMsg "dark.default" []
+
+-- | Phase 1.2: an NPC's combat art as an art payload (empty -> no event).
+combatArtMsgEv :: NPCID -> GameState -> [OutputEvent]
+combatArtMsgEv nId st = case combatArtMsg nId st of
+    "" -> []
+    art -> [EvArt (ArtPayload art [])]
+
+-- | Phase 1.2: `withAscii` as events — the art as structured payload (with
+--   hotspot anchors), the description as raw prose. Byte-identical:
+--   @art ++ "\\n" ++ desc@, just the description when the art is empty.
+lookWithArtEv :: AsciiArt -> GameState -> String -> [OutputEvent]
+lookWithArtEv art state desc =
+    let rendered = renderArtForLook art state
+        artFrags | null rendered = []
+                 | otherwise = [ EvArt (ArtPayload rendered
+                                   [ ArtHotspot i (hsGlyph h) (hsTarget h)
+                                   | (i, h) <- zip [1 :: Int ..] (aaHotspots art) ]) ] ++ nl
+    in artFrags ++ evRaw desc
 
 -- | Verbs that cannot be performed on non-carried targets in darkness (Phase 0.3, Bug B3).
 isDarkRestricted :: Verb -> Bool
@@ -1273,9 +1310,9 @@ combatArtMsg nId st = case Map.lookup nId (npcDefs (world st)) of
     _ -> ""
 
 -- | `search` — reveal hidden items and run the room's search outcome
-searchRoom :: GameState -> CommandResult
+searchRoom :: GameState -> (GameState, [OutputEvent])
 searchRoom state = case getCurrentRoom state of
-    Just room | isDark room state -> (state, darkRoomMessage room)
+    Just room | isDark room state -> (state, darkRoomEv room)
     _ ->
         let rId = currentRoom (save state)
             -- hidden items currently in this room
@@ -1287,20 +1324,20 @@ searchRoom state = case getCurrentRoom state of
                      , not (itemDiscovered st)
                      ]
             stateAfterReveal = foldr discoverItem state hidden
-            discoveredMsgs = [ maybe (renderMsg "search.reveal" [("item", iId)]) id
+            discoveredMsgs = [ maybe (evMsg "search.reveal" [("item", iId)]) evRaw
                                  (Map.lookup iId (itemDefs (world state)) >>= itemDiscoverText)
                              | iId <- hidden ]
             (stateFinal, hookMsg) =
                 case lookupRoom rId state >>= roomSearchOutcome of
-                    Nothing -> (stateAfterReveal, "")
-                    Just outcome -> applyOutcome outcome "" stateAfterReveal
-            full = intercalate "\n" (filter (not . null) (discoveredMsgs ++ [hookMsg]))
-        in (stateFinal, if null full then renderMsg "search.nothing" [] else full)
+                    Nothing -> (stateAfterReveal, [])
+                    Just outcome -> applyOutcomeEv outcome "" stateAfterReveal
+            full = joinAllEv (discoveredMsgs ++ [hookMsg])
+        in (stateFinal, if null (renderEvents full) then evMsg "search.nothing" [] else full)
 
 -- | Item-on-item interaction (crafting).
 --   Returns Nothing if no interaction is defined, so callers can keep their
 --   own "nothing here" message.
-tryItemOnItem :: ItemID -> String -> GameState -> Maybe CommandResult
+tryItemOnItem :: ItemID -> String -> GameState -> Maybe (GameState, [OutputEvent])
 tryItemOnItem usedId targetStr state =
     case findMatchingItem targetStr state of
         Nothing -> Nothing
@@ -1309,16 +1346,16 @@ tryItemOnItem usedId targetStr state =
                 altKey = (itemId target, usedId)
             in case Map.lookup key (itemInteractions (world state)) <|>
                     Map.lookup altKey (itemInteractions (world state)) of
-                Just outcome -> Just (applyOutcome outcome (itemId target) state)
+                Just outcome -> Just (applyOutcomeEv outcome (itemId target) state)
                 Nothing -> Nothing
 
 -- | Dialogue: use the tree if present, otherwise fall back to the legacy single line
-talkTo :: NPCDef -> Maybe NPCState -> GameState -> CommandResult
+talkTo :: NPCDef -> Maybe NPCState -> GameState -> (GameState, [OutputEvent])
 talkTo npc maybeNpcState state =
     let status = maybe "alive" npcStatus maybeNpcState
     in case Map.lookup status (npcDialogueTrees npc) of
         Just tree -> renderDialogue npc tree maybeNpcState state
-        Nothing -> (clearActiveDialogue state, renderMsg "dialogue.nothing_to_say" [("name", npcName npc)])
+        Nothing -> (clearActiveDialogue state, evMsg "dialogue.nothing_to_say" [("name", npcName npc)])
 
 -- | Choices of a node that pass their optional `visible_when` predicate.
 --   Used by both rendering and `choose N` so numbering stays consistent.
@@ -1355,20 +1392,21 @@ isValidChoice idx state = case activeChoices state of
     Nothing      -> False
 
 -- | Render the current node of a dialogue tree and list its choices
-renderDialogue :: NPCDef -> DialogueTree -> Maybe NPCState -> GameState -> CommandResult
+renderDialogue :: NPCDef -> DialogueTree -> Maybe NPCState -> GameState -> (GameState, [OutputEvent])
 renderDialogue npc tree maybeNpcState state =
     let nodeId = fromMaybe (dtEntry tree) (maybeNpcState >>= npcDialogueNode)
         maybeNode = Map.lookup nodeId (dtNodes tree)
     in case maybeNode of
-        Nothing -> (clearActiveDialogue state, renderMsg "dialogue.nothing_to_say" [("name", npcName npc)])
+        Nothing -> (clearActiveDialogue state, evMsg "dialogue.nothing_to_say" [("name", npcName npc)])
         Just node ->
-            let header = renderMsg "dialogue.line" [("name", npcName npc), ("text", formatWithVars (dnText node) state)]
+            let header = evMsg "dialogue.line" [("name", npcName npc), ("text", formatWithVars (dnText node) state)]
                 choices = visibleChoices state node
+                choiceLines = [ evMsg "dialogue.choice_line" [("i", show i), ("text", formatWithVars (dcText c) state)]
+                              | (i, c) <- zip [1 :: Int ..] choices ]
+                -- Byte-identical: header ++ "\\n\\n" ++ unlines choiceLines
                 body = if null choices
                        then header
-                       else header ++ "\n\n" ++ unlines
-                            [ renderMsg "dialogue.choice_line" [("i", show i), ("text", formatWithVars (dcText c) state)]
-                            | (i, c) <- zip [1 :: Int ..] choices ]
+                       else header ++ nl2 ++ unlinesEv choiceLines
                 -- store the node so a follow-up `choose N` can resolve it
                 stateWithNode = setDialogueNode (npcId npc) (Just nodeId) state
                 state' = if null choices
@@ -1383,7 +1421,7 @@ renderDialogue npc tree maybeNpcState state =
 -- | Combat logic delegated to the pure resolver (Phase 7f). The parser only
 --   wires profile + actors + target and applies the returned effects through
 --   the single outcome interpreter. Messages come from the resolver.
-executeAttack :: NPCDef -> Maybe NPCState -> String -> GameState -> CommandResult
+executeAttack :: NPCDef -> Maybe NPCState -> String -> GameState -> (GameState, [OutputEvent])
 executeAttack npc mNpcState targetStr state =
     let nId = npcId npc
         profile = combatProfile (world state)
@@ -1392,7 +1430,7 @@ executeAttack npc mNpcState targetStr state =
         actors = [PlayerActor]
                  ++ map CompanionActor (partyMembersInRoom state)
                  ++ [ShipActor vId | Just vId <- [currentVehicle (save state)]]
-        (effects, msgs) = resolveCombat profile actors (TargetNPC nId targetStr) CAAttack state
+        (effects, msgs) = resolveCombatEv profile actors (TargetNPC nId targetStr) CAAttack state
         -- Apply the whole effect list through the shared interpreter: it
         -- threads the RNG salt and joins every effect message instead of
         -- discarding all but the last (killNPCWithMsg / OnStateChange rules
@@ -1404,28 +1442,28 @@ executeAttack npc mNpcState targetStr state =
         screenMsgs = case (profile, mNpcState >>= npcHealth) of
             (CombatClassic (Just scr), Just _) -> combatScreenLines scr nId state
             _                                  -> []
-        body = combineMsgs (screenMsgs ++ effectMsg : msgs)
+        body = combineMsgsEv (map evRaw screenMsgs ++ effectMsg : msgs)
         -- The enemy is rendered every round (after the effects, so the killing
         -- round shows the body — see `combatArtMsg`).
-        body' = combineMsgs [combatArtMsg nId st', body]
-    in if null body' then (st', "") else (st', body')
+        body' = combineMsgsEv [combatArtMsgEv nId st', body]
+    in if null (renderEvents body') then (st', []) else (st', body')
 
 -- | Combat logic for attacking a target ship (Phase 7h-2).
-executeAttackShip :: VehicleDef -> String -> GameState -> CommandResult
+executeAttackShip :: VehicleDef -> String -> GameState -> (GameState, [OutputEvent])
 executeAttackShip veh targetStr state =
     let vId = vehicleId veh
         profile = combatProfile (world state)
         actors = [PlayerActor]
                  ++ map CompanionActor (partyMembersInRoom state)
                  ++ [ShipActor pvId | Just pvId <- [currentVehicle (save state)]]
-        (effects, msgs) = resolveCombat profile actors (TargetShip vId targetStr) CAAttack state
+        (effects, msgs) = resolveCombatEv profile actors (TargetShip vId targetStr) CAAttack state
         (st', effectMsg) = applyOutcomes effects vId state
-        body = combineMsgs (effectMsg : msgs)
-    in if null body then (st', "") else (st', body)
+        body = combineMsgsEv (effectMsg : msgs)
+    in if null (renderEvents body) then (st', []) else (st', body)
 
 -- | Check if the target names a vehicle at the player's stop, and if so,
 --   refuse attacking an ordinary vehicle or execute ship-to-ship combat.
-tryAttackVehicle :: String -> GameState -> Maybe CommandResult
+tryAttackVehicle :: String -> GameState -> Maybe (GameState, [OutputEvent])
 tryAttackVehicle targetStr state = case findVehicle targetStr state of
     Just veh ->
         let vId = vehicleId veh
@@ -1435,15 +1473,17 @@ tryAttackVehicle targetStr state = case findVehicle targetStr state of
             vehStop = vsCurrentStop (getVehicleState vId state)
             isAboardTarget = currentVehicle (save state) == Just vId
         in if isAboardTarget || vehStop /= outsideStop
-           then Just (state, renderMsg "target.not_seen" [("target", targetStr)])
+           then Just (state, evMsg "target.not_seen" [("target", targetStr)])
            else case targetShipSystems (TargetShip vId targetStr) state of
-               Nothing -> Just (state, renderMsg "attack.cant_target" [("target", targetStr)])
+               Nothing -> Just (state, evMsg "attack.cant_target" [("target", targetStr)])
                Just _  -> Just (executeAttackShip veh targetStr state)
     Nothing -> Nothing
 
 -- | Concatenate non-empty combat messages.
-combineMsgs :: [String] -> String
-combineMsgs = unlines . filter (not . null)
+-- | Phase 1.2: fragment form of the former `combineMsgs` (unlines with
+--   empty-piece filter) — byte-identical.
+combineMsgsEv :: [[OutputEvent]] -> [OutputEvent]
+combineMsgsEv = unlinesEv . filter (not . null . renderEvents)
 
 -- | Map a custom verb name to the tactical combat action it represents.
 --   Returns Nothing for verbs that are not tactical combat verbs.
@@ -1456,7 +1496,7 @@ tacticalVerbAction _        = Nothing
 --   room (the same heuristic as `attack <target>`), or against a ship at
 --   the current stop. Used for bare verbs like `defend` and `flee` that
 --   have no explicit target.
-executeTacticalAction :: CombatAction -> GameState -> CommandResult
+executeTacticalAction :: CombatAction -> GameState -> (GameState, [OutputEvent])
 executeTacticalAction action state =
     let roomNPCs = getNPCsInRoom (currentRoom (save state)) state
         livingNPCs = [ npc | npc <- roomNPCs
@@ -1469,11 +1509,11 @@ executeTacticalAction action state =
                 actors = [PlayerActor]
                          ++ map CompanionActor (partyMembersInRoom state)
                          ++ [ShipActor vId | Just vId <- [currentVehicle (save state)]]
-                (effects, msgs) = resolveCombat profile actors (TargetNPC nId (npcName npc)) action state
+                (effects, msgs) = resolveCombatEv profile actors (TargetNPC nId (npcName npc)) action state
                 (st', effectMsg) = applyOutcomes effects nId state
-                body = combineMsgs (effectMsg : msgs)
-                body' = combineMsgs [combatArtMsg nId st', body]
-            in if null body' then (st', "") else (st', body')
+                body = combineMsgsEv (effectMsg : msgs)
+                body' = combineMsgsEv [combatArtMsgEv nId st', body]
+            in if null (renderEvents body') then (st', []) else (st', body')
         [] ->
             let outsideStop = case currentVehicle (save state) of
                     Just pvId -> vsCurrentStop (getVehicleState pvId state)
@@ -1491,11 +1531,20 @@ executeTacticalAction action state =
                         actors = [PlayerActor]
                                  ++ map CompanionActor (partyMembersInRoom state)
                                  ++ [ShipActor pvId | Just pvId <- [currentVehicle (save state)]]
-                        (effects, msgs) = resolveCombat profile actors (TargetShip vId (vehicleName veh)) action state
+                        (effects, msgs) = resolveCombatEv profile actors (TargetShip vId (vehicleName veh)) action state
                         (st', effectMsg) = applyOutcomes effects vId state
-                        body = combineMsgs (effectMsg : msgs)
-                    in if null body then (st', "") else (st', body)
-                [] -> (state, renderMsg "attack.none_here" [])
+                        body = combineMsgsEv (effectMsg : msgs)
+                    in if null (renderEvents body) then (st', []) else (st', body)
+                [] -> (state, evMsg "attack.none_here" [])
+
+-- | Compatibility form (Phase 1.2; used by the tests, the aux paths of the
+--   game loop and the TUI hand-over): the same command, its event stream
+--   rendered back to the flat CLI text — byte-identical to the pre-1.2
+--   string pipeline.
+executeCommand :: Command -> GameState -> CommandResult
+executeCommand cmd state =
+    let (st', evs) = executeCommandEv cmd state
+    in (st', renderEvents evs)
 
 -- ---------------------------------------------------------------------------
 -- Help text

@@ -8,11 +8,12 @@ module Quests
     , completeQuest
     , advanceQuest
     , completeQuestWith
-    , journalText
+    , journalTextEv
     ) where
 
 import Types
-import Messages (renderMsg)
+import Types.Output (OutputEvent (..), evRaw, joinAllEv, unlinesEv, renderEvents)
+import Messages (renderMsg, evMsg)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
@@ -62,33 +63,38 @@ advanceQuest qId state =
                     { save = (save state) { activeQuests = Map.insert qId (idx + 1) (activeQuests (save state)) } }
 
 -- | Mark a quest completed and fire its reward with a runner.
---   Returns the new state plus the reward message ("" if none).
-completeQuestWith :: (Effect -> EntityID -> GameState -> (GameState, String))
-                  -> QuestID -> GameState -> (GameState, String)
+--   Returns the new state plus the reward events (empty if none).
+completeQuestWith :: (Effect -> EntityID -> GameState -> (GameState, [OutputEvent]))
+                  -> QuestID -> GameState -> (GameState, [OutputEvent])
 completeQuestWith runOutcome qId state =
     let withoutActive = completeQuest qId state
     in case lookupQuest qId state >>= questReward of
-        Nothing -> (withoutActive, "")
+        Nothing -> (withoutActive, [])
         Just outcome -> runOutcome outcome "" withoutActive
 
--- | Journal text: active quests with their current stage, then completed ones
-journalText :: GameState -> String
-journalText state =
+-- | Journal (Phase 1.2): active quests with their current stage, then
+--   completed ones — as event fragments, byte-identical to the former text.
+journalTextEv :: GameState -> [OutputEvent]
+journalTextEv state =
     let active = Map.toList (activeQuests (save state))
         completed = Set.toList (completedQuests (save state))
         activeLines =
-            [ "- " ++ questName q ++ ": " ++ stageText q idx
+            [ evRaw ("- " ++ questName q ++ ": " ++ stageText q idx)
             | (qId, idx) <- active
             , Just q <- [lookupQuest qId state] ]
         completedLines =
-            [ "- " ++ questName q ++ " (completed)"
+            [ evRaw ("- " ++ questName q ++ " (completed)")
             | qId <- completed
             , Just q <- [lookupQuest qId state] ]
-    in case (activeLines, completedLines) of
-        ([], []) -> renderMsg "quests.journal_empty" []
-        _ -> renderMsg "quests.journal_header" [] ++
-             (if null activeLines then "" else unlines (renderMsg "quests.active_header" [] : activeLines)) ++
-             (if null completedLines then "" else unlines (renderMsg "quests.completed_header" [] : completedLines))
+    in case (renderEvents (joinAllEv activeLines), renderEvents (joinAllEv completedLines)) of
+        ("", "") -> evMsg "quests.journal_empty" []
+        -- Byte-identical: the header ends with "\\n", the unlines blocks are
+        -- appended directly (no extra separator).
+        _ -> concat
+             [ evMsg "quests.journal_header" []
+             , if null activeLines then [] else unlinesEv (evMsg "quests.active_header" [] : activeLines)
+             , if null completedLines then [] else unlinesEv (evMsg "quests.completed_header" [] : completedLines)
+             ]
   where
     stageText q idx =
         case drop idx (questStages q) of

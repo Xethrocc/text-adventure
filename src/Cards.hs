@@ -21,8 +21,9 @@ module Cards
 
 import Types
 import Game
-import Messages (renderMsg)
-import Effects (applyOutcome)
+import Types.Output (OutputEvent (..), styledText, evText, evRaw, nl, joinEv, evIntercalate, unlinesEv, renderEvents, ArtPayload (..))
+import Messages (renderMsg, evMsg)
+import Effects (applyOutcomeEv)
 import Ansi (stripAnsi)
 import Data.Char (toLower)
 import Data.List (foldl', intercalate, isInfixOf)
@@ -50,7 +51,7 @@ matchesNPCTarget tgt npc
 
 -- | Validate and deduct resource costs for playing a card.
 --   Supports "player.<resource>" or "<resource>".
-checkResourceCosts :: Map.Map String Int -> GameState -> Either String GameState
+checkResourceCosts :: Map.Map String Int -> GameState -> Either [OutputEvent] GameState
 checkResourceCosts costs st =
     let costList = Map.toList costs
         resolveVar name =
@@ -64,7 +65,7 @@ checkResourceCosts costs st =
             let (_, cur) = resolveVar res
             in if cur >= req
                then Right ()
-               else Left (renderMsg "card.cost_insufficient"
+               else Left (evMsg "card.cost_insufficient"
                             [("res", res), ("need", show req), ("have", show cur)])
     in case mapM_ checkOne costList of
         Left err -> Left err
@@ -75,7 +76,7 @@ checkResourceCosts costs st =
             in Right (foldl' deduct st costList)
 
 -- | Validate card target against living enemies in current room.
-validateTarget :: CardTarget -> Maybe String -> GameState -> Either String (String, GameState)
+validateTarget :: CardTarget -> Maybe String -> GameState -> Either [OutputEvent] (String, GameState)
 validateTarget targetReq mTarget st =
     let curRoom = currentRoom (save st)
         roomNPCs = getNPCsInRoom curRoom st
@@ -87,38 +88,38 @@ validateTarget targetReq mTarget st =
             Right ("player", setVariableChecked "cmd.target" (VVText "player") st)
         TargetAllEnemies ->
             if null livingEnemies
-            then Left (renderMsg "card.no_enemies" [])
+            then Left (evMsg "card.no_enemies" [])
             else Right ("all enemies", setVariableChecked "cmd.target" (VVText "all") st)
         TargetSingleEnemy ->
             if null livingEnemies
-            then Left (renderMsg "card.no_enemies" [])
+            then Left (evMsg "card.no_enemies" [])
             else case mTarget of
                 Nothing ->
                     if length livingEnemies == 1
                     then let sole = head livingEnemies
                          in Right (npcName sole, setVariableChecked "cmd.target" (VVText (npcId sole)) st)
-                    else Left (renderMsg "card.specify_target"
+                    else Left (evMsg "card.specify_target"
                                 [("names", intercalate ", " (map npcName livingEnemies))])
                 Just tStr ->
                     let matches = filter (matchesNPCTarget tStr) livingEnemies
                     in case matches of
-                        [] -> Left (renderMsg "card.no_match" [("target", tStr)])
+                        [] -> Left (evMsg "card.no_match" [("target", tStr)])
                         (targetNpc:_) ->
                             Right (npcName targetNpc, setVariableChecked "cmd.target" (VVText (npcId targetNpc)) st)
 
 -- | Play a card from hand by 1-based index, with optional target.
-playCard :: Int -> Maybe String -> GameState -> CommandResult
+playCard :: Int -> Maybe String -> GameState -> (GameState, [OutputEvent])
 playCard idx mTarget st = case deckState (save st) of
-    Nothing -> (st, renderMsg "card.no_deck_play" [])
+    Nothing -> (st, evMsg "card.no_deck_play" [])
     Just ds ->
         let curHand = hand ds
         in if idx < 1 || idx > length curHand
-           then (st, renderMsg "card.invalid_number"
+           then (st, evMsg "card.invalid_number"
                      [("idx", show idx), ("n", show (length curHand))])
            else
                let cId = curHand !! (idx - 1)
                in case Map.lookup cId (cardDefs (world st)) of
-                   Nothing -> (st, renderMsg "card.unknown" [("id", cId)])
+                   Nothing -> (st, evMsg "card.unknown" [("id", cId)])
                    Just card ->
                        case validateTarget (cardTarget card) mTarget st of
                            Left err -> (st, err)
@@ -136,13 +137,13 @@ playCard idx mTarget st = case deckState (save st) of
                                            stAfterCard = stCostPaid
                                                { save = (save stCostPaid) { deckState = Just dsAfter } }
                                            (stFinal, effectMsgs) = foldl' (\(sAcc, msgsAcc) eff ->
-                                               let (s', m) = applyOutcome eff "" sAcc
-                                               in (s', if null m then msgsAcc else msgsAcc ++ [m])
+                                               let (s', m) = applyOutcomeEv eff "" sAcc
+                                               in (s', joinEv msgsAcc m)
                                                ) (stAfterCard, []) (cardEffects card)
-                                           header = renderMsg "card.play" [("card", cardName card)]
-                                                    ++ (if null targetLabel then "" else renderMsg "card.play.on" [("target", targetLabel)])
-                                                    ++ (if cardExhaust card then renderMsg "card.play.exhausted" [] else ".")
-                                           allMsg = intercalate "\n" (filter (not . null) (header : effectMsgs))
+                                           headerFrags = evMsg "card.play" [("card", cardName card)]
+                                                    ++ (if null targetLabel then [] else evRaw (" on " ++ targetLabel))
+                                                    ++ (if cardExhaust card then evMsg "card.play.exhausted" [] else evRaw ".")
+                                           allMsg = joinEv headerFrags effectMsgs
                                        in (stFinal, allMsg)
 
 -- | End the player's turn:
@@ -150,9 +151,9 @@ playCard idx mTarget st = case deckState (save st) of
 --   - Resets player.block to 0
 --   - Restores energy to player.max_energy (default: 3)
 --   - Draws cards (default: 5 or player.draw_per_turn)
-endTurn :: GameState -> CommandResult
+endTurn :: GameState -> (GameState, [OutputEvent])
 endTurn st = case deckState (save st) of
-    Nothing -> (st, renderMsg "card.no_deck_endturn" [])
+    Nothing -> (st, evMsg "card.no_deck_endturn" [])
     Just _ds ->
         let st1 = discardHand st
             st2 = setVariableChecked "player.block" (VVInt 0)
@@ -174,7 +175,7 @@ endTurn st = case deckState (save st) of
                     Just (VVInt d) -> d
                     _              -> 5
             st4 = drawCards drawCount st3
-            msg = renderMsg "card.turn_ended" [("max", show maxE), ("n", show drawCount)]
+            msg = evMsg "card.turn_ended" [("max", show maxE), ("n", show drawCount)]
         in (st4, msg)
 
 -- | Visible width of a string, ignoring ANSI CSI escape sequences.
@@ -351,34 +352,37 @@ renderDeckCombatHud st ds =
        ++ [doubleLine]
 
 -- | Display the current hand in horizontal tile layout with combat HUD.
-showHand :: GameState -> CommandResult
+-- | The hand screen as one art block (Phase 1.2: screens travel as EvArt).
+--   Byte-identical: the block text is the former intercalate composition.
+showHand :: GameState -> (GameState, [OutputEvent])
 showHand st = case deckState (save st) of
-    Nothing -> (st, renderMsg "card.no_deck" [])
+    Nothing -> (st, evMsg "card.no_deck" [])
     Just ds ->
         let curHand = hand ds
             hudLines = renderDeckCombatHud st ds
-        in if null curHand
-           then (st, intercalate "\n" (hudLines ++ [renderMsg "card.hand_empty" []]))
-           else
-               let lookupCardBox idx cId = case Map.lookup cId (cardDefs (world st)) of
-                       Just c  -> renderCardBox idx c
-                       Nothing ->
-                           [ "┌──────────────┐"
-                           , "│ " ++ padRightVisible 12 (show idx ++ ". " ++ take 8 cId) ++ " │"
-                           , "│  [Unbekannt] │"
-                           , "│              │"
-                           , "│ Nicht        │"
-                           , "│ gefunden     │"
-                           , "└──────────────┘"
-                           ]
-                   cardBoxes = zipWith lookupCardBox [1 :: Int ..] curHand
-                   tiledHand = hcatBoxes 80 cardBoxes
-               in (st, intercalate "\n" (hudLines ++ [""] ++ tiledHand))
+            screenLines = if null curHand
+                          then hudLines ++ [renderMsg "card.hand_empty" []]
+                          else
+                              let lookupCardBox idx cId = case Map.lookup cId (cardDefs (world st)) of
+                                      Just c  -> renderCardBox idx c
+                                      Nothing ->
+                                          [ "┌──────────────┐"
+                                          , "│ " ++ padRightVisible 12 (show idx ++ ". " ++ take 8 cId) ++ " │"
+                                          , "│  [Unbekannt] │"
+                                          , "│              │"
+                                          , "│ Nicht        │"
+                                          , "│ gefunden     │"
+                                          , "└──────────────┘"
+                                          ]
+                                  cardBoxes = zipWith lookupCardBox [1 :: Int ..] curHand
+                                  tiledHand = hcatBoxes 80 cardBoxes
+                              in hudLines ++ [""] ++ tiledHand
+        in (st, [EvArt (ArtPayload (intercalate "\n" screenLines) [])])
 
 -- | Display draw pile summary.
-showDeck :: GameState -> CommandResult
+showDeck :: GameState -> (GameState, [OutputEvent])
 showDeck st = case deckState (save st) of
-    Nothing -> (st, renderMsg "card.no_deck" [])
+    Nothing -> (st, evMsg "card.no_deck" [])
     Just ds ->
         let curDraw = drawPile ds
             curHand = hand ds
@@ -397,12 +401,12 @@ showDeck st = case deckState (save st) of
             footer = renderMsg "card.piles_footer"
                      [("hand", show (length curHand)), ("discard", show (length curDisc)),
                       ("exhaust", show (length curExh))]
-        in (st, intercalate "\n" ([header] ++ body ++ [footer]))
+        in (st, [EvArt (ArtPayload (intercalate "\n" ([header] ++ body ++ [footer])) [])])
 
 -- | Display discard pile contents.
-showDiscard :: GameState -> CommandResult
+showDiscard :: GameState -> (GameState, [OutputEvent])
 showDiscard st = case deckState (save st) of
-    Nothing -> (st, renderMsg "card.no_deck" [])
+    Nothing -> (st, evMsg "card.no_deck" [])
     Just ds ->
         let curDisc = discardPile ds
             nameOf cId = case Map.lookup cId (cardDefs (world st)) of
@@ -414,4 +418,4 @@ showDiscard st = case deckState (save st) of
                         | (name, cnt) <- cardCounts ]
             header = renderMsg "card.discard_pile_header" [("n", show (length curDisc))]
             body = if null cardLines then [renderMsg "card.pile_empty" []] else cardLines
-        in (st, intercalate "\n" ([header] ++ body))
+        in (st, [EvArt (ArtPayload (intercalate "\n" ([header] ++ body)) [])])

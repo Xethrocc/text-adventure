@@ -2,7 +2,7 @@
 module Main where
 
 import Control.Monad (when)
-import Data.List (isInfixOf, isPrefixOf, isSuffixOf)
+import Data.List (intercalate, isInfixOf, isPrefixOf, isSuffixOf)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Types as AesonT
 import qualified Data.ByteString.Lazy.Char8 as BLC
@@ -13,12 +13,17 @@ import Data.Either (isLeft)
 import System.Timeout (timeout)
 import Control.Exception (bracket, evaluate, try, SomeException)
 import Game
+import Types.Output (OutputEvent (..), Style (..), StyledText (..), Span (..), Color (..),
+                      MsgPayload (..), ArtPayload (..), ArtHotspot (..),
+                      plainStyle, styledText, styleToAnsi, renderStyled, renderEvents,
+                      evText, evRaw, nl, joinEv, joinAllEv, evIntercalate, unlinesEv)
 import Vehicles
 import Effects
+import Effects (applyOutcomeEv)
 import Quests
 import Cards
-import GameLoop (LoopState (..), initLoopState, applyLoopCommand,
-                 bumpMetaRuns, reseedRng,
+import GameLoop (LoopState (..), initLoopState, applyLoopCommand, applyLoopCommandEv,
+                 sideEvents, bumpMetaRuns, reseedRng,
                  commandEvents, consumesTurn, consumesTurnIn, runGameWithFrontend,
                  handleGameOver, saveBlockedMessage, loadBlockedMessage)
 import Frontend (Frontend (..), commandCompletion)
@@ -872,6 +877,81 @@ testRenderMsgArgs = do
     r5 <- expectEqual "  7" (formatStringWith "{n:3}" (`lookup` [("n", "7")]))
     pure (r1 && r2 && r3 && r4 && r5)
 
+-- | Phase 1.2: the fragment algebra replicates the four string join idioms
+--   byte for byte: joinMessages (\\n between non-empty), direct ++, unlines
+--   (trailing \\n incl. empty pieces), intercalate (\\n incl. empty pieces).
+testOutputFragmentAlgebra :: IO Bool
+testOutputFragmentAlgebra = do
+    let a = evText "a"
+        b = evText "b"
+        e = evText ""
+        r1 = renderEvents (joinEv a b) == joinMessages "a" "b"
+        r2 = renderEvents (joinEv a []) == joinMessages "a" ""
+        r3 = renderEvents (joinEv [] b) == joinMessages "" "b"
+        r4 = renderEvents (a ++ b) == "a" ++ "b"
+        r5 = renderEvents (unlinesEv [a, e, b]) == unlines ["a", "", "b"]
+        r6 = renderEvents (evIntercalate [a, e, b]) == intercalate "\n" ["a", "", "b"]
+        r7 = renderEvents (unlinesEv [a, b]) == unlines ["a", "b"]
+        r8 = null (renderEvents [EvSfx "x.wav", EvMusicStop, EvRoomChanged "r"])
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- | Phase 1.2: styling model — plain text stays byte-identical, spans render
+--   to SGR sequences, colours map to the 3x band.
+testOutputStylingModel :: IO Bool
+testOutputStylingModel = do
+    let plain = styledText "hello world"
+        r1 = renderStyled plain == "hello world"
+        r2 = styleToAnsi plainStyle == ""
+        styled = StyledText "hello world"
+            [ Span 0 5 (plainStyle { stColor = Just CRed, stBold = True }) ]
+        r3 = renderStyled styled == "\ESC[31;1mhello\ESC[0m world"
+        r4 = styleToAnsi (plainStyle { stColor = Just CYellow }) == "\ESC[33m"
+        r5 = styleToAnsi (plainStyle { stUnderline = True, stDim = True, stItalic = True }) == "\ESC[39;2;3;4m"
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Phase 1.2: catalog messages survive the loop as structured events —
+--   key + args + rendered text; the rendered text matches the flat path.
+testOutputEventKeys :: IO Bool
+testOutputEventKeys = do
+    let (_, evs) = applyLoopCommandEv (parseCommand "take torch") (initLoopState initSampleGame)
+        msgEv = case evs of
+            (EvMessage p : _) -> Just p
+            _ -> Nothing
+    r1 <- case msgEv of
+        Just p -> expectEqual (Just "take.ok") (mpKey p)
+        Nothing -> expectTrue "first event is the take.ok message" False
+    r2 <- expectTrue "args pin the item id"
+              (maybe False (\p -> lookup "item" (mpArgs p) == Just "torch") msgEv)
+    r3 <- expectTrue "rendered text matches the flat path"
+              (maybe False (\p -> mpText p == renderMsg "take.ok" [("item", "torch")]) msgEv)
+    -- and the compat wrapper reproduces the flat string
+    let (_, flat) = applyLoopCommand (parseCommand "take torch") (initLoopState initSampleGame)
+    r4 <- expectTrue "compat wrapper renders the same text"
+              (takeWhile (/= '\n') flat == maybe "" mpText msgEv)
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 1.2: side events — room change, game over, queued sfx/music, and
+--   the quest marker; none of them contributes text.
+testOutputSideEvents :: IO Bool
+testOutputSideEvents = do
+    -- room change: go north from the sample start
+    let (ls1, evs1) = applyLoopCommandEv (Go North) (initLoopState initSampleGame)
+        roomEvs = [ r | EvRoomChanged r <- evs1 ]
+        _ = ls1
+    r1 <- expectEqual ["hallway"] roomEvs
+    -- game over + sfx/music: endGame via a GameEnd effect, audio via pending fields
+    let st0 = initSampleGame
+        (st1, _) = applyOutcomeEv (GameEnd Victory "you win") "" st0
+        st2 = st1 { pendingSfx = ["win.wav"], pendingMusic = Just (MusicStart "theme.ogg") }
+        evs2 = sideEvents st0 st2
+    r2 <- expectEqual [EvGameOver, EvSfx "win.wav", EvMusicStart "theme.ogg"] evs2
+    -- quest update marker
+    let st3 = st1 { save = (save st1) { activeQuests = Map.singleton "q1" 0 } }
+        evs3 = sideEvents st0 st3
+        r3 = EvQuestUpdate `elem` evs3
+    pure (r1 && r2 && r3)
+
+
 -- | R1: an unknown entity in a `Predicate.Location` (e.g. `at: palyer` typo) is reported as a MissingEntity error.
 testValidateTypoInPredicateLocation :: IO Bool
 testValidateTypoInPredicateLocation = do
@@ -1530,7 +1610,7 @@ testConditionTickExpire = do
         (after2, msgs2) = tickConditions after1
     r1 <- expectTrue "active after 1 tick" (hasCondition "poisoned" after1)
     r2 <- expectTrue "expired after 2 ticks" (not (hasCondition "poisoned" after2))
-    let endMsgs = [m | m <- msgs2, "You feel better." `isPrefixOf` m]
+    let endMsgs = [renderEvents m | m <- msgs2, "You feel better." `isPrefixOf` renderEvents m]
     r3 <- expectTrue "end message produced" (not (null endMsgs))
     pure (r1 && r2 && r3)
 
@@ -2091,8 +2171,8 @@ testTriggerFiresOnEnter = do
         stateWithTrigger = initSampleGame
             { world = (world initSampleGame) { triggerDefs = [trigger] } }
         (_, msg) = fireTriggers (OnEnter "treasure") stateWithTrigger
-    r1 <- expectTrue "trigger fired" (not (null msg))
-    r2 <- expectTrue "message mentions treasure" (isInfixOf "treasure" msg)
+    r1 <- expectTrue "trigger fired" (not (null (renderEvents msg)))
+    r2 <- expectTrue "message mentions treasure" (isInfixOf "treasure" (renderEvents msg))
     pure (r1 && r2)
 
 -- | Cooldown: after firing, the trigger stays silent for `trCooldown` further
@@ -3464,7 +3544,7 @@ testStrictFoldKeepsEffectOrder = do
     r1 <- expectTrue "Sequence keeps authored order and newline joining"
               (msgViaSequence == "first\nsecond\nthird")
     r2 <- expectTrue "effect list keeps authored order"
-              (msgViaList == "first\nsecond\nthird")
+              (renderEvents msgViaList == "first\nsecond\nthird")
     pure (r1 && r2)
 
 -- | P2-22: `pick` is both a dialogue keyword (`pick 3` = choose option 3) and a
@@ -3520,7 +3600,7 @@ testDepthGuardStaysOutOfTriggerText = do
                                         Nothing [deep] False 0 ] } }
         (st', msg) = fireTriggers (OnCustomEvent "go") st0
     r1 <- expectTrue "trigger output contains no engine error text"
-              (not ("[ERROR]" `isInfixOf` msg) && not ("[engine]" `isInfixOf` msg))
+              (not ("[ERROR]" `isInfixOf` renderEvents msg) && not ("[engine]" `isInfixOf` renderEvents msg))
     r2 <- expectTrue "trigger path recorded the diagnostic"
               (any ("maximum outcome depth exceeded" `isInfixOf`) (diagnostics st'))
     pure (r1 && r2)
@@ -5141,7 +5221,7 @@ testPlayCardDeductsEnergyAndAppliesOutcomes = do
             r2 <- expectEqual 14 goblinHp
             r3 <- expectEqual [] (hand ds1)
             r4 <- expectEqual ["strike"] (discardPile ds1)
-            r5 <- expectTrue "msg mentions playing Strike" (isInfixOf "Strike" msg)
+            r5 <- expectTrue "msg mentions playing Strike" (isInfixOf "Strike" (renderEvents msg))
             pure (r1 && r2 && r3 && r4 && r5)
 
 -- | Phase 2B: Exhausting card moves it to exhaustPile rather than discardPile.
@@ -5184,7 +5264,7 @@ testPlayCardExhaustsCorrectly = do
             r1 <- expectEqual [] (hand ds1)
             r2 <- expectEqual [] (discardPile ds1)
             r3 <- expectEqual ["obliterate"] (exhaustPile ds1)
-            r4 <- expectTrue "msg notes exhaust" (isInfixOf "Exhaust" msg)
+            r4 <- expectTrue "msg notes exhaust" (isInfixOf "Exhaust" (renderEvents msg))
             pure (r1 && r2 && r3 && r4)
 
 -- | Phase 2B: endTurn discards unplayed hand, resets block, restores energy, and draws 5 cards.
@@ -5479,9 +5559,9 @@ testRenderDeckCombatHud = do
     -- showHand integration test
     let (stHand, handMsg) = showHand st
     r9 <- expectEqual (save st) (save stHand)
-    r10 <- expectTrue "showHand includes HUD" (isInfixOf "GEGNER: Höhlentroll" handMsg)
-    r11 <- expectTrue "showHand includes card name" (isInfixOf "Hieb" handMsg)
-    r12 <- expectTrue "showHand includes card type" (isInfixOf "[Angriff]" handMsg)
+    r10 <- expectTrue "showHand includes HUD" (isInfixOf "GEGNER: Höhlentroll" (renderEvents handMsg))
+    r11 <- expectTrue "showHand includes card name" (isInfixOf "Hieb" (renderEvents handMsg))
+    r12 <- expectTrue "showHand includes card type" (isInfixOf "[Angriff]" (renderEvents handMsg))
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12)
 
 -- | Phase R3: Test resolveInteractTarget for Item, NPC, Bare, Vehicle and NotFound
@@ -6970,5 +7050,9 @@ main = do
         , runTest "at: palyer typo fixture produces validation error (R1)" testValidateTypoInPredicateLocation
         , runTest "message catalog invariants (Phase 1.1)" testMessageCatalogInvariants
         , runTest "renderMsg substitutes and escapes args (Phase 1.1)" testRenderMsgArgs
+        , runTest "output events: fragment algebra is byte-identical (Phase 1.2)" testOutputFragmentAlgebra
+        , runTest "output events: styling model renders spans to ANSI (Phase 1.2)" testOutputStylingModel
+        , runTest "output events: EvMessage carries key+args through the loop (Phase 1.2)" testOutputEventKeys
+        , runTest "output events: side events for room/quest/gameover/sfx (Phase 1.2)" testOutputSideEvents
         ]
     when (not (and results)) exitFailure

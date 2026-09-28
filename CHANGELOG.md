@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+### Strukturierte Ausgabe: OutputEvents + Styling-Modell (Phase 1.2)
+
+- Neues Blatt-Modul `src/Types/Output.hs` (über die `Types`-Fassade exportiert):
+  die Engine produziert ihre Ausgabe als **geordneten Event-Strom** statt
+  flachem Text — `EvMessage` (Katalog-Key + Args + gerenderter Text),
+  `EvText` (ANSI-freie Prosa mit `StyledText`/`Span`-Modell), `EvArt`
+  (roher Kunstblock **plus** strukturierte Hotspot-Anker `ArtHotspot`),
+  `EvAnim`/`EvSfx`/`EvMusicStart`/`EvMusicStop` und textfreie State-Events
+  (`EvRoomChanged`/`EvQuestUpdate`/`EvDialogue`/`EvCombat`/`EvGameOver`,
+  abgeleitet in `GameLoop.sideEvents` aus dem Zustandsübergang).
+- **Primärpfad event-nativ:** `applyLoopCommandEv :: Command -> LoopState ->
+  (LoopState, [OutputEvent])` und `executeCommandEv` (Parser) — der komplette
+  Kern (Effects-Interpreter, Trigger, Combat-Resolver, Vehicles, Cards,
+  Dialogue) liefert Events. **Kompatibilitätsform:** `applyLoopCommand`/
+  `executeCommand` behalten die String-Signatur und rendern den Strom zurück
+  (`renderEvents`) — dadurch blieben alle 363 Engine-Tests (4 neue 1.2-Tests:
+  Fragment-Algebra, Styling-Renderer, Key-Durchreichung, Side-Events) und die
+  Loop-Auxpfade unverändert.
+- **Styling-Entscheidung (dokumentiert in `docs/output-events.md`):** Prosa
+  ist ANSI-frei; Farbe/Attribute kommen als Spans und werden am Rand zu ANSI
+  gerendert (`styleToAnsi`/`renderStyled`; ersetzt langfristig
+  string-eingebettete Codes neben `ansiFilter`). **Kunst ist die dokumentierte
+  Ausnahme:** authoring-seitige Art (img2ascii, Screens, Hotspot-Marker) enthält
+  legitim ANSI und reist roh in `EvArt` — zusammen mit strukturierten Hotspots,
+  damit grafische Frontends nicht parsen müssen. Kampf-/Karten-Screens sind
+  jetzt `EvArt`-Payloads (die 1.1-Ausnahme ist damit eingesammelt).
+- **Fragment-Algebra:** `joinEv`/`unlinesEv`/`evIntercalate`/`combineMsgsEv`
+  replizieren die vier Join-Idiome der alten Pipeline byte-exakt
+  (`joinMessages`, direktes `++`, `unlines` mit trailing `\n` inkl.
+  Leerstücken, `intercalate` inkl. Leerstücken).
+- **Keine Verhaltensänderung:** alle 41 E2E-Playthroughs vor/nach byte-identisch
+  (39 Golden-Captures, `diff -r` leer — inkl. der Combat-Nachweis-Fixes:
+  `combineMsgsEv` filtert leere Pieces, `unlines`-trailing-`\n` erhalten);
+  alle 6 Testsuiten PASS (TUI-Tests grün), 0 Warnungen; WASM-Spike läuft mit
+  Event-Strom weiterhin byte-identisch.
+- Für 1.3/1.4: `applyLoopCommandEv` ist die reine Schnittstelle des Session-
+  Automaten; das Protokoll serialisiert `[OutputEvent]` 1:1. Bewusst nicht in
+  1.2: `pendingNarrative`/`pendingCutscene` (Loop-Präsentation → 1.3) und die
+  Save/Load-Drucke (IO-seitig → 1.3 als IO-Wünsche).
+
 ### Message-Katalog (Phase 1.1)
 
 - Neues Blatt-Modul `src/Messages.hs`: alle player-facing Engine-Meldungen sind

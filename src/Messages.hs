@@ -16,6 +16,8 @@ module Messages
     , catalogEntries
     , defaultCatalog
     , formatStringWith
+    , msgPayload
+    , evMsg
     ) where
 
 import Data.Char (isDigit)
@@ -23,6 +25,7 @@ import Data.List (intercalate, isPrefixOf)
 import qualified Data.List as List (lookup)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Types.Output (MsgPayload (..), OutputEvent (..))
 
 -- | Stable message key. Plain alias: the catalog is data, and Phase 4.3
 --   overlays YAML-provided keys on the same namespace.
@@ -37,6 +40,16 @@ renderMsg key args =
     case Map.lookup key defaultCatalog of
         Nothing  -> "<msg:" ++ key ++ ">"
         Just tmpl -> formatStringWith tmpl (\k -> List.lookup k args)
+
+-- | A catalog message as a structured payload: key, args and the rendered
+--   text (byte-identical to 'renderMsg'). Phase 1.2.
+msgPayload :: MsgId -> [(String, String)] -> MsgPayload
+msgPayload key args = MsgPayload (Just key) args (renderMsg key args)
+
+-- | A catalog message as a one-element event fragment (the form command
+--   handlers return). Phase 1.2.
+evMsg :: MsgId -> [(String, String)] -> [OutputEvent]
+evMsg key args = [EvMessage (msgPayload key args)]
 
 -- | The catalog as an association list — the single source of truth.
 --   'defaultCatalog' is derived from it; a unit test pins that the list

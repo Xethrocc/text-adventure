@@ -7,6 +7,8 @@ module GameLoop
   , LoopState (..)
   , initLoopState
   , applyLoopCommand
+  , applyLoopCommandEv
+  , sideEvents
   , initSampleGame
   , commandEvents
   , consumesTurn
@@ -24,7 +26,8 @@ module GameLoop
 
 import Types
 import Game
-import Messages (renderMsg)
+import Types.Output (OutputEvent (..), styledText, evText, evRaw, nl, joinEv, joinAllEv, evIntercalate, unlinesEv, renderEvents, MsgPayload (..))
+import Messages (renderMsg, evMsg, msgPayload)
 import Effects
 import Parser
 import Verbs (verbCanonicalName)
@@ -100,37 +103,41 @@ consumesTurnIn st cmd = case cmd of
 -- | Pure command transition used by both the interactive loop and tests.
 --   Undo itself does not consume a turn. Other commands run the normal turn
 --   ticks and save the exact pre-command state for restoration.
-applyLoopCommand :: Command -> LoopState -> (LoopState, String)
-applyLoopCommand Undo loopState
+-- | Phase 1.2 (primary path): run one command and return the ordered event
+--   stream — catalog messages keep key + args, prose/art/audio/state changes
+--   travel as their own events. 'applyLoopCommand' is the compatibility form
+--   (rendered back to the flat CLI text, byte-identical).
+applyLoopCommandEv :: Command -> LoopState -> (LoopState, [OutputEvent])
+applyLoopCommandEv Undo loopState
     -- Rogue Phase 1: the author can disable undo globally (gpAllowUndo). The
     -- state stays untouched — the command is refused, nothing to tick.
     | not (gpAllowUndo (worldGamePolicy (world (lsCurrent loopState)))) =
-        (loopState, renderMsg "undo.disabled" [])
+        (loopState, evMsg "undo.disabled" [])
     | otherwise = case lsHistory loopState of
-        [] -> (loopState, renderMsg "undo.nothing" [])
+        [] -> (loopState, evMsg "undo.nothing" [])
         previous : rest ->
-            (loopState { lsCurrent = previous, lsHistory = rest }, renderMsg "undo.done" [])
-applyLoopCommand Quit loopState =
-    let (newState, message) = executeCommand Quit (lsCurrent loopState)
+            (loopState { lsCurrent = previous, lsHistory = rest }, evMsg "undo.done" [])
+applyLoopCommandEv Quit loopState =
+    let (newState, message) = executeCommandEv Quit (lsCurrent loopState)
     in (loopState { lsCurrent = newState }, message)
-applyLoopCommand Restart loopState =
+applyLoopCommandEv Restart loopState =
     -- Rogue Phase 2: meta.* travels from the dying/finished run into the fresh
     -- one (the plan's restart semantics); lsSaveSlot resets (initLoopState).
     -- The rngState reseed + run counter happen in the IO restart path
     -- ('runRestart') — this branch stays pure for the unit tests.
-    let (newState, message) = executeCommand Look (lsInitial loopState)
+    let (newState, message) = executeCommandEv Look (lsInitial loopState)
     in (initLoopState (carryMetaVars (lsCurrent loopState) newState), message)
 
 
-applyLoopCommand Help loopState = (loopState, helpText)
-applyLoopCommand (Save _) loopState = (loopState, "")
-applyLoopCommand (Load _) loopState = (loopState, "")
-applyLoopCommand ListSaves loopState = (loopState, "")
-applyLoopCommand command loopState
+applyLoopCommandEv Help loopState = (loopState, evMsg "help.text" [])
+applyLoopCommandEv (Save _) loopState = (loopState, [])
+applyLoopCommandEv (Load _) loopState = (loopState, [])
+applyLoopCommandEv ListSaves loopState = (loopState, [])
+applyLoopCommandEv command loopState
     | not (consumesTurnIn (lsCurrent loopState) command) =
-        let (newState, message) = executeCommand command (lsCurrent loopState)
+        let (newState, message) = executeCommandEv command (lsCurrent loopState)
             (stateAfterTriggers, triggerMsg) = fireCommandTriggers command (lsCurrent loopState) newState
-            combined = combineMessages message triggerMsg
+            combined = joinEv message triggerMsg ++ sideEvents (lsCurrent loopState) stateAfterTriggers
         in (loopState { lsCurrent = stateAfterTriggers }, combined)
 
     | otherwise =
@@ -144,20 +151,63 @@ applyLoopCommand command loopState
             stateWithTurn = incrementTurnCount oldState
             (stateAfterTick, tickMsgs) = tickConditions stateWithTurn
             (stateAfterVehicleTick, vehicleTickMsg) = vehicleConditionTick stateAfterTick
-            allTickMsgs = tickMsgs ++ (if null vehicleTickMsg then [] else [vehicleTickMsg])
-            tickText = unlines allTickMsgs
+            allTickMsgs = tickMsgs ++ (if null (renderEvents vehicleTickMsg) then [] else [vehicleTickMsg])
+            tickText = unlinesEv allTickMsgs
         in if gameOver (save stateAfterVehicleTick)
            then
                -- L11: the condition tick ended the game before the command ran
                -- (the tick pipeline runs first). The player is already dead, so
                -- the command is dropped — only the tick messages are reported.
-               (loopState { lsCurrent = stateAfterVehicleTick, lsHistory = history' }, tickText)
+               (loopState { lsCurrent = stateAfterVehicleTick, lsHistory = history' },
+                   tickText ++ sideEvents oldState stateAfterVehicleTick)
            else
-               let (newState, message) = executeCommand command stateAfterVehicleTick
+               let (newState, message) = executeCommandEv command stateAfterVehicleTick
                    (stateAfterTriggers, triggerMsg) = fireCommandTriggers command stateAfterVehicleTick newState
                    fullMessage = if null allTickMsgs then message else tickText ++ message
                in (loopState { lsCurrent = stateAfterTriggers, lsHistory = history' },
-                   combineMessages fullMessage triggerMsg)
+                   joinEv fullMessage triggerMsg ++ sideEvents oldState stateAfterTriggers)
+
+-- | Phase 1.2: additive side events derived from the state transition —
+--   they contribute no text ('evTextOf' = ""), so the CLI/TUI rendering is
+--   byte-identical; graphical frontends and the protocol (1.4) consume them.
+--   Order after all text of the command: room, quest, dialogue, combat,
+--   game over, then the presentation queues (audio, animation).
+sideEvents :: GameState -> GameState -> [OutputEvent]
+sideEvents before after = concat
+    [ [ EvRoomChanged (currentRoom (save after))
+      | currentRoom (save before) /= currentRoom (save after) ]
+    , [ EvQuestUpdate
+      | (activeQuests (save before), completedQuests (save before))
+        /= (activeQuests (save after), completedQuests (save after)) ]
+    , [ EvDialogue
+      | activeDialogue (save before) /= activeDialogue (save after)
+      , activeDialogue (save after) /= Nothing ]
+    , [ EvCombat engagedAfter
+      | lookupVarOf before combatEngagedKey /= lookupVarOf after combatEngagedKey ]
+      -- the new value as Bool (non-zero = engaged)
+    , [ EvGameOver | gameOver (save after) && not (gameOver (save before)) ]
+    , map EvSfx (pendingSfx after)
+    , case pendingMusic after of
+        Just (MusicStart path) -> [EvMusicStart path]
+        Just MusicStop         -> [EvMusicStop]
+        Nothing                -> []
+    , case pendingAnimation after of
+        Just (frames, micros) -> [EvAnim micros frames]
+        Nothing               -> []
+    ]
+  where
+    lookupVarOf st name = Map.lookup name (variables (save st))
+    engagedAfter = case Map.lookup combatEngagedKey (variables (save after)) of
+        Just (VVInt n) -> n /= 0
+        _              -> False
+
+-- | Compatibility form (Phase 1.2; used by the tests and the loop's aux
+--   paths): the same command, its event stream rendered back to the flat CLI
+--   text — byte-identical to the pre-1.2 string pipeline.
+applyLoopCommand :: Command -> LoopState -> (LoopState, String)
+applyLoopCommand cmd loopState =
+    let (ls', evs) = applyLoopCommandEv cmd loopState
+    in (ls', renderEvents evs)
 
 -- | Rogue (Empfehlung 3, pure): a restart begins a fresh run with a freshly
 --   derived rngState — carrying the old stream over would replay identical
@@ -262,13 +312,13 @@ persistMeta st = saveMeta (world st) (variables (save st))
 
 -- | Determine which trigger events apply to a completed command, using the
 --   state before and after the command to detect room changes.
-fireCommandTriggers :: Command -> GameState -> GameState -> (GameState, String)
+fireCommandTriggers :: Command -> GameState -> GameState -> (GameState, [OutputEvent])
 fireCommandTriggers cmd before after =
     let events = commandEvents cmd before after
         afterWithCmdVars = bindCommandVars cmd after
         (st, msgs) = foldl' (\(s, acc) ev -> let (s', m) = fireTriggers ev s
-                                            in (s', combineMessages acc m))
-                           (afterWithCmdVars, "") events
+                                            in (s', joinEv acc m))
+                           (afterWithCmdVars, []) events
     in (st, msgs)
 
 -- | Compute the list of events raised by a command.

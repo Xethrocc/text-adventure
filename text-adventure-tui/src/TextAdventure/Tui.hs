@@ -59,7 +59,7 @@ import Completion (completionFor)
 import Frontend (Frontend (..))
 import GameLoop (runGameWithFrontend)
 import Game (lookupRoom)
-import Types
+import Types hiding (EvArt)  -- Phase 1.2: TuiEvent.EvArt shadows the output event
 
 -- | Brick names used by this UI.
 data TuiName = HistoryVp    -- ^ vertical viewport over the game history

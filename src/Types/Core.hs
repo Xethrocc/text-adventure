@@ -137,6 +137,7 @@ import qualified Data.Text as T
 import Data.Word (Word64)
 import Data.Bits (shiftR, xor)
 import GHC.Generics (Generic)
+import Types.Output
 import Data.Aeson
 import Data.Aeson.Types (Parser, Pair, toJSONKeyText)
 import Control.Applicative ((<|>))
@@ -183,6 +184,16 @@ type CardID    = String
 
 -- ---------------------------------------------------------------------------
 -- | Combined result of executing a command
+--
+--   Two forms since Phase 1.2: 'CommandResultEv' is the primary, structured
+--   form (an ordered 'OutputEvent' stream — catalog messages keep their key,
+--   art travels with hotspot payloads, audio and state changes ride along).
+--   'CommandResult' is the compatibility form: the same stream rendered back
+--   to the flat CLI text ('Output.renderEvents'), byte-identical to the
+--   pre-1.2 string pipeline. The test suite and the aux paths of the game
+--   loop consume the flat form; the protocol (1.4) and the WebUI consume the
+--   event form.
+type CommandResultEv = (GameState, [OutputEvent])
 type CommandResult = (GameState, String)
 
 -- ---------------------------------------------------------------------------
