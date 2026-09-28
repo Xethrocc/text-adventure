@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Text-Erweiterung: Inline-Bedingungen, Ausdrücke via Expr-Parser und Props (Phase 2.4)
+
+- **Inline-Bedingungen `{if <flag/var-cond>|a|b}`** (`src/Messages.hs`):
+  - Syntax für bedingte Textverzweigungen in allen Templates (`msg`, `text`, Raum- und Item-Beschreibungen, Dialoge): `{if <cond>|then_branch|else_branch}` (optional ohne Else-Zweig: `{if <cond>|then_branch}` mit Default `""`).
+  - Unterstützt Flag-Prüfungen (`{if has_torch|...|...}`), Negation (`{if !has_torch|...|...}`), numerische Vergleiche (`==`, `!=`, `/=`, `>=`, `<=`, `>`, `<`, `=`) und Text-Variablen-Vergleiche (`{if weather == rain|...|...}`).
+  - Verschachtelte Klammern und Format-Platzhalter in den Zweigen werden rekursiv aufgelöst; Pipes können mit `\|` maskiert werden.
+- **Ausdrücke `{= <expr>}` via vorhandenem `Expr`-Parser** (`src/Messages.hs`, `src/Types/Core.hs`):
+  - Mathematische Berechnungen direkt in Text-Templates: `{= gold * 2}`, `{= (gold + bonus) * 2}`, `{= item.torch.fuel + 5}`.
+  - Vollständige Wiederverwendung von `parseExpr` und `Expr` (Grundrechenarten, Klammern, `min`, `max`, `clamp`).
+  - Format-Modifikatoren integrierbar: `{= gold * 2:+}` (Vorzeichen erzwingen), `{= gold * 2:6}` (Breiten-Padding). Division durch 0 ist zero-safe (`0`).
+- **Entity-Props `{item.<id>.<prop>}` und `{npc.<id>.<prop>}`** (`src/Game.hs`, `src/Types/Core.hs`):
+  - Zugriff auf ganzzahlige Props von Items (`ItemState.itemProps`) und NPCs (`NPCState.npcProps`, `npcHealth`) direkt in Templates, Bedingungen und Ausdrücken (z. B. `{item.torch.fuel}`, `{npc.guard.mood}`, `{npc.guard.hp}`).
+  - `VRVariable` in `resolveValueRef` erweitert, sodass Props auch in `ValueRef` und Predicates (`compare_var`) transparent aufgelöst werden.
+- **Fehlerbehandlung (kein stiller Durchfall des rohen Templates)**:
+  - Unbekanntes Item/Prop: `<error: unknown item '<id>'>` bzw. `<error: unknown prop '<prop>' on item '<id>'>`.
+  - Unbekannter NPC/Prop: `<error: unknown npc '<id>'>` bzw. `<error: unknown prop '<prop>' on npc '<id>'>`.
+  - Unbekannte Variable im Ausdruck: `<error: unknown variable '<name>'>`.
+  - Syntaxfehler/unbekannter Befehl im Ausdruck: `<error: expr: <reason>>`.
+  - Kaputte If-Syntax: `<error: invalid if syntax: expected {if <cond>|a|b}>` bzw. `<error: invalid if condition: <cond>>`.
+  - Bestehende unqualifizierte Platzhalter `{unknown}` bleiben für Abwärtskompatibilität unverändert.
+- **Compiler & Worldbuilder** (`worldbuilder/src/Worldbuilder/Compile.hs`):
+  - `isKnownPlaceholder` erkennt `item.*`, `npc.*`, `flag.*`, `flag:*` und `condition_turns.*`.
+  - `extractPlaceholders` filtert `{if ...}` und `{= ...}` vorab, sodass keine Fehlwarnungen (`UnknownPlaceholder`) erzeugt werden.
+- **Tests & Qualität**:
+  - 4 neue Unit-Tests mit 50 Assertions in `test/Tests.hs` (**394 Engine-Tests** gemessen, vorher 390).
+  - **171 Worldbuilder-Tests** gemessen (unverändert grün).
+  - **20 TUI-Tests** gemessen (unverändert grün).
+  - **46 Loop-Einträge** in ci.sh-Stufe 4/5 (gemessen, unverändert) + 1 Worldgen-Eingabe; `scripts/ci.sh` grün.
+  - Byte-Identität: bestehende E2E-Läufe und generierte Welten/Saves (`thefog`, etc.) byte-identisch.
+  - Abwärtskompatibilität: mit dem Vorher-Stand (`38584d6`) via `git worktree add` kompilierte Welt und Save laden mit dem neuen Stand ohne Versionswarnung, `worldChecksum` stabil.
+  - Message-Katalog **183 Keys** unverändert (`scripts/check-msg-catalog.sh` grün).
+  - 0 Compiler-Warnungen im kalten Build (`cabal clean && cabal build all --enable-tests`).
+
 ### Disambiguation: EvDisambiguate, numerierte Rückfrage, Antwort ohne Zugverbrauch (Phase 2.3)
 
 - **Event `EvDisambiguate [String]`** (`src/Types/Output.hs`, `docs/protocol-v1.md`, `test/golden/protocol/server_events.json`):
