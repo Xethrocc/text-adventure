@@ -6,11 +6,31 @@
 
 - Session-Logik aus den interaktiven Loops (`loopGame`, `deathLoop`, `victoryLoop`, `runRestart`)
   in pure Zustandsübergänge herausgezogen:
-  - Neuer Request-Typ `SessionRequest a`: `ReqSave FilePath (SaveState -> a)`, `ReqLoad FilePath (Maybe SaveState -> a)`, `ReqPersistMeta MetaState a`, `ReqPause a`, `ReqDeleteSave FilePath a`, `ReqListSaves ([FilePath] -> a)`.
-  - Neuer Session-Zustand `SessionState`: `SessionContinue LoopState`, `SessionQuit`, `SessionReload FilePath (Maybe SaveState)`.
+  - Neuer Request-Typ `SessionRequest`: `ReqSave String`, `ReqLoad String`,
+    `ReqPersistMeta`, `ReqPause`, `ReqDeleteSave String`, `ReqListSaves`
+    (Alias `type IoRequest = SessionRequest`). Ein parameterloser ADT ohne
+    Continuations: der pure Übergang gibt den Wunsch zurück, der Interpreter
+    führt ihn aus.
+  - Neuer Session-Zustand `SessionState`: `SessionPlaying LoopState`,
+    `SessionDeath LoopState`, `SessionDeathPromptLoad LoopState`,
+    `SessionVictory LoopState GameOverReason`, `SessionEnded`.
   - Pure Übergänge in `src/GameLoop.hs`: `transitionSave` (Policy-Check, Save-Erzeugung), `transitionLoad` (Policy-Check), `transitionLoadSuccess` (Meta-Merge, RNG-Reseed), `transitionListSaves`, `transitionRestart` (Run-Index bump, Seed-Reseed), `transitionGameOver` (Verzweigung Death/Victory), `transitionDeathUndo`, `transitionDeathCanLoad`, `transitionDeathLoadSlot`, `transitionDeathInput`, `transitionVictoryInput` und `advanceNarrative` (erzeugt `[ReqPause]` für Zwischenschritte).
 - `loopGame`, `deathLoop`, `victoryLoop` und `runRestart` sind dünne Interpreter,
   die IO-Wünsche über `executeRequest` ausführen und die puren Übergänge weiterschalten.
+  Die Übergänge liefern ein Tupel aus neuem Zustand, IO-Wünschen und fertig
+  gerenderten Ausgabezeilen — meist `(Zustand, [SessionRequest], [String])`,
+  bei den Menü-Helfern schmaler (`transitionLoadSuccess :: … -> (LoopState,
+  [String])`, `transitionDeathCanLoad :: … -> (Bool, [String])`,
+  `transitionDeathLoadSlot :: … -> (String, SessionRequest)`). Die Session-Schicht
+  nutzt bewusst noch nicht den `[OutputEvent]`-Strom aus 1.2.
+- **Bekannte Abweichung (dokumentiert, nicht behoben):** `ReqLoad` führt der
+  Interpreter nicht aus (`executeRequest … (ReqLoad _) = pure ()`). Das Laden
+  passiert weiterhin inline in `loopGame` und `deathLoop` (je `loadGame` +
+  `loadMeta`), wo die Request-Liste nur als Gate dient. Save, PersistMeta,
+  Pause, DeleteSave und ListSaves laufen dagegen vollständig über den
+  Interpreter. Das Verhalten ist dadurch unverändert (E2E byte-identisch), aber
+  die Lade-Logik liegt doppelt in den Loops und müsste von einem zweiten
+  Frontend nachgebaut werden.
 - Spiel-Logik (Save/Load-Regeln, Death/Victory-Menü-Auswahl, Pause-Sequenzen bei Narrativen) ist vollständig ohne IO unit-testbar.
 - **7 neue Unit-Tests** in `test/Tests.hs` für alle puren Übergänge; **370 Engine-Tests** (vorher 363, alle PASS).
 - **Akzeptanzkriterium erfüllt:** alle **42 E2E-Fixtures** (`ci/e2e/*.in`) vor und nach dem Umbau gegen isolierte `TA_SAVES_DIR` durchgespielt; vollständige stdout sowie persistierte `world.json`/`save.json` sind **byte-identisch** (`diff -r` leer).
