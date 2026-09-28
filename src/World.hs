@@ -7,7 +7,17 @@
 --
 --   The worldbuilder emits BOTH files, so `--world` alone gives you a world
 --   with nothing placed yet — pass `--save` too for a playable start.
-module World where
+module World
+    ( -- * Loading a playable game
+      loadGame
+    , loadGameWorld
+    , loadSaveState
+      -- * Defaults and paths
+    , defaultSaveState
+    , initialEntityStates
+    , startRoomId
+    , siblingSavePath
+    ) where
 
 import Types
 import Game (syncInventory)

@@ -2,7 +2,36 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Saving, loading and listing save games
-module SaveLoad where
+--
+--   Explicit export list (Phase 0.7): `MetaFile` and the internal path/seed
+--   helpers stay private, so @-Wall@ can report them as unused if they ever
+--   become dead.
+module SaveLoad
+    ( -- * Save slots and directories
+      savesDir
+    , saveSlotPath
+    , metaSavePath
+    , ironmanCheckpointSlot
+      -- * Save and load
+    , saveGame
+    , loadGame
+    , deleteSaveSlot
+    , listSaves
+      -- * Meta progression
+    , loadMeta
+    , loadMetaForSlug
+    , saveMeta
+    , metaVars
+    , mergeMetaVars
+      -- * Checksums, versions, slots and seeds
+    , computeWorldChecksum
+    , currentSaveVersion
+    , adventureSlug
+    , deriveRunSeed
+    , deriveRunSeedFromSlug
+      -- * Display
+    , formatSaveEntry
+    ) where
 
 import Types
 import Game (syncInventory)
