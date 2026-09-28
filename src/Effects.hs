@@ -28,6 +28,7 @@ module Effects
 
 import Types
 import Game
+import Messages (renderMsg)
 import Quests (canStartQuest, startQuest, advanceQuest, completeQuestWith)
 import Vehicles (vehicleConditionTickWith)
 import Data.List (intercalate, foldl')
@@ -100,21 +101,21 @@ applyOutcomeWith depth salt outcome targetId state
             Left err    -> (state, err, salt)
             Right st'   -> (st', "", salt)
     MoveEntity _ (InContainer _) ->
-        (state, "You can't move an item into a container that way.", salt)
+        (state, renderMsg "container.move_refused" [], salt)
 
     QuestOp StartQuest qId ->
         if canStartQuest qId state
         then (startQuest qId state, "", salt)
-        else (state, "You cannot start that quest right now.", salt)
+        else (state, renderMsg "quest.cannot_start" [], salt)
     QuestOp AdvanceQuest qId ->
         if Map.member qId (activeQuests (save state))
         then (advanceQuest qId state, "", salt)
-        else (state, "That quest is not active.", salt)
+        else (state, renderMsg "quest.not_active" [], salt)
     QuestOp CompleteQuest qId ->
         if Map.member qId (activeQuests (save state))
         then let (st', rewardMsg) = completeQuestWithMsg qId state
              in (st', rewardMsg, salt)
-        else (state, "That quest is not active.", salt)
+        else (state, renderMsg "quest.not_active" [], salt)
 
     Conditional predicate thenOutcome elseOutcome ->
         if evalPredicate predicate state

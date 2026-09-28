@@ -19,7 +19,8 @@ module Messages
     ) where
 
 import Data.Char (isDigit)
-import Data.List (intercalate, isPrefixOf, lookup)
+import Data.List (intercalate, isPrefixOf)
+import qualified Data.List as List (lookup)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 
@@ -35,7 +36,7 @@ renderMsg :: MsgId -> [(String, String)] -> String
 renderMsg key args =
     case Map.lookup key defaultCatalog of
         Nothing  -> "<msg:" ++ key ++ ">"
-        Just tmpl -> formatStringWith tmpl (`lookup` args)
+        Just tmpl -> formatStringWith tmpl (\k -> List.lookup k args)
 
 -- | The catalog as an association list — the single source of truth.
 --   'defaultCatalog' is derived from it; a unit test pins that the list
@@ -200,6 +201,39 @@ catalogEntries =
     , ("combat.ally_strike",     "{ally} strikes for {dmg}.")
     , ("combat.strikes_back_kill", "The {target} strikes back and kills you!")
     , ("combat.classic_exchange", "You hit for {dmg}, it hits you for {npc_dmg}.")
+    -- -- vehicles (Vehicles.hs) ----------------------------------------------
+    , ("vehicle.no_here_enter",  "There is no '{id}' here to enter.")
+    , ("vehicle.not_here",        "The {vehicle} is not here.")
+    , ("vehicle.board",           "You board the {vehicle}.")
+    , ("vehicle.disembark",       "You disembark from the {vehicle}.")
+    , ("vehicle.no_id",           "There is no '{id}'.")
+    , ("vehicle.cant_steer",      "You can't steer the {vehicle}; it follows its own route.")
+    , ("vehicle.cant_drive",      "You can't drive there from here. Stations: {stations}")
+    , ("vehicle.need_controls",   "You need to be at the controls to drive.")
+    , ("vehicle.drive_to",        "You drive to {stop}.")
+    , ("vehicle.not_on",          "You are not on a vehicle.")
+    , ("vehicle.manual_only",     "This vehicle only moves when you drive it.")
+    , ("vehicle.route_end",       "The route has no further stops.")
+    , ("vehicle.travel_on",       "You travel on to {stop}.")
+    , ("vehicle.fuelled",         "The {vehicle} is fuelled ({f}/{max}).")
+    , ("vehicle.warning",         "Warning: {list}!")
+    , ("look.fuel_out",           "\nOut of {item} (0/{max})")
+    , ("look.fuel",               "\nFuel ({item}: {f}/{max})")
+    -- -- quests / effects / journal -----------------------------------------
+    , ("container.move_refused", "You can't move an item into a container that way.")
+    , ("quest.cannot_start",      "You cannot start that quest right now.")
+    , ("quest.not_active",        "That quest is not active.")
+    , ("quests.journal_empty",    "Your journal is empty.")
+    , ("quests.journal_header",   "=== Journal ===\n")
+    , ("quests.active_header",    "Active:")
+    , ("quests.completed_header", "Completed:")
+    -- -- equipment internals (Game.hs) ----------------------------------------
+    , ("item.no_id",              "There is no item '{id}'.")
+    , ("equip.not_equippable",    "You cannot equip the {item}.")
+    , ("equip.need_carried",      "You need to be carrying the {item}.")
+    , ("equip.slot_occupied",     "You already have the {item} equipped there. Unequip it first.")
+    , ("equip.header",            "Equipment:\n")
+    , ("equip.line",              "  {slot}: {name}")
     ]
 
 -- | The full help screen, byte-identical to the former inline intercalate

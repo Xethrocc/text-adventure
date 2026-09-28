@@ -12,6 +12,7 @@ module Quests
     ) where
 
 import Types
+import Messages (renderMsg)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
@@ -84,10 +85,10 @@ journalText state =
             | qId <- completed
             , Just q <- [lookupQuest qId state] ]
     in case (activeLines, completedLines) of
-        ([], []) -> "Your journal is empty."
-        _ -> "=== Journal ===\n" ++
-             (if null activeLines then "" else unlines ("Active:" : activeLines)) ++
-             (if null completedLines then "" else unlines ("Completed:" : completedLines))
+        ([], []) -> renderMsg "quests.journal_empty" []
+        _ -> renderMsg "quests.journal_header" [] ++
+             (if null activeLines then "" else unlines (renderMsg "quests.active_header" [] : activeLines)) ++
+             (if null completedLines then "" else unlines (renderMsg "quests.completed_header" [] : completedLines))
   where
     stageText q idx =
         case drop idx (questStages q) of

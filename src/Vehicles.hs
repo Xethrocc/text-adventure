@@ -21,6 +21,7 @@ module Vehicles
     ) where
 
 import Types
+import Messages (renderMsg)
 import Game (followParty, hasItem, consumeItem)
 import Data.List (intercalate, find, elemIndex, foldl')
 import Data.Char (toLower)
@@ -80,26 +81,26 @@ nextVehicleStop v cur =
 -- | Enter a vehicle. Fails with a message if that isn't possible here.
 enterVehicle :: VehicleID -> GameState -> Either String (GameState, String)
 enterVehicle vId state = case lookupVehicle vId state of
-    Nothing -> Left ("There is no '" ++ vId ++ "' here to enter.")
+    Nothing -> Left (renderMsg "vehicle.no_here_enter" [("id", vId)])
     Just v ->
         let vState = getVehicleState vId state
             stopRoom = vsCurrentStop vState
         in if currentRoom (save state) /= stopRoom
-           then Left ("The " ++ vehicleName v ++ " is not here.")
+           then Left (renderMsg "vehicle.not_here" [("vehicle", vehicleName v)])
            else Right
                 ( followParty (vehicleEntryRoom v)
                     ( state { save = (save state)
                         { currentVehicle = Just vId
                         , currentRoom = vehicleEntryRoom v
                         , visitedRooms = Set.insert (vehicleEntryRoom v) (visitedRooms (save state)) } } )
-                , "You board the " ++ vehicleName v ++ "." )
+                , renderMsg "vehicle.board" [("vehicle", vehicleName v)] )
 
 -- | Exit the current vehicle back to its current stop's outside room
 exitVehicle :: GameState -> Either String (GameState, String)
 exitVehicle state = case currentVehicle (save state) of
-    Nothing -> Left "You are not in a vehicle."
+    Nothing -> Left (renderMsg "vehicle.not_in" [])
     Just vId -> case lookupVehicle vId state of
-        Nothing -> Left "You are not in a vehicle."
+        Nothing -> Left (renderMsg "vehicle.not_in" [])
         Just v ->
             let vState = getVehicleState vId state
                 outside = vsCurrentStop vState
@@ -109,7 +110,7 @@ exitVehicle state = case currentVehicle (save state) of
                         { currentVehicle = Nothing
                         , currentRoom = outside
                         , visitedRooms = Set.insert outside (visitedRooms (save state)) } } )
-                , "You disembark from the " ++ vehicleName v ++ "." )
+                , renderMsg "vehicle.disembark" [("vehicle", vehicleName v)] )
 
 -- | Move a vehicle to a stop's outside room (updates its position).
 --   Returns updated state; the caller decides whether the player travels with it.
@@ -137,10 +138,10 @@ payStopCost stop state = case stopCost stop of
 --   and outside-room ids). Must be done from the cockpit.
 driveVehicle :: VehicleID -> String -> GameState -> Either String (GameState, String)
 driveVehicle vId targetStr state = case lookupVehicle vId state of
-    Nothing -> Left ("There is no '" ++ vId ++ "'.")
+    Nothing -> Left (renderMsg "vehicle.no_id" [("id", vId)])
     Just v
         | vehicleType v /= PlayerControlled ->
-            Left ("You can't steer the " ++ vehicleName v ++ "; it follows its own route.")
+            Left (renderMsg "vehicle.cant_steer" [("vehicle", vehicleName v)])
         | otherwise ->
             let target = map toLower targetStr
                 matches = [ (rId, stop)
@@ -148,37 +149,37 @@ driveVehicle vId targetStr state = case lookupVehicle vId state of
                           , target `elem` [map toLower (stopLabel stop), map toLower rId]
                           , rId /= vsCurrentStop (getVehicleState vId state) ]
             in case matches of
-                [] -> Left ("You can't drive there from here. Stations: "
-                            ++ intercalate ", " (map (stopLabel . snd) (vehicleStopList v)))
+                [] -> Left (renderMsg "vehicle.cant_drive"
+                            [("stations", intercalate ", " (map (stopLabel . snd) (vehicleStopList v)))])
                 ((destId, stop):_) ->
                     if currentVehicle (save state) == Just vId
                        && Just (currentRoom (save state)) /= vehicleCockpitRoom v
-                    then Left "You need to be at the controls to drive."
+                    then Left (renderMsg "vehicle.need_controls" [])
                     else case payStopCost stop state of
                         Left err -> Left err
                         Right st ->
                             let st' = moveVehicleToStop vId destId st
-                            in Right (st', "You drive to " ++ stopLabel stop ++ ".")
+                            in Right (st', renderMsg "vehicle.drive_to" [("stop", stopLabel stop)])
 
 -- | AutomaticRoute/PaidVehicle: advance to the next stop (`wait`).
 --   Only while aboard; pays the fare for PaidVehicles.
 advanceVehicleRoute :: GameState -> Either String (GameState, String)
 advanceVehicleRoute state = case currentVehicle (save state) of
-    Nothing -> Left "You are not on a vehicle."
+    Nothing -> Left (renderMsg "vehicle.not_on" [])
     Just vId -> case lookupVehicle vId state of
-        Nothing -> Left "You are not on a vehicle."
+        Nothing -> Left (renderMsg "vehicle.not_on" [])
         Just v
             | vehicleType v == PlayerControlled ->
-                Left "This vehicle only moves when you drive it."
+                Left (renderMsg "vehicle.manual_only" [])
             | otherwise ->
                 let vState = getVehicleState vId state
                 in case nextVehicleStop v (vsCurrentStop vState) of
-                    Nothing -> Left "The route has no further stops."
+                    Nothing -> Left (renderMsg "vehicle.route_end" [])
                     Just (destId, stop) -> case payStopCost stop state of
                         Left err -> Left err
                         Right st ->
                             let st' = moveVehicleToStop vId destId st
-                            in Right (st', "You travel on to " ++ stopLabel stop ++ ".")
+                            in Right (st', renderMsg "vehicle.travel_on" [("stop", stopLabel stop)])
 
 -- | Refuel: add fuel units (capped at max) via an item interaction.
 --   Returns Nothing if the vehicle takes no fuel.
@@ -191,8 +192,9 @@ refuelVehicle vId amount state = case lookupVehicle vId state >>= vehicleFuelPro
             cur = fromMaybe 0 (vsFuel vs)
             newFuel = min maxFuel (cur + amount)
         in Just (setVehicleState vId (vs { vsFuel = Just newFuel }) state,
-                 "The " ++ maybe vId vehicleName (lookupVehicle vId state) ++ " is fuelled ("
-                    ++ show newFuel ++ "/" ++ show maxFuel ++ ").")
+                 renderMsg "vehicle.fuelled"
+                    [("vehicle", maybe vId vehicleName (lookupVehicle vId state)),
+                     ("f", show newFuel), ("max", show maxFuel)])
 
 -- | Clear a vehicle condition (e.g. after `repair`)
 clearVehicleCondition :: VehicleID -> String -> GameState -> GameState
@@ -233,13 +235,13 @@ vehicleLookAddon state = case currentVehicle (save state) of
             let vState = getVehicleState vId state
                 condLine = if Set.null (vsActiveConditions vState)
                            then ""
-                           else "Warning: " ++ intercalate ", " (Set.toList (vsActiveConditions vState))
-                                ++ "!"
+                           else renderMsg "vehicle.warning"
+                                [("list", intercalate ", " (Set.toList (vsActiveConditions vState)))]
                 fuelLine = case (vehicleFuelProp v, vsFuel vState) of
                     (Just fs, Just f) ->
                         if f <= 0
-                            then "\nOut of " ++ fsItem fs ++ " (0/" ++ show (fsMax fs) ++ ")"
-                            else "\nFuel (" ++ fsItem fs ++ ": " ++ show f ++ "/" ++ show (fsMax fs) ++ ")"
+                            then renderMsg "look.fuel_out" [("item", fsItem fs), ("max", show (fsMax fs))]
+                            else renderMsg "look.fuel" [("item", fsItem fs), ("f", show f), ("max", show (fsMax fs))]
                     _ -> ""
                 statusLine = unlines (filter (not . null) [condLine]) ++
                              (if null condLine then "" else "\n") ++ fuelLine
