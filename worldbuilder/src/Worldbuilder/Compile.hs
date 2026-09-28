@@ -136,8 +136,8 @@ checkSetExitRefs roomKeys adv =
     go (AOConditional _ ts es) = go' ts ++ go' es
     go (AONarrative _ follow)  = go' follow
     go (AORandomChoice cs)     = concatMap go' (map snd cs)
-    go (AOApplyCondition _ _ t e) = go' (t ++ e)
-    go _                       = []
+    go (AOApplyCondition _ _ t e _) = go' (t ++ e)
+    go _                         = []
     go' = concatMap go
     setExitIssues from dir mTo =
         [ ciError ("outcomes." ++ tag) "UnknownDirection"
@@ -1246,7 +1246,7 @@ checkCooldownConditionReserved gw =
 --   `RandomChoice`/`Narrative` nest further effects).
 conditionNamesInEffect :: E.Effect -> [String]
 conditionNamesInEffect eff = case eff of
-    E.ApplyCondition n _ mt me -> n : concatMap conditionNamesInEffect (catMaybes [mt, me])
+    E.ApplyCondition n _ mt me _ -> n : concatMap conditionNamesInEffect (catMaybes [mt, me])
     E.ClearCondition n         -> [n]
     E.Sequence es              -> concatMap conditionNamesInEffect es
     E.Conditional _ a b        -> conditionNamesInEffect a ++ conditionNamesInEffect b
@@ -1382,9 +1382,9 @@ refsInEffect e = case e of
     E.RandomChoice cs                 -> concatMap (refsInEffect . snd) cs
     E.Conditional p t el              -> refsInPredicate p ++ refsInEffect t ++ refsInEffect el
     E.Narrative _ follow              -> refsInEffect follow
-    E.ApplyCondition _ _ (Just t) (Just el) -> refsInEffect t ++ refsInEffect el
-    E.ApplyCondition _ _ (Just t) Nothing   -> refsInEffect t
-    E.ApplyCondition _ _ Nothing (Just el)  -> refsInEffect el
+    E.ApplyCondition _ _ (Just t) (Just el) _ -> refsInEffect t ++ refsInEffect el
+    E.ApplyCondition _ _ (Just t) Nothing _   -> refsInEffect t
+    E.ApplyCondition _ _ Nothing (Just el) _  -> refsInEffect el
     _                                 -> []
 
 -- | Faction references inside a Predicate tree.
@@ -1430,9 +1430,9 @@ hpTargetsInEffect e = case e of
     E.RandomChoice cs                       -> concatMap (hpTargetsInEffect . snd) cs
     E.Conditional _ t el                    -> hpTargetsInEffect t ++ hpTargetsInEffect el
     E.Narrative _ follow                    -> hpTargetsInEffect follow
-    E.ApplyCondition _ _ (Just t) (Just el) -> hpTargetsInEffect t ++ hpTargetsInEffect el
-    E.ApplyCondition _ _ (Just t) Nothing   -> hpTargetsInEffect t
-    E.ApplyCondition _ _ Nothing (Just el)  -> hpTargetsInEffect el
+    E.ApplyCondition _ _ (Just t) (Just el) _ -> hpTargetsInEffect t ++ hpTargetsInEffect el
+    E.ApplyCondition _ _ (Just t) Nothing _   -> hpTargetsInEffect t
+    E.ApplyCondition _ _ Nothing (Just el) _  -> hpTargetsInEffect el
     _                                       -> []
 
 -- ---------------------------------------------------------------------------
@@ -1806,8 +1806,8 @@ compileAActionOutcome ao = case ao of
     AOStandingSet fid n -> E.SetValue (E.VRVariable ("faction." ++ fid)) (E.EVInt n)
     AOSetEntityState e s -> E.SetValue (E.VRActorProp (E.ActorEntity e) E.PState) (E.EVString s)
     -- P1-17: previously unreachable engine effects, now authorable.
-    AOApplyCondition name turns tick end ->
-        E.ApplyCondition name turns (outcomesMaybe tick) (outcomesMaybe end)
+    AOApplyCondition name turns tick end hidden ->
+        E.ApplyCondition name turns (outcomesMaybe tick) (outcomesMaybe end) hidden
     AOClearCondition name -> E.ClearCondition name
     -- Rogue Phase 3: dynamic exits. Direction strings are validated in
     -- 'checkSetExitRefs' (UnknownDirection) — they must not be silently
@@ -2354,7 +2354,7 @@ checkUnknownPlaceholders adv varDefs =
         AOConditional _ ts es     -> concatMap outcomeWrittenVars (ts ++ es)
         AONarrative _ follow      -> concatMap outcomeWrittenVars follow
         AORandomChoice cs         -> concatMap (concatMap outcomeWrittenVars . snd) cs
-        AOApplyCondition _ _ ts es -> concatMap outcomeWrittenVars (ts ++ es)
+        AOApplyCondition _ _ ts es _ -> concatMap outcomeWrittenVars (ts ++ es)
         _                         -> []
 
     condTextStrings ct = actDefault ct : map atvText (actVariants ct)
@@ -2416,7 +2416,7 @@ checkUnknownPlaceholders adv varDefs =
         AOConditional _ ts es      -> concatMap (outcomeTexts path) (ts ++ es)
         AONarrative ls follow      -> [ (path, l) | l <- ls ] ++ concatMap (outcomeTexts path) follow
         AORandomChoice cs          -> concatMap (concatMap (outcomeTexts path) . snd) cs
-        AOApplyCondition _ _ ts es -> concatMap (outcomeTexts path) (ts ++ es)
+        AOApplyCondition _ _ ts es _ -> concatMap (outcomeTexts path) (ts ++ es)
         _                          -> []
 
 -- | Phase 0.4: warn when a dark room contains items but has no light_flag,

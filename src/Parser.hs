@@ -533,7 +533,7 @@ executeCommandEv Inventory state =
 
 executeCommandEv StatsCmd state =
     let p = player (save state)
-        condList = Map.elems (conditions (save state))
+        condList = filter (not . condHidden) (Map.elems (conditions (save state)))
         skillList = Map.toList (playerSkills p)
         skillDesc = if null skillList
                     then []

@@ -171,7 +171,7 @@ testHudPanels =
     let st0 = hudState "start"
         withCond = st0 { save = (save st0)
             { conditions = Map.singleton "poison"
-                (Condition "poison" 3 Nothing Nothing)
+                (Condition "poison" 3 Nothing Nothing False)
             , equipment = Map.singleton Weapon "rusty_sword"
             , variables = Map.fromList
                 [ ("combat.engaged", VVInt 1)
@@ -181,8 +181,9 @@ testHudPanels =
             , gameOver = True } }
         hud = buildHud withCond
     in do
-        rA <- expectEqual "cond line" (Just "poison (3)") (condLine (Condition "poison" 3 Nothing Nothing))
-        rB <- expectTrue "expired cond dropped" (isNothing (condLine (Condition "old" 0 Nothing Nothing)))
+        rA <- expectEqual "cond line" (Just "poison (3)") (condLine (Condition "poison" 3 Nothing Nothing False))
+        rB <- expectTrue "expired cond dropped" (isNothing (condLine (Condition "old" 0 Nothing Nothing False)))
+        rBHidden <- expectTrue "hidden cond dropped" (isNothing (condLine (Condition "bomb" 3 Nothing Nothing True)))
         rC <- expectTrue "equipment line" (any (isInfixOf "Weapon:") (hvEquipment hud))
         rD <- expectTrue "combat panel engaged" (not (null (hvCombat hud)))
         rE <- expectTrue "combat shows round 4" (any (isInfixOf "Round 4") (hvCombat hud))
@@ -193,7 +194,7 @@ testHudPanels =
         rI <- expectTrue "game over flagged" (hvGameOver hud)
         rJ <- expectTrue "no combat panel when disengaged"
                 (null (hvCombat (buildHud (hudState "start"))))
-        pure (rA && rB && rC && rD && rE && rF && rG && rH && rI && rJ)
+        pure (rA && rB && rBHidden && rC && rD && rE && rF && rG && rH && rI && rJ)
 
 -- | Multi-floor HUD & Minimap: rooms on different floors are segregated,
 --   the HUD detects explored floors, and non-current floor views drop the player marker.

@@ -158,7 +158,7 @@ applyOutcomeWith depth salt outcome targetId state
     StopMusic ->
         (state { pendingMusic = Just MusicStop }, [], salt)
 
-    ApplyCondition name turns tick end -> (applyCondition name turns tick end state, [], salt)
+    ApplyCondition name turns tick end hidden -> (applyConditionWithHidden name turns tick end hidden state, [], salt)
     ClearCondition name -> (clearCondition name state, [], salt)
 
     RaiseEvent name ->

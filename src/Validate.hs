@@ -126,7 +126,7 @@ dynamicExitTargets gw =
     nestedTargets (RandomChoice os)              = concatMap (nestedTargets . snd) os
     nestedTargets (Conditional _ t e)            = nestedTargets t ++ nestedTargets e
     nestedTargets (Narrative _ f)                = nestedTargets f
-    nestedTargets (ApplyCondition _ _ t e)       = concatMap (maybe [] nestedTargets) [t, e]
+    nestedTargets (ApplyCondition _ _ t e _)     = concatMap (maybe [] nestedTargets) [t, e]
     nestedTargets _                              = []
 
 -- | Rooms unreachable from the given start room via Open/Locked exits, plus the
@@ -421,7 +421,7 @@ idsFromOutcomeVehicle outcome = case outcome of
                                                  ++ idsFromOutcomeVehicle t
                                                  ++ idsFromOutcomeVehicle e
     Narrative _ followUp                         -> idsFromOutcomeVehicle followUp
-    ApplyCondition _ _ mt me                     -> concatMap idsFromOutcomeVehicle (catMaybes [mt, me])
+    ApplyCondition _ _ mt me _                   -> concatMap idsFromOutcomeVehicle (catMaybes [mt, me])
     _                                            -> []
 
 -- | Vehicle IDs referenced via `ship.<id>.<system>` variables in a Predicate.

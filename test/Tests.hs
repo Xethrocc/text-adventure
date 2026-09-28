@@ -851,6 +851,75 @@ testPredicateLocationJsonRoundTrip = do
     r4 <- expectEqual (Just pNpc) legacyNpc
     pure (r1 && r2 && r3 && r4)
 
+-- | Phase 2.1: Predicate has_condition evaluates active conditions and round-trips.
+testPredicateHasCondition :: IO Bool
+testPredicateHasCondition = do
+    let st = applyCondition "poison" 3 Nothing Nothing initSampleGame
+    r1 <- expectTrue "hasCondition True when active" (evalPredicate (HasCondition "poison") st)
+    let cleared = clearCondition "poison" st
+    r2 <- expectTrue "hasCondition False when cleared" (not (evalPredicate (HasCondition "poison") cleared))
+    r3 <- expectTrue "hasCondition False when not present" (not (evalPredicate (HasCondition "fire") st))
+    let jsonDec = Aeson.decode (BLC.pack "{\"has_condition\":\"poison\"}")
+    r4 <- expectEqual (Just (HasCondition "poison")) jsonDec
+    let encDec = Aeson.decode (Aeson.encode (HasCondition "poison"))
+    r5 <- expectEqual (Just (HasCondition "poison")) encDec
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Phase 2.1: ValueRef condition_turns queries remaining turns, evaluates in comparisons.
+testPredicateConditionTurns :: IO Bool
+testPredicateConditionTurns = do
+    let st = applyCondition "cooldown" 4 Nothing Nothing initSampleGame
+    r1 <- expectEqual 4 (resolveValueRef (VRConditionTurns "cooldown") st)
+    r2 <- expectEqual 0 (resolveValueRef (VRConditionTurns "absent") st)
+    r3 <- expectTrue "cooldown <= 4 is True" (evalPredicate (Compare (VRConditionTurns "cooldown") CLte (VRVariable "4")) st)
+    r4 <- expectTrue "cooldown > 4 is False" (not (evalPredicate (Compare (VRConditionTurns "cooldown") CGt (VRVariable "4")) st))
+    r5 <- expectTrue "cooldown == 4 is True" (evalPredicate (Compare (VRConditionTurns "cooldown") CEq (VRVariable "4")) st)
+    r6 <- expectTrue "CompareVar condition_turns.cooldown <= 4 is True" (evalPredicate (CompareVar "condition_turns.cooldown" CLte 4) st)
+    let vrDec = Aeson.decode (BLC.pack "{\"condition_turns\":\"cooldown\"}")
+    r7 <- expectEqual (Just (VRConditionTurns "cooldown")) vrDec
+    let vrStrDec = Aeson.decode (BLC.pack "\"condition_turns.cooldown\"")
+    r8 <- expectEqual (Just (VRConditionTurns "cooldown")) vrStrDec
+    let cmpDec = Aeson.decode (BLC.pack "{\"compare\":{\"lhs\":{\"condition_turns\":\"cooldown\"},\"op\":\"<=\",\"rhs\":4}}")
+    r9 <- expectEqual (Just (Compare (VRConditionTurns "cooldown") CLte (VRVariable "4"))) cmpDec
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9)
+
+-- | Phase 2.1: Hidden condition is omitted from stats output and protocol snapshot.
+testConditionHidden :: IO Bool
+testConditionHidden = do
+    let st0 = initSampleGame
+        st1 = applyConditionWithHidden "hidden_timer" 5 Nothing Nothing True st0
+        st2 = applyConditionWithHidden "visible_buff" 3 Nothing Nothing False st1
+    let (_, out) = executeCommand StatsCmd st2
+    r1 <- expectTrue "visible condition in stats" ("visible_buff" `isInfixOf` out)
+    r2 <- expectTrue "hidden condition not in stats" (not ("hidden_timer" `isInfixOf` out))
+    let snap = makeSnapshot st2
+        snapNames = map csName (psConditions (snapPlayer snap))
+    r3 <- expectTrue "visible condition in snapshot" ("visible_buff" `elem` snapNames)
+    r4 <- expectTrue "hidden condition not in snapshot" (not ("hidden_timer" `elem` snapNames))
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 2.1: Condition JSON backward compatibility.
+testConditionJsonCompatibility :: IO Bool
+testConditionJsonCompatibility = do
+    let cNormal = Condition "poison" 3 Nothing Nothing False
+        cHidden = Condition "bomb" 5 Nothing Nothing True
+    let encNormal = BLC.unpack (Aeson.encode cNormal)
+    r1 <- expectTrue "condHidden omitted when False" (not ("condHidden" `isInfixOf` encNormal))
+    r2 <- expectTrue "hidden omitted when False" (not ("\"hidden\"" `isInfixOf` encNormal))
+    let encHidden = BLC.unpack (Aeson.encode cHidden)
+    r3 <- expectTrue "condHidden included when True" ("\"condHidden\":true" `isInfixOf` encHidden)
+    let legacyJson = BLC.pack "{\"condName\":\"poison\",\"condRemaining\":3,\"condTickOutcome\":null,\"condEndOutcome\":null}"
+    r4 <- expectEqual (Just cNormal) (Aeson.decode legacyJson)
+    let hiddenJson = BLC.pack "{\"condName\":\"bomb\",\"condRemaining\":5,\"condTickOutcome\":null,\"condEndOutcome\":null,\"condHidden\":true}"
+    r5 <- expectEqual (Just cHidden) (Aeson.decode hiddenJson)
+    let hiddenAltJson = BLC.pack "{\"condName\":\"bomb\",\"condRemaining\":5,\"condTickOutcome\":null,\"condEndOutcome\":null,\"hidden\":true}"
+    r6 <- expectEqual (Just cHidden) (Aeson.decode hiddenAltJson)
+    let legacyEffectJson = BLC.pack "{\"tag\":\"ApplyCondition\",\"contents\":[\"poison\",3,null,null]}"
+    r7 <- expectEqual (Just (ApplyCondition "poison" 3 Nothing Nothing False)) (Aeson.decode legacyEffectJson)
+    let eff = ApplyCondition "bomb" 5 Nothing Nothing True
+    r8 <- expectEqual (Just eff) (Aeson.decode (Aeson.encode eff))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
 -- | Phase 1.1: catalog invariants — no duplicate keys (Map.fromList would drop
 --   them silently), no empty keys/templates, no template containing the
 --   missing-key marker.
@@ -2273,7 +2342,7 @@ testQuestRewardGiveItemWorks = do
 -- | Condition-Tick nutzt ebenfalls den vollständigen Interpreter
 testConditionTickGiveItemWorks :: IO Bool
 testConditionTickGiveItemWorks = do
-    let cond = Condition "reward_tick" 2 (Just (MoveEntity "torch" (CarriedBy ActorPlayer))) Nothing
+    let cond = Condition "reward_tick" 2 (Just (MoveEntity "torch" (CarriedBy ActorPlayer))) Nothing False
         withCond = initSampleGame
             { save = (save initSampleGame) { conditions = Map.singleton "reward_tick" cond } }
         (st1, _) = tickConditions withCond
@@ -7456,6 +7525,11 @@ main = do
         , runTest "Location round-trip and backward-compatible decoding (R1)" testLocationJsonRoundTrip
         , runTest "Predicate.Location round-trip and backward-compatible decoding (R1)" testPredicateLocationJsonRoundTrip
         , runTest "at: palyer typo fixture produces validation error (R1)" testValidateTypoInPredicateLocation
+        -- Phase 2.1: Predicate has_condition, ValueRef condition_turns, Condition hidden
+        , runTest "has_condition predicate evaluation and JSON (Phase 2.1)" testPredicateHasCondition
+        , runTest "condition_turns ValueRef evaluation and comparisons (Phase 2.1)" testPredicateConditionTurns
+        , runTest "hidden condition omitted from stats and snapshot (Phase 2.1)" testConditionHidden
+        , runTest "condition JSON backward-compatible decoding and serialization (Phase 2.1)" testConditionJsonCompatibility
         , runTest "message catalog invariants (Phase 1.1)" testMessageCatalogInvariants
         , runTest "renderMsg substitutes and escapes args (Phase 1.1)" testRenderMsgArgs
         , runTest "output events: fragment algebra is byte-identical (Phase 1.2)" testOutputFragmentAlgebra

@@ -314,6 +314,7 @@ numericBars st =
 -- | One active status effect: "poison (3)" — remaining turns in parens.
 condLine :: Condition -> Maybe String
 condLine c
+    | condHidden c         = Nothing
     | condRemaining c <= 0 = Nothing
     | otherwise            = Just (condName c ++ " (" ++ show (condRemaining c) ++ ")")
 

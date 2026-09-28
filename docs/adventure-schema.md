@@ -392,8 +392,8 @@ description:
 | `{ set_state: entity, to: state }` | SetValue (VRProperty entity "state") — z. B. `locked_by`-Tore öffnen |
 | `{ damage_npc: { npc: id, amount: N } }` | ModifyValue (VRProperty id "hp") −N — Module 7g |
 | `{ narrative: ["Zeile 1", "Zeile 2"], then: [...] }` | Narrative — interaktive, seitenweise Ausgabe (`[Press Enter to continue]`); `then` sind Folge-Effekte nach der letzten Zeile |
-| `{ condition: { name: id, turns: N, tick: [...], end: [...] } }` | ApplyCondition — zeitlich begrenzter Status-Effekt (`tick` je Zug, `end` beim Ablauf) |
-| `{ clear_condition: id }` | ClearCondition — Status-Effekt vorzeitig entfernen |
+| `{ condition: { name: id, turns: N, tick: [...], end: [...], hidden: bool } }` | ApplyCondition — timed condition/status effect (`tick` each turn, `end` upon expiration, optional `hidden: true` suppresses status/HUD display) |
+| `{ clear_condition: id }` | ClearCondition — remove a condition/timer early |
 | `{ skill: { name: id, delta: N } }` | ModifySkill — Skill um `N` verändern (auch negativ) |
 | `{ random: [[gewicht, [effekte]], ...] }` | RandomChoice — gewichtete Zufallsauswahl (Gewicht ≥ 1) |
 | `{ raise: name }` | RaiseEvent — feuert alle Regeln `on: custom <name>` (P1-20) |
@@ -435,6 +435,57 @@ setzen (dort sind Strings erlaubt).
 
 Das frühere `check_flag`-Kürzel wurde entfernt
 (P1-18), weil es nie dekodierbar war und den Erwartungswert still verwarf.
+
+### Conditions and Timers (Phase 2.1)
+
+Conditions represent active status effects or countdown timers on the player:
+
+- **Applying a Condition (`condition:` Outcome):**
+  ```yaml
+  - condition:
+      name: bomb_fuse
+      turns: 4
+      hidden: true          # optional: when true, hidden from 'stats' command and TUI HUD
+      tick:
+        - msg: "The fuse burns down."
+      end:
+        - msg: "BOOM!"
+        - game_end: defeat
+  ```
+  `hidden: true` allows running background timers or invisible debuffs without cluttering the player's status display.
+
+- **Querying Active Conditions (`has_condition` Predicate):**
+  Check whether a condition is currently active on the player:
+  ```yaml
+  when:
+    has_condition: bomb_fuse
+  ```
+  Evaluates to `true` while the condition is active, and `false` once expired or cleared.
+
+- **Checking Remaining Turns (`condition_turns` ValueRef):**
+  Inspect the remaining turns of an active condition in comparisons (`compare` / `condition_turns:`):
+  ```yaml
+  when:
+    compare:
+      lhs:
+        condition_turns: bomb_fuse
+      op: "<="
+      rhs: 2
+  ```
+  Or using the shorthand syntax:
+  ```yaml
+  when:
+    condition_turns:
+      condition: bomb_fuse
+      op: "<="
+      value: 2
+  ```
+  If the condition is not currently active, `condition_turns` evaluates to `0`.
+
+- **Clearing a Condition (`clear_condition` Outcome):**
+  ```yaml
+  - clear_condition: bomb_fuse
+  ```
 
 Item-Felder für Container:
 

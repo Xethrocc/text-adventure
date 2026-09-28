@@ -1124,8 +1124,8 @@ data AActionOutcome
         -- ^ set_exit: { from: hall, dir: north, to: chamber, locked_by: seal }
     | AORemoveExit String String       -- ^ remove_exit: { from: hall, dir: south }
     -- P1-17: effects that previously had no YAML form at all.
-    | AOApplyCondition String Int [AActionOutcome] [AActionOutcome]
-        -- ^ condition: {name, turns, tick, end} — timed status effect
+    | AOApplyCondition String Int [AActionOutcome] [AActionOutcome] Bool
+        -- ^ condition: {name, turns, tick, end, hidden} — timed status effect (Phase 2.1)
     | AOClearCondition String          -- ^ clear_condition: <name>
     | AOModifySkill String Int         -- ^ skill: {name, delta}
     | AORandomChoice [(Int, [AActionOutcome])]  -- ^ random: [[weight, [outcomes]], ...]
@@ -1164,7 +1164,8 @@ instance FromJSON AActionOutcome where
         <|> (AONarrative <$> o .: "narrative" <*> o .:? "then" .!= [])
         <|> (do cond <- o .: "condition"
                 AOApplyCondition <$> cond .: "name" <*> cond .: "turns"
-                                 <*> cond .:? "tick" .!= [] <*> cond .:? "end" .!= [])
+                                 <*> cond .:? "tick" .!= [] <*> cond .:? "end" .!= []
+                                 <*> cond .:? "hidden" .!= False)
         <|> (AOClearCondition <$> o .: "clear_condition")
         <|> (do sk <- o .: "skill"
                 AOModifySkill <$> sk .: "name" <*> sk .: "delta")

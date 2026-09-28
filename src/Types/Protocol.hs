@@ -731,7 +731,8 @@ makeSnapshot state = Snapshot
             Just (VVInt g) -> Just g
             _              -> Nothing
         , psConditions = [ ConditionSnapshot (condName c) (condRemaining c)
-                         | c <- Map.elems (conditions ss) ]
+                         | c <- Map.elems (conditions ss)
+                         , not (condHidden c) ]
         , psEquipment  = [ (show slot, iId) | (slot, iId) <- Map.toList (equipment ss) ]
         , psInventory  = [ ItemSummary (itemId def) (itemName def) (ctDefault (itemDescription def))
                          | (iId, st) <- Map.toList (itemStates ss)
@@ -834,6 +835,7 @@ makeSnapshot state = Snapshot
         Just (VarIs v val)   -> case Map.lookup v (variables ss) of
             Just (VVText s) -> s == val
             _               -> False
+        Just (HasCondition cond) -> Map.member cond (conditions ss)
         Just _               -> True
 
     -- Combat snapshot

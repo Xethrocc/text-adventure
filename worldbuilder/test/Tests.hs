@@ -243,9 +243,9 @@ carriesExitEffect e = case e of
     E.RandomChoice cs -> any (carriesExitEffect . snd) cs
     E.Conditional _ t el -> carriesExitEffect t || carriesExitEffect el
     E.Narrative _ f -> carriesExitEffect f
-    E.ApplyCondition _ _ (Just t) (Just el) -> carriesExitEffect t || carriesExitEffect el
-    E.ApplyCondition _ _ (Just t) Nothing   -> carriesExitEffect t
-    E.ApplyCondition _ _ Nothing (Just el)  -> carriesExitEffect el
+    E.ApplyCondition _ _ (Just t) (Just el) _ -> carriesExitEffect t || carriesExitEffect el
+    E.ApplyCondition _ _ (Just t) Nothing _   -> carriesExitEffect t
+    E.ApplyCondition _ _ Nothing (Just el) _  -> carriesExitEffect el
     _                -> False
 
 -- | Rogue Phase 3: `set_exit` / `remove_exit` compile to the engine effects;
@@ -902,8 +902,10 @@ testP117EffectSugar = do
     let dec = Aeson.decode :: BLC.ByteString -> Maybe AActionOutcome
     r1 <- expectEqual (Just (AONarrative ["a", "b"] [AOMessage "x"]))
               (dec (BLC.pack "{\"narrative\": [\"a\", \"b\"], \"then\": [{\"msg\": \"x\"}]}"))
-    r2 <- expectEqual (Just (AOApplyCondition "poisoned" 3 [AODamagePlayer 1] [AOMessage "over"]))
+    r2 <- expectEqual (Just (AOApplyCondition "poisoned" 3 [AODamagePlayer 1] [AOMessage "over"] False))
               (dec (BLC.pack "{\"condition\": {\"name\": \"poisoned\", \"turns\": 3, \"tick\": [{\"damage\": 1}], \"end\": [{\"msg\": \"over\"}]}}"))
+    r2b <- expectEqual (Just (AOApplyCondition "bomb" 5 [] [] True))
+              (dec (BLC.pack "{\"condition\": {\"name\": \"bomb\", \"turns\": 5, \"hidden\": true}}"))
     r3 <- expectEqual (Just (AOClearCondition "poisoned"))
               (dec (BLC.pack "{\"clear_condition\": \"poisoned\"}"))
     r4 <- expectEqual (Just (AOModifySkill "lockpick" 1))
@@ -912,13 +914,15 @@ testP117EffectSugar = do
               (dec (BLC.pack "{\"random\": [[3, [{\"msg\": \"a\"}]], [1, [{\"msg\": \"b\"}]]]}"))
     c1 <- expectEqual (E.Narrative ["a"] (E.SendMessage "x"))
               (compileAActionOutcome (AONarrative ["a"] [AOMessage "x"]))
-    c2 <- expectEqual (E.ApplyCondition "p" 2 (Just (E.SendMessage "t")) (Just (E.SendMessage "e")))
-              (compileAActionOutcome (AOApplyCondition "p" 2 [AOMessage "t"] [AOMessage "e"]))
+    c2 <- expectEqual (E.ApplyCondition "p" 2 (Just (E.SendMessage "t")) (Just (E.SendMessage "e")) False)
+              (compileAActionOutcome (AOApplyCondition "p" 2 [AOMessage "t"] [AOMessage "e"] False))
+    c2b <- expectEqual (E.ApplyCondition "b" 3 Nothing Nothing True)
+              (compileAActionOutcome (AOApplyCondition "b" 3 [] [] True))
     c3 <- expectEqual (E.ClearCondition "p") (compileAActionOutcome (AOClearCondition "p"))
     c4 <- expectEqual (E.ModifySkill "s" 2) (compileAActionOutcome (AOModifySkill "s" 2))
     c5 <- expectEqual (E.RandomChoice [(2, E.SendMessage "a")])
               (compileAActionOutcome (AORandomChoice [(2, [AOMessage "a"])]))
-    pure (and [r1, r2, r3, r4, r5, c1, c2, c3, c4, c5])
+    pure (and [r1, r2, r2b, r3, r4, r5, c1, c2, c2b, c3, c4, c5])
 
 -- | Audio Phase 1 & 2: `sfx:`, `music:`, `stop_music:` decode and compile.
 testAudioOutcomes :: IO Bool
@@ -2774,14 +2778,14 @@ testCooldownConditionClash :: IO Bool
 testCooldownConditionClash = do
     let withHook outcomes = (minAdventure (minRoom "loc_0"))
             { advRooms = [ (minRoom "loc_0") { arOnEnter = Just outcomes } ] }
-    r1 <- case compileAdventure (withHook [AOApplyCondition "cooldown_slash" 2 [] []]) of
+    r1 <- case compileAdventure (withHook [AOApplyCondition "cooldown_slash" 2 [] [] False]) of
             Left errs -> expectContains "CooldownConditionClash" (issuesText errs)
             Right _   -> expectTrue "expected CooldownConditionClash for apply_condition" False
     r2 <- case compileAdventure (withHook [AOClearCondition "cooldown_slash"]) of
             Left errs -> expectContains "CooldownConditionClash" (issuesText errs)
             Right _   -> expectTrue "expected CooldownConditionClash for clear_condition" False
     -- an ordinary condition name is unaffected (control case)
-    r3 <- case compileAdventure (withHook [AOApplyCondition "poisoned" 3 [] []]) of
+    r3 <- case compileAdventure (withHook [AOApplyCondition "poisoned" 3 [] [] False]) of
             Left errs -> expectTrue "an ordinary condition is not a cooldown clash"
                             (not ("CooldownConditionClash" `isInfixOf` issuesText errs))
             Right _   -> pure True

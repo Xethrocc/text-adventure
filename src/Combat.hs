@@ -218,7 +218,7 @@ tacticalAbility tc target abId st =
                                else []
                            cooldownEffects =
                                if paCooldown pa > 0
-                               then [ ApplyCondition ("cooldown_" ++ abId) (paCooldown pa) Nothing Nothing ]
+                               then [ ApplyCondition ("cooldown_" ++ abId) (paCooldown pa) Nothing Nothing False ]
                                else []
                        in ( tacticalStateEffects tc target round' "ability" abilityMark st
                               ++ costEffects ++ cooldownEffects ++ paEffects pa

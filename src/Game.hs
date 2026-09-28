@@ -69,9 +69,11 @@ module Game
     , setVariableChecked
     , hasCondition
     , applyCondition
+    , applyConditionWithHidden
     , clearCondition
     , evalExpr
     , evalPredicate
+    , resolveValueRef
     , formatWithVars
     , setPlayerHP
     , updatePlayerHealth
@@ -811,11 +813,15 @@ modifySkill skillId delta state = state
 -- Conditions (Phase 2)
 -- ---------------------------------------------------------------------------
 
--- | Apply (or refresh) a timed status effect
+-- | Apply (or refresh) a timed status effect (defaults to not hidden)
 applyCondition :: String -> Int -> Maybe Effect -> Maybe Effect -> GameState -> GameState
-applyCondition name turns tick end state = state
+applyCondition name turns tick end = applyConditionWithHidden name turns tick end False
+
+-- | Apply (or refresh) a timed status effect with explicit hidden flag (Phase 2.1)
+applyConditionWithHidden :: String -> Int -> Maybe Effect -> Maybe Effect -> Bool -> GameState -> GameState
+applyConditionWithHidden name turns tick end hidden state = state
     { save = (save state)
-        { conditions = Map.insert name (Condition name turns tick end) (conditions (save state)) } }
+        { conditions = Map.insert name (Condition name turns tick end hidden) (conditions (save state)) } }
 
 -- | Remove a status effect
 clearCondition :: String -> GameState -> GameState
@@ -934,6 +940,7 @@ evalPredicate (PAll ps) st = all (\p -> evalPredicate p st) ps
 evalPredicate (PAny ps) st = any (\p -> evalPredicate p st) ps
 evalPredicate (PlayerHas iId) st = hasItem iId st
 evalPredicate (HasFlag f) st = getFlag f st == Just "true"
+evalPredicate (HasCondition cn) st = hasCondition cn st
 -- A state predicate checks the entity's state in whichever layer stores it:
 -- `entityStates` (exit locks, doors, `set_state:` targets), an NPC's status
 -- ("alive"/"dead", as `killNPC` and the combat path set it) or an item's status
@@ -984,7 +991,10 @@ evalPredicate (Location actor rId) st = case actor of
 evalPredicate (CompareVar name op n) st =
     case Map.lookup name (variables (save st)) of
         Just (VVInt v) -> fromMaybe False (compareValues op v n)
-        _              -> False
+        _              -> case name of
+            _ | Just cn <- stripPrefix "condition_turns." name ->
+                fromMaybe False (compareValues op (resolveValueRef (VRConditionTurns cn) st) n)
+            _ -> False
 -- A text variable equals a literal. This is the read side of `variables:` with
 -- `type: text`: the value is a `VVText`, and no other predicate can inspect it
 -- (`compare_var` only compares numbers, `compare` resolves text to 0). Such a
@@ -1005,6 +1015,10 @@ evalPredicate (Compare lhs op rhs) st =
 
 -- | Resolve a ValueRef to an Int for comparisons.
 resolveValueRef :: ValueRef -> GameState -> Int
+resolveValueRef (VRConditionTurns cName) st =
+    case Map.lookup cName (conditions (save st)) of
+        Just c  -> condRemaining c
+        Nothing -> 0
 resolveValueRef (VRVariable name) st =
     case Map.lookup name (variables (save st)) of
         Just (VVInt n)  -> n
@@ -1020,7 +1034,11 @@ resolveValueRef (VRVariable name) st =
             "deck.count"        -> maybe 0 (length . drawPile) (deckState (save st))
             "discard.count"     -> maybe 0 (length . discardPile) (deckState (save st))
             "exhaust.count"     -> maybe 0 (length . exhaustPile) (deckState (save st))
-            _                   -> 0
+            _ | Just cn <- stripPrefix "condition_turns." name ->
+                resolveValueRef (VRConditionTurns cn) st
+              | otherwise -> case reads name of
+                  [(n, "")] -> n
+                  _         -> 0
 resolveValueRef (VRFlag f) st =
     case getFlag f st of
         Just "true"  -> 1

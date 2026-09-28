@@ -1,0 +1,58 @@
+name: Bomb Defusal Fixture
+start_room: workshop
+
+rooms:
+  - id: workshop
+    name: Bomb Disposal Workshop
+    desc: A sturdy workshop with bomb disposal equipment.
+    exits:
+      north: vault
+
+  - id: vault
+    name: High Security Vault
+    desc: A secure reinforced vault where an armed device is secured.
+    exits:
+      south: workshop
+    on_enter:
+      - condition:
+          name: bomb
+          turns: 4
+          hidden: true
+          tick:
+            - msg: "The bomb's hidden clockwork clicks."
+          end:
+            - msg: "BOOM! The bomb detonates!"
+            - game_end: defeat
+      - msg: "An armed bomb begins its hidden countdown!"
+
+items:
+  - id: toolkit
+    name: defuser toolkit
+    desc: Specialized electronic tools for bomb disposal.
+    keys: [toolkit, defuser, tools]
+    location: workshop
+    verb_map:
+      use,intact:
+        - msg: "You inspect the toolkit. It is ready to disarm active explosives."
+
+rules:
+  - id: bomb_warning
+    on: turn
+    when:
+      all:
+        - has_condition: bomb
+        - condition_turns:
+            condition: bomb
+            op: "<="
+            value: 2
+    effects:
+      - msg: "URGENT WARNING: Bomb detonation is imminent!"
+
+  - id: defuse_bomb
+    on: use toolkit
+    when:
+      has_condition: bomb
+    effects:
+      - clear_condition: bomb
+      - msg: "SUCCESS: Wire clipped! The bomb has been safely defused."
+      - game_end: victory

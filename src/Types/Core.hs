@@ -333,7 +333,11 @@ data Comparator = CEq | CNeq | CLt | CLte | CGt | CGte
     deriving (Show, Eq, Generic)
 
 instance ToJSON Comparator
-instance FromJSON Comparator
+instance FromJSON Comparator where
+    parseJSON (String s) = case parseComparatorName (T.unpack s) of
+        Just c  -> pure c
+        Nothing -> fail ("Unknown comparator: " ++ T.unpack s)
+    parseJSON v = genericParseJSON defaultOptions v
 
 -- | Reference to an entity/actor whose property is inspected or modified.
 data ActorRef
@@ -379,38 +383,53 @@ data ValueRef
     | VRItemProp ItemID String         -- ^ (item name, property name)
     | VRActorProp ActorRef PropRef      -- ^ (actor, property) typed reference
     | VRPlayerHealth                   -- ^ player hit points
+    | VRConditionTurns String          -- ^ remaining turns of an active condition/timer (Phase 2.1)
     deriving (Show, Eq, Generic)
 
 instance ToJSON ValueRef where
-    toJSON (VRFlag f)        = object [ "tag" .= ("VRFlag" :: T.Text), "contents" .= f ]
-    toJSON (VRVariable v)    = object [ "tag" .= ("VRVariable" :: T.Text), "contents" .= v ]
-    toJSON (VRItemProp i p)  = object [ "tag" .= ("VRItemProp" :: T.Text), "contents" .= [i, p] ]
-    toJSON (VRActorProp a p) = object [ "tag" .= ("VRActorProp" :: T.Text), "contents" .= [toJSON a, toJSON p] ]
-    toJSON VRPlayerHealth    = object [ "tag" .= ("VRPlayerHealth" :: T.Text) ]
+    toJSON (VRFlag f)           = object [ "tag" .= ("VRFlag" :: T.Text), "contents" .= f ]
+    toJSON (VRVariable v)       = object [ "tag" .= ("VRVariable" :: T.Text), "contents" .= v ]
+    toJSON (VRItemProp i p)     = object [ "tag" .= ("VRItemProp" :: T.Text), "contents" .= [i, p] ]
+    toJSON (VRActorProp a p)    = object [ "tag" .= ("VRActorProp" :: T.Text), "contents" .= [toJSON a, toJSON p] ]
+    toJSON VRPlayerHealth       = object [ "tag" .= ("VRPlayerHealth" :: T.Text) ]
+    toJSON (VRConditionTurns c) = object [ "tag" .= ("VRConditionTurns" :: T.Text), "contents" .= c ]
 
 instance FromJSON ValueRef where
-    parseJSON = withObject "ValueRef" $ \o -> do
-        tag <- o .: "tag" :: Parser T.Text
-        case tag of
-            "VRFlag"         -> VRFlag <$> o .: "contents"
-            "VRVariable"     -> VRVariable <$> o .: "contents"
-            "VRItemProp"     -> do
-                contents <- o .: "contents"
-                case contents of
-                    [i, p] -> pure (VRItemProp i p)
-                    _      -> fail "VRItemProp: expected [itemId, prop]"
-            "VRActorProp"    -> do
-                contents <- o .: "contents"
-                case contents of
-                    [aVal, pVal] -> VRActorProp <$> parseJSON aVal <*> parseJSON pVal
-                    _            -> fail "VRActorProp: expected [actor, prop]"
-            "VRPlayerHealth" -> pure VRPlayerHealth
-            "VRProperty"     -> do
-                contents <- o .: "contents"
-                case contents of
-                    (targetStr : propStr : _) -> pure (legacyVRProperty targetStr propStr)
-                    _                         -> fail "VRProperty: expected [target, prop]"
-            _                -> fail ("Unknown ValueRef tag: " ++ T.unpack tag)
+    parseJSON (Number n) = pure (VRVariable (show (round n :: Int)))
+    parseJSON (String s)
+        | Just rest <- stripPrefix "condition_turns." str = pure (VRConditionTurns rest)
+        | Just n <- (readMaybe str :: Maybe Int)           = pure (VRVariable (show n))
+        | otherwise                                        = pure (VRVariable str)
+      where
+        str = T.unpack s
+    parseJSON (Object o) =
+        (do tag <- o .: "tag" :: Parser T.Text
+            case tag of
+                "VRFlag"           -> VRFlag <$> o .: "contents"
+                "VRVariable"       -> VRVariable <$> o .: "contents"
+                "VRItemProp"       -> do
+                    contents <- o .: "contents"
+                    case contents of
+                        [i, p] -> pure (VRItemProp i p)
+                        _      -> fail "VRItemProp: expected [itemId, prop]"
+                "VRActorProp"      -> do
+                    contents <- o .: "contents"
+                    case contents of
+                        [aVal, pVal] -> VRActorProp <$> parseJSON aVal <*> parseJSON pVal
+                        _            -> fail "VRActorProp: expected [actor, prop]"
+                "VRPlayerHealth"   -> pure VRPlayerHealth
+                "VRConditionTurns" -> VRConditionTurns <$> o .: "contents"
+                "VRProperty"       -> do
+                    contents <- o .: "contents"
+                    case contents of
+                        (targetStr : propStr : _) -> pure (legacyVRProperty targetStr propStr)
+                        _                         -> fail "VRProperty: expected [target, prop]"
+                _                  -> fail ("Unknown ValueRef tag: " ++ T.unpack tag))
+        <|> (VRConditionTurns <$> o .: "condition_turns")
+        <|> (VRFlag <$> o .: "flag")
+        <|> (VRVariable <$> o .: "var")
+        <|> (pure VRPlayerHealth <* (guard =<< (o .: "player_health" <|> o .: "player_hp")))
+    parseJSON _ = fail "Expected object, number or string for ValueRef"
 
 -- | Map legacy stringly-typed `VRProperty target prop` into `VRActorProp`
 legacyVRProperty :: String -> String -> ValueRef
@@ -609,6 +628,7 @@ data Predicate
     | Location ActorRef RoomID -- ^ actor reference, room ID (is actor in this room?)
     | CompareVar String Comparator Int  -- ^ variable vs integer literal (mana >= 5)
     | VarIs String String               -- ^ text variable equals a literal (`{ var: X, is: Y }`)
+    | HasCondition String               -- ^ active condition/timer on player (Phase 2.1)
     deriving (Show, Eq, Generic)
 
 -- | Serialize to the same compact object shape that FromJSON accepts
@@ -628,6 +648,7 @@ instance ToJSON Predicate where
         CompareVar n op v  -> object [ "compare_var" .= object
                                         [ "name" .= n, "op" .= comparatorName op, "value" .= v ] ]
         VarIs n v          -> object [ "var" .= n, "is" .= v ]
+        HasCondition c     -> object [ "has_condition" .= c ]
 
 -- | Stable string form of a comparator, used in YAML/JSON predicates.
 comparatorName :: Comparator -> String
@@ -641,19 +662,25 @@ comparatorName CGte = "gte"
 -- | Parse a comparator from its string form.
 parseComparatorName :: String -> Maybe Comparator
 parseComparatorName s = case map toLower s of
-    "eq"  -> Just CEq
-    "="   -> Just CEq
-    "ne"  -> Just CNeq
-    "!="  -> Just CNeq
-    "lt"  -> Just CLt
-    "<"   -> Just CLt
-    "lte" -> Just CLte
-    "<="  -> Just CLte
-    "gt"  -> Just CGt
-    ">"   -> Just CGt
-    "gte" -> Just CGte
-    ">="  -> Just CGte
-    _     -> Nothing
+    "eq"   -> Just CEq
+    "ceq"  -> Just CEq
+    "="    -> Just CEq
+    "ne"   -> Just CNeq
+    "cneq" -> Just CNeq
+    "!="   -> Just CNeq
+    "lt"   -> Just CLt
+    "clt"  -> Just CLt
+    "<"    -> Just CLt
+    "lte"  -> Just CLte
+    "clte" -> Just CLte
+    "<="   -> Just CLte
+    "gt"   -> Just CGt
+    "cgt"  -> Just CGt
+    ">"    -> Just CGt
+    "gte"  -> Just CGte
+    "cgte" -> Just CGte
+    ">="   -> Just CGte
+    _      -> Nothing
 
 instance FromJSON Predicate where
     parseJSON = withObject "Predicate" $ \o ->
@@ -664,6 +691,7 @@ instance FromJSON Predicate where
         <|> (PTrue <$ (o .: "true" :: Parser Bool))
         <|> (PlayerHas <$> o .: "has_item")
         <|> (HasFlag   <$> o .: "has_flag")
+        <|> (HasCondition <$> o .: "has_condition")
         <|> (EntityHasState <$> o .: "state" <*> o .: "is")
         -- Text comparison for variables holding text (`type: text`), e.g. the
         -- engine's own `combat.action`. Distinct from `state`/`is`, which tests
@@ -672,6 +700,17 @@ instance FromJSON Predicate where
         <|> (RoomHasTag     <$> o .: "room"  <*> o .: "has_tag")
         <|> (Location       <$> o .: "at"    <*> o .: "room")
         <|> (Compare <$> o .: "lhs" <*> o .: "op" <*> o .: "rhs")
+        <|> (do cmpObj <- o .: "compare"
+                (Compare <$> cmpObj .: "lhs" <*> cmpObj .: "op" <*> cmpObj .: "rhs")
+                  <|> (do cName <- cmpObj .: "condition_turns"
+                          opVal <- cmpObj .: "op"
+                          vVal  <- cmpObj .: "value" <|> cmpObj .: "rhs"
+                          pure (Compare (VRConditionTurns cName) opVal vVal)))
+        <|> (do ct <- o .: "condition_turns"
+                cName <- ct .: "name" <|> ct .: "condition"
+                opVal <- ct .: "op"
+                vVal  <- ct .: "value" <|> ct .: "rhs"
+                pure (Compare (VRConditionTurns cName) opVal vVal))
         <|> (do cv  <- o .: "compare_var"
                 n   <- cv .: "name"
                 opS <- cv .: "op"
@@ -726,7 +765,7 @@ data Effect
     | ModifyValue ValueRef Int                    -- ^ Modify a numeric value (hp, skill, prop, etc.)
     | MoveEntity EntityID Location                -- ^ Move an entity to a location
     | SendMessage String                          -- ^ Show a message to the player
-    | ApplyCondition String Int (Maybe Effect) (Maybe Effect) -- ^ Name, turns, tick, end effects
+    | ApplyCondition String Int (Maybe Effect) (Maybe Effect) Bool -- ^ Name, turns, tick, end effects, hidden
     | ClearCondition String                       -- ^ Remove a condition by name
     | RaiseEvent String                           -- ^ P1-20: fire `OnCustomEvent name`
     | ModifySkill SkillID Int                     -- ^ Change a skill by delta
@@ -1015,7 +1054,23 @@ asciiPair k art
     | otherwise        = [k .= art]
 
 instance ToJSON Effect
-instance FromJSON Effect
+instance FromJSON Effect where
+    parseJSON v = genericParseJSON defaultOptions v <|> parseLegacyEffect v
+      where
+        parseLegacyEffect = withObject "Effect" $ \o -> do
+            tag <- o .: "tag" :: Parser T.Text
+            case tag of
+                "ApplyCondition" -> do
+                    contents <- o .: "contents"
+                    case contents of
+                        [n, t, tick, end] ->
+                            ApplyCondition <$> parseJSON n
+                                           <*> parseJSON t
+                                           <*> parseJSON tick
+                                           <*> parseJSON end
+                                           <*> pure False
+                        _ -> fail "ApplyCondition legacy contents mismatch"
+                _ -> fail ("Unsupported legacy effect tag: " ++ T.unpack tag)
 
 -- ---------------------------------------------------------------------------
 -- JSON helpers for compound Map keys
@@ -1314,12 +1369,29 @@ instance FromJSON Player where
 data Condition = Condition
     { condName        :: String
     , condRemaining   :: Int                -- ^ Turns until it expires
-    , condTickOutcome :: Maybe Effect -- ^ Fired every turn while active
-    , condEndOutcome  :: Maybe Effect -- ^ Fired once when it expires
+    , condTickOutcome :: Maybe Effect       -- ^ Fired every turn while active
+    , condEndOutcome  :: Maybe Effect       -- ^ Fired once when it expires
+    , condHidden      :: Bool               -- ^ Hidden from status and HUD display (Phase 2.1)
     } deriving (Show, Eq, Generic)
 
-instance ToJSON Condition
-instance FromJSON Condition
+instance ToJSON Condition where
+    toJSON c = object $
+        [ "condName"        .= condName c
+        , "condRemaining"   .= condRemaining c
+        , "condTickOutcome" .= condTickOutcome c
+        , "condEndOutcome"  .= condEndOutcome c
+        ] ++ [ "condHidden" .= True | condHidden c ]
+
+instance FromJSON Condition where
+    parseJSON = withObject "Condition" $ \o -> Condition
+        <$> o .: "condName"
+        <*> o .: "condRemaining"
+        <*> o .:? "condTickOutcome"
+        <*> o .:? "condEndOutcome"
+        <*> (do mh <- o .:? "condHidden"
+                case mh of
+                    Just h  -> pure h
+                    Nothing -> o .:? "hidden" .!= False)
 
 -- ---------------------------------------------------------------------------
 -- Quests
