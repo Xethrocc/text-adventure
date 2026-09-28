@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### Protokoll v1: Typen, Codec, Golden-Tests und Spezifikation (Phase 1.4)
+
+- **Protokoll v1 als Typen und Codec ohne Transport** (`src/Types/Protocol.hs`):
+  - Versioniertes Wire-Protokoll mit `currentProtocolVersion = 1`.
+  - `ClientMsg` mit Nachrichtenarten:
+    - `command`: regulaeres Textkommando (`command`)
+    - `choose`: Dialog-/Menue-Auswahl per Index (`index`)
+    - `continue`: Weiterblaettern bei Narrativ-/Pausen-Zustaenden
+    - `load_world`: Weltdatei neu laden (`path`)
+    - `save`: Spielstand in Slot speichern (`slot`)
+    - `load`: Spielstand aus Slot laden (`slot`)
+  - `ServerMsg` mit Nachrichtenarten:
+    - `events`: Liste strukturierter Ausgabeevents (`events: [OutputEvent]`)
+    - `snapshot`: Kompakter Zustands-Snapshot fuer UI-HUD, Map, Quests und Dialoge
+    - `error`: Protokollfehler (`code`, `message`, `details`) mit standardisierten Fehlercodes (`ERR_VERSION_MISMATCH`, `ERR_MALFORMED`, `ERR_UNKNOWN_TYPE`, `ERR_INVALID_COMMAND`, `ERR_INTERNAL`)
+  - Strukturierte Snapshots fuer Frontends: `Snapshot`, `PlayerSnapshot` (HP, MaxHP, Location, Carried Items, Equipped Weapons/Armor/Offhand, Gold, Flags, Engine Variables), `RoomSnapshot` (ID, Name, Exits mit Zielen und Lock-Status, Items, NPCs), `ConditionSnapshot`, `QuestSnapshot`, `DialogueSnapshot` mit auswaehlbaren Optionen (`choices`), `CombatSnapshot` (Gegner-HP, Rundenstatus), `GameOverSnapshot` (Grund).
+  - Extraktionsfunktion `makeSnapshot :: GameState -> Snapshot` fuer den Praesentations-Tier.
+  - Striktes Parsing mit Versionsvalidierung (`decodeClientMsg`, `decodeServerMsg`): abweichende oder fehlende Versionen werden mit standardisiertem Fehler `ERR_VERSION_MISMATCH` bzw. `ERR_MALFORMED` zurueckgewiesen.
+- **Deterministische Golden-Tests:**
+  - `encodeSorted` garantiert stabile Bytes auf allen Verschachtelungsebenen via `aeson-pretty` (`confCompare = compare`).
+  - 9 Golden-JSON-Referenzdateien in `test/golden/protocol/` (`client_command.json`, `client_choose.json`, `client_continue.json`, `client_load_world.json`, `client_save.json`, `client_load.json`, `server_events.json`, `server_snapshot.json`, `server_error.json`).
+  - Deterministische Byte-Stabilitaet im Test explizit belegt (`run1 == run2` und Byte-Vergleich gegen Plattendateien).
+- **Aeson-Serialisierung fuer alle 12 Ausgabeevents** (`src/Types/Output.hs`):
+  - `ToJSON` und `FromJSON` Instanzen fuer `OutputEvent` (`message`, `text`, `art`, `anim`, `sfx`, `music_start`, `music_stop`, `room_changed`, `quest_update`, `dialogue`, `combat`, `game_over`).
+  - Serialisierung fuer `Style`, `Span`, `StyledText`, `Color`, `MsgPayload`, `ArtHotspot` und `ArtPayload`.
+- **Session-Uebergangs-Bruecke (Constraint 6):**
+  - Session-Uebergaenge aus Phase 1.3 (`transitionSave`, `transitionLoad`, `transitionRestart`, `transitionGameOver`, `advanceNarrative`) liefern intern `[String]`.
+  - An der Protokollgrenze werden diese Zeilen durch `sessionLinesToEvents :: [String] -> [OutputEvent]` als `EvText (plainStyledText line)` eingekleidet, sodass das Wire-Format einheitlich `[OutputEvent]` bleibt (dokumentiert in `docs/protocol-v1.md`).
+- **Protokoll-Spezifikation** (`docs/protocol-v1.md`):
+  - Vollstaendiges englisches Referenzdokument fuer Frontend- und Backend-Autoren (Nachrichten, vollstaendiger 12-Event-Katalog, Snapshot-Schema, Fehlercodes und Versionierungsrichtlinien).
+- **Test- und Build-Nachweise:**
+  - 6 neue Unit- und Golden-Tests in `test/Tests.hs` (**376 Tests** gesamt, vorher 370).
+  - `cabal clean && cabal build all --enable-tests` mit **0 Warnungen**.
+  - `scripts/ci.sh` vollstaendig gruen (alle 8 Stufen PASS).
+
 ### CI: save/load-Rundlauf als Stufe 8
 
 - **Befund aus der 1.3-Prüfung:** kein einziges E2E-Fixture nutzt `save` oder
