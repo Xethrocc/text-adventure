@@ -1,7 +1,43 @@
 {-# LANGUAGE TupleSections, PatternSynonyms #-}
 
 -- | Command parsing and processing for the text adventure engine
-module Parser where
+--
+--   The export list is explicit (Phase 0.7): everything not listed here is an
+--   internal helper. This is the only way @-Wall@ can report unused top-level
+--   bindings in this module — while everything was exported, dead code was
+--   structurally invisible.
+module Parser
+    ( -- * Command and target types
+      Command (..)
+    , InteractTarget (..)
+    , TargetResolution (..)
+      -- * Pattern synonyms for 'TargetResolution'
+    , pattern TargetItem
+    , pattern TargetVehicle
+    , pattern TargetAmbiguous
+    , pattern TargetNotFound
+    , pattern TargetBare
+      -- * Parsing
+    , parseCommand
+    , parseCommandWith
+    , parseVerbWith
+    , preferInventoryTarget
+      -- * Target resolution
+    , resolveTarget
+    , resolveInteractTarget
+    , reachableExitEntities
+      -- * Execution
+    , executeCommand
+    , executeAttack
+    , interactItem
+    , bindCommandVars
+      -- * Messages, darkness and help
+    , darkRoomMessage
+    , defaultDarkMessage
+    , isCurrentRoomDark
+    , helpText
+    , isValidChoice
+    ) where
 
 import Types
 import Game
