@@ -26,6 +26,9 @@ module Parser
     , resolveTarget
     , resolveInteractTarget
     , reachableExitEntities
+      -- * Disambiguation (Phase 2.3)
+    , disambiguableCommand
+    , resolveDisambiguationAnswer
       -- * Execution
     , executeCommand
     , executeCommandEv
@@ -1141,8 +1144,12 @@ preferInventoryTarget verb = case verbCanonicalName verb of
 --   - 'drop', 'use', 'equip' prioritize inventory items first, falling back to room.
 --   - 'take' prioritizes room items first, falling back to inventory.
 --   - other verbs prioritize room entities first, falling back to inventory.
+--   Phase 2.3: when 'chosenTarget' is set (the player answered a disambiguation
+--   question), that entity id wins — the answer selects an entity, not a string,
+--   so a candidate whose id is also another candidate's keyword resolves too.
 resolveTarget :: Verb -> String -> GameState -> TargetResolution
 resolveTarget verb targetStr state
+    | Just chosen <- chosenTarget state = chosenResolution chosen state
     | null (words targetStr) = BareVerb
     | otherwise =
         let resolved = resolveHotspotTarget targetStr state
@@ -1296,10 +1303,66 @@ interactNotFound verb targetStr state
     | otherwise = (state, evMsg "target.not_seen" [("target", targetStr)])
 
 -- | Fallback interaction when multiple entities match the target.
+--   Phase 2.3: this is a *question*, not a terminal message — the stream
+--   carries 'EvDisambiguate' with the candidate ids, and the numbered form of
+--   the catalog prompt names every candidate. The loop remembers the pending
+--   question and turns the player's next input into the chosen candidate.
 interactAmbiguous :: [String] -> GameState -> (GameState, [OutputEvent])
 interactAmbiguous ids state =
     let names = map (entityDisplayName state) ids
-    in (state, evMsg "disambiguate.prompt" [("names", intercalate ", " names)])
+        options = zipWith (\n name -> renderMsg "disambiguate.option" [("n", show (n :: Int)), ("name", name)])
+                           [1 ..] names
+    in (state, EvDisambiguate ids : evMsg "disambiguate.prompt" [("names", intercalate ", " options)])
+
+-- | Phase 2.3: the resolution of an explicitly chosen entity id (see
+--   'chosenTarget'). Unknown ids fall back to 'NotFound'.
+chosenResolution :: String -> GameState -> TargetResolution
+chosenResolution chosen state
+    | Map.member chosen (itemDefs (world state))    = ResolvedItem chosen
+    | Map.member chosen (npcDefs (world state))     = ResolvedNPC chosen
+    | Map.member chosen (vehicleDefs (world state)) = ResolvedVehicle chosen
+    | otherwise = NotFound chosen
+
+-- | Phase 2.3: can this command be replayed once the player has chosen one of
+--   the ambiguous candidates? Only the command shapes whose dispatch resolves a
+--   target through 'resolveTarget' qualify; for any other command no question is
+--   recorded.
+disambiguableCommand :: Command -> Bool
+disambiguableCommand cmd = case cmd of
+    Interact _ _       -> True
+    ActionWithArgs _ _ -> True
+    EquipCmd _         -> True
+    UnequipCmd _       -> True
+    _                  -> False
+
+-- | Phase 2.3: interpret the player's answer to a disambiguation question.
+--   A plain number picks the candidate at that 1-based position; a word picks
+--   the candidate it distinguishes, provided exactly one candidate is described
+--   by it (its id, display name or keyword words). 'Nothing' means "not an
+--   answer" — the caller then treats the input as a normal command.
+resolveDisambiguationAnswer :: [String] -> String -> GameState -> Maybe String
+resolveDisambiguationAnswer ids raw state
+    | not (null answerWords), all isDigit (unwords answerWords) =
+        let n = read (unwords answerWords) :: Int
+        in if n >= 1 && n <= length ids then Just (ids !! (n - 1)) else Nothing
+    | otherwise = case filter (describesAnswer answerWords) ids of
+        [single] -> Just single
+        _        -> Nothing
+  where
+    answerWords = stripStopWords (words (map toLower raw))
+    describesAnswer ws eid = any (matches ws) (candidateWordSource state eid)
+    matches ws src = let srcN = normalizeText src
+                     in unwords ws == srcN || case ws of
+                            [singleWord] -> singleWord `elem` words srcN
+                            _            -> False
+
+-- | Phase 2.3: the strings a disambiguation answer may distinguish a candidate by.
+candidateWordSource :: GameState -> String -> [String]
+candidateWordSource state eid =
+    let itemWords = maybe [] itemKeywords (Map.lookup eid (itemDefs (world state)))
+        npcWords  = maybe [] npcKeywords  (Map.lookup eid (npcDefs (world state)))
+        vehWords  = maybe [] vehicleKeywords (Map.lookup eid (vehicleDefs (world state)))
+    in eid : entityDisplayName state eid : itemWords ++ npcWords ++ vehWords
 
 -- | Display name of an entity (item name, NPC name, or vehicle name).
 entityDisplayName :: GameState -> String -> String

@@ -879,6 +879,11 @@ Before a command is executed, the engine automatically extracts arguments and re
 - `cmd.count` — The number of argument tokens (integer).
 - `cmd.arg1..N` — Individual argument tokens (integer if numeric, otherwise text).
 
+When a verb's target matches several entities, the engine asks `Which do you mean: [1] …, [2] …?`
+and binds `cmd.target_kind = "ambiguous"` with the raw input as `cmd.target`. The player answers with
+a number or a distinguishing word; the resolved command then runs with `cmd.target` set to the chosen
+entity ID. The question and the answer cost no turn of their own.
+
 #### Veto Semantics and Execution Order
 
 - All matching `before <verb>` rules execute in definition order.

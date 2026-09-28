@@ -80,6 +80,13 @@
         },
         {
             "type": "game_over"
+        },
+        {
+            "candidates": [
+                "torch",
+                "torch2"
+            ],
+            "type": "disambiguate"
         }
     ],
     "type": "events",

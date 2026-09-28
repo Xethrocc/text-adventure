@@ -6,6 +6,7 @@ module GameLoop
   , gameLoop
   , LoopState (..)
   , initLoopState
+  , PendingDisambiguation (..)
   , applyLoopCommand
   , applyLoopCommandEv
   , sideEvents
@@ -67,15 +68,26 @@ import qualified Data.Map.Strict as Map
 --   'lsSaveSlot' (Rogue Phase 1) remembers the ironman checkpoint slot of the
 --   current run: set by every successful save, reset by restart — the slot it
 --   points at is what the death screen deletes in ironman mode.
+--   'lsPendingDisambiguation' (Phase 2.3) remembers an open "Which do you
+--   mean?" question: the candidate ids in prompt order plus the command that
+--   produced the ambiguity, so the player's answer can replay it. Runtime only —
+--   'LoopState' is never serialized, so no save/world byte is affected.
 data LoopState = LoopState
     { lsCurrent :: GameState
     , lsHistory :: [GameState]
     , lsInitial :: GameState   -- ^ pristine initial state, used by Restart
     , lsSaveSlot :: Maybe String
+    , lsPendingDisambiguation :: Maybe PendingDisambiguation
+    } deriving (Show, Eq)
+
+-- | An open disambiguation question (Phase 2.3).
+data PendingDisambiguation = PendingDisambiguation
+    { pdCandidates :: [String]  -- ^ candidate entity ids, in prompt order
+    , pdCommand    :: Command   -- ^ the command that hit the ambiguity
     } deriving (Show, Eq)
 
 initLoopState :: GameState -> LoopState
-initLoopState state = LoopState state [] state Nothing
+initLoopState state = LoopState state [] state Nothing Nothing
 
 maxUndoHistory :: Int
 maxUndoHistory = 50
@@ -117,15 +129,89 @@ consumesTurnIn st cmd = case cmd of
     ActionWithArgs v _ | verbCanonicalName v `elem` ["status", "bilanz", "finanzen"] -> False
     _           -> consumesTurn cmd
 
--- | Pure command transition used by both the interactive loop and tests.
---   Undo itself does not consume a turn. Other commands run the normal turn
---   ticks and save the exact pre-command state for restoration.
 -- | Phase 1.2 (primary path): run one command and return the ordered event
 --   stream — catalog messages keep key + args, prose/art/audio/state changes
 --   travel as their own events. 'applyLoopCommand' is the compatibility form
 --   (rendered back to the flat CLI text, byte-identical).
+--
+--   Phase 2.3: this is also the disambiguation entry point. If a question from
+--   the previous command is still open, the input is first interpreted as an
+--   answer (a number or a distinguishing word); a valid answer replays the
+--   original command on the chosen candidate **without advancing the clock**,
+--   an invalid one falls through as a normal command (which also closes the
+--   question). Otherwise the command runs normally and an 'EvDisambiguate' in
+--   its stream opens a new question.
 applyLoopCommandEv :: Command -> LoopState -> (LoopState, [OutputEvent])
-applyLoopCommandEv Undo loopState
+applyLoopCommandEv command loopState
+    | Just (ls', evs) <- applyPendingDisambiguation command loopState = (ls', evs)
+    | otherwise =
+        let (ls', evs) = applyLoopCommandCore command loopState
+        in (ls' { lsPendingDisambiguation = newPending command evs }, evs)
+
+-- | Phase 2.3: resolve an open disambiguation question with this input. The
+--   chosen entity id is written into 'chosenTarget' so the replayed command
+--   resolves to exactly that entity (its id may also be a keyword of another
+--   candidate — the answer picks an entity, not a string).
+applyPendingDisambiguation :: Command -> LoopState -> Maybe (LoopState, [OutputEvent])
+applyPendingDisambiguation command loopState = do
+    pending <- lsPendingDisambiguation loopState
+    raw     <- disambiguationAnswerText command
+    chosen  <- resolveDisambiguationAnswer (pdCandidates pending) raw (lsCurrent loopState)
+    let st' = (lsCurrent loopState) { chosenTarget = Just chosen }
+    pure (runCommandNoTurn (pdCommand pending)
+                           loopState { lsPendingDisambiguation = Nothing, lsCurrent = st' })
+
+-- | Phase 2.3: the command shapes that can carry an answer are the ones the
+--   parser could not resolve: a bare number becomes 'ChooseCmd' (Phase 4.6),
+--   anything else unknown keeps its raw input line. Every other command is a
+--   normal command and closes an open question.
+disambiguationAnswerText :: Command -> Maybe String
+disambiguationAnswerText (Unknown raw) = Just raw
+disambiguationAnswerText (ChooseCmd n)  = Just (show n)
+disambiguationAnswerText _              = Nothing
+
+-- | Phase 2.3: does this command's event stream open a disambiguation question?
+--   Only commands whose target resolution can be disambiguated
+--   ('disambiguableCommand') are remembered; any other command (including an
+--   invalid answer) closes a pending question.
+newPending :: Command -> [OutputEvent] -> Maybe PendingDisambiguation
+newPending command evs
+    | disambiguableCommand command
+    , ids : _ <- [candidateIds | EvDisambiguate candidateIds <- evs]
+    = Just (PendingDisambiguation ids command)
+    | otherwise = Nothing
+
+-- | Phase 2.3: replay the disambiguated command without a turn — the whole
+--   question/answer exchange must not advance the clock (plan row 2.3). The
+--   veto check still runs, but a `block: turn: true` rule cannot make the
+--   answer cost a turn either. The transient 'chosenTarget' is cleared again
+--   so it can never leak into a later command.
+runCommandNoTurn :: Command -> LoopState -> (LoopState, [OutputEvent])
+runCommandNoTurn command loopState =
+    case checkBeforeVeto command (lsCurrent loopState) of
+        Left (stBlocked, msgs, _) ->
+            (loopState { lsCurrent = stBlocked { chosenTarget = Nothing } }
+            , msgs ++ sideEvents (lsCurrent loopState) stBlocked)
+        Right (stAfterBefore, beforeMsgs) ->
+            let (lsDone, evsDone) = applyAfterVeto [OnTurn] command stAfterBefore beforeMsgs loopState
+            in (lsDone { lsCurrent = (lsCurrent lsDone) { chosenTarget = Nothing } }, evsDone)
+
+-- | Phase 2.3: shared tail of the non-turn dispatch path — dispatch, fire the
+--   command triggers and append the additive side events. 'skipEvents' removes
+--   event types from consideration: the disambiguation answer replays a
+--   turn-shaped command without advancing the clock, so it passes 'OnTurn'
+--   here — "no clock advance" must also mean "no `on: turn`".
+applyAfterVeto :: [EventType] -> Command -> GameState -> [OutputEvent] -> LoopState -> (LoopState, [OutputEvent])
+applyAfterVeto skipEvents command stAfterBefore beforeMsgs loopState =
+    let (newState, message) = dispatchCommandEv command stAfterBefore
+        (stateAfterTriggers, triggerMsg) =
+            fireCommandTriggersSkipping skipEvents command (lsCurrent loopState) newState
+        cmdMsg = joinBeforeAndCmd beforeMsgs message
+        combined = joinEv cmdMsg triggerMsg ++ sideEvents (lsCurrent loopState) stateAfterTriggers
+    in (loopState { lsCurrent = stateAfterTriggers }, combined)
+
+applyLoopCommandCore :: Command -> LoopState -> (LoopState, [OutputEvent])
+applyLoopCommandCore Undo loopState
     -- Rogue Phase 1: the author can disable undo globally (gpAllowUndo). The
     -- state stays untouched — the command is refused, nothing to tick.
     | not (gpAllowUndo (worldGamePolicy (world (lsCurrent loopState)))) =
@@ -134,10 +220,10 @@ applyLoopCommandEv Undo loopState
         [] -> (loopState, evMsg "undo.nothing" [])
         previous : rest ->
             (loopState { lsCurrent = previous, lsHistory = rest }, evMsg "undo.done" [])
-applyLoopCommandEv Quit loopState =
+applyLoopCommandCore Quit loopState =
     let (newState, message) = executeCommandEv Quit (lsCurrent loopState)
     in (loopState { lsCurrent = newState }, message)
-applyLoopCommandEv Restart loopState =
+applyLoopCommandCore Restart loopState =
     -- Rogue Phase 2: meta.* travels from the dying/finished run into the fresh
     -- one (the plan's restart semantics); lsSaveSlot resets (initLoopState).
     -- The rngState reseed + run counter happen in the IO restart path
@@ -146,11 +232,11 @@ applyLoopCommandEv Restart loopState =
     in (initLoopState (carryMetaVars (lsCurrent loopState) newState), message)
 
 
-applyLoopCommandEv Help loopState = (loopState, evMsg "help.text" [])
-applyLoopCommandEv (Save _) loopState = (loopState, [])
-applyLoopCommandEv (Load _) loopState = (loopState, [])
-applyLoopCommandEv ListSaves loopState = (loopState, [])
-applyLoopCommandEv command loopState =
+applyLoopCommandCore Help loopState = (loopState, evMsg "help.text" [])
+applyLoopCommandCore (Save _) loopState = (loopState, [])
+applyLoopCommandCore (Load _) loopState = (loopState, [])
+applyLoopCommandCore ListSaves loopState = (loopState, [])
+applyLoopCommandCore command loopState =
     case checkBeforeVeto command (lsCurrent loopState) of
         Left (stBlocked, msgs, False) ->
             -- Vetoed without turn consumption (Phase 2.2 default)
@@ -176,11 +262,7 @@ applyLoopCommandEv command loopState =
 
         Right (stAfterBefore, beforeMsgs)
             | not (consumesTurnIn (lsCurrent loopState) command) ->
-                let (newState, message) = dispatchCommandEv command stAfterBefore
-                    (stateAfterTriggers, triggerMsg) = fireCommandTriggers command (lsCurrent loopState) newState
-                    cmdMsg = joinBeforeAndCmd beforeMsgs message
-                    combined = joinEv cmdMsg triggerMsg ++ sideEvents (lsCurrent loopState) stateAfterTriggers
-                in (loopState { lsCurrent = stateAfterTriggers }, combined)
+                applyAfterVeto [] command stAfterBefore beforeMsgs loopState
 
             | otherwise ->
                 let oldState = lsCurrent loopState
@@ -349,8 +431,13 @@ persistMeta st = saveMeta (world st) (variables (save st))
 -- | Determine which trigger events apply to a completed command, using the
 --   state before and after the command to detect room changes.
 fireCommandTriggers :: Command -> GameState -> GameState -> (GameState, [OutputEvent])
-fireCommandTriggers cmd before after =
-    let events = commandEvents cmd before after
+fireCommandTriggers = fireCommandTriggersSkipping []
+
+-- | Like 'fireCommandTriggers', but ignoring the listed event types (Phase 2.3:
+--   the disambiguation answer skips 'OnTurn' — it must not advance the clock).
+fireCommandTriggersSkipping :: [EventType] -> Command -> GameState -> GameState -> (GameState, [OutputEvent])
+fireCommandTriggersSkipping skipEvents cmd before after =
+    let events = filter (`notElem` skipEvents) (commandEvents cmd before after)
         afterWithCmdVars = bindCommandVars cmd after
         (st, msgs) = foldl' (\(s, acc) ev -> let (s', m) = fireTriggers ev s
                                             in (s', joinEv acc m))

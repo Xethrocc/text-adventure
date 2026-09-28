@@ -312,6 +312,7 @@ data OutputEvent
     | EvDialogue                      -- ^ a dialogue became active (snapshot carries choices)
     | EvCombat Bool                   -- ^ combat engaged flag changed (new value)
     | EvGameOver                      -- ^ the game ended this command (reason in snapshot)
+    | EvDisambiguate [String]         -- ^ target was ambiguous: candidate entity ids in prompt order (Phase 2.3)
     deriving (Show, Eq, Generic)
 
 instance ToJSON OutputEvent where
@@ -328,6 +329,7 @@ instance ToJSON OutputEvent where
         EvDialogue        -> object [ "type" .= ("dialogue" :: String) ]
         EvCombat eng      -> object [ "type" .= ("combat" :: String), "engaged" .= eng ]
         EvGameOver        -> object [ "type" .= ("game_over" :: String) ]
+        EvDisambiguate ids -> object [ "type" .= ("disambiguate" :: String), "candidates" .= ids ]
 
 instance FromJSON OutputEvent where
     parseJSON = withObject "OutputEvent" $ \o -> do
@@ -345,6 +347,7 @@ instance FromJSON OutputEvent where
             "dialogue"     -> pure EvDialogue
             "combat"       -> EvCombat <$> o .: "engaged"
             "game_over"    -> pure EvGameOver
+            "disambiguate" -> EvDisambiguate <$> o .: "candidates"
             other          -> fail ("Unknown OutputEvent type: " ++ other)
 
 -- ---------------------------------------------------------------------------
@@ -373,6 +376,7 @@ evTextOf ev = case ev of
     EvDialogue        -> ""
     EvCombat _        -> ""
     EvGameOver        -> ""
+    EvDisambiguate _  -> ""
 
 -- | Render an event stream to the CLI's text: concatenation of all text
 --   contributions. Byte-identical to the pre-1.2 string pipeline by

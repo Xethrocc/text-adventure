@@ -94,10 +94,12 @@ Playthroughs sind vor/nach der Umstellung byte-identisch (`diff -r` leer).
 - **1.4 (Protokoll):** `ServerMsg "events"` serialisiert `[OutputEvent]` 1:1
   (JSON über die vorhandenen `Generic`-Typen); `snapshot` liefert die
   HUD-/Map-/Quest-/Dialog-Zustände, die die State-Events nur ankündigen.
-- **2.3 (Disambiguation):** die Rückfrage ist heute `disambiguate.prompt`
-  (Katalog-Text); mit Events kann sie später als eigenes Event mit
-  strukturierten Kandidaten ausgedrückt werden — Protokoll-Upgrade, kein
-  Umbau.
+- **2.3 (Disambiguation) — erledigt:** die Rückfrage ist jetzt das Event
+  `EvDisambiguate [<Kandidaten-Ids in Reihenfolge>]` plus der Katalog-Text
+  `disambiguate.prompt` mit numerierter Liste (`disambiguate.option`:
+  `[{n}] {name}`) — „Which do you mean: [1] …, [2] …?“. Der Event ist textfrei
+  (`evTextOf` = `""`), die CLI-Ausgabe bleibt daher byte-identisch; das Protokoll
+  serialisiert ihn als Typ `"disambiguate"` mit Feld `candidates`.
 - **Nicht umgestellt (bewusst):** `pendingNarrative`/`pendingCutscene`
   (Loop-seitige Präsentation mit Pausen; zieht mit 1.3 in die Session-Logik),
   die Save-/Load-/Meta-**Drucke** in `SaveLoad.hs` (direktes IO via

@@ -1,0 +1,54 @@
+name: Disambiguation Fixture
+start_room: gate
+
+# Phase 2.3 fixture: two ambiguous target groups in two rooms — one answered by
+# number, one answered by a distinguishing word. `bericht` prints the engine's
+# turn counter, which pins the "costs no turn" promise of the plan row: the two
+# answers must not advance the clock, so the report shows 4 turns (take gem,
+# north, take key, bericht).
+verbs:
+  - name: bericht
+
+rooms:
+  - id: gate
+    name: Gatehouse
+    desc: A gatehouse with a shelf holding two gems of different colours. A vault door lies to the north.
+    exits:
+      north: vault
+
+  - id: vault
+    name: Vault Chamber
+    desc: A cold vault chamber. A rack holds two keys of different metals.
+    exits:
+      south: gate
+
+items:
+  - id: gem_blue
+    name: blue gem
+    desc: A cool blue gem.
+    keys: [gem, blue gem]
+    location: gate
+
+  - id: gem_red
+    name: red gem
+    desc: A warm red gem.
+    keys: [gem, red gem]
+    location: gate
+
+  - id: key_brass
+    name: brass key
+    desc: A small brass key.
+    keys: [key, brass key]
+    location: vault
+
+  - id: key_iron
+    name: iron key
+    desc: A heavy iron key.
+    keys: [key, iron key]
+    location: vault
+
+rules:
+  - id: bericht_zuege
+    on: command bericht
+    effects:
+      - msg: "ZUGZAEHLER-{turns}"

@@ -17,7 +17,8 @@ import Vehicles
 import Effects
 import Quests
 import Cards
-import GameLoop (LoopState (..), initLoopState, applyLoopCommand, applyLoopCommandEv,
+import GameLoop (LoopState (..), initLoopState, PendingDisambiguation (..),
+                 applyLoopCommand, applyLoopCommandEv,
                  sideEvents, bumpMetaRuns, reseedRng,
                  commandEvents, consumesTurn, consumesTurnIn, runGameWithFrontend,
                  handleGameOver, saveBlockedMessage, loadBlockedMessage, deathMenuText,
@@ -1077,6 +1078,102 @@ testExitAndEffectJsonCompatibility = do
 
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
 
+-- ===========================================================================
+-- Phase 2.3: Disambiguation
+-- ===========================================================================
+
+-- | Phase 2.3 base game: a second item in the start room that shares the
+--   keyword `torch` with the sample torch, so `take torch` resolves to two
+--   candidates. The candidate order comes from the item-state map (sorted by
+--   id): @["torch", "torch2"]@.
+disambiguationGame :: GameState
+disambiguationGame = initSampleGame
+    { world = (world initSampleGame)
+        { itemDefs = Map.insert "torch2" spareTorch (itemDefs (world initSampleGame)) }
+    , save = (save initSampleGame)
+        { itemStates = Map.insert "torch2"
+                        (ItemState (InRoom "start") "intact" Map.empty False)
+                        (itemStates (save initSampleGame)) } }
+  where
+    spareTorch = (itemDefs (world initSampleGame) Map.! "torch")
+        { itemId = "torch2", itemName = "spare torch", itemKeywords = ["torch", "spare torch"] }
+
+-- | Phase 2.3: same world plus an `on: turn` trigger so the clock is visible.
+disambiguationTickGame :: GameState
+disambiguationTickGame = disambiguationGame
+    { world = (world disambiguationGame)
+        { triggerDefs = [ TriggerDef "tick" OnTurn Nothing [SendMessage "TICK"] False 0 ] } }
+
+-- | Phase 2.3: the ambiguous attempt becomes an event plus a numbered
+--   question and records the pending question on the loop state.
+testDisambiguationEventAndPending :: IO Bool
+testDisambiguationEventAndPending = do
+    let (ls1, evs1) = applyLoopCommandEv (parseCommand "take torch") (initLoopState disambiguationGame)
+    r1 <- expectTrue "EvDisambiguate carries the candidate ids in prompt order"
+            (EvDisambiguate ["torch", "torch2"] `elem` evs1)
+    r2 <- expectTrue "question numbers every candidate"
+            ("Which do you mean: [1] torch, [2] spare torch?" `isInfixOf` renderEvents evs1)
+    r3 <- expectEqual (Just (PendingDisambiguation ["torch", "torch2"] (Interact VTake "torch")))
+            (lsPendingDisambiguation ls1)
+    pure (r1 && r2 && r3)
+
+-- | Phase 2.3: answering with a number picks the candidate at that position.
+testDisambiguationByNumber :: IO Bool
+testDisambiguationByNumber = do
+    let (ls1, _evs1) = applyLoopCommandEv (parseCommand "take torch") (initLoopState disambiguationGame)
+        (ls2, evs2)  = applyLoopCommandEv (parseCommand "1") ls1
+        itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+    r1 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "torch" (lsCurrent ls2))
+    r2 <- expectEqual (Just (InRoom "start")) (itemLoc "torch2" (lsCurrent ls2))
+    r3 <- expectTrue "candidate 1 is taken" ("You take the torch." `isInfixOf` renderEvents evs2)
+    r4 <- expectEqual Nothing (lsPendingDisambiguation ls2)
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 2.3: answering with a distinguishing word picks that candidate.
+testDisambiguationByWord :: IO Bool
+testDisambiguationByWord = do
+    let (ls1, _evs1) = applyLoopCommandEv (parseCommand "take torch") (initLoopState disambiguationGame)
+        (ls2, evs2)  = applyLoopCommandEv (parseCommand "spare") ls1
+        itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+    r1 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "torch2" (lsCurrent ls2))
+    r2 <- expectEqual (Just (InRoom "start")) (itemLoc "torch" (lsCurrent ls2))
+    r3 <- expectTrue "the spare torch is taken" ("You take the spare torch." `isInfixOf` renderEvents evs2)
+    r4 <- expectEqual Nothing (lsPendingDisambiguation ls2)
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 2.3: input that does not single out a candidate is not an answer —
+--   it runs as a normal command and closes the question.
+testDisambiguationFallback :: IO Bool
+testDisambiguationFallback = do
+    let (ls1, _evs1) = applyLoopCommandEv (parseCommand "take torch") (initLoopState disambiguationGame)
+        -- "torch" describes both candidates -> still ambiguous, not an answer
+        (ls2, evs2) = applyLoopCommandEv (parseCommand "torch") ls1
+        -- a number outside 1..2 is not an answer either
+        (ls3, evs3) = applyLoopCommandEv (parseCommand "9") ls1
+    r1 <- expectEqual Nothing (lsPendingDisambiguation ls2)
+    r2 <- expectTrue "undistinguishing word runs as an unknown command"
+            ("I don't understand 'torch'." `isInfixOf` renderEvents evs2)
+    r3 <- expectEqual Nothing (lsPendingDisambiguation ls3)
+    r4 <- expectTrue "out-of-range number is not a choice"
+            ("You are not in a conversation right now." `isInfixOf` renderEvents evs3)
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase 2.3: the answer costs no turn — the clock stays where it was and
+--   `on: turn` does not fire for the replayed command, while the ambiguous
+--   attempt itself still costs its turn.
+testDisambiguationTurnCost :: IO Bool
+testDisambiguationTurnCost = do
+    let (ls1, evs1) = applyLoopCommandEv (parseCommand "take torch") (initLoopState disambiguationTickGame)
+        (ls2, evs2) = applyLoopCommandEv (parseCommand "1") ls1
+    r1 <- expectEqual 1 (turnCount (save (lsCurrent ls1)))
+    r2 <- expectTrue "the ambiguous attempt fires on: turn" ("TICK" `isInfixOf` renderEvents evs1)
+    r3 <- expectEqual 1 (turnCount (save (lsCurrent ls2)))
+    r4 <- expectTrue "the answer does not fire on: turn" (not ("TICK" `isInfixOf` renderEvents evs2))
+    r5 <- expectTrue "the answer still performs the action"
+            (fmap itemLocation (Map.lookup "torch" (itemStates (save (lsCurrent ls2))))
+                == Just (CarriedBy ActorPlayer))
+    pure (r1 && r2 && r3 && r4 && r5)
+
 -- | Phase 1.1: catalog invariants — no duplicate keys (Map.fromList would drop
 --   them silently), no empty keys/templates, no template containing the
 --   missing-key marker.
@@ -1472,6 +1569,7 @@ testProtocolServerMsgRoundTrip = do
             , EvDialogue
             , EvCombat True
             , EvGameOver
+            , EvDisambiguate ["torch", "torch2"]
             ]
         msgs =
             [ ServerEvents 1 sampleEvents
@@ -1501,6 +1599,7 @@ testProtocolGoldenDeterministic = do
             , EvDialogue
             , EvCombat True
             , EvGameOver
+            , EvDisambiguate ["torch", "torch2"]
             ]
         makeCases =
             [ ("client_command.json", encodeSorted (cmdCommand "look"))
@@ -1922,7 +2021,7 @@ testMetaProgressionPreservedOnRestart = do
                 [ ("meta.souls", VVInt 7)
                 , ("meta.unlocked_class", VVText "mage")
                 , ("gold", VVInt 9) ] } }
-        loop = LoopState mid [] pristine (Just "checkpoint")
+        loop = LoopState mid [] pristine (Just "checkpoint") Nothing
         (l2, msg) = applyLoopCommand Restart loop
     -- The fresh run starts from `lsInitial` (gold absent there); meta.souls=7
     -- and meta.unlocked_class survive, gold does not leak.
@@ -1955,7 +2054,7 @@ testMetaRunsCounter = do
     -- restart path: the carried counter increments once per restart
     let mid = pristine { save = (save pristine)
             { variables = Map.fromList [("meta.souls", VVInt 3), ("meta.runs", VVInt 5)] } }
-        loop2 = LoopState mid [] pristine Nothing
+        loop2 = LoopState mid [] pristine Nothing Nothing
         (l3, _) = applyLoopCommand Restart loop2
     r2 <- expectTrue "pure restart branch carries meta.runs (IO path bumps)"
         (Map.lookup "meta.runs" (variables (save (lsCurrent l3))) == Just (VVInt 1))
@@ -7693,6 +7792,12 @@ main = do
         , runTest "Guarded exit movement gating and messages (Phase 2.2)" testGuardedExit
         , runTest "Veto turn cost respects consumesTurn flag (Phase 2.2)" testVetoTurnCost
         , runTest "Exit, Effect, and EventType JSON round-trip and backward compat (Phase 2.2)" testExitAndEffectJsonCompatibility
+        -- Phase 2.3: Disambiguation
+        , runTest "disambiguation: event, numbered question and pending state (Phase 2.3)" testDisambiguationEventAndPending
+        , runTest "disambiguation: answer by number picks the candidate (Phase 2.3)" testDisambiguationByNumber
+        , runTest "disambiguation: answer by distinguishing word (Phase 2.3)" testDisambiguationByWord
+        , runTest "disambiguation: non-answer runs normally and closes the question (Phase 2.3)" testDisambiguationFallback
+        , runTest "disambiguation: the answer costs no turn and fires no on: turn (Phase 2.3)" testDisambiguationTurnCost
         , runTest "message catalog invariants (Phase 1.1)" testMessageCatalogInvariants
         , runTest "renderMsg substitutes and escapes args (Phase 1.1)" testRenderMsgArgs
         , runTest "output events: fragment algebra is byte-identical (Phase 1.2)" testOutputFragmentAlgebra

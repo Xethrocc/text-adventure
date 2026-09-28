@@ -191,7 +191,7 @@ Reports protocol or session errors to the client.
 
 ## 5. OutputEvent Catalog
 
-The engine produces output as an ordered stream of `OutputEvent` values. The protocol serializes all 12 events as follows:
+The engine produces output as an ordered stream of `OutputEvent` values. The protocol serializes all 13 events as follows:
 
 | Event Type (`type`) | Description | Fields |
 |---|---|---|
@@ -207,6 +207,7 @@ The engine produces output as an ordered stream of `OutputEvent` values. The pro
 | `"dialogue"` | Dialogue engaged with NPC (choices in snapshot). | *(no extra fields)* |
 | `"combat"` | Combat engagement flag changed. | `engaged`: `Bool` |
 | `"game_over"` | Game reached death, victory, or custom ending. | *(no extra fields)* |
+| `"disambiguate"` | The command's target was ambiguous; the engine asks which candidate is meant. The candidate ids are in prompt order, i.e. `candidates[n-1]` is option `[n]`. | `candidates`: `[String]` |
 
 ### 5.1 Styling Span Model
 

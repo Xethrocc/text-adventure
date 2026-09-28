@@ -92,7 +92,7 @@ run_e2e() {
     [ "$failed" -eq 0 ] || exit 1
 }
 
-for name in thefog pure-if fantasy cyberpunk space-opera detective horror economy_hamurabi deckbuilder_spire sandbox_wilderness factions trade encounters survival stealth patrol combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state combat-screen dark-feelable bomb waechter traglast; do
+for name in thefog pure-if fantasy cyberpunk space-opera detective horror economy_hamurabi deckbuilder_spire sandbox_wilderness factions trade encounters survival stealth patrol combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state combat-screen dark-feelable bomb waechter traglast disambiguation; do
     case "$name" in
         thefog)             src=examples/thefog.yaml ;;
         factions|trade|encounters|survival|stealth|patrol|combat-off|combat-narrative|combat-classic|combat-tactical|party|starship|combo|ship-duel)     src="examples/modules/$name.yaml" ;;
@@ -104,6 +104,7 @@ for name in thefog pure-if fantasy cyberpunk space-opera detective horror econom
         bomb)               src="examples/fixtures/bomb.yaml" ;;
         waechter)           src="examples/fixtures/waechter.yaml" ;;
         traglast)           src="examples/fixtures/traglast.yaml" ;;
+        disambiguation)     src="examples/fixtures/disambiguation.yaml" ;;
         *)                  src="examples/genres/$name.yaml" ;;
     esac
     run_e2e "$name" "$src"
@@ -120,9 +121,10 @@ echo "== 5. e2e non-victory paths =="
 # `patrol-attack` and `patrol-death` are not failures either but *behaviour*
 # paths: they pin that a patrolling NPC actually closes in, warns, bites — and
 # that its damage can kill (turn-consuming commands only; `look` is free).
-for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss-fail combo-fail combat-tactical-fail ship-duel-fail combat-tactical-defend patrol-attack patrol-death combat-screen-round; do
+for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss-fail combo-fail combat-tactical-fail ship-duel-fail combat-tactical-defend patrol-attack patrol-death combat-screen-round disambiguation-fallback; do
     case "$name" in
         trade-fail)        src=examples/modules/trade.yaml ;;
+        disambiguation-fallback) src="examples/fixtures/disambiguation.yaml" ;;
         combat-off-fail)   src=examples/modules/combat-off.yaml ;;
         patrol-attack|patrol-death) src=examples/modules/patrol.yaml ;;
         combat-screen-round) src=examples/fixtures/combat-screen.yaml ;;

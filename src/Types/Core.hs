@@ -1838,6 +1838,9 @@ data GameState = GameState
     , pendingMusic :: Maybe MusicCommand           -- ^ Music command for the frontend (Audio Phase 2, runtime only)
     , diagnostics :: [String]                      -- ^ Engine-level findings for the author (P2-23)
     , lastVeto :: Maybe Bool                       -- ^ Phase 2.2: Nothing = not vetoed, Just consumesTurn = vetoed
+    , chosenTarget :: Maybe String                 -- ^ Phase 2.3: entity id the player picked in a
+                                                   --   disambiguation answer; overrides target
+                                                   --   resolution for the replayed command (runtime only)
     } deriving (Show, Eq)
 
 -- NOTE: `GameState` deliberately has **no** JSON instance — only `SaveState`

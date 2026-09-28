@@ -194,6 +194,7 @@ emptyGameState = GameState
     , pendingMusic = Nothing
     , diagnostics = []
     , lastVeto = Nothing
+    , chosenTarget = Nothing
     }
 
 -- ---------------------------------------------------------------------------

@@ -132,6 +132,7 @@ catalogEntries =
     , ("npc.dead_silent",      "The {npc} is dead and says nothing.")
     , ("npc.cant_do",          "You can't do that to {npc}.")
     , ("disambiguate.prompt",  "Which do you mean: {names}?")
+    , ("disambiguate.option",  "[{n}] {name}")
     -- -- combat --------------------------------------------------------------
     , ("combat.not_engaged",  "You are not in combat.")
     , ("attack.cant_target",  "You can't attack the {target}.")
