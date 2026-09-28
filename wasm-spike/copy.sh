@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# WASM Spike (Plan 1.0): copies the pure engine core from ../src into
-# src-gen/. Frontend.hs and SaveLoad.hs are NOT copied — the spike replaces
-# them with IO stubs in stubs/ (haskeline / directory are not available on
-# wasm32-wasi). This keeps the spike independent of the production tree.
+# WASM Spike (Plan 1.0) — OBSOLETE first attempt, kept as a documented fallback.
+# It copies a subset of the core modules from ../src into src-gen/ for the
+# stub-based variant. The current spike does NOT use this: spike.cabal compiles
+# the unmodified production library straight from ../src, and the wasm32-wasi
+# GHC distribution ships haskeline, directory, filepath and process (WASI-patched),
+# so no stub separation is needed. Kept for reference only.
 set -euo pipefail
 cd "$(dirname "$0")"
 

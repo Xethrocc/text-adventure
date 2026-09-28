@@ -22,7 +22,7 @@ nativ (GHC 9.6.7) gebauten Referenzlauf. Eine Stub- oder IO-Trennung ist für de
 | `spike.cabal` | Library (_HS-Quelle: `../src`, also der echte Code) + `spike-main` |
 | `Spike.hs` | Fahrprogramm: Sample-Spiel (`initSampleGame`) + kompiliertes `dark-feelable`-Adventure über `applyLoopCommand` |
 | `copy.sh`, `stubs/`, `src-gen/` | **Erster Versuch** (Fallback dokumentiert): Kopie der Kern-Module + IO-Stubs für `Frontend`/`SaveLoad`/`World` — funktionierte, ist aber obsolet, seit die echte Library baut |
-| `run.sh` | Fahrer: copy → build → wasmtime mit `--dir .` |
+| `run.sh` | Fahrer: build (Library aus `../src`) → wasmtime mit `--dir .` |
 | `data/` | `world.json`/`save.json` (via `worldbuilder compile examples/fixtures/dark-feelable.yaml -o wasm-spike/data`), nicht eingecheckt |
 
 ## Durchgeführte Versuche und Messwerte
@@ -74,7 +74,7 @@ nativ (GHC 9.6.7) gebauten Referenzlauf. Eine Stub- oder IO-Trennung ist für de
 | 2 | **Save/Load über WASI-Preopens** (`--dir .`) funktioniert nur für Dateisystem-Runtimes; **Browser hat kein WASI-FS** | mittel | Save/Load muss in 5.1 über JS-Imports (`JSFFI`) oder das Server-Protokoll laufen — betrifft `SaveLoad`/`World`-IO, nicht den Kern |
 | 3 | **`process`-Aufrufe in `Audio.hs`** (ffplay/ffmpeg) existieren im Browser nicht | mittel | Audio geht über Web Audio (Phase 5.2, ohnehin geplant); `Audio.hs` einfach nicht in den WASM-Build linken |
 | 4 | **GHC-WASM ist 9.14-Flavour** (Produktion: 9.6.7) — keine Sprach-Importe, aber zwei GHC-Versionen pflegen | niedrig | CI könnte optional einen wasm-Build als Smoke-Test aufnehmen |
-| 5 | **WASM-Modulgröße 6,0 MB** (unkomprimiert, -O1, Debug-Info) | niedrig | Für den Web-Export: `wasm-opt`/gzip/br und ggf. Splitting; keine Struktur-Blocker |
+| 5 | **WASM-Modulgröße 5.9 MB** (unkomprimiert, -O1, Debug-Info) | niedrig | Für den Web-Export: `wasm-opt`/gzip/br und ggf. Splitting; keine Struktur-Blocker |
 | 6 | Node 26 markiert `node:wasi` als experimentell; wasmtime/Chrome/Firefox laufen stabil | niedrig | Für die WebUI (Haskell-Server, Phase 3) irrelevant; für 5.1 Browser-Target Standard-WASM |
 
 ## Aufwandsschätzung für 5.1 (Plan fordert „Aufwand für 5.1“)
@@ -94,3 +94,22 @@ nativ (GHC 9.6.7) gebauten Referenzlauf. Eine Stub- oder IO-Trennung ist für de
   ist eine spätere, optionale Distribution-Form desselben Protokolls.
 - Für **1.3** (purer Session-Automat) gilt der Befund als Bestätigung, nicht als
   neue Arbeit: Der Kern ist schon rein; es fehlt nur die Loop-IO als „Wünsche“.
+
+## Reproduktion
+
+```bash
+# 1. Toolchain in den PATH holen (ghc-wasm-meta liefert die Env-Datei;
+#    ~/.ghc-wasm/bin existiert nicht).
+. ~/.ghc-wasm/env
+
+# 2. Eingabedateien für den Fahrer erzeugen (nicht eingecheckt).
+cabal run worldbuilder -- compile examples/fixtures/dark-feelable.yaml -o wasm-spike/data
+
+# 3. Bauen und unter wasmtime ausführen (~3 min beim ersten Mal, inkl. aeson).
+wasm-spike/run.sh
+```
+
+`run.sh` sourct `~/.ghc-wasm/env` selbst und bricht mit klarer Meldung ab, wenn
+Toolchain oder `data/` fehlen. Die Ausgabe muss die vier Marker des E2E-Fixtures
+`dark-feelable` zeigen: Dunkelheitsmeldung, `take relic` verweigert, `take torch`
+gelingt, Hebel erhellt den Raum.
