@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Disambiguation: EvDisambiguate, numerierte Rückfrage, Antwort ohne Zugverbrauch (Phase 2.3)
+
+- **Event `EvDisambiguate [String]`** (`src/Types/Output.hs`, `docs/protocol-v1.md`, `test/golden/protocol/server_events.json`):
+  - Neuer Konstruktor in `OutputEvent` mit den Kandidaten-IDs in Reihenfolge der Rückfrage; das Event ist textfrei (`evTextOf` = `""`), die CLI-Ausgabe bleibt damit byte-identisch.
+  - Protokoll-Typ `"disambiguate"` mit Feld `candidates`; Event-Katalog der Spezifikation auf 13 Events erweitert, Golden-Datei um den Event ergänzt (restliche Bytes unverändert).
+- **Numerierte Rückfrage** (`src/Parser.hs`, `src/Messages.hs`):
+  - `interactAmbiguous` liefert jetzt `EvDisambiguate` plus die Rückfrage „Which do you mean: [1] …, [2] …?“ — der bestehende Katalog-Key `disambiguate.prompt` bekommt die numerierte Liste, der neue Key `disambiguate.option` (`[{n}] {name}`) hält die Nummerierung im Katalog (kein hartkodierter Spielertext).
+- **Antwort per Zahl oder unterscheidendem Wort** (`src/GameLoop.hs`, `src/Parser.hs`, `src/Types/Core.hs`):
+  - Neuer Laufzeitzustand `LoopState.lsPendingDisambiguation :: Maybe PendingDisambiguation` (Kandidaten-IDs + auslösendes Kommando); `LoopState` wird nicht serialisiert, Saves und Welten bleiben unberührt.
+  - `resolveDisambiguationAnswer` nimmt eine 1-basierte Zahl (der Parser macht aus `1` ein `ChooseCmd`) oder ein Wort, das genau einen Kandidaten beschreibt (ID, Anzeigename oder Keywords); sonst gilt die Eingabe nicht als Antwort.
+  - `GameState.chosenTarget :: Maybe String` (reiner Laufzeitzustand wie `lastVeto`) lässt die Wiederholung exakt auf der gewählten Entity-ID auflösen — nötig, weil die ID eines Kandidaten zugleich Keyword eines anderen sein kann; `resolveTarget` gewährt ihr Vorrang und der Wert wird nach dem Wiederholen wieder gelöscht.
+  - Nicht als Antwort interpretierbare Eingaben laufen als normales Kommando und schließen die Rückfrage.
+- **Kein Zugverbrauch** (`src/GameLoop.hs`): die Antwort läuft über `runCommandNoTurn` — kein `turnCount`-Increment, kein Condition-Tick, kein `on: turn` (`fireCommandTriggersSkipping` schließt den Turn-Event aus). Die mehrdeutige Eingabe selbst kostet wie bisher ihren normalen Zug.
+- **E2E-Fixtures**:
+  - `examples/fixtures/disambiguation.yaml` mit zwei mehrdeutigen Gruppen (zwei Edelsteine, zwei Schlüssel) und einem Zähler-Report.
+  - `ci/e2e/disambiguation.{in,expect}` (Stufe 4): Antwort per Zahl und per unterscheidendem Wort; der Marker `ZUGZAEHLER-4` belegt, dass die Antworten die Uhr nicht weiterstellen.
+  - `ci/e2e/disambiguation-fallback.{in,expect}` (Stufe 5): eine nicht unterscheidende Eingabe läuft als normales Kommando und schließt die Rückfrage.
+- **Tests & Qualität**:
+  - 5 neue Unit-Tests in `test/Tests.hs` (**390 Engine-Tests** gemessen, vorher 385).
+  - **46 Loop-Einträge** in ci.sh-Stufe 4/5 (gemessen, vorher 44) + 1 Worldgen-Eingabe; `scripts/ci.sh` grün („All checks passed.“).
+  - Byte-Identität: alle **45** beiden Revisionen gemeinsamen E2E-Eingaben (44 Playthroughs + Worldgen) liefern identische `world.json`, `save.json` und stdout+stderr (Vollvergleich, gleiche absolute Pfade).
+  - Abwärtskompatibilität: mit dem Vorher-Stand kompilierte Welt und Save laden mit dem neuen Stand ohne Versionswarnung, `worldChecksum` stabil (`2442544942641501920`).
+  - Message-Katalog **183 Keys** (vorher 182, neuer Key `disambiguate.option`); `scripts/check-msg-catalog.sh` grün.
+  - 0 Compiler-Warnungen (`cabal clean && cabal build all --enable-tests`).
+
 ### Veto Stufe 1 (D3): OnBefore, Block, cmd.target und Guarded Exit (Phase 2.2)
 
 - **Event `OnBefore verb` und `Block`-Effekt** (`src/Types/Core.hs`, `src/Effects.hs`, `src/Parser.hs`, `src/GameLoop.hs`):
