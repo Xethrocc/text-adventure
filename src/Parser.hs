@@ -463,7 +463,7 @@ extractCommandArgs cmd = case cmd of
 -- ---------------------------------------------------------------------------
 
 -- | Execute a command and return updated game state and message
-executeCommandEv :: Command -> GameState -> (GameState, [OutputEvent])
+executeCommandEv :: Command -> GameState -> CommandResultEv
 
 executeCommandEv (Go dir) state
     | canMove dir state = case getExitInDirection dir state of

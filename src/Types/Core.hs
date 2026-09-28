@@ -16,6 +16,7 @@ module Types.Core
     , CardID
     , ClipID
       -- * Command results
+    , CommandResultEv
     , CommandResult
       -- * Variables
     , VariableType (..)

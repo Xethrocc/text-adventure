@@ -22,15 +22,25 @@
   (182 Zeilen, überlange Templates gekürzt) und hält die Kopfzahl synchron;
   Belegzahlen auf gemessen korrigiert (42 E2E-Eingaben statt 39, 363 statt 359).
 - README: Worldbuilder-Testzahl 166 → **169** (gemessen).
-- **Build wieder warnungsfrei:** Phase 1.1/1.2 hinterließ **17 Warnungen** —
+- **Build wieder warnungsfrei:** Phase 1.1/1.2 hinterließ **18 Warnungen** (17 davon in der Linux-Sicht) —
   14 im Engine-Build (12 tote Import-Einträge bzw. `Types.Output`-Importe doppelt
   neben der `Types`-Fassade, dazu zwei durch den Umbau verwaiste Bindungen
   `Parser.withAscii` und `GameLoop.combineMessages`) und 3 im Test-Build (zwei
   redundante Importe, ein ungenutztes `ls1`). Sie blieben unentdeckt, weil der
   letzte `ci.sh`-Lauf des Batches auf dem Doku-Commit saß: `cabal` kompilierte
-  nichts neu, also meldete der Warnungs-Gate nichts. Erst ein erzwungener
-  Neuaufbau (`find . -name '*.hs' -exec touch {} +` vor dem Build) zeigt sie —
-  der Gate greift eben nur, wenn wirklich kompiliert wird.
+  nichts neu, also meldete der Warnungs-Gate nichts. **`touch` und
+  `-fforce-recomp` erzwingen keinen Neubau** — cabal entscheidet über Inhalts-
+  Hashes der Dateien; verlässlich ist nur `cabal clean` vor dem Build (oder eine
+  echte Inhaltsänderung).
+- **Nachtrag (ein Lauf später):** der erste Push war trotzdem rot — auf Windows
+  meldete `src/Types/Core.hs:196` den ungenutzten Typ `CommandResultEv`
+  (`-Wunused-top-binds`). Er stand nicht in der Exportliste von `Types.Core` und
+  wurde nirgends verwendet, nur in Kommentaren erwähnt; auf Linux blieb er
+  unentdeckt, weil das Modul nie neu kompiliert wurde, während der
+  Windows-Runner kalt baut. Behoben, indem der Alias seine dokumentierte Rolle
+  bekommt: `CommandResultEv` ist jetzt exportiert und
+  `executeCommandEv :: Command -> GameState -> CommandResultEv`. Danach
+  `cabal clean` + voller Build: 0 Warnungen auf beiden Plattformen.
 - Keine Verhaltensänderung: 363 Engine-Tests, 169 Worldbuilder, 20 TUI, CI grün.
 
 ### Strukturierte Ausgabe: OutputEvents + Styling-Modell (Phase 1.2)
