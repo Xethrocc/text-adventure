@@ -23,7 +23,7 @@
   - Bildet ein Entschärfungsszenario ab: versteckte Bombe (`hidden: true`, 4 Züge), Entschärfer prüft `has_condition: bomb` vor `clear_condition: bomb`, und Warnregel triggert auf `condition_turns <= 2` erst nach Scharfschaltung.
   - In `scripts/ci.sh` (Stufe 4 Playthroughs) registriert (`ci/e2e/bomb.in`, `ci/e2e/bomb.expect`).
 - **Tests & Qualität**:
-  - 4 neue Unit-Tests in `test/Tests.hs` (**382 Tests** gesamt, vorher 378).
+  - 4 neue Unit-Tests in `test/Tests.hs` (**380 Tests** gesamt, vorher 376).
   - Vorher-Stand-Save und -Welt verifiziert: Save lädt ohne Checksum-Warnung, World-Checksumme identisch.
   - `scripts/ci.sh` grün (alle Stufen PASS, 42 bestehende E2E-Läufe byte-identisch).
   - 0 Compiler-Warnungen (`cabal clean && ./scripts/ci.sh`).
