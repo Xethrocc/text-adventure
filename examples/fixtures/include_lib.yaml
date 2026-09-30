@@ -1,0 +1,18 @@
+# 5.3: library file — no name/start_room here (reserved for the main file).
+rooms:
+  - id: kammer
+    name: Kammer
+    desc: Die Kammer der Bibliothek.
+
+items:
+  - id: amulett
+    name: Amulett
+    keys: [amulett]
+    desc: Ein Amulett aus der Bibliothek.
+    location: kammer
+
+rules:
+  - id: nimm_amulett
+    on: "take amulett"
+    effects:
+      - msg: "Das Amulett warmt in deiner Hand."

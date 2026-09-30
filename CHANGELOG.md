@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Bibliotheken: `include:` für wiederverwendbare Sektionen (5.3)
+
+- **`include: [lib/a.yaml, lib/b.yaml]`** (transitiv erlaubt): ein Abenteuer kann
+  Bibliotheksdateien einbinden (Prozeduren, Verben, Regeln, Inhalte — „Pakete"), Pfade
+  relativ zur jeweiligen Datei. JSON und YAML wie überall.
+- **Merge-Vertrag (fest, weil YAML-Objekte keine Reihenfolge haben und die
+  Trigger-Reihenfolge semantisch wirksam ist):** eigene Sektionen **vor** den Includes
+  (die Hauptdatei hat Vorrang — ihr erster `block:` stoppt die Bibliothek); Includes in
+  Listenreihenfolge, Tiefensuche (eine Datei vor ihren eigenen Includes).
+- **Zyklus = harter Fehler** (mit Kette); eine über zwei Wege erreichbare Datei (Diamond)
+  wird **einmal** geladen, an der Position ihres ersten Vorkommens.
+- **Single-Value-Felder sind der Hauptdatei vorbehalten** (`name`, `start_room`,
+  `player`, `combat`, `game`, `journal`, `progression`, `interactions`, `deck`,
+  `title_art`, …) — eine Bibliothek, die eines setzt, ist ein harter Fehler mit Pfad.
+- **Doppelte IDs über den Merge hinweg sind ein harter Fehler**, der **beide Dateien**
+  nennt (alle ID-tragenden Sektionen: rooms, items, npcs, quests, vehicles, verbs,
+  variables, rules, cards, sandbox_zones, procedures, chapters, facts, devices, clips,
+  abilities, encounter_tables, factions, pursuit, initial_flags/variables, end_art;
+  `tests:`-Namen sind keine referenzierbaren IDs und `combine:` hat keine ID).
+- **Byte-Identität:** derselbe Inhalt kompiliert zur identischen Welt, egal ob monolithisch
+  oder in Bibliotheken aufgeteilt (Unit-Test). Ohne `include:` bleibt alles beim Alten
+  (Fast-Path).
+- **Tests**: 7 Worldbuilder-Tests (**197**; Merge, Forbidden, Duplikate, transitiv,
+  Zyklus, Diamond, Byte-Identität) + Fixture `include_demo.yaml`/`include_lib.yaml`
+  (dogfoodet `worldbuilder test` mit Bibliothek) in CI-Stufe 4b.
+
 ### Verfolgung & Pfadsuche: `pursuit:` und die Distanz-Vokabel (Tür IV)
 
 - **Kern `src/Pursuit.hs`**: stateless, reine BFS-Suche über den Laufzeit-Graphen

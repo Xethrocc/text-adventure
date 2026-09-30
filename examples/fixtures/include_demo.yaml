@@ -1,0 +1,20 @@
+# 5.3: the main adventure pulls in a library file. Own sections come first,
+# then the library's (merge contract — see docs/adventure-schema.md).
+name: Include Demo
+start_room: halle
+
+rooms:
+  - id: halle
+    name: Halle
+    desc: Die Halle.
+    exits:
+      north: kammer
+
+include: [include_lib.yaml]
+
+tests:
+  - name: "bibliothek und merge"
+    input: [go north, look, take amulett]
+    expect:
+      - "Die Kammer der Bibliothek."
+      - "Das Amulett warmt in deiner Hand."

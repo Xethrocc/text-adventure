@@ -12,8 +12,9 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import System.Exit (exitFailure)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
+import Worldbuilder.ParseFile (parseAdventureFile)
 import System.FilePath ((</>))
-import System.IO (hSetEncoding, stdout, utf8)
+import System.IO (hSetEncoding, stdout, utf8, openTempFile, hClose)
 import Control.Exception (try, SomeException)
 import Worldbuilder.Types
 import Worldbuilder.Locate (lineForPath)
@@ -197,6 +198,7 @@ minAdventure room = Adventure
     , advJournal = Nothing
     , advChapters = []
     , advPursuit = []
+    , advInclude = []
     , advFacts = []
     , advCombines = []
     , advDevices = []
@@ -762,6 +764,181 @@ testProgressionChecks = do
             Left errs -> expectTrue ("warn-only case must compile, got: " ++ issuesText errs) False
 
     pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- ---------------------------------------------------------------------------
+-- 5.3: include: libraries
+-- ---------------------------------------------------------------------------
+
+-- | Throwaway directory for include: tests (real files, real parse paths).
+withIncludeDir :: (FilePath -> IO Bool) -> IO Bool
+withIncludeDir act = do
+    tmp <- getTemporaryDirectory
+    (probe, h) <- openTempFile tmp "ta-include"
+    hClose h
+    removeFile probe
+    createDirectoryIfMissing True probe
+    ok <- act probe
+    removeDirectoryRecursive probe
+    pure ok
+
+-- | Merge contract: the main file's own sections come first, then includes
+--   in list order; resolved `include:` lists end up empty.
+testIncludeMerge :: IO Bool
+testIncludeMerge = withIncludeDir $ \dir -> do
+    writeFile (dir </> "main.yaml") $ unlines
+        [ "start_room: halle"
+        , "rooms:"
+        , "  - id: halle"
+        , "    name: Halle"
+        , "    desc: Die Halle."
+        , "include: [lib.yaml]"
+        , "rules:"
+        , "  - id: eigene"
+        , "    on: \"turn\""
+        , "    effects: [ {msg: \"eigene\"} ]"
+        ]
+    writeFile (dir </> "lib.yaml") $ unlines
+        [ "rooms:"
+        , "  - id: kammer"
+        , "    name: Kammer"
+        , "    desc: Die Kammer."
+        , "rules:"
+        , "  - id: libtrigger"
+        , "    on: \"turn\""
+        , "    effects: [ {msg: \"lib\"} ]"
+        ]
+    r <- parseAdventureFile (dir </> "main.yaml")
+    case r of
+        Left err -> expectTrue ("include merge parses, got: " ++ err) False
+        Right adv -> do
+            a <- expectEqual ["halle", "kammer"] (map arId (advRooms adv))
+            b <- expectEqual ["eigene", "libtrigger"] (map atId (advTriggers adv))
+            c <- expectEqual ([] :: [String]) (advInclude adv)
+            pure (a && b && c)
+
+-- | Single-value fields are reserved for the main adventure file.
+testIncludeForbidden :: IO Bool
+testIncludeForbidden = withIncludeDir $ \dir -> do
+    writeFile (dir </> "main.yaml") $ unlines
+        [ "start_room: halle"
+        , "rooms: [ {id: halle, name: H, desc: D} ]"
+        , "include: [lib.yaml]"
+        ]
+    writeFile (dir </> "lib.yaml") "name: Bibliothek\n"
+    r <- parseAdventureFile (dir </> "main.yaml")
+    case r of
+        Left err -> expectTrue "forbidden key is named"
+            ("'name' is reserved" `isInfixOf` err)
+        Right _ -> expectTrue "forbidden key must fail" False
+
+-- | Duplicate ids across merged sources fail naming both files.
+testIncludeDuplicates :: IO Bool
+testIncludeDuplicates = withIncludeDir $ \dir -> do
+    writeFile (dir </> "main.yaml") $ unlines
+        [ "start_room: halle"
+        , "rooms: [ {id: halle, name: H, desc: D} ]"
+        , "include: [lib.yaml]"
+        ]
+    writeFile (dir </> "lib.yaml") "rooms: [ {id: halle, name: H2, desc: D} ]\n"
+    r <- parseAdventureFile (dir </> "main.yaml")
+    case r of
+        Left err -> do
+            a <- expectTrue "duplicate id is named" ("'halle' defined in" `isInfixOf` err)
+            b <- expectTrue "both files are named"
+                    ("main.yaml" `isInfixOf` err && "lib.yaml" `isInfixOf` err)
+            pure (a && b)
+        Right _ -> expectTrue "duplicate id must fail" False
+
+-- | Transitive includes merge depth-first: own sections before own includes.
+testIncludeTransitive :: IO Bool
+testIncludeTransitive = withIncludeDir $ \dir -> do
+    writeFile (dir </> "main.yaml") $ unlines
+        [ "start_room: r1"
+        , "rooms: [ {id: r1, name: R1, desc: D} ]"
+        , "include: [b.yaml]"
+        ]
+    writeFile (dir </> "b.yaml") $ unlines
+        [ "rooms: [ {id: r2, name: R2, desc: D} ]"
+        , "include: [c.yaml]"
+        ]
+    writeFile (dir </> "c.yaml") "rooms: [ {id: r3, name: R3, desc: D} ]\n"
+    r <- parseAdventureFile (dir </> "main.yaml")
+    case r of
+        Left err -> expectTrue ("transitive include parses, got: " ++ err) False
+        Right adv -> expectEqual ["r1", "r2", "r3"] (map arId (advRooms adv))
+
+-- | Include cycles are a hard error naming the chain.
+testIncludeCycle :: IO Bool
+testIncludeCycle = withIncludeDir $ \dir -> do
+    writeFile (dir </> "main.yaml") $ unlines
+        [ "start_room: r1"
+        , "rooms: [ {id: r1, name: R1, desc: D} ]"
+        , "include: [b.yaml]"
+        ]
+    writeFile (dir </> "b.yaml") "include: [main.yaml]\n"
+    r <- parseAdventureFile (dir </> "main.yaml")
+    case r of
+        Left err -> expectTrue "cycle is named" ("include cycle" `isInfixOf` err)
+        Right _ -> expectTrue "cycle must fail" False
+
+-- | A diamond (same library via two paths) loads once, at its first position.
+testIncludeDiamond :: IO Bool
+testIncludeDiamond = withIncludeDir $ \dir -> do
+    writeFile (dir </> "main.yaml") $ unlines
+        [ "start_room: r1"
+        , "rooms: [ {id: r1, name: R1, desc: D} ]"
+        , "include: [b.yaml, c.yaml]"
+        ]
+    writeFile (dir </> "b.yaml") $ unlines
+        [ "rooms: [ {id: r2, name: R2, desc: D} ]"
+        , "include: [d.yaml]"
+        ]
+    writeFile (dir </> "c.yaml") $ unlines
+        [ "rooms: [ {id: r3, name: R3, desc: D} ]"
+        , "include: [d.yaml]"
+        ]
+    writeFile (dir </> "d.yaml") "rooms: [ {id: rd, name: RD, desc: D} ]\n"
+    r <- parseAdventureFile (dir </> "main.yaml")
+    case r of
+        Left err -> expectTrue ("diamond parses, got: " ++ err) False
+        Right adv -> expectEqual ["r1", "r2", "rd", "r3"] (map arId (advRooms adv))
+
+-- | Byte-identical compilation: the same content compiles to the identical
+--   world whether it lives in one file or is split into libraries.
+testIncludeIdenticalWorld :: IO Bool
+testIncludeIdenticalWorld = withIncludeDir $ \dir -> do
+    writeFile (dir </> "mono.yaml") $ unlines
+        [ "start_room: r1"
+        , "rooms:"
+        , "  - {id: r1, name: R1, desc: D}"
+        , "  - {id: r2, name: R2, desc: D}"
+        , "rules:"
+        , "  - id: t1"
+        , "    on: \"turn\""
+        , "    effects: [ {msg: \"x\"} ]"
+        ]
+    writeFile (dir </> "main.yaml") $ unlines
+        [ "start_room: r1"
+        , "rooms:"
+        , "  - {id: r1, name: R1, desc: D}"
+        , "include: [lib.yaml]"
+        ]
+    writeFile (dir </> "lib.yaml") $ unlines
+        [ "rooms:"
+        , "  - {id: r2, name: R2, desc: D}"
+        , "rules:"
+        , "  - id: t1"
+        , "    on: \"turn\""
+        , "    effects: [ {msg: \"x\"} ]"
+        ]
+    m <- parseAdventureFile (dir </> "mono.yaml")
+    t <- parseAdventureFile (dir </> "main.yaml")
+    case (m, t) of
+        (Left err, _) -> expectTrue ("mono parses, got: " ++ err) False
+        (_, Left err) -> expectTrue ("split parses, got: " ++ err) False
+        (Right mono, Right split) ->
+            expectEqual (fmap crWorld (compileAdventure mono))
+                        (fmap crWorld (compileAdventure split))
 
 -- | Rogue Phase 1: the authored `game:` block compiles to the engine
 --   GamePolicy. Absent block keeps the default; savezone rooms are validated
@@ -3317,6 +3494,14 @@ tests =
     -- Pursuit (Tür IV)
     , ("pursuit: step_toward/step_away_from sugar compiles", testPursuitSugar)
     , ("pursuit: section emits sorted on:turn triggers; checks", testPursuitSection)
+    -- 5.3: include:
+    , ("include: own sections first, then includes (5.3)", testIncludeMerge)
+    , ("include: single-value fields are reserved (5.3)", testIncludeForbidden)
+    , ("include: duplicate ids name both files (5.3)", testIncludeDuplicates)
+    , ("include: transitive, depth-first order (5.3)", testIncludeTransitive)
+    , ("include: cycle is a hard error (5.3)", testIncludeCycle)
+    , ("include: diamond loads once at first position (5.3)", testIncludeDiamond)
+    , ("include: split sources compile byte-identical (5.3)", testIncludeIdenticalWorld)
     -- W4: devices (Hebel / Halterung)
     , ("devices: compile in order; empty deviceDefs omitted", testDevicesCompile)
     , ("devices: static checks (Duplicate, Location, Item, FlipCount, Tag, NoEffects)", testDeviceChecks)

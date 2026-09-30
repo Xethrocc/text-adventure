@@ -2099,6 +2099,48 @@ W4 ersetzt bewusst aufwändige Licht-Physik/Emergenz durch **explizite Zustände
 - Bei `on_remove` schaltet die Halterung das Flag `krypta_beleuchtet` auf `"false"`.
 - Die Dunkelheitsprüfung des Spiels (`isDark`) wertet das `light_flag` des Raumes aus — ohne Emergenz, rein deterministisch und transparent für Autoren und Spieler.
 
+## Bibliotheken: `include:` (5.3)
+
+Ein Abenteuer kann **Bibliotheksdateien** einbinden (Prozeduren, Verben, Regeln, Inhalte —
+„Pakete"). Damit wird ein umfangreiches Spiel wartbar: wiederverwendbare Sektionen liegen
+in eigenen Dateien statt als Kopie in jeder Welt.
+
+```yaml
+# hauptspiel.yaml
+name: Mein Spiel
+start_room: halle
+rooms: [ {id: halle, name: Halle, desc: …} ]
+include: [lib/basis.yaml, lib/kampf.yaml]
+
+# lib/basis.yaml — eine Bibliothek
+procedures:
+  - id: warten
+    effects: [ … ]
+rules:
+  - id: basis_tick
+    on: "turn"
+    effects: [ … ]
+```
+
+**Merge-Vertrag (fest, weil YAML-Objekte keine Reihenfolge haben und Trigger-Reihenfolge
+semantisch wirksam ist):**
+
+1. **Eigene Sektionen zuerst, dann Includes** — die Hauptdatei hat Vorrang (ihr erster
+   `block:` stoppt die Bibliothek). Includes mergen in `include:`-Listenreihenfolge.
+2. **Transitiv**: Bibliotheken dürfen selbst `include:` schreiben (Tiefensuche; eine
+   Datei kommt vor ihren eigenen Includes). Ein **Kreisbezug ist ein harter Fehler**;
+   eine Datei, die über zwei Wege erreichbar ist (Diamond), wird **einmal** geladen —
+   an der Position ihres ersten Vorkommens.
+3. **Single-Value-Felder sind der Hauptdatei vorbehalten** (`name`, `start_room`,
+   `player`, `combat`, `game`, `journal`, `progression`, `interactions`, …). Eine
+   Bibliothek, die eines setzt, ist ein **harter Fehler** (mit Pfad).
+4. **Doppelte IDs über Dateigrenzen sind ein harter Fehler**, der beide Dateien nennt
+   (`rooms: 'halle' defined in a.yaml and b.yaml`). Prozeduren, Räume, Items, NPCs,
+   Regeln, Facts, Kapitel, Vorrichtungen, Karten, Verben, Variablen … — alle
+   ID-tragenden Sektionen; `tests:`-Namen sind keine referenzierbaren IDs.
+5. **Byte-Identität**: derselbe Inhalt kompiliert zur identischen Welt, egal ob er in
+   einer Datei liegt oder in Bibliotheken aufgeteilt ist (getestet).
+
 ## Verfolgung: `pursuit:` und die Distanz-Vokabel (Tür IV)
 
 Verfolgung/Pfadsuche als **Kern-Abfrage über den Laufzeit-Graphen**: der Autor schreibt nur

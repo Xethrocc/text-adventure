@@ -64,6 +64,7 @@ data Adventure = Adventure
     , advDevices          :: [ADeviceDef]                -- ^ interactive devices/fixtures (W4)
     , advProgression      :: Maybe AProgressionDef       -- ^ player progression (W2)
     , advTests            :: [AContentTest]              -- ^ authored content tests (B1)
+    , advInclude          :: [String]                    -- ^ include: library files (5.3, merged first-own-then-includes)
     , advRawValue         :: Maybe Value                 -- ^ raw parsed JSON/YAML value for schema validation
     } deriving (Show, Eq, Generic)
 
@@ -106,7 +107,7 @@ instance FromJSON AClip where
 instance FromJSON Adventure where
     parseJSON v@(Object o) = Adventure
         <$> o .:? "name"
-        <*> o .:  "start_room"
+        <*> o .:?  "start_room" .!= ""
         <*> o .:? "rooms"           .!= []
         <*> o .:? "items"           .!= []
         <*> o .:? "npcs"            .!= []
@@ -145,6 +146,7 @@ instance FromJSON Adventure where
         <*> parseDevicesField o
         <*> o .:? "progression"
         <*> o .:? "tests" .!= []
+        <*> o .:? "include" .!= []
         <*> pure (Just v)
     parseJSON _ = fail "Expected Adventure to be an object"
 
@@ -1608,7 +1610,7 @@ knownKeys EntAdventure = Set.fromList
     , "initial_variables", "initial_flags", "active_quests", "factions"
     , "encounter_tables", "environment", "stealth", "patrol", "combat"
     , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
-    , "handLimit", "hand_limit", "sandbox_zones", "procedures", "tests"
+    , "handLimit", "hand_limit", "sandbox_zones", "procedures", "tests", "include"
     , "facts", "combine", "combine_verb", "journal", "chapters", "devices", "pursuit"
     , "progression"
     ]
