@@ -303,6 +303,7 @@ initSampleGame = GameState
                 , npcDefenseBase = 0
                 , npcVerbMap = Map.empty
                 , npcAscii = emptyAscii
+                , npcTopics = Map.empty
                 })
             , ("goblin", NPCDef
                 { npcId = "goblin"
@@ -315,6 +316,7 @@ initSampleGame = GameState
                 , npcDefenseBase = 2
                 , npcVerbMap = Map.empty
                 , npcAscii = emptyAscii
+                , npcTopics = Map.empty
                 })
             ]
         , entityInteractions = Map.fromList

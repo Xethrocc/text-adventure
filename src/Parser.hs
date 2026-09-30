@@ -70,6 +70,8 @@ data Command
     | Interact Verb String
     | InteractWith Verb String String
     | ChooseCmd Int              -- ^ select a dialogue option (Phase 4.6)
+    | AskCmd String String       -- ^ 4.5: `ask X about Y` (topic table)
+    | TellCmd String String      -- ^ 4.5: `tell X about Y` (topic table)
     | TakeAll
     | DropAll
     | CompoundCommand [Command]
@@ -253,6 +255,11 @@ parseSimpleCommandWith defs tokens input = case tokens of
     -- can never mean "take item <n>" — the keyword list is matched before
     -- `parseVerbWith`. Intended, and pinned by
     -- `testDialoguePickKeywordAlias` in test/Tests.hs.
+    ["ask", who, "about", what]  -> AskCmd who what
+    ["tell", who, "about", what] -> TellCmd who what
+    ["ask", who, "nach", what]   -> AskCmd who what
+    ["frag", who, "nach", what]  -> AskCmd who what
+    ["erzaehl", who, "von", what] -> TellCmd who what
     ["choose", nStr] | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
     ["pick", nStr]   | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
     ["option", nStr] | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
@@ -564,6 +571,8 @@ extractCommandArgs cmd = case cmd of
     WaitCmd               -> ("wait", "", [])
     RefuelCmd s           -> ("refuel", s, words s)
     RepairCmd s           -> ("repair", s, words s)
+    AskCmd who what       -> ("ask", who, [who, what])
+    TellCmd who what      -> ("tell", who, [who, what])
     ChooseCmd n           -> ("choose", show n, [show n])
     PlayCardCmd idx mT    -> ("play", show idx ++ maybe "" (" " ++) mT, show idx : maybe [] words mT)
     HandCmd               -> ("hand", "", [])
@@ -828,6 +837,9 @@ dispatchCommandEv HandCmd state = showHand state
 dispatchCommandEv DeckCmd state = showDeck state
 dispatchCommandEv DiscardCmd state = showDiscard state
 dispatchCommandEv EndTurnCmd state = endTurn state
+
+dispatchCommandEv (AskCmd who what) state = talkTopic who what state
+dispatchCommandEv (TellCmd who what) state = talkTopic who what state
 
 dispatchCommandEv (ChooseCmd idx) state =
     case activeDialogue (save state) of
@@ -1838,6 +1850,18 @@ isValidChoice idx state = case activeChoices state of
     Nothing      -> False
 
 -- | Render the current node of a dialogue tree and list its choices
+-- | 4.5: run one topic's effect (the topic table lives on the NPC).
+talkTopic :: String -> String -> GameState -> (GameState, [OutputEvent])
+talkTopic who what state =
+    case [ n | n <- Map.elems (npcDefs (world state))
+             , let w = map toLower who
+             , npcId n == who || w `elem` map (map toLower) (npcKeywords n) ] of
+        (npc : _) ->
+            case Map.lookup (map toLower what) (npcTopics npc) of
+                Just eff -> applyOutcomeEv eff (npcId npc) state
+                Nothing -> (state, evMsg "dialog.no_topic" [("npc", npcName npc), ("topic", what)])
+        [] -> (state, evMsg "dialog.no_npc" [])
+
 renderDialogue :: NPCDef -> DialogueTree -> Maybe NPCState -> GameState -> (GameState, [OutputEvent])
 renderDialogue npc tree maybeNpcState state =
     let nodeId = fromMaybe (dtEntry tree) (maybeNpcState >>= npcDialogueNode)

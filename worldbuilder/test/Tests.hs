@@ -2407,7 +2407,7 @@ testStealthCompiles = do
                     [ AOSetFlag "alarmed" "true", AOMessage "The guard heard you!" ]
         adv = (minAdventure (minRoom "loc_0"))
             { advStealth = Just (AStealth noise [guard])
-            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing ] }
+            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing Map.empty ] }
     case compileAdventure adv of
         Left errs -> do
             putStrLn $ "  compile errors: " ++ show errs
@@ -2629,7 +2629,7 @@ testPatrolFixtureCompiles = do
 -- | The patrolling wolf the patrol tests declare.
 wolfNPC :: String -> ANPC
 wolfNPC loc = ANPC "wolf" "Wolf" (ACondText "Wolf" []) (AAscii (ACondText "" []) [] 0 [] Nothing)
-                    [] loc "alive" Nothing 8 3 Map.empty Map.empty Nothing
+                    [] loc "alive" Nothing 8 3 Map.empty Map.empty Nothing Map.empty
 
 -- | The 7f combat segment: default without a block is CombatClassic; off /
 --   narrative compile to their profiles; tactical and unknown profiles are
@@ -2757,7 +2757,7 @@ testCombatFixturesCompile = do
 partySquire :: Maybe AParty -> ANPC
 partySquire party
     = ANPC "squire" "Knappe" (ACondText "Knappe" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive"
-        (Just 20) 3 1 Map.empty Map.empty party
+        (Just 20) 3 1 Map.empty Map.empty party Map.empty
 
 followVerb :: AVerb
 followVerb = AVerb "follow" ["escort"]
@@ -5572,7 +5572,7 @@ minItemKey iid = AItem
     , aiInContainer = Nothing
     }
 
--- | Minimal usable ANPC for pool entries.
+-- | Minimal usable ANPC for pool entries. Map.empty
 minNpcKey :: String -> ANPC
 minNpcKey nid = ANPC
     { anId = nid
@@ -5587,8 +5587,7 @@ minNpcKey nid = ANPC
     , anDefense = 1
     , anDialogue = Map.empty
     , anVerbMap = Map.empty
-    , anParty = Nothing
-    }
+    , anParty = Nothing, anTopics = Map.empty }
 
 main :: IO ()
 main = do

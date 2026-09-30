@@ -1491,6 +1491,7 @@ data NPCDef = NPCDef
     , npcDefenseBase   :: Int
     , npcVerbMap       :: Map.Map (Verb, String) Effect
     , npcAscii         :: AsciiArt              -- ^ Optional state-dependent, animated ASCII art
+    , npcTopics        :: Map.Map String Effect    -- ^ 4.5: `ask`/`tell` X about <topic>
     } deriving (Show, Eq)
 
 instance ToJSON NPCDef where
@@ -1504,7 +1505,8 @@ instance ToJSON NPCDef where
         , "npcAttackBase"    .= npcAttackBase def
         , "npcDefenseBase"   .= npcDefenseBase def
         , "npcVerbMap"       .= verbStateMapToJSON (npcVerbMap def)
-        ] ++ asciiPair "npcAscii" (npcAscii def)
+        ] ++ (if Map.null (npcTopics def) then [] else ["topics" .= npcTopics def])
+          ++ asciiPair "npcAscii" (npcAscii def)
 
 instance FromJSON NPCDef where
     parseJSON = withObject "NPCDef" $ \o -> NPCDef
@@ -1518,6 +1520,7 @@ instance FromJSON NPCDef where
         <*> o .:  "npcDefenseBase"
         <*> (o .: "npcVerbMap" >>= verbStateMapFromJSON)
         <*> o .:? "npcAscii"         .!= emptyAscii
+        <*> o .:? "topics" .!= Map.empty
 
 -- | Dynamic NPC state
 data NPCState = NPCState

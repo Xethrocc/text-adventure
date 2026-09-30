@@ -573,6 +573,7 @@ data ANPC = ANPC
     , anDialogue    :: Map.Map String ADialogueTree
     , anVerbMap     :: Map.Map String [AActionOutcome]
     , anParty       :: Maybe AParty          -- ^ party / companion block (Phase 7g)
+    , anTopics      :: Map.Map String AActionOutcome  -- ^ 4.5: ask/tell X about <topic>
     } deriving (Show, Eq, Generic)
 
 -- | The `party:` block on an NPC (Phase 7g): the NPC can be recruited,
@@ -613,6 +614,7 @@ instance FromJSON ANPC where
         <*> o .:? "dialogue"  .!= Map.empty
         <*> o .:? "verb_map"  .!= Map.empty
         <*> o .:? "party"
+        <*> o .:? "topics" .!= Map.empty
 
 -- | Dialogue tree: { entry: ..., nodes: { ... } }
 data ADialogueTree = ADialogueTree

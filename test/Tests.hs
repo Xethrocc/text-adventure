@@ -494,7 +494,7 @@ testCombatNarrativeLose = do
 -- | A minimal companion-capable NPC used by the party tests.
 squireDef :: NPCDef
 squireDef = NPCDef "squire" "squire" (plainText "A loyal squire with a chipped blade.")
-    Map.empty ["squire", "knappe"] (Just 20) 3 1 Map.empty emptyAscii
+    Map.empty ["squire", "knappe"] (Just 20) 3 1 Map.empty emptyAscii Map.empty
 
 -- | Sample game plus a `squire`. Joining is just the roster convention:
 --   the follow variable `party.squire` set to 1.
@@ -2085,7 +2085,7 @@ testDefaultSaveStateFieldsInitialised = do
 -- | Second companion used by the P0-2 combat regressions.
 guardDef :: NPCDef
 guardDef = NPCDef "guard" "guard" (plainText "A silent guard.")
-    Map.empty ["guard"] (Just 20) 3 1 Map.empty emptyAscii
+    Map.empty ["guard"] (Just 20) 3 1 Map.empty emptyAscii Map.empty
 
 -- | P0-2 fixture: sample game in the hallway with two companions (guard,
 --   squire) and a rule that announces the goblin's death. `goblinHp` decides
@@ -4302,7 +4302,7 @@ testStandingOutcomeViaDialogue = do
                                 (DialogueNode "intro" "Join us."
                                     [ DialogueChoice "I accept." Nothing Nothing
                                         (ModifyValue (VRVariable "faction.smugglers") 20) ]))))
-                    ["recruiter"] Nothing 0 0 Map.empty emptyAscii)
+                    ["recruiter"] Nothing 0 0 Map.empty emptyAscii Map.empty)
                 (npcDefs (world sample)) }
         st0 = sample { world = w
                      , save = (save sample)
@@ -5055,6 +5055,8 @@ testContainerTakePut = do
 --   the suite builds with `-Werror=incomplete-patterns`, so adding a constructor
 --   fails the build until its verdict is written down here.
 expectedConsumesTurn :: Command -> Bool
+expectedConsumesTurn (AskCmd _ _) = True
+expectedConsumesTurn (TellCmd _ _) = True
 expectedConsumesTurn cmd = case cmd of
     Go _               -> True
     Look               -> False

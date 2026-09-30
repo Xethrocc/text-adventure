@@ -2471,6 +2471,7 @@ compileNPCDefSafe registry n =
             , E.npcName = anName n
             , E.npcDescription = compileCondText (anTexts n)
             , E.npcAscii = compileAscii (anAscii n)
+            , E.npcTopics = Map.map compileAActionOutcome (anTopics n)
             , E.npcDialogueTrees = compileDialogueTrees (anDialogue n)
             , E.npcKeywords = anKeywords n
             , E.npcMaxHealth = anMaxHealth n
