@@ -54,8 +54,8 @@ redirected with `--saves-dir DIR` or the `TA_SAVES_DIR` environment variable
 (the flag wins) — used by tests and CI for hermetic runs.
 
 Whole pipeline — build, all six test suites, validation of 26 shipped
-adventures, 46 scripted playthroughs (33 happy paths + 13 non-victory runs),
-plus the worldgen and run-regeneration checks:
+adventures, 47 scripted playthroughs (34 happy paths + 13 non-victory runs), authored
+content tests (`worldbuilder test`), plus the worldgen and run-regeneration checks:
 
 ```bash
 bash scripts/ci.sh
@@ -167,8 +167,8 @@ no own state file. Their state lives in the existing `VarMap`
 
 ```bash
 cabal build all
-cabal test all --test-show-details=direct    # 390 engine tests, 171 worldbuilder tests, 20 TUI tests, plus the img2ascii/text2ascii tool suites
-bash scripts/ci.sh                           # build + tests + validation + 46 E2E playthroughs
+cabal test all --test-show-details=direct    # 400 engine tests, 178 worldbuilder tests, 20 TUI tests, plus the img2ascii/text2ascii tool suites
+bash scripts/ci.sh                           # build + tests + validation + 47 E2E playthroughs
 cabal run worldbuilder -- check examples/thefog.yaml   # content statistics
 ```
 

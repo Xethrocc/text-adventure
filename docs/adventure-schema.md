@@ -1798,6 +1798,72 @@ rules:
 
 ---
 
+## Content-Tests: `tests:` (B1)
+
+Autoren schreiben eigene Regressionstests als Daten — `worldbuilder test <adventure.yaml>`
+kompiliert das Adventure, spielt jeden Test in einem **frischen Zustand** durch und prüft die
+**geordneten Marker**.
+
+```yaml
+tests:
+  - name: belohnung
+    input: [dank, doppel]          # Eingabefolge (Zeilen wie am Prompt)
+    expect:
+      - "REWARD: 5 gold for the rescue (total 5)."
+      - "DOPPEL: total 10."
+```
+
+**Regeln:**
+
+- **Ein Zustand pro Test:** Tests laufen unabhängig voneinander; der Start-Look gehört
+  zur Ausgabe, Befehle werden mit den Adventure-Verben geparst (Custom-Verben
+  funktionieren).
+- **Geordnete Marker:** `expect` ist eine Teilfolge der gerenderten Ausgabe — die
+  Reihenfolge ist Vertrag. Ein nicht erreichter Marker wird benannt.
+- **Reiner Lauf:** `save`/`load` erzeugen ihre Meldungen, aber keine Dateien; nach Game
+  Over werden keine Befehle mehr gefüttert.
+- **Gate:** `worldbuilder test` bricht mit Exit 1 ab; die CI (Stufe 4b) führt es für
+  Abenteuer mit `tests:`-Sektion aus. Locals läuft dasselbe Kommando.
+
+## Procedures: `procedures:` und `call:` (Phase 2.5)
+
+Benannte, parametrisierte Effekt-Bündel gegen Copy-Paste: der Autor deklariert eine
+Prozedur einmal und ruft sie von überall mit `call:` auf.
+
+```yaml
+procedures:
+  - id: belohnen
+    params: [betrag, grund]
+    effects:
+      - compute_var: { var: gold, expr: "gold + betrag" }
+      - msg: "REWARD: {betrag} gold for {grund} (total {gold})."
+
+rules:
+  - id: rule_dank
+    on: "command dank"
+    effects:
+      - call: { proc: belohnen, args: [5, "the rescue"] }   # oder ohne args: call: belohnen
+```
+
+**Regeln:**
+
+- **Parameter sind literale Argumente** (int/bool/text) — keine berechneten Aufrufe:
+  Aufrufstellen bleiben statisch prüfbar (wie `raise: name`).
+- **Scope:** Parameter und Locals liegen in einem Prozedur-Scope, der die
+  Adventure-Variablen **schattet** (lesend wie schreibend). Ein Schreiben auf einen
+  Parameternamen ändert nur die lokale Kopie und wird beim Verlassen des Aufrufs
+  verworfen; Schreiben auf andere Namen geht in die `variables:`-Map wie gewohnt.
+  `msg`-Templates lesen Parameter direkt (`{betrag}`), Ausdrücke ebenso (`gold + betrag`).
+- **Keine Rekursion:** Zyklen im Call-Graph — auch indirekte über mehrere Prozeduren —
+  sind **Compile-Fehler** (`ProcRecursion`). Verschachtelte, nicht-zyklische Aufrufe sind
+  erlaubt; pro Call entsteht ein neuer Scope.
+- **Weitere Checks:** `UnknownProc` (unbekannter Name), `ProcArity` (falsche
+  Argumentanzahl), `DuplicateProc` (doppelte `id`), `ProcParamReserved` (Parameter in
+  engine-eigenen Namensräumen: `cmd.`, `combat.`, `env.`, `faction.`, `party.`,
+  `patrol.`, `ship.`, `stealth.`).
+- **Veto:** `block` im Prozedurkörper stoppt die restlichen Körpereffekte **und** die
+  restlichen Effekte des Aufrufers — dieselbe Semantik wie in einer `effects:`-Liste.
+
 ## Validierungs-Warnungen (Compiler-Diagnosen)
 
 Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity = SError`) und **nicht-fatalen Warnungen** (`ciSeverity = SWarning`):

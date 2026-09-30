@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Content-Tests als Daten: `tests:`-Sektion und `worldbuilder test` (B1)
+
+- **`tests:`-Sektion** (`worldbuilder/src/Worldbuilder/Types.hs`, `AContentTest`): der Autor
+  schreibt eigene Regressionstests als Daten — `name` (optional, Default `unnamed`),
+  `input: [befehle]` (Eingabefolge, Zeilen wie am Prompt) und `expect: [marker]`
+  (**geordnete** Marker: jeder Marker muss in der gerenderten Ausgabe erscheinen, in
+  deklarierter Reihenfolge — Teilfolgen-Semantik).
+- **Runner `worldbuilder test <adventure.yaml> [name]`** (neues Modul
+  `worldbuilder/src/Worldbuilder/Test.hs`): kompiliert das Adventure, spielt jeden Test in
+  einem **frischen Zustand** durch (Loop-Kern `applyLoopCommandEv`, Start-Look eingeschlossen,
+  Custom-Verben via `parseCommandWith`) und prüft die Marker. Reiner Lauf — `save`/`load`
+  erzeugen ihre Meldungen, aber keine Dateien; nach Game Over werden keine Befehle mehr
+  gefüttert. Optionaler Namensfilter (Argument ohne `-`).
+- **Exit-Code:** ein fehlgeschlagener Test bricht mit Exit 1 ab — CI-tauglich.
+- **CI-Stufe 4b** (`scripts/ci.sh`): `worldbuilder test` für Abenteuer mit `tests:`-Sektion
+  (erweiterte Liste); das `procedures`-Fixture dogfoodet den eigenen Mechanismus.
+- **Tests**: 2 Worldbuilder-Tests (**178** gesamt): Marker-Semantik/-Parsing und Runner-
+  Round-Trip (bestehend + fehlgeschlagen) über eine temporäre Adventure-Datei.
+
+### Procedures: `procedures:`-Block, `call:` und Parameter-Scope (Phase 2.5, D2)
+
+- **`procedures:`-Block** (`worldbuilder/src/Worldbuilder/Types.hs`, `AProcDef`): benannte, parametrisierte Effekt-Bündel (`id`, `params: [..]`, `effects: [..]`), kompiliert nach `ProcDef` in `GameWorld.procDefs`. Eine leere Map wird im `world.json` **weggelassen** (ToJSON-Omission) — Byte-Identität und Checksumme bestehender Welten bleiben unverändert.
+- **Effekt `CallProc`** (`src/Types/Core.hs` + `src/Effects.hs`): führt den Prozedurkörper mit literalen Argumenten aus. Parameter und Locals liegen in einem frischen Scope (`GameState.procScopes`, innermost-first, **runtime-only** — `GameState` hat keine JSON-Instanz, nichts wird gespeichert), der beim Verlassen verworfen wird. Namen ohne Scope-Binding schreiben in die VarMap wie bisher.
+- **Scope-lesende Variablenauflösung** (`src/Game.hs`): `getVariable`, `resolveValueRef (VRVariable …)` und `lookupVarForFormat` (`{template}`) prüfen den Prozedur-Scope zuerst — Parameter und Locals schatten Adventure-Variablen (lesend wie schreibend).
+- **`call:` im YAML**: `call: <name>` (ohne Argumente) oder `call: {proc: <name>, args: [literal, ...]}` — Argumente sind int/bool/text-**Literale** (kein dynamischer Aufruf), damit Aufrufstellen statisch prüfbar bleiben (dieselbe Eigenschaft wie `raise: name`).
+- **Compiler-Checks** (`worldbuilder/src/Worldbuilder/Compile.hs`): `UnknownProc`, `ProcArity`, `DuplicateProc`, `ProcParamReserved` (Parameter dürfen nicht in engine-eigenen Namensräumen liegen: `cmd.`, `combat.`, `env.`, `faction.`, `party.`, `patrol.`, `ship.`, `stealth.`) und **`ProcRecursion`**: Zyklen im Call-Graph (auch indirekt) sind Compile-Fehler — `maxOutcomeDepth` bleibt Laufzeitschutz für verschachtelte Effekte und wird bewusst **nicht** für die Terminierung von Prozeduraufrufen herangezogen.
+- **Veto-Semantik wie `Sequence`**: `block` im Prozedurkörper stoppt die restlichen Körpereffekte **und** die restlichen Effekte des Aufrufers (2.2-Semantik).
+- **Meldungen**: `proc.unknown`, `proc.arity` (Message-Katalog jetzt 185 Keys).
+- **Tests**: 6 Engine-Tests (**400** gesamt) + 5 Worldbuilder-Tests (**176** gesamt); E2E-Fixture `procedures` inkl. verschachteltem Aufruf (`examples/fixtures/procedures.yaml`, `ci/e2e/procedures.in/.expect`, CI-Stufe 4).
+
 ### Text-Erweiterung: Inline-Bedingungen, Ausdrücke via Expr-Parser und Props (Phase 2.4)
 
 - **Inline-Bedingungen `{if <flag/var-cond>|a|b}`** (`src/Messages.hs`):
