@@ -372,6 +372,7 @@ initSampleGame = GameState
         , worldClips = Map.empty
         , cardDefs = Map.empty
         , sandboxZones = Map.empty
+        , procDefs = Map.empty
         }
     , save = SaveState
         { player = Player 100 100 10 5 (Map.singleton "lockpick" 2)
@@ -423,4 +424,5 @@ initSampleGame = GameState
     , diagnostics = []
     , lastVeto = Nothing
     , chosenTarget = Nothing
+    , procScopes = []
     }

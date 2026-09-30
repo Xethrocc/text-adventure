@@ -1376,6 +1376,8 @@ emitAdventure t plan seed =
             , advDeck              = Nothing
             , advHandLimit         = Nothing
             , advSandboxZones      = []
+            , advProcedures        = []
+            , advTests             = []
             , advRawValue          = Nothing
             }
     in (adv, dpWarnings plan ++ popWarns)

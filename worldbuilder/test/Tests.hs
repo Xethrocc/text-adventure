@@ -18,6 +18,7 @@ import Control.Exception (try, SomeException)
 import Worldbuilder.Types
 import Worldbuilder.Locate (lineForPath)
 import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome, allWorldEffects)
+import Worldbuilder.Test (checkMarkers, executeContentTest)
 import Worldbuilder.ParseFile (parseAdventureFile)
 import Worldbuilder.Rng
 import Worldbuilder.Generate
@@ -55,6 +56,7 @@ minWorld = E.GameWorld
     , worldClips = Map.empty
     , cardDefs = Map.empty
     , sandboxZones = Map.empty
+    , procDefs = Map.empty
     }
 
 -- | Helper: a minimal valid SaveState referencing room_0
@@ -185,10 +187,179 @@ minAdventure room = Adventure
     , advDeck = Nothing
     , advHandLimit = Nothing
     , advSandboxZones = []
+    , advProcedures = []
+    , advTests = []
     , advRawValue = Nothing
     }
 
 -- ===== Rogue Phase 1: authored game policy =====
+
+-- ---------------------------------------------------------------------------
+-- Phase 2.5: procedures (D2)
+-- ---------------------------------------------------------------------------
+
+-- | `procedures:` compiles into procDefs; an empty proc map is omitted from
+--   world.json — the byte-stability guarantee for every existing adventure.
+testProceduresCompile :: IO Bool
+testProceduresCompile = do
+    let empty = minAdventure (minRoom "loc_0")
+    r0 <- case compileAdventure empty of
+            Left _ -> expectTrue "default compiles" False
+            Right cr -> do
+                a <- expectTrue "no procs by default" (Map.null (E.procDefs (crWorld cr)))
+                b <- expectTrue "world.json omits empty procDefs"
+                        (not ("procDefs" `isInfixOf` BLC.unpack (Aeson.encode (crWorld cr))))
+                pure (a && b)
+    let adv = empty
+            { advProcedures = [AProcDef "belohnen" ["betrag"] [AOMessage "hi"]] }
+    r1 <- case compileAdventure adv of
+            Left errs -> expectTrue ("procs compile, got: " ++ issuesText errs) False
+            Right cr -> case Map.lookup "belohnen" (E.procDefs (crWorld cr)) of
+                Nothing -> expectTrue "procDefs contains belohnen" False
+                Just pd -> do
+                    a <- expectEqual ["betrag"] (E.procParams pd)
+                    b <- expectTrue "body compiled" (not (null (E.procEffects pd)))
+                    pure (a && b)
+    pure (r0 && r1)
+
+-- | `call:` sites are checked statically — unknown names and arity
+--   mismatches are compile errors; matching calls compile.
+testProcCallSiteChecks :: IO Bool
+testProcCallSiteChecks = do
+    let mk call = (minAdventure (minRoom "loc_0"))
+            { advProcedures =
+                [ AProcDef "f" ["a"] [AOMessage "x"]
+                , AProcDef "caller" [] [call] ] }
+    r1 <- case compileAdventure (mk (AOCallProc "nope" [])) of
+            Left errs -> expectTrue "unknown is UnknownProc"
+                (any (\i -> ciCode i == "UnknownProc") errs)
+            Right _ -> expectTrue "unknown call must fail" False
+    r2 <- case compileAdventure (mk (AOCallProc "f" [E.EVInt 1, E.EVInt 2])) of
+            Left errs -> expectTrue "mismatch is ProcArity"
+                (any (\i -> ciCode i == "ProcArity") errs)
+            Right _ -> expectTrue "arity mismatch must fail" False
+    r3 <- case compileAdventure (mk (AOCallProc "f" [E.EVInt 1])) of
+            Left errs -> expectTrue ("valid call compiles, got: " ++ issuesText errs) False
+            Right _ -> expectTrue "valid call ok" True
+    pure (r1 && r2 && r3)
+
+-- | Recursion is statically forbidden (D2): direct and indirect call cycles
+--   are compile errors — `maxOutcomeDepth` is deliberately not relied upon.
+testProcRecursionForbidden :: IO Bool
+testProcRecursionForbidden = do
+    let direct = (minAdventure (minRoom "loc_0"))
+            { advProcedures = [AProcDef "p" [] [AOCallProc "p" []]] }
+        indirect = (minAdventure (minRoom "loc_0"))
+            { advProcedures =
+                [ AProcDef "p" [] [AOCallProc "q" []]
+                , AProcDef "q" [] [AOCallProc "p" []] ] }
+    r1 <- case compileAdventure direct of
+            Left errs -> expectTrue "direct cycle is ProcRecursion"
+                (any (\i -> ciCode i == "ProcRecursion") errs)
+            Right _ -> expectTrue "direct recursion must fail" False
+    r2 <- case compileAdventure indirect of
+            Left errs -> expectTrue "indirect cycle is ProcRecursion"
+                (any (\i -> ciCode i == "ProcRecursion") errs)
+            Right _ -> expectTrue "indirect recursion must fail" False
+    pure (r1 && r2)
+
+-- | Parameters must not shadow engine-owned variable namespaces; duplicate
+--   procedure ids are rejected.
+testProcParamAndIdChecks :: IO Bool
+testProcParamAndIdChecks = do
+    let reserved = (minAdventure (minRoom "loc_0"))
+            { advProcedures = [AProcDef "p" ["cmd.target"] [AOMessage "x"]] }
+        dup = (minAdventure (minRoom "loc_0"))
+            { advProcedures =
+                [AProcDef "p" [] [AOMessage "x"], AProcDef "p" [] [AOMessage "y"]] }
+    r1 <- case compileAdventure reserved of
+            Left errs -> expectTrue "reserved param is ProcParamReserved"
+                (any (\i -> ciCode i == "ProcParamReserved") errs)
+            Right _ -> expectTrue "reserved param must fail" False
+    r2 <- case compileAdventure dup of
+            Left errs -> expectTrue "duplicate id is DuplicateProc"
+                (any (\i -> ciCode i == "DuplicateProc") errs)
+            Right _ -> expectTrue "duplicate id must fail" False
+    pure (r1 && r2)
+
+-- | `call:` parses from the two YAML shapes: bare name (no args) and
+--   {proc: name, args: [literal, ...]}.
+testCallParsesFromJson :: IO Bool
+testCallParsesFromJson = do
+    r1 <- case Aeson.decode (BLC.pack "{\"call\":\"belohnen\"}") of
+        Just ao -> expectEqual (AOCallProc "belohnen" []) ao
+        Nothing -> expectTrue "bare call parses" False
+    r2 <- case Aeson.decode
+            (BLC.pack "{\"call\":{\"proc\":\"belohnen\",\"args\":[7,\"hi\",true]}}") of
+        Just ao -> expectEqual
+            (AOCallProc "belohnen" [E.EVInt 7, E.EVString "hi", E.EVBool True]) ao
+        Nothing -> expectTrue "call with args parses" False
+    pure (r1 && r2)
+
+-- ---------------------------------------------------------------------------
+-- B1: content tests as data
+-- ---------------------------------------------------------------------------
+
+-- | Ordered marker semantics + YAML parsing of `tests:` entries.
+testContentTestBasics :: IO Bool
+testContentTestBasics = do
+    r1 <- case Aeson.decode (BLC.pack "{\"input\":[\"look\"],\"expect\":[\"x\",\"y\"]}") of
+        Just ct -> expectEqual (AContentTest "unnamed" ["look"] ["x", "y"]) ct
+        Nothing -> expectTrue "test entry parses (name optional)" False
+    r2 <- expectEqual (Nothing :: Maybe String)
+            (checkMarkers "alpha\nbeta\ngamma" ["alpha", "gamma"])
+    r3 <- expectEqual (Just ("gamma" :: String))
+            (checkMarkers "gamma\nbeta\nalpha" ["beta", "gamma"])
+    r4 <- expectEqual (Just ("delta" :: String))
+            (checkMarkers "alpha" ["alpha", "delta"])
+    pure (r1 && r2 && r3 && r4)
+
+-- | Full round trip: YAML file -> parse -> compile -> execute the authored
+--   tests; one passing and one failing case.
+testContentTestRunner :: IO Bool
+testContentTestRunner = do
+    tmpDir <- getTemporaryDirectory
+    let path = tmpDir </> "b1-content-tests.yaml"
+        yaml = unlines
+            [ "name: B1 Fixture"
+            , "start_room: r0"
+            , "verbs:"
+            , "  - name: hallo"
+            , "rooms:"
+            , "  - id: r0"
+            , "    name: Room"
+            , "    desc: A room."
+            , "rules:"
+            , "  - id: greet"
+            , "    on: \"command hallo\""
+            , "    effects:"
+            , "      - msg: \"HALLO-DU\""
+            , "tests:"
+            , "  - name: passt"
+            , "    input: [hallo]"
+            , "    expect: [\"HALLO-DU\"]"
+            , "  - name: schlaegt_fehl"
+            , "    input: [hallo]"
+            , "    expect: [\"FEHLT\"]"
+            ]
+    writeFile path yaml
+    parsed <- parseAdventureFile path
+    case parsed of
+        Left err -> do
+            removeFile path
+            expectTrue ("fixture parses: " ++ show err) False
+        Right adv -> case compileAdventure adv of
+            Left errs -> do
+                removeFile path
+                expectTrue ("fixture compiles: " ++ issuesText errs) False
+            Right cr -> do
+                let results = [ executeContentTest ct (crWorld cr) (crSave cr)
+                              | ct <- advTests adv ]
+                r1 <- expectEqual (2 :: Int) (length results)
+                r2 <- expectEqual (Nothing :: Maybe String) (head results)
+                r3 <- expectEqual (Just ("FEHLT" :: String)) (last results)
+                removeFile path
+                pure (r1 && r2 && r3)
 
 -- | Rogue Phase 1: the authored `game:` block compiles to the engine
 --   GamePolicy. Absent block keeps the default; savezone rooms are validated
@@ -2721,6 +2892,15 @@ tests =
     , ("run: seed override is respected", testRunPreparationSeedOverride)
     , ("run: pruneOldRuns removes oldest runs beyond keepCount", testPruneOldRuns)
     , ("run: checkpoint checksum binds to world of that run", testCheckpointBindingAcrossRuns)
+    -- Phase 2.5: procedures (D2)
+    , ("proc: procedures compile and empty procDefs is omitted from world.json", testProceduresCompile)
+    , ("proc: call sites are statically checked (UnknownProc, ProcArity)", testProcCallSiteChecks)
+    , ("proc: recursion is statically forbidden (ProcRecursion)", testProcRecursionForbidden)
+    , ("proc: reserved params and duplicate ids are rejected", testProcParamAndIdChecks)
+    , ("proc: call parses from bare name and {proc, args} shapes", testCallParsesFromJson)
+    -- B1: content tests as data
+    , ("content-tests: parsing and ordered marker semantics", testContentTestBasics)
+    , ("content-tests: runner round-trip with pass and fail", testContentTestRunner)
     -- Schritt 2 / Phase 2D: Cards & Deckbuilder
     , ("cards: map syntax and deck count-map compile (Phase 2D)", testCardGameYamlCompilation)
     , ("cards: list syntax and card outcomes compile (Phase 2D)", testCardGameListFormAndOutcomes)

@@ -92,7 +92,7 @@ run_e2e() {
     [ "$failed" -eq 0 ] || exit 1
 }
 
-for name in thefog pure-if fantasy cyberpunk space-opera detective horror economy_hamurabi deckbuilder_spire sandbox_wilderness factions trade encounters survival stealth patrol combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state combat-screen dark-feelable bomb waechter traglast disambiguation; do
+for name in thefog pure-if fantasy cyberpunk space-opera detective horror economy_hamurabi deckbuilder_spire sandbox_wilderness factions trade encounters survival stealth patrol combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state combat-screen dark-feelable bomb waechter traglast disambiguation procedures; do
     case "$name" in
         thefog)             src=examples/thefog.yaml ;;
         factions|trade|encounters|survival|stealth|patrol|combat-off|combat-narrative|combat-classic|combat-tactical|party|starship|combo|ship-duel)     src="examples/modules/$name.yaml" ;;
@@ -105,9 +105,21 @@ for name in thefog pure-if fantasy cyberpunk space-opera detective horror econom
         waechter)           src="examples/fixtures/waechter.yaml" ;;
         traglast)           src="examples/fixtures/traglast.yaml" ;;
         disambiguation)     src="examples/fixtures/disambiguation.yaml" ;;
+        procedures)         src="examples/fixtures/procedures.yaml" ;;
         *)                  src="examples/genres/$name.yaml" ;;
     esac
     run_e2e "$name" "$src"
+done
+
+echo "== 4b. author content tests (B1) =="
+# Content tests as data: the `tests:` section of an adventure runs through
+# `worldbuilder test` (ordered markers). Extend the list as adventures grow
+# their own tests.
+for name in procedures; do
+    case "$name" in
+        procedures) src="examples/fixtures/procedures.yaml" ;;
+    esac
+    "${WORLDBUILDER[@]}" test "$src" || exit 1
 done
 
 echo "== 5. e2e non-victory paths =="

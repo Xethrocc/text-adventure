@@ -168,6 +168,7 @@ allAOutcomes a =
         , interactions
         , concatMap (maybe [] id . aqReward) (advQuests a)
         , concatMap acdOutcomes (advCards a)
+        , concatMap apEffects (advProcedures a)
         ]
 collisions :: Ord a => [(String, a)] -> [(a, [String])]
 collisions pairs =
@@ -255,6 +256,7 @@ compileAdventure adv =
 
         (cardErrs, compiledCards) = compileCards (advCards adv)
         (szErrs, compiledSandboxZones) = compileSandboxZones (advSandboxZones adv)
+        (procCompileErrs, compiledProcs) = compileProcedures (advProcedures adv)
         mStartingDeck = case advDeck adv of
             Just d  -> Just d
             Nothing -> advPlayer adv >>= apDeck
@@ -289,6 +291,7 @@ compileAdventure adv =
                 , E.worldGamePolicy = compiledPolicy
                 , E.cardDefs = compiledCards
                 , E.sandboxZones = compiledSandboxZones
+                , E.procDefs = compiledProcs
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
@@ -302,6 +305,7 @@ compileAdventure adv =
         setExitErrs = checkSetExitRefs roomKeys adv
         ambientErrs = checkAmbientRates gw
         clipErrs = checkClips (advClips adv) gw
+        procCallErrs = checkProcRefs (advProcedures adv) adv
 
 
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
@@ -326,6 +330,8 @@ compileAdventure adv =
                     ++ cardErrs
                     ++ deckErrs
                     ++ szErrs
+                    ++ procCompileErrs
+                    ++ procCallErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -1222,6 +1228,79 @@ compileCombatScreen (Just s) = Just E.CombatScreen
 --   the merged set, so the rule keeps holding once 7f-3 emits the engine's own
 --   entries — a "clash table" against the merged set would then flag the
 --   engine's own definitions.
+-- ---------------------------------------------------------------------------
+-- Phase 2.5 (D2): procedures
+-- ---------------------------------------------------------------------------
+
+-- | Variable namespaces the engine owns (mirrors the per-prefix clash checks:
+--   `cmd.`, `combat.`, `env.`, `faction.`, `party.`, `patrol.`, `ship.`,
+--   `stealth.`). Procedure parameters must not shadow them.
+reservedVarPrefixes :: [String]
+reservedVarPrefixes =
+    ["cmd.", "combat.", "env.", "faction.", "party.", "patrol.", "ship.", "stealth."]
+
+-- | Compile `procedures:` entries. Duplicate ids and parameter names in
+--   engine-owned variable namespaces are rejected here.
+compileProcedures :: [AProcDef] -> ([CompileIssue], Map.Map String E.ProcDef)
+compileProcedures procs = (dupErrs ++ paramErrs, compiled)
+  where
+    compiled = Map.fromList
+        [ (apId p, E.ProcDef (apId p) (apParams p) (map compileAActionOutcome (apEffects p)))
+        | p <- procs ]
+    dupErrs =
+        [ ciError ("procedures." ++ pid) "DuplicateProc"
+            ("procedure '" ++ pid ++ "' is declared more than once")
+        | pid <- Map.keys dupMap ]
+      where
+        dupMap = Map.filter (> (1 :: Int))
+            (Map.fromListWith (+) [ (apId p, 1 :: Int) | p <- procs ])
+    paramErrs =
+        [ ciError ("procedures." ++ apId p ++ ".params." ++ pname) "ProcParamReserved"
+            ("'" ++ pname ++ "' is in a reserved variable namespace (the engine owns it)")
+        | p <- procs, pname <- apParams p
+        , any (`isPrefixOf` pname) reservedVarPrefixes ]
+
+-- | Validate `call:` sites against the declared procedures: unknown names and
+--   arity mismatches are errors — and so is **recursion**: D2 forbids it
+--   statically (a cycle in the call graph is a compile error; the runtime
+--   `maxOutcomeDepth` guard is deliberately not relied upon for that).
+checkProcRefs :: [AProcDef] -> Adventure -> [CompileIssue]
+checkProcRefs procs adv = concatMap siteIssues callSites ++ recursionErrs
+  where
+    paramMap = Map.fromList [ (apId p, length (apParams p)) | p <- procs ]
+    siteIssues (name, nArgs) = case Map.lookup name paramMap of
+        Nothing ->
+            [ ciError "outcomes.call" "UnknownProc"
+                ("call to undeclared procedure '" ++ name ++ "'") ]
+        Just nParams
+            | nArgs == nParams -> []
+            | otherwise ->
+                [ ciError "outcomes.call" "ProcArity"
+                    ("procedure '" ++ name ++ "' takes " ++ show nParams
+                     ++ " arguments, but the call passes " ++ show nArgs) ]
+    callSites = [ (name, length args) | AOCallProc name args <- allAOutcomes adv ]
+    -- Call graph over the procedure bodies; 'callsIn' sees nested calls.
+    graph = Map.fromList [ (apId p, callsIn (apEffects p)) | p <- procs ]
+    callsIn = concatMap go
+      where
+        go (AOCallProc name _)          = [name]
+        go (AOConditional _ ts es)      = callsIn ts ++ callsIn es
+        go (AONarrative _ follow)       = callsIn follow
+        go (AORandomChoice cs)          = concatMap (callsIn . snd) cs
+        go (AOApplyCondition _ _ t e _) = callsIn t ++ callsIn e
+        go _                            = []
+    recursionErrs =
+        [ ciError ("procedures." ++ p) "ProcRecursion"
+            ("procedure '" ++ p ++ "' takes part in a call cycle — recursion is "
+             ++ "statically forbidden (D2)")
+        | p <- Map.keys graph, p `Set.member` reachableFrom p ]
+    reachableFrom start = go Set.empty (Map.findWithDefault [] start graph)
+      where
+        go seen [] = seen
+        go seen (x:xs)
+            | x `Set.member` seen = go seen xs
+            | otherwise = go (Set.insert x seen) (Map.findWithDefault [] x graph ++ xs)
+
 checkCombatVarReserved :: Map.Map String E.VarDef -> [CompileIssue]
 checkCombatVarReserved varDefs =
     [ ciError ("variables." ++ name) "CombatVariableClash"
@@ -1350,6 +1429,7 @@ allWorldEffects gw = concat
     , Map.elems (E.itemInteractions gw)
     , concatMap E.paEffects (Map.elems (E.abilities gw))
     , concatMap E.cardEffects (Map.elems (E.cardDefs gw))
+    , concatMap E.procEffects (Map.elems (E.procDefs gw))
     ]
   where
     roomHooks r = catMaybes [roomOnEnter r, roomOnLook r, roomOnExit r, roomSearchOutcome r]
@@ -1804,6 +1884,7 @@ compileAActionOutcome ao = case ao of
     AOSetTextVar name s -> E.SetValue (E.VRVariable name) (E.EVString s)
     AOAddVar name d -> E.ModifyValue (E.VRVariable name) d
     AOComputeVar name expr -> E.ComputeValue (E.VRVariable name) expr
+    AOCallProc name args -> E.CallProc name args
     AONarrative ls follow -> E.Narrative ls (compileOutcomes follow)
     AOStandingAdd fid n -> E.ModifyValue (E.VRVariable ("faction." ++ fid)) n
     AOStandingSet fid n -> E.SetValue (E.VRVariable ("faction." ++ fid)) (E.EVInt n)

@@ -7,6 +7,7 @@ import Worldbuilder.ParseFile (parseAdventureFile)
 import Worldbuilder.Generate (parseTemplate, validateTemplate, generateDungeon, dtSeed, GenerateError (..))
 import Worldbuilder.Rng (deriveRuntimeSeed)
 import Worldbuilder.Run (RunConfig (..), runRunner)
+import Worldbuilder.Test (runContentTests)
 
 -- JSON encoding (output only)
 import Data.Aeson (encode)
@@ -43,7 +44,18 @@ runCLI = do
         ("generate" : path : rest) -> generateCmd path rest
         ("run" : path : rest)      -> runCmd path rest
         ("check" : path : _)       -> checkStats path
+        ("test" : path : rest)     -> testCmd path rest
         _                          -> putStrLn usage
+
+-- | B1: run the authored `tests:` content tests of an adventure. An
+--   optional name argument (without leading '-') filters the test names.
+testCmd :: FilePath -> [String] -> IO ()
+testCmd path rest = do
+    let mFilter = case rest of
+            (f : _) | take 1 f /= "-" -> Just f
+            _                         -> Nothing
+    failures <- runContentTests path mFilter
+    unless (failures == 0) exitFailure
 
 usage :: String
 usage = unlines
@@ -54,6 +66,7 @@ usage = unlines
     , "  worldbuilder compile <adventure.json> -o <dir> [--force]  Emit world.json + save.json"
     , "                                              --force writes even if validation has issues"
     , "  worldbuilder check <adventure.json>         Print content statistics"
+    , "  worldbuilder test <adventure.json> [name]   Run the authored content tests (`tests:` section)"
     , ""
     , "  worldbuilder generate <template.yaml> --seed N -o <dir> [--force]"
     , "                                              Generate a dungeon from a template and emit"

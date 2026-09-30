@@ -105,6 +105,7 @@ module Types.Core
     , EventType (..)
     , TriggerDef (..)
     , TriggerState (..)
+    , ProcDef (..)
       -- * Procedural Sandbox & Cutscenes
     , BiomeTemplate (..)
     , SandboxZone (..)
@@ -790,6 +791,7 @@ data Effect
     | ShuffleDeck                                 -- ^ Phase 2A: shuffle draw pile
     | GenerateRoom RoomID String String RoomID Direction Direction -- ^ Phase 3A: id, name, description, fromRoom, toDir, returnDir
     | Block (Maybe String) Bool                   -- ^ Phase 2.2: veto command execution (optional message, consumesTurn)
+    | CallProc String [EffectValue]               -- ^ Phase 2.5: run procedure `name` with literal args (D2)
     | Noop                                        -- ^ Do nothing
     deriving (Show, Eq, Generic)
 
@@ -1540,6 +1542,19 @@ data TriggerState = TriggerState
 instance ToJSON TriggerState
 instance FromJSON TriggerState
 
+-- | A named, parameterized effect bundle (Phase 2.5, D2 "procedures").
+--   Authors declare `procedures:` entries and call them with `call:`; the
+--   call site is literal (name + literal args) so the compiler can check it
+--   statically (no dynamic dispatch).
+data ProcDef = ProcDef
+    { procId      :: String
+    , procParams  :: [String]
+    , procEffects :: [Effect]
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON ProcDef
+instance FromJSON ProcDef
+
 -- | Static world definition containing blueprint/map data
 data GameWorld = GameWorld
     { rooms              :: Map.Map RoomID Room
@@ -1561,6 +1576,7 @@ data GameWorld = GameWorld
     , worldGamePolicy    :: GamePolicy                               -- ^ roguelike policy (Rogue Phase 1; default = unchanged behaviour)
     , cardDefs           :: Map.Map CardID Card                      -- ^ Card definitions for deckbuilder / card games (Genre 5)
     , sandboxZones       :: Map.Map String SandboxZone               -- ^ Procedural infinite sandbox zones (Genre 3)
+    , procDefs           :: Map.Map String ProcDef                   -- ^ Named procedures (Phase 2.5); empty map is omitted from world.json
     } deriving (Show, Eq)
 
 -- | A cutscene clip (Phase H/H4): a frame sequence played once at its own
@@ -1601,6 +1617,7 @@ instance ToJSON GameWorld where
         , "worldName"          .= worldName gw
         , "abilities"          .= abilities gw
         ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair ++ sandboxPair
+          ++ procPair
       where
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
@@ -1612,6 +1629,9 @@ instance ToJSON GameWorld where
                      | worldGamePolicy gw /= defaultGamePolicy ]
         cardPair = [ "cards" .= cardDefs gw | not (Map.null (cardDefs gw)) ]
         sandboxPair = [ "sandboxZones" .= sandboxZones gw | not (Map.null (sandboxZones gw)) ]
+        -- Phase 2.5 (M2): omitted when empty so world.json (and with it the
+        -- world checksum) of every existing adventure stays bit-identical.
+        procPair = [ "procDefs" .= procDefs gw | not (Map.null (procDefs gw)) ]
         endArt = Map.filter (not . isEmptyAscii) (worldEndArt gw)
         titleArt = worldTitleArt gw
 
@@ -1670,6 +1690,7 @@ instance FromJSON GameWorld where
         <*> o .:? "game" .!= defaultGamePolicy
         <*> o .:? "cards" .!= Map.empty
         <*> o .:? "sandboxZones" .!= Map.empty
+        <*> o .:? "procDefs" .!= Map.empty
 
 -- | Encode item-on-item outcomes as objects (P2-9).
 itemInteractionsToJSON :: Map.Map (String, String) Effect -> Value
@@ -1841,6 +1862,9 @@ data GameState = GameState
     , chosenTarget :: Maybe String                 -- ^ Phase 2.3: entity id the player picked in a
                                                    --   disambiguation answer; overrides target
                                                    --   resolution for the replayed command (runtime only)
+    , procScopes :: [Map.Map String VariableValue] -- ^ Phase 2.5: procedure parameter/locals stack,
+                                                   --   innermost first (runtime only, like `diagnostics`:
+                                                   --   GameState has no JSON instance, nothing to save)
     } deriving (Show, Eq)
 
 -- NOTE: `GameState` deliberately has **no** JSON instance — only `SaveState`

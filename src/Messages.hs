@@ -239,6 +239,8 @@ catalogEntries =
     , ("container.move_refused", "You can't move an item into a container that way.")
     , ("quest.cannot_start",      "You cannot start that quest right now.")
     , ("quest.not_active",        "That quest is not active.")
+    , ("proc.unknown",            "That procedure does not exist.")
+    , ("proc.arity",              "That procedure cannot be called this way.")
     , ("quests.journal_empty",    "Your journal is empty.")
     , ("quests.journal_header",   "=== Journal ===\n")
     , ("quests.active_header",    "Active:")

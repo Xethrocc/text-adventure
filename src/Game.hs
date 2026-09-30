@@ -156,6 +156,7 @@ emptyGameWorld = GameWorld
     , worldClips         = Map.empty
     , cardDefs           = Map.empty
     , sandboxZones       = Map.empty
+    , procDefs           = Map.empty
     }
 
 -- | Default empty game state
@@ -196,6 +197,7 @@ emptyGameState = GameState
     , diagnostics = []
     , lastVeto = Nothing
     , chosenTarget = Nothing
+    , procScopes = []
     }
 
 -- ---------------------------------------------------------------------------
@@ -842,8 +844,19 @@ hasCondition name state = Map.member name (conditions (save state))
 -- ---------------------------------------------------------------------------
 
 -- | Read an adventure-declared variable value.
+-- | Look up a name in the procedure scope stack (Phase 2.5), innermost
+--   binding first: parameters and locals shadow adventure variables.
+lookupProcScope :: String -> GameState -> Maybe VariableValue
+lookupProcScope name state = go (procScopes state)
+  where
+    go [] = Nothing
+    go (scope:rest) = case Map.lookup name scope of
+        Just v  -> Just v
+        Nothing -> go rest
+
 getVariable :: String -> GameState -> Maybe VariableValue
-getVariable name state = Map.lookup name (variables (save state))
+getVariable name state =
+    lookupProcScope name state <|> Map.lookup name (variables (save state))
 
 -- | Set an adventure-declared variable.
 setVariable :: String -> VariableValue -> GameState -> GameState
@@ -993,7 +1006,7 @@ evalPredicate (Location actor rId) st = case actor of
                 Just is -> itemLocation is == InRoom rId
                 Nothing -> False
 evalPredicate (CompareVar name op n) st =
-    case Map.lookup name (variables (save st)) of
+    case getVariable name st of
         Just (VVInt v) -> fromMaybe False (compareValues op v n)
         _              -> case name of
             _ | Just cn <- stripPrefix "condition_turns." name ->
@@ -1007,7 +1020,7 @@ evalPredicate (CompareVar name op n) st =
 -- `initial_variables:`. The authored `set_var` outcome takes integers only
 -- (`AOSetVar String Int`), so it cannot produce a text value.
 evalPredicate (VarIs name expected) st =
-    case Map.lookup name (variables (save st)) of
+    case getVariable name st of
         Just (VVText v) -> v == expected
         _               -> False
 evalPredicate (Compare lhs op rhs) st =
@@ -1024,7 +1037,7 @@ resolveValueRef (VRConditionTurns cName) st =
         Just c  -> condRemaining c
         Nothing -> 0
 resolveValueRef (VRVariable name) st =
-    case Map.lookup name (variables (save st)) of
+    case getVariable name st of
         Just (VVInt n)  -> n
         Just (VVText s) -> case reads s of [(n,"")] -> n; _ -> 0
         _               -> case name of
@@ -1131,7 +1144,7 @@ formatWithVars str st = formatStringWith str (lookupVarForFormat st)
 
 lookupVarForFormat :: GameState -> String -> Maybe String
 lookupVarForFormat st name
-    | Just val <- Map.lookup name (variables (save st)) =
+    | Just val <- getVariable name st =
         Just (varToString val)
     | Just fName <- stripPrefix "flag:" name <|> stripPrefix "flag." name =
         case Map.lookup fName (flags (save st)) of

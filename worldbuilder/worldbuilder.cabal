@@ -22,6 +22,7 @@ library
                        Worldbuilder.Rng
                        Worldbuilder.Generate
                        Worldbuilder.Run
+                       Worldbuilder.Test
   hs-source-dirs:      src
   build-depends:       base >=4.12 && <5,
                        text-adventure,

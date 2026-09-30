@@ -4942,6 +4942,98 @@ testSlugify = do
     r7 <- expectEqual "default" (slugify "  ")
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
 
+-- ---------------------------------------------------------------------------
+-- Phase 2.5: procedures
+-- ---------------------------------------------------------------------------
+
+-- | Helper: empty state with the given procedures installed
+--   (name, params, body).
+procState :: [(String, [String], [Effect])] -> GameState
+procState procs =
+    let gw = (world emptyGameState)
+            { procDefs = Map.fromList
+                [ (pid, ProcDef pid params effs) | (pid, params, effs) <- procs ] }
+    in emptyGameState { world = gw }
+
+-- | The call binds literal args as parameters; the body can read them in
+--   expressions and {templates}, and the scope is popped afterwards.
+testProcCallBindsParams :: IO Bool
+testProcCallBindsParams = do
+    let st0 = procState
+            [ ("belohnen", ["betrag", "grund"],
+                [ ComputeValue (VRVariable "gold")
+                    (EAdd (EVar "gold") (EVar "betrag"))
+                , SendMessage "Danke: {grund} ({gold})" ]) ]
+        (st1, evs, _) = applyOutcomeWith 0 0
+            (CallProc "belohnen" [EVInt 7, EVString "hilfe"]) "" st0
+        out = renderEvents evs
+    r1 <- expectEqual (Just (VVInt 7)) (getVariable "gold" st1)
+    r2 <- expectTrue "params visible in message" ("Danke: hilfe (7)" `isInfixOf` out)
+    r3 <- expectTrue "scope popped after call" (null (procScopes st1))
+    pure (r1 && r2 && r3)
+
+-- | Locals: writing to a parameter name mutates the local copy only (discarded
+--   on return); writing to an unbound name goes to the adventure VarMap.
+testProcLocalsAreDiscarded :: IO Bool
+testProcLocalsAreDiscarded = do
+    let st0 = setVariable "x" (VVInt 5) $ procState
+            [ ("rechnen", ["x"],
+                [ SetValue (VRVariable "x") (EVInt 99)
+                , SetValue (VRVariable "y") (EVInt 1)
+                , SendMessage "in={x}" ]) ]
+        (st1, evs, _) = applyOutcomeWith 0 0 (CallProc "rechnen" [EVInt 1]) "" st0
+    r1 <- expectEqual (Just (VVInt 5)) (getVariable "x" st1)
+    r2 <- expectEqual (Just (VVInt 1)) (getVariable "y" st1)
+    r3 <- expectTrue "local write visible inside" ("in=99" `isInfixOf` renderEvents evs)
+    pure (r1 && r2 && r3)
+
+-- | Nested calls: the inner scope shadows the outer one and is popped first.
+testProcNestedScopes :: IO Bool
+testProcNestedScopes = do
+    let st0 = procState
+            [ ("outer", ["a"],
+                [ SetValue (VRVariable "a") (EVInt 10)
+                , CallProc "inner" [EVInt 1]
+                , SendMessage "a={a}" ])
+            , ("inner", ["a"], [SetValue (VRVariable "a") (EVInt 20)]) ]
+        (st1, evs, _) = applyOutcomeWith 0 0 (CallProc "outer" [EVInt 1]) "" st0
+    r1 <- expectTrue "outer sees its own a after inner returned"
+            ("a=10" `isInfixOf` renderEvents evs)
+    r2 <- expectTrue "all scopes popped" (null (procScopes st1))
+    pure (r1 && r2)
+
+-- | A veto inside the body stops the remaining body effects — and, like any
+--   other veto, the remaining effects of the caller (2.2 semantics).
+testProcVetoStopsBody :: IO Bool
+testProcVetoStopsBody = do
+    let st0 = procState
+            [ ("stopper", [], [Block (Just "halt") False, SendMessage "nie"]) ]
+        (_, evs, _) = applyOutcomeWith 0 0
+            (Sequence [CallProc "stopper" [], SendMessage "nachher"]) "" st0
+        out = renderEvents evs
+    r1 <- expectTrue "veto message shown" ("halt" `isInfixOf` out)
+    r2 <- expectTrue "rest of body skipped" (not ("nie" `isInfixOf` out))
+    r3 <- expectTrue "caller sequence stops too" (not ("nachher" `isInfixOf` out))
+    pure (r1 && r2 && r3)
+
+-- | Defensive: the compiler rejects unknown calls, but a hand-built world
+--   reaching the engine must degrade to a diagnostic, not a crash.
+testProcUnknownDefensive :: IO Bool
+testProcUnknownDefensive = do
+    let st0 = procState []
+        (st1, evs, _) = applyOutcomeWith 0 0 (CallProc "nope" []) "" st0
+    r1 <- expectTrue "diagnostic recorded" (not (null (diagnostics st1)))
+    r2 <- expectTrue "message shown" ("procedure" `isInfixOf` renderEvents evs)
+    pure (r1 && r2)
+
+-- | Defensive: arity mismatch degrades to a diagnostic as well.
+testProcArityDefensive :: IO Bool
+testProcArityDefensive = do
+    let st0 = procState [ ("f", ["a"], [Noop]) ]
+        (st1, _, _) = applyOutcomeWith 0 0 (CallProc "f" [EVInt 1, EVInt 2]) "" st0
+    r1 <- expectTrue "diagnostic recorded" (not (null (diagnostics st1)))
+    pure r1
+
 -- | Rogue Phase 4c: run-seed derivation from slug and run index.
 --   Determinism, distinctness across runs, and distinctness across slugs.
 testDeriveRunSeed :: IO Bool
@@ -7761,6 +7853,12 @@ main = do
         , runTest "savesDir default stays 'saves' (Rogue P0)" testSavesDirDefault
         , runTest "slugify is deterministic and file-safe (Rogue P0)" testSlugify
         , runTest "run-seed derivation from slug and run index (Rogue P4c)" testDeriveRunSeed
+        , runTest "procedure call binds parameters and pops the scope (Phase 2.5)" testProcCallBindsParams
+        , runTest "procedure locals are discarded on return (Phase 2.5)" testProcLocalsAreDiscarded
+        , runTest "nested procedure calls keep scopes isolated (Phase 2.5)" testProcNestedScopes
+        , runTest "veto inside a procedure stops body and caller (Phase 2.5)" testProcVetoStopsBody
+        , runTest "call to unknown procedure is defensive (Phase 2.5)" testProcUnknownDefensive
+        , runTest "procedure arity mismatch is defensive (Phase 2.5)" testProcArityDefensive
         , runTest "fatal condition tick stops the command (L11)" testFatalTickStopsCommand
         -- Review L4: constructor coverage in Validate
         , runTest "MissingRoom from a rule room reference (L4)" testValidateMissingRoomInRule

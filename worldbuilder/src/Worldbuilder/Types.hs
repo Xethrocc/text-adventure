@@ -53,6 +53,8 @@ data Adventure = Adventure
     , advDeck             :: Maybe [String]              -- ^ starting deck (Phase 2D)
     , advHandLimit        :: Maybe Int                   -- ^ maximum cards in hand (Phase 2 / S2)
     , advSandboxZones     :: [ASandboxZone]              -- ^ procedural sandbox zones (Schritt 3 / Phase 3E)
+    , advProcedures       :: [AProcDef]                  -- ^ named procedures (Phase 2.5)
+    , advTests            :: [AContentTest]              -- ^ authored content tests (B1)
     , advRawValue         :: Maybe Value                 -- ^ raw parsed JSON/YAML value for schema validation
     } deriving (Show, Eq, Generic)
 
@@ -124,6 +126,8 @@ instance FromJSON Adventure where
         <*> parseDeckField o
         <*> parseHandLimitField o
         <*> parseSandboxZonesField o
+        <*> o .:? "procedures" .!= []
+        <*> o .:? "tests" .!= []
         <*> pure (Just v)
     parseJSON _ = fail "Expected Adventure to be an object"
 
@@ -1100,6 +1104,35 @@ instance FromJSON AInteractions where
 -- Action outcomes (YAML-friendly — each has exactly one key)
 -- ---------------------------------------------------------------------------
 
+-- | A named, parameterized effect bundle authored under `procedures:`
+--   (Phase 2.5, D2). Called with `call:` — literal name + literal args.
+data AProcDef = AProcDef
+    { apId      :: String
+    , apParams  :: [String]
+    , apEffects :: [AActionOutcome]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AProcDef where
+    parseJSON = withObject "AProcDef" $ \o -> AProcDef
+        <$> o .:  "id"
+        <*> o .:? "params"  .!= []
+        <*> o .:? "effects" .!= []
+
+-- | An authored content test (B1): a command sequence and **ordered** output
+--   markers — every marker must appear in the rendered output, in the
+--   declared order (subsequence semantics).
+data AContentTest = AContentTest
+    { actName   :: String
+    , actInput  :: [String]
+    , actExpect :: [String]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AContentTest where
+    parseJSON = withObject "AContentTest" $ \o -> AContentTest
+        <$> o .:? "name"   .!= "unnamed"
+        <*> o .:  "input"
+        <*> o .:  "expect"
+
 data AActionOutcome
     = AOMessage String
     | AOHealPlayer Int
@@ -1150,7 +1183,16 @@ data AActionOutcome
     | AOGenerateRoom String String String String String String
       -- ^ id, name, desc, connect_from, direction, return_direction
     | AOBlock (Maybe String) Bool      -- ^ block: "msg" or block: { msg: "...", turn: true } (Phase 2.2)
+    | AOCallProc String [E.EffectValue] -- ^ call: <name> or call: {proc: <name>, args: [...]} (Phase 2.5)
     deriving (Show, Eq, Generic)
+
+-- | Procedure arguments are literal YAML scalars (int/bool/text) — literal on
+--   purpose so call sites stay statically checkable (no dynamic dispatch).
+parseProcArg :: Value -> Parser E.EffectValue
+parseProcArg (Number n) = pure (E.EVInt (truncate n))
+parseProcArg (Bool b)   = pure (E.EVBool b)
+parseProcArg (String s) = pure (E.EVString (T.unpack s))
+parseProcArg _          = fail "procedure arguments must be int, bool or text literals"
 
 -- Parse an outcome from an object with a single recognized key
 instance FromJSON AActionOutcome where
@@ -1162,6 +1204,14 @@ instance FromJSON AActionOutcome where
             -- NOTE: game_end must be tried before msg: an object may carry both
             -- "game_end" and a "msg" for the end screen.
             (AOGameEnd <$> o .: "game_end" <*> o .:? "msg")
+        <|> (do cp <- o .: "call"
+                case cp of
+                    String s  -> pure (AOCallProc (T.unpack s) [])
+                    Object co -> do
+                        pname <- co .: "proc"
+                        rawArgs <- co .:? "args" .!= []
+                        AOCallProc pname <$> mapM parseProcArg rawArgs
+                    _ -> fail "call must be a procedure name or {proc: name, args: [...]}")
         <|> (AOConditional <$> o .: "if" <*> o .:? "then" .!= [] <*> o .:? "else" .!= [])
         -- P1-17: effects that previously had no YAML form. These must stay
         -- BEFORE the broad `msg` branch below — an object may carry a `msg`
@@ -1338,7 +1388,7 @@ knownKeys EntAdventure = Set.fromList
     , "initial_variables", "initial_flags", "active_quests", "factions"
     , "encounter_tables", "environment", "stealth", "patrol", "combat"
     , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
-    , "handLimit", "hand_limit", "sandbox_zones"
+    , "handLimit", "hand_limit", "sandbox_zones", "procedures", "tests"
     ]
 knownKeys EntRoom = Set.fromList
     [ "id", "name", "desc", "description", "exits", "tags", "light_flag"

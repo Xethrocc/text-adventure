@@ -1,0 +1,60 @@
+name: Procedures Fixture
+start_room: workshop
+
+verbs:
+  - name: "dank"
+    aliases: ["thank"]
+  - name: "doppel"
+    aliases: ["double"]
+
+variables:
+  - name: "gold"
+    type: int
+    initial: 0
+    min: 0
+
+# Phase 2.5 (D2): named procedures with literal args. `doppel` calls
+# `belohnen` (nested call, params shadow nothing here) and then does its own
+# arithmetic — the E2E markers pin the call, the parameter binding and the
+# nested call in one go.
+procedures:
+  - id: "belohnen"
+    params: ["betrag", "grund"]
+    effects:
+      - compute_var: { var: gold, expr: "gold + betrag" }
+      - msg: "REWARD: {betrag} gold for {grund} (total {gold})."
+  - id: "doppel"
+    params: ["n"]
+    effects:
+      - call: { proc: belohnen, args: [2, "doubling"] }
+      - compute_var: { var: gold, expr: "gold + n" }
+      - msg: "DOPPEL: total {gold}."
+
+rooms:
+  - id: workshop
+    name: Workshop
+    desc: A plain room with a ledger and a strongbox.
+
+rules:
+  - id: "rule_dank"
+    on: "command dank"
+    effects:
+      - call: { proc: belohnen, args: [5, "the rescue"] }
+  - id: "rule_doppel"
+    on: "command doppel"
+    effects:
+      - call: { proc: doppel, args: [3] }
+
+# B1: authored content tests — `worldbuilder test examples/fixtures/procedures.yaml`
+tests:
+  - name: "belohnung und verschachtelter aufruf"
+    input: [dank, doppel]
+    expect:
+      - "REWARD: 5 gold for the rescue (total 5)."
+      - "REWARD: 2 gold for doubling (total 7)."
+      - "DOPPEL: total 10."
+  - name: "reihenfolge ist vertrag"
+    input: [doppel]
+    expect:
+      - "REWARD: 2 gold for doubling (total 2)."
+      - "DOPPEL: total 5."

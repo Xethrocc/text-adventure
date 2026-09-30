@@ -68,6 +68,38 @@ applyOutcomeWith depth salt outcome targetId state
             state' = state { lastVeto = Just consumesTurn }
         in (state', mEv, salt)
 
+    -- Phase 2.5 (D2): run a named procedure with literal args. Parameters and
+    -- locals live in a fresh innermost scope (read via 'getVariable', written
+    -- via 'setScopedVariable') that is popped when the call returns — nothing
+    -- is persisted. The compiler statically rejects unknown names, arity
+    -- mismatches and recursion; the guards below are defensive. Like
+    -- 'Sequence', a veto inside the body stops the remaining body effects (and
+    -- propagates to the caller through 'lastVeto').
+    CallProc name args ->
+        case Map.lookup name (procDefs (world state)) of
+            Nothing ->
+                ( addDiagnostic ("[engine] call to unknown procedure '" ++ name ++ "'") state
+                , evMsg "proc.unknown" [], salt )
+            Just pd
+                | length args /= length (procParams pd) ->
+                    ( addDiagnostic
+                        ("[engine] procedure '" ++ name ++ "' called with "
+                         ++ show (length args) ++ " arguments, expected "
+                         ++ show (length (procParams pd))) state
+                    , evMsg "proc.arity" [], salt )
+                | otherwise ->
+                    let scope = Map.fromList (zip (procParams pd) (map effectValToVarVal args))
+                        st0 = state { procScopes = scope : procScopes state }
+                        step (st, acc, s) o =
+                            case lastVeto st of
+                                Just _  -> (st, acc, s)
+                                Nothing ->
+                                    let (st2, m2, s2) = applyOutcomeWith (depth + 1) s o targetId st
+                                    in (st2, joinEv acc m2, s2)
+                        (st1, msgs, salt') = foldl' step (st0, [], salt) (procEffects pd)
+                        stPop = st1 { procScopes = drop 1 (procScopes st1) }
+                    in (stPop, msgs, salt')
+
     Sequence outcomes ->
         let step (st, acc, s) o =
                 case lastVeto st of
@@ -238,11 +270,23 @@ applyOutcomeWith depth salt outcome targetId state
 -- | Apply SetValue: set a value reference to a new value (handles flags,
 --   variables, entity states). Returns the state plus any message produced by
 --   the fired side effects (an entity-state change fires its `OnStateChange`).
+-- | Set a name in the innermost procedure scope that binds it (Phase 2.5
+--   locals); names not bound in any scope go to the adventure VarMap as usual.
+--   Locals die with the call: the scope is popped in the 'CallProc' case.
+setScopedVariable :: String -> VariableValue -> GameState -> GameState
+setScopedVariable name val state = go [] (procScopes state)
+  where
+    go _ [] = setVariableChecked name val state
+    go before (scope:rest)
+        | Map.member name scope =
+            state { procScopes = reverse before ++ Map.insert name val scope : rest }
+        | otherwise = go (scope : before) rest
+
 applySetValue :: ValueRef -> EffectValue -> GameState -> (GameState, [OutputEvent])
 applySetValue (VRFlag name) val state =
     (setFlag name (effectValueToString val) state, [])
 applySetValue (VRVariable name) val state =
-    (setVariableChecked name (effectValToVarVal val) state, [])
+    (setScopedVariable name (effectValToVarVal val) state, [])
 applySetValue (VRActorProp (ActorEntity eId) PState) val state =
     setEntityStateWithEvents eId (effectValueToString val) state
 applySetValue (VRActorProp ActorPlayer PRoom) val state =
@@ -274,7 +318,7 @@ modifyValueProp (VRVariable name) delta state =
             Just (VVInt n)  -> n
             Just (VVText s) -> case reads s of [(n,_)] -> n; _ -> 0
             _               -> 0
-    in (setVariableChecked name (VVInt (cur + delta)) state, [])
+    in (setScopedVariable name (VVInt (cur + delta)) state, [])
 modifyValueProp (VRItemProp iId prop) delta state =
     (modifyItemProp iId prop delta state, [])
 modifyValueProp (VRActorProp (ActorNPC eId) PHealth) delta state
