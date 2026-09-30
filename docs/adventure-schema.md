@@ -2099,6 +2099,45 @@ W4 ersetzt bewusst aufwändige Licht-Physik/Emergenz durch **explizite Zustände
 - Bei `on_remove` schaltet die Halterung das Flag `krypta_beleuchtet` auf `"false"`.
 - Die Dunkelheitsprüfung des Spiels (`isDark`) wertet das `light_flag` des Raumes aus — ohne Emergenz, rein deterministisch und transparent für Autoren und Spieler.
 
+## Mengen- und Tag-Abfragen (B2)
+
+Die größte Autorenqual war die **Aufzählung** („hat der Spieler irgendeinen Schlüssel?",
+„ist hier noch jemand?"). B2 exponiert das als allgemeine Vokabel — ohne Zwei-Wege-Katalog
+und genre-neutral.
+
+**Tag-Prädikate:**
+
+```yaml
+when: { actor_has_tag: {actor: player, tag: licht} }   # trägt etwas mit Tag X
+when: { room: halle, has_item_tag: licht }             # liegt hier etwas mit Tag X?
+```
+
+**Die Zähl-Familie** (Int-Werte, überall nutzbar, wo Werte stehen — `compare_var`,
+`compare`, `compute_var`):
+
+```yaml
+when: { compare_var: {name: count.items.in.halle, op: gte, value: 2} }   # Anzahl ≥ n
+when: { compare_var: {name: count.alive_npcs.in.halle, op: eq, value: 0} }  # alle tot
+# String-Form: count.<was>.<in|by>.<id>[.<tag>]
+#   count.items.in.halle   count.npcs.in.halle   count.alive_npcs.in.halle
+#   count.items.by.player  count.items.tag.licht.in.halle
+when: { compare: { lhs: {count: {what: items, in: halle, tag: licht}}, op: gte, value: 1 } }
+```
+
+| Dimension | Werte | Anmerkung |
+|---|---|---|
+| **was** | `items`, `npcs` (alle), `alive_npcs` (lebende) | `npcs` zählt alle im Raum, `alive_npcs` nur lebende — „alle tot" ist `alive_npcs == 0` |
+| **wo** | `in: <raum>` / `by: <actor>` | `by:` zählt Getragenes (Inventar + Ausrüstung); für NPCs ist `by:` immer 0 (getragene NPCs gibt es nicht) |
+| **tag** (optional) | `tag: <tag>` | filtert auf Items mit diesem Tag; nur bei `items` |
+
+**Anmerkungen:**
+
+- `compare_var` liest auch die `distance.`- und `count.`-Werte (Tür IV / B2) — wie
+  `condition_turns.` zuvor.
+- Fehlende Räume/IDs zählen als **0** (wie bei den bestehenden Prädikaten); eine
+  Referenzprüfung für Prädikat-Räume gibt es bisher nicht (offene Härterung, siehe
+  `plan-autorenfaehigkeiten.md`).
+
 ## Bibliotheken: `include:` (5.3)
 
 Ein Abenteuer kann **Bibliotheksdateien** einbinden (Prozeduren, Verben, Regeln, Inhalte —

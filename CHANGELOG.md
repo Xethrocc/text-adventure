@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Mengen- und Tag-Abfragen: Prädikate und die Zähl-Familie (B2)
+
+- **Tag-Prädikate** `HasTaggedItem ActorRef String` (`actor_has_tag: {actor, tag}`) und
+  `RoomHasTaggedItem RoomID String` (`room: X, has_item_tag: Y`) — generalisieren
+  `playerHasTaggedItem` auf jeden Akteur und auf Räume („trägt etwas mit Tag X",
+  „liegt hier eine Lichtquelle?").
+- **Die Zähl-Familie** `VRCount CountSpec` als Int-Wert in `compare_var`/`compare`/
+  `compute_var`: **was** (`items`/`npcs`/`alive_npcs`) × **wo** (`in: <raum>` /
+  `by: <actor>`) × optionaler **Tag-Filter**. String-Form `count.<was>.<in|by>.<id>[.<tag>]`,
+  Objekt-Form `{count: {what: …, in|by: …, tag: …}}`. „Anzahl Items ≥ n" und „alle NPCs
+  tot" (`alive_npcs == 0`) sind damit Zeilen, keine 20-Zweig-Kaskaden.
+- **`compare_var` liest jetzt auch `distance.`- und `count.`-Werte** (wie zuvor
+  `condition_turns.`) — die Prüfregel bleibt: genre-neutrale Primitive, Inhalt macht das Genre.
+- **Anmerkung:** getragene NPCs zählen für `by:` als 0; fehlende Räume/IDs zählen als 0
+  (wie bei den bestehenden Prädikaten) — eine Referenzprüfung für Prädikat-Räume ist
+  weiterhin offene Härterung.
+- **Tests**: 2 Engine-Tests (**423**) + Fixture `mengen.yaml` (alle vier Katalog-Beispiele
+  als Regeln mit Markern) in CI-Stufe 4b. Die Vokabel liegt in der Engine (keine
+  Worldbuilder-Schicht nötig).
+
 ### Bibliotheken: `include:` für wiederverwendbare Sektionen (5.3)
 
 - **`include: [lib/a.yaml, lib/b.yaml]`** (transitiv erlaubt): ein Abenteuer kann

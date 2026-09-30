@@ -45,6 +45,10 @@ module Types.Core
     , PursuitOptions (..)
     , defaultPursuitOptions
     , parseDistanceRef
+    , CountWhat (..)
+    , CountWhere (..)
+    , CountSpec (..)
+    , parseCountRef
     , PropRef (..)
     , ValueRef (..)
     , legacyVRProperty
@@ -412,6 +416,52 @@ instance FromJSON PursuitOptions
 defaultPursuitOptions :: PursuitOptions
 defaultPursuitOptions = PursuitOptions False False
 
+-- | B2: what a count query counts.
+data CountWhat
+    = CountItems        -- ^ items (optionally filtered by tag)
+    | CountNpcs         -- ^ all NPCs
+    | CountAliveNpcs    -- ^ living NPCs only
+    deriving (Show, Eq, Generic)
+
+-- | B2: where a count query looks.
+data CountWhere
+    = CountInRoom RoomID
+    | CountCarriedBy ActorRef
+    deriving (Show, Eq, Generic)
+
+-- | B2: a general count query — `count.<what>.<in|by>.<id>[.<tag>]` in the
+--   string form, `{count: {what: …, in|by: …, tag: …}}` as an object.
+data CountSpec = CountSpec
+    { csWhat :: CountWhat
+    , csWhere :: CountWhere
+    , csTag   :: Maybe String  -- ^ optional: only items carrying this tag
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON CountSpec where
+    toJSON cs = object $
+        [ "what" .= whatName (csWhat cs), whereKey (csWhere cs) ]
+        ++ maybe [] (\t -> ["tag" .= t]) (csTag cs)
+      where
+        whatName CountItems     = ("items" :: String)
+        whatName CountNpcs      = "npcs"
+        whatName CountAliveNpcs = "alive_npcs"
+        whereKey (CountInRoom r)    = ("in" :: Key) .= r
+        whereKey (CountCarriedBy a) = ("by" :: Key) .= actorId a
+
+instance FromJSON CountSpec where
+    parseJSON = withObject "CountSpec" $ \o -> do
+        whatStr <- o .: "what"
+        what <- case whatStr :: String of
+            "items"      -> pure CountItems
+            "npcs"       -> pure CountNpcs
+            "alive_npcs" -> pure CountAliveNpcs
+            other        -> fail ("count: unknown what '" ++ other
+                                  ++ "' (use items, npcs or alive_npcs)")
+        wherePart <- (CountInRoom <$> o .: "in")
+                  <|> (CountCarriedBy . parseActorString <$> o .: "by")
+        tag <- o .:? "tag"
+        pure (CountSpec what wherePart tag)
+
 -- | String convention for actor references: "player", "ship:<id>" or an
 --   NPC id (the canonical parse used by distance/step sugar and the YAML
 --   string forms).
@@ -429,6 +479,7 @@ data ValueRef
     | VRPlayerHealth                   -- ^ player hit points
     | VRConditionTurns String          -- ^ remaining turns of an active condition/timer (Phase 2.1)
     | VRDistance ActorRef DistanceTarget -- ^ pursuit (Tür IV): hop distance, -1 = unreachable
+    | VRCount CountSpec                 -- ^ B2: count query (items/npcs in a room or carried)
     deriving (Show, Eq, Generic)
 
 instance ToJSON ValueRef where
@@ -439,12 +490,14 @@ instance ToJSON ValueRef where
     toJSON VRPlayerHealth       = object [ "tag" .= ("VRPlayerHealth" :: T.Text) ]
     toJSON (VRConditionTurns c) = object [ "tag" .= ("VRConditionTurns" :: T.Text), "contents" .= c ]
     toJSON (VRDistance a t)     = object [ "tag" .= ("VRDistance" :: T.Text), "contents" .= [toJSON a, toJSON t] ]
+    toJSON (VRCount cs)         = object [ "tag" .= ("VRCount" :: T.Text), "contents" .= cs ]
 
 instance FromJSON ValueRef where
     parseJSON (Number n) = pure (VRVariable (show (round n :: Int)))
     parseJSON (String s)
         | Just rest <- stripPrefix "condition_turns." str = pure (VRConditionTurns rest)
         | Just rest <- stripPrefix "distance." str         = pure (parseDistanceRef rest)
+        | Just rest <- stripPrefix "count." str            = pure (parseCountRef rest)
         | Just n <- (readMaybe str :: Maybe Int)           = pure (VRVariable (show n))
         | otherwise                                        = pure (VRVariable str)
       where
@@ -471,6 +524,7 @@ instance FromJSON ValueRef where
                     case contents of
                         [aVal, tVal] -> VRDistance <$> parseJSON aVal <*> parseJSON tVal
                         _            -> fail "VRDistance: expected [seeker, target]"
+                "VRCount"          -> VRCount <$> o .: "contents"
                 "VRProperty"       -> do
                     contents <- o .: "contents"
                     case contents of
@@ -481,6 +535,7 @@ instance FromJSON ValueRef where
                 case d of
                     [aVal, tVal] -> VRDistance <$> parseJSON aVal <*> parseJSON tVal
                     _            -> fail "distance: expected [seeker, target]")
+        <|> (VRCount <$> o .: "count")
         <|> (VRConditionTurns <$> o .: "condition_turns")
         <|> (VRFlag <$> o .: "flag")
         <|> (VRVariable <$> o .: "var")
@@ -512,6 +567,25 @@ splitOnce :: Char -> String -> (String, String)
 splitOnce c s = case break (== c) s of
     (a, _:b) -> (a, b)
     (a, _)   -> (a, "")
+
+-- | String form `count.<what>.<in|by>.<id>` and
+--   `count.<what>.tag.<tag>.<in|by>.<id>` (B2) — e.g. "items.in.halle",
+--   "items.tag.light.in.halle", "alive_npcs.in.halle", "items.by.player".
+parseCountRef :: String -> ValueRef
+parseCountRef rest = VRCount (CountSpec what wherePart tag)
+  where
+    (whatStr, afterWhat) = splitOnce '.' rest
+    what = case whatStr of
+        "npcs"       -> CountNpcs
+        "alive_npcs" -> CountAliveNpcs
+        _            -> CountItems
+    (tag, afterTag) = case stripPrefix "tag." afterWhat of
+        Nothing -> (Nothing, afterWhat)
+        Just t  -> let (tg, rest') = splitOnce '.' t in (Just tg, rest')
+    (qual, ident) = splitOnce '.' afterTag
+    wherePart = case qual of
+        "by" -> CountCarriedBy (parseActorString ident)
+        _    -> CountInRoom ident
 
 -- ---------------------------------------------------------------------------
 -- Arithmetic expressions for dynamic calculations (Phase 1A)
@@ -703,6 +777,8 @@ data Predicate
     | HasCondition String               -- ^ active condition/timer on player (Phase 2.1)
     | Knows ActorRef String             -- ^ W1: actor knows this fact (VarMap `known.<actor>.<fact>`)
     | ActorHas ActorRef ItemID          -- ^ W4: does the actor (player, NPC, device) carry/hold this item?
+    | HasTaggedItem ActorRef String     -- ^ B2: does the actor carry an item with this tag?
+    | RoomHasTaggedItem RoomID String   -- ^ B2: does the room hold an item with this tag?
     deriving (Show, Eq, Generic)
 
 -- | Serialize to the same compact object shape that FromJSON accepts
@@ -725,6 +801,8 @@ instance ToJSON Predicate where
         VarIs n v          -> object [ "var" .= n, "is" .= v ]
         HasCondition c     -> object [ "has_condition" .= c ]
         Knows a f          -> object [ "knows" .= actorId a, "fact" .= f ]
+        HasTaggedItem a t  -> object [ "actor_has_tag" .= object ["actor" .= actorId a, "tag" .= t ] ]
+        RoomHasTaggedItem r t -> object [ "room" .= r, "has_item_tag" .= t ]
 
 -- | Stable string form of a comparator, used in YAML/JSON predicates.
 comparatorName :: Comparator -> String
@@ -782,6 +860,9 @@ instance FromJSON Predicate where
         -- an entity's state layer.
         <|> (VarIs <$> o .: "var" <*> o .: "is")
         <|> (RoomHasTag     <$> o .: "room"  <*> o .: "has_tag")
+        <|> (RoomHasTaggedItem <$> o .: "room" <*> o .: "has_item_tag")
+        <|> (do aht <- o .: "actor_has_tag"
+                HasTaggedItem <$> aht .: "actor" <*> aht .: "tag")
         <|> (Location       <$> o .: "at"    <*> o .: "room")
         <|> (Compare <$> o .: "lhs" <*> o .: "op" <*> o .: "rhs")
         <|> (do cmpObj <- o .: "compare"

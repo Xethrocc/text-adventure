@@ -502,6 +502,32 @@ getExitInDirection dir state = case getCurrentRoom state of
 -- Pursuit (Tür IV): distance queries and one-edge pursuit steps
 -- ---------------------------------------------------------------------------
 
+-- | B2: items an actor carries or wears.
+carriedItemsOf :: ActorRef -> GameState -> [ItemDef]
+carriedItemsOf actor st =
+    getItemsInLocation (CarriedBy actor) st ++ getItemsInLocation (EquippedBy actor) st
+
+-- | B2: evaluate a general count query (items/npcs in a room or carried,
+--   optional item-tag filter). NPCs carried by an actor are not a thing —
+--   a `by:` where counts nothing for them.
+countSpecValue :: CountSpec -> GameState -> Int
+countSpecValue cs st = case csWhat cs of
+    CountItems     -> length [ () | i <- itemsAt, tagged i ]
+    CountNpcs      -> length npcsAt
+    CountAliveNpcs -> length [ () | nId <- npcsAt, not (isDeadNPC nId st) ]
+  where
+    itemsAt = case csWhere cs of
+        CountInRoom r      -> getItemsInLocation (InRoom r) st
+        CountCarriedBy a   -> carriedItemsOf a st
+    npcsAt = case csWhere cs of
+        CountInRoom r      -> [ nId
+                              | (nId, ns) <- Map.toList (npcStates (save st))
+                              , npcLocation ns == InRoom r ]
+        CountCarriedBy _   -> []
+    tagged i = case csTag cs of
+        Nothing -> True
+        Just t  -> Set.member t (itemTags i)
+
 -- | The room an actor currently occupies. 'Nothing' when the actor is not in
 --   a room (carried, removed, unknown).
 actorRoom :: GameState -> ActorRef -> Maybe RoomID
@@ -1138,6 +1164,11 @@ evalPredicate (PAll ps) st = all (\p -> evalPredicate p st) ps
 evalPredicate (PAny ps) st = any (\p -> evalPredicate p st) ps
 evalPredicate (PlayerHas iId) st = hasItem iId st
 evalPredicate (ActorHas actor iId) st = actorHasItem actor iId st
+-- B2: tag-based item queries (the generalisation of playerHasTaggedItem)
+evalPredicate (HasTaggedItem actor tag) st =
+    any (Set.member tag . itemTags) (carriedItemsOf actor st)
+evalPredicate (RoomHasTaggedItem r tag) st =
+    any (Set.member tag . itemTags) (getItemsInLocation (InRoom r) st)
 evalPredicate (HasFlag f) st = getFlag f st == Just "true"
 evalPredicate (HasCondition cn) st = hasCondition cn st
 -- A state predicate checks the entity's state in whichever layer stores it:
@@ -1193,6 +1224,10 @@ evalPredicate (CompareVar name op n) st =
         _              -> case name of
             _ | Just cn <- stripPrefix "condition_turns." name ->
                 fromMaybe False (compareValues op (resolveValueRef (VRConditionTurns cn) st) n)
+              | Just rest <- stripPrefix "distance." name ->
+                fromMaybe False (compareValues op (resolveValueRef (parseDistanceRef rest) st) n)
+              | Just rest <- stripPrefix "count." name ->
+                fromMaybe False (compareValues op (resolveValueRef (parseCountRef rest) st) n)
             _ -> False
 -- A text variable equals a literal. This is the read side of `variables:` with
 -- `type: text`: the value is a `VVText`, and no other predicate can inspect it
@@ -1218,6 +1253,7 @@ evalPredicate (Compare lhs op rhs) st =
 
 -- | Resolve a ValueRef to an Int for comparisons.
 resolveValueRef :: ValueRef -> GameState -> Int
+resolveValueRef (VRCount cs) st = countSpecValue cs st
 resolveValueRef (VRDistance seeker target) st =
     distanceTo defaultPursuitOptions st seeker target
 resolveValueRef (VRConditionTurns cName) st =
@@ -1243,6 +1279,8 @@ resolveValueRef (VRVariable name) st =
                 resolveValueRef (VRConditionTurns cn) st
               | Just rest <- stripPrefix "distance." name ->
                 resolveValueRef (parseDistanceRef rest) st
+              | Just rest <- stripPrefix "count." name ->
+                resolveValueRef (parseCountRef rest) st
               | Just rest <- stripPrefix "item." name, (itId, '.':prop) <- break (== '.') rest ->
                 resolveValueRef (VRItemProp itId prop) st
               | Just rest <- stripPrefix "npc." name, (nId, '.':prop) <- break (== '.') rest ->

@@ -5581,6 +5581,79 @@ testPursuitSaveLoad = do
 mkTestRoom :: RoomID -> String -> Room
 mkTestRoom rId name = Room rId name (plainText name) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing
 
+-- ---------------------------------------------------------------------------
+-- B2: tag predicates and the count family
+-- ---------------------------------------------------------------------------
+
+-- | Helper: state with rooms and items (with locations) — the W4 device
+--   helper without devices.
+mkTestItem :: String -> String -> ItemDef
+mkTestItem i n =
+    ItemDef i n (plainText n) [i] Set.empty Nothing [] False Nothing True Nothing Map.empty emptyAscii
+
+mstate :: [Room] -> [(ItemDef, Location)] -> GameState
+mstate rms its =
+    let gw = (world emptyGameState)
+            { rooms = Map.fromList [ (roomId r, r) | r <- rms ]
+            , itemDefs = Map.fromList [ (itemId i, i) | (i, _) <- its ]
+            }
+        sv = (save emptyGameState)
+            { currentRoom = if null rms then "" else roomId (head rms)
+            , itemStates = Map.fromList
+                [ (itemId i, ItemState loc "intact" Map.empty False) | (i, loc) <- its ]
+            }
+    in emptyGameState { world = gw, save = sv }
+
+-- | `has_tagged_item`/`has_item_tag` generalise playerHasTaggedItem to any
+--   actor and to rooms.
+testTaggedItemPredicates :: IO Bool
+testTaggedItemPredicates = do
+    let lamp = (mkTestItem "lampe" "Lampe") { itemTags = Set.fromList ["licht"] }
+        stein = (mkTestItem "stein" "Stein") { itemTags = Set.fromList ["schwer"] }
+        st0 = mstate [mkTestRoom "halle" "Halle"]
+                [ (lamp, CarriedBy ActorPlayer), (stein, InRoom "halle") ]
+        st = st0 { save = (save st0) { inventory = ["lampe"] } }
+    r1 <- expectTrue "player carries a tagged item"
+            (evalPredicate (HasTaggedItem ActorPlayer "licht") st)
+    r2 <- expectTrue "wrong tag is false"
+            (not (evalPredicate (HasTaggedItem ActorPlayer "schwer") st))
+    r3 <- expectTrue "room holds a tagged item"
+            (evalPredicate (RoomHasTaggedItem "halle" "schwer") st)
+    r4 <- expectTrue "room has no such tag item"
+            (not (evalPredicate (RoomHasTaggedItem "halle" "licht") st))
+    pure (r1 && r2 && r3 && r4)
+
+-- | The count family: items/npcs (alive) in a room or carried, with an
+--   optional tag filter — in the string form and as an object.
+testCountSpec :: IO Bool
+testCountSpec = do
+    let lamp = (mkTestItem "lampe" "Lampe") { itemTags = Set.fromList ["licht"] }
+        stein = (mkTestItem "stein" "Stein") { itemTags = Set.fromList ["schwer"] }
+        kiesel = (mkTestItem "kiesel" "Kiesel") { itemTags = Set.empty }
+        st0 = mstate [mkTestRoom "halle" "Halle"]
+                [ (lamp, InRoom "halle"), (stein, InRoom "halle"), (kiesel, CarriedBy ActorPlayer) ]
+        st = st0 { save = (save st0)
+                    { inventory = ["kiesel"]
+                    , npcStates = Map.fromList
+                        [ ("wolf", NPCState (InRoom "halle") "alive" Nothing Map.empty Nothing)
+                        , ("geist", NPCState (InRoom "halle") "dead" Nothing Map.empty Nothing) ] } }
+    r1 <- expectEqual (2 :: Int) (resolveValueRef (VRVariable "count.items.in.halle") st)
+    r2 <- expectEqual (1 :: Int) (resolveValueRef (VRVariable "count.items.tag.licht.in.halle") st)
+    r3 <- expectEqual (2 :: Int) (resolveValueRef (VRVariable "count.npcs.in.halle") st)
+    r4 <- expectEqual (1 :: Int) (resolveValueRef (VRVariable "count.alive_npcs.in.halle") st)
+    r5 <- expectEqual (1 :: Int) (resolveValueRef (VRVariable "count.items.by.player") st)
+    r6 <- expectEqual (0 :: Int) (resolveValueRef (VRVariable "count.alive_npcs.in.nirgendwo") st)
+    -- the object form carries the tag filter too
+    let spec = CountSpec CountItems (CountInRoom "halle") (Just "schwer")
+    r7 <- expectEqual (1 :: Int) (resolveValueRef (VRCount spec) st)
+    r8 <- expectEqual (0 :: Int) (resolveValueRef (VRCount (CountSpec CountAliveNpcs (CountCarriedBy ActorPlayer) Nothing)) st)
+    -- `compare_var` sees the count family too (the string form)
+    r9 <- expectTrue "compare_var over count values"
+            (evalPredicate (CompareVar "count.items.in.halle" CGte 2) st)
+    r10 <- expectTrue "compare_var over count values (false case)"
+            (not (evalPredicate (CompareVar "count.npcs.in.halle" CGt 5) st))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10)
+
 -- | Helper: state with rooms, items (with locations), and devices installed.
 dstate :: [Room] -> [(ItemDef, Location)] -> [DeviceDef] -> GameState
 dstate rms its devs =
@@ -8482,6 +8555,8 @@ main = do
         , runTest "pursuit step effects: messages, override, seeker contract (Tür IV)" testPursuitStepEffects
         , runTest "pursuit fairness: locked door stops the pursuer (Tür IV)" testPursuitFairness
         , runTest "pursuit save/load recomputes the identical step (Tür IV)" testPursuitSaveLoad
+        , runTest "tag predicates: actor carries / room holds tagged item (B2)" testTaggedItemPredicates
+        , runTest "count family: items/npcs/alive, room or carried, tags (B2)" testCountSpec
         , runTest "ActorHas predicate for player, NPC and device entity (W4)" testActorHasPredicate
         , runTest "Mount and Unmount effects move item location (W4)" testMountAndUnmountEffects
         , runTest "device examine shows description and mounted item (W4)" testDeviceInteractionExamine

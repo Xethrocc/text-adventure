@@ -1,0 +1,63 @@
+# B2: tag predicates and the count family — the four catalog examples.
+name: Mengen Fixture
+start_room: halle
+
+verbs:
+  - name: "pruefe"
+    aliases: ["check"]
+
+rooms:
+  - id: halle
+    name: Halle
+    desc: Die Halle.
+
+items:
+  - id: amulett
+    name: Amulett
+    keys: [amulett]
+    desc: Ein leuchtendes Amulett.
+    tags: [licht]
+    location: halle
+  - id: lampe
+    name: Lampe
+    keys: [lampe]
+    desc: Eine Lampe.
+    tags: [licht]
+    location: halle
+  - id: stein
+    name: Stein
+    keys: [stein]
+    desc: Ein Stein.
+    location: halle
+
+# The four catalog examples (plan-autorenfaehigkeiten.md, B2):
+rules:
+  - id: traegt_licht
+    on: "command pruefe"
+    when: { actor_has_tag: {actor: player, tag: licht} }
+    effects:
+      - msg: "Du traegst etwas Helles."
+  - id: niemand_lebt
+    on: "command pruefe"
+    when: { compare_var: {name: count.alive_npcs.in.halle, op: eq, value: 0} }
+    effects:
+      - msg: "Hier lebt niemand mehr."
+  - id: viel_zeug
+    on: "command pruefe"
+    when: { compare_var: {name: count.items.in.halle, op: gte, value: 2} }
+    effects:
+      - msg: "Hier liegt einiges herum."
+  - id: lichtquelle
+    on: "command pruefe"
+    when: { room: halle, has_item_tag: licht }
+    effects:
+      - msg: "Es ist hell hier."
+
+tests:
+  - name: "alle vier beispiele"
+    input: [take amulett, pruefe]
+    expect:
+      - "Du traegst etwas Helles."
+      - "Hier lebt niemand mehr."
+      - "Hier liegt einiges herum."
+      - "Es ist hell hier."
