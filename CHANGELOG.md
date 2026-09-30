@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Container (4.4)
+
+- **Tragbare Container**: Items mit `capacity: N` (Truhe, Tasche) — Verschachtelung
+  beliebig tief über `in_container:` (der Orts-Baum über die Item-Locations).
+- **Ortsfeste Container**: `containers:`-Sektion (wie `devices:`) mit `capacity:`, `open:`,
+  `locked:` — der Startzustand landet in den Entity-States.
+- **Gebaute Kern-Verben** (immer verfügbar): `open`/`close`/`lock`/`unlock` (Zustandswechsel
+  `open`/`closed`/`locked`), `take X from Y`, `put X in Y` (einzeln, Kapazität geprüft).
+  `take X` findet X auch in offenen Containern; `look` zeigt den Inhalt offener Container.
+- **Scope-Vertrag:** geschlossene Container schneiden den Zweig ab (ihre Inhalte sind weder
+  sichtbar noch erreichbar); die Verschachtelung ist beliebig tief.
+- **Zählbare Limits:** `player: {inventory_limit: N}` (VarMap `inventory.limit`) und der
+  Laufzeit-Effekt `set_inventory_limit: N` — beim Überschreiten verweigern `take`/
+  `take from` (`inventory.full`). Kapazitäten zählen Items (kein Gewicht/Volumen).
+- **Key-Bindung ist Autoren-Vokabel:** `lock`/`unlock` wechseln nur den Zustand; wer einen
+  Schlüssel verlangt, sperrt per Regel (block).
+- **Zero New `SaveState` Fields:** Zustand = `entityStates`, Inhalt = `itemStates`
+  (`InContainer`), Limit = VarMap. `ContainerState` ist jetzt der Definitionsteil der
+  `containers:`-Einträge.
+- **Messages**: 18 neue Schlüssel (container.*, inventory.full).
+- **Tests**: 2 Engine- (**426**) + 2 Worldbuilder-Tests (**200**); Fixture `behaelter.yaml`
+  (Inhalt/Nehmen, Schließen/Sperren, verschlossene Kiste + Kapazität) in CI-Stufe 4b.
+
 ### Geschlossene Mengen-Operationen (B3)
 
 - **Fünf geschlossene Effekte** ersetzen die 20-Zweig-Kaskaden: `damage_all`, `move_all`,

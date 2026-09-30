@@ -25,6 +25,12 @@ module Game
     , pursuitStep
     , countItemMembers
     , countNpcMembers
+    , isContainer
+    , containerCapacityOf
+    , containerStateOf
+    , itemsInContainer
+    , visibleItemsAt
+    , containerChainOpen
     , markCurrentRoomVisited
     , isRoomVisited
     , setRoomVisited
@@ -41,6 +47,8 @@ module Game
     , itemAliases
     , npcAliases
     , matchesItemTarget
+    , lookupItem
+    , relocateItem
     , normalizeText
       -- * Inventory and equipment
     , pickupItem
@@ -148,7 +156,7 @@ import Messages (formatStringWith, renderMsg)
 import Data.List (foldl', isPrefixOf, nub, stripPrefix)
 import Data.Bits (shiftR)
 import Data.Char (toLower, isDigit, isSpace)
-import Data.Maybe (listToMaybe, fromMaybe)
+import Data.Maybe (listToMaybe, fromMaybe, isJust)
 import Control.Applicative ((<|>))
 import Data.Word (Word64)
 import qualified Data.Map.Strict as Map
@@ -183,6 +191,7 @@ emptyGameWorld = GameWorld
     , combineDefs        = []
     , chapterDefs        = []
     , deviceDefs         = Map.empty
+    , containerDefs      = Map.empty
     , progressionDef     = Nothing
     }
 
@@ -405,6 +414,61 @@ getItemsInLocation loc state =
     , Just def <- [Map.lookup iId (itemDefs (world state))]
     , not (itemHidden def) || itemDiscovered st
     ]
+
+-- ---------------------------------------------------------------------------
+-- 4.4: containers
+-- ---------------------------------------------------------------------------
+
+-- | Is this id a container (an item with `capacity` or a `containers:` entry)?
+isContainer :: String -> GameState -> Bool
+isContainer cid state =
+    maybe False (isJust . itemCapacity) (lookupItem cid state)
+        || Map.member cid (containerDefs (world state))
+
+-- | The container's capacity (Nothing = unlimited).
+containerCapacityOf :: String -> GameState -> Maybe Int
+containerCapacityOf cid state =
+    case lookupItem cid state of
+        Just i  -> itemCapacity i
+        Nothing -> Map.lookup cid (containerDefs (world state)) >>= (containerCapacity . conState)
+
+-- | The live state of a container: "open", "closed" or "locked" (entityStates).
+--   Items without an entry start open; `containers:` entries start with the
+--   state the compiler recorded.
+containerStateOf :: String -> GameState -> String
+containerStateOf cid state = fromMaybe "open" (getEntityState cid state)
+
+-- | Items directly inside a container (hidden ones need discovery, like
+--   everywhere else).
+itemsInContainer :: String -> GameState -> [ItemDef]
+itemsInContainer cid state = getItemsInLocation (InContainer cid) state
+
+-- | 4.4: every item at a location plus the contents of open containers,
+--   recursively (closed containers cut the branch off).
+visibleItemsAt :: Location -> GameState -> [ItemDef]
+visibleItemsAt loc state =
+    let direct = getItemsInLocation loc state
+        nested = concat
+            [ visibleItemsAt (InContainer (itemId i)) state
+            | i <- direct
+            , isContainer (itemId i) state
+            , containerStateOf (itemId i) state == "open" ]
+    in direct ++ nested
+
+-- | 4.4: is this container reachable from the outside (its whole chain of
+--   enclosing containers open)? Stationary containers (a room) are always
+--   reachable; the cycle guard is paranoia against malformed saves.
+containerChainOpen :: String -> GameState -> Bool
+containerChainOpen cid state = go (0 :: Int) cid
+  where
+    go n c
+        | n >= (64 :: Int) = False
+        | otherwise = case Map.lookup c (itemStates (save state)) of
+            Just is -> case itemLocation is of
+                InContainer c2 -> containerStateOf c2 state == "open" && go (n + 1) c2
+                Removed        -> False
+                _              -> True
+            Nothing -> Map.member c (containerDefs (world state))
 
 
 -- | W4: Check if an actor (player, NPC, device) carries an item

@@ -1,0 +1,57 @@
+# 4.4: containers — verbs, scope, nesting, capacity, inventory limit.
+name: Behaelter Fixture
+start_room: halle
+
+rooms:
+  - id: halle
+    name: Halle
+    desc: Die Halle.
+
+items:
+  - id: truhe
+    name: Truhe
+    keys: [truhe]
+    desc: Eine Truhe.
+    capacity: 2
+    location: halle
+  - id: amulett
+    name: Amulett
+    keys: [amulett]
+    desc: Ein Amulett.
+    in_container: truhe
+  - id: stein
+    name: Stein
+    keys: [stein]
+    desc: Ein Stein.
+    location: halle
+
+containers:
+  - id: kiste
+    name: Kiste
+    location: halle
+    capacity: 1
+    locked: true
+
+tests:
+  - name: "inhalt und nehmen"
+    input: [look, take amulett from truhe, look]
+    expect:
+      - "In Truhe: Amulett."
+      - "You take amulett from Truhe."
+      - "Truhe is empty."
+  - name: "schliessen und sperren"
+    input: [close truhe, take amulett from truhe, open truhe, lock truhe, open truhe]
+    expect:
+      - "Truhe is closed now."
+      - "Truhe is closed."
+      - "Truhe is open now."
+      - "Truhe is locked now."
+      - "Truhe is locked."
+  - name: "verschlossene kiste"
+    input: [open kiste, unlock kiste, open kiste, put stein in kiste, put amulett in kiste]
+    expect:
+      - "Kiste is locked."
+      - "Kiste is unlocked now."
+      - "Kiste is open now."
+      - "You put stein in Kiste."
+      - "There is no room in Kiste."

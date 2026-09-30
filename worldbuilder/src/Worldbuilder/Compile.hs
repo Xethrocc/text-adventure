@@ -257,6 +257,11 @@ compileAdventure adv =
         (combatErrs, combatProfileCompiled) = compileCombat (advCombat adv)
         (initVarErrs, initialVars) =
             compileInitialVariables allVarDefs allVarInitials (advInitialVariables adv)
+        -- 4.4: `player: {inventory_limit: N}` seeds the VarMap (explicit
+        -- initial_variables win over it).
+        inventoryLimitVars = maybe Map.empty
+            (\n -> Map.singleton "inventory.limit" (E.VVInt n))
+            (advPlayer adv >>= apInventoryLimit)
         (initStateErrs, initialFlags, initialQuests) =
             compileInitialState (advActiveQuests adv) (advInitialFlags adv) questDefs
 
@@ -311,6 +316,8 @@ compileAdventure adv =
                 ("'" ++ v ++ "' collides with the generated notes command (journal: notes)")
             | v <- Map.keys verbRegistry, v `elem` ["notizen", "notes"], notesMode ]
         compiledDevices = compileDevices (advDevices adv)
+        (containerErrs, compiledContainers, containerInitials) =
+            compileContainers allRooms (advContainers adv)
         (deviceErrs, deviceWarns) = checkDeviceRefs (advDevices adv) adv
         (deviceTriggers, deviceVerbs) = compileDeviceTriggers (advDevices adv) (advItems adv)
         hasHolders = any (\d -> not (null (adFits d)) || isJust (adFitsTag d) || not (null (adOnInsert d)) || not (null (adOnRemove d))) (advDevices adv)
@@ -358,6 +365,7 @@ compileAdventure adv =
                 , E.factDefs = compiledFacts
                 , E.combineDefs = compiledCombines
                 , E.deviceDefs = compiledDevices
+                , E.containerDefs = compiledContainers
                 , E.progressionDef = compiledProgression
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
@@ -404,6 +412,7 @@ compileAdventure adv =
                     ++ chapterErrs
                     ++ chapterVarErrs
                     ++ pursuitErrs
+                    ++ containerErrs
                     ++ knowledgeClashErrs
                     ++ journalErrs
                     ++ deviceErrs
@@ -420,7 +429,7 @@ compileAdventure adv =
                         , E.inventory = []
                         , E.itemStates = itemStates
                         , E.npcStates = npcStates
-                        , E.entityStates = initialEntityStates allRooms
+                        , E.entityStates = initialEntityStates allRooms containerInitials
                         , E.flags = initialFlags
                         , E.turnCount = 0
                         , E.gameOver = False
@@ -434,7 +443,7 @@ compileAdventure adv =
                         , E.currentVehicle = Nothing
                         , E.activeDialogue = Nothing
                         , E.rngState = E.initialRngState
-                        , E.variables = initialVars
+                        , E.variables = Map.union initialVars inventoryLimitVars
                         , E.triggerStates = Map.empty
                         , E.exitOverrides = Map.empty
                         , E.deckState = case mStartingDeck of
@@ -458,8 +467,8 @@ compileAdventure adv =
             in Right (CompileResult gw startSave allWarns)
   where
     -- Every locked exit starts locked in entityStates
-    initialEntityStates rooms =
-        Map.fromList
+    initialEntityStates rooms containerInits =
+        Map.fromList containerInits `Map.union` Map.fromList
             [ (e, "locked")
             | room <- Map.elems rooms
             , E.Locked _ e <- Map.elems (E.roomConnections room)
@@ -1580,6 +1589,31 @@ compileDeviceActorRef :: String -> E.ActorRef
 compileDeviceActorRef "player" = E.ActorPlayer
 compileDeviceActorRef s        = E.ActorEntity s
 
+-- | 4.4: stationary containers. The live state (open/locked) lives in
+--   entityStates ("open"/"closed"/"locked") — no new save field. Returns the
+--   defs, the initial states and the errors (duplicate id, missing room).
+compileContainers :: Map.Map String E.Room -> [AContainerDef]
+                   -> ([CompileIssue], Map.Map String E.ContainerDef, [(String, String)])
+compileContainers allRooms cons = (errs, Map.fromList [ (acnId c, toDef c) | c <- cons ], initials)
+  where
+    toDef c = E.ContainerDef (acnId c)
+                (if null (acnName c) then acnId c else acnName c)
+                (acnLocation c)
+                (E.ContainerState (acnOpen c) (acnLocked c) (acnCapacity c))
+    initials =
+        [ (acnId c, if acnLocked c then "locked" else if acnOpen c then "open" else "closed")
+        | c <- cons ]
+    ids = map acnId cons
+    errs =
+        [ ciError ("containers." ++ acnId c) "DuplicateContainer"
+            ("container id '" ++ acnId c ++ "' is declared more than once")
+        | c <- cons, length (filter (== acnId c) ids) > 1 ]
+        ++
+        [ ciError ("containers." ++ acnId c) "MissingRoom"
+            ("container '" ++ acnId c ++ "' sits in unknown room '"
+                ++ acnLocation c ++ "'")
+        | c <- cons, acnLocation c `notElem` map roomId (Map.elems allRooms) ]
+
 compileDevices :: [ADeviceDef] -> Map.Map String E.DeviceDef
 compileDevices devs = Map.fromList
     [ (adId d, E.DeviceDef
@@ -2369,6 +2403,7 @@ compileItemDefSafe registry i =
                 , E.itemPortable = fromMaybe True (aiPortable i)
                 , E.itemTakeFailure = aiTakeFailure i
                 , E.itemVerbMap = verbMap'
+                , E.itemCapacity = aiCapacity i
                 })
 
 compileItemStates :: [AItem] -> ([CompileIssue], Map.Map String E.ItemState)
@@ -2662,6 +2697,7 @@ compileAActionOutcome ao = case ao of
     AORevealAll cs -> E.RevealAll cs
     AOConsumeAll cs -> E.ConsumeAll cs
     AOSetStateAll cs newStatus -> E.SetStateAll cs newStatus
+    AOSetInventoryLimit n -> E.SetValue (E.VRVariable "inventory.limit") (E.EVInt n)
     AOForget f a -> E.Forget (compileActorRef a) f
     AONarrative ls follow -> E.Narrative ls (compileOutcomes follow)
     AOStandingAdd fid n -> E.ModifyValue (E.VRVariable ("faction." ++ fid)) n

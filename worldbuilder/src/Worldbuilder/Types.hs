@@ -59,6 +59,7 @@ data Adventure = Adventure
     , advJournal          :: Maybe String                -- ^ journal: notes | messages (W1; default: messages = no notes command)
     , advChapters         :: [AChapterDef]               -- ^ chapters (W3, narrative order)
     , advPursuit          :: [APursuitEntry]             -- ^ pursuit (Tür IV): per-pursuer chase config
+    , advContainers       :: [AContainerDef]             -- ^ stationary containers (4.4)
     , advFacts            :: [AFactDef]                  -- ^ knowledge facts (W1)
     , advCombines         :: [ACombineDef]               -- ^ derivation rules (W1)
     , advDevices          :: [ADeviceDef]                -- ^ interactive devices/fixtures (W4)
@@ -141,6 +142,7 @@ instance FromJSON Adventure where
         <*> o .:? "journal"      .!= Nothing
         <*> o .:? "chapters"   .!= []
         <*> o .:? "pursuit"    .!= []
+        <*> o .:? "containers" .!= []
         <*> o .:? "facts"      .!= []
         <*> o .:? "combine"    .!= []
         <*> parseDevicesField o
@@ -273,6 +275,7 @@ data AAdventurePlayer = AAdventurePlayer
     , apSkills    :: Map.Map String Int
     , apDeck      :: Maybe [String]
     , apHandLimit :: Maybe Int
+    , apInventoryLimit :: Maybe Int  -- ^ 4.4: count-based inventory limit (VarMap `inventory.limit`)
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AAdventurePlayer where
@@ -283,6 +286,7 @@ instance FromJSON AAdventurePlayer where
         <*> o .:? "skills" .!= Map.empty
         <*> (o .:? "deck" >>= maybe (pure Nothing) (fmap Just . parseDeckValue))
         <*> (o .:? "handLimit" <|> o .:? "hand_limit")
+        <*> o .:? "inventory_limit"
 
 -- | A declared adventure verb: canonical name + input aliases (Phase 3a).
 data AVerb = AVerb
@@ -526,6 +530,7 @@ data AItem = AItem
     , aiPortable   :: Maybe Bool       -- default Nothing → True (backwards compat)
     , aiTakeFailure :: Maybe String
     , aiInContainer :: Maybe String    -- ^ container item id; when set, item starts inside it
+    , aiCapacity :: Maybe Int        -- ^ 4.4: container capacity (count of items); Nothing = not a container
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AItem where
@@ -548,6 +553,7 @@ instance FromJSON AItem where
         <*> o .:? "portable"
         <*> o .:? "take_failure"
         <*> o .:? "in_container"
+        <*> o .:? "capacity"
 
 -- ---------------------------------------------------------------------------
 -- NPCs
@@ -1219,6 +1225,26 @@ instance FromJSON APursuitEntry where
         <*> o .:? "ignores" .!= []
         <*> o .:? "msg"     .!= Nothing
 
+-- | 4.4: a stationary container (chest, coffin, cabinet) authored under
+--   `containers:`. Portable containers are items with `capacity:`.
+data AContainerDef = AContainerDef
+    { acnId       :: String
+    , acnName     :: String
+    , acnLocation :: String           -- ^ room id
+    , acnCapacity :: Maybe Int        -- ^ count of items it holds
+    , acnOpen     :: Bool             -- ^ starts open (default: closed)
+    , acnLocked   :: Bool             -- ^ starts locked (default: no)
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AContainerDef where
+    parseJSON = withObject "AContainerDef" $ \o -> AContainerDef
+        <$> o .:  "id"
+        <*> o .:? "name"     .!= ""
+        <*> o .:? "location" .!= "start"
+        <*> o .:? "capacity"
+        <*> o .:? "open"     .!= False
+        <*> o .:? "locked"   .!= False
+
 -- | An interactive device / fixture (W4) authored under `devices:`.
 data ADeviceDef = ADeviceDef
     { adId          :: String
@@ -1344,6 +1370,7 @@ data AActionOutcome
     | AORevealAll E.CountSpec               -- ^ reveal_all: {what, in|by, tag?}
     | AOConsumeAll E.CountSpec              -- ^ consume_all: {what, in|by, tag?}
     | AOSetStateAll E.CountSpec String      -- ^ set_state_all: {what, in|by, tag?, state}
+    | AOSetInventoryLimit Int               -- ^ set_inventory_limit: N (4.4, VarMap inventory.limit)
     | AOMount String String            -- ^ mount: { item: <item>, to: <device> } (W4)
     | AOUnmount String                 -- ^ unmount: <item> (W4)
     | AOGainXp Int                     -- ^ gain_xp: <amount> (W2)
@@ -1420,6 +1447,7 @@ instance FromJSON AActionOutcome where
                 AOConsumeAll <$> parseJSON (Object o'))
         <|> (do o' <- o .: "set_state_all" :: Parser Object
                 AOSetStateAll <$> parseJSON (Object o') <*> o' .: "state")
+        <|> (AOSetInventoryLimit <$> o .: "set_inventory_limit")
         <|> (do sk <- o .: "skill"
                 AOModifySkill <$> sk .: "name" <*> sk .: "delta")
         <|> (AORandomChoice <$> o .: "random")
@@ -1628,7 +1656,7 @@ knownKeys EntAdventure = Set.fromList
     , "encounter_tables", "environment", "stealth", "patrol", "combat"
     , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
     , "handLimit", "hand_limit", "sandbox_zones", "procedures", "tests", "include"
-    , "facts", "combine", "combine_verb", "journal", "chapters", "devices", "pursuit"
+    , "facts", "combine", "combine_verb", "journal", "chapters", "devices", "pursuit", "containers"
     , "progression"
     ]
 knownKeys EntRoom = Set.fromList

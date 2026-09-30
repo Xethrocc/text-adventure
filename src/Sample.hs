@@ -115,7 +115,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = emptyAscii
+                , itemCapacity = Nothing, itemAscii = emptyAscii
                 })
             , ("key", ItemDef
                 { itemId = "key"
@@ -133,7 +133,7 @@ initSampleGame = GameState
                     (Sequence
                         [ QuestOp StartQuest "find_treasure"
                         , SetValue (VRFlag "quest_started") (EVString "true") ])
-                , itemAscii = emptyAscii
+                , itemCapacity = Nothing, itemAscii = emptyAscii
                 })
             , ("gold", ItemDef
                 { itemId = "gold"
@@ -148,7 +148,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = emptyAscii
+                , itemCapacity = Nothing, itemAscii = emptyAscii
                 })
             , ("jewel", ItemDef
                 { itemId = "jewel"
@@ -163,7 +163,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = emptyAscii
+                , itemCapacity = Nothing, itemAscii = emptyAscii
                 })
             , ("potion_healing", ItemDef
                 { itemId = "potion_healing"
@@ -182,7 +182,7 @@ initSampleGame = GameState
                         [ ModifyValue VRPlayerHealth 50
                         , SetValue (VRItemProp "potion_healing" "uses") (EVInt (-1))
                         , SetValue (VRActorProp (ActorEntity "potion_healing") PState) (EVString "empty") ])
-                , itemAscii = emptyAscii
+                , itemCapacity = Nothing, itemAscii = emptyAscii
                 })
             -- Equipment examples
             , ("sword_rusty", ItemDef
@@ -198,7 +198,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = emptyAscii
+                , itemCapacity = Nothing, itemAscii = emptyAscii
                 })
             , ("leather_armor", ItemDef
                 { itemId = "leather_armor"
@@ -213,7 +213,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = emptyAscii
+                , itemCapacity = Nothing, itemAscii = emptyAscii
                 })
             , ("ring_vigor", ItemDef
                 { itemId = "ring_vigor"
@@ -228,7 +228,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = emptyAscii
+                , itemCapacity = Nothing, itemAscii = emptyAscii
                 })
             -- Hidden item, found via `search`
             , ("note_old", ItemDef
@@ -244,7 +244,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = emptyAscii
+                , itemCapacity = Nothing, itemAscii = emptyAscii
                 })
             -- Vehicle demo (Phase 3)
             , ("carriage", ItemDef
@@ -260,7 +260,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = emptyAscii
+                , itemCapacity = Nothing, itemAscii = emptyAscii
                 })
             , ("hay", ItemDef
                 { itemId = "hay"
@@ -275,7 +275,7 @@ initSampleGame = GameState
                 , itemPortable = True
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
-                , itemAscii = emptyAscii
+                , itemCapacity = Nothing, itemAscii = emptyAscii
                 })
             ]
         , npcDefs = Map.fromList
@@ -376,7 +376,8 @@ initSampleGame = GameState
         , chapterDefs = []
         , combineDefs = []
         , procDefs = Map.empty
-        , deviceDefs = Map.empty
+        , deviceDefs = Map.empty,
+            containerDefs = Map.empty
         , progressionDef = Nothing
         }
     , save = SaveState

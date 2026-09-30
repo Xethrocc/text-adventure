@@ -494,7 +494,7 @@ testCombatNarrativeLose = do
 -- | A minimal companion-capable NPC used by the party tests.
 squireDef :: NPCDef
 squireDef = NPCDef "squire" "squire" (plainText "A loyal squire with a chipped blade.")
-    Map.empty ["squire", "knappe"] (Just 20) 3 1 Map.empty (emptyAscii)
+    Map.empty ["squire", "knappe"] (Just 20) 3 1 Map.empty emptyAscii
 
 -- | Sample game plus a `squire`. Joining is just the roster convention:
 --   the follow variable `party.squire` set to 1.
@@ -2085,7 +2085,7 @@ testDefaultSaveStateFieldsInitialised = do
 -- | Second companion used by the P0-2 combat regressions.
 guardDef :: NPCDef
 guardDef = NPCDef "guard" "guard" (plainText "A silent guard.")
-    Map.empty ["guard"] (Just 20) 3 1 Map.empty (emptyAscii)
+    Map.empty ["guard"] (Just 20) 3 1 Map.empty emptyAscii
 
 -- | P0-2 fixture: sample game in the hallway with two companions (guard,
 --   squire) and a rule that announces the goblin's death. `goblinHp` decides
@@ -3458,7 +3458,7 @@ testTakeEventOnlyOnSuccess = do
     let base = initSampleGame
         nonPortable = ItemDef "statue" "statue" (plainText "A heavy stone statue.")
                           ["statue"] Set.empty Nothing [] False Nothing False
-                          (Just "The statue will not budge.") Map.empty (emptyAscii)
+                          (Just "The statue will not budge.") Map.empty Nothing emptyAscii
         st0 = base { world = (world base)
                          { itemDefs = Map.insert "statue" nonPortable (itemDefs (world base)) }
                    , save  = (save base)
@@ -3679,7 +3679,7 @@ testOnUseTriggerMultiWordAlias = do
         w = (world sample)
             { itemDefs = Map.insert "oil_can"
                 (ItemDef "oil_can" "oil can" (plainText "A dented oil can.") ["oil", "can"]
-                         Set.empty Nothing [] False Nothing True Nothing Map.empty (emptyAscii))
+                         Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii)
                 (itemDefs (world sample))
             , triggerDefs =
                 [ TriggerDef "light_lantern" (OnUse "oil_can") Nothing
@@ -3710,7 +3710,7 @@ testTakeWithOnTakePicksUp = do
             { itemDefs = Map.insert "token"
                 (ItemDef "token" "token" (plainText "A token.") ["token"] Set.empty
                          Nothing [] False Nothing True Nothing
-                         (Map.singleton (VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))) (emptyAscii))
+                         (Map.singleton (VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))) Nothing emptyAscii)
                 (itemDefs (world sample)) }
         here = currentRoom (save sample)
         st = sample { world = w
@@ -3731,7 +3731,7 @@ testTakeNonPortableFails = do
             { itemDefs = Map.insert "statue"
                 (ItemDef "statue" "statue" (plainText "A statue.") ["statue"] Set.empty
                          Nothing [] False Nothing False (Just "Too heavy to lift.")
-                         Map.empty (emptyAscii))
+                         Map.empty Nothing emptyAscii)
                 (itemDefs (world sample)) }
         here = currentRoom (save sample)
         st = sample { world = w
@@ -3749,7 +3749,7 @@ testTakeNonPortableFails = do
 -- Helper: an equippable item placed in the player's inventory.
 invItem :: String -> ItemDef
 invItem iid = ItemDef iid iid (plainText "x") [iid] Set.empty
-    (Just Weapon) [] False Nothing True Nothing Map.empty (emptyAscii)
+    (Just Weapon) [] False Nothing True Nothing Map.empty Nothing emptyAscii
 
 -- | Equipped items are always also carried.
 testEquippedImpliesCarried :: IO Bool
@@ -4302,7 +4302,7 @@ testStandingOutcomeViaDialogue = do
                                 (DialogueNode "intro" "Join us."
                                     [ DialogueChoice "I accept." Nothing Nothing
                                         (ModifyValue (VRVariable "faction.smugglers") 20) ]))))
-                    ["recruiter"] Nothing 0 0 Map.empty (emptyAscii))
+                    ["recruiter"] Nothing 0 0 Map.empty emptyAscii)
                 (npcDefs (world sample)) }
         st0 = sample { world = w
                      , save = (save sample)
@@ -4339,7 +4339,7 @@ tradeWorld stock credits =
                 (ItemDef "rope" "rope" (plainText "A coil of rope.")
                     ["rope"] Set.empty Nothing [] False Nothing True Nothing
                     (Map.singleton (VCustom "buy", "intact") buyEff
-                        `Map.union` Map.singleton (VCustom "sell", "intact") sellEff) (emptyAscii))
+                        `Map.union` Map.singleton (VCustom "sell", "intact") sellEff) Nothing emptyAscii)
             , verbDefs = Map.singleton "buy" (VerbDef "buy" ["purchase"])
                 `Map.union` Map.singleton "sell" (VerbDef "sell" ["pawn"])
             }
@@ -4513,7 +4513,7 @@ testVisitedAcceptsBool = do
 testItemWithoutStateIsReported :: IO Bool
 testItemWithoutStateIsReported = do
     let lamp = ItemDef "lamp" "lamp" (plainText "A brass lamp.") ["lamp"] Set.empty
-                    Nothing [] False Nothing True Nothing Map.empty (emptyAscii)
+                    Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii
         gw = (world initSampleGame)
                 { itemDefs = Map.insert "lamp" lamp (itemDefs (world initSampleGame)) }
     r1 <- expectTrue "MissingItemState is reported"
@@ -4955,6 +4955,100 @@ testEnterFiresBeforeTurnThroughLoop = do
     r2 <- expectTrue "the enter event precedes the turn event" (idxOf "ENTER" < idxOf "TURN")
     pure (r1 && r2)
 
+-- ---------------------------------------------------------------------------
+-- 4.4: containers
+-- ---------------------------------------------------------------------------
+
+-- | Helper: state with rooms, items, stationary containers and entity states.
+cstate2 :: [Room] -> [(ItemDef, Location)] -> [ContainerDef] -> Map.Map String String -> GameState
+cstate2 rms its cons ents =
+    let gw = (world emptyGameState)
+            { rooms = Map.fromList [ (roomId r, r) | r <- rms ]
+            , itemDefs = Map.fromList [ (itemId i, i) | (i, _) <- its ]
+            , containerDefs = Map.fromList [ (conId c, c) | c <- cons ]
+            }
+        sv = (save emptyGameState)
+            { currentRoom = if null rms then "" else roomId (head rms)
+            , itemStates = Map.fromList
+                [ (itemId i, ItemState loc "intact" Map.empty False) | (i, loc) <- its ]
+            , entityStates = ents
+            }
+    in emptyGameState { world = gw, save = sv }
+
+-- | The container verbs: open/close/lock/unlock with their states and the
+--   refusal messages (through the real command path).
+testContainerVerbs :: IO Bool
+testContainerVerbs = do
+    let truhe = (mkTestItem "truhe" "Truhe") { itemCapacity = Just 5 }
+        st0 = cstate2 [mkTestRoom "halle" "Halle"] [(truhe, InRoom "halle")] []
+                (Map.fromList [("truhe", "closed")])
+        run cmd st = applyLoopCommandEv (parseCommand cmd) (initLoopState st)
+        stOf = lsCurrent . fst
+        evsOf = snd
+        stateOf c = containerStateOf "truhe" (stOf (run c st0))
+    r1 <- expectEqual "open" (stateOf "open truhe")
+    r2 <- expectTrue "open message" ("is open now" `isInfixOf` renderEvents (evsOf (run "open truhe" st0)))
+    r3 <- expectEqual "locked" (stateOf "lock truhe")
+    r4 <- expectTrue "lock message" ("is locked now" `isInfixOf` renderEvents (evsOf (run "lock truhe" st0)))
+    let stLocked = stOf (run "lock truhe" st0)
+    r5 <- expectTrue "open is refused when locked"
+            ("is locked" `isInfixOf` renderEvents (evsOf (run "open truhe" stLocked)))
+    r6 <- expectEqual "closed" (containerStateOf "truhe" (stOf (run "unlock truhe" stLocked)))
+    r7 <- expectTrue "unlock message" ("is unlocked now" `isInfixOf` renderEvents (evsOf (run "unlock truhe" stLocked)))
+    let stOpen = stOf (run "open truhe" st0)
+    r8 <- expectTrue "close works" ("is closed now" `isInfixOf` renderEvents (evsOf (run "close truhe" stOpen)))
+    r9 <- expectTrue "not a container" ("is not a container" `isInfixOf` renderEvents (evsOf (run "open nix" st0)))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9)
+
+-- | take X from Y / put X in Y: scope, capacity, nesting, inventory limit.
+testContainerTakePut :: IO Bool
+testContainerTakePut = do
+    let truhe = (mkTestItem "truhe" "Truhe") { itemCapacity = Just 1 }
+        lampe = mkTestItem "lampe" "Lampe"
+        stein = mkTestItem "stein" "Stein"
+        st0 = cstate2 [mkTestRoom "halle" "Halle"]
+                [ (truhe, InRoom "halle"), (lampe, InContainer "truhe"), (stein, InRoom "halle") ]
+                [] (Map.fromList [("truhe", "open")])
+        run cmd st = applyLoopCommandEv (parseCommand cmd) (initLoopState st)
+        stOf = lsCurrent . fst
+        evsOf = snd
+        itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+    -- the lamp is in scope through the open container (take finds it)
+    r1 <- expectTrue "container contents are in scope"
+            (any (\i -> itemId i == "lampe") (visibleItemsAt (InRoom "halle") st0))
+    -- take the lamp out
+    let st2 = stOf (run "take lampe from truhe" st0)
+    r2 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "lampe" st2)
+    r3 <- expectTrue "took_from message"
+            ("You take lampe from Truhe." `isInfixOf` renderEvents (evsOf (run "take lampe from truhe" st0)))
+    -- put the stone in (capacity 1, the lamp is out)
+    let st3 = stOf (run "put stein in truhe" st2)
+    r4 <- expectEqual (Just (InContainer "truhe")) (itemLoc "stein" st3)
+    r5 <- expectTrue "put message"
+            ("You put stein in Truhe." `isInfixOf` renderEvents (evsOf (run "put stein in truhe" st2)))
+    -- full: the lamp cannot go in
+    let st4 = stOf (run "put lampe in truhe" st3)
+    r6 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "lampe" st4)
+    r7 <- expectTrue "full message" ("no room" `isInfixOf` renderEvents (evsOf (run "put lampe in truhe" st3)))
+    -- a closed container refuses take
+    let stClosed = stOf (run "close truhe" st3)
+    r8 <- expectTrue "take from closed refuses"
+            ("Truhe is closed" `isInfixOf` renderEvents (evsOf (run "take stein from truhe" stClosed)))
+    -- nesting: the stone is visible through two open containers
+    let tasche = (mkTestItem "tasche" "Tasche") { itemCapacity = Just 3 }
+        st5 = cstate2 [mkTestRoom "halle" "Halle"]
+                [ (truhe, InRoom "halle"), (tasche, InContainer "truhe"), (stein, InContainer "tasche") ]
+                [] (Map.fromList [("truhe", "open"), ("tasche", "open")])
+    r9 <- expectTrue "nested contents are visible"
+            (any (\i -> itemId i == "stein") (visibleItemsAt (InRoom "halle") st5))
+    -- inventory limit (VarMap inventory.limit): one more item is refused
+    let st6 = st0 { save = (save st0)
+                    { variables = Map.insert "inventory.limit" (VVInt 1) (variables (save st0)) } }
+        st7 = stOf (run "take stein" st6)
+    r10 <- expectTrue "inventory limit refuses" ("carrying too much" `isInfixOf`
+            renderEvents (evsOf (run "take lampe" st7)))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10)
+
 -- | L13: `consumesTurn` ends in a `_ -> True` catch-all, so a new `Command`
 --   constructor silently becomes turn-consuming — that is how P1-16 happened.
 --   `expectedConsumesTurn` matches every constructor **without** a wildcard and
@@ -4983,6 +5077,12 @@ expectedConsumesTurn cmd = case cmd of
     Undo               -> False
     EnterVehicleCmd _  -> True
     ExitVehicleCmd     -> True
+    OpenCmd _          -> True   -- 4.4: opening a container costs a turn
+    CloseCmd _         -> True
+    LockCmd _          -> True
+    UnlockCmd _        -> True
+    TakeFromCmd _ _    -> True
+    PutInCmd _ _       -> True
     DriveToCmd _       -> True
     WaitCmd            -> True
     RefuelCmd _        -> True
@@ -5643,7 +5743,7 @@ mkTestRoom rId name = Room rId name (plainText name) Map.empty Set.empty Nothing
 --   helper without devices.
 mkTestItem :: String -> String -> ItemDef
 mkTestItem i n =
-    ItemDef i n (plainText n) [i] Set.empty Nothing [] False Nothing True Nothing Map.empty emptyAscii
+    ItemDef i n (plainText n) [i] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii
 
 mstate :: [Room] -> [(ItemDef, Location)] -> GameState
 mstate rms its =
@@ -5725,9 +5825,9 @@ dstate rms its devs =
 testActorHasPredicate :: IO Bool
 testActorHasPredicate = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty emptyAscii
-        it2 = ItemDef "schluessel" "Schlüssel" (plainText "Ein Schlüssel.") ["schluessel"] Set.empty Nothing [] False Nothing True Nothing Map.empty emptyAscii
-        it3 = ItemDef "kristall" "Kristall" (plainText "Ein Kristall.") ["kristall"] Set.empty Nothing [] False Nothing True Nothing Map.empty emptyAscii
+        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii
+        it2 = ItemDef "schluessel" "Schlüssel" (plainText "Ein Schlüssel.") ["schluessel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii
+        it3 = ItemDef "kristall" "Kristall" (plainText "Ein Kristall.") ["kristall"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii
         dev1 = DeviceDef "halterung" "Halterung" ["halterung"] "krypta" (Just "Eine Halterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [ (it1, InRoom "krypta")
                           , (it2, CarriedBy (ActorNPC "guard"))
@@ -5743,7 +5843,7 @@ testActorHasPredicate = do
 testMountAndUnmountEffects :: IO Bool
 testMountAndUnmountEffects = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty emptyAscii
+        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii
         dev1 = DeviceDef "halterung" "Halterung" ["halterung"] "krypta" (Just "Eine Halterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [(it1, InRoom "krypta")] [dev1]
     let (st1, _, _) = applyOutcomeWith 0 0 (Mount "fackel" (ActorEntity "halterung")) "" st0
@@ -5757,7 +5857,7 @@ testMountAndUnmountEffects = do
 testDeviceInteractionExamine :: IO Bool
 testDeviceInteractionExamine = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "brennende Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty emptyAscii
+        it1 = ItemDef "fackel" "brennende Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii
         dev1 = DeviceDef "halterung" "Fackelhalterung" ["halterung"] "krypta" (Just "Eine Wandhalterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [(it1, CarriedBy (ActorEntity "halterung"))] [dev1]
         cmd = parseCommandWith Map.empty "examine halterung"
@@ -7341,7 +7441,7 @@ mkTestKey iid name = ItemDef
     , itemPortable = True
     , itemTakeFailure = Nothing
     , itemVerbMap = Map.empty
-    , itemAscii = emptyAscii
+    , itemCapacity = Nothing, itemAscii = emptyAscii
     }
 
 -- | Phase 0.1: Test central resolveTarget for Item, NPC, Vehicle, Bare, NotFound, and Ambiguous
@@ -7585,7 +7685,7 @@ mkTestEquip iid name slot = ItemDef
     , itemPortable = True
     , itemTakeFailure = Nothing
     , itemVerbMap = Map.empty
-    , itemAscii = emptyAscii
+    , itemCapacity = Nothing, itemAscii = emptyAscii
     }
 
 -- | Phase 0.2: Direct test of search order and preferInventoryTarget predicate
@@ -8612,6 +8712,8 @@ main = do
         , runTest "tag predicates: actor carries / room holds tagged item (B2)" testTaggedItemPredicates
         , runTest "count family: items/npcs/alive, room or carried, tags (B2)" testCountSpec
         , runTest "mass ops: damage/move/reveal/consume/set_state (B3)" testMassOps
+        , runTest "container verbs: open/close/lock/unlock (4.4)" testContainerVerbs
+        , runTest "container take/put: scope, capacity, nesting, limit (4.4)" testContainerTakePut
         , runTest "ActorHas predicate for player, NPC and device entity (W4)" testActorHasPredicate
         , runTest "Mount and Unmount effects move item location (W4)" testMountAndUnmountEffects
         , runTest "device examine shows description and mounted item (W4)" testDeviceInteractionExamine

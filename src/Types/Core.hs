@@ -100,6 +100,7 @@ module Types.Core
     , NPCDef (..)
     , NPCState (..)
     , ContainerState (..)
+    , ContainerDef (..)
       -- * Player
     , Player (..)
     , Inventory
@@ -1374,6 +1375,7 @@ data ItemDef = ItemDef
         , itemPortable      :: Bool                  -- ^ Can the player pick this up?
         , itemTakeFailure   :: Maybe String          -- ^ Message when take fails (non-portable)
         , itemVerbMap       :: Map.Map (Verb, String) Effect
+        , itemCapacity      :: Maybe Int          -- ^ 4.4: container capacity (count of items), Nothing = not a container
         , itemAscii         :: AsciiArt              -- ^ Optional state-dependent, animated ASCII art
         } deriving (Show, Eq)
 
@@ -1391,7 +1393,8 @@ instance ToJSON ItemDef where
         , "itemPortable"     .= itemPortable def
         , "itemTakeFailure"  .= itemTakeFailure def
         , "itemVerbMap"      .= verbStateMapToJSON (itemVerbMap def)
-        ] ++ asciiPair "itemAscii" (itemAscii def)
+        ] ++ maybe [] (\c -> ["itemCapacity" .= c]) (itemCapacity def)
+          ++ asciiPair "itemAscii" (itemAscii def)
 
 instance FromJSON ItemDef where
     parseJSON = withObject "ItemDef" $ \o -> ItemDef
@@ -1407,6 +1410,7 @@ instance FromJSON ItemDef where
         <*> o .:? "itemPortable"     .!= True
         <*> o .:? "itemTakeFailure"  .!= Nothing
         <*> (o .: "itemVerbMap" >>= verbStateMapFromJSON)
+        <*> o .:? "itemCapacity"     .!= Nothing
         <*> o .:? "itemAscii"        .!= emptyAscii
 
 -- | Dynamic item state
@@ -1542,6 +1546,19 @@ data ContainerState = ContainerState
 
 instance ToJSON ContainerState
 instance FromJSON ContainerState
+
+-- | 4.4: a stationary container (chest, coffin, cabinet) authored under
+--   `containers:`. Portable containers are `ItemDef`s with `itemCapacity`.
+--   The live state (open/locked) lives in `entityStates` — no new save field.
+data ContainerDef = ContainerDef
+    { conId       :: EntityID
+    , conName     :: String
+    , conLocation :: RoomID
+    , conState    :: ContainerState  -- ^ initial state (open/locked/capacity)
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON ContainerDef
+instance FromJSON ContainerDef
 
 -- ---------------------------------------------------------------------------
 -- Player
@@ -1868,6 +1885,7 @@ data GameWorld = GameWorld
     , combineDefs        :: [CombineDef]                             -- ^ Derivation rules (W1); empty list is omitted
     , chapterDefs        :: [ChapterDef]                             -- ^ Chapters (W3) in narrative order; empty list is omitted
     , deviceDefs         :: Map.Map DeviceID DeviceDef               -- ^ Interactive devices/fixtures (W4); empty map is omitted
+    , containerDefs      :: Map.Map EntityID ContainerDef            -- ^ Stationary containers (4.4); empty map is omitted
     , progressionDef     :: Maybe ProgressionDef                     -- ^ Player progression (W2); Nothing omitted from world.json
     } deriving (Show, Eq)
 
@@ -1909,7 +1927,7 @@ instance ToJSON GameWorld where
         , "worldName"          .= worldName gw
         , "abilities"          .= abilities gw
         ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair ++ sandboxPair
-          ++ procPair ++ factPair ++ combinePair ++ chapterPair ++ devicePair ++ progPair
+          ++ procPair ++ factPair ++ combinePair ++ chapterPair ++ devicePair ++ containerPair ++ progPair
       where
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
@@ -1928,6 +1946,7 @@ instance ToJSON GameWorld where
         combinePair = [ "combineDefs" .= combineDefs gw | not (null (combineDefs gw)) ]
         chapterPair = [ "chapterDefs" .= chapterDefs gw | not (null (chapterDefs gw)) ]
         devicePair = [ "deviceDefs" .= deviceDefs gw | not (Map.null (deviceDefs gw)) ]
+        containerPair = [ "containerDefs" .= containerDefs gw | not (Map.null (containerDefs gw)) ]
         progPair = [ "progressionDef" .= p | Just p <- [progressionDef gw] ]
         endArt = Map.filter (not . isEmptyAscii) (worldEndArt gw)
         titleArt = worldTitleArt gw
@@ -1992,6 +2011,7 @@ instance FromJSON GameWorld where
         <*> o .:? "combineDefs" .!= []
         <*> o .:? "chapterDefs" .!= []
         <*> o .:? "deviceDefs" .!= Map.empty
+        <*> o .:? "containerDefs" .!= Map.empty
         <*> o .:? "progressionDef" .!= Nothing
 
 -- | Encode item-on-item outcomes as objects (P2-9).

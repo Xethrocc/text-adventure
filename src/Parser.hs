@@ -84,6 +84,12 @@ data Command
     | Undo                       -- ^ restore the previous game state
     | EnterVehicleCmd String     -- ^ enter a vehicle
     | ExitVehicleCmd             -- ^ exit the current vehicle
+    | OpenCmd String             -- ^ 4.4: open a container
+    | CloseCmd String            -- ^ 4.4: close a container
+    | LockCmd String             -- ^ 4.4: lock a container
+    | UnlockCmd String           -- ^ 4.4: unlock a container
+    | TakeFromCmd String String  -- ^ 4.4: take X from Y
+    | PutInCmd String String     -- ^ 4.4: put X in Y
     | DriveToCmd String          -- ^ drive the current vehicle to a station
     | WaitCmd                    -- ^ advance an AutomaticRoute vehicle
     | RefuelCmd String           -- ^ refuel a vehicle (fuel item used via interactions)
@@ -179,6 +185,14 @@ parseCompoundCommandWith defs tokens@(v : rest) =
 parseCompoundCommandWith _ [] = Unknown ""
 
 -- | Parse a single (non-compound) command with the verb registry
+-- | 4.4: split a word list at the first occurrence of one of the prepositions
+--   (`take X from Y` / `put X in Y`). Both sides must be non-empty.
+splitPrep :: [String] -> [String] -> Maybe ([String], [String])
+splitPrep preps ws =
+    case break (`elem` preps) ws of
+        (x, _ : y) | not (null x) && not (null y) -> Just (x, y)
+        _ -> Nothing
+
 parseSimpleCommandWith :: Map.Map String VerbDef -> [String] -> String -> Command
 parseSimpleCommandWith defs tokens input = case tokens of
     []                     -> Unknown ""
@@ -292,6 +306,25 @@ parseSimpleCommandWith defs tokens input = case tokens of
         | not (null targetParts)
         , "from" `notElem` targetParts
         , "aus" `notElem` targetParts -> UnequipCmd (unwords (safeStripStopWords targetParts))
+    -- 4.4: container verbs (open/close/lock/unlock + take X from Y / put X in Y)
+    "open"       : targetParts | not (null targetParts) -> OpenCmd (unwords (safeStripStopWords targetParts))
+    "oeffne"     : targetParts | not (null targetParts) -> OpenCmd (unwords (safeStripStopWords targetParts))
+    "close"      : targetParts | not (null targetParts) -> CloseCmd (unwords (safeStripStopWords targetParts))
+    "schliesse"  : targetParts | not (null targetParts) -> CloseCmd (unwords (safeStripStopWords targetParts))
+    "lock"       : targetParts | not (null targetParts) -> LockCmd (unwords (safeStripStopWords targetParts))
+    "verschliesse" : targetParts | not (null targetParts) -> LockCmd (unwords (safeStripStopWords targetParts))
+    "unlock"     : targetParts | not (null targetParts) -> UnlockCmd (unwords (safeStripStopWords targetParts))
+    "entsperre"  : targetParts | not (null targetParts) -> UnlockCmd (unwords (safeStripStopWords targetParts))
+    "take" : rest | Just (x, y) <- splitPrep ["from", "aus"] rest ->
+        TakeFromCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
+    "get"  : rest | Just (x, y) <- splitPrep ["from", "aus"] rest ->
+        TakeFromCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
+    "nimm" : rest | Just (x, y) <- splitPrep ["from", "aus"] rest ->
+        TakeFromCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
+    "put"  : rest | Just (x, y) <- splitPrep ["in"] rest ->
+        PutInCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
+    "lege" : rest | Just (x, y) <- splitPrep ["in"] rest ->
+        PutInCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
     -- Complex parsing (supports multi-word targets with stop-word stripping)
     "look"  : "at"   : targetParts | not (null targetParts) -> Interact VLookAt (unwords (safeStripStopWords targetParts))
     "pick"  : "up"   : targetParts | not (null targetParts) -> Interact VTake (unwords (safeStripStopWords targetParts))
@@ -509,6 +542,12 @@ extractCommandArgs cmd = case cmd of
     MapCmd                -> ("map", "", [])
     TakeAll               -> ("take", "all", ["all"])
     DropAll               -> ("drop", "all", ["all"])
+    OpenCmd t             -> ("open", t, words t)
+    CloseCmd t            -> ("close", t, words t)
+    LockCmd t             -> ("lock", t, words t)
+    UnlockCmd t           -> ("unlock", t, words t)
+    TakeFromCmd x y       -> ("take", x ++ " " ++ y, words (x ++ " " ++ y))
+    PutInCmd x y          -> ("put", x ++ " " ++ y, words (x ++ " " ++ y))
     EquipCmd t            -> ("equip", t, words t)
     UnequipCmd t          -> ("unequip", t, words t)
     UnequipAllCmd         -> ("unequip", "all", ["all"])
@@ -579,6 +618,67 @@ executeCommandEv cmd state =
             in (stFinal, joinBeforeAndCmd beforeMsgs cmdMsgs)
 
 -- | Dispatch command execution without the OnBefore veto phase.
+
+
+-- | 4.4: the display name of a container (item name, else the containers: name).
+containerName :: String -> GameState -> String
+containerName cid state =
+    case lookupItem cid state of
+        Just i  -> itemName i
+        Nothing -> maybe cid conName (Map.lookup cid (containerDefs (world state)))
+
+-- | 4.4: resolve a container target — an item with `capacity` (portable) or
+--   a `containers:` entry (stationary).
+findContainerRef :: String -> GameState -> Maybe String
+findContainerRef targetStr state =
+    case [ itemId i | i <- scopeItems, matchesItemTarget targetStr i ] of
+        (iId : _) -> Just iId
+        [] ->
+            let ents = [ conId c
+                       | c <- Map.elems (containerDefs (world state))
+                       , conLocation c == currentRoom (save state)
+                       , conName c == targetStr || conId c == targetStr ]
+            in case ents of
+                (eId : _) -> Just eId
+                []        -> Nothing
+  where
+    scopeItems = visibleItemsAt (InRoom (currentRoom (save state))) state
+                ++ getItemsInLocation (CarriedBy ActorPlayer) state
+
+-- | 4.4: a scope item (visible through open containers) matching the target.
+findScopeItem :: String -> GameState -> Maybe ItemID
+findScopeItem targetStr state =
+    case [ itemId i | i <- scopeItems, matchesItemTarget targetStr i ] of
+        (iId : _) -> Just iId
+        []        -> Nothing
+  where
+    scopeItems = visibleItemsAt (InRoom (currentRoom (save state))) state
+                ++ getItemsInLocation (CarriedBy ActorPlayer) state
+
+-- | 4.4: the item sits directly in this container.
+itemInContainer :: ItemID -> String -> GameState -> Bool
+itemInContainer iId cid state =
+    fmap itemLocation (Map.lookup iId (itemStates (save state))) == Just (InContainer cid)
+
+-- | 4.4: the container holds as many items as its capacity allows.
+containerFull :: String -> GameState -> Bool
+containerFull cid state =
+    case containerCapacityOf cid state of
+        Nothing -> False
+        Just n  -> length (itemsInContainer cid state) >= n
+
+-- | 4.4: the player carries as many items as the inventory limit allows
+--   (`inventory.limit` in the VarMap — set by the world or `set_inventory_limit:`).
+inventoryFull :: GameState -> Bool
+inventoryFull state =
+    case getVariable "inventory.limit" state of
+        Just (VVInt n) | n >= 0 ->
+            length (inventory (save state)) + Map.size (equipment (save state)) >= n
+        _ -> False
+
+
+
+
 dispatchCommandEv :: Command -> GameState -> CommandResultEv
 
 dispatchCommandEv (Go dir) state
@@ -626,6 +726,24 @@ dispatchCommandEv Look state = case getCurrentRoom state of
                 itemDesc = if null itemsInRoom
                            then evMsg "look.see_nothing" []
                            else evMsg "look.items" [("names", intercalate ", " (map itemName itemsInRoom))]
+                -- 4.4: open containers show their contents (recursively through
+                --   further open containers).
+                openContainers =
+                    [ (itemId i, itemName i)
+                    | i <- itemsInRoom
+                    , isContainer (itemId i) state
+                    , containerStateOf (itemId i) state == "open" ]
+                    ++
+                    [ (conId c, conName c)
+                    | c <- Map.elems (containerDefs (world state))
+                    , conLocation c == currentRoom (save state)
+                    , containerStateOf (conId c) state == "open" ]
+                containerDesc = concat
+                    [ case itemsInContainer cid state of
+                        [] -> evMsg "container.empty" [("name", cname)]
+                        contents -> evMsg "container.contains"
+                            [("name", cname), ("items", intercalate ", " (map itemName contents))]
+                    | (cid, cname) <- openContainers ]
                 npcDesc = if null livingHere
                           then []
                           else evMsg "look.npcs" [("names", intercalate ", " (map npcName livingHere))]
@@ -646,7 +764,7 @@ dispatchCommandEv Look state = case getCurrentRoom state of
                                    [ ArtHotspot i (hsGlyph h) (hsTarget h)
                                    | (i, h) <- zip [1 :: Int ..] (aaHotspots (roomAscii room)) ])]
                 full = joinAllEv
-                        [ artFrags, evRaw desc, itemDesc, npcDesc, corpseDesc, hookMsg,
+                        [ artFrags, evRaw desc, itemDesc, containerDesc, npcDesc, corpseDesc, hookMsg,
                           maybe [] evRaw vehicleMsg ]
             in (state', full)
 
@@ -904,6 +1022,80 @@ dispatchCommandEv (ActionWithArgs verb args) state =
     let stateWithVars = bindCommandVars (ActionWithArgs verb args) state
     in dispatchCommandEv (Interact verb (unwords args)) stateWithVars
 
+-- | 4.4: container verbs — open / close / lock / unlock.
+dispatchCommandEv (OpenCmd t) state =
+    case findContainerRef t state of
+        Nothing -> (state, evMsg "container.not_a_container" [("target", t)])
+        Just cid -> case containerStateOf cid state of
+            "locked" -> (state, evMsg "container.is_locked" [("name", containerName cid state)])
+            "open"   -> (state, evMsg "container.already_open" [("name", containerName cid state)])
+            _        -> (setEntityState cid "open" state
+                        , evMsg "container.opened" [("name", containerName cid state)])
+
+dispatchCommandEv (CloseCmd t) state =
+    case findContainerRef t state of
+        Nothing -> (state, evMsg "container.not_a_container" [("target", t)])
+        Just cid -> case containerStateOf cid state of
+            "locked" -> (state, evMsg "container.is_locked" [("name", containerName cid state)])
+            "closed" -> (state, evMsg "container.already_closed" [("name", containerName cid state)])
+            _        -> (setEntityState cid "closed" state
+                        , evMsg "container.closed" [("name", containerName cid state)])
+
+dispatchCommandEv (LockCmd t) state =
+    case findContainerRef t state of
+        Nothing -> (state, evMsg "container.not_a_container" [("target", t)])
+        Just cid -> case containerStateOf cid state of
+            "locked" -> (state, evMsg "container.is_locked" [("name", containerName cid state)])
+            _        -> (setEntityState cid "locked" state
+                        , evMsg "container.locked" [("name", containerName cid state)])
+
+dispatchCommandEv (UnlockCmd t) state =
+    case findContainerRef t state of
+        Nothing -> (state, evMsg "container.not_a_container" [("target", t)])
+        Just cid -> case containerStateOf cid state of
+            "locked" -> (setEntityState cid "closed" state
+                        , evMsg "container.unlocked" [("name", containerName cid state)])
+            _        -> (state, evMsg "container.not_locked" [("name", containerName cid state)])
+
+-- | 4.4: `take X from Y` — one item out of an open container (the item is
+--   looked up inside Y, so a closed container reports "closed", not "missing").
+dispatchCommandEv (TakeFromCmd x y) state =
+    case findContainerRef y state of
+        Nothing -> (state, evMsg "container.not_a_container" [("target", y)])
+        Just cid
+            | not (containerChainOpen cid state) ->
+                (state, evMsg "container.is_locked" [("name", containerName cid state)])
+            | containerStateOf cid state /= "open" ->
+                (state, evMsg "container.is_closed" [("name", containerName cid state)])
+            | otherwise ->
+                case [ itemId i | i <- itemsInContainer cid state, matchesItemTarget x i ] of
+                    [] -> (state, evMsg "container.no_item" [("item", x), ("name", containerName cid state)])
+                    (iId : _)
+                        | inventoryFull state -> (state, evMsg "inventory.full" [])
+                        | otherwise ->
+                            ( relocateItem iId (CarriedBy ActorPlayer) state
+                            , evMsg "container.took_from"
+                                [ ("item", x), ("name", containerName cid state) ] )
+
+-- | 4.4: `put X in Y` — one item into an open container (capacity checked).
+dispatchCommandEv (PutInCmd x y) state =
+    case findContainerRef y state of
+        Nothing -> (state, evMsg "container.not_a_container" [("target", y)])
+        Just cid
+            | not (containerChainOpen cid state) ->
+                (state, evMsg "container.is_locked" [("name", containerName cid state)])
+            | containerStateOf cid state /= "open" ->
+                (state, evMsg "container.is_closed" [("name", containerName cid state)])
+            | containerFull cid state ->
+                (state, evMsg "container.full" [("name", containerName cid state)])
+            | otherwise ->
+                case findScopeItem x state of
+                    Nothing -> (state, evMsg "container.no_item" [("item", x), ("name", y)])
+                    Just iId ->
+                        ( relocateItem iId (InContainer cid) state
+                        , evMsg "container.put"
+                            [ ("item", x), ("name", containerName cid state) ] )
+
 dispatchCommandEv (Interact verb targetStr) state =
     let stateWithVars = bindCommandVars (Interact verb targetStr) state
     in case resolveInteractTarget verb targetStr stateWithVars of
@@ -960,7 +1152,6 @@ dispatchCommandEv (Interact verb targetStr) state =
             | otherwise ->
                 interactAmbiguous ids stateWithVars
 
--- | Handle "use <item> on <entity>" with weapon→attack fallback
 dispatchCommandEv (InteractWith VUseOn itemStr entityStr) state =
     let itemTarget = normalizeText itemStr
         entityTarget = normalizeText entityStr
@@ -1198,7 +1389,7 @@ resolveTarget verb targetStr state
     | null (words targetStr) = BareVerb
     | otherwise =
         let resolved = resolveHotspotTarget targetStr state
-            roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
+            roomItems = visibleItemsAt (InRoom (currentRoom (save state))) state
             invItems  = getItemsInLocation (CarriedBy ActorPlayer) state
             roomNPCs  = getNPCsInRoom (currentRoom (save state)) state
             roomDevices = filter (\d -> devLocation d == currentRoom (save state))
@@ -1281,7 +1472,10 @@ interactItem verb item maybeItemState targetStr state =
                 case itemPortable item of
                     False -> (state, fromMaybe (evMsg "take.not_portable" [("item", itemName item)])
                                              (fmap evRaw (itemTakeFailure item)))
-                    True ->
+                    True
+                        | inventoryFull state ->
+                            (state, evMsg "inventory.full" [])
+                        | otherwise ->
                         let (st', extra) = case vmLookup of
                                 Just outcome -> applyOutcomeEv outcome iId state
                                 Nothing      -> (state, [])

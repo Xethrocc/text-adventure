@@ -1312,6 +1312,7 @@ emitAdventure t plan seed =
                     , aiPortable = Just False
                     , aiTakeFailure = Nothing
                     , aiInContainer = Nothing
+                    , aiCapacity = Nothing
                     })
             _ -> Nothing
 
@@ -1381,6 +1382,7 @@ emitAdventure t plan seed =
             , advJournal           = Nothing
             , advChapters          = []
             , advPursuit           = []
+            , advContainers        = []
             , advInclude           = []
             , advFacts             = []
             , advCombines          = []

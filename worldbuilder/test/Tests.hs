@@ -60,7 +60,7 @@ minWorld = E.GameWorld
     , combineDefs = []
     , procDefs = Map.empty
     , chapterDefs = []
-    , deviceDefs = Map.empty
+    , deviceDefs = Map.empty, containerDefs = Map.empty
     , progressionDef = Nothing
     }
 
@@ -196,7 +196,7 @@ minAdventure room = Adventure
     , advCombineVerb = Nothing
     , advJournal = Nothing
     , advChapters = []
-    , advPursuit = []
+    , advPursuit = [], advContainers = []
     , advInclude = []
     , advFacts = []
     , advCombines = []
@@ -786,6 +786,46 @@ testProgressionChecks = do
     pure (r1 && r2 && r3 && r4 && r5 && r6)
 
 -- ---------------------------------------------------------------------------
+-- 4.4: containers
+-- ---------------------------------------------------------------------------
+
+-- | `containers:` compiles to containerDefs plus the initial entity states;
+--   `player: {inventory_limit}` seeds the VarMap; duplicate ids and unknown
+--   rooms fail.
+testContainersCompile :: IO Bool
+testContainersCompile = do
+    let mk cons = (minAdventure (minRoom "loc_0"))
+            { advContainers = cons
+            , advPlayer = Just (AAdventurePlayer Nothing Nothing Nothing Map.empty Nothing Nothing (Just 3)) }
+        mkC i open locked = AContainerDef i "" "loc_0" (Just 5) open locked
+    r1 <- case compileAdventure (mk [mkC "truhe" False True, mkC "schrank" True False]) of
+            Left errs -> expectTrue ("containers compile, got: " ++ issuesText errs) False
+            Right cr -> do
+                let cd = E.containerDefs (crWorld cr)
+                a <- expectEqual ["schrank", "truhe"] (Map.keys cd)
+                b <- expectEqual (Just "locked") (Map.lookup "truhe" (E.entityStates (crSave cr)))
+                c <- expectEqual (Just "open") (Map.lookup "schrank" (E.entityStates (crSave cr)))
+                d <- expectEqual (Just (E.VVInt 3)) (Map.lookup "inventory.limit" (E.variables (crSave cr)))
+                pure (a && b && c && d)
+    r2 <- case compileAdventure (mk [mkC "doppelt" False False, mkC "doppelt" False False]) of
+            Left errs -> expectTrue "duplicate container is DuplicateContainer"
+                (any (\i -> ciCode i == "DuplicateContainer") errs)
+            Right _ -> expectTrue "duplicate container must fail" False
+    r3 <- case compileAdventure (mk [AContainerDef "ortlos" "" "nirgendwo" Nothing False False]) of
+            Left errs -> expectTrue "unknown room is MissingRoom"
+                (any (\i -> ciCode i == "MissingRoom") errs)
+            Right _ -> expectTrue "unknown room must fail" False
+    pure (r1 && r2 && r3)
+
+-- | `set_inventory_limit:` compiles to the VarMap write.
+testSetInventoryLimitSugar :: IO Bool
+testSetInventoryLimitSugar = do
+    case compileAActionOutcome (AOSetInventoryLimit 7) of
+        E.SetValue (E.VRVariable "inventory.limit") (E.EVInt 7) ->
+            expectTrue "set_inventory_limit compiles" True
+        _ -> expectTrue "set_inventory_limit compiles" False
+
+-- ---------------------------------------------------------------------------
 -- 5.3: include: libraries
 -- ---------------------------------------------------------------------------
 
@@ -1149,7 +1189,7 @@ minItem iid = AItem
     , aiProps = Map.empty
     , aiOnTake = Nothing
     , aiVerbMap = Map.empty
-    , aiPortable = Nothing
+    , aiCapacity = Nothing, aiPortable = Nothing
     , aiTakeFailure = Nothing
     , aiInContainer = Nothing
     }
@@ -3517,6 +3557,9 @@ tests =
     , ("pursuit: section emits sorted on:turn triggers; checks", testPursuitSection)
     -- 5.3: include:
     , ("include: own sections first, then includes (5.3)", testIncludeMerge)
+    -- 4.4: containers
+    , ("containers: defs, initial states, inventory limit (4.4)", testContainersCompile)
+    , ("containers: set_inventory_limit sugar (4.4)", testSetInventoryLimitSugar)
     , ("include: single-value fields are reserved (5.3)", testIncludeForbidden)
     , ("include: duplicate ids name both files (5.3)", testIncludeDuplicates)
     , ("include: transitive, depth-first order (5.3)", testIncludeTransitive)
@@ -5524,7 +5567,7 @@ minItemKey iid = AItem
     , aiProps = Map.empty
     , aiOnTake = Nothing
     , aiVerbMap = Map.empty
-    , aiPortable = Just True
+    , aiCapacity = Nothing, aiPortable = Just True
     , aiTakeFailure = Nothing
     , aiInContainer = Nothing
     }

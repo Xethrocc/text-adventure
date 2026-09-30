@@ -2099,6 +2099,55 @@ W4 ersetzt bewusst aufwändige Licht-Physik/Emergenz durch **explizite Zustände
 - Bei `on_remove` schaltet die Halterung das Flag `krypta_beleuchtet` auf `"false"`.
 - Die Dunkelheitsprüfung des Spiels (`isDark`) wertet das `light_flag` des Raumes aus — ohne Emergenz, rein deterministisch und transparent für Autoren und Spieler.
 
+## Container (4.4)
+
+Container fassen Items — **tragbar** (Items mit `capacity:`) und **ortsfest** (die
+`containers:`-Sektion, wie `devices:`). Beide teilen dieselbe Mechanik: der Zustand lebt
+in den Entity-States (`open`/`closed`/`locked`), der Inhalt in den Item-Locations
+(`in_container:`), die Kapazität ist zählbasiert (Anzahl Items).
+
+```yaml
+items:
+  - id: truhe
+    name: Truhe
+    capacity: 3            # dieses Item ist ein Container
+    location: halle
+  - id: amulett
+    name: Amulett
+    in_container: truhe    # startet in der Truhe (Verschachtelung beliebig tief)
+
+containers:
+  - id: kiste
+    name: Kiste
+    location: halle
+    capacity: 2
+    locked: true           # startet verschlossen (open: true = offen, Default: geschlossen)
+
+player:
+  inventory_limit: 5       # zählbasiertes Inventarlimit (VarMap `inventory.limit`)
+
+effects:
+  - set_inventory_limit: 8 # zur Laufzeit änderbar (z.B. nach einer Quest)
+```
+
+**Gebaute Verben** (immer verfügbar): `open`/`close`/`lock`/`unlock` (Zustandswechsel),
+`take X from Y` und `put X in Y` (einzeln, Kapazität geprüft). `take X` findet X auch in
+**offenen** Containern — geschlossene schneiden den Zweig ab, die Verschachtelung geht
+beliebig tief (`look` zeigt den Inhalt offener Container).
+
+**Verträge:**
+
+- Item-Container starten **offen** (kein Entity-State); `containers:`-Einträge starten mit
+  `open:`/`locked:`. Alle Zustände sind jederzeit per `set_state:` setzbar.
+- **Key-Bindung ist Autoren-Vokabel:** `lock`/`unlock` wechseln nur den Zustand. Wer einen
+  Schlüssel verlangt, sperrt per Regel (z.B. `on: "command unlock"` + `when: {not: {actor_has:
+  {actor: player, item: schluessel}}}` + `block: "…"`).
+- Das Inventarlimit ist eine Zahl in der VarMap (`inventory.limit`) — die Welt setzt es über
+  `player: {inventory_limit:}`, der Laufzeit-Effekt `set_inventory_limit:` ändert es. Beim
+  Überschreiten verweigert `take`/`take from` (`inventory.full`).
+- Die Kapazität (`capacity:`) zählt die **direkt** enthaltenen Items (zählbasiert, kein
+  Gewicht/Volumen).
+
 ## Geschlossene Mengen-Operationen (B3)
 
 Die 20-Zweig-Kaskaden („Schaden an alle im Raum, dann alle Schlüssel entfernen, dann …")
