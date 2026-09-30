@@ -1,0 +1,85 @@
+name: Quest RPG Fixture (W2)
+start_room: dorfplatz
+
+rooms:
+  - id: dorfplatz
+    name: Dorfplatz
+    desc: Ein lebendiger Marktplatz im Herzen des Dorfes.
+
+items:
+  - id: elixier
+    name: Erfahrungs-Elixier
+    keys: [elixier, trank]
+    desc: Ein glitzerndes Elixier, das 100 Erfahrungspunkte gewaehrt.
+    location: dorfplatz
+    verb_map:
+      use,intact:
+        - gain_xp: 100
+        - consume: elixier
+
+  - id: kristall
+    name: Macht-Kristall
+    keys: [kristall]
+    desc: Ein uralter Kristall, der 150 Erfahrungspunkte freisetzt.
+    location: dorfplatz
+    verb_map:
+      use,intact:
+        - gain_xp: 150
+        - consume: kristall
+
+progression:
+  levels:
+    - level: 1
+      name: Novize
+      xp: 0
+    - level: 2
+      name: Abenteurer
+      xp: 100
+      msg: "Aufstieg zu Level 2! Deine Kampfkraft steigt."
+      effects:
+        - set_var:
+            var: bonus.attack
+            val: 3
+    - level: 3
+      name: Held
+      xp: 250
+      msg: "Aufstieg zu Level 3! Du bist ein wahrer Held."
+      effects:
+        - set_var:
+            var: bonus.defense
+            val: 2
+
+rules:
+  - id: level_2_belohnung
+    on: levelup 2
+    effects:
+      - msg: "Gildemeister: 'Glueckwunsch zum 2. Level, Abenteurer!'"
+
+  - id: level_3_belohnung
+    on: levelup 3
+    effects:
+      - msg: "Die Dorfbewohner jubeln: Ein neuer Held ist geboren!"
+
+# B1: authored content tests — `worldbuilder test examples/fixtures/quest_rpg.yaml`
+tests:
+  - name: "xp gewinnen, stufenaufstieg, trigger feuer und stats anzeige"
+    input:
+      - stats
+      - take elixier
+      - take kristall
+      - use elixier
+      - stats
+      - use kristall
+      - stats
+    expect:
+      - "Level 1 — Novize (0/100 XP)"
+      - "You take the Erfahrungs-Elixier."
+      - "You take the Macht-Kristall."
+      - "Aufstieg zu Level 2! Deine Kampfkraft steigt."
+      - "Gildemeister: 'Glueckwunsch zum 2. Level, Abenteurer!'"
+      - "Level 2 — Abenteurer (100/250 XP)"
+      - "Attack:  13 (base 10)"
+      - "Aufstieg zu Level 3! Du bist ein wahrer Held."
+      - "Die Dorfbewohner jubeln: Ein neuer Held ist geboren!"
+      - "Level 3 — Held (250 XP)"
+      - "Defense: 7 (base 5)"

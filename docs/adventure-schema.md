@@ -1950,6 +1950,71 @@ rules:
   (`{if <var> == chapter...}`-artig mit `chapter.current` als Text-Variable — das
   `chapter.current`-Format ist eine Text-Variable, Werte = Kapitel-IDs).
 
+## Fortschritt & Stufen: `progression:` (W2)
+
+Genre-neutrale Fortschritts-Tabelle für Erfahrungspunkte (XP), Stufenaufstiege und Charakterentwicklung.
+Das System ist rein datengetrieben: Autoren definieren Stufenschwellen (`xp:`), Rangnamen (`name:`) und beim Stufenaufstieg feuernde Effekte (`effects:`).
+
+```yaml
+progression:
+  levels:
+    - level: 1
+      name: Novize
+      xp: 0
+    - level: 2
+      name: Abenteurer
+      xp: 100
+      msg: "Aufstieg zu Level 2! Deine Kampfkraft steigt."
+      effects:
+        - set_var:
+            var: bonus.attack
+            val: 3
+    - level: 3
+      name: Held
+      xp: 250
+      msg: "Aufstieg zu Level 3! Du bist ein wahrer Held."
+      effects:
+        - set_var:
+            var: bonus.defense
+            val: 2
+```
+
+### Felder unter `progression.levels`
+
+| Feld | Typ | Default | Beschreibung |
+|---|---|---|---|
+| `level` | Int | Index (1, 2, ...) | 1-basierter Level-Index |
+| `name` | String | **required** | Titel / Rangname (z. B. `Novize`, `Abenteurer`, `Held`) |
+| `xp` | Int | **required** | Schwellenwert für dieses Level. Level 1 muss `xp: 0` haben; Werte müssen streng monoton steigen |
+| `msg` / `level_msg` | String | Default-Meldung | Optionale Belohnungs-Meldung beim Erreichen der Stufe |
+| `effects` | [AActionOutcome] | `[]` | Effekte, die beim Aufstieg auf diese Stufe ausgeführt werden |
+
+### Effekte & Events
+
+- **Effekt `gain_xp: <int>`:**
+  - Erhöht oder verringert `xp.current`. Negative Werte (`gain_xp: -50`) sind erlaubt, werden jedoch am Boden nach unten auf `0` geclamped (`xp.clamped`).
+  - **Stufen-Garantie (Anti-De-Level):** Ein Verlust von Erfahrungspunkten führt **niemals** zu einem Absinken des erreichten Levels (`level.current` ist strikt monoton wachsend).
+  - Überschreitet der neue XP-Wert Schwellen zukünftiger Stufen, werden alle übersprungenen Stufen in streng aufsteigender Reihenfolge abgearbeitet (Level 2, dann Level 3).
+- **Event `OnLevelUp <n>` (Trigger `on: levelup <n>` / `on: level_up <n>`):**
+  - Feuert beim Erreichen der jeweiligen Stufe `n`. Erlaubt Autoren, Quests, NPCs, Dialogbäume oder Weltzustände an Level-Aufstiege zu koppeln.
+
+### State & Kampf-Boni (Zero New `SaveState` Fields)
+
+- Das Fortschrittsmodell benötigt keine neuen `SaveState`-Felder. Alle Zustände werden in der regulären `variables`-VarMap verwaltet:
+  - `xp.current`: Aktuelle Erfahrungspunkte (Default: 0).
+  - `level.current`: Aktuelle Stufe (Default: 1).
+  - `bonus.attack`: Additiver Bonus auf Spieler-Angriff (`effectiveAttack`).
+  - `bonus.defense`: Additiver Bonus auf Spieler-Verteidigung (`effectiveDefense`).
+  - `bonus.hp`: Additiver Bonus auf maximale Spieler-Lebenspunkte (`effectiveMaxHealth`).
+- Die Präfixe `xp.`, `level.` und `bonus.` sind für die Engine reserviert; das manuelle Deklarieren unter `variables:` wird vom Compiler abgewiesen (`ProgressionVariableClash`).
+
+### Anzeige im `stats`-Befehl
+
+Wenn `progression:` im Abenteuer definiert ist, blendet `stats` die Fortschrittszeile ein:
+- Vor Maximalstufe: `Level 1 — Novize (42/100 XP)`
+- Auf Maximalstufe: `Level 3 — Held (250 XP)`
+Ohne `progression:`-Sektion bleibt die `stats`-Ausgabe unverändert.
+
 ## Vorrichtungen & Halterungen: `devices:` (W4)
 
 Explizite Zustands- und Einbaumechanik für Hebel und Halterungen als genre-neutrale Primitive (Schlösser, Fackelhalterungen, Sicherungskästen, Konsolen, Altäre). Hebel und Halterung sind zwei Ausprägungen desselben Konzepts: Eine Vorrichtung ist eine ortsfeste Entität im Raum mit Zuständen, geschlossenen Effektlisten und optionaler Aufnahme für genau ein Item.
@@ -2050,5 +2115,6 @@ Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity =
 | `IronmanWithoutSavezones` | `ironman: true` ist im `game:`-Block aktiviert, aber `save_zones` ist leer. | `save_zones: [room1, ...]` angeben oder den Hardcore-Modus (ohne Speichermöglichkeit) bewusst beibehalten. |
 | `UnknownDeviceTag` | Das Feld `fits_tag` einer Vorrichtung matcht keinen Tag deklarierter Items. | Schreibweise des Tags prüfen oder sicherstellen, dass passende Items diesen Tag tragen. |
 | `DeviceWithoutEffects` | Eine Vorrichtung besitzt weder Insert-, Remove- noch Flip-Effekte. | Effekte für Interaktionen hinterlegen oder Vorrichtung bei rein dekorativem Zweck belassen. |
+| `GainXpWithoutProgression` | Ein `gain_xp`-Effekt wird verwendet, aber das Abenteuer deklariert keine `progression:`-Sektion. | `progression:` mit Stufentabelle deklarieren oder den `gain_xp`-Aufruf entfernen. |
 
 

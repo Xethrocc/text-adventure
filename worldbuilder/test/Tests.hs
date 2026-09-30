@@ -61,6 +61,7 @@ minWorld = E.GameWorld
     , procDefs = Map.empty
     , chapterDefs = []
     , deviceDefs = Map.empty
+    , progressionDef = Nothing
     }
 
 -- | Helper: a minimal valid SaveState referencing room_0
@@ -198,6 +199,7 @@ minAdventure room = Adventure
     , advFacts = []
     , advCombines = []
     , advDevices = []
+    , advProgression = Nothing
     , advTests = []
     , advRawValue = Nothing
     }
@@ -599,6 +601,117 @@ testDeviceChecks = do
     r6 <- case compileAdventure (mkDevs [noEffDev]) of
             Right cr -> expectTrue "device without effects produces DeviceWithoutEffects warning"
                 (any (\i -> ciCode i == "DeviceWithoutEffects") (crWarnings cr))
+            Left errs -> expectTrue ("warn-only case must compile, got: " ++ issuesText errs) False
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- ---------------------------------------------------------------------------
+-- W2: progression (XP & Level)
+-- ---------------------------------------------------------------------------
+
+testProgressionCompile :: IO Bool
+testProgressionCompile = do
+    let empty = minAdventure (minRoom "loc_0")
+    -- 1. Adventure without progression: progressionDef is Nothing, no progression variables
+    r0 <- case compileAdventure empty of
+            Left errs -> expectTrue ("empty compile failed: " ++ issuesText errs) False
+            Right cr -> do
+                a <- expectEqual Nothing (E.progressionDef (crWorld cr))
+                b <- expectTrue "world.json omits progression when Nothing"
+                        (not ("progression" `isInfixOf` BLC.unpack (Aeson.encode (crWorld cr))))
+                c <- expectTrue "xp.current not generated when progression is Nothing"
+                        (not (Map.member "xp.current" (E.varDefs (crWorld cr))))
+                pure (a && b && c)
+
+    -- 2. Adventure with progression: compiles levels, effects, variables, initials
+    let prog = AProgressionDef
+            [ ALevelDef (Just 1) 0 "Novize" Nothing []
+            , ALevelDef (Just 2) 100 "Krieger" (Just "Du bist nun Krieger!") [AOSetVar "bonus.attack" 2]
+            ]
+        adv = empty { advProgression = Just prog }
+    r1 <- case compileAdventure adv of
+            Left errs -> expectTrue ("progression compile, got: " ++ issuesText errs) False
+            Right cr -> do
+                let mPdef = E.progressionDef (crWorld cr)
+                case mPdef of
+                    Nothing -> expectTrue "progressionDef compiled" False
+                    Just pdef -> do
+                        let lvls = E.progLevels pdef
+                        a1 <- expectEqual 2 (length lvls)
+                        let l1 = head lvls
+                            l2 = lvls !! 1
+                        b1 <- expectEqual 1 (E.lvlNumber l1)
+                        b2 <- expectEqual 0 (E.lvlXp l1)
+                        b3 <- expectEqual "Novize" (E.lvlName l1)
+                        b4 <- expectEqual 2 (E.lvlNumber l2)
+                        b5 <- expectEqual 100 (E.lvlXp l2)
+                        b6 <- expectEqual (Just "Du bist nun Krieger!") (E.lvlMsg l2)
+
+                        -- Variables merged
+                        let vDefs = E.varDefs (crWorld cr)
+                            vInits = E.variables (crSave cr)
+                        c1 <- expectTrue "xp.current def exists" (Map.member "xp.current" vDefs)
+                        c2 <- expectTrue "level.current def exists" (Map.member "level.current" vDefs)
+                        c3 <- expectTrue "bonus.attack def exists" (Map.member "bonus.attack" vDefs)
+                        c4 <- expectTrue "bonus.defense def exists" (Map.member "bonus.defense" vDefs)
+                        c5 <- expectTrue "bonus.hp def exists" (Map.member "bonus.hp" vDefs)
+
+                        d1 <- expectEqual (Just (E.VVInt 0)) (Map.lookup "xp.current" vInits)
+                        d2 <- expectEqual (Just (E.VVInt 1)) (Map.lookup "level.current" vInits)
+                        d3 <- expectEqual (Just (E.VVInt 0)) (Map.lookup "bonus.attack" vInits)
+
+                        pure (a1 && b1 && b2 && b3 && b4 && b5 && b6 && c1 && c2 && c3 && c4 && c5 && d1 && d2 && d3)
+    pure (r0 && r1)
+
+testProgressionChecks :: IO Bool
+testProgressionChecks = do
+    let base = minAdventure (minRoom "loc_0")
+        mkProg ps = base { advProgression = Just (AProgressionDef ps) }
+
+    -- 1. Empty levels -> EmptyLevels error
+    r1 <- case compileAdventure (mkProg []) of
+            Left errs -> expectTrue "empty levels is EmptyLevels"
+                (any (\i -> ciCode i == "EmptyLevels") errs)
+            Right _ -> expectTrue "empty levels must fail" False
+
+    -- 2. First level XP /= 0 -> BadLevelXp error
+    r2 <- case compileAdventure (mkProg [ALevelDef (Just 1) 50 "Novize" Nothing []]) of
+            Left errs -> expectTrue "first level xp /= 0 is BadLevelXp"
+                (any (\i -> ciCode i == "BadLevelXp") errs)
+            Right _ -> expectTrue "first level xp /= 0 must fail" False
+
+    -- 3. Non-monotonic XP -> NonMonotonicXp error
+    r3 <- case compileAdventure (mkProg [ ALevelDef (Just 1) 0 "Novize" Nothing []
+                                        , ALevelDef (Just 2) 100 "Krieger" Nothing []
+                                        , ALevelDef (Just 3) 80 "Meister" Nothing []
+                                        ]) of
+            Left errs -> expectTrue "decreasing xp is NonMonotonicXp"
+                (any (\i -> ciCode i == "NonMonotonicXp") errs)
+            Right _ -> expectTrue "decreasing xp must fail" False
+
+    -- 4. Duplicate/equal XP -> NonMonotonicXp error
+    r4 <- case compileAdventure (mkProg [ ALevelDef (Just 1) 0 "Novize" Nothing []
+                                        , ALevelDef (Just 2) 100 "Krieger" Nothing []
+                                        , ALevelDef (Just 3) 100 "Meister" Nothing []
+                                        ]) of
+            Left errs -> expectTrue "equal xp is NonMonotonicXp"
+                (any (\i -> ciCode i == "NonMonotonicXp") errs)
+            Right _ -> expectTrue "equal xp must fail" False
+
+    -- 5. Reserved variable clash in author variables -> ProgressionVariableClash error
+    let clashAdv = (mkProg [ALevelDef (Just 1) 0 "Novize" Nothing []])
+            { advVariables = [ AVariable "xp.current" "int" (Just (Aeson.Number 0)) Nothing Nothing ] }
+    r5 <- case compileAdventure clashAdv of
+            Left errs -> expectTrue "declaring xp.current is ProgressionVariableClash"
+                (any (\i -> ciCode i == "ProgressionVariableClash") errs)
+            Right _ -> expectTrue "reserved var clash must fail" False
+
+    -- 6. gain_xp outcome without progression section -> GainXpWithoutProgression warning
+    let warnAdv = base
+            { advTriggers = [ ATrigger "t1" "turn" Nothing [AOGainXp 50] False 0 ] }
+    r6 <- case compileAdventure warnAdv of
+            Right cr -> expectTrue "gain_xp without progression produces GainXpWithoutProgression warning"
+                (any (\i -> ciCode i == "GainXpWithoutProgression") (crWarnings cr))
             Left errs -> expectTrue ("warn-only case must compile, got: " ++ issuesText errs) False
 
     pure (r1 && r2 && r3 && r4 && r5 && r6)
@@ -3147,6 +3260,9 @@ tests =
     , ("facts: facts compile in order; empty lists omitted from world.json", testFactsCompile)
     , ("facts: static checks (UnknownFact, DuplicateFact, YieldsWithoutPremises)", testFactChecks)
     , ("facts: knows/learn/forget YAML sugar parses", testKnowsSugar)
+    -- W2: progression (XP & Level)
+    , ("progression: levels compile, variables merge, empty omitted", testProgressionCompile)
+    , ("progression: static checks (EmptyLevels, BadLevelXp, NonMonotonicXp, Clash, Warn)", testProgressionChecks)
     -- W3: chapters
     , ("chapters: compile in order; empty chapterDefs omitted", testChaptersCompile)
     , ("chapters: static checks (Duplicate, Unknown, Backwards, Unreachable)", testChapterChecks)

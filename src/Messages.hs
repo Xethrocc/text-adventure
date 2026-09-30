@@ -92,6 +92,10 @@ catalogEntries =
     , ("stats.health",        "Health:  {hp} / {max}")
     , ("stats.attack",        "Attack:  {atk} (base {base})")
     , ("stats.defense",       "Defense: {def} (base {base})")
+    , ("stats.progression",     "Level {level} — {name} ({xp}/{next} XP)")
+    , ("stats.progression_max", "Level {level} — {name} ({xp} XP)")
+    , ("levelup.default",       "You reached level {level}: {name}!")
+    , ("xp.clamped",            "XP cannot drop below 0.")
     -- -- undo / quit / parse ------------------------------------------------
     , ("undo.nothing",        "Nothing to undo.")
     , ("quit.bye",            "Goodbye!")

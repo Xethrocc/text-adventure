@@ -377,6 +377,7 @@ initSampleGame = GameState
         , combineDefs = []
         , procDefs = Map.empty
         , deviceDefs = Map.empty
+        , progressionDef = Nothing
         }
     , save = SaveState
         { player = Player 100 100 10 5 (Map.singleton "lockpick" 2)

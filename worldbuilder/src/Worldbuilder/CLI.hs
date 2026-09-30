@@ -153,6 +153,16 @@ repairHint code = case code of
         "Declare the variable under 'variables:' or check for a typo in the placeholder name."
     "DarkRoomDeadEnd" ->
         "Add 'tags: [feelable]' to an item, configure a 'light_flag', or provide a reachable 'lightsource'."
+    "ProgressionVariableClash" ->
+        "Names starting with 'xp.', 'level.' or 'bonus.' belong to the engine — rename the variable."
+    "EmptyLevels" ->
+        "progression: must define at least one level in 'levels:'."
+    "BadLevelXp" ->
+        "The first level must have xp: 0."
+    "NonMonotonicXp" ->
+        "XP thresholds in 'levels:' must be strictly increasing."
+    "GainXpWithoutProgression" ->
+        "Add a 'progression:' section to define level thresholds and names."
     _ -> ""
 
 -- | Render validation errors (ValidationError derives Show)

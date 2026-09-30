@@ -58,7 +58,7 @@ import Control.Applicative ((<|>))
 import Data.Char (toLower, isDigit)
 import Data.List (find, intercalate, nub, foldl', dropWhileEnd, isPrefixOf, isSuffixOf)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust, catMaybes)
 import qualified Data.Set as Set
 import Verbs (resolveVerb, verbCanonicalName)
 
@@ -668,13 +668,36 @@ dispatchCommandEv StatsCmd state =
                    else evMsg "stats.conditions" [("conds", intercalate ", "
                         [ condName c ++ " (" ++ show (condRemaining c) ++ " turns)"
                         | c <- condList ])]
+        progDesc = case progressionDef (world state) of
+            Nothing   -> []
+            Just prog ->
+                let curLvl = getLevel state
+                    curXp = getXp state
+                    mCurDef = find (\l -> lvlNumber l == curLvl) (progLevels prog)
+                    lvlTitle = maybe ("Level " ++ show curLvl) lvlName mCurDef
+                    mNextDef = find (\l -> lvlNumber l == curLvl + 1) (progLevels prog)
+                in case mNextDef of
+                    Just nextLvl ->
+                        evMsg "stats.progression"
+                            [ ("level", show curLvl)
+                            , ("name", lvlTitle)
+                            , ("xp", show curXp)
+                            , ("next", show (lvlXp nextLvl))
+                            ]
+                    Nothing ->
+                        evMsg "stats.progression_max"
+                            [ ("level", show curLvl)
+                            , ("name", lvlTitle)
+                            , ("xp", show curXp)
+                            ]
         -- Byte-identical to the former unlines: every line gets its "\n" —
         -- including the last, and the 4th piece concatenates without one.
-        msg = unlinesEv
-            [ evMsg "stats.health" [("hp", show (playerHealth p)), ("max", show (effectiveMaxHealth state))]
-            , evMsg "stats.attack" [("atk", show (effectiveAttack state)), ("base", show (playerAttack p))]
-            , evMsg "stats.defense" [("def", show (effectiveDefense state)), ("base", show (playerDefense p))]
-            , joinAllEv [skillDesc, condDesc, evRaw (equipmentSummary state)]
+        msg = unlinesEv $ catMaybes
+            [ if null progDesc then Nothing else Just progDesc
+            , Just (evMsg "stats.health" [("hp", show (playerHealth p)), ("max", show (effectiveMaxHealth state))])
+            , Just (evMsg "stats.attack" [("atk", show (effectiveAttack state)), ("base", show (playerAttack p))])
+            , Just (evMsg "stats.defense" [("def", show (effectiveDefense state)), ("base", show (playerDefense p))])
+            , Just (joinAllEv [skillDesc, condDesc, evRaw (equipmentSummary state)])
             ]
     in (state, msg)
 

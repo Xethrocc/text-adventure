@@ -96,6 +96,30 @@ checkChapterGate state = case candidate of
         (cd:_) -> Just cd
         []     -> Nothing
 
+-- | W2: step through reached levels in ascending order, applying level-up effects,
+--   messages and firing OnLevelUp events. Monotonically advancing, terminates
+--   in at most |progLevels| steps.
+stepLevels :: Int -> ProgressionDef -> GameState -> [OutputEvent] -> Int -> (GameState, [OutputEvent], Int)
+stepLevels depth prog st acc salt =
+    let curXp = getXp st
+        curLvl = getLevel st
+        mNextLvl = find (\l -> lvlNumber l == curLvl + 1 && lvlXp l <= curXp) (progLevels prog)
+    in case mNextLvl of
+        Nothing -> (st, acc, salt)
+        Just nextLvl ->
+            let lvlNum = lvlNumber nextLvl
+                st1 = setVariableChecked "level.current" (VVInt lvlNum) st
+                lvlEv = case lvlMsg nextLvl of
+                    Just m  -> evRaw (formatWithVars m st1)
+                    Nothing -> evMsg "levelup.default" [("level", show lvlNum), ("name", lvlName nextLvl)]
+                (st2, trigMsgs) = fireTriggersWithDepth (depth + 1) (OnLevelUp lvlNum) st1
+                runEff (s, a, slt) eff =
+                    let (s', m', slt') = applyOutcomeWith (depth + 1) slt eff "" s
+                    in (s', a ++ m', slt')
+                (st3, effMsgs, salt') = foldl' runEff (st2, [], salt) (lvlEffects nextLvl)
+                acc' = acc ++ lvlEv ++ trigMsgs ++ effMsgs
+            in stepLevels depth prog st3 acc' salt'
+
 -- | W1: message decision for a newly learned fact — no message (NPC or
 --   silent fact), the catalog default, or an author template.
 data LearnMsg = NoMsg | DefaultMsg | AuthorMsg (Maybe String)
@@ -364,6 +388,17 @@ applyOutcomeWith depth salt outcome targetId state
 
     Mount iId actor -> (mountItem iId actor state, [], salt)
     Unmount iId     -> (unmountItem iId state, [], salt)
+
+    GainXp delta ->
+        let curXp = getXp state
+            rawXp = curXp + delta
+            newXp = max 0 rawXp
+            st1 = setVariableChecked "xp.current" (VVInt newXp) state
+            clampMsgs = if rawXp < 0 then evMsg "xp.clamped" [] else []
+            (st2, lvlMsgs, salt') = case progressionDef (world st1) of
+                Nothing   -> (st1, [], salt)
+                Just prog -> stepLevels depth prog st1 [] salt
+        in (st2, joinEv clampMsgs lvlMsgs, salt')
 
     Forget actor fact ->
         let key = "known." ++ actorId actor ++ "." ++ fact

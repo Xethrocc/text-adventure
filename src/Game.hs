@@ -107,6 +107,9 @@ module Game
     , combatInitiativeKey
     , combatInitiativePlayerKey
     , combatVarPrefix
+      -- * Progression (W2)
+    , getXp
+    , getLevel
       -- * Cards and deck
     , drawCards
     , discardCard
@@ -174,6 +177,7 @@ emptyGameWorld = GameWorld
     , combineDefs        = []
     , chapterDefs        = []
     , deviceDefs         = Map.empty
+    , progressionDef     = Nothing
     }
 
 -- | Default empty game state
@@ -641,23 +645,29 @@ sumEquipBonus f state =
         , Just v <- [f eff]
         ]
 
--- | Effective attack = base + equipment bonuses
+-- | Lookup a numeric bonus variable (W2, defaults to 0).
+varBonus :: String -> GameState -> Int
+varBonus name st = case getVariable name st of
+    Just (VVInt n) -> n
+    _              -> 0
+
+-- | Effective attack = base + equipment bonuses + bonus.attack (W2)
 effectiveAttack :: GameState -> Int
-effectiveAttack state = playerAttack (player (save state)) + sumEquipBonus attackOf state
+effectiveAttack state = playerAttack (player (save state)) + sumEquipBonus attackOf state + varBonus "bonus.attack" state
   where
     attackOf (AttackBonus n) = Just n
     attackOf _               = Nothing
 
--- | Effective defense = base + equipment bonuses
+-- | Effective defense = base + equipment bonuses + bonus.defense (W2)
 effectiveDefense :: GameState -> Int
-effectiveDefense state = playerDefense (player (save state)) + sumEquipBonus defenseOf state
+effectiveDefense state = playerDefense (player (save state)) + sumEquipBonus defenseOf state + varBonus "bonus.defense" state
   where
     defenseOf (DefenseBonus n) = Just n
     defenseOf _                = Nothing
 
--- | Effective max health = base + equipment bonuses
+-- | Effective max health = base + equipment bonuses + bonus.hp (W2)
 effectiveMaxHealth :: GameState -> Int
-effectiveMaxHealth state = playerMaxHealth (player (save state)) + sumEquipBonus hpOf state
+effectiveMaxHealth state = playerMaxHealth (player (save state)) + sumEquipBonus hpOf state + varBonus "bonus.hp" state
   where
     hpOf (MaxHealthBonus n) = Just n
     hpOf _                  = Nothing
@@ -959,6 +969,22 @@ setVariableChecked name val state =
     case val of
         VVInt n -> setVariable name (VVInt (clampToVarDef name n state)) state
         _       -> setVariable name val state
+
+-- ---------------------------------------------------------------------------
+-- Progression (W2)
+-- ---------------------------------------------------------------------------
+
+-- | Look up current player XP (default 0)
+getXp :: GameState -> Int
+getXp state = case getVariable "xp.current" state of
+    Just (VVInt x) -> x
+    _              -> 0
+
+-- | Look up current player level (default 1)
+getLevel :: GameState -> Int
+getLevel state = case getVariable "level.current" state of
+    Just (VVInt l) -> l
+    _              -> 1
 
 -- ---------------------------------------------------------------------------
 -- Combat round state (Phase 7f-3, step A1)

@@ -172,6 +172,7 @@ allAOutcomes a =
         , concatMap acdOutcomes (advCards a)
         , concatMap apEffects (advProcedures a)
         , concatMap deviceOutcomes (advDevices a)
+        , maybe [] (concatMap alEffects . aplLevels) (advProgression a)
         ]
 collisions :: Ord a => [(String, a)] -> [(a, [String])]
 collisions pairs =
@@ -230,8 +231,14 @@ compileAdventure adv =
         -- Phase 7h: ship systems (VarMap) + station verbs per interior room
         (shipErrs, shipTriggerDefs, shipVarDefs, shipVarInitials) =
             compileShipSystems verbRegistry (advVehicles adv)
-        (shipConflictErrs, allVarDefs, allVarInitials) =
+        (shipConflictErrs, shipAllVarDefs, shipAllVarInitials) =
             mergeShipVars partyAllVarDefs partyAllVarInitials shipVarDefs shipVarInitials
+        (progErrs, compiledProgression, progVarDefs, progVarInitials) =
+            compileProgression (advProgression adv)
+        (progConflictErrs, allVarDefs, allVarInitials) =
+            mergeProgressionVars shipAllVarDefs shipAllVarInitials progVarDefs progVarInitials
+        progVarErrs = checkProgressionVarReserved varDefs
+        gainXpWarns = checkGainXpWithoutProgression adv
 
         allTriggerDefs = triggerDefs ++ encounterDefs ++ envTriggerDefs ++ stealthTriggerDefs
             ++ patrolTriggerDefs ++ shipTriggerDefs
@@ -348,6 +355,7 @@ compileAdventure adv =
                 , E.factDefs = compiledFacts
                 , E.combineDefs = compiledCombines
                 , E.deviceDefs = compiledDevices
+                , E.progressionDef = compiledProgression
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
@@ -395,6 +403,9 @@ compileAdventure adv =
                     ++ knowledgeClashErrs
                     ++ journalErrs
                     ++ deviceErrs
+                    ++ progErrs
+                    ++ progConflictErrs
+                    ++ progVarErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -439,6 +450,7 @@ compileAdventure adv =
                 allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ darkRoomWarns
                           ++ chapterWarns
                           ++ deviceWarns
+                          ++ gainXpWarns
             in Right (CompileResult gw startSave allWarns)
   where
     -- Every locked exit starts locked in entityStates
@@ -500,8 +512,16 @@ checkUnknownYamlKeys (Aeson.Object topObj) =
             ++ checkSingleton "patrol" EntPatrol (KM.lookup "patrol" topObj)
             ++ checkCombat (KM.lookup "combat" topObj)
             ++ checkSingleton "interactions" EntInteractions (KM.lookup "interactions" topObj)
+            ++ checkProgressionSection (KM.lookup "progression" topObj)
     in topWarns ++ sectionWarns
 checkUnknownYamlKeys _ = []
+
+checkProgressionSection :: Maybe Aeson.Value -> [CompileIssue]
+checkProgressionSection Nothing = []
+checkProgressionSection (Just (Aeson.Object progObj)) =
+    checkKeys "progression" EntProgression (KM.keys progObj)
+    ++ checkListOrMap "progression.levels" EntLevel (KM.lookup "levels" progObj) noNested
+checkProgressionSection (Just _) = []
 
 checkKeys :: String -> EntityType -> [Aeson.Key] -> [CompileIssue]
 checkKeys prefix entType actualKeys =
@@ -1852,6 +1872,94 @@ compileDeviceTriggers devs items
         in devTrigs ++ [fallbackTrig]
 
 -- ---------------------------------------------------------------------------
+-- W2: Player Progression (XP / Level)
+-- ---------------------------------------------------------------------------
+
+compileProgression :: Maybe AProgressionDef -> ([CompileIssue], Maybe E.ProgressionDef, Map.Map String E.VarDef, Map.Map String E.VariableValue)
+compileProgression Nothing = ([], Nothing, Map.empty, Map.empty)
+compileProgression (Just prog) =
+    let levels = aplLevels prog
+        emptyErrs = if null levels
+                    then [ciError "progression.levels" "EmptyLevels" "progression: must define at least one level in 'levels:'"]
+                    else []
+        firstXpErrs = case levels of
+            (l:_) | alXp l /= 0 -> [ciError "progression.levels.0" "BadLevelXp" "the first level must have xp: 0"]
+            _                   -> []
+        monoErrs = [ ciError ("progression.levels." ++ show idx) "NonMonotonicXp"
+                        ("level " ++ show idx ++ " xp (" ++ show (alXp l2)
+                         ++ ") must be strictly greater than level " ++ show (idx - 1)
+                         ++ " xp (" ++ show (alXp l1) ++ ")")
+                   | (idx, (l1, l2)) <- zip [2 :: Int ..] (zip levels (drop 1 levels))
+                   , alXp l2 <= alXp l1
+                   ]
+        errs = emptyErrs ++ firstXpErrs ++ monoErrs
+        compiledLevels = zipWith compileLevel [1 :: Int ..] levels
+        compiledProg = if null emptyErrs then Just (E.ProgressionDef compiledLevels) else Nothing
+        progDefs = Map.fromList
+            [ ("xp.current",    E.VarDef "xp.current" (E.VTInt (Just 0) Nothing) (E.VVInt 0))
+            , ("level.current", E.VarDef "level.current" (E.VTInt (Just 1) Nothing) (E.VVInt 1))
+            , ("bonus.attack",  E.VarDef "bonus.attack" (E.VTInt Nothing Nothing) (E.VVInt 0))
+            , ("bonus.defense", E.VarDef "bonus.defense" (E.VTInt Nothing Nothing) (E.VVInt 0))
+            , ("bonus.hp",       E.VarDef "bonus.hp" (E.VTInt Nothing Nothing) (E.VVInt 0))
+            ]
+        progInitials = Map.fromList
+            [ ("xp.current",    E.VVInt 0)
+            , ("level.current", E.VVInt 1)
+            , ("bonus.attack",  E.VVInt 0)
+            , ("bonus.defense", E.VVInt 0)
+            , ("bonus.hp",       E.VVInt 0)
+            ]
+    in (errs, compiledProg, progDefs, progInitials)
+  where
+    compileLevel idx l =
+        E.LevelDef
+            { E.lvlNumber  = fromMaybe idx (alLevel l)
+            , E.lvlXp      = alXp l
+            , E.lvlName    = alName l
+            , E.lvlMsg     = alMsg l
+            , E.lvlEffects = map compileAActionOutcome (alEffects l)
+            }
+
+mergeProgressionVars :: Map.Map String E.VarDef -> Map.Map String E.VariableValue
+                     -> Map.Map String E.VarDef -> Map.Map String E.VariableValue
+                     -> ([CompileIssue], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+mergeProgressionVars varDefs varInitials progDefs progInitials =
+    let clashErrs =
+            [ ciError ("variables." ++ name) "ProgressionVariableClash"
+                ("'" ++ name ++ "' is owned by the progression system; it comes from the 'progression:' block (W2)")
+            | name <- Map.keys varDefs
+            , name `Map.member` progDefs ]
+    in (clashErrs, Map.union progDefs varDefs, Map.union progInitials varInitials)
+
+checkProgressionVarReserved :: Map.Map String E.VarDef -> [CompileIssue]
+checkProgressionVarReserved varDefs =
+    [ ciError ("variables." ++ name) "ProgressionVariableClash"
+        ("'" ++ name ++ "' is in the reserved '" ++ prefix ++ "' namespace; "
+         ++ "the engine owns progression and combat bonus state (W2)")
+    | name <- Map.keys varDefs
+    , prefix <- ["xp.", "level.", "bonus."]
+    , prefix `isPrefixOf` name ]
+
+hasGainXpOutcome :: AActionOutcome -> Bool
+hasGainXpOutcome ao = case ao of
+    AOGainXp _                   -> True
+    AOConditional _ t e          -> any hasGainXpOutcome t || any hasGainXpOutcome e
+    AONarrative _ f              -> any hasGainXpOutcome f
+    AORandomChoice cs            -> any (any hasGainXpOutcome . snd) cs
+    AOApplyCondition _ _ tk ed _ -> any hasGainXpOutcome tk || any hasGainXpOutcome ed
+    _                            -> False
+
+checkGainXpWithoutProgression :: Adventure -> [CompileIssue]
+checkGainXpWithoutProgression adv =
+    case advProgression adv of
+        Just _  -> []
+        Nothing ->
+            if any hasGainXpOutcome (allAOutcomes adv)
+            then [ ciWarning "outcomes.gain_xp" "GainXpWithoutProgression"
+                     "adventure uses gain_xp but defines no progression: section" ]
+            else []
+
+-- ---------------------------------------------------------------------------
 -- Phase 2.5 (D2): procedures
 -- ---------------------------------------------------------------------------
 
@@ -1860,7 +1968,7 @@ compileDeviceTriggers devs items
 --   `stealth.`). Procedure parameters must not shadow them.
 reservedVarPrefixes :: [String]
 reservedVarPrefixes =
-    ["chapter.", "cmd.", "combat.", "env.", "faction.", "known.", "party.", "patrol.", "ship.", "stealth."]
+    ["bonus.", "chapter.", "cmd.", "combat.", "env.", "faction.", "known.", "level.", "party.", "patrol.", "ship.", "stealth.", "xp."]
 
 -- | Compile `procedures:` entries. Duplicate ids and parameter names in
 --   engine-owned variable namespaces are rejected here.
@@ -2053,6 +2161,7 @@ allWorldEffects gw = concat
     , concatMap E.paEffects (Map.elems (E.abilities gw))
     , concatMap E.cardEffects (Map.elems (E.cardDefs gw))
     , concatMap E.procEffects (Map.elems (E.procDefs gw))
+    , maybe [] (concatMap E.lvlEffects . E.progLevels) (E.progressionDef gw)
     ]
   where
     roomHooks r = catMaybes [roomOnEnter r, roomOnLook r, roomOnExit r, roomSearchOutcome r]
@@ -2558,6 +2667,7 @@ compileAActionOutcome ao = case ao of
                      then E.oppositeDirection toDir
                      else dirOf retDirStr
         in E.GenerateRoom rId rName rDesc fromR toDir retDir
+    AOGainXp n -> E.GainXp n
 
 -- | `Just` the compiled effect for a non-empty outcome list, else `Nothing`
 --   (engine `ApplyCondition` takes optional tick/end effects).
@@ -2729,6 +2839,12 @@ compileAtOn s =
         ["command", v]               -> Right (E.OnCommand v)
         ["chapter", cid]             -> Right (E.OnChapter cid)
         ["before", v]                -> Right (E.OnBefore v)
+        ["levelup", lvlStr]          -> case readMaybe lvlStr of
+            Just lvl -> Right (E.OnLevelUp lvl)
+            Nothing  -> Left ("Invalid level number in 'levelup " ++ lvlStr ++ "'")
+        ["level_up", lvlStr]         -> case readMaybe lvlStr of
+            Just lvl -> Right (E.OnLevelUp lvl)
+            Nothing  -> Left ("Invalid level number in 'level_up " ++ lvlStr ++ "'")
         _                            -> Left ("Unsupported trigger event '" ++ s ++ "'")
 
 -- ---------------------------------------------------------------------------

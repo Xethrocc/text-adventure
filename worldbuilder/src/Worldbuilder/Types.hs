@@ -61,6 +61,7 @@ data Adventure = Adventure
     , advFacts            :: [AFactDef]                  -- ^ knowledge facts (W1)
     , advCombines         :: [ACombineDef]               -- ^ derivation rules (W1)
     , advDevices          :: [ADeviceDef]                -- ^ interactive devices/fixtures (W4)
+    , advProgression      :: Maybe AProgressionDef       -- ^ player progression (W2)
     , advTests            :: [AContentTest]              -- ^ authored content tests (B1)
     , advRawValue         :: Maybe Value                 -- ^ raw parsed JSON/YAML value for schema validation
     } deriving (Show, Eq, Generic)
@@ -140,6 +141,7 @@ instance FromJSON Adventure where
         <*> o .:? "facts"      .!= []
         <*> o .:? "combine"    .!= []
         <*> parseDevicesField o
+        <*> o .:? "progression"
         <*> o .:? "tests" .!= []
         <*> pure (Just v)
     parseJSON _ = fail "Expected Adventure to be an object"
@@ -1313,6 +1315,7 @@ data AActionOutcome
     | AOGotoChapter String             -- ^ goto_chapter: <id> (W3)
     | AOMount String String            -- ^ mount: { item: <item>, to: <device> } (W4)
     | AOUnmount String                 -- ^ unmount: <item> (W4)
+    | AOGainXp Int                     -- ^ gain_xp: <amount> (W2)
     | AOForget String String           -- ^ forget: <fact> - same shapes (W1)
     deriving (Show, Eq, Generic)
 
@@ -1493,8 +1496,38 @@ instance FromJSON AActionOutcome where
                     String s  -> pure (AOUnmount (T.unpack s))
                     Object uo -> AOUnmount <$> uo .: "item"
                     _         -> fail "unmount must be item id or { item: <item> }")
+        <|> (AOGainXp <$> o .: "gain_xp")
         <|> fail "Unknown outcome type. Use one of: msg, heal, damage, give, consume, set_flag, start_quest, etc."
         ) v
+
+-- | A level definition authored in YAML (W2).
+data ALevelDef = ALevelDef
+    { alLevel   :: Maybe Int
+    , alXp      :: Int
+    , alName    :: String
+    , alMsg     :: Maybe String
+    , alEffects :: [AActionOutcome]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ALevelDef where
+    parseJSON = withObject "ALevelDef" $ \o -> ALevelDef
+        <$> o .:? "level"
+        <*> o .:  "xp"
+        <*> o .:  "name"
+        <*> (do m1 <- o .:? "level_msg"
+                case m1 of
+                    Just _  -> pure m1
+                    Nothing -> o .:? "msg")
+        <*> o .:? "effects" .!= []
+
+-- | Player progression table authored in YAML (W2).
+data AProgressionDef = AProgressionDef
+    { aplLevels :: [ALevelDef]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AProgressionDef where
+    parseJSON = withObject "AProgressionDef" $ \o -> AProgressionDef
+        <$> o .:? "levels" .!= []
 
 -- ---------------------------------------------------------------------------
 -- Known YAML Keys per Entity Type (Compiler-Härtung)
@@ -1528,6 +1561,8 @@ data EntityType
     | EntCombat
     | EntCombatScreen
     | EntInteractions
+    | EntProgression
+    | EntLevel
     deriving (Show, Eq, Ord, Enum, Bounded)
 
 -- | Single source of truth for allowed YAML mapping keys per entity type,
@@ -1541,6 +1576,7 @@ knownKeys EntAdventure = Set.fromList
     , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
     , "handLimit", "hand_limit", "sandbox_zones", "procedures", "tests"
     , "facts", "combine", "combine_verb", "journal", "chapters", "devices"
+    , "progression"
     ]
 knownKeys EntRoom = Set.fromList
     [ "id", "name", "desc", "description", "exits", "tags", "light_flag"
@@ -1608,3 +1644,7 @@ knownKeys EntCombatScreen = Set.fromList
     [ "art", "bar_width", "scene", "footer" ]
 knownKeys EntInteractions = Set.fromList
     [ "entity", "item" ]
+knownKeys EntProgression = Set.fromList
+    [ "levels" ]
+knownKeys EntLevel = Set.fromList
+    [ "level", "xp", "name", "level_msg", "msg", "effects" ]

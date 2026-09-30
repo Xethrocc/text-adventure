@@ -1844,6 +1844,181 @@ testValidateTypoInPredicateLocation = do
             pure (r1 && r2)
         _ -> expectTrue "R1 fixtures decode into a Predicate" False
 
+-- ---------------------------------------------------------------------------
+-- Progression (W2) tests
+-- ---------------------------------------------------------------------------
+
+testGainXpAndLevelUp :: IO Bool
+testGainXpAndLevelUp = do
+    let pdef = ProgressionDef
+            [ LevelDef 1 0 "Novize" Nothing []
+            , LevelDef 2 100 "Krieger" Nothing [ModifyValue (VRVariable "bonus.attack") 2]
+            ]
+        gw = emptyGameWorld { progressionDef = Just pdef }
+        st0 = emptyGameState
+            { world = gw
+            , save = (save emptyGameState)
+                { variables = Map.fromList
+                    [ ("xp.current", VVInt 0)
+                    , ("level.current", VVInt 1)
+                    , ("bonus.attack", VVInt 0)
+                    ]
+                }
+            }
+    -- 1. Gain 50 XP: not enough to level up
+    let (st1, msg1) = applyOutcome (GainXp 50) "" st0
+    r1 <- expectEqual 50 (getXp st1)
+    r2 <- expectEqual 1 (getLevel st1)
+    r3 <- expectTrue "no level up msg yet" (null msg1)
+
+    -- 2. Gain another 50 XP: reaches 100 XP -> level up to level 2
+    let (st2, msg2) = applyOutcome (GainXp 50) "" st1
+    r4 <- expectEqual 100 (getXp st2)
+    r5 <- expectEqual 2 (getLevel st2)
+    r6 <- expectTrue "level up msg emitted" ("level 2" `isInfixOf` msg2 && "Krieger" `isInfixOf` msg2)
+    r7 <- expectEqual (Just (VVInt 2)) (Map.lookup "bonus.attack" (variables (save st2)))
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+testMultiLevelUpInOneTurn :: IO Bool
+testMultiLevelUpInOneTurn = do
+    let pdef = ProgressionDef
+            [ LevelDef 1 0 "Rekrut" Nothing []
+            , LevelDef 2 100 "Soeldner" Nothing [ModifyValue (VRVariable "bonus.attack") 2]
+            , LevelDef 3 250 "Veteran" Nothing [ModifyValue (VRVariable "bonus.defense") 3]
+            ]
+        trigLvl2 = TriggerDef "trig2" (OnLevelUp 2) Nothing [SendMessage "Trigger: Lvl2!"] False 0
+        trigLvl3 = TriggerDef "trig3" (OnLevelUp 3) Nothing [SendMessage "Trigger: Lvl3!"] False 0
+        gw = emptyGameWorld
+            { progressionDef = Just pdef
+            , triggerDefs = [trigLvl2, trigLvl3]
+            }
+        st0 = emptyGameState
+            { world = gw
+            , save = (save emptyGameState)
+                { variables = Map.fromList
+                    [ ("xp.current", VVInt 0)
+                    , ("level.current", VVInt 1)
+                    , ("bonus.attack", VVInt 0)
+                    , ("bonus.defense", VVInt 0)
+                    ]
+                }
+            }
+    -- Gain 300 XP in one shot (crosses level 2 and level 3)
+    let (st1, msg) = applyOutcome (GainXp 300) "" st0
+    r1 <- expectEqual 300 (getXp st1)
+    r2 <- expectEqual 3 (getLevel st1)
+    r3 <- expectEqual (Just (VVInt 2)) (Map.lookup "bonus.attack" (variables (save st1)))
+    r4 <- expectEqual (Just (VVInt 3)) (Map.lookup "bonus.defense" (variables (save st1)))
+    r5 <- expectTrue "Lvl2 trigger fired" ("Trigger: Lvl2!" `isInfixOf` msg)
+    r6 <- expectTrue "Lvl3 trigger fired" ("Trigger: Lvl3!" `isInfixOf` msg)
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+testCombatBonusVars :: IO Bool
+testCombatBonusVars = do
+    let st0 = emptyGameState
+    r1 <- expectEqual 10 (effectiveAttack st0)
+    r2 <- expectEqual 5 (effectiveDefense st0)
+    r3 <- expectEqual 100 (effectiveMaxHealth st0)
+
+    let st1 = emptyGameState
+            { save = (save emptyGameState)
+                { variables = Map.fromList
+                    [ ("bonus.attack", VVInt 4)
+                    , ("bonus.defense", VVInt 3)
+                    , ("bonus.hp", VVInt 25)
+                    ]
+                }
+            }
+    r4 <- expectEqual 14 (effectiveAttack st1)
+    r5 <- expectEqual 8 (effectiveDefense st1)
+    r6 <- expectEqual 125 (effectiveMaxHealth st1)
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+testNegativeXpClampAndAntiDelevel :: IO Bool
+testNegativeXpClampAndAntiDelevel = do
+    let pdef = ProgressionDef
+            [ LevelDef 1 0 "Novize" Nothing []
+            , LevelDef 2 100 "Krieger" Nothing []
+            ]
+        gw = emptyGameWorld { progressionDef = Just pdef }
+        st0 = emptyGameState
+            { world = gw
+            , save = (save emptyGameState)
+                { variables = Map.fromList
+                    [ ("xp.current", VVInt 150)
+                    , ("level.current", VVInt 2)
+                    ]
+                }
+            }
+    -- 1. Deduct 50 XP: stays at level 2
+    let (st1, _) = applyOutcome (GainXp (-50)) "" st0
+    r1 <- expectEqual 100 (getXp st1)
+    r2 <- expectEqual 2 (getLevel st1)
+
+    -- 2. Deduct 200 XP: underflows below 0 -> clamped to 0, level remains 2 (anti-de-level)
+    let (st2, msg2) = applyOutcome (GainXp (-200)) "" st1
+    r3 <- expectEqual 0 (getXp st2)
+    r4 <- expectEqual 2 (getLevel st2)
+    r5 <- expectTrue "clamp message emitted" ("cannot drop below 0" `isInfixOf` msg2)
+    pure (r1 && r2 && r3 && r4 && r5)
+
+testStatsProgression :: IO Bool
+testStatsProgression = do
+    let pdef = ProgressionDef
+            [ LevelDef 1 0 "Lehrling" Nothing []
+            , LevelDef 2 100 "Meister" Nothing []
+            ]
+        gwWithProg = emptyGameWorld { progressionDef = Just pdef }
+        stProg1 = emptyGameState
+            { world = gwWithProg
+            , save = (save emptyGameState)
+                { variables = Map.fromList
+                    [ ("xp.current", VVInt 42)
+                    , ("level.current", VVInt 1)
+                    ]
+                }
+            }
+        (_, out1) = executeCommand StatsCmd stProg1
+    r1 <- expectTrue "displays level and xp progress" ("Level 1 — Lehrling (42/100 XP)" `isInfixOf` out1)
+
+    -- Max level formatting
+    let stProg2 = emptyGameState
+            { world = gwWithProg
+            , save = (save emptyGameState)
+                { variables = Map.fromList
+                    [ ("xp.current", VVInt 120)
+                    , ("level.current", VVInt 2)
+                    ]
+                }
+            }
+        (_, out2) = executeCommand StatsCmd stProg2
+    r2 <- expectTrue "displays max level formatting" ("Level 2 — Meister (120 XP)" `isInfixOf` out2)
+
+    -- Without progressionDef: unchanged
+    let stNoProg = emptyGameState
+        (_, outNoProg) = executeCommand StatsCmd stNoProg
+    r3 <- expectTrue "no level line when progressionDef is Nothing" (not ("Level " `isInfixOf` outNoProg))
+    pure (r1 && r2 && r3)
+
+testProgressionGameWorldM2Invariant :: IO Bool
+testProgressionGameWorldM2Invariant = do
+    let gwNoProg = emptyGameWorld
+        encodedNoProg = BLC.unpack (Aeson.encode gwNoProg)
+    r1 <- expectTrue "progression key omitted when Nothing" (not ("\"progression\"" `isInfixOf` encodedNoProg))
+
+    let pdef = ProgressionDef [ LevelDef 1 0 "Start" Nothing [SendMessage "Hi"], LevelDef 2 50 "Next" Nothing [] ]
+        gwWithProg = emptyGameWorld { progressionDef = Just pdef }
+        encodedWithProg = Aeson.encode gwWithProg
+        decoded = Aeson.decode encodedWithProg :: Maybe GameWorld
+    case decoded of
+        Nothing -> do
+            putStrLn "Failed to decode GameWorld with progressionDef"
+            pure False
+        Just gwDec -> do
+            r2 <- expectEqual (Just pdef) (progressionDef gwDec)
+            pure (r1 && r2)
+
 -- | `exit` is the quit alias, `disembark` leaves a vehicle — the help text has
 --   to say the same, otherwise players quit the game instead of leaving a ship.
 testExitIsNotDisembark :: IO Bool
@@ -8331,5 +8506,12 @@ main = do
         , runTest "protocol: version mismatch and error handling (Phase 1.4)" testProtocolVersionMismatch
         , runTest "protocol: session lines bridged to wire events (Phase 1.4)" testProtocolSessionBridge
         , runTest "protocol: makeSnapshot extracts presentation-tier state (Phase 1.4)" testProtocolMakeSnapshot
+        -- Progression (W2)
+        , runTest "progression: gain_xp and level up transitions (W2)" testGainXpAndLevelUp
+        , runTest "progression: multi-level up in one turn (W2)" testMultiLevelUpInOneTurn
+        , runTest "progression: combat bonus variables (W2)" testCombatBonusVars
+        , runTest "progression: negative xp clamp and anti-delevel guarantee (W2)" testNegativeXpClampAndAntiDelevel
+        , runTest "progression: stats formatting (W2)" testStatsProgression
+        , runTest "progression: GameWorld progressionDef M2 invariant (W2)" testProgressionGameWorldM2Invariant
         ]
     when (not (and results)) exitFailure

@@ -111,6 +111,8 @@ module Types.Core
     , ChapterDef (..)
     , DeviceDef (..)
     , DeviceID
+    , LevelDef (..)
+    , ProgressionDef (..)
       -- * Procedural Sandbox & Cutscenes
     , BiomeTemplate (..)
     , SandboxZone (..)
@@ -816,6 +818,7 @@ data Effect
     | GotoChapter String                           -- ^ W3: to a named chapter (no backward jumps)
     | Mount ItemID ActorRef                        -- ^ W4: place an item into a device/actor
     | Unmount ItemID                               -- ^ W4: remove an item from its device/actor to the room
+    | GainXp Int                                   -- ^ W2: add XP (clamped at 0), run level loop
     | Noop                                        -- ^ Do nothing
     deriving (Show, Eq, Generic)
 
@@ -1541,6 +1544,7 @@ data EventType
     | OnBefore String                  -- ^ verb name before execution (Phase 2.2)
     | OnLearn String                   -- ^ W1: fired once per newly learned fact, in learning order
     | OnChapter String                 -- ^ W3: fired when entering chapter <id>
+    | OnLevelUp Int                    -- ^ W2: fired when player reaches level <n>
     deriving (Show, Eq, Generic)
 
 instance ToJSON EventType
@@ -1644,6 +1648,26 @@ type DeviceID = String
 instance ToJSON DeviceDef
 instance FromJSON DeviceDef
 
+-- | A single level threshold and its benefits (W2).
+data LevelDef = LevelDef
+    { lvlNumber  :: Int               -- ^ 1-based level index (1, 2, 3...)
+    , lvlXp      :: Int               -- ^ XP threshold required to reach this level
+    , lvlName    :: String            -- ^ Display name / rank title
+    , lvlMsg     :: Maybe String      -- ^ Optional message shown upon reaching this level
+    , lvlEffects :: [Effect]          -- ^ Effects executed when reaching this level
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON LevelDef
+instance FromJSON LevelDef
+
+-- | Player progression table (W2). Declared under `progression:`.
+data ProgressionDef = ProgressionDef
+    { progLevels :: [LevelDef]
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON ProgressionDef
+instance FromJSON ProgressionDef
+
 -- | Static world definition containing blueprint/map data
 data GameWorld = GameWorld
     { rooms              :: Map.Map RoomID Room
@@ -1670,6 +1694,7 @@ data GameWorld = GameWorld
     , combineDefs        :: [CombineDef]                             -- ^ Derivation rules (W1); empty list is omitted
     , chapterDefs        :: [ChapterDef]                             -- ^ Chapters (W3) in narrative order; empty list is omitted
     , deviceDefs         :: Map.Map DeviceID DeviceDef               -- ^ Interactive devices/fixtures (W4); empty map is omitted
+    , progressionDef     :: Maybe ProgressionDef                     -- ^ Player progression (W2); Nothing omitted from world.json
     } deriving (Show, Eq)
 
 -- | A cutscene clip (Phase H/H4): a frame sequence played once at its own
@@ -1710,7 +1735,7 @@ instance ToJSON GameWorld where
         , "worldName"          .= worldName gw
         , "abilities"          .= abilities gw
         ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair ++ sandboxPair
-          ++ procPair ++ factPair ++ combinePair ++ chapterPair ++ devicePair
+          ++ procPair ++ factPair ++ combinePair ++ chapterPair ++ devicePair ++ progPair
       where
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
@@ -1729,6 +1754,7 @@ instance ToJSON GameWorld where
         combinePair = [ "combineDefs" .= combineDefs gw | not (null (combineDefs gw)) ]
         chapterPair = [ "chapterDefs" .= chapterDefs gw | not (null (chapterDefs gw)) ]
         devicePair = [ "deviceDefs" .= deviceDefs gw | not (Map.null (deviceDefs gw)) ]
+        progPair = [ "progressionDef" .= p | Just p <- [progressionDef gw] ]
         endArt = Map.filter (not . isEmptyAscii) (worldEndArt gw)
         titleArt = worldTitleArt gw
 
@@ -1792,6 +1818,7 @@ instance FromJSON GameWorld where
         <*> o .:? "combineDefs" .!= []
         <*> o .:? "chapterDefs" .!= []
         <*> o .:? "deviceDefs" .!= Map.empty
+        <*> o .:? "progressionDef" .!= Nothing
 
 -- | Encode item-on-item outcomes as objects (P2-9).
 itemInteractionsToJSON :: Map.Map (String, String) Effect -> Value

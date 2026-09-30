@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Fortschritt & Stufen: `progression:` für Erfahrungspunkte (XP) und Level (W2)
+
+- **`progression:`-Sektion** (`AProgressionDef` → `ProgressionDef`): Datengestützte Stufentabelle mit Schwellen (`xp:`), Titeln (`name:`), optionaler Aufstiegsnachricht (`msg:` / `level_msg:`) und Stufeneffekten (`effects:`). Leere Tabellen werden im `world.json` weggelassen (M2-Invariante, Byte-Identität für bestehende Welten).
+- **Effekt `gain_xp: <int>`**:
+  - Modifiziert `xp.current`. Negative Delta-Werte sind erlaubt, werden aber nach unten auf 0 geclamped (`xp.clamped`).
+  - **Stufen-Garantie (Anti-De-Level):** XP-Verlust führt niemals zu einem Herabstufen (`level.current` wächst strikt monoton).
+  - Mehrfachaufstiege in einem Zug laufen geordnet in aufsteigender Stufenfolge ab.
+- **Event `OnLevelUp <n>`** (Trigger `on: levelup <n>` / `on: level_up <n>`): Feuert beim Erreichen der Stufe `n`.
+- **Zero New `SaveState` Fields**: Alle Zustände liegen in `variables`:
+  - `xp.current` (Int, Default 0)
+  - `level.current` (Int, Default 1)
+  - Additive Kampfboni: `bonus.attack` in `effectiveAttack`, `bonus.defense` in `effectiveDefense`, `bonus.hp` in `effectiveMaxHealth`.
+  - Reservierte Namensräume `xp.`, `level.`, `bonus.`.
+- **Präsentation**: `stats` zeigt bei vorhandenem `progressionDef` die Fortschrittszeile (`Level n — Name (xp/next XP)` bzw. `Level n — Name (xp XP)` auf Max-Level). Ohne `progression:` bleibt die Ausgabe byte-identisch.
+- **Compiler-Checks**: `EmptyLevels`, `BadLevelXp`, `NonMonotonicXp`, `ProgressionVariableClash`, `GainXpWithoutProgression` (Warnung).
+- **Meldungskatalog**: 4 neue Schlüssel (`stats.progression`, `stats.progression_max`, `levelup.default`, `xp.clamped`), Katalog bei **206 Keys** (100% referenziert).
+- **Tests**: 6 Engine-Tests (**416**) + 2 Worldbuilder-Tests (**188**); Golden Fixture `examples/fixtures/quest_rpg.yaml` mit 11 Assertions in CI-Stufe 4b.
+
 ### Vorrichtungen & Halterungen: `devices:` für Hebel und Halterungen (W4)
 
 - **`devices:`-Sektion** (`ADeviceDef` → `DeviceDef`): ortsfeste Vorrichtungen im Raum mit Zuständen (`flip_states`), Fit-Regeln (`fits_tag` / `fits`), geschlossenen Effektlisten (`on_insert`, `on_remove`, `on_flip_*`) und optionaler Aufnahme für genau ein Item. Hebel und Halterung sind zwei Ausprägungen desselben Konzepts.
