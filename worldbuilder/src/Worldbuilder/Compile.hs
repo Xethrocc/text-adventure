@@ -31,7 +31,7 @@ import qualified Types as E
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Char (toLower, isDigit, isSpace)
-import Data.List (nub, stripPrefix, isPrefixOf, minimumBy, intercalate)
+import Data.List (nub, stripPrefix, isPrefixOf, minimumBy, intercalate, sortOn)
 import Data.Ord (comparing)
 import Data.Maybe (mapMaybe, fromMaybe, catMaybes, isNothing, isJust)
 import Data.Either (partitionEithers)
@@ -241,6 +241,7 @@ compileAdventure adv =
         gainXpWarns = checkGainXpWithoutProgression adv
 
         allTriggerDefs = triggerDefs ++ encounterDefs ++ envTriggerDefs ++ stealthTriggerDefs
+                        ++ pursuitTriggers
             ++ patrolTriggerDefs ++ shipTriggerDefs
             ++ knowledgeTriggers ++ journalTriggers ++ deviceTriggers
         -- W1/W4: inject the generated combine/notes/device verbs into the registry so
@@ -274,6 +275,8 @@ compileAdventure adv =
         (procCompileErrs, compiledProcs) = compileProcedures (advProcedures adv)
         compiledChapters = compileChapters (advChapters adv)
         (chapterErrs, chapterWarns) = checkChapterRefs (advChapters adv) adv
+        (pursuitErrs, pursuitTriggers) =
+            compilePursuit (advPursuit adv) (Map.keys npcDefsWithParty)
         chapterVarErrs = checkChapterVarReserved varDefs
         compiledFacts = compileFacts (advFacts adv)
         compiledCombines = compileCombines (advCombines adv)
@@ -400,6 +403,7 @@ compileAdventure adv =
                     ++ knownVarErrs
                     ++ chapterErrs
                     ++ chapterVarErrs
+                    ++ pursuitErrs
                     ++ knowledgeClashErrs
                     ++ journalErrs
                     ++ deviceErrs
@@ -1320,6 +1324,36 @@ compileChapters :: [AChapterDef] -> [E.ChapterDef]
 compileChapters cs =
     [ E.ChapterDef (achId c) (achIntro c) (achWhen c) | c <- cs ]
 
+-- | Pursuit (Tür IV): `pursuit:` entries become one `on: turn` trigger each —
+--   emitted in npc-id order (the trigger list order is semantically live, so
+--   a second compile run must be byte-identical). Checks: unknown pursuer
+--   (MissingNPC), unknown `ignores:` value (UnknownPursuitIgnore).
+compilePursuit :: [APursuitEntry] -> [String] -> ([CompileIssue], [E.TriggerDef])
+compilePursuit entries knownNpcs = (errs, map mkTrigger (sortOn apeNpc entries))
+  where
+    errs =
+        [ ciError ("pursuit." ++ apeNpc e) "MissingNPC"
+            ("pursuit references npc '" ++ apeNpc e
+                ++ "', which is not declared under 'npcs:'")
+        | e <- entries, apeNpc e `notElem` knownNpcs ]
+        ++
+        [ ciError ("pursuit." ++ apeNpc e) "UnknownPursuitIgnore"
+            ("ignores: '" ++ v ++ "' is not a pursuit ignore (use 'locked' or 'guarded')")
+        | e <- entries, v <- apeIgnores e, v `notElem` ["locked", "guarded"] ]
+    mkTrigger e = E.TriggerDef
+        { E.trId = "pursuit_" ++ apeNpc e
+        , E.trEvent = E.OnTurn
+        , E.trCondition = Nothing
+        , E.trEffects =
+            [ E.StepToward (E.ActorNPC (apeNpc e)) (apeTarget e) opts (apeMsg e) ]
+        , E.trOnce = False
+        , E.trCooldown = 0
+        }
+      where
+        opts = E.PursuitOptions
+            ("locked" `elem` apeIgnores e)
+            ("guarded" `elem` apeIgnores e)
+
 -- | W3 checks: duplicate ids, unknown `goto_chapter` targets, statically
 --   recognizable backward jumps (a `goto_chapter: X` inside the `on: chapter
 --   Y` rule of a later chapter X>Y in declaration order). Unreachable
@@ -1379,11 +1413,10 @@ checkChapterVarReserved varDefs =
          ++ "the engine owns the chapter state (W3)")
     | name <- Map.keys varDefs, "chapter." `isPrefixOf` name ]
 
--- | W1: author-facing actor reference - "player" or an NPC id (same
---   convention as the engine's ActorRef FromJSON).
+-- | W1: author-facing actor reference - "player", "ship:<id>" or an NPC id
+--   (same convention as the engine's parseActorString).
 compileActorRef :: String -> E.ActorRef
-compileActorRef "player" = E.ActorPlayer
-compileActorRef s        = E.ActorNPC s
+compileActorRef = E.parseActorString
 
 -- | W1 (Befehl `kombiniere`, W1.4): generate one trigger per combine entry
 --   and argument shape — `kombiniere a b` and `kombiniere a mit b`, both
@@ -2620,6 +2653,10 @@ compileAActionOutcome ao = case ao of
     AOLearn f a -> E.Learn (compileActorRef a) f
     AONextChapter -> E.NextChapter
     AOGotoChapter t -> E.GotoChapter t
+    AOStepToward seeker target mMsg ->
+        E.StepToward (compileActorRef seeker) target E.defaultPursuitOptions mMsg
+    AOStepAwayFrom seeker target mMsg ->
+        E.StepAwayFrom (compileActorRef seeker) target E.defaultPursuitOptions mMsg
     AOForget f a -> E.Forget (compileActorRef a) f
     AONarrative ls follow -> E.Narrative ls (compileOutcomes follow)
     AOStandingAdd fid n -> E.ModifyValue (E.VRVariable ("faction." ++ fid)) n

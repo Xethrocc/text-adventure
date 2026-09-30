@@ -389,6 +389,9 @@ applyOutcomeWith depth salt outcome targetId state
     Mount iId actor -> (mountItem iId actor state, [], salt)
     Unmount iId     -> (unmountItem iId state, [], salt)
 
+    StepToward seeker target opts mMsg   -> pursuitMove True seeker target opts mMsg state salt
+    StepAwayFrom seeker target opts mMsg -> pursuitMove False seeker target opts mMsg state salt
+
     GainXp delta ->
         let curXp = getXp state
             rawXp = curXp + delta
@@ -695,6 +698,47 @@ setEntityStateWithEvents :: String -> String -> GameState -> (GameState, [Output
 setEntityStateWithEvents eId val state
     | getEntityState eId state == Just val = (state, [])
     | otherwise = fireTriggers (OnStateChange eId) (setEntityState eId val state)
+
+-- | Pursuit (Tür IV): move the seeker exactly one edge toward (or away
+--   from) the target. Only NPCs and ships are seekers (decision 2026-09-30);
+--   any other actor is refused with a diagnostic. One edge per call, never
+--   a whole path — repeated calls keep stepping. The optional author message
+--   replaces the catalog line (W1 message pattern).
+pursuitMove :: Bool -> ActorRef -> DistanceTarget -> PursuitOptions -> Maybe String
+            -> GameState -> Int -> (GameState, [OutputEvent], Int)
+pursuitMove toward seeker target opts mMsg state salt =
+    case seeker of
+        ActorNPC _  -> walk
+        ActorShip _ -> walk
+        _ -> ( addDiagnostic "[engine] pursuit: only NPCs and ships can be seekers" state
+             , [], salt )
+  where
+    walk = case pursuitStep toward opts state seeker target of
+        Just (dir, room) ->
+            let st' = setSeekerRoom seeker room state
+                evs = case mMsg of
+                    Just m  -> evRaw (formatWithVars m st')
+                    Nothing | toward -> evMsg "pursuit.step"
+                                        [ ("name", actorId seeker), ("room", room)
+                                        , ("dir", show dir) ]
+                            | otherwise -> evMsg "pursuit.flee"
+                                        [ ("name", actorId seeker), ("room", room)
+                                        , ("dir", show dir) ]
+            in (st', evs, salt)
+        Nothing ->
+            (state, evMsg "pursuit.no_path" [("name", actorId seeker)], salt)
+
+-- | Set an actor's room position (NPC or ship).
+setSeekerRoom :: ActorRef -> RoomID -> GameState -> GameState
+setSeekerRoom (ActorNPC n) room state =
+    state { save = (save state)
+        { npcStates = Map.adjust (\ns -> ns { npcLocation = InRoom room }) n
+                        (npcStates (save state)) } }
+setSeekerRoom (ActorShip v) room state =
+    state { save = (save state)
+        { vehicleStates = Map.adjust (\vs -> vs { vsCurrentStop = room }) v
+                        (vehicleStates (save state)) } }
+setSeekerRoom _ _ state = state
 
 -- | Fire triggers matching the given event type (entry point, nesting depth 0).
 fireTriggers :: EventType -> GameState -> (GameState, [OutputEvent])

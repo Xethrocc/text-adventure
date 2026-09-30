@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Verfolgung & Pfadsuche: `pursuit:` und die Distanz-Vokabel (Tür IV)
+
+- **Kern `src/Pursuit.hs`**: stateless, reine BFS-Suche über den Laufzeit-Graphen
+  (`effectiveConnections`) — `bfsDistances` (Hops, `-1` = unerreichbar) und
+  `stepToward`/`stepAway` (je **eine** Kante, nie der ganze Pfad).
+- **Wortschatz**: `distance.<sucher>.<ziel>` als Int-Wert in `compare_var`/`compute_var`
+  (`-1`-Sentinel); Effekte `step_toward`/`step_away_from` in der Form
+  `[sucher, ziel, msg?]` (Sucher: NPC oder Schiff; Ziel: Akteur oder `room:<id>`).
+  Ohne `msg` gilt der Katalog (`pursuit.step`/`pursuit.flee` mit `{name}`/`{room}`/`{dir}`),
+  ohne Schritt `pursuit.no_path`.
+- **`pursuit:`-Sektion** (`npc`, `target?`, `ignores?`, `msg?`) erzeugt pro Verfolger einen
+  `on: turn`-Trigger (ein Schritt pro Zug) — **deterministisch in NPC-ID-Reihenfolge**
+  emittiert (Trigger-Reihenfolge ist semantisch wirksam).
+- **Tie-Break-Vertrag (fest, sichtbar):** bei Gleichstand gewinnt die **kleinste
+  Ziel-Raum-ID**, dann `Pursuit.directionPriority` („Gameplay-Vertrag, nicht
+  umsortieren") — bewusst unabhängig von `Direction`s abgeleitetem `Ord`.
+- **Fairness als Vertrag:** Default „wie der Spieler" (offene Ausgänge, aufgeschlossene
+  Türen, erfüllte Wachen-Prädikate); `ignores: [locked|guarded]` ist die explizite
+  Ausnahme („Wolf durch die verriegelte Tür"). `step_away_from` ist Flucht: streng
+  größerer Abstand, wobei „unerreichbar" als unendlich weit zählt.
+- **Reproduzierbarkeit:** stateless (kein neues Save-Feld), kein `rngState`-Verbrauch,
+  nur geordnete Container; Save/Load mitten in der Verfolgung rechnet identisch weiter
+  (Unit-Test). `distance.`-Werte sind live berechnete virtuelle Werte wie `condition_turns.`.
+- **Compiler-Checks**: `MissingNPC` (unbekannter Verfolger), `UnknownPursuitIgnore`
+  (falscher `ignores:`-Wert).
+- **Meldungskatalog**: 3 neue Schlüssel (`pursuit.step`, `pursuit.flee`, `pursuit.no_path`).
+- **Tests**: 5 Engine-Tests (**421**) + 2 Worldbuilder-Tests (**190**); Golden-Fixture
+  `examples/fixtures/pursuit.yaml` (Tie-Break-Pfad „ostweg" + Fairness an der verriegelten
+  Tür) in CI-Stufe 4b.
+
 ### Fortschritt & Stufen: `progression:` für Erfahrungspunkte (XP) und Level (W2)
 
 - **`progression:`-Sektion** (`AProgressionDef` → `ProgressionDef`): Datengestützte Stufentabelle mit Schwellen (`xp:`), Titeln (`name:`), optionaler Aufstiegsnachricht (`msg:` / `level_msg:`) und Stufeneffekten (`effects:`). Leere Tabellen werden im `world.json` weggelassen (M2-Invariante, Byte-Identität für bestehende Welten).

@@ -58,6 +58,7 @@ data Adventure = Adventure
     , advCombineVerb      :: Maybe String                -- ^ verb word for combining facts (W1; default "kombiniere")
     , advJournal          :: Maybe String                -- ^ journal: notes | messages (W1; default: messages = no notes command)
     , advChapters         :: [AChapterDef]               -- ^ chapters (W3, narrative order)
+    , advPursuit          :: [APursuitEntry]             -- ^ pursuit (Tür IV): per-pursuer chase config
     , advFacts            :: [AFactDef]                  -- ^ knowledge facts (W1)
     , advCombines         :: [ACombineDef]               -- ^ derivation rules (W1)
     , advDevices          :: [ADeviceDef]                -- ^ interactive devices/fixtures (W4)
@@ -138,6 +139,7 @@ instance FromJSON Adventure where
         <*> o .:? "combine_verb" .!= Nothing
         <*> o .:? "journal"      .!= Nothing
         <*> o .:? "chapters"   .!= []
+        <*> o .:? "pursuit"    .!= []
         <*> o .:? "facts"      .!= []
         <*> o .:? "combine"    .!= []
         <*> parseDevicesField o
@@ -1197,6 +1199,24 @@ instance FromJSON AChapterDef where
         <*> o .:? "intro" .!= Nothing
         <*> o .:? "when"  .!= Nothing
 
+-- | Pursuit (Tür IV): one pursuer configuration authored under `pursuit:`.
+--   The compiler turns each entry into one `on: turn` trigger that steps the
+--   pursuer one edge toward the target — emitted in npc-id order (the
+--   trigger list order is semantically live, so it must stay stable).
+data APursuitEntry = APursuitEntry
+    { apeNpc     :: String              -- ^ the pursuing NPC
+    , apeTarget  :: E.DistanceTarget    -- ^ default: the player
+    , apeIgnores :: [String]            -- ^ "locked" / "guarded" exits passable
+    , apeMsg     :: Maybe String        -- ^ optional per-step author message
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON APursuitEntry where
+    parseJSON = withObject "APursuitEntry" $ \o -> APursuitEntry
+        <$> o .:  "npc"
+        <*> o .:? "target"  .!= E.DTActor E.ActorPlayer
+        <*> o .:? "ignores" .!= []
+        <*> o .:? "msg"     .!= Nothing
+
 -- | An interactive device / fixture (W4) authored under `devices:`.
 data ADeviceDef = ADeviceDef
     { adId          :: String
@@ -1313,6 +1333,10 @@ data AActionOutcome
     | AOLearn String String            -- ^ learn: <fact> or learn: {fact, actor} (W1; actor defaults to player)
     | AONextChapter                    -- ^ next_chapter (W3)
     | AOGotoChapter String             -- ^ goto_chapter: <id> (W3)
+    | AOStepToward String E.DistanceTarget (Maybe String)
+      -- ^ step_toward: [seeker, target, msg?] — one edge toward (Tür IV)
+    | AOStepAwayFrom String E.DistanceTarget (Maybe String)
+      -- ^ step_away_from: [seeker, target, msg?] — one edge away (Tür IV)
     | AOMount String String            -- ^ mount: { item: <item>, to: <device> } (W4)
     | AOUnmount String                 -- ^ unmount: <item> (W4)
     | AOGainXp Int                     -- ^ gain_xp: <amount> (W2)
@@ -1367,6 +1391,16 @@ instance FromJSON AActionOutcome where
                     _         -> fail "forget must be a fact id or {fact, actor}")
         <|> (AONextChapter <$ (o .: "next_chapter" :: Parser Bool))
         <|> (AOGotoChapter <$> o .: "goto_chapter")
+        <|> (do t <- o .: "step_toward" :: Parser [Value]
+                case t of
+                    [a, b]    -> AOStepToward <$> parseJSON a <*> parseJSON b <*> pure Nothing
+                    [a, b, m] -> AOStepToward <$> parseJSON a <*> parseJSON b <*> (Just <$> parseJSON m)
+                    _         -> fail "step_toward: expected [seeker, target, msg?]")
+        <|> (do t <- o .: "step_away_from" :: Parser [Value]
+                case t of
+                    [a, b]    -> AOStepAwayFrom <$> parseJSON a <*> parseJSON b <*> pure Nothing
+                    [a, b, m] -> AOStepAwayFrom <$> parseJSON a <*> parseJSON b <*> (Just <$> parseJSON m)
+                    _         -> fail "step_away_from: expected [seeker, target, msg?]")
         <|> (do sk <- o .: "skill"
                 AOModifySkill <$> sk .: "name" <*> sk .: "delta")
         <|> (AORandomChoice <$> o .: "random")
@@ -1575,7 +1609,7 @@ knownKeys EntAdventure = Set.fromList
     , "encounter_tables", "environment", "stealth", "patrol", "combat"
     , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
     , "handLimit", "hand_limit", "sandbox_zones", "procedures", "tests"
-    , "facts", "combine", "combine_verb", "journal", "chapters", "devices"
+    , "facts", "combine", "combine_verb", "journal", "chapters", "devices", "pursuit"
     , "progression"
     ]
 knownKeys EntRoom = Set.fromList

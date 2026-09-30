@@ -13,6 +13,7 @@ import Data.Either (isLeft)
 import System.Timeout (timeout)
 import Control.Exception (bracket, evaluate, try, SomeException)
 import Game
+import Pursuit (bfsDistances, stepToward, stepAway)
 import Vehicles
 import Effects
 import Quests
@@ -5397,6 +5398,183 @@ testChapterOnChapterDoesNotCascade = do
     pure (r1 && r2 && r2b && r3)
 
 -- ---------------------------------------------------------------------------
+-- Pursuit (Tür IV): distance queries and one-edge steps
+-- ---------------------------------------------------------------------------
+
+-- | Helper: rooms with connections plus positioned NPCs.
+pstate :: [(RoomID, [(Direction, Exit)])] -> [(String, RoomID)] -> GameState
+pstate rms npcs =
+    let pRooms = [ (mkTestRoom r r) { roomConnections = Map.fromList cs } | (r, cs) <- rms ]
+        gw = (world emptyGameState) { rooms = Map.fromList [ (roomId r, r) | r <- pRooms ] }
+        sv = (save emptyGameState)
+            { currentRoom = if null rms then "" else fst (head rms)
+            , npcStates = Map.fromList
+                [ (n, NPCState (InRoom loc) "alive" Nothing Map.empty Nothing)
+                | (n, loc) <- npcs ]
+            }
+    in emptyGameState { world = gw, save = sv }
+
+-- | The search core: distances, one-edge steps, the explicit tie-break
+--   (smallest target room id first, then directionPriority) and the -1
+--   sentinel. This pins the selection point against tie-break drift.
+testPursuitCore :: IO Bool
+testPursuitCore = do
+    --        ziel
+    --       / |  \
+    --      a  b   c
+    --       \ |  /
+    --        start
+    let edges = Map.fromList
+            [ ("start", [(North, "a"), (South, "b"), (East, "c"), (West, "c")])
+            , ("a", [(South, "start"), (North, "ziel")])
+            , ("b", [(North, "start"), (South, "ziel")])
+            , ("c", [(West, "start"), (Northeast, "ziel")])
+            , ("ziel", [(South, "a"), (North, "b"), (Southwest, "c")])
+            ]
+        dists = bfsDistances edges "ziel"
+    r1 <- expectEqual (Just (2 :: Int)) (Map.lookup "start" dists)
+    r2 <- expectEqual (Just (1 :: Int)) (Map.lookup "a" dists)
+    r3 <- expectTrue "unreachable rooms are absent (-1 sentinel)"
+            (isNothing (Map.lookup "isolated" dists))
+    -- tie-break at equal distance: smallest target room id wins
+    r4 <- expectEqual (Just (North, "a")) (stepToward (edges Map.! "start") dists "start")
+    -- tie-break at equal room: directionPriority (North before East)
+    r5 <- expectEqual (Just (East, "c"))
+            (stepToward [(West, "c"), (East, "c")] dists "start")
+    -- one edge per call: from "a" the next hop is the goal
+    r6 <- expectEqual (Just (North, "ziel")) (stepToward (edges Map.! "a") dists "a")
+    -- at the goal: no step
+    r7 <- expectEqual Nothing (stepToward (edges Map.! "ziel") dists "ziel")
+    -- away: strictly farther only ("a" = 1 -> "start" = 2)
+    r8 <- expectEqual (Just (South, "start")) (stepAway [(South, "start"), (North, "ziel")] dists "a")
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- | Distance queries over the live state: actors as seekers and targets,
+--   the -1 sentinel for unreachable / no position, and the
+--   `distance.<seeker>.<target>` value form.
+testPursuitDistance :: IO Bool
+testPursuitDistance = do
+    let st0 = pstate
+            [ ("start", [(North, Open "a")])
+            , ("a", [(South, Open "start"), (North, Open "ziel")])
+            , ("ziel", [(South, Open "a")])
+            , ("isolated", [])
+            ] [("wolf", "start"), ("bird", "isolated")]
+        st = st0 { save = (save st0) { currentRoom = "ziel" } }
+    r1 <- expectEqual (2 :: Int)
+            (distanceTo defaultPursuitOptions st (ActorNPC "wolf") (DTActor ActorPlayer))
+    r2 <- expectEqual (1 :: Int)
+            (distanceTo defaultPursuitOptions st (ActorNPC "wolf") (DTRoom "a"))
+    r3 <- expectEqual (-1 :: Int)
+            (distanceTo defaultPursuitOptions st (ActorNPC "bird") (DTActor ActorPlayer))
+    r4 <- expectEqual (-1 :: Int)
+            (distanceTo defaultPursuitOptions st (ActorNPC "wolf") (DTRoom "isolated"))
+    -- the string value form `distance.<seeker>.<target>`
+    r5 <- expectEqual (2 :: Int) (resolveValueRef (VRVariable "distance.wolf.player") st)
+    r6 <- expectEqual (-1 :: Int) (resolveValueRef (VRVariable "distance.bird.player") st)
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | step_toward / step_away_from effects: one edge per call, catalog
+--   messages, author message override, and the seeker-type contract
+--   (only NPCs and ships — anything else is refused with a diagnostic).
+testPursuitStepEffects :: IO Bool
+testPursuitStepEffects = do
+    let st0 = pstate
+            [ ("start", [(North, Open "a")])
+            , ("a", [(South, Open "start"), (North, Open "ziel")])
+            , ("ziel", [(South, Open "a")])
+            , ("isolated", [])
+            ] [("wolf", "start"), ("bird", "isolated")]
+        st = st0 { save = (save st0) { currentRoom = "ziel" } }
+        wolfRoom s = Map.lookup "wolf" (npcStates (save s)) >>= \ns ->
+            case npcLocation ns of InRoom r -> Just r; _ -> Nothing
+        (st1, evs1, _) =
+            applyOutcomeWith 0 0 (StepToward (ActorNPC "wolf") (DTActor ActorPlayer)
+                                    defaultPursuitOptions Nothing) "" st
+    r1 <- expectEqual (Just "a") (wolfRoom st1)
+    r2 <- expectTrue "catalog step message (route visible)"
+            ("wolf moves to a" `isInfixOf` renderEvents evs1)
+    -- one edge per call: the next call moves one more edge, not the path
+    let (st2, _, _) =
+            applyOutcomeWith 0 0 (StepToward (ActorNPC "wolf") (DTActor ActorPlayer)
+                                    defaultPursuitOptions Nothing) "" st1
+    r3 <- expectEqual (Just "ziel") (wolfRoom st2)
+    -- author message override replaces the catalog line
+    let (st3, evs3, _) =
+            applyOutcomeWith 0 0 (StepToward (ActorNPC "wolf") (DTRoom "start")
+                                    defaultPursuitOptions (Just "Der Wolf folgt.")) "" st2
+    r4 <- expectEqual (Just "a") (wolfRoom st3)
+    r5 <- expectTrue "author message shown" ("Der Wolf folgt." `isInfixOf` renderEvents evs3)
+    -- flee: strictly farther away
+    let (st4, _, _) =
+            applyOutcomeWith 0 0 (StepAwayFrom (ActorNPC "wolf") (DTActor ActorPlayer)
+                                    defaultPursuitOptions Nothing) "" st3
+    r6 <- expectEqual (Just "start") (wolfRoom st4)
+    -- no path: catalog message, state unchanged
+    let birdRoom s = Map.lookup "bird" (npcStates (save s)) >>= \ns ->
+            case npcLocation ns of InRoom r -> Just r; _ -> Nothing
+        (st5, evs5, _) =
+            applyOutcomeWith 0 0 (StepToward (ActorNPC "bird") (DTActor ActorPlayer)
+                                    defaultPursuitOptions Nothing) "" st
+    r7 <- expectEqual (Just "isolated") (birdRoom st5)
+    r8 <- expectTrue "no-path message" ("can find no way" `isInfixOf` renderEvents evs5)
+    -- only NPCs and ships are seekers
+    let (st6, _, _) =
+            applyOutcomeWith 0 0 (StepToward ActorPlayer (DTRoom "start")
+                                    defaultPursuitOptions Nothing) "" st
+    r9 <- expectTrue "non-seeker refused with a diagnostic" (not (null (diagnostics st6)))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9)
+
+-- | Fairness: a pursuer that may not pass the locked door stays put — the
+--   distance is -1 and no step is taken. With `ignores: [locked]` it walks
+--   right through.
+testPursuitFairness :: IO Bool
+testPursuitFairness = do
+    let st0 = pstate
+            [ ("start", [(North, Locked "mid" "tuer")])
+            , ("mid", [(South, Open "start")])
+            ] [("wolf", "start")]
+        st = st0 { save = (save st0)
+                    { currentRoom = "mid"
+                    , entityStates = Map.singleton "tuer" "locked" } }
+        wolfRoom s = Map.lookup "wolf" (npcStates (save s)) >>= \ns ->
+            case npcLocation ns of InRoom r -> Just r; _ -> Nothing
+    r1 <- expectEqual (-1 :: Int)
+            (distanceTo defaultPursuitOptions st (ActorNPC "wolf") (DTActor ActorPlayer))
+    let (st1, evs1, _) =
+            applyOutcomeWith 0 0 (StepToward (ActorNPC "wolf") (DTActor ActorPlayer)
+                                    defaultPursuitOptions Nothing) "" st
+    r2 <- expectEqual (Just "start") (wolfRoom st1)
+    r3 <- expectTrue "fairness message" ("can find no way" `isInfixOf` renderEvents evs1)
+    let ignores = PursuitOptions True False
+        (st2, _, _) =
+            applyOutcomeWith 0 0 (StepToward (ActorNPC "wolf") (DTActor ActorPlayer)
+                                    ignores Nothing) "" st
+    r4 <- expectEqual (Just "mid") (wolfRoom st2)
+    pure (r1 && r2 && r3 && r4)
+
+-- | Save/Load in the middle of a chase: the reloaded state computes the
+--   identical next step (statelessness + identical recomputation).
+testPursuitSaveLoad :: IO Bool
+testPursuitSaveLoad = do
+    let st0 = pstate
+            [ ("start", [(North, Open "a")])
+            , ("a", [(South, Open "start"), (North, Open "ziel")])
+            , ("ziel", [(South, Open "a")])
+            ] [("wolf", "start")]
+        st = st0 { save = (save st0) { currentRoom = "ziel" } }
+    case Aeson.decode (Aeson.encode (save st)) of
+        Nothing -> expectTrue "save round-trips through JSON" False
+        Just loaded ->
+            let stLoaded = st { save = loaded }
+                step s = pursuitStep True defaultPursuitOptions s
+                            (ActorNPC "wolf") (DTActor ActorPlayer)
+            in do
+                r1 <- expectTrue "a step exists" (isJust (step st))
+                r2 <- expectEqual (step st) (step stLoaded)
+                pure (r1 && r2)
+
+-- ---------------------------------------------------------------------------
 -- W4: devices (Hebel / Halterung)
 -- ---------------------------------------------------------------------------
 
@@ -8299,6 +8477,11 @@ main = do
         , runTest "chapter auto-gate: first eligible, one per turn (W3)" testChapterGate
         , runTest "goto/next: refusal, diagnostics, OnChapter (W3)" testChapterSwitchEffects
         , runTest "chapter gate does not cascade (W3)" testChapterOnChapterDoesNotCascade
+        , runTest "pursuit core: distances, one-edge steps, tie-break (Tür IV)" testPursuitCore
+        , runTest "pursuit distance: seekers, targets, -1 sentinel (Tür IV)" testPursuitDistance
+        , runTest "pursuit step effects: messages, override, seeker contract (Tür IV)" testPursuitStepEffects
+        , runTest "pursuit fairness: locked door stops the pursuer (Tür IV)" testPursuitFairness
+        , runTest "pursuit save/load recomputes the identical step (Tür IV)" testPursuitSaveLoad
         , runTest "ActorHas predicate for player, NPC and device entity (W4)" testActorHasPredicate
         , runTest "Mount and Unmount effects move item location (W4)" testMountAndUnmountEffects
         , runTest "device examine shows description and mounted item (W4)" testDeviceInteractionExamine

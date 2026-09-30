@@ -1,0 +1,73 @@
+name: Pursuit Fixture
+start_room: halle
+
+rooms:
+  - id: halle
+    name: Halle
+    desc: Die Halle.
+    exits:
+      north: ostweg
+      west: westweg
+  - id: ostweg
+    name: Ostweg
+    desc: Der Ostweg.
+    exits:
+      south: halle
+      north: kammer
+  - id: westweg
+    name: Westweg
+    desc: Der Westweg.
+    exits:
+      east: halle
+      north: kammer
+  - id: kammer
+    name: Kammer
+    desc: Die Kammer.
+    exits:
+      south: ostweg
+      east: westweg
+  - id: zelle
+    name: Zelle
+    desc: Die Zelle. Die Tür ist verschlossen.
+    exits:
+      north: {to: halle, locked_by: tuer}
+
+items:
+  - id: k1
+    name: Kiesel
+    keys: [kiesel]
+    desc: Ein Kiesel.
+    location: halle
+  - id: k2
+    name: Knochen
+    keys: [knochen]
+    desc: Ein Knochen.
+    location: halle
+
+npcs:
+  - id: jaeger
+    name: Jaeger
+    location: kammer
+    keywords: [jaeger]
+  - id: sperrer
+    name: Sperrer
+    location: zelle
+    keywords: [sperrer]
+
+# Tür IV: one step per turn, toward the player. The tie-break (two equally
+# long routes from kammer to halle) is pinned: smallest target room id first
+# (ostweg < westweg) — the golden route below protects that contract.
+pursuit:
+  - npc: jaeger
+    target: player
+  - npc: sperrer
+    target: player
+
+tests:
+  - name: "golden-pfad und fairness"
+    input: [take kiesel, take knochen]
+    expect:
+      - "jaeger moves to ostweg"
+      - "sperrer can find no way."
+      - "jaeger moves to halle"
+      - "sperrer can find no way."

@@ -4,7 +4,7 @@
 module Main where
 
 import Control.Monad (forM, when)
-import Data.List (isInfixOf, nub, find)
+import Data.List (isInfixOf, isPrefixOf, nub, find)
 import qualified Data.Aeson as Aeson
 import Data.Maybe (listToMaybe)
 import qualified Data.ByteString.Lazy.Char8 as BLC
@@ -196,6 +196,7 @@ minAdventure room = Adventure
     , advCombineVerb = Nothing
     , advJournal = Nothing
     , advChapters = []
+    , advPursuit = []
     , advFacts = []
     , advCombines = []
     , advDevices = []
@@ -520,6 +521,52 @@ testChapterSugar = do
             E.GotoChapter "finale" -> expectTrue "goto_chapter compiles" True
             _ -> expectTrue "goto_chapter compiles" False
     pure (r1 && r2)
+
+-- ---------------------------------------------------------------------------
+-- Pursuit (Tür IV)
+-- ---------------------------------------------------------------------------
+
+-- | `step_toward:` / `step_away_from:` sugar compiles to the engine effects.
+testPursuitSugar :: IO Bool
+testPursuitSugar = do
+    r1 <- case compileAActionOutcome (AOStepToward "wolf" (E.DTActor E.ActorPlayer) Nothing) of
+            E.StepToward (E.ActorNPC "wolf") (E.DTActor E.ActorPlayer) _ Nothing ->
+                expectTrue "step_toward compiles" True
+            _ -> expectTrue "step_toward compiles" False
+    r2 <- case compileAActionOutcome (AOStepAwayFrom "wolf" (E.DTRoom "halle") (Just "weg!")) of
+            E.StepAwayFrom (E.ActorNPC "wolf") (E.DTRoom "halle") _ (Just "weg!") ->
+                expectTrue "step_away_from compiles" True
+            _ -> expectTrue "step_away_from compiles" False
+    pure (r1 && r2)
+
+-- | `pursuit:` compiles to one `on: turn` trigger per pursuer, emitted in
+--   npc-id order; unknown pursuers and unknown `ignores:` values are errors.
+testPursuitSection :: IO Bool
+testPursuitSection = do
+    let mk entries = (minAdventure (minRoom "loc_0"))
+            { advPursuit = entries
+            , advNPCs = [ (minNpcKey "wolf") { anLocation = "loc_0" }
+                        , (minNpcKey "bird") { anLocation = "loc_0" } ] }
+        eWolf = APursuitEntry "wolf" (E.DTActor E.ActorPlayer) ["locked"] (Just "Der Wolf folgt.")
+        eBird = APursuitEntry "bird" (E.DTActor E.ActorPlayer) [] Nothing
+    r1 <- case compileAdventure (mk [eWolf, eBird]) of
+            Left errs -> expectTrue ("pursuit compiles, got: " ++ issuesText errs) False
+            Right cr -> do
+                let ts = [ t | t <- E.triggerDefs (crWorld cr)
+                             , "pursuit_" `isPrefixOf` E.trId t ]
+                a <- expectEqual ["pursuit_bird", "pursuit_wolf"] (map E.trId ts)
+                b <- expectTrue "on: turn per pursuer" (all (\t -> E.trEvent t == E.OnTurn) ts)
+                pure (a && b)
+    r2 <- case compileAdventure (mk [APursuitEntry "ghost" (E.DTActor E.ActorPlayer) [] Nothing]) of
+            Left errs -> expectTrue "unknown pursuer is MissingNPC"
+                (any (\i -> ciCode i == "MissingNPC") errs)
+            Right _ -> expectTrue "unknown pursuer must fail" False
+    r3 <- case compileAdventure
+                (mk [APursuitEntry "wolf" (E.DTActor E.ActorPlayer) ["invisible"] Nothing]) of
+            Left errs -> expectTrue "unknown ignore is UnknownPursuitIgnore"
+                (any (\i -> ciCode i == "UnknownPursuitIgnore") errs)
+            Right _ -> expectTrue "unknown ignore must fail" False
+    pure (r1 && r2 && r3)
 
 -- ---------------------------------------------------------------------------
 -- W4: devices (Hebel / Halterung)
@@ -3267,6 +3314,9 @@ tests =
     , ("chapters: compile in order; empty chapterDefs omitted", testChaptersCompile)
     , ("chapters: static checks (Duplicate, Unknown, Backwards, Unreachable)", testChapterChecks)
     , ("chapters: next_chapter/goto_chapter sugar compiles", testChapterSugar)
+    -- Pursuit (Tür IV)
+    , ("pursuit: step_toward/step_away_from sugar compiles", testPursuitSugar)
+    , ("pursuit: section emits sorted on:turn triggers; checks", testPursuitSection)
     -- W4: devices (Hebel / Halterung)
     , ("devices: compile in order; empty deviceDefs omitted", testDevicesCompile)
     , ("devices: static checks (Duplicate, Location, Item, FlipCount, Tag, NoEffects)", testDeviceChecks)

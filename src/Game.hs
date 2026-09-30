@@ -20,6 +20,9 @@ module Game
     , canMove
     , getExitInDirection
     , effectiveConnections
+    , actorRoom
+    , distanceTo
+    , pursuitStep
     , markCurrentRoomVisited
     , isRoomVisited
     , setRoomVisited
@@ -138,6 +141,7 @@ module Game
     ) where
 
 import Types
+import Pursuit (bfsDistances, stepToward, stepAway)
 import Messages (formatStringWith, renderMsg)
 import Data.List (foldl', isPrefixOf, nub, stripPrefix)
 import Data.Bits (shiftR)
@@ -493,6 +497,76 @@ getExitInDirection :: Direction -> GameState -> Maybe Exit
 getExitInDirection dir state = case getCurrentRoom state of
     Just room -> Map.lookup dir (effectiveConnections state (roomId room))
     Nothing   -> Nothing
+
+-- ---------------------------------------------------------------------------
+-- Pursuit (Tür IV): distance queries and one-edge pursuit steps
+-- ---------------------------------------------------------------------------
+
+-- | The room an actor currently occupies. 'Nothing' when the actor is not in
+--   a room (carried, removed, unknown).
+actorRoom :: GameState -> ActorRef -> Maybe RoomID
+actorRoom st actor = case actor of
+    ActorPlayer   -> Just (currentRoom (save st))
+    ActorRoom r   -> Just r
+    ActorNPC n    -> case Map.lookup n (npcStates (save st)) of
+        Just ns -> case npcLocation ns of
+            InRoom r -> Just r
+            _        -> Nothing
+        Nothing -> Nothing
+    ActorShip v   -> vsCurrentStop <$> Map.lookup v (vehicleStates (save st))
+    ActorEntity _ -> Nothing
+
+-- | The room a distance target sits in.
+targetRoomOf :: GameState -> DistanceTarget -> Maybe RoomID
+targetRoomOf st (DTRoom r)  = Just (canonicalRoomId (world st) r)
+targetRoomOf st (DTActor a) = actorRoom st a
+
+-- | Forward edges of the live graph, restricted to exits a seeker with these
+--   options may pass (default \"wie der Spieler\": open exits, unlocked
+--   doors, guards whose predicate holds). Room ids are canonical; only
+--   ordered containers are used, so traversal order is stable.
+pursuitEdges :: PursuitOptions -> GameState -> Map.Map RoomID [(Direction, RoomID)]
+pursuitEdges opts st =
+    Map.fromList
+        [ (r, [ (dir, to) | (dir, exit) <- Map.toList (effectiveConnections st r)
+                          , Just to <- [passableTarget exit] ])
+        | r <- allRoomIds st ]
+  where
+    allRoomIds s = Map.keys (rooms (world s)) ++ Map.keys (dynamicRooms (save s))
+    passableTarget (Open to) = Just to
+    passableTarget (Locked to ent)
+        | poIgnoreLocked opts          = Just to
+        | getEntityState ent st == Just "unlocked" = Just to
+        | otherwise                    = Nothing
+    passableTarget (Guarded to p _)
+        | poIgnoreGuarded opts = Just to
+        | evalPredicate p st   = Just to
+        | otherwise            = Nothing
+
+-- | Hop distance from the seeker's room to the target — @-1@ is the
+--   documented sentinel for \"unreachable\" (including: seeker or target has
+--   no room position at the moment).
+distanceTo :: PursuitOptions -> GameState -> ActorRef -> DistanceTarget -> Int
+distanceTo opts st seeker target =
+    case (actorRoom st seeker, targetRoomOf st target) of
+        (Just from, Just goal) ->
+            Map.findWithDefault (-1) from (bfsDistances (pursuitEdges opts st) goal)
+        _ -> (-1)
+
+-- | The single next edge of a pursuit step ('True' = toward the target,
+--   'False' = away from it). 'Nothing' when the seeker cannot move — one
+--   edge per call, never a whole path (repeated calls keep stepping).
+pursuitStep :: Bool -> PursuitOptions -> GameState -> ActorRef -> DistanceTarget
+            -> Maybe (Direction, RoomID)
+pursuitStep toward opts st seeker target =
+    case (actorRoom st seeker, targetRoomOf st target) of
+        (Just from, Just goal) ->
+            let edges = Map.findWithDefault [] from (pursuitEdges opts st)
+                dists = bfsDistances (pursuitEdges opts st) goal
+            in if toward
+               then stepToward edges dists from
+               else stepAway edges dists from
+        _ -> Nothing
 
 -- ---------------------------------------------------------------------------
 -- Items
@@ -1144,6 +1218,8 @@ evalPredicate (Compare lhs op rhs) st =
 
 -- | Resolve a ValueRef to an Int for comparisons.
 resolveValueRef :: ValueRef -> GameState -> Int
+resolveValueRef (VRDistance seeker target) st =
+    distanceTo defaultPursuitOptions st seeker target
 resolveValueRef (VRConditionTurns cName) st =
     case Map.lookup cName (conditions (save st)) of
         Just c  -> condRemaining c
@@ -1165,6 +1241,8 @@ resolveValueRef (VRVariable name) st =
             "exhaust.count"     -> maybe 0 (length . exhaustPile) (deckState (save st))
             _ | Just cn <- stripPrefix "condition_turns." name ->
                 resolveValueRef (VRConditionTurns cn) st
+              | Just rest <- stripPrefix "distance." name ->
+                resolveValueRef (parseDistanceRef rest) st
               | Just rest <- stripPrefix "item." name, (itId, '.':prop) <- break (== '.') rest ->
                 resolveValueRef (VRItemProp itId prop) st
               | Just rest <- stripPrefix "npc." name, (nId, '.':prop) <- break (== '.') rest ->

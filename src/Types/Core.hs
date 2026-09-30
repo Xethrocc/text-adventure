@@ -40,6 +40,11 @@ module Types.Core
     , parseComparatorName
     , ActorRef (..)
     , actorId
+    , parseActorString
+    , DistanceTarget (..)
+    , PursuitOptions (..)
+    , defaultPursuitOptions
+    , parseDistanceRef
     , PropRef (..)
     , ValueRef (..)
     , legacyVRProperty
@@ -346,9 +351,7 @@ data ActorRef
 instance ToJSON ActorRef
 
 instance FromJSON ActorRef where
-    parseJSON (String s)
-        | s == "player" = pure ActorPlayer
-        | otherwise     = pure (ActorNPC (T.unpack s))
+    parseJSON (String s) = pure (parseActorString (T.unpack s))
     parseJSON v = genericParseJSON defaultOptions v
 
 -- | Canonical string ID for an actor reference.
@@ -372,6 +375,52 @@ instance ToJSON PropRef
 instance FromJSON PropRef
 
 -- | Reference to a value that can be compared in a predicate or modified in an effect.
+-- | Pursuit (Tür IV): the target of a distance query / pursuit step — an
+--   actor (resolved to its current room) or a fixed room.
+data DistanceTarget
+    = DTActor ActorRef
+    | DTRoom RoomID
+    deriving (Show, Eq, Generic)
+
+instance ToJSON DistanceTarget where
+    toJSON (DTActor a) = object [ "actor" .= a ]
+    toJSON (DTRoom r)  = object [ "room"  .= r ]
+
+instance FromJSON DistanceTarget where
+    parseJSON (String s)
+        | Just r <- stripPrefix "room:" str = pure (DTRoom r)
+        | otherwise                        = pure (DTActor (parseActorString str))
+      where
+        str = T.unpack s
+    parseJSON (Object o) =
+        (DTActor <$> o .: "actor") <|> (DTRoom <$> o .: "room")
+    parseJSON _ = fail "Expected object or string for DistanceTarget"
+
+-- | Which exits a seeker may pass (pursuit, Tür IV). The default
+--   ("wie der Spieler") passes exactly those edges the player could walk:
+--   open exits, unlocked doors and guards whose predicate holds. Lives here
+--   (not in 'Pursuit') so 'Effect' can carry it without an import cycle.
+data PursuitOptions = PursuitOptions
+    { poIgnoreLocked  :: Bool  -- ^ pass locked exits as if they were open
+    , poIgnoreGuarded :: Bool  -- ^ pass guarded exits regardless of the guard
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON PursuitOptions
+instance FromJSON PursuitOptions
+
+-- | Default seeker behaviour: exactly like the player.
+defaultPursuitOptions :: PursuitOptions
+defaultPursuitOptions = PursuitOptions False False
+
+-- | String convention for actor references: "player", "ship:<id>" or an
+--   NPC id (the canonical parse used by distance/step sugar and the YAML
+--   string forms).
+parseActorString :: String -> ActorRef
+parseActorString "player" = ActorPlayer
+parseActorString s = case stripPrefix "ship:" s of
+    Just v  -> ActorShip v
+    Nothing -> ActorNPC s
+
 data ValueRef
     = VRFlag    FlagID                -- ^ flag value as string
     | VRVariable String                -- ^ adventure variable name (float/int)
@@ -379,6 +428,7 @@ data ValueRef
     | VRActorProp ActorRef PropRef      -- ^ (actor, property) typed reference
     | VRPlayerHealth                   -- ^ player hit points
     | VRConditionTurns String          -- ^ remaining turns of an active condition/timer (Phase 2.1)
+    | VRDistance ActorRef DistanceTarget -- ^ pursuit (Tür IV): hop distance, -1 = unreachable
     deriving (Show, Eq, Generic)
 
 instance ToJSON ValueRef where
@@ -388,11 +438,13 @@ instance ToJSON ValueRef where
     toJSON (VRActorProp a p)    = object [ "tag" .= ("VRActorProp" :: T.Text), "contents" .= [toJSON a, toJSON p] ]
     toJSON VRPlayerHealth       = object [ "tag" .= ("VRPlayerHealth" :: T.Text) ]
     toJSON (VRConditionTurns c) = object [ "tag" .= ("VRConditionTurns" :: T.Text), "contents" .= c ]
+    toJSON (VRDistance a t)     = object [ "tag" .= ("VRDistance" :: T.Text), "contents" .= [toJSON a, toJSON t] ]
 
 instance FromJSON ValueRef where
     parseJSON (Number n) = pure (VRVariable (show (round n :: Int)))
     parseJSON (String s)
         | Just rest <- stripPrefix "condition_turns." str = pure (VRConditionTurns rest)
+        | Just rest <- stripPrefix "distance." str         = pure (parseDistanceRef rest)
         | Just n <- (readMaybe str :: Maybe Int)           = pure (VRVariable (show n))
         | otherwise                                        = pure (VRVariable str)
       where
@@ -414,12 +466,21 @@ instance FromJSON ValueRef where
                         _            -> fail "VRActorProp: expected [actor, prop]"
                 "VRPlayerHealth"   -> pure VRPlayerHealth
                 "VRConditionTurns" -> VRConditionTurns <$> o .: "contents"
+                "VRDistance"       -> do
+                    contents <- o .: "contents"
+                    case contents of
+                        [aVal, tVal] -> VRDistance <$> parseJSON aVal <*> parseJSON tVal
+                        _            -> fail "VRDistance: expected [seeker, target]"
                 "VRProperty"       -> do
                     contents <- o .: "contents"
                     case contents of
                         (targetStr : propStr : _) -> pure (legacyVRProperty targetStr propStr)
                         _                         -> fail "VRProperty: expected [target, prop]"
                 _                  -> fail ("Unknown ValueRef tag: " ++ T.unpack tag))
+        <|> (do d <- o .: "distance"
+                case d of
+                    [aVal, tVal] -> VRDistance <$> parseJSON aVal <*> parseJSON tVal
+                    _            -> fail "distance: expected [seeker, target]")
         <|> (VRConditionTurns <$> o .: "condition_turns")
         <|> (VRFlag <$> o .: "flag")
         <|> (VRVariable <$> o .: "var")
@@ -435,6 +496,22 @@ legacyVRProperty target   "state"   = VRActorProp (ActorEntity target) PState
 legacyVRProperty target   "hp"      = VRActorProp (ActorNPC target) PHealth
 legacyVRProperty "player" prop      = VRActorProp ActorPlayer (PCustom prop)
 legacyVRProperty target   prop      = VRActorProp (ActorNPC target) (PCustom prop)
+
+-- | String form `distance.<seeker>.<target>` where <target> is an actor id
+--   or `room.<roomId>`. Pursuit (Tür IV) — see "plan-pursuit-suche.md".
+parseDistanceRef :: String -> ValueRef
+parseDistanceRef rest = VRDistance (parseActorString seeker) target
+  where
+    (seeker, targetRest) = splitOnce '.' rest
+    target = case stripPrefix "room." targetRest of
+        Just r  -> DTRoom r
+        Nothing -> DTActor (parseActorString targetRest)
+
+-- | Split at the first occurrence of a character (second part without it).
+splitOnce :: Char -> String -> (String, String)
+splitOnce c s = case break (== c) s of
+    (a, _:b) -> (a, b)
+    (a, _)   -> (a, "")
 
 -- ---------------------------------------------------------------------------
 -- Arithmetic expressions for dynamic calculations (Phase 1A)
@@ -819,6 +896,8 @@ data Effect
     | Mount ItemID ActorRef                        -- ^ W4: place an item into a device/actor
     | Unmount ItemID                               -- ^ W4: remove an item from its device/actor to the room
     | GainXp Int                                   -- ^ W2: add XP (clamped at 0), run level loop
+    | StepToward ActorRef DistanceTarget PursuitOptions (Maybe String)   -- ^ pursuit: one edge toward the target (opt. author msg)
+    | StepAwayFrom ActorRef DistanceTarget PursuitOptions (Maybe String) -- ^ pursuit: one edge away (opt. author msg)
     | Noop                                        -- ^ Do nothing
     deriving (Show, Eq, Generic)
 

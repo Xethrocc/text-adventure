@@ -2099,6 +2099,55 @@ W4 ersetzt bewusst aufwändige Licht-Physik/Emergenz durch **explizite Zustände
 - Bei `on_remove` schaltet die Halterung das Flag `krypta_beleuchtet` auf `"false"`.
 - Die Dunkelheitsprüfung des Spiels (`isDark`) wertet das `light_flag` des Raumes aus — ohne Emergenz, rein deterministisch und transparent für Autoren und Spieler.
 
+## Verfolgung: `pursuit:` und die Distanz-Vokabel (Tür IV)
+
+Verfolgung/Pfadsuche als **Kern-Abfrage über den Laufzeit-Graphen**: der Autor schreibt nur
+die `pursuit:`-Sektion und nutzt die Vokabel — die Suche selbst liegt in der Engine
+(`src/Pursuit.hs`, stateless, rein, deterministisch).
+
+```yaml
+pursuit:
+  - npc: wolf            # der Verfolger (NPC)
+    target: player       # optional, Default: player — auch: <npc-id>, "ship:<id>", "room:<id>"
+    ignores: [locked]    # optional: "locked" / "guarded" Ausgänge passierbar
+    msg: "Der Wolf folgt."   # optional: eigene Meldung pro Schritt
+
+rules:
+  - id: flucht
+    on: "command fliehe"
+    effects:
+      - step_away_from: [taeter, npc_wolf]   # eine Kante weg
+  - id: alarm
+    when: { compare: { var: "distance.wolf.player", op: "<=", value: 2 } }
+    effects:
+      - msg: "Du hörst Pfoten!"
+```
+
+**Wortschatz:**
+
+- **`distance.<sucher>.<ziel>`** — Int-Wert (Hops), **`-1` = unerreichbar** (auch wenn Sucher oder
+  Ziel gerade keinen Raum haben). In `compare_var`/`compare`/`compute_var` nutzbar.
+  Ziel-Formen: `player`, NPC-ID, `ship:<id>`, `room:<id>`.
+- **`step_toward: [sucher, ziel, msg?]`** / **`step_away_from: [sucher, ziel, msg?]`** — bewegt
+  den Sucher **genau eine Kante** Richtung Ziel (bzw. streng davon weg), nie den ganzen Pfad.
+  Ohne `msg` gilt der Katalog (`pursuit.step`/`pursuit.flee` mit `{name}`/`{room}`/`{dir}`);
+  ohne Schritt `pursuit.no_path`. Nur **NPCs und Schiffe** dürfen Sucher sein.
+- **`pursuit:`** erzeugt pro Eintrag einen `on: turn`-Trigger (ein Schritt pro Zug),
+  deterministisch in NPC-ID-Reihenfolge emittiert.
+
+**Regeln (Verträge):**
+
+- **Tie-Break fest und sichtbar:** bei Gleichstand gewinnt die **kleinste Ziel-Raum-ID**, dann
+  eine feste Richtungspriorität (`Pursuit.directionPriority`, „Gameplay-Vertrag, nicht
+  umsortieren"). Unabhängig von `Direction`s abgeleitetem `Ord` — ein Refactor dort darf
+  keine Läufe ändern.
+- **Default „wie der Spieler":** der Verfolger sieht dieselben Ausgänge wie der Spieler
+  (offen, aufgeschlossene Türen, erfüllte Wachen-Prädikate). `ignores: [locked|guarded]`
+  macht Ausnahmen explizit (Fairness bleibt Autorenentscheidung).
+- **Stateless und rein:** kein Feld im Save, kein `rngState`-Verbrauch — speichern/laden
+  mitten in der Verfolgung rechnet identisch weiter.
+- **`-1` ist der einzige Unerreichbar-Sentinel** (dokumentiert und getestet).
+
 ## Validierungs-Warnungen (Compiler-Diagnosen)
 
 Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity = SError`) und **nicht-fatalen Warnungen** (`ciSeverity = SWarning`):

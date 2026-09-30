@@ -23,7 +23,7 @@ extra-source-files:
     test/golden/protocol/*.json
 
 library
-  exposed-modules:     Types, Types.Output, Types.Core, Types.Cards, Types.Vehicles, Types.Combat, Types.Protocol, Verbs, Game, GameLoop, Frontend, Completion, Combat, Parser, SaveLoad, World, Sample, Validate, Ansi, Audio, Quests, Vehicles, Effects, Cards, Messages
+  exposed-modules:     Types, Types.Output, Types.Core, Types.Cards, Types.Vehicles, Types.Combat, Types.Protocol, Verbs, Game, GameLoop, Frontend, Completion, Combat, Parser, Pursuit, SaveLoad, World, Sample, Validate, Ansi, Audio, Quests, Vehicles, Effects, Cards, Messages
   hs-source-dirs:      src
   build-depends:       base >=4.12 && <5,
                        containers >=0.6 && <0.8,
