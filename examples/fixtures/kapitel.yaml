@@ -1,0 +1,55 @@
+name: Kapitel Fixture
+start_room: zug
+
+verbs:
+  - name: "springe"
+    aliases: ["jump"]
+
+rooms:
+  - id: zug
+    name: Zugabteil
+    desc: Ein Zugabteil in der Dämmerung.
+    exits:
+      north: bahnhof
+  - id: bahnhof
+    name: Bahnhof
+    desc: Der Bahnhof schluckt dich.
+
+items:
+  - id: ticket
+    name: Ticket
+    keys: [ticket]
+    desc: Ein Bahn-Ticket.
+    location: zug
+
+chapters:
+  - id: ankunft
+    intro: "Kapitel eins: Die Ankunft."
+  - id: sanatorium
+    when: { has_flag: habe_ticket }
+    intro: "Kapitel zwei: Das Sanatorium."
+
+rules:
+  - id: nimm_ticket
+    on: "take ticket"
+    effects:
+      - set_flag: habe_ticket
+      - msg: "Du steckst das Ticket ein."
+  - id: springe_nach_ankunft
+    on: "command springe"
+    effects:
+      - goto_chapter: ankunft
+
+# W3: the auto-gate fires once per turn, after the trigger fold; explicit
+# jumps are author control; backward jumps are refused.
+tests:
+  - name: "auto-gate beim zug"
+    input: [take ticket, look]
+    expect:
+      - "Du steckst das Ticket ein."
+      - "Kapitel zwei: Das Sanatorium."
+  - name: "spruenge und ruecksprung verweigert"
+    input: [springe, springe]
+    expect:
+      - "Kapitel eins: Die Ankunft."
+      - "This chapter is behind you."

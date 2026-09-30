@@ -256,9 +256,12 @@ applyLoopCommandCore command loopState =
                 allTickMsgs = tickMsgs ++ (if null (renderEvents vehicleTickMsg) then [] else [vehicleTickMsg])
                 tickText = unlinesEv allTickMsgs
                 (stateAfterTurnTriggers, turnTrigMsg) = fireTriggers OnTurn stateAfterVehicleTick
+                -- W3 auto-gate: at most one chapter switch per turn, checked
+                -- after the turn-trigger fold (W3.2).
+                (stateAfterChapter, chapterMsg) = checkChapterGate stateAfterTurnTriggers
                 fullMsg = if null allTickMsgs then msgs else tickText ++ msgs
-            in (loopState { lsCurrent = stateAfterTurnTriggers, lsHistory = history' }
-               , joinEv fullMsg turnTrigMsg ++ sideEvents oldState stateAfterTurnTriggers)
+            in (loopState { lsCurrent = stateAfterChapter, lsHistory = history' }
+               , joinEv fullMsg turnTrigMsg ++ chapterMsg ++ sideEvents oldState stateAfterChapter)
 
         Right (stAfterBefore, beforeMsgs)
             | not (consumesTurnIn (lsCurrent loopState) command) ->
@@ -287,10 +290,14 @@ applyLoopCommandCore command loopState =
                    else
                        let (newState, message) = dispatchCommandEv command stateAfterVehicleTick
                            (stateAfterTriggers, triggerMsg) = fireCommandTriggers command stateAfterVehicleTick newState
+                           -- W3 auto-gate: after the (command) trigger fold;
+                           -- the fold includes OnTurn, so this is "after the
+                           -- turn-trigger fold" for every consuming command.
+                           (stateAfterChapter, chapterMsg) = checkChapterGate stateAfterTriggers
                            cmdMsg = joinBeforeAndCmd beforeMsgs message
                            fullMessage = if null allTickMsgs then cmdMsg else tickText ++ cmdMsg
-                       in (loopState { lsCurrent = stateAfterTriggers, lsHistory = history' },
-                           joinEv fullMessage triggerMsg ++ sideEvents oldState stateAfterTriggers)
+                       in (loopState { lsCurrent = stateAfterChapter, lsHistory = history' },
+                           joinEv fullMessage triggerMsg ++ chapterMsg ++ sideEvents oldState stateAfterChapter)
 
 -- | Phase 1.2: additive side events derived from the state transition —
 --   they contribute no text ('evTextOf' = ""), so the CLI/TUI rendering is

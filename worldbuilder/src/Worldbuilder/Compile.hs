@@ -262,6 +262,9 @@ compileAdventure adv =
         (cardErrs, compiledCards) = compileCards (advCards adv)
         (szErrs, compiledSandboxZones) = compileSandboxZones (advSandboxZones adv)
         (procCompileErrs, compiledProcs) = compileProcedures (advProcedures adv)
+        compiledChapters = compileChapters (advChapters adv)
+        (chapterErrs, chapterWarns) = checkChapterRefs (advChapters adv) adv
+        chapterVarErrs = checkChapterVarReserved varDefs
         compiledFacts = compileFacts (advFacts adv)
         compiledCombines = compileCombines (advCombines adv)
         factRefErrs = checkFactRefs (advFacts adv) gw adv
@@ -329,6 +332,7 @@ compileAdventure adv =
                 , E.cardDefs = compiledCards
                 , E.sandboxZones = compiledSandboxZones
                 , E.procDefs = compiledProcs
+                , E.chapterDefs = compiledChapters
                 , E.factDefs = compiledFacts
                 , E.combineDefs = compiledCombines
                 }
@@ -373,6 +377,8 @@ compileAdventure adv =
                     ++ procCallErrs
                     ++ factRefErrs
                     ++ knownVarErrs
+                    ++ chapterErrs
+                    ++ chapterVarErrs
                     ++ knowledgeClashErrs
                     ++ journalErrs
     in case allErrors of
@@ -417,6 +423,7 @@ compileAdventure adv =
                 placeholderWarns = checkUnknownPlaceholders adv allVarDefs
                 darkRoomWarns = checkDarkRoomDeadEnds adv
                 allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ darkRoomWarns
+                          ++ chapterWarns
             in Right (CompileResult gw startSave allWarns)
   where
     -- Every locked exit starts locked in entityStates
@@ -1272,6 +1279,71 @@ compileCombatScreen (Just s) = Just E.CombatScreen
 --   entries — a "clash table" against the merged set would then flag the
 --   engine's own definitions.
 -- ---------------------------------------------------------------------------
+-- | W3: compile `chapters:` — order preserved (auto-gate tie-break and
+--   `next_chapter` direction; Gameplay-Vertrag: nicht umsortieren).
+compileChapters :: [AChapterDef] -> [E.ChapterDef]
+compileChapters cs =
+    [ E.ChapterDef (achId c) (achIntro c) (achWhen c) | c <- cs ]
+
+-- | W3 checks: duplicate ids, unknown `goto_chapter` targets, statically
+--   recognizable backward jumps (a `goto_chapter: X` inside the `on: chapter
+--   Y` rule of a later chapter X>Y in declaration order). Unreachable
+--   chapters (no `when:`, never a goto target, not the first) are a
+--   **warning**, returned separately (they must not block compilation).
+checkChapterRefs :: [AChapterDef] -> Adventure -> ([CompileIssue], [CompileIssue])
+checkChapterRefs cs adv = (dupErrs ++ targetErrs ++ backwardErrs, unreachableWarns)
+  where
+    ids = map achId cs
+    indexMap = Map.fromList (zip ids [0 :: Int ..])
+    dupErrs =
+        [ ciError ("chapters." ++ cid) "DuplicateChapter"
+            ("chapter '" ++ cid ++ "' is declared more than once")
+        | (cid, n) <- Map.toList (Map.fromListWith (+) [ (i, 1 :: Int) | i <- ids ])
+        , n > 1 ]
+    targetErrs =
+        [ ciError "outcomes.goto_chapter" "UnknownChapter"
+            ("goto_chapter target '" ++ t ++ "' is not declared under 'chapters:'")
+        | t <- nub (concatMap gotoTargets (allAOutcomes adv))
+        , t `notElem` ids ]
+    gotoTargets ao = case ao of
+        AOGotoChapter t  -> [t]
+        AOConditional _ ts es -> concatMap gotoTargets ts ++ concatMap gotoTargets es
+        AONarrative _ follow  -> concatMap gotoTargets follow
+        AORandomChoice cs'    -> concatMap (concatMap gotoTargets . snd) cs'
+        AOApplyCondition _ _ t e _ -> concatMap gotoTargets t ++ concatMap gotoTargets e
+        _ -> []
+    -- A `goto_chapter: X` fired from chapter Y's own on: chapter rule set is
+    -- a backward jump when X is declared before Y (no retrospection, W3).
+    backwardErrs =
+        [ ciError ("chapters." ++ src) "ChapterBackwardsJump"
+            ("goto_chapter '" ++ tgt ++ "' from chapter '" ++ src
+             ++ "' is a backward jump — retrospection is forbidden (W3)")
+        | ATrigger _tid on _ effs _ _ <- advTriggers adv
+        , ("chapter", src) <- [breakOn on :: (String, String)]
+        , tgt <- concatMap gotoTargets effs
+        , Just iSrc <- [Map.lookup src indexMap], Just iTgt <- [Map.lookup tgt indexMap]
+        , iTgt <= iSrc ]
+      where
+        breakOn onStr = case words onStr of
+            ["chapter", cid] -> ("chapter", cid)
+            _                -> ("", "")
+    unreachableWarns =
+        [ ciWarning ("chapters." ++ achId c) "UnreachableChapter"
+            ("chapter '" ++ achId c
+             ++ "' has no auto-gate, is never a goto target, and is not the first chapter")
+        | c <- drop 1 cs
+        , Nothing <- [achWhen c]
+        , achId c `notElem` concatMap gotoTargets (allAOutcomes adv) ]
+
+-- | W3: `chapter.` belongs to the chapter state — author-declared variables
+--   in this namespace would collide with current/visited markers.
+checkChapterVarReserved :: Map.Map String E.VarDef -> [CompileIssue]
+checkChapterVarReserved varDefs =
+    [ ciError ("variables." ++ name) "ChapterVariableClash"
+        ("'" ++ name ++ "' is in the reserved 'chapter.' namespace; "
+         ++ "the engine owns the chapter state (W3)")
+    | name <- Map.keys varDefs, "chapter." `isPrefixOf` name ]
+
 -- | W1: author-facing actor reference - "player" or an NPC id (same
 --   convention as the engine's ActorRef FromJSON).
 compileActorRef :: String -> E.ActorRef
@@ -1441,7 +1513,7 @@ checkKnownVarReserved varDefs =
 --   `stealth.`). Procedure parameters must not shadow them.
 reservedVarPrefixes :: [String]
 reservedVarPrefixes =
-    ["cmd.", "combat.", "env.", "faction.", "known.", "party.", "patrol.", "ship.", "stealth."]
+    ["chapter.", "cmd.", "combat.", "env.", "faction.", "known.", "party.", "patrol.", "ship.", "stealth."]
 
 -- | Compile `procedures:` entries. Duplicate ids and parameter names in
 --   engine-owned variable namespaces are rejected here.
@@ -2090,6 +2162,8 @@ compileAActionOutcome ao = case ao of
     AOComputeVar name expr -> E.ComputeValue (E.VRVariable name) expr
     AOCallProc name args -> E.CallProc name args
     AOLearn f a -> E.Learn (compileActorRef a) f
+    AONextChapter -> E.NextChapter
+    AOGotoChapter t -> E.GotoChapter t
     AOForget f a -> E.Forget (compileActorRef a) f
     AONarrative ls follow -> E.Narrative ls (compileOutcomes follow)
     AOStandingAdd fid n -> E.ModifyValue (E.VRVariable ("faction." ++ fid)) n
@@ -2304,6 +2378,7 @@ compileAtOn s =
         ["state", e]                 -> Right (E.OnStateChange e)
         ["custom", n]                -> Right (E.OnCustomEvent n)
         ["command", v]               -> Right (E.OnCommand v)
+        ["chapter", cid]             -> Right (E.OnChapter cid)
         ["before", v]                -> Right (E.OnBefore v)
         _                            -> Left ("Unsupported trigger event '" ++ s ++ "'")
 

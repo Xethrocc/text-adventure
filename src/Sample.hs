@@ -373,6 +373,7 @@ initSampleGame = GameState
         , cardDefs = Map.empty
         , sandboxZones = Map.empty
         , factDefs = []
+        , chapterDefs = []
         , combineDefs = []
         , procDefs = Map.empty
         }

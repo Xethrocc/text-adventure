@@ -56,6 +56,7 @@ data Adventure = Adventure
     , advProcedures       :: [AProcDef]                  -- ^ named procedures (Phase 2.5)
     , advCombineVerb      :: Maybe String                -- ^ verb word for combining facts (W1; default "kombiniere")
     , advJournal          :: Maybe String                -- ^ journal: notes | messages (W1; default: messages = no notes command)
+    , advChapters         :: [AChapterDef]               -- ^ chapters (W3, narrative order)
     , advFacts            :: [AFactDef]                  -- ^ knowledge facts (W1)
     , advCombines         :: [ACombineDef]               -- ^ derivation rules (W1)
     , advTests            :: [AContentTest]              -- ^ authored content tests (B1)
@@ -133,6 +134,7 @@ instance FromJSON Adventure where
         <*> o .:? "procedures" .!= []
         <*> o .:? "combine_verb" .!= Nothing
         <*> o .:? "journal"      .!= Nothing
+        <*> o .:? "chapters"   .!= []
         <*> o .:? "facts"      .!= []
         <*> o .:? "combine"    .!= []
         <*> o .:? "tests" .!= []
@@ -1162,6 +1164,19 @@ instance FromJSON ACombineDef where
         <*> o .:  "yields"
         <*> o .:? "msg" .!= Nothing
 
+-- | A chapter (W3) authored under `chapters:` in narrative order.
+data AChapterDef = AChapterDef
+    { achId    :: String
+    , achIntro :: Maybe String
+    , achWhen  :: Maybe E.Predicate   -- ^ auto-gate (reuses engine predicate parsing)
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AChapterDef where
+    parseJSON = withObject "AChapterDef" $ \o -> AChapterDef
+        <$> o .:  "id"
+        <*> o .:? "intro" .!= Nothing
+        <*> o .:? "when"  .!= Nothing
+
 -- | An authored content test (B1): a command sequence and **ordered** output
 --   markers — every marker must appear in the rendered output, in the
 --   declared order (subsequence semantics).
@@ -1229,6 +1244,8 @@ data AActionOutcome
     | AOBlock (Maybe String) Bool      -- ^ block: "msg" or block: { msg: "...", turn: true } (Phase 2.2)
     | AOCallProc String [E.EffectValue] -- ^ call: <name> or call: {proc: <name>, args: [...]} (Phase 2.5)
     | AOLearn String String            -- ^ learn: <fact> or learn: {fact, actor} (W1; actor defaults to player)
+    | AONextChapter                    -- ^ next_chapter (W3)
+    | AOGotoChapter String             -- ^ goto_chapter: <id> (W3)
     | AOForget String String           -- ^ forget: <fact> - same shapes (W1)
     deriving (Show, Eq, Generic)
 
@@ -1278,6 +1295,8 @@ instance FromJSON AActionOutcome where
                     String f  -> pure (AOForget (T.unpack f) "player")
                     Object fo -> AOForget <$> fo .: "fact" <*> fo .:? "actor" .!= "player"
                     _         -> fail "forget must be a fact id or {fact, actor}")
+        <|> (AONextChapter <$ (o .: "next_chapter" :: Parser Bool))
+        <|> (AOGotoChapter <$> o .: "goto_chapter")
         <|> (do sk <- o .: "skill"
                 AOModifySkill <$> sk .: "name" <*> sk .: "delta")
         <|> (AORandomChoice <$> o .: "random")
@@ -1445,7 +1464,7 @@ knownKeys EntAdventure = Set.fromList
     , "encounter_tables", "environment", "stealth", "patrol", "combat"
     , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
     , "handLimit", "hand_limit", "sandbox_zones", "procedures", "tests"
-    , "facts", "combine", "combine_verb", "journal"
+    , "facts", "combine", "combine_verb", "journal", "chapters"
     ]
 knownKeys EntRoom = Set.fromList
     [ "id", "name", "desc", "description", "exits", "tags", "light_flag"

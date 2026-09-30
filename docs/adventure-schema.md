@@ -1912,6 +1912,44 @@ combine_verb: kombiniere # optional: das Wort fürs Kombinieren (Default: kombin
 - **Checks:** `UnknownFact`, `DuplicateFact`, `YieldsWithoutPremises`,
   `KnownVariableClash` (`known.` gehört der Engine), Kollisionen der generierten Verben.
 
+## Kapitel: `chapters:` (W3)
+
+Narrative Struktur als Daten: benannte Kapitel mit optionaler Auto-Gate-Bedingung und
+Intro-Text. Der Wechsel ist ein Zustandsübergang; der Szenenwechsel bleibt Autorenregel
+am `OnChapter`-Event.
+
+```yaml
+chapters:
+  - id: ankunft
+    intro: "Kapitel eins: Die Ankunft."
+  - id: sanatorium
+    when: { has_flag: habe_ticket }     # Auto-Gate (optional)
+    intro: "Kapitel zwei: Das Sanatorium."
+
+rules:
+  - id: szenenwechsel
+    on: "chapter sanatorium"            # OnChapter - Ortswechsel, Zustände, Meldungen
+    effects:
+      - move: bahnhof_vorhalle
+```
+
+**Regeln:**
+
+- **Deklarationsreihenfolge = Vertrag** (nicht umsortieren): sie ist die `next_chapter`-Richtung
+  und der Auto-Gate-Tie-Break.
+- **Auto-Gate:** höchstens **ein** Wechsel pro Zug, geprüft nach dem Trigger-Fold; Kandidat =
+  das erste Kapitel mit erfülltem `when:`, das weder besucht noch aktuell ist. Besuchte
+  Kapitel werden nie automatisch wieder betreten.
+- **Effekte:** `next_chapter` (das folgende Kapitel) und `goto_chapter: <id>` — **Rücksprünge
+  werden verweigert** („This chapter is behind you."): ein besuchtes Kapitel wird nie wieder
+  betreten (keine Rückblenden, W3-Vertrag). Unbekannte Ziele sind Compile-Fehler
+  (`UnknownChapter`), statisch erkennbare Rückwärts-Sprünge ebenfalls
+  (`ChapterBackwardsJump`), unerreichbare Kapitel eine Warnung (`UnreachableChapter`).
+- **Event `OnChapter <id>`** (Trigger `on: chapter <id>`): hier hängt der Szenenwechsel.
+- Kapitelabhängige Raumtexte laufen über die Inline-Bedingungen der Phase 2.4
+  (`{if <var> == chapter...}`-artig mit `chapter.current` als Text-Variable — das
+  `chapter.current`-Format ist eine Text-Variable, Werte = Kapitel-IDs).
+
 ## Validierungs-Warnungen (Compiler-Diagnosen)
 
 Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity = SError`) und **nicht-fatalen Warnungen** (`ciSeverity = SWarning`):

@@ -159,6 +159,7 @@ emptyGameWorld = GameWorld
     , procDefs           = Map.empty
     , factDefs           = []
     , combineDefs        = []
+    , chapterDefs        = []
     }
 
 -- | Default empty game state

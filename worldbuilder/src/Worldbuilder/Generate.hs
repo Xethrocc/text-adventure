@@ -1379,6 +1379,7 @@ emitAdventure t plan seed =
             , advProcedures        = []
             , advCombineVerb       = Nothing
             , advJournal           = Nothing
+            , advChapters          = []
             , advFacts             = []
             , advCombines          = []
             , advTests             = []

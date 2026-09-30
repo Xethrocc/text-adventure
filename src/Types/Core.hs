@@ -108,6 +108,7 @@ module Types.Core
     , ProcDef (..)
     , FactDef (..)
     , CombineDef (..)
+    , ChapterDef (..)
       -- * Procedural Sandbox & Cutscenes
     , BiomeTemplate (..)
     , SandboxZone (..)
@@ -804,6 +805,8 @@ data Effect
     | Learn ActorRef String                       -- ^ W1: actor learns a fact (idempotent, fires OnLearn)
     | Forget ActorRef String                      -- ^ W1: actor forgets a fact (explicit only, never automatic)
     | ShowNotes                                   -- ^ W1: render the player's notes book
+    | NextChapter                                  -- ^ W3: to the next chapter (declaration order)
+    | GotoChapter String                           -- ^ W3: to a named chapter (no backward jumps)
     | Noop                                        -- ^ Do nothing
     deriving (Show, Eq, Generic)
 
@@ -1528,6 +1531,7 @@ data EventType
     | OnCommand String                 -- ^ verb name (e.g. "activate")
     | OnBefore String                  -- ^ verb name before execution (Phase 2.2)
     | OnLearn String                   -- ^ W1: fired once per newly learned fact, in learning order
+    | OnChapter String                 -- ^ W3: fired when entering chapter <id>
     deriving (Show, Eq, Generic)
 
 instance ToJSON EventType
@@ -1596,6 +1600,18 @@ data CombineDef = CombineDef
 instance ToJSON CombineDef
 instance FromJSON CombineDef
 
+-- | A chapter (W3): authored under `chapters:` in narrative order. The list
+--   order is the auto-gate tie-break and the `next_chapter` direction —
+--   Gameplay-Vertrag: nicht umsortieren.
+data ChapterDef = ChapterDef
+    { chId    :: String
+    , chIntro :: Maybe String        -- ^ shown on entering the chapter
+    , chWhen  :: Maybe Predicate     -- ^ auto-gate: switch when this holds
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON ChapterDef
+instance FromJSON ChapterDef
+
 -- | Static world definition containing blueprint/map data
 data GameWorld = GameWorld
     { rooms              :: Map.Map RoomID Room
@@ -1620,6 +1636,7 @@ data GameWorld = GameWorld
     , procDefs           :: Map.Map String ProcDef                   -- ^ Named procedures (Phase 2.5); empty map is omitted from world.json
     , factDefs           :: [FactDef]                                -- ^ Knowledge facts (W1), in declaration order; empty list is omitted
     , combineDefs        :: [CombineDef]                             -- ^ Derivation rules (W1); empty list is omitted
+    , chapterDefs        :: [ChapterDef]                             -- ^ Chapters (W3) in narrative order; empty list is omitted
     } deriving (Show, Eq)
 
 -- | A cutscene clip (Phase H/H4): a frame sequence played once at its own
@@ -1660,7 +1677,7 @@ instance ToJSON GameWorld where
         , "worldName"          .= worldName gw
         , "abilities"          .= abilities gw
         ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair ++ sandboxPair
-          ++ procPair ++ factPair ++ combinePair
+          ++ procPair ++ factPair ++ combinePair ++ chapterPair
       where
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
@@ -1677,6 +1694,7 @@ instance ToJSON GameWorld where
         procPair = [ "procDefs" .= procDefs gw | not (Map.null (procDefs gw)) ]
         factPair = [ "factDefs" .= factDefs gw | not (null (factDefs gw)) ]
         combinePair = [ "combineDefs" .= combineDefs gw | not (null (combineDefs gw)) ]
+        chapterPair = [ "chapterDefs" .= chapterDefs gw | not (null (chapterDefs gw)) ]
         endArt = Map.filter (not . isEmptyAscii) (worldEndArt gw)
         titleArt = worldTitleArt gw
 
@@ -1738,6 +1756,7 @@ instance FromJSON GameWorld where
         <*> o .:? "procDefs" .!= Map.empty
         <*> o .:? "factDefs" .!= []
         <*> o .:? "combineDefs" .!= []
+        <*> o .:? "chapterDefs" .!= []
 
 -- | Encode item-on-item outcomes as objects (P2-9).
 itemInteractionsToJSON :: Map.Map (String, String) Effect -> Value

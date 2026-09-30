@@ -59,6 +59,7 @@ minWorld = E.GameWorld
     , factDefs = []
     , combineDefs = []
     , procDefs = Map.empty
+    , chapterDefs = []
     }
 
 -- | Helper: a minimal valid SaveState referencing room_0
@@ -192,6 +193,7 @@ minAdventure room = Adventure
     , advProcedures = []
     , advCombineVerb = Nothing
     , advJournal = Nothing
+    , advChapters = []
     , advFacts = []
     , advCombines = []
     , advTests = []
@@ -445,6 +447,75 @@ testKnowsSugar = do
         Just o -> expectEqual (AOForget "brief" "player") o
         Nothing -> expectTrue "forget: parses" False
     pure (r1 && r2 && r3 && r4)
+
+-- ---------------------------------------------------------------------------
+-- W3: chapters
+-- ---------------------------------------------------------------------------
+
+-- | `chapters:` compiles in declaration order; empty chapterDefs are omitted
+--   from world.json (byte-stability).
+testChaptersCompile :: IO Bool
+testChaptersCompile = do
+    let empty = minAdventure (minRoom "loc_0")
+    r0 <- case compileAdventure empty of
+            Left _ -> expectTrue "default compiles" False
+            Right cr -> do
+                a <- expectTrue "no chapters by default" (null (E.chapterDefs (crWorld cr)))
+                b <- expectTrue "world.json omits empty chapterDefs"
+                        (not ("chapterDefs" `isInfixOf` BLC.unpack (Aeson.encode (crWorld cr))))
+                pure (a && b)
+    let adv = empty
+            { advChapters =
+                [ AChapterDef "kap1" Nothing Nothing
+                , AChapterDef "kap2" (Just "Zwei.") (Just (HasFlag "tor")) ] }
+    r1 <- case compileAdventure adv of
+            Left errs -> expectTrue ("chapters compile, got: " ++ issuesText errs) False
+            Right cr -> do
+                a <- expectEqual ["kap1", "kap2"] (map E.chId (E.chapterDefs (crWorld cr)))
+                b <- expectTrue "gates compiled"
+                        (all (\cd -> E.chWhen cd /= Nothing) (drop 1 (E.chapterDefs (crWorld cr))))
+                pure (a && b)
+    pure (r0 && r1)
+
+-- | Static checks: duplicate ids, unknown goto targets, backward jumps
+--   (error), unreachable chapters (warning).
+testChapterChecks :: IO Bool
+testChapterChecks = do
+    let mk chs rules = (minAdventure (minRoom "loc_0"))
+            { advChapters = chs, advTriggers = rules }
+        back = ATrigger "sprung" "chapter kap2" Nothing [AOGotoChapter "kap1"] False 0
+        fwd  = ATrigger "sprung" "chapter kap1" Nothing [AOGotoChapter "kap2"] False 0
+    r1 <- case compileAdventure (mk [AChapterDef "k" Nothing Nothing, AChapterDef "k" Nothing Nothing] []) of
+            Left errs -> expectTrue "duplicate is DuplicateChapter"
+                (any (\i -> ciCode i == "DuplicateChapter") errs)
+            Right _ -> expectTrue "duplicate must fail" False
+    r2 <- case compileAdventure (mk [AChapterDef "k" Nothing Nothing] [ATrigger "s" "turn" Nothing [AOGotoChapter "nope"] False 0]) of
+            Left errs -> expectTrue "unknown target is UnknownChapter"
+                (any (\i -> ciCode i == "UnknownChapter") errs)
+            Right _ -> expectTrue "unknown target must fail" False
+    r3 <- case compileAdventure (mk [AChapterDef "kap1" Nothing Nothing, AChapterDef "kap2" Nothing Nothing] [back]) of
+            Left errs -> expectTrue "backward jump is ChapterBackwardsJump"
+                (any (\i -> ciCode i == "ChapterBackwardsJump") errs)
+            Right _ -> expectTrue "backward jump must fail" False
+    r4 <- case compileAdventure (mk [AChapterDef "kap1" Nothing Nothing, AChapterDef "kap2" Nothing Nothing] [fwd]) of
+            Left errs -> expectTrue ("forward jump compiles, got: " ++ issuesText errs) False
+            Right _ -> expectTrue "forward jump compiles" True
+    r5 <- case compileAdventure (mk [AChapterDef "k1" Nothing Nothing, AChapterDef "k2" Nothing Nothing] []) of
+            Right cr -> expectTrue "unreachable chapter warns"
+                (any (\i -> ciCode i == "UnreachableChapter") (crWarnings cr))
+            Left errs -> expectTrue ("warn-only case compiles, got: " ++ issuesText errs) False
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | `next_chapter` / `goto_chapter` sugar compiles.
+testChapterSugar :: IO Bool
+testChapterSugar = do
+    r1 <- case compileAActionOutcome AONextChapter of
+            E.NextChapter -> expectTrue "next_chapter compiles" True
+            _ -> expectTrue "next_chapter compiles" False
+    r2 <- case compileAActionOutcome (AOGotoChapter "finale") of
+            E.GotoChapter "finale" -> expectTrue "goto_chapter compiles" True
+            _ -> expectTrue "goto_chapter compiles" False
+    pure (r1 && r2)
 
 -- | Rogue Phase 1: the authored `game:` block compiles to the engine
 --   GamePolicy. Absent block keeps the default; savezone rooms are validated
@@ -2990,6 +3061,10 @@ tests =
     , ("facts: facts compile in order; empty lists omitted from world.json", testFactsCompile)
     , ("facts: static checks (UnknownFact, DuplicateFact, YieldsWithoutPremises)", testFactChecks)
     , ("facts: knows/learn/forget YAML sugar parses", testKnowsSugar)
+    -- W3: chapters
+    , ("chapters: compile in order; empty chapterDefs omitted", testChaptersCompile)
+    , ("chapters: static checks (Duplicate, Unknown, Backwards, Unreachable)", testChapterChecks)
+    , ("chapters: next_chapter/goto_chapter sugar compiles", testChapterSugar)
     -- Schritt 2 / Phase 2D: Cards & Deckbuilder
     , ("cards: map syntax and deck count-map compile (Phase 2D)", testCardGameYamlCompilation)
     , ("cards: list syntax and card outcomes compile (Phase 2D)", testCardGameListFormAndOutcomes)

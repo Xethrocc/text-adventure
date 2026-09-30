@@ -21,6 +21,9 @@ module Effects
     , fireTriggers
     , fireTriggersWithDepth
     , fireTriggerList
+    , checkChapterGate
+    , currentChapterId
+    , chapterVisited
     , tickConditions
     , completeQuestWithMsg
     , vehicleConditionTick
@@ -34,7 +37,7 @@ import Quests (canStartQuest, startQuest, advanceQuest, completeQuestWith)
 import Vehicles (vehicleConditionTickWith)
 import Data.List (intercalate, foldl', find)
 import Data.Bits (shiftR)
-import Data.Maybe (listToMaybe, fromMaybe)
+import Data.Maybe (listToMaybe, fromMaybe, isJust)
 import Control.Monad (guard)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -50,6 +53,49 @@ maxOutcomeDepth = 20
 
 -- | Outcome application with a threaded RNG salt and recursion depth.
 --   Returns (state, message, nextSalt, nextDepth).
+-- | W3 helpers: current chapter id (VVText in `chapter.current`) and the
+--   visited marker `chapter.visited.<id>`.
+currentChapterId :: GameState -> String
+currentChapterId state = case getVariable "chapter.current" state of
+    Just (VVText cid) -> cid
+    Just (VVInt _)    -> ""   -- never: ids are text
+    _                 -> ""
+
+chapterVisited :: String -> GameState -> Bool
+chapterVisited cid state =
+    getVariable ("chapter.visited." ++ cid) state == Just (VVInt 1)
+
+-- | Enter a chapter: set current, mark visited, show the intro, fire
+--   OnChapter. Shared by the auto-gate, next_chapter and goto_chapter.
+switchChapter :: ChapterDef -> GameState -> Int -> (GameState, [OutputEvent], Int)
+switchChapter cd state salt =
+    let st1 = setVariableChecked "chapter.current" (VVText (chId cd)) state
+        st2 = setVariableChecked ("chapter.visited." ++ chId cd) (VVInt 1) st1
+        intro = case chIntro cd of
+            Just m  -> evRaw (formatWithVars m st2)
+            Nothing -> []
+        (st3, trig) = fireTriggersWithDepth 1 (OnChapter (chId cd)) st2
+    in (st3, joinEv intro trig, salt)
+
+-- | W3 auto-gate (W3.2): at most ONE switch per call (called once per turn,
+--   after the turn-trigger fold). Candidate = the first chapter in
+--   declaration order whose `when:` holds, that is unvisited and not current.
+--   Declaration order is a Gameplay-Vertrag (nicht umsortieren).
+checkChapterGate :: GameState -> (GameState, [OutputEvent])
+checkChapterGate state = case candidate of
+    Nothing -> (state, [])
+    Just cd -> let (st', evs, _) = switchChapter cd state 0 in (st', evs)
+  where
+    chapters = chapterDefs (world state)
+    cur = currentChapterId state
+    eligible cd = isJust (chWhen cd)
+                  && not (chapterVisited (chId cd) state)
+                  && chId cd /= cur
+                  && evalPredicate (fromMaybe PTrue (chWhen cd)) state
+    candidate = case filter eligible chapters of
+        (cd:_) -> Just cd
+        []     -> Nothing
+
 -- | W1: message decision for a newly learned fact — no message (NPC or
 --   silent fact), the catalog default, or an author template.
 data LearnMsg = NoMsg | DefaultMsg | AuthorMsg (Maybe String)
@@ -293,6 +339,28 @@ applyOutcomeWith depth salt outcome targetId state
                 then evMsg "notes.empty" []
                 else joinEv header (evRaw (unlines grouped))
         in (state, body, salt)
+
+    -- W3: chapters. All three paths route through 'switchChapter' (current +
+    -- visited + intro + OnChapter). `goto_chapter` refuses backward jumps (a
+    -- visited chapter is never entered again - no retrospection, W3 contract).
+    NextChapter ->
+        let chapters = chapterDefs (world state)
+            cur = currentChapterId state
+            rest = drop 1 (dropWhile (\cd -> chId cd /= cur) chapters)
+        in case rest of
+            [] -> ( addDiagnostic "[engine] next_chapter: no chapter follows the current one" state
+                  , evMsg "chapter.no_next" [], salt )
+            (cd:_) -> switchChapter cd state salt
+
+    GotoChapter target ->
+        case find (\cd -> chId cd == target) (chapterDefs (world state)) of
+            Nothing ->
+                ( addDiagnostic ("[engine] goto_chapter: unknown chapter '" ++ target ++ "'") state
+                , evMsg "chapter.unknown" [], salt )
+            Just cd
+                | chapterVisited target state ->
+                    ( state, evMsg "chapter.refuse_back" [], salt )
+                | otherwise -> switchChapter cd state salt
 
     Forget actor fact ->
         let key = "known." ++ actorId actor ++ "." ++ fact

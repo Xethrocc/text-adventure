@@ -5129,6 +5129,98 @@ testNpcKnowledgeCascade = do
     r3 <- expectTrue "no message for npc learning" (renderEvents [] == "")
     pure (r1 && r2 && r3)
 
+-- ---------------------------------------------------------------------------
+-- W3: chapters
+-- ---------------------------------------------------------------------------
+
+-- | Helper: state with chapters installed (declaration order = contract).
+cstate :: [ChapterDef] -> GameState
+cstate cs =
+    let gw = (world emptyGameState) { chapterDefs = cs }
+    in emptyGameState { world = gw }
+
+-- | The auto-gate: first eligible chapter in declaration order, at most one
+--   switch per call, visited chapters never re-entered.
+testChapterGate :: IO Bool
+testChapterGate = do
+    let cds = [ ChapterDef "kap1" Nothing Nothing
+              , ChapterDef "kap2" (Just "Kapitel eins.") (Just (HasFlag "tor_offen"))
+              , ChapterDef "kap3" Nothing (Just (HasFlag "tor_offen")) ]
+        st0 = cstate cds
+    -- No gate fires without a trigger: chapter 1 is not entered either (no
+    -- when, no effect) - the gate only switches gated chapters.
+    r0 <- expectEqual "" (currentChapterId st0)
+    -- Gate with both conditions true: first eligible in declaration order.
+    let st1 = setFlag "tor_offen" "true" st0
+        (st2, evs1) = checkChapterGate st1
+    r1 <- expectEqual "kap2" (currentChapterId st2)
+    r2 <- expectTrue "kap2 visited" (chapterVisited "kap2" st2)
+    r3 <- expectTrue "one switch per call: kap3 stays out"
+            (not (chapterVisited "kap3" st2))
+    r4 <- expectTrue "intro shown" ("Kapitel eins." `isInfixOf` renderEvents evs1)
+    -- Second call with kap2 visited: kap3 is now the first eligible.
+    let (st3, _) = checkChapterGate st2
+    r5 <- expectEqual "kap3" (currentChapterId st3)
+    -- All visited: no more switches.
+    let (st4, _) = checkChapterGate st3
+    r6 <- expectEqual "kap3" (currentChapterId st4)
+    pure (r0 && r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | goto_chapter: forward ok, backward refused, unknown diagnosed;
+--   next_chapter walks declaration order; OnChapter fires.
+testChapterSwitchEffects :: IO Bool
+testChapterSwitchEffects = do
+    let cds = [ ChapterDef "eins" Nothing Nothing
+              , ChapterDef "zwei" (Just "Eins.") Nothing
+              , ChapterDef "drei" Nothing Nothing ]
+        st0 = cstate cds
+        (st1, evs1, _) = applyOutcomeWith 0 0 (GotoChapter "zwei") "" st0
+    r1 <- expectEqual "zwei" (currentChapterId st1)
+    r2 <- expectTrue "OnChapter fired (intro shown)" ("Eins." `isInfixOf` renderEvents evs1)
+    -- forward to unvisited "eins" is allowed (visited = {zwei}), then the
+    -- return jump to the VISITED "zwei" is refused (no retrospection)
+    let (st2, evs2, _) = applyOutcomeWith 0 0 (GotoChapter "eins") "" st1
+    r3 <- expectEqual "eins" (currentChapterId st2)
+    let (st2b, evs3, _) = applyOutcomeWith 0 0 (GotoChapter "zwei") "" st2
+    r4 <- expectEqual "eins" (currentChapterId st2b)
+    r5 <- expectTrue "refusal message" ("behind you" `isInfixOf` renderEvents evs3)
+    -- next_chapter from eins -> zwei; from drei -> no_next + diagnostic
+    let st5a = cstate cds
+        (st5, _, _) = applyOutcomeWith 0 0 (GotoChapter "eins") "" st5a
+        (st6, _, _) = applyOutcomeWith 0 0 NextChapter "" st5
+    r6 <- expectEqual "zwei" (currentChapterId st6)
+    let (st7, evs7, _) = applyOutcomeWith 0 0 (GotoChapter "drei") "" st1
+        (st8, evs8, _) = applyOutcomeWith 0 0 NextChapter "" st7
+    r7 <- expectEqual "drei" (currentChapterId st8)
+    r8 <- expectTrue "no_next diagnosed" (not (null (diagnostics st8)))
+    -- unknown target diagnosed
+    let (st9, _, _) = applyOutcomeWith 0 0 (GotoChapter "fuenf") "" st0
+    r9 <- expectTrue "unknown target diagnosed" (not (null (diagnostics st9)))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9)
+
+-- | A goto_chapter from a chapter rule set is itself a chapter entry: the
+--   auto-gate does not double-fire (one switch per turn contract).
+testChapterOnChapterDoesNotCascade :: IO Bool
+testChapterOnChapterDoesNotCascade = do
+    let cds = [ ChapterDef "eins" Nothing Nothing
+              , ChapterDef "zwei" Nothing (Just (HasFlag "go"))
+              , ChapterDef "drei" Nothing Nothing ]
+        st0 = cstate cds
+        -- Explicit goto enters "eins"; turn 1 runs with the gate closed (no
+        -- flag), then the flag opens and turn 2 fires the gate - one switch
+        -- per turn, after the fold.
+        (stA, _, _) = applyOutcomeWith 0 0 (GotoChapter "eins") "" st0
+        (ls1, _) = applyLoopCommandEv (Interact VTake "zugx") (initLoopState stA)
+        (ls2, _) = applyLoopCommandEv (Interact VTake "zugy")
+                    ls1 { lsCurrent = setFlag "go" "true" (lsCurrent ls1) }
+        (ls3, _) = applyLoopCommandEv (Interact VTake "zugg")
+                    ls2 { lsCurrent = setFlag "go" "false" (lsCurrent ls2) }
+    r1 <- expectEqual "eins" (currentChapterId (lsCurrent ls1))
+    r2 <- expectEqual "zwei" (currentChapterId (lsCurrent ls2))
+    r2b <- expectEqual "zwei" (currentChapterId (lsCurrent ls3))
+    r3 <- expectTrue "no third chapter auto-fired" (not (chapterVisited "drei" (lsCurrent ls3)))
+    pure (r1 && r2 && r2b && r3)
+
 -- | Rogue Phase 4c: run-seed derivation from slug and run index.
 --   Determinism, distinctness across runs, and distinctness across slugs.
 testDeriveRunSeed :: IO Bool
@@ -7958,6 +8050,9 @@ main = do
         , runTest "learn cascade, idempotency and forget (W1)" testLearnCascadeAndForget
         , runTest "OnLearn fires per fact; silent and author messages (W1)" testOnLearnAndMessages
         , runTest "npc knowledge cascades separately (W1)" testNpcKnowledgeCascade
+        , runTest "chapter auto-gate: first eligible, one per turn (W3)" testChapterGate
+        , runTest "goto/next: refusal, diagnostics, OnChapter (W3)" testChapterSwitchEffects
+        , runTest "chapter gate does not cascade (W3)" testChapterOnChapterDoesNotCascade
         , runTest "fatal condition tick stops the command (L11)" testFatalTickStopsCommand
         -- Review L4: constructor coverage in Validate
         , runTest "MissingRoom from a rule room reference (L4)" testValidateMissingRoomInRule

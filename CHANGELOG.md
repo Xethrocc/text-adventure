@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Kapitel: `chapters:` mit Auto-Gate und `next_chapter`/`goto_chapter` (W3)
+
+- **`chapters:`-Sektion** (`AChapterDef` → `ChapterDef`): benannte Kapitel in narrativer
+  Reihenfolge mit optionaler `intro:`-Meldung und optionaler `when:`-Auto-Gate-Bedingung
+  (Prädikate, wie bei Ausgängen). Kompiliert als **Liste** — die Deklarationsreihenfolge
+  ist Gameplay-Vertrag (nicht umsortieren); leere Liste wird im `world.json` weggelassen.
+- **Effekte `next_chapter`/`goto_chapter: <id>`** und **Event `OnChapter <id>`**
+  (Trigger `on: chapter <id>`) — der Szenenwechsel (Ortswechsel, Zustände, Meldungen)
+  bleibt Autorenregel am Event.
+- **Auto-Gate:** höchstens **ein** Wechsel pro Zug, geprüft nach dem Turn-Trigger-Fold
+  (in `GameLoop`, beiden zug-konsumierenden Pfaden); Kandidat = erstes Kapitel in
+  Deklarationsreihenfolge mit erfülltem `when:`, weder besucht noch aktuell.
+- **Keine Rückblenden — maschinell erzwungen:** `goto_chapter` auf ein besuchtes Kapitel
+  wird verweigert („This chapter is behind you."); statisch erkennbare Rückwärts-Sprünge
+  (`goto_chapter` in einer `on: chapter`-Regel auf ein früheres Kapitel) sind
+  **Compile-Fehler**; unbekannte Ziele (`UnknownChapter`), doppelte IDs
+  (`DuplicateChapter`), unerreichbare Kapitel (`UnreachableChapter`, Warnung) und
+  `chapter.`-Variablen-Kollisionen (`ChapterVariableClash`) sind Compiler-Checks.
+- **State als VarMap** (`chapter.current`, `chapter.visited.<id>`) — kein neues
+  `SaveState`-Feld, Save-Bytes unangetastet; reserviertes Präfix (auch für
+  Prozedur-Parameter).
+- **Tests**: 3 Engine-Tests (**407**) + 3 Worldbuilder-Tests (**184**); Fixture
+  `examples/fixtures/kapitel.yaml` (Auto-Gate, Sprünge, Rücksprung-Verweigerung) in
+  CI-Stufe 4b.
+
 ### Wissensmodell: `facts:`, `combine:`, `learn`/`forget`/`knows` und Notizbuch (W1)
 
 - **`facts:`-Sektion** (`AFactDef` → `FactDef`): Fakten mit `keys` (Wörter zum Ansprechen),
