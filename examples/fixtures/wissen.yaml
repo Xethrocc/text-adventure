@@ -1,0 +1,85 @@
+name: Wissen Fixture
+start_room: bibliothek
+
+verbs:
+  - name: "lese"
+    aliases: ["read"]
+
+variables:
+  - name: "habe_brief"
+    type: int
+    initial: 0
+
+facts:
+  - id: brief_gelesen
+    keys: [brief]
+    text: "Der Brief erwähnt eine Verabredung am Hafen."
+    source: "gefunden in der Bibliothek"
+    tag: beweise
+    learn_msg: "Du liest den Brief aufmerksam."
+  - id: tagebuch_gelesen
+    keys: [tagebuch]
+    text: "Das Tagebuch bestätigt die Verabredung."
+    tag: beweise
+    learn_msg: "Das Tagebuch deckt sich."
+  - id: verabredung
+    keys: [verabredung]
+    text: "Es gab eine Verabredung am Hafen."
+    tag: schluesse
+
+combine:
+  - facts: [brief_gelesen, tagebuch_gelesen]
+    yields: verabredung
+    msg: "Brief und Tagebuch zusammen: die Verabredung am Hafen."
+
+journal: notes
+
+rooms:
+  - id: bibliothek
+    name: Bibliothek
+    desc: Ein Regal voller Papiere. Ein Brief liegt auf dem Tisch.
+
+items:
+  - id: brief
+    name: Brief
+    keys: [brief]
+    desc: Ein zugeknöpfter Brief.
+    location: bibliothek
+    on_take:
+      - set_flag: habe_brief
+      - learn: brief_gelesen
+
+rules:
+  - id: lese_brief
+    on: "command lese"
+    when:
+      all:
+        - has_flag: habe_brief
+        - var: cmd.arg1
+          is: brief
+    effects:
+      - learn: brief_gelesen
+  - id: lese_tagebuch
+    on: "command lese"
+    when:
+      var: cmd.arg1
+      is: tagebuch
+    effects:
+      - learn: tagebuch_gelesen
+
+# B1: authored content tests — `worldbuilder test examples/fixtures/wissen.yaml`
+tests:
+  - name: "lernen, kombinieren, notizen"
+    input: [take brief, lese tagebuch, kombiniere brief mit tagebuch, notizen]
+    expect:
+      - "You take the Brief."
+      - "Du liest den Brief aufmerksam."
+      - "Brief und Tagebuch zusammen: die Verabredung am Hafen."
+      - "Your notes:"
+      - "Der Brief erwähnt eine Verabredung am Hafen. (gefunden in der Bibliothek)"
+      - "[schluesse]"
+      - "Es gab eine Verabredung am Hafen."
+  - name: "ohne praemissen kein schluss"
+    input: [kombiniere brief tagebuch]
+    expect:
+      - "You cannot combine these like that."

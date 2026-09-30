@@ -56,6 +56,8 @@ minWorld = E.GameWorld
     , worldClips = Map.empty
     , cardDefs = Map.empty
     , sandboxZones = Map.empty
+    , factDefs = []
+    , combineDefs = []
     , procDefs = Map.empty
     }
 
@@ -188,6 +190,10 @@ minAdventure room = Adventure
     , advHandLimit = Nothing
     , advSandboxZones = []
     , advProcedures = []
+    , advCombineVerb = Nothing
+    , advJournal = Nothing
+    , advFacts = []
+    , advCombines = []
     , advTests = []
     , advRawValue = Nothing
     }
@@ -360,6 +366,85 @@ testContentTestRunner = do
                 r3 <- expectEqual (Just ("FEHLT" :: String)) (last results)
                 removeFile path
                 pure (r1 && r2 && r3)
+
+-- ---------------------------------------------------------------------------
+-- W1: knowledge model (facts: / combine:)
+-- ---------------------------------------------------------------------------
+
+-- | `facts:` compiles in declaration order; empty fact/combine lists are
+--   omitted from world.json (byte-stability).
+testFactsCompile :: IO Bool
+testFactsCompile = do
+    let empty = minAdventure (minRoom "loc_0")
+    r0 <- case compileAdventure empty of
+            Left _ -> expectTrue "default compiles" False
+            Right cr -> do
+                a <- expectTrue "no facts by default" (null (E.factDefs (crWorld cr)))
+                b <- expectTrue "world.json omits empty factDefs"
+                        (not ("factDefs" `isInfixOf` BLC.unpack (Aeson.encode (crWorld cr))))
+                c <- expectTrue "world.json omits empty combineDefs"
+                        (not ("combineDefs" `isInfixOf` BLC.unpack (Aeson.encode (crWorld cr))))
+                pure (a && b && c)
+    let adv = empty
+            { advFacts =
+                [ AFactDef "brief" ["brief"] "Der Brief." Nothing Nothing Nothing Nothing
+                , AFactDef "brief_gelesen" [] "" Nothing Nothing Nothing Nothing ]
+            , advCombines = [ACombineDef ["brief"] "brief_gelesen" Nothing] }
+    r1 <- case compileAdventure adv of
+            Left errs -> expectTrue ("facts compile, got: " ++ issuesText errs) False
+            Right cr -> do
+                a <- expectEqual ["brief", "brief_gelesen"] (map E.factId (E.factDefs (crWorld cr)))
+                b <- expectTrue "combine compiled"
+                        (any (\c -> E.cdYields c == "brief_gelesen") (E.combineDefs (crWorld cr)))
+                pure (a && b)
+    pure (r0 && r1)
+
+-- | The knowledge model is checked statically: unknown fact references
+--   (learn/forget outcomes, combine premises/yields, `knows:` predicates),
+--   duplicate ids and yields without premises are compile errors.
+testFactChecks :: IO Bool
+testFactChecks = do
+    let advWith extraFacts extraRules extraCombines = (minAdventure (minRoom "loc_0"))
+            { advFacts = [AFactDef "brief" ["brief"] "Der Brief." Nothing Nothing Nothing Nothing] ++ extraFacts
+            , advTriggers = [ ATrigger "t" "turn" Nothing extraRules False 0 ]
+            , advCombines = extraCombines }
+    r1 <- case compileAdventure (advWith [] [AOLearn "nope" "player"] []) of
+            Left errs -> expectTrue "learn of unknown fact is UnknownFact"
+                (any (\i -> ciCode i == "UnknownFact") errs)
+            Right _ -> expectTrue "unknown learn must fail" False
+    r2 <- case compileAdventure (advWith [] [] [ACombineDef ["brief"] "nope" Nothing]) of
+            Left errs -> expectTrue "yields of unknown fact is UnknownFact"
+                (any (\i -> ciCode i == "UnknownFact") errs)
+            Right _ -> expectTrue "unknown yields must fail" False
+    r3 <- case compileAdventure (advWith [] [] [ACombineDef [] "brief" Nothing]) of
+            Left errs -> expectTrue "premise-less combine is YieldsWithoutPremises"
+                (any (\i -> ciCode i == "YieldsWithoutPremises") errs)
+            Right _ -> expectTrue "premise-less combine must fail" False
+    r4 <- case compileAdventure (advWith [AFactDef "brief" [] "x" Nothing Nothing Nothing Nothing] [] []) of
+            Left errs -> expectTrue "duplicate fact is DuplicateFact"
+                (any (\i -> ciCode i == "DuplicateFact") errs)
+            Right _ -> expectTrue "duplicate fact must fail" False
+    r5 <- case compileAdventure (advWith [] [] []) of
+            Left errs -> expectTrue ("clean knowledge model compiles, got: " ++ issuesText errs) False
+            Right _ -> expectTrue "clean compiles" True
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | `knows:` predicates and `learn:`/`forget:` outcomes parse and compile.
+testKnowsSugar :: IO Bool
+testKnowsSugar = do
+    r1 <- case Aeson.decode (BLC.pack "{\"knows\":\"brief\"}") of
+        Just p -> expectEqual (E.Knows E.ActorPlayer "brief") p
+        Nothing -> expectTrue "knows: fact parses (player default)" False
+    r2 <- case Aeson.decode (BLC.pack "{\"learn\":\"brief\"}") of
+        Just o -> expectEqual (AOLearn "brief" "player") o
+        Nothing -> expectTrue "learn: fact parses (player default)" False
+    r3 <- case Aeson.decode (BLC.pack "{\"learn\":{\"fact\":\"brief\",\"actor\":\"butler\"}}") of
+        Just o -> expectEqual (AOLearn "brief" "butler") o
+        Nothing -> expectTrue "learn: {fact, actor} parses" False
+    r4 <- case Aeson.decode (BLC.pack "{\"forget\":\"brief\"}") of
+        Just o -> expectEqual (AOForget "brief" "player") o
+        Nothing -> expectTrue "forget: parses" False
+    pure (r1 && r2 && r3 && r4)
 
 -- | Rogue Phase 1: the authored `game:` block compiles to the engine
 --   GamePolicy. Absent block keeps the default; savezone rooms are validated
@@ -2901,6 +2986,10 @@ tests =
     -- B1: content tests as data
     , ("content-tests: parsing and ordered marker semantics", testContentTestBasics)
     , ("content-tests: runner round-trip with pass and fail", testContentTestRunner)
+    -- W1: knowledge model
+    , ("facts: facts compile in order; empty lists omitted from world.json", testFactsCompile)
+    , ("facts: static checks (UnknownFact, DuplicateFact, YieldsWithoutPremises)", testFactChecks)
+    , ("facts: knows/learn/forget YAML sugar parses", testKnowsSugar)
     -- Schritt 2 / Phase 2D: Cards & Deckbuilder
     , ("cards: map syntax and deck count-map compile (Phase 2D)", testCardGameYamlCompilation)
     , ("cards: list syntax and card outcomes compile (Phase 2D)", testCardGameListFormAndOutcomes)

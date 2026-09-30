@@ -106,6 +106,8 @@ module Types.Core
     , TriggerDef (..)
     , TriggerState (..)
     , ProcDef (..)
+    , FactDef (..)
+    , CombineDef (..)
       -- * Procedural Sandbox & Cutscenes
     , BiomeTemplate (..)
     , SandboxZone (..)
@@ -617,6 +619,7 @@ data Predicate
     | CompareVar String Comparator Int  -- ^ variable vs integer literal (mana >= 5)
     | VarIs String String               -- ^ text variable equals a literal (`{ var: X, is: Y }`)
     | HasCondition String               -- ^ active condition/timer on player (Phase 2.1)
+    | Knows ActorRef String             -- ^ W1: actor knows this fact (VarMap `known.<actor>.<fact>`)
     deriving (Show, Eq, Generic)
 
 -- | Serialize to the same compact object shape that FromJSON accepts
@@ -637,6 +640,7 @@ instance ToJSON Predicate where
                                         [ "name" .= n, "op" .= comparatorName op, "value" .= v ] ]
         VarIs n v          -> object [ "var" .= n, "is" .= v ]
         HasCondition c     -> object [ "has_condition" .= c ]
+        Knows a f          -> object [ "knows" .= actorId a, "fact" .= f ]
 
 -- | Stable string form of a comparator, used in YAML/JSON predicates.
 comparatorName :: Comparator -> String
@@ -680,6 +684,11 @@ instance FromJSON Predicate where
         <|> (PlayerHas <$> o .: "has_item")
         <|> (HasFlag   <$> o .: "has_flag")
         <|> (HasCondition <$> o .: "has_condition")
+        -- W1: knowledge — `knows: <fact>` (player) or `{knows: <actor>, fact: <fact>}`
+        <|> (do k <- o .: "knows"
+                case k of
+                    String f -> pure (Knows ActorPlayer (T.unpack f))
+                    _        -> Knows <$> parseJSON k <*> o .: "fact")
         <|> (EntityHasState <$> o .: "state" <*> o .: "is")
         -- Text comparison for variables holding text (`type: text`), e.g. the
         -- engine's own `combat.action`. Distinct from `state`/`is`, which tests
@@ -792,6 +801,9 @@ data Effect
     | GenerateRoom RoomID String String RoomID Direction Direction -- ^ Phase 3A: id, name, description, fromRoom, toDir, returnDir
     | Block (Maybe String) Bool                   -- ^ Phase 2.2: veto command execution (optional message, consumesTurn)
     | CallProc String [EffectValue]               -- ^ Phase 2.5: run procedure `name` with literal args (D2)
+    | Learn ActorRef String                       -- ^ W1: actor learns a fact (idempotent, fires OnLearn)
+    | Forget ActorRef String                      -- ^ W1: actor forgets a fact (explicit only, never automatic)
+    | ShowNotes                                   -- ^ W1: render the player's notes book
     | Noop                                        -- ^ Do nothing
     deriving (Show, Eq, Generic)
 
@@ -1515,6 +1527,7 @@ data EventType
     | OnTurn
     | OnCommand String                 -- ^ verb name (e.g. "activate")
     | OnBefore String                  -- ^ verb name before execution (Phase 2.2)
+    | OnLearn String                   -- ^ W1: fired once per newly learned fact, in learning order
     deriving (Show, Eq, Generic)
 
 instance ToJSON EventType
@@ -1555,6 +1568,34 @@ data ProcDef = ProcDef
 instance ToJSON ProcDef
 instance FromJSON ProcDef
 
+-- | A knowledge fact (W1): declared under `facts:`. The notes book shows
+--   learned player facts in **declaration order** — Gameplay-Vertrag:
+--   nicht umsortieren (dieselbe Ordnungs-Falle wie `Direction`s `Ord`).
+data FactDef = FactDef
+    { factId       :: String
+    , factKeys     :: [String]        -- ^ words the player can use to refer to it
+    , factText     :: String          -- ^ notes-book text
+    , factSource   :: Maybe String    -- ^ optional origin note ("found in the library")
+    , factTag      :: Maybe String    -- ^ optional grouping tag ("evidence" / "guess")
+    , factLearnMsg :: Maybe String    -- ^ message on learning (default: learn.default)
+    , factSilent   :: Maybe Bool      -- ^ per-fact override of the adventure journal mode
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON FactDef
+instance FromJSON FactDef
+
+-- | A derivation rule (W1, `combine:`): when an actor knows **all** premises,
+--   the yields fact follows — the auto-cascade applies this table as a pure
+--   fixpoint in the Learn application (never over trigger recursion).
+data CombineDef = CombineDef
+    { cdFacts  :: [String]            -- ^ premises (all must be known)
+    , cdYields :: String              -- ^ the derived fact
+    , cdMsg    :: Maybe String        -- ^ confirmation message on derivation
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON CombineDef
+instance FromJSON CombineDef
+
 -- | Static world definition containing blueprint/map data
 data GameWorld = GameWorld
     { rooms              :: Map.Map RoomID Room
@@ -1577,6 +1618,8 @@ data GameWorld = GameWorld
     , cardDefs           :: Map.Map CardID Card                      -- ^ Card definitions for deckbuilder / card games (Genre 5)
     , sandboxZones       :: Map.Map String SandboxZone               -- ^ Procedural infinite sandbox zones (Genre 3)
     , procDefs           :: Map.Map String ProcDef                   -- ^ Named procedures (Phase 2.5); empty map is omitted from world.json
+    , factDefs           :: [FactDef]                                -- ^ Knowledge facts (W1), in declaration order; empty list is omitted
+    , combineDefs        :: [CombineDef]                             -- ^ Derivation rules (W1); empty list is omitted
     } deriving (Show, Eq)
 
 -- | A cutscene clip (Phase H/H4): a frame sequence played once at its own
@@ -1617,7 +1660,7 @@ instance ToJSON GameWorld where
         , "worldName"          .= worldName gw
         , "abilities"          .= abilities gw
         ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair ++ sandboxPair
-          ++ procPair
+          ++ procPair ++ factPair ++ combinePair
       where
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
@@ -1632,6 +1675,8 @@ instance ToJSON GameWorld where
         -- Phase 2.5 (M2): omitted when empty so world.json (and with it the
         -- world checksum) of every existing adventure stays bit-identical.
         procPair = [ "procDefs" .= procDefs gw | not (Map.null (procDefs gw)) ]
+        factPair = [ "factDefs" .= factDefs gw | not (null (factDefs gw)) ]
+        combinePair = [ "combineDefs" .= combineDefs gw | not (null (combineDefs gw)) ]
         endArt = Map.filter (not . isEmptyAscii) (worldEndArt gw)
         titleArt = worldTitleArt gw
 
@@ -1691,6 +1736,8 @@ instance FromJSON GameWorld where
         <*> o .:? "cards" .!= Map.empty
         <*> o .:? "sandboxZones" .!= Map.empty
         <*> o .:? "procDefs" .!= Map.empty
+        <*> o .:? "factDefs" .!= []
+        <*> o .:? "combineDefs" .!= []
 
 -- | Encode item-on-item outcomes as objects (P2-9).
 itemInteractionsToJSON :: Map.Map (String, String) Effect -> Value

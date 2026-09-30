@@ -231,7 +231,12 @@ compileAdventure adv =
             mergeShipVars partyAllVarDefs partyAllVarInitials shipVarDefs shipVarInitials
 
         allTriggerDefs = triggerDefs ++ encounterDefs ++ envTriggerDefs ++ stealthTriggerDefs
-                            ++ patrolTriggerDefs ++ shipTriggerDefs
+            ++ patrolTriggerDefs ++ shipTriggerDefs
+            ++ knowledgeTriggers ++ journalTriggers
+        -- W1: inject the generated combine/notes verbs into the registry so
+        -- `parseCommandWith` understands them like any custom verb.
+        verbRegistryFull = Map.union verbRegistry (Map.union knowledgeVerb journalVerb)
+        knowledgeClashErrs = knowledgeVerbCollisions ++ journalVerbCollisions
 
         -- Rogue Phase 1: the authored `game:` policy. Savezone rooms must
         -- exist (MissingRoom); ironman without savezones is a warning (legal
@@ -257,6 +262,38 @@ compileAdventure adv =
         (cardErrs, compiledCards) = compileCards (advCards adv)
         (szErrs, compiledSandboxZones) = compileSandboxZones (advSandboxZones adv)
         (procCompileErrs, compiledProcs) = compileProcedures (advProcedures adv)
+        compiledFacts = compileFacts (advFacts adv)
+        compiledCombines = compileCombines (advCombines adv)
+        factRefErrs = checkFactRefs (advFacts adv) gw adv
+        knownVarErrs = checkKnownVarReserved varDefs
+        -- W1.4/W1.5: `kombiniere`-Trigger aus combine: (nur wenn Eintraege
+        -- existieren) und der `notizen`-Befehl nur bei `journal: notes`.
+        combineVerb = fromMaybe "kombiniere" (advCombineVerb adv)
+        factsById = Map.fromList [ (afdId f, f) | f <- advFacts adv ]
+        (knowledgeTriggers, knowledgeVerb) =
+            if null (advCombines adv)
+                then ([], Map.empty)
+                else compileKnowledgeTriggers combineVerb (advCombines adv) factsById
+        notesMode = advJournal adv == Just "notes"
+        journalErrs =
+            [ ciError "journal" "BadJournalMode"
+                ("journal: '" ++ m ++ "' is not a mode (expected 'notes' or 'messages')")
+            | Just m <- [advJournal adv], m `notElem` ["notes", "messages"] ]
+        journalVerb = if notesMode
+            then Map.singleton "notizen" (E.VerbDef "notizen" ["notes"])
+            else Map.empty
+        journalTriggers = if notesMode then compileNotesTrigger "notizen" else []
+        -- Registry-Kollisionen: ein Autor-Verb darf nicht mit den
+        -- generierten Worten kollidieren (combine_verb ist autorenwaehlbar
+        -- und damit selbst die Referenz).
+        knowledgeVerbCollisions =
+            [ ciError ("verbs." ++ v) "CombineVerbClash"
+                ("'" ++ v ++ "' collides with the generated combine verb")
+            | v <- Map.keys verbRegistry, v == combineVerb, not (null (advCombines adv)) ]
+        journalVerbCollisions =
+            [ ciError ("verbs." ++ v) "NotesVerbClash"
+                ("'" ++ v ++ "' collides with the generated notes command (journal: notes)")
+            | v <- Map.keys verbRegistry, v `elem` ["notizen", "notes"], notesMode ]
         mStartingDeck = case advDeck adv of
             Just d  -> Just d
             Nothing -> advPlayer adv >>= apDeck
@@ -279,7 +316,7 @@ compileAdventure adv =
                 , E.itemInteractions = itemInteractions
                 , E.questDefs = questDefs
                 , E.vehicleDefs = vehicleDefs
-                , E.verbDefs = verbRegistry
+                , E.verbDefs = verbRegistryFull
                 , E.varDefs = allVarDefs
                 , E.triggerDefs = allTriggerDefs
                 , E.combatProfile = combatProfileCompiled
@@ -292,6 +329,8 @@ compileAdventure adv =
                 , E.cardDefs = compiledCards
                 , E.sandboxZones = compiledSandboxZones
                 , E.procDefs = compiledProcs
+                , E.factDefs = compiledFacts
+                , E.combineDefs = compiledCombines
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
@@ -332,6 +371,10 @@ compileAdventure adv =
                     ++ szErrs
                     ++ procCompileErrs
                     ++ procCallErrs
+                    ++ factRefErrs
+                    ++ knownVarErrs
+                    ++ knowledgeClashErrs
+                    ++ journalErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -1229,6 +1272,167 @@ compileCombatScreen (Just s) = Just E.CombatScreen
 --   entries — a "clash table" against the merged set would then flag the
 --   engine's own definitions.
 -- ---------------------------------------------------------------------------
+-- | W1: author-facing actor reference - "player" or an NPC id (same
+--   convention as the engine's ActorRef FromJSON).
+compileActorRef :: String -> E.ActorRef
+compileActorRef "player" = E.ActorPlayer
+compileActorRef s        = E.ActorNPC s
+
+-- | W1 (Befehl `kombiniere`, W1.4): generate one trigger per combine entry
+--   and argument shape — `kombiniere a b` and `kombiniere a mit b`, both
+--   orders — gated on the player actually knowing the premises (detective
+--   fairness). Emitted in declaration order (deterministic emission, W1
+--   rule 5); the unmatched-input case falls through to the engine's
+--   unknown-command answer. The verb word is injected into the registry.
+compileKnowledgeTriggers
+    :: String                      -- ^ combine verb word
+    -> [ACombineDef]               -- ^ combine entries (declaration order)
+    -> Map.Map String AFactDef     -- ^ declared facts by id (keys for matching)
+    -> ([E.TriggerDef], Map.Map String E.VerbDef)
+compileKnowledgeTriggers verb cs factsById =
+    ( successTriggers ++ [fallback]
+    , Map.singleton verb (E.VerbDef verb aliases) )
+  where
+    -- The fallback fires only when no success arm matches (exclusive by
+    -- construction) and answers with a generic message - otherwise a wrong
+    -- `kombiniere` command would be answered with silence.
+    fallback = E.TriggerDef
+        { E.trId = "combine.fallback"
+        , E.trEvent = E.OnCommand verb
+        , E.trCondition = Just (PNot (PAny
+            ( [ matchPred (head (acdFacts c)) (acdFacts c !! 1) | c <- pairs ]
+              ++ [ singlePred (head (acdFacts c)) | c <- singles ] )))
+        , E.trEffects = [ E.SendMessage "You cannot combine these like that." ]
+        , E.trOnce = False
+        , E.trCooldown = 0 }
+    pairs = [ c | c <- cs, length (acdFacts c) == 2 ]
+    singles = [ c | c <- cs, length (acdFacts c) == 1 ]
+    aliases = if verb == "kombiniere" then ["combine"] else []
+    keysFor f = case Map.lookup f factsById of
+        Just fd -> nub (f : afdKeys fd)
+        Nothing -> [f]
+    matchVar var f = PAny [ VarIs var k | k <- keysFor f ]
+    arm v1 v2 a b = PAll
+        [ matchVar v1 a, matchVar v2 b
+        , Knows ActorPlayer a, Knows ActorPlayer b ]
+    matchPred a b = PAny
+        [ arm "cmd.arg1" "cmd.arg2" a b, arm "cmd.arg1" "cmd.arg3" a b
+        , arm "cmd.arg1" "cmd.arg2" b a, arm "cmd.arg1" "cmd.arg3" b a ]
+    singlePred a = PAll [ matchVar "cmd.arg1" a, Knows ActorPlayer a ]
+    effects c = case acdMsg c of
+        Just m  -> [ E.SendMessage m, E.Learn E.ActorPlayer (acdYields c) ]
+        Nothing -> [ E.Learn E.ActorPlayer (acdYields c) ]
+    triggerOf c = E.TriggerDef
+        { E.trId = "combine." ++ acdYields c
+        , E.trEvent = E.OnCommand verb
+        , E.trCondition = Just (matchPred (head (acdFacts c))
+                                          (acdFacts c !! 1))
+        , E.trEffects = effects c
+        , E.trOnce = False
+        , E.trCooldown = 0
+        }
+    pairTriggers = [ triggerOf c | c <- pairs ]
+    singleTriggers =
+        [ E.TriggerDef
+            { E.trId = "combine." ++ acdYields c
+            , E.trEvent = E.OnCommand verb
+            , E.trCondition = Just (singlePred (head (acdFacts c)))
+            , E.trEffects = effects c
+            , E.trOnce = False
+            , E.trCooldown = 0 }
+       | c <- singles ]
+    successTriggers = pairTriggers ++ singleTriggers
+
+-- | W1 (Befehl `notizen`, W1.5): generate the notes command trigger when the
+--   adventure opts in (`journal: notes`); verb injected into the registry.
+compileNotesTrigger :: String -> [E.TriggerDef]
+compileNotesTrigger verb =
+    [ E.TriggerDef
+        { E.trId = "notes"
+        , E.trEvent = E.OnCommand verb
+        , E.trCondition = Nothing
+        , E.trEffects = [E.ShowNotes]
+        , E.trOnce = False
+        , E.trCooldown = 0 } ]
+
+-- W1: knowledge model (facts: / combine:)
+-- ---------------------------------------------------------------------------
+
+-- | Compile `facts:` entries — order is preserved ('[E.FactDef]', not a Map):
+--   the notes book shows facts in declaration order (Gameplay-Vertrag).
+compileFacts :: [AFactDef] -> [E.FactDef]
+compileFacts fdefs =
+    [ E.FactDef (afdId f) (afdKeys f) (afdText f)
+                (afdSource f) (afdTag f) (afdLearnMsg f) (afdSilent f)
+    | f <- fdefs ]
+
+-- | Compile `combine:` entries (order preserved — the cascade walks the
+--   table in declaration order).
+compileCombines :: [ACombineDef] -> [E.CombineDef]
+compileCombines cs =
+    [ E.CombineDef (acdFacts c) (acdYields c) (acdMsg c) | c <- cs ]
+
+-- | Validate the knowledge model: unknown fact references (premises, yields,
+--   'knows:' predicates, learn:/forget: outcomes, combine premises), a yields
+--   without premises, and duplicate fact ids. Walked over the raw outcomes
+--   (via 'allAOutcomes') so rules, procedures and rooms are all covered.
+checkFactRefs :: [AFactDef] -> E.GameWorld -> Adventure -> [CompileIssue]
+checkFactRefs fdefs gw adv =
+    dupErrs ++ yieldsErrs ++ refErrs ++ predErrs
+  where
+    factIds = Set.fromList (map afdId fdefs)
+    dupErrs =
+        [ ciError ("facts." ++ fid) "DuplicateFact"
+            ("fact '" ++ fid ++ "' is declared more than once")
+        | fid <- Map.keys dupMap ]
+      where
+        dupMap = Map.filter (> (1 :: Int))
+            (Map.fromListWith (+) [ (afdId f, 1 :: Int) | f <- fdefs ])
+    yieldsErrs = concat
+        [ [ ciError ("combine." ++ cdYields c) "YieldsWithoutPremises"
+                ("combine entry for '" ++ cdYields c
+                 ++ "' has no premises - it would learn unconditionally")
+          | null (cdFacts c) ]
+          ++ [ ciError ("combine." ++ cdYields c) "UnknownFact"
+                 ("combine yields fact '" ++ cdYields c
+                  ++ "' is not declared under 'facts:'")
+             | cdYields c `Set.notMember` factIds ]
+        | c <- E.combineDefs gw ]
+    refErrs =
+        [ ciError ("outcomes." ++ kind) "UnknownFact"
+            ("'" ++ kind ++ "' references undeclared fact '" ++ f ++ "'")
+        | (kind, f) <- nub (concatMap factRefsIn (allAOutcomes adv))
+        , f `Set.notMember` factIds ]
+    predErrs =
+        [ ciError "predicates.knows" "UnknownFact"
+            ("'knows' references undeclared fact '" ++ f ++ "'")
+        | f <- nub (concatMap knowsInPredicate (allWorldPredicates gw))
+        , f `Set.notMember` factIds ]
+    knowsInPredicate p = case p of
+        E.Knows _ f -> [f]
+        E.PNot q    -> knowsInPredicate q
+        E.PAll qs   -> concatMap knowsInPredicate qs
+        E.PAny qs  -> concatMap knowsInPredicate qs
+        _           -> []
+    factRefsIn ao = case ao of
+        AOLearn f _  -> [("learn", f)]
+        AOForget f _ -> [("forget", f)]
+        AOConditional _ ts es -> concatMap factRefsIn ts ++ concatMap factRefsIn es
+        AONarrative _ follow  -> concatMap factRefsIn follow
+        AORandomChoice cs     -> concatMap (concatMap factRefsIn . snd) cs
+        AOApplyCondition _ _ t e _ -> concatMap factRefsIn t ++ concatMap factRefsIn e
+        _ -> []
+
+-- | W1: `known.` belongs to the knowledge model — author-declared variables
+--   in this namespace would collide with learned facts.
+checkKnownVarReserved :: Map.Map String E.VarDef -> [CompileIssue]
+checkKnownVarReserved varDefs =
+    [ ciError ("variables." ++ name) "KnownVariableClash"
+        ("'" ++ name ++ "' is in the reserved 'known.' namespace; "
+         ++ "the engine owns the learned-fact state (W1)")
+    | name <- Map.keys varDefs, "known." `isPrefixOf` name ]
+
+-- ---------------------------------------------------------------------------
 -- Phase 2.5 (D2): procedures
 -- ---------------------------------------------------------------------------
 
@@ -1237,7 +1441,7 @@ compileCombatScreen (Just s) = Just E.CombatScreen
 --   `stealth.`). Procedure parameters must not shadow them.
 reservedVarPrefixes :: [String]
 reservedVarPrefixes =
-    ["cmd.", "combat.", "env.", "faction.", "party.", "patrol.", "ship.", "stealth."]
+    ["cmd.", "combat.", "env.", "faction.", "known.", "party.", "patrol.", "ship.", "stealth."]
 
 -- | Compile `procedures:` entries. Duplicate ids and parameter names in
 --   engine-owned variable namespaces are rejected here.
@@ -1885,6 +2089,8 @@ compileAActionOutcome ao = case ao of
     AOAddVar name d -> E.ModifyValue (E.VRVariable name) d
     AOComputeVar name expr -> E.ComputeValue (E.VRVariable name) expr
     AOCallProc name args -> E.CallProc name args
+    AOLearn f a -> E.Learn (compileActorRef a) f
+    AOForget f a -> E.Forget (compileActorRef a) f
     AONarrative ls follow -> E.Narrative ls (compileOutcomes follow)
     AOStandingAdd fid n -> E.ModifyValue (E.VRVariable ("faction." ++ fid)) n
     AOStandingSet fid n -> E.SetValue (E.VRVariable ("faction." ++ fid)) (E.EVInt n)

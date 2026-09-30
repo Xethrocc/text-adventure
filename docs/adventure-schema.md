@@ -1864,6 +1864,54 @@ rules:
 - **Veto:** `block` im Prozedurkörper stoppt die restlichen Körpereffekte **und** die
   restlichen Effekte des Aufrufers — dieselbe Semantik wie in einer `effects:`-Liste.
 
+## Wissensmodell: `facts:`, `combine:`, `learn`/`forget`/`knows` (W1)
+
+Fakten als Daten statt Flags: der Autor deklariert Wissen einmal, die Engine verwaltet
+Lernen, Ableitung und Nachschlagen.
+
+```yaml
+facts:
+  - id: brief_gelesen
+    keys: [brief, notiz]                  # Wörter, mit denen der Spieler es anspricht
+    text: "Der Brief erwähnt eine Verabredung am Hafen."
+    source: "gefunden in der Bibliothek"   # optional, Notizbuch-Zusatz
+    tag: beweise                           # optional, Notizbuch-Gruppierung
+    learn_msg: "Du liest den Brief aufmerksam."  # optional, Meldung beim Lernen
+    silent: false                          # optional, überschreibt alles
+
+combine:
+  - facts: [brief_gelesen, tagebuch_gelesen]
+    yields: verabredung
+    msg: "Brief und Tagebuch zusammen: die Verabredung am Hafen."
+
+journal: notes          # optional: aktiviert den `notizen`-Befehl (Default: messages)
+combine_verb: kombiniere # optional: das Wort fürs Kombinieren (Default: kombiniere)
+```
+
+**Regeln:**
+
+- **Wissen ist akteursbezogen:** `learn: <fact>` (Spieler) bzw.
+  `learn: {fact: <f>, actor: <npc>}` — Prädikat `knows: <fact>`/
+  `{knows: <actor>, fact: <f>}`. Jeder Akteur hat seinen eigenen Wissensstand; das
+  Notizbuch zeigt nur Spieler-Wissen (NPC-Wissen ist Detektivarbeit — Verhör).
+- **Lernen ist idempotent** (Set-Semantik); pro neu gelerntem Fakt feuert `OnLearn`
+  (Trigger `on: learn <fact>`) einmal, in Lernreihenfolge.
+- **`combine:`-Kaskade:** alle Prämissen müssen dem **denselben Akteur** bekannt sein;
+  die Ableitung läuft als geschlossene Operation in der `Learn`-Anwendung (terminierend,
+  kein Kontrollfluss). `yields`-Fakten müssen deklariert sein.
+- **Kein automatisches Vergessen:** `forget: <fact>` entfernt nur den genannten Fakt;
+  abgeleitete Fakten bleiben (keine Rückwärts-Kaskade).
+- **Meldungen:** nur Spieler-Lernen zeigt Meldungen (Katalog-Default `learn.default`);
+  `learn_msg`/`combine`-`msg` schlagen sie; `silent: true` unterdrückt.
+- **`kombiniere`-Befehl** (generiert, sobald `combine:`-Einträge existieren):
+  `kombiniere <X> <Y>` oder `kombiniere <X> mit <Y>` — beide Reihenfolgen; Matching über
+  die `keys` der Fakten (`cmd.arg*`). Voraussetzung: beide Prämissen sind **bekannt**.
+  Ohne Match: „You cannot combine these like that.“
+- **Notizbuch** (nur bei `journal: notes`): `notizen`/`notes` zeigt gelernte, nicht-silente
+  Fakten in **Deklarationsreihenfolge** — die ist Gameplay-Vertrag (nicht umsortieren).
+- **Checks:** `UnknownFact`, `DuplicateFact`, `YieldsWithoutPremises`,
+  `KnownVariableClash` (`known.` gehört der Engine), Kollisionen der generierten Verben.
+
 ## Validierungs-Warnungen (Compiler-Diagnosen)
 
 Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity = SError`) und **nicht-fatalen Warnungen** (`ciSeverity = SWarning`):

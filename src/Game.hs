@@ -157,6 +157,8 @@ emptyGameWorld = GameWorld
     , cardDefs           = Map.empty
     , sandboxZones       = Map.empty
     , procDefs           = Map.empty
+    , factDefs           = []
+    , combineDefs        = []
     }
 
 -- | Default empty game state
@@ -1023,6 +1025,10 @@ evalPredicate (VarIs name expected) st =
     case getVariable name st of
         Just (VVText v) -> v == expected
         _               -> False
+-- W1: knowledge is a VarMap entry `known.<actor>.<fact>` with value 1;
+--   parameters/locals of an active procedure shadow it like any variable.
+evalPredicate (Knows actor fact) st =
+    getVariable ("known." ++ actorId actor ++ "." ++ fact) st == Just (VVInt 1)
 evalPredicate (Compare lhs op rhs) st =
     let lval = resolveValueRef lhs st
         rval = resolveValueRef rhs st

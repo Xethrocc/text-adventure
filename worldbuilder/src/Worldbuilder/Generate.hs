@@ -1377,6 +1377,10 @@ emitAdventure t plan seed =
             , advHandLimit         = Nothing
             , advSandboxZones      = []
             , advProcedures        = []
+            , advCombineVerb       = Nothing
+            , advJournal           = Nothing
+            , advFacts             = []
+            , advCombines          = []
             , advTests             = []
             , advRawValue          = Nothing
             }

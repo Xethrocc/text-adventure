@@ -1,6 +1,6 @@
 # Engine-Message-Katalog (Phase 1.1)
 
-**Stand:** 2026-09-28 · **Kataloggröße: 185 Keys** (`src/Messages.hs`, `catalogEntries`)
+**Stand:** 2026-09-28 · **Kataloggröße: 188 Keys** (`src/Messages.hs`, `catalogEntries`)
 
 ## Was diese Stufe leistet
 
@@ -152,113 +152,116 @@ abgeschnitten mit `…`; maßgeblich ist `src/Messages.hs`.
 | 75 | `inv.header` | `Inventory: {items}` |
 | 76 | `item.cant_do` | `You can't do that to the {item} right now.` |
 | 77 | `item.no_id` | `There is no item '{id}'.` |
-| 78 | `load.ironman_blocked` | `Loading is disabled in ironman mode.` |
-| 79 | `load.permadeath` | `No load after death (permadeath).` |
-| 80 | `load.prompt` | `Enter save name to load (or press Enter for 'savegame'):` |
-| 81 | `look.corpse_many` | `\nBodies lie here: {names}.` |
-| 82 | `look.corpse_one` | `\nThe body of {name} lies here.` |
-| 83 | `look.fuel` | `\nFuel ({item}: {f}/{max})` |
-| 84 | `look.fuel_out` | `\nOut of {item} (0/{max})` |
-| 85 | `look.items` | `\nYou see: {names}.` |
-| 86 | `look.npcs` | `\nAlso here: {names}.` |
-| 87 | `look.see_nothing` | `\nYou see nothing of interest.` |
-| 88 | `look.void` | `You're in a void. There's nothing here.` |
-| 89 | `map.legend_line` | `  {i}: {label}` |
-| 90 | `map.no_marks` | `There is nothing marked on the map.` |
-| 91 | `map.void` | `You're in a void. There's nothing to map.` |
-| 92 | `menu.death_full` | `  [U]ndo  \|  [L]oad last save  \|  [R]estart  \|  [Q]uit` |
-| 93 | `menu.restart_quit` | `  [R]estart  \|  [Q]uit` |
-| 94 | `meta.corrupted` | `Warning: meta file '{path}' is corrupted — starting fresh.` |
-| 95 | `meta.unreadable` | `Warning: meta file '{path}' is unreadable — starting fresh.` |
-| 96 | `move.blocked` | `You can't go that way.` |
-| 97 | `move.door_locked` | `The door is locked.` |
-| 98 | `move.no_exit` | `There's nothing in that direction.` |
-| 99 | `move.ok` | `You move {dir}.` |
-| 100 | `npc.already_dead` | `The {npc} is already dead.` |
-| 101 | `npc.cant_do` | `You can't do that to {npc}.` |
-| 102 | `npc.dead_silent` | `The {npc} is dead and says nothing.` |
-| 103 | `parse.unknown` | `I don't understand '{input}'. Type 'help' for available commands.` |
-| 104 | `proc.arity` | `That procedure cannot be called this way.` |
-| 105 | `proc.unknown` | `That procedure does not exist.` |
-| 106 | `quest.cannot_start` | `You cannot start that quest right now.` |
-| 107 | `quest.not_active` | `That quest is not active.` |
-| 108 | `quests.active_header` | `Active:` |
-| 109 | `quests.completed_header` | `Completed:` |
-| 110 | `quests.journal_empty` | `Your journal is empty.` |
-| 111 | `quests.journal_header` | `=== Journal ===\n` |
-| 112 | `quit.bye` | `Goodbye!` |
-| 113 | `quit.thanks` | `Thanks for playing!` |
-| 114 | `refuel.no_vehicle` | `There is no vehicle to refuel.` |
-| 115 | `refuel.not_needed` | `The {vehicle} doesn't need fuel.` |
-| 116 | `repair.nothing_broken` | `There is nothing broken about the {vehicle} that matches '{target}'.` |
-| 117 | `repair.ok` | `You repair the {vehicle} ({problem}).` |
-| 118 | `repair.problems` | ` Problems: {list}.` |
-| 119 | `save.compatible` | `compatible` |
-| 120 | `save.corrupted` | `Error: Save file is corrupted or incompatible.` |
-| 121 | `save.entry` | `  {name} — {timestamp} ({compat})` |
-| 122 | `save.list_header` | `=== Saved Games ===` |
-| 123 | `save.loaded` | `Game loaded from {path} (saved: {timestamp}).` |
-| 124 | `save.loaded_legacy` | `Game loaded (legacy format).` |
-| 125 | `save.loaded_legacy2` | `Game loaded from legacy format.` |
-| 126 | `save.none_found` | `No saved games found.` |
-| 127 | `save.not_found` | `Error: Save file '{path}' not found.` |
-| 128 | `save.saved` | `Game saved to {path} ({timestamp}).` |
-| 129 | `save.savezone_only` | `You can only rest at a savezone.` |
-| 130 | `save.slot_delete_failed` | `Warning: could not delete save slot {path}.` |
-| 131 | `save.slot_deleted` | `Save slot deleted: {path}` |
-| 132 | `save.unreadable` | `Error: Could not read file '{path}'.` |
-| 133 | `save.version_warning` | `Warning: This save was made with a different world version. Results may be unpredictable.` |
-| 134 | `save.world_mismatch` | `world mismatch!` |
-| 135 | `search.nothing` | `You find nothing of interest.` |
-| 136 | `search.nothing_item` | `You find nothing special about the {item}.` |
-| 137 | `search.nothing_npc` | `You find nothing on {npc}.` |
-| 138 | `search.reveal` | `You find the {item}.` |
-| 139 | `search.void` | `You're in a void. There's nothing to search.` |
-| 140 | `stats.attack` | `Attack:  {atk} (base {base})` |
-| 141 | `stats.conditions` | `Conditions: {conds}\n` |
-| 142 | `stats.defense` | `Defense: {def} (base {base})` |
-| 143 | `stats.health` | `Health:  {hp} / {max}` |
-| 144 | `stats.skills` | `Skills: {skills}\n` |
-| 145 | `take.already` | `You already have the {item}.` |
-| 146 | `take.none_here` | `There's nothing here to take.` |
-| 147 | `take.not_portable` | `You can't take the {item}.` |
-| 148 | `take.ok` | `You take the {item}.` |
-| 149 | `target.not_carried` | `You don't have '{target}'.` |
-| 150 | `target.not_seen` | `You don't see '{target}' here.` |
-| 151 | `ui.press_enter` | `  [Press Enter to continue]` |
-| 152 | `undo.disabled` | `Undo is disabled in this adventure.` |
-| 153 | `undo.done` | `Undone.` |
-| 154 | `undo.ironman` | `No undo in ironman mode.` |
-| 155 | `undo.nothing` | `Nothing to undo.` |
-| 156 | `undo.permadeath` | `No undo after death (permadeath).` |
-| 157 | `unequip.all` | `You remove all equipment.` |
-| 158 | `unequip.not_equipped` | `The {item} is not equipped.` |
-| 159 | `unequip.ok` | `You unequip the {item}.` |
-| 160 | `use.not_carried` | `You need to be carrying '{item}' to use it.` |
-| 161 | `use.nothing` | `Nothing happens.` |
-| 162 | `use.ok` | `You use the {item}. {msg}` |
-| 163 | `use.unreachable` | `You can't reach '{entity}' from here.` |
-| 164 | `vehicle.board` | `You board the {vehicle}.` |
-| 165 | `vehicle.cant_drive` | `You can't drive there from here. Stations: {stations}` |
-| 166 | `vehicle.cant_steer` | `You can't steer the {vehicle}; it follows its own route.` |
-| 167 | `vehicle.disembark` | `You disembark from the {vehicle}.` |
-| 168 | `vehicle.drive_to` | `You drive to {stop}.` |
-| 169 | `vehicle.fuelled` | `The {vehicle} is fuelled ({f}/{max}).` |
-| 170 | `vehicle.manual_only` | `This vehicle only moves when you drive it.` |
-| 171 | `vehicle.need_controls` | `You need to be at the controls to drive.` |
-| 172 | `vehicle.no_here_enter` | `There is no '{id}' here to enter.` |
-| 173 | `vehicle.no_id` | `There is no '{id}'.` |
-| 174 | `vehicle.not_here` | `The {vehicle} is not here.` |
-| 175 | `vehicle.not_in` | `You are not in a vehicle.` |
-| 176 | `vehicle.not_on` | `You are not on a vehicle.` |
-| 177 | `vehicle.route_end` | `The route has no further stops.` |
-| 178 | `vehicle.travel_on` | `You travel on to {stop}.` |
-| 179 | `vehicle.warning` | `Warning: {list}!` |
-| 180 | `victory.title` | `  VICTORY!` |
-| 181 | `watch.nothing` | `There is nothing to watch about {label}.` |
-| 182 | `watch.start` | `Watching {label}...` |
-| 183 | `watch.void` | `You're in a void. There's nothing to watch.` |
-| 184 | `world.file_unreadable` | `Could not read world file '{path}': {err}` |
-| 185 | `world.save_unreadable` | `Could not read save file '{path}': {err}` |
+| 78 | `learn.default` | `Noted.` |
+| 79 | `load.ironman_blocked` | `Loading is disabled in ironman mode.` |
+| 80 | `load.permadeath` | `No load after death (permadeath).` |
+| 81 | `load.prompt` | `Enter save name to load (or press Enter for 'savegame'):` |
+| 82 | `look.corpse_many` | `\nBodies lie here: {names}.` |
+| 83 | `look.corpse_one` | `\nThe body of {name} lies here.` |
+| 84 | `look.fuel` | `\nFuel ({item}: {f}/{max})` |
+| 85 | `look.fuel_out` | `\nOut of {item} (0/{max})` |
+| 86 | `look.items` | `\nYou see: {names}.` |
+| 87 | `look.npcs` | `\nAlso here: {names}.` |
+| 88 | `look.see_nothing` | `\nYou see nothing of interest.` |
+| 89 | `look.void` | `You're in a void. There's nothing here.` |
+| 90 | `map.legend_line` | `  {i}: {label}` |
+| 91 | `map.no_marks` | `There is nothing marked on the map.` |
+| 92 | `map.void` | `You're in a void. There's nothing to map.` |
+| 93 | `menu.death_full` | `  [U]ndo  \|  [L]oad last save  \|  [R]estart  \|  [Q]uit` |
+| 94 | `menu.restart_quit` | `  [R]estart  \|  [Q]uit` |
+| 95 | `meta.corrupted` | `Warning: meta file '{path}' is corrupted — starting fresh.` |
+| 96 | `meta.unreadable` | `Warning: meta file '{path}' is unreadable — starting fresh.` |
+| 97 | `move.blocked` | `You can't go that way.` |
+| 98 | `move.door_locked` | `The door is locked.` |
+| 99 | `move.no_exit` | `There's nothing in that direction.` |
+| 100 | `move.ok` | `You move {dir}.` |
+| 101 | `notes.empty` | `Your notes are empty.` |
+| 102 | `notes.header` | `Your notes:` |
+| 103 | `npc.already_dead` | `The {npc} is already dead.` |
+| 104 | `npc.cant_do` | `You can't do that to {npc}.` |
+| 105 | `npc.dead_silent` | `The {npc} is dead and says nothing.` |
+| 106 | `parse.unknown` | `I don't understand '{input}'. Type 'help' for available commands.` |
+| 107 | `proc.arity` | `That procedure cannot be called this way.` |
+| 108 | `proc.unknown` | `That procedure does not exist.` |
+| 109 | `quest.cannot_start` | `You cannot start that quest right now.` |
+| 110 | `quest.not_active` | `That quest is not active.` |
+| 111 | `quests.active_header` | `Active:` |
+| 112 | `quests.completed_header` | `Completed:` |
+| 113 | `quests.journal_empty` | `Your journal is empty.` |
+| 114 | `quests.journal_header` | `=== Journal ===\n` |
+| 115 | `quit.bye` | `Goodbye!` |
+| 116 | `quit.thanks` | `Thanks for playing!` |
+| 117 | `refuel.no_vehicle` | `There is no vehicle to refuel.` |
+| 118 | `refuel.not_needed` | `The {vehicle} doesn't need fuel.` |
+| 119 | `repair.nothing_broken` | `There is nothing broken about the {vehicle} that matches '{target}'.` |
+| 120 | `repair.ok` | `You repair the {vehicle} ({problem}).` |
+| 121 | `repair.problems` | ` Problems: {list}.` |
+| 122 | `save.compatible` | `compatible` |
+| 123 | `save.corrupted` | `Error: Save file is corrupted or incompatible.` |
+| 124 | `save.entry` | `  {name} — {timestamp} ({compat})` |
+| 125 | `save.list_header` | `=== Saved Games ===` |
+| 126 | `save.loaded` | `Game loaded from {path} (saved: {timestamp}).` |
+| 127 | `save.loaded_legacy` | `Game loaded (legacy format).` |
+| 128 | `save.loaded_legacy2` | `Game loaded from legacy format.` |
+| 129 | `save.none_found` | `No saved games found.` |
+| 130 | `save.not_found` | `Error: Save file '{path}' not found.` |
+| 131 | `save.saved` | `Game saved to {path} ({timestamp}).` |
+| 132 | `save.savezone_only` | `You can only rest at a savezone.` |
+| 133 | `save.slot_delete_failed` | `Warning: could not delete save slot {path}.` |
+| 134 | `save.slot_deleted` | `Save slot deleted: {path}` |
+| 135 | `save.unreadable` | `Error: Could not read file '{path}'.` |
+| 136 | `save.version_warning` | `Warning: This save was made with a different world version. Results may be unpredictable.` |
+| 137 | `save.world_mismatch` | `world mismatch!` |
+| 138 | `search.nothing` | `You find nothing of interest.` |
+| 139 | `search.nothing_item` | `You find nothing special about the {item}.` |
+| 140 | `search.nothing_npc` | `You find nothing on {npc}.` |
+| 141 | `search.reveal` | `You find the {item}.` |
+| 142 | `search.void` | `You're in a void. There's nothing to search.` |
+| 143 | `stats.attack` | `Attack:  {atk} (base {base})` |
+| 144 | `stats.conditions` | `Conditions: {conds}\n` |
+| 145 | `stats.defense` | `Defense: {def} (base {base})` |
+| 146 | `stats.health` | `Health:  {hp} / {max}` |
+| 147 | `stats.skills` | `Skills: {skills}\n` |
+| 148 | `take.already` | `You already have the {item}.` |
+| 149 | `take.none_here` | `There's nothing here to take.` |
+| 150 | `take.not_portable` | `You can't take the {item}.` |
+| 151 | `take.ok` | `You take the {item}.` |
+| 152 | `target.not_carried` | `You don't have '{target}'.` |
+| 153 | `target.not_seen` | `You don't see '{target}' here.` |
+| 154 | `ui.press_enter` | `  [Press Enter to continue]` |
+| 155 | `undo.disabled` | `Undo is disabled in this adventure.` |
+| 156 | `undo.done` | `Undone.` |
+| 157 | `undo.ironman` | `No undo in ironman mode.` |
+| 158 | `undo.nothing` | `Nothing to undo.` |
+| 159 | `undo.permadeath` | `No undo after death (permadeath).` |
+| 160 | `unequip.all` | `You remove all equipment.` |
+| 161 | `unequip.not_equipped` | `The {item} is not equipped.` |
+| 162 | `unequip.ok` | `You unequip the {item}.` |
+| 163 | `use.not_carried` | `You need to be carrying '{item}' to use it.` |
+| 164 | `use.nothing` | `Nothing happens.` |
+| 165 | `use.ok` | `You use the {item}. {msg}` |
+| 166 | `use.unreachable` | `You can't reach '{entity}' from here.` |
+| 167 | `vehicle.board` | `You board the {vehicle}.` |
+| 168 | `vehicle.cant_drive` | `You can't drive there from here. Stations: {stations}` |
+| 169 | `vehicle.cant_steer` | `You can't steer the {vehicle}; it follows its own route.` |
+| 170 | `vehicle.disembark` | `You disembark from the {vehicle}.` |
+| 171 | `vehicle.drive_to` | `You drive to {stop}.` |
+| 172 | `vehicle.fuelled` | `The {vehicle} is fuelled ({f}/{max}).` |
+| 173 | `vehicle.manual_only` | `This vehicle only moves when you drive it.` |
+| 174 | `vehicle.need_controls` | `You need to be at the controls to drive.` |
+| 175 | `vehicle.no_here_enter` | `There is no '{id}' here to enter.` |
+| 176 | `vehicle.no_id` | `There is no '{id}'.` |
+| 177 | `vehicle.not_here` | `The {vehicle} is not here.` |
+| 178 | `vehicle.not_in` | `You are not in a vehicle.` |
+| 179 | `vehicle.not_on` | `You are not on a vehicle.` |
+| 180 | `vehicle.route_end` | `The route has no further stops.` |
+| 181 | `vehicle.travel_on` | `You travel on to {stop}.` |
+| 182 | `vehicle.warning` | `Warning: {list}!` |
+| 183 | `victory.title` | `  VICTORY!` |
+| 184 | `watch.nothing` | `There is nothing to watch about {label}.` |
+| 185 | `watch.start` | `Watching {label}...` |
+| 186 | `watch.void` | `You're in a void. There's nothing to watch.` |
+| 187 | `world.file_unreadable` | `Could not read world file '{path}': {err}` |
+| 188 | `world.save_unreadable` | `Could not read save file '{path}': {err}` |
 
 <!-- END GENERATED -->

@@ -5034,6 +5034,101 @@ testProcArityDefensive = do
     r1 <- expectTrue "diagnostic recorded" (not (null (diagnostics st1)))
     pure r1
 
+-- ---------------------------------------------------------------------------
+-- W1: knowledge model
+-- ---------------------------------------------------------------------------
+
+-- | Helper: empty state with facts/combines installed.
+kstate :: [FactDef] -> [CombineDef] -> GameState
+kstate fds cds =
+    let gw = (world emptyGameState) { factDefs = fds, combineDefs = cds }
+    in emptyGameState { world = gw }
+
+-- | 'Knows' reads `known.<actor>.<fact>`; NPCs are separate minds.
+testKnowsPredicate :: IO Bool
+testKnowsPredicate = do
+    let st0 = kstate [FactDef "brief" ["brief"] "Der Brief." Nothing Nothing Nothing Nothing] []
+        (st1, _, _) = applyOutcomeWith 0 0 (Learn ActorPlayer "brief") "" st0
+        (st2, _, _) = applyOutcomeWith 0 0 (Learn (ActorNPC "butler") "brief") "" st1
+    r1 <- expectTrue "player knows brief" (evalPredicate (Knows ActorPlayer "brief") st1)
+    r2 <- expectTrue "npc knowledge is separate"
+            (not (evalPredicate (Knows (ActorNPC "butler") "brief") st1))
+    r3 <- expectTrue "npc learns too" (evalPredicate (Knows (ActorNPC "butler") "brief") st2)
+    r4 <- expectTrue "unknown fact unknown" (not (evalPredicate (Knows ActorPlayer "brief") st0))
+    pure (r1 && r2 && r3 && r4)
+
+-- | 'Learn' is idempotent and the cascade derives A->B->C in one step;
+--   'Forget' removes only the named fact.
+testLearnCascadeAndForget :: IO Bool
+testLearnCascadeAndForget = do
+    let cds =
+            [ CombineDef ["brief"] "brief_gelesen" Nothing
+            , CombineDef ["brief_gelesen", "tagebuch"] "verabredung" (Just "Der Hafen!") ]
+        st0 = kstate
+            [ FactDef "brief" ["brief"] "Der Brief." Nothing Nothing Nothing Nothing
+            , FactDef "brief_gelesen" [] "" Nothing Nothing Nothing Nothing
+            , FactDef "tagebuch" ["tagebuch"] "Das Tagebuch." Nothing Nothing Nothing Nothing
+            , FactDef "verabredung" [] "" Nothing Nothing Nothing Nothing ]
+            cds
+        (st1, _, _) = applyOutcomeWith 0 0 (Learn ActorPlayer "brief") "" st0
+        (st2, _, _) = applyOutcomeWith 0 0 (Learn ActorPlayer "tagebuch") "" st1
+    r1 <- expectTrue "brief learned" (evalPredicate (Knows ActorPlayer "brief") st1)
+    r2 <- expectTrue "cascade derived brief_gelesen"
+            (evalPredicate (Knows ActorPlayer "brief_gelesen") st1)
+    r3 <- expectTrue "second learn completes the chain"
+            (evalPredicate (Knows ActorPlayer "verabredung") st2)
+    r4 <- expectTrue "idempotent: re-learn is a no-op"
+            (let (st3, _, _) = applyOutcomeWith 0 0 (Learn ActorPlayer "brief") "" st2
+             in st3 == st2)
+    r5 <- expectTrue "scope stack untouched" (null (procScopes st2))
+    let (st4, _, _) = applyOutcomeWith 0 0 (Forget ActorPlayer "brief") "" st2
+    r6 <- expectTrue "forget removes the fact"
+            (not (evalPredicate (Knows ActorPlayer "brief") st4))
+    r7 <- expectTrue "forget does not cascade backwards"
+            (evalPredicate (Knows ActorPlayer "brief_gelesen") st4)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | OnLearn fires once per newly learned fact, in learning order; silent
+--   facts learn silently; author learn_msg wins.
+testOnLearnAndMessages :: IO Bool
+testOnLearnAndMessages = do
+    let fds =
+            [ FactDef "a" [] "" Nothing Nothing Nothing Nothing
+            , FactDef "stille" [] "" Nothing Nothing Nothing (Just True)
+            , FactDef "mit_msg" [] "" Nothing Nothing (Just "EUREKA: {grund}") Nothing ]
+        st0 = kstate fds
+            [ CombineDef ["a"] "b" (Just "B folgt aus A.")
+            , CombineDef ["b"] "c" Nothing ]
+        (st1, evs, _) = applyOutcomeWith 0 0
+            (Sequence [ Learn ActorPlayer "a", SendMessage "m1", Learn ActorPlayer "stille"
+                      , SendMessage "m2", Learn ActorPlayer "mit_msg" ]) "" st0
+        out = renderEvents evs
+    r1 <- expectTrue "learn.default shown for plain fact" ("Noted." `isInfixOf` out)
+    r2 <- expectTrue "silent fact shows nothing"
+            (length [l | l <- lines out, "Noted." `isInfixOf` l] == 2)
+    r3 <- expectTrue "author learn_msg wins" ("EUREKA:" `isInfixOf` out)
+    r4 <- expectTrue "combine cdMsg shown for derived fact" ("B folgt aus A." `isInfixOf` out)
+    -- OnLearn fired for a and b (c derives only after b is learned — wait: the
+    -- cascade of 'a' learns b AND (b -> c) in one walk; so c is new too).
+    r5 <- expectTrue "all three facts known"
+            (all (\x -> evalPredicate (Knows ActorPlayer x) st1) ["a", "b", "c"])
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | NPC learning cascades for the NPC but never for the player.
+testNpcKnowledgeCascade :: IO Bool
+testNpcKnowledgeCascade = do
+    let st0 = kstate
+            [ FactDef "geruecht" [] "" Nothing Nothing Nothing Nothing
+            , FactDef "verdacht" [] "" Nothing Nothing Nothing Nothing ]
+            [ CombineDef ["geruecht"] "verdacht" Nothing ]
+        (st1, _, _) = applyOutcomeWith 0 0 (Learn (ActorNPC "butler") "geruecht") "" st0
+    r1 <- expectTrue "npc cascade derived"
+            (evalPredicate (Knows (ActorNPC "butler") "verdacht") st1)
+    r2 <- expectTrue "player untouched"
+            (not (evalPredicate (Knows ActorPlayer "verdacht") st1))
+    r3 <- expectTrue "no message for npc learning" (renderEvents [] == "")
+    pure (r1 && r2 && r3)
+
 -- | Rogue Phase 4c: run-seed derivation from slug and run index.
 --   Determinism, distinctness across runs, and distinctness across slugs.
 testDeriveRunSeed :: IO Bool
@@ -7859,6 +7954,10 @@ main = do
         , runTest "veto inside a procedure stops body and caller (Phase 2.5)" testProcVetoStopsBody
         , runTest "call to unknown procedure is defensive (Phase 2.5)" testProcUnknownDefensive
         , runTest "procedure arity mismatch is defensive (Phase 2.5)" testProcArityDefensive
+        , runTest "knows predicate reads known.<actor>.<fact> (W1)" testKnowsPredicate
+        , runTest "learn cascade, idempotency and forget (W1)" testLearnCascadeAndForget
+        , runTest "OnLearn fires per fact; silent and author messages (W1)" testOnLearnAndMessages
+        , runTest "npc knowledge cascades separately (W1)" testNpcKnowledgeCascade
         , runTest "fatal condition tick stops the command (L11)" testFatalTickStopsCommand
         -- Review L4: constructor coverage in Validate
         , runTest "MissingRoom from a rule room reference (L4)" testValidateMissingRoomInRule

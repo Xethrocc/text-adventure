@@ -54,6 +54,10 @@ data Adventure = Adventure
     , advHandLimit        :: Maybe Int                   -- ^ maximum cards in hand (Phase 2 / S2)
     , advSandboxZones     :: [ASandboxZone]              -- ^ procedural sandbox zones (Schritt 3 / Phase 3E)
     , advProcedures       :: [AProcDef]                  -- ^ named procedures (Phase 2.5)
+    , advCombineVerb      :: Maybe String                -- ^ verb word for combining facts (W1; default "kombiniere")
+    , advJournal          :: Maybe String                -- ^ journal: notes | messages (W1; default: messages = no notes command)
+    , advFacts            :: [AFactDef]                  -- ^ knowledge facts (W1)
+    , advCombines         :: [ACombineDef]               -- ^ derivation rules (W1)
     , advTests            :: [AContentTest]              -- ^ authored content tests (B1)
     , advRawValue         :: Maybe Value                 -- ^ raw parsed JSON/YAML value for schema validation
     } deriving (Show, Eq, Generic)
@@ -127,6 +131,10 @@ instance FromJSON Adventure where
         <*> parseHandLimitField o
         <*> parseSandboxZonesField o
         <*> o .:? "procedures" .!= []
+        <*> o .:? "combine_verb" .!= Nothing
+        <*> o .:? "journal"      .!= Nothing
+        <*> o .:? "facts"      .!= []
+        <*> o .:? "combine"    .!= []
         <*> o .:? "tests" .!= []
         <*> pure (Just v)
     parseJSON _ = fail "Expected Adventure to be an object"
@@ -1118,6 +1126,42 @@ instance FromJSON AProcDef where
         <*> o .:? "params"  .!= []
         <*> o .:? "effects" .!= []
 
+-- | A knowledge fact (W1) authored under `facts:` — notes-book text, keys
+--   for referring to it, optional source/tag/learn message/silence.
+data AFactDef = AFactDef
+    { afdId       :: String
+    , afdKeys     :: [String]
+    , afdText     :: String
+    , afdSource   :: Maybe String
+    , afdTag      :: Maybe String
+    , afdLearnMsg :: Maybe String
+    , afdSilent   :: Maybe Bool
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AFactDef where
+    parseJSON = withObject "AFactDef" $ \o -> AFactDef
+        <$> o .:  "id"
+        <*> o .:? "keys"      .!= []
+        <*> o .:  "text"
+        <*> o .:? "source"    .!= Nothing
+        <*> o .:? "tag"       .!= Nothing
+        <*> o .:? "learn_msg" .!= Nothing
+        <*> o .:? "silent"    .!= Nothing
+
+-- | A derivation rule authored under `combine:` (W1): premises -> yields,
+--   with an optional confirmation message.
+data ACombineDef = ACombineDef
+    { acdFacts  :: [String]
+    , acdYields :: String
+    , acdMsg    :: Maybe String
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ACombineDef where
+    parseJSON = withObject "ACombineDef" $ \o -> ACombineDef
+        <$> o .:  "facts"
+        <*> o .:  "yields"
+        <*> o .:? "msg" .!= Nothing
+
 -- | An authored content test (B1): a command sequence and **ordered** output
 --   markers — every marker must appear in the rendered output, in the
 --   declared order (subsequence semantics).
@@ -1184,6 +1228,8 @@ data AActionOutcome
       -- ^ id, name, desc, connect_from, direction, return_direction
     | AOBlock (Maybe String) Bool      -- ^ block: "msg" or block: { msg: "...", turn: true } (Phase 2.2)
     | AOCallProc String [E.EffectValue] -- ^ call: <name> or call: {proc: <name>, args: [...]} (Phase 2.5)
+    | AOLearn String String            -- ^ learn: <fact> or learn: {fact, actor} (W1; actor defaults to player)
+    | AOForget String String           -- ^ forget: <fact> - same shapes (W1)
     deriving (Show, Eq, Generic)
 
 -- | Procedure arguments are literal YAML scalars (int/bool/text) — literal on
@@ -1222,6 +1268,16 @@ instance FromJSON AActionOutcome where
                                  <*> cond .:? "tick" .!= [] <*> cond .:? "end" .!= []
                                  <*> cond .:? "hidden" .!= False)
         <|> (AOClearCondition <$> o .: "clear_condition")
+        <|> (do l <- o .: "learn"
+                case l of
+                    String f  -> pure (AOLearn (T.unpack f) "player")
+                    Object lo -> AOLearn <$> lo .: "fact" <*> lo .:? "actor" .!= "player"
+                    _         -> fail "learn must be a fact id or {fact, actor}")
+        <|> (do lf <- o .: "forget"
+                case lf of
+                    String f  -> pure (AOForget (T.unpack f) "player")
+                    Object fo -> AOForget <$> fo .: "fact" <*> fo .:? "actor" .!= "player"
+                    _         -> fail "forget must be a fact id or {fact, actor}")
         <|> (do sk <- o .: "skill"
                 AOModifySkill <$> sk .: "name" <*> sk .: "delta")
         <|> (AORandomChoice <$> o .: "random")
@@ -1389,6 +1445,7 @@ knownKeys EntAdventure = Set.fromList
     , "encounter_tables", "environment", "stealth", "patrol", "combat"
     , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
     , "handLimit", "hand_limit", "sandbox_zones", "procedures", "tests"
+    , "facts", "combine", "combine_verb", "journal"
     ]
 knownKeys EntRoom = Set.fromList
     [ "id", "name", "desc", "description", "exits", "tags", "light_flag"

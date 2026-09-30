@@ -118,9 +118,10 @@ echo "== 4b. author content tests (B1) =="
 # Content tests as data: the `tests:` section of an adventure runs through
 # `worldbuilder test` (ordered markers). Extend the list as adventures grow
 # their own tests.
-for name in procedures; do
+for name in procedures wissen; do
     case "$name" in
         procedures) src="examples/fixtures/procedures.yaml" ;;
+        wissen)     src="examples/fixtures/wissen.yaml" ;;
     esac
     "${WORLDBUILDER[@]}" test "$src" || exit 1
 done

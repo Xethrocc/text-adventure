@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### Wissensmodell: `facts:`, `combine:`, `learn`/`forget`/`knows` und Notizbuch (W1)
+
+- **`facts:`-Sektion** (`AFactDef` → `FactDef`): Fakten mit `keys` (Wörter zum Ansprechen),
+  Notizbuch-`text`, optionalem `source`, `tag` (Gruppierung), `learn_msg` (Meldung beim
+  Lernen) und `silent` (pro Fakt). Kompiliert als **Liste** in Deklarationsreihenfolge —
+  die Notizbuch-Reihenfolge ist ein Gameplay-Vertrag („nicht umsortieren“); leere Listen
+  werden im `world.json` weggelassen.
+- **Prädikat `Knows`** (`knows: <fact>` bzw. `{knows: <actor>, fact: <fact>}`): liest
+  `known.<actor>.<fact>` (VarMap); Akteure haben getrennte Wissensstände (NPC-Schatten).
+- **Effekte `learn`/`forget`**: Lernen ist **idempotent** (Set-Semantik); pro neu gelerntem
+  Fakt feuert **`OnLearn`** einmal, in Lernreihenfolge. `forget` entfernt nur den genannten
+  Fakt — es gibt kein automatisches Vergessen und keine Rückwärts-Kaskade.
+- **`combine:`-Kaskade** als geschlossene Operation in der `Learn`-Anwendung (FIFO-Queue
+  über die deklarierte Tabelle, jeder Fakt höchstens einmal, Prämissen gegen den
+  fortschreibenden State) — **kein** Verlass auf `maxOutcomeDepth`, keine Trigger-Rekursion.
+- **Meldungen**: nur der Spieler sieht Notizen (NPC-Lernen still); `silent: true`
+  unterdrückt; Autor-`learn_msg`/`combine`-`msg` schlagen den Katalog-Default
+  (`learn.default`, „Noted.“) — Katalog jetzt 187 Keys.
+- **`kombiniere`-Befehl** (W1.4, compiler-generiert): pro `combine:`-Eintrag werden
+  Trigger generiert (beide Argumentformen `X Y`/`X mit Y`, beide Reihenfolgen, Matching
+  über `cmd.arg*` gegen `keys` per `VarIs`), **gated auf `Knows` beider Prämissen**
+  (detektivische Fairness); ein generierter Fallback antwortet bei Nicht-Match
+  („You cannot combine these like that.“). Das Verb wird in die Registry injiziert
+  (Default `kombiniere`, Alias `combine`, per `combine_verb:` überschreibbar).
+- **Notizbuch** (W1.5): `journal: notes` generiert den `notizen`-Befehl (Alias `notes`) →
+  Effekt `ShowNotes`: gelernte, nicht-silente Spieler-Fakten in **Deklarationsreihenfolge**
+  (ungetaggte zuerst, dann Tags in Erstauftretens-Reihenfolge), mit `(source)`. NPC-Wissen
+  ist nie sichtbar (das ist die Detektivarbeit).
+- **Checks** (`worldbuilder`): `UnknownFact` (learn/forget/knows/combine-Referenzen),
+  `DuplicateFact`, `YieldsWithoutPremises`, `KnownVariableClash` (`known.` gehört der Engine;
+  auch in den Proc-Param-Präfixen).
+- **Tests**: 4 Engine-Tests (**404**) + 3 Worldbuilder-Tests (**181**); Fixture
+  `examples/fixtures/wissen.yaml` (Lernen → Kombinieren → Notizbuch, plus Fehlschlags-Pfad)
+  in CI-Stufe 4b.
+
 ### Content-Tests als Daten: `tests:`-Sektion und `worldbuilder test` (B1)
 
 - **`tests:`-Sektion** (`worldbuilder/src/Worldbuilder/Types.hs`, `AContentTest`): der Autor

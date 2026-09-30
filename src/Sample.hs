@@ -372,6 +372,8 @@ initSampleGame = GameState
         , worldClips = Map.empty
         , cardDefs = Map.empty
         , sandboxZones = Map.empty
+        , factDefs = []
+        , combineDefs = []
         , procDefs = Map.empty
         }
     , save = SaveState

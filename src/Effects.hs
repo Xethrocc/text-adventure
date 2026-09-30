@@ -32,7 +32,7 @@ import Game
 import Messages (evMsg)
 import Quests (canStartQuest, startQuest, advanceQuest, completeQuestWith)
 import Vehicles (vehicleConditionTickWith)
-import Data.List (intercalate, foldl')
+import Data.List (intercalate, foldl', find)
 import Data.Bits (shiftR)
 import Data.Maybe (listToMaybe, fromMaybe)
 import Control.Monad (guard)
@@ -50,6 +50,10 @@ maxOutcomeDepth = 20
 
 -- | Outcome application with a threaded RNG salt and recursion depth.
 --   Returns (state, message, nextSalt, nextDepth).
+-- | W1: message decision for a newly learned fact — no message (NPC or
+--   silent fact), the catalog default, or an author template.
+data LearnMsg = NoMsg | DefaultMsg | AuthorMsg (Maybe String)
+
 applyOutcomeWith :: Int -> Int -> Effect -> ItemID -> GameState -> (GameState, [OutputEvent], Int)
 applyOutcomeWith depth salt outcome targetId state
     | depth > maxOutcomeDepth =
@@ -206,6 +210,96 @@ applyOutcomeWith depth salt outcome targetId state
         in (st', m, salt)
 
     ModifySkill skillId delta -> (modifySkill skillId delta state, [], salt)
+
+    -- W1: knowledge is the closed VarMap namespace `known.<actor>.<fact>`.
+    --   `Learn` is idempotent (Set semantics). Per newly learned fact (in
+    --   learning order): first the message (only for the player, when not
+    --   silent — the `combine:` cascade passes the deriving entry's message),
+--   then the `OnLearn` trigger fires once. The `combine:` closure itself is a
+    --   pure, bounded walk over the declared table (queue, every fact at most
+    --   once) — a closed operation on the fact set, never trigger recursion.
+    Learn actor fact ->
+        let (stC, learned) = cascade state [] [(actorId actor, fact, AuthorMsg Nothing)]
+            fire (st, acc, s) (aId, f, mMsg) =
+                let (st', trigMsgs) = fireTriggersWithDepth (depth + 1) (OnLearn f) st
+                    entry = case mMsg of
+                        AuthorMsg (Just m) -> evRaw (formatWithVars m st)
+                        AuthorMsg Nothing  -> evMsg "learn.default" []
+                        DefaultMsg         -> evMsg "learn.default" []
+                        NoMsg              -> []
+                in (st', joinEv acc (joinEv entry trigMsgs), s)
+        in foldl' fire (stC, [], salt) learned
+      where
+        defs = combineDefs (world state)
+        facts = factDefs (world state)
+        -- The cascade walks the declared `combine:` table as a closed
+        -- operation on the fact set (FIFO queue, every fact at most once) —
+        -- never trigger recursion. Entries carry their message decision:
+        -- 'Nothing' = no message (NPC or silent), 'Just Nothing' = catalog
+        -- default, 'Just (Just m)' = author template (combine cdMsg or
+        -- fact learn_msg).
+        cascade st learned [] = (st, reverse learned)
+        cascade st learned ((aId, f, mMsg):q)
+            | getVariable ("known." ++ aId ++ "." ++ f) st == Just (VVInt 1)
+            = cascade st learned q
+            | otherwise =
+                let st1 = setVariableChecked ("known." ++ aId ++ "." ++ f) (VVInt 1) st
+                    derived =
+                        [ (aId, cdYields c, AuthorMsg (cdMsg c))
+                        | c <- defs, cdYields c `notElem` map snd3 ((aId, f, mMsg) : q)
+                        , all (\p -> getVariable ("known." ++ aId ++ "." ++ p) st1
+                                    == Just (VVInt 1)) (cdFacts c) ]
+                    learned' = (aId, f, learnMsgFor aId f mMsg) : learned
+                in cascade st1 learned' (q ++ derived)
+        -- Only the player sees notes; `silent: true` suppresses everything;
+        -- author messages (combine cdMsg or fact learn_msg) win over the
+        -- catalog default.
+        learnMsgFor :: String -> String -> LearnMsg -> LearnMsg
+        learnMsgFor aId f mFromCombine
+            | aId /= "player"              = NoMsg
+            | factSilentFor f == Just True = NoMsg
+            | otherwise = case mFromCombine of
+                AuthorMsg (Just m) -> AuthorMsg (Just m)
+                AuthorMsg Nothing  -> case find (\fd -> factId fd == f) facts of
+                    Just fd | Just m <- factLearnMsg fd -> AuthorMsg (Just m)
+                    _       -> DefaultMsg
+                DefaultMsg         -> DefaultMsg
+                NoMsg              -> NoMsg
+        factSilentFor f = case find (\fd -> factId fd == f) facts of
+            Just fd -> factSilent fd
+            Nothing -> Nothing
+        snd3 (_, f, _) = f
+
+    -- W1 (Befehl `notizen`, generierter Trigger bei `journal: notes`): render
+    --   the notes book — learned, non-silent player facts in **declaration
+    --   order** (ungrouped first, then tags in first-occurrence order). NPC
+    --   knowledge is never shown (that is the detective work: questioning).
+    ShowNotes ->
+        let visible = [ fd | fd <- factDefs (world state)
+                        , getVariable ("known.player." ++ factId fd) state == Just (VVInt 1)
+                        , factSilent fd /= Just True ]
+            header = evMsg "notes.header" []
+            lineFor fd =
+                let src = case factSource fd of
+                        Just s' -> " (" ++ s' ++ ")"
+                        Nothing -> ""
+                in "- " ++ factText fd ++ src
+            tagBlock t = ("[" ++ t ++ "]") : map lineFor [ fd | fd <- visible, factTag fd == Just t ]
+            untagged = map lineFor [ fd | fd <- visible, Nothing <- [factTag fd] ]
+            tagOrder = nub' [ t | fd <- visible, Just t <- [factTag fd] ]
+            nub' = foldr (\x acc -> x : filter (/= x) acc) []
+            grouped = untagged ++ concatMap tagBlock tagOrder
+            body = if null visible
+                then evMsg "notes.empty" []
+                else joinEv header (evRaw (unlines grouped))
+        in (state, body, salt)
+
+    Forget actor fact ->
+        let key = "known." ++ actorId actor ++ "." ++ fact
+        in if getVariable key state == Just (VVInt 1)
+           then (state { save = (save state) { variables = Map.delete key (variables (save state)) } }
+                , [], salt)
+           else (state, [], salt)
 
     SetExit from dir exit ->
         let ss = save state
