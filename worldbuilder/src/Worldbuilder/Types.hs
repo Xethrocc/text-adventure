@@ -1339,6 +1339,11 @@ data AActionOutcome
       -- ^ step_toward: [seeker, target, msg?] — one edge toward (Tür IV)
     | AOStepAwayFrom String E.DistanceTarget (Maybe String)
       -- ^ step_away_from: [seeker, target, msg?] — one edge away (Tür IV)
+    | AODamageAll E.CountSpec Int           -- ^ damage_all: {what, in|by, tag?, amount}
+    | AOMoveAll E.CountSpec E.CountWhere    -- ^ move_all: {what, in|by, tag?, to: {in|by}}
+    | AORevealAll E.CountSpec               -- ^ reveal_all: {what, in|by, tag?}
+    | AOConsumeAll E.CountSpec              -- ^ consume_all: {what, in|by, tag?}
+    | AOSetStateAll E.CountSpec String      -- ^ set_state_all: {what, in|by, tag?, state}
     | AOMount String String            -- ^ mount: { item: <item>, to: <device> } (W4)
     | AOUnmount String                 -- ^ unmount: <item> (W4)
     | AOGainXp Int                     -- ^ gain_xp: <amount> (W2)
@@ -1403,6 +1408,18 @@ instance FromJSON AActionOutcome where
                     [a, b]    -> AOStepAwayFrom <$> parseJSON a <*> parseJSON b <*> pure Nothing
                     [a, b, m] -> AOStepAwayFrom <$> parseJSON a <*> parseJSON b <*> (Just <$> parseJSON m)
                     _         -> fail "step_away_from: expected [seeker, target, msg?]")
+        -- B3: closed mass operations (the count-set language of B2 plus an
+        -- operation-specific parameter; never a user effect list).
+        <|> (do o' <- o .: "damage_all" :: Parser Object
+                AODamageAll <$> parseJSON (Object o') <*> o' .: "amount")
+        <|> (do o' <- o .: "move_all" :: Parser Object
+                AOMoveAll <$> parseJSON (Object o') <*> o' .: "to")
+        <|> (do o' <- o .: "reveal_all" :: Parser Object
+                AORevealAll <$> parseJSON (Object o'))
+        <|> (do o' <- o .: "consume_all" :: Parser Object
+                AOConsumeAll <$> parseJSON (Object o'))
+        <|> (do o' <- o .: "set_state_all" :: Parser Object
+                AOSetStateAll <$> parseJSON (Object o') <*> o' .: "state")
         <|> (do sk <- o .: "skill"
                 AOModifySkill <$> sk .: "name" <*> sk .: "delta")
         <|> (AORandomChoice <$> o .: "random")

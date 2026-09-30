@@ -429,6 +429,15 @@ data CountWhere
     | CountCarriedBy ActorRef
     deriving (Show, Eq, Generic)
 
+instance ToJSON CountWhere where
+    toJSON (CountInRoom r)    = object [ "in" .= r ]
+    toJSON (CountCarriedBy a) = object [ "by" .= actorId a ]
+
+instance FromJSON CountWhere where
+    parseJSON = withObject "CountWhere" $ \o ->
+            (CountInRoom <$> o .: "in")
+        <|> (CountCarriedBy . parseActorString <$> o .: "by")
+
 -- | B2: a general count query — `count.<what>.<in|by>.<id>[.<tag>]` in the
 --   string form, `{count: {what: …, in|by: …, tag: …}}` as an object.
 data CountSpec = CountSpec
@@ -979,6 +988,11 @@ data Effect
     | GainXp Int                                   -- ^ W2: add XP (clamped at 0), run level loop
     | StepToward ActorRef DistanceTarget PursuitOptions (Maybe String)   -- ^ pursuit: one edge toward the target (opt. author msg)
     | StepAwayFrom ActorRef DistanceTarget PursuitOptions (Maybe String) -- ^ pursuit: one edge away (opt. author msg)
+    | DamageAll CountSpec Int                 -- ^ B3: damage every NPC in the set
+    | MoveAll CountSpec CountWhere            -- ^ B3: move every member of the set to
+    | RevealAll CountSpec                     -- ^ B3: reveal every hidden item in the set
+    | ConsumeAll CountSpec                    -- ^ B3: remove every member of the set
+    | SetStateAll CountSpec String            -- ^ B3: set the state of every member
     | Noop                                        -- ^ Do nothing
     deriving (Show, Eq, Generic)
 

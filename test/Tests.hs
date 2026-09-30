@@ -5355,7 +5355,7 @@ testChapterSwitchEffects = do
     r2 <- expectTrue "OnChapter fired (intro shown)" ("Eins." `isInfixOf` renderEvents evs1)
     -- forward to unvisited "eins" is allowed (visited = {zwei}), then the
     -- return jump to the VISITED "zwei" is refused (no retrospection)
-    let (st2, evs2, _) = applyOutcomeWith 0 0 (GotoChapter "eins") "" st1
+    let (st2, _, _) = applyOutcomeWith 0 0 (GotoChapter "eins") "" st1
     r3 <- expectEqual "eins" (currentChapterId st2)
     let (st2b, evs3, _) = applyOutcomeWith 0 0 (GotoChapter "zwei") "" st2
     r4 <- expectEqual "eins" (currentChapterId st2b)
@@ -5365,7 +5365,7 @@ testChapterSwitchEffects = do
         (st5, _, _) = applyOutcomeWith 0 0 (GotoChapter "eins") "" st5a
         (st6, _, _) = applyOutcomeWith 0 0 NextChapter "" st5
     r6 <- expectEqual "zwei" (currentChapterId st6)
-    let (st7, evs7, _) = applyOutcomeWith 0 0 (GotoChapter "drei") "" st1
+    let (st7, _, _) = applyOutcomeWith 0 0 (GotoChapter "drei") "" st1
         (st8, evs8, _) = applyOutcomeWith 0 0 NextChapter "" st7
     r7 <- expectEqual "drei" (currentChapterId st8)
     r8 <- expectTrue "no_next diagnosed" (not (null (diagnostics st8)))
@@ -5573,6 +5573,60 @@ testPursuitSaveLoad = do
                 r1 <- expectTrue "a step exists" (isJust (step st))
                 r2 <- expectEqual (step st) (step stLoaded)
                 pure (r1 && r2)
+
+-- | B3: the five closed mass operations over a count set (B2 dimensions).
+testMassOps :: IO Bool
+testMassOps = do
+    let lamp = (mkTestItem "lampe" "Lampe") { itemTags = Set.fromList ["licht"] }
+        stein = (mkTestItem "stein" "Stein") { itemTags = Set.fromList ["schwer"] }
+        truhe = (mkTestItem "truhe" "Truhe") { itemTags = Set.empty }
+        st0 = mstate [mkTestRoom "halle" "Halle", mkTestRoom "keller" "Keller"]
+                [ (lamp, InRoom "halle"), (stein, InRoom "halle"), (truhe, InRoom "keller") ]
+        st = st0 { save = (save st0)
+                    { npcStates = Map.fromList
+                        [ ("wolf", NPCState (InRoom "halle") "alive" (Just 10) Map.empty Nothing)
+                        , ("geist", NPCState (InRoom "halle") "alive" (Just 3) Map.empty Nothing) ] } }
+        npcLoc n s = Map.lookup n (npcStates (save s)) >>= \ns ->
+            case npcLocation ns of InRoom r -> Just r; _ -> Nothing
+        itemLoc i s = Map.lookup i (itemStates (save s)) >>= \is -> Just (itemLocation is)
+    -- damage_all: every living NPC in the room takes the damage
+    let (st1, _, _) = applyOutcomeWith 0 0
+            (DamageAll (CountSpec CountAliveNpcs (CountInRoom "halle") Nothing) 4) "" st
+    r1 <- expectEqual (Just (6 :: Int)) (Map.lookup "wolf" (npcStates (save st1)) >>= npcHealth)
+    r2 <- expectEqual (Just (-1 :: Int)) (Map.lookup "geist" (npcStates (save st1)) >>= npcHealth)
+    -- move_all: every tagged item in the room moves to the cellar
+    let (st2, _, _) = applyOutcomeWith 0 0
+            (MoveAll (CountSpec CountItems (CountInRoom "halle") (Just "licht")) (CountInRoom "keller")) "" st
+    r3 <- expectEqual (Just (InRoom "keller")) (itemLoc "lampe" st2)
+    r4 <- expectEqual (Just (InRoom "halle")) (itemLoc "stein" st2)
+    -- move_all to an actor
+    let (st2b, _, _) = applyOutcomeWith 0 0
+            (MoveAll (CountSpec CountItems (CountInRoom "halle") Nothing) (CountCarriedBy ActorPlayer)) "" st
+    r5 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "lampe" st2b)
+    -- reveal_all: hidden items in the set are discovered
+    let hiddenStein = (mkTestItem "hschluessel" "H") { itemHidden = True }
+        stH0 = mstate [mkTestRoom "halle" "Halle"] [(hiddenStein, InRoom "halle")]
+        (stH, _, _) = applyOutcomeWith 0 0
+            (RevealAll (CountSpec CountItems (CountInRoom "halle") Nothing)) "" stH0
+    r6 <- expectTrue "hidden item is revealed"
+            (maybe False itemDiscovered (Map.lookup "hschluessel" (itemStates (save stH))))
+    -- consume_all: every member is removed
+    let (st3, _, _) = applyOutcomeWith 0 0
+            (ConsumeAll (CountSpec CountItems (CountInRoom "halle") (Just "schwer"))) "" st
+    r7 <- expectEqual (Just Removed) (itemLoc "stein" st3)
+    r8 <- expectEqual (Just (InRoom "halle")) (itemLoc "lampe" st3)
+    -- set_state_all: item status and NPC status
+    let (st4, _, _) = applyOutcomeWith 0 0
+            (SetStateAll (CountSpec CountItems (CountInRoom "halle") (Just "licht")) "brennend") "" st
+    r9 <- expectEqual (Just "brennend") (Map.lookup "lampe" (itemStates (save st4)) >>= \is -> Just (itemStatus is))
+    let (st5, _, _) = applyOutcomeWith 0 0
+            (SetStateAll (CountSpec CountNpcs (CountInRoom "halle") Nothing) "tot") "" st
+    r10 <- expectEqual (Just "tot") (Map.lookup "wolf" (npcStates (save st5)) >>= \ns -> Just (npcStatus ns))
+    -- move_all also moves NPCs
+    let (st6, _, _) = applyOutcomeWith 0 0
+            (MoveAll (CountSpec CountNpcs (CountInRoom "halle") Nothing) (CountInRoom "keller")) "" st
+    r11 <- expectEqual (Just "keller") (npcLoc "wolf" st6)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11)
 
 -- ---------------------------------------------------------------------------
 -- W4: devices (Hebel / Halterung)
@@ -8557,6 +8611,7 @@ main = do
         , runTest "pursuit save/load recomputes the identical step (Tür IV)" testPursuitSaveLoad
         , runTest "tag predicates: actor carries / room holds tagged item (B2)" testTaggedItemPredicates
         , runTest "count family: items/npcs/alive, room or carried, tags (B2)" testCountSpec
+        , runTest "mass ops: damage/move/reveal/consume/set_state (B3)" testMassOps
         , runTest "ActorHas predicate for player, NPC and device entity (W4)" testActorHasPredicate
         , runTest "Mount and Unmount effects move item location (W4)" testMountAndUnmountEffects
         , runTest "device examine shows description and mounted item (W4)" testDeviceInteractionExamine

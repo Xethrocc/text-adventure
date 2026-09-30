@@ -2657,6 +2657,11 @@ compileAActionOutcome ao = case ao of
         E.StepToward (compileActorRef seeker) target E.defaultPursuitOptions mMsg
     AOStepAwayFrom seeker target mMsg ->
         E.StepAwayFrom (compileActorRef seeker) target E.defaultPursuitOptions mMsg
+    AODamageAll cs amount -> E.DamageAll cs amount
+    AOMoveAll cs dest -> E.MoveAll cs dest
+    AORevealAll cs -> E.RevealAll cs
+    AOConsumeAll cs -> E.ConsumeAll cs
+    AOSetStateAll cs newStatus -> E.SetStateAll cs newStatus
     AOForget f a -> E.Forget (compileActorRef a) f
     AONarrative ls follow -> E.Narrative ls (compileOutcomes follow)
     AOStandingAdd fid n -> E.ModifyValue (E.VRVariable ("faction." ++ fid)) n

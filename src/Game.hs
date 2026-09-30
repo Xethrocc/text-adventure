@@ -23,6 +23,8 @@ module Game
     , actorRoom
     , distanceTo
     , pursuitStep
+    , countItemMembers
+    , countNpcMembers
     , markCurrentRoomVisited
     , isRoomVisited
     , setRoomVisited
@@ -502,23 +504,44 @@ getExitInDirection dir state = case getCurrentRoom state of
 -- Pursuit (Tür IV): distance queries and one-edge pursuit steps
 -- ---------------------------------------------------------------------------
 
--- | B2: items an actor carries or wears.
-carriedItemsOf :: ActorRef -> GameState -> [ItemDef]
-carriedItemsOf actor st =
-    getItemsInLocation (CarriedBy actor) st ++ getItemsInLocation (EquippedBy actor) st
-
 -- | B2: evaluate a general count query (items/npcs in a room or carried,
 --   optional item-tag filter). NPCs carried by an actor are not a thing —
 --   a `by:` where counts nothing for them.
 countSpecValue :: CountSpec -> GameState -> Int
 countSpecValue cs st = case csWhat cs of
-    CountItems     -> length [ () | i <- itemsAt, tagged i ]
-    CountNpcs      -> length npcsAt
-    CountAliveNpcs -> length [ () | nId <- npcsAt, not (isDeadNPC nId st) ]
+    CountItems     -> length (countItemMembers cs st)
+    CountNpcs      -> length (countNpcMembers cs st)
+    CountAliveNpcs -> length (countNpcMembers cs st)
+
+-- | B2/B3: the item members of a count set (empty for npc sets). The set is
+--   **every** item at the location, hidden ones included — otherwise
+--   `reveal_all` could never find its targets. (The count is an author
+--   query, not a visibility query.)
+countItemMembers :: CountSpec -> GameState -> [ItemDef]
+countItemMembers cs st = case csWhat cs of
+    CountItems -> [ i | i <- itemsAt, tagged i ]
+    _          -> []
   where
     itemsAt = case csWhere cs of
-        CountInRoom r      -> getItemsInLocation (InRoom r) st
-        CountCarriedBy a   -> carriedItemsOf a st
+        CountInRoom r      -> itemsAtLoc (InRoom r)
+        CountCarriedBy a   -> itemsAtLoc (CarriedBy a) ++ itemsAtLoc (EquippedBy a)
+    itemsAtLoc loc =
+        [ def
+        | (iId, is) <- Map.toList (itemStates (save st))
+        , itemLocation is == loc
+        , Just def <- [Map.lookup iId (itemDefs (world st))] ]
+    tagged i = case csTag cs of
+        Nothing -> True
+        Just t  -> Set.member t (itemTags i)
+
+-- | B2/B3: the NPC members of a count set (empty for item sets). The
+--   `alive_npcs` variant filters to living NPCs.
+countNpcMembers :: CountSpec -> GameState -> [NPCID]
+countNpcMembers cs st = case csWhat cs of
+    CountItems     -> []
+    CountNpcs      -> npcsAt
+    CountAliveNpcs -> [ nId | nId <- npcsAt, not (isDeadNPC nId st) ]
+  where
     npcsAt = case csWhere cs of
         CountInRoom r      -> [ nId
                               | (nId, ns) <- Map.toList (npcStates (save st))
@@ -1164,11 +1187,12 @@ evalPredicate (PAll ps) st = all (\p -> evalPredicate p st) ps
 evalPredicate (PAny ps) st = any (\p -> evalPredicate p st) ps
 evalPredicate (PlayerHas iId) st = hasItem iId st
 evalPredicate (ActorHas actor iId) st = actorHasItem actor iId st
--- B2: tag-based item queries (the generalisation of playerHasTaggedItem)
+-- B2: tag-based item queries (the generalisation of playerHasTaggedItem).
+--   Same member set as the count family (hidden items included).
 evalPredicate (HasTaggedItem actor tag) st =
-    any (Set.member tag . itemTags) (carriedItemsOf actor st)
+    not (null (countItemMembers (CountSpec CountItems (CountCarriedBy actor) (Just tag)) st))
 evalPredicate (RoomHasTaggedItem r tag) st =
-    any (Set.member tag . itemTags) (getItemsInLocation (InRoom r) st)
+    not (null (countItemMembers (CountSpec CountItems (CountInRoom r) (Just tag)) st))
 evalPredicate (HasFlag f) st = getFlag f st == Just "true"
 evalPredicate (HasCondition cn) st = hasCondition cn st
 -- A state predicate checks the entity's state in whichever layer stores it:

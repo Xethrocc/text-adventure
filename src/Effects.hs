@@ -290,7 +290,7 @@ applyOutcomeWith depth salt outcome targetId state
     --   once) — a closed operation on the fact set, never trigger recursion.
     Learn actor fact ->
         let (stC, learned) = cascade state [] [(actorId actor, fact, AuthorMsg Nothing)]
-            fire (st, acc, s) (aId, f, mMsg) =
+            fire (st, acc, s) (_, f, mMsg) =
                 let (st', trigMsgs) = fireTriggersWithDepth (depth + 1) (OnLearn f) st
                     entry = case mMsg of
                         AuthorMsg (Just m) -> evRaw (formatWithVars m st)
@@ -391,6 +391,32 @@ applyOutcomeWith depth salt outcome targetId state
 
     StepToward seeker target opts mMsg   -> pursuitMove True seeker target opts mMsg state salt
     StepAwayFrom seeker target opts mMsg -> pursuitMove False seeker target opts mMsg state salt
+
+    -- B3: closed mass operations over a count set (never a user-supplied
+    -- effect list as loop body — that is the G1 line).
+    DamageAll cs amount ->
+        let (stDmg, evs) = foldl'
+                (\(st, acc) n ->
+                    let (stN, m) = modifyValueProp (VRActorProp (ActorNPC n) PHealth) (-amount) st
+                    in (stN, joinEv acc m))
+                (state, []) (countNpcMembers cs state)
+        in (stDmg, evs, salt)
+    MoveAll cs dest ->
+        let loc = whereLocation dest
+            st1 = foldl' (\st i -> setItemLoc (itemId i) loc st) state (countItemMembers cs state)
+            st2 = foldl' (\st n -> setNpcLoc n loc st) st1 (countNpcMembers cs state)
+        in (st2, [], salt)
+    RevealAll cs ->
+        (foldl' (\st i -> setItemDiscovered (itemId i) st) state
+            (countItemMembers cs state), [], salt)
+    ConsumeAll cs ->
+        (foldl' (\st i -> setItemLoc (itemId i) Removed st) state
+            (countItemMembers cs state), [], salt)
+    SetStateAll cs newStatus ->
+        let st1 = foldl' (\st i -> setItemStatus (itemId i) newStatus st) state
+                    (countItemMembers cs state)
+            st2 = foldl' (\st n -> setNpcStatus n newStatus st) st1 (countNpcMembers cs state)
+        in (st2, [], salt)
 
     GainXp delta ->
         let curXp = getXp state
@@ -739,6 +765,46 @@ setSeekerRoom (ActorShip v) room state =
         { vehicleStates = Map.adjust (\vs -> vs { vsCurrentStop = room }) v
                         (vehicleStates (save state)) } }
 setSeekerRoom _ _ state = state
+
+-- | B3: the Location a count where maps to.
+whereLocation :: CountWhere -> Location
+whereLocation (CountInRoom r)    = InRoom r
+whereLocation (CountCarriedBy a) = CarriedBy a
+
+-- | B3: set an item's location directly.
+setItemLoc :: ItemID -> Location -> GameState -> GameState
+setItemLoc i loc state =
+    state { save = (save state)
+        { itemStates = Map.adjust (\is -> is { itemLocation = loc }) i
+                        (itemStates (save state)) } }
+
+-- | B3: reveal a hidden item.
+setItemDiscovered :: ItemID -> GameState -> GameState
+setItemDiscovered i state =
+    state { save = (save state)
+        { itemStates = Map.adjust (\is -> is { itemDiscovered = True }) i
+                        (itemStates (save state)) } }
+
+-- | B3: set an item's status.
+setItemStatus :: ItemID -> String -> GameState -> GameState
+setItemStatus i newStatus state =
+    state { save = (save state)
+        { itemStates = Map.adjust (\is -> is { itemStatus = newStatus }) i
+                        (itemStates (save state)) } }
+
+-- | B3: set an NPC's location.
+setNpcLoc :: NPCID -> Location -> GameState -> GameState
+setNpcLoc n loc state =
+    state { save = (save state)
+        { npcStates = Map.adjust (\ns -> ns { npcLocation = loc }) n
+                        (npcStates (save state)) } }
+
+-- | B3: set an NPC's status.
+setNpcStatus :: NPCID -> String -> GameState -> GameState
+setNpcStatus n newStatus state =
+    state { save = (save state)
+        { npcStates = Map.adjust (\ns -> ns { npcStatus = newStatus }) n
+                        (npcStates (save state)) } }
 
 -- | Fire triggers matching the given event type (entry point, nesting depth 0).
 fireTriggers :: EventType -> GameState -> (GameState, [OutputEvent])

@@ -2099,6 +2099,38 @@ W4 ersetzt bewusst aufwändige Licht-Physik/Emergenz durch **explizite Zustände
 - Bei `on_remove` schaltet die Halterung das Flag `krypta_beleuchtet` auf `"false"`.
 - Die Dunkelheitsprüfung des Spiels (`isDark`) wertet das `light_flag` des Raumes aus — ohne Emergenz, rein deterministisch und transparent für Autoren und Spieler.
 
+## Geschlossene Mengen-Operationen (B3)
+
+Die 20-Zweig-Kaskaden („Schaden an alle im Raum, dann alle Schlüssel entfernen, dann …")
+sind jetzt fünf **geschlossene** Effekte. „Geschlossen" ist der Vertrag: der Autor liefert
+**nie** eine Effektliste als Schleifenkörper — jede Operation hat ihre feste Semantik
+(keine Turing-Vollständigkeit, kein Autoren-Kontrollfluss).
+
+```yaml
+effects:
+  - damage_all:   {what: alive_npcs, in: halle, amount: 5}      # Schaden an alle
+  - move_all:     {what: items, in: halle, to: {in: keller}}    # alle bewegen
+  - move_all:     {what: items, in: halle, to: {by: player}}    # alles einsammeln
+  - reveal_all:   {what: items, in: halle}                      # alle versteckten aufdecken
+  - consume_all:  {what: items, in: halle, tag: schwer}         # alle entfernen
+  - set_state_all: {what: items, in: halle, tag: licht, state: brennend}
+```
+
+Die **Zielmengen** sind dieselbe Sprache wie die B2-Abfragen (`what` × `in:`/`by:` ×
+optionaler `tag:`) — Abfrage und Wirkung sprechen eine Sprache. Die Wirkung pro Zielart:
+
+| Operation | Items | NPCs |
+|---|---|---|
+| `damage_all` | — | Health (wie `damage:`, keine Klemmung) |
+| `move_all` | Location (Raum oder `by:`-Akteur) | Position |
+| `reveal_all` | `itemDiscovered` | — |
+| `consume_all` | entfernt (`Removed`) | — |
+| `set_state_all` | `itemStatus` | `npcStatus` |
+
+**Wichtig:** die Menge ist **jedes** Item am Ort — auch versteckte (sonst fände
+`reveal_all` seine Ziele nie). Die B2-Zählung zählt damit auch versteckte Items: sie ist
+eine Autoren-Abfrage, keine Sichtbarkeits-Abfrage.
+
 ## Mengen- und Tag-Abfragen (B2)
 
 Die größte Autorenqual war die **Aufzählung** („hat der Spieler irgendeinen Schlüssel?",

@@ -1,0 +1,82 @@
+# B3: the five closed mass operations over a count set.
+name: Massen Fixture
+start_room: halle
+
+verbs:
+  - name: "schaden"
+  - name: "raeumen"
+  - name: "zeigen"
+  - name: "verbrauchen"
+  - name: "setzen"
+
+rooms:
+  - id: halle
+    name: Halle
+    desc: Die Halle.
+  - id: keller
+    name: Keller
+    desc: Der Keller.
+
+items:
+  - id: lampe
+    name: Lampe
+    keys: [lampe]
+    desc: Eine Lampe.
+    tags: [licht]
+    location: halle
+  - id: stein
+    name: Stein
+    keys: [stein]
+    desc: Ein Stein.
+    tags: [schwer]
+    location: halle
+  - id: schluessel
+    name: Schluessel
+    keys: [schluessel]
+    desc: Ein versteckter Schluessel.
+    tags: [schwer]
+    location: halle
+    hidden: true
+
+npcs:
+  - id: wolf
+    name: Wolf
+    location: halle
+    keywords: [wolf]
+
+rules:
+  - id: masse_schaden
+    on: "command schaden"
+    effects:
+      - damage_all: {what: alive_npcs, in: halle, amount: 4}
+      - msg: "Der Wolf heult."
+  - id: masse_zeigen
+    on: "command zeigen"
+    effects:
+      - reveal_all: {what: items, in: halle}
+      - msg: "Etwas glaenzt hervor."
+  - id: masse_verbrauchen
+    on: "command verbrauchen"
+    effects:
+      - consume_all: {what: items, in: halle, tag: schwer}
+      - msg: "Das Schwere verschwindet."
+  - id: masse_setzen
+    on: "command setzen"
+    effects:
+      - set_state_all: {what: items, in: halle, tag: licht, state: brennend}
+      - msg: "Es brennt."
+  - id: masse_raeumen
+    on: "command raeumen"
+    effects:
+      - move_all: {what: items, in: halle, to: {in: keller}}
+      - msg: "Alles liegt im Keller."
+
+tests:
+  - name: "alle fuenf massen-operationen"
+    input: [schaden, zeigen, verbrauchen, setzen, raeumen]
+    expect:
+      - "Der Wolf heult."
+      - "Etwas glaenzt hervor."
+      - "Das Schwere verschwindet."
+      - "Es brennt."
+      - "Alles liegt im Keller."

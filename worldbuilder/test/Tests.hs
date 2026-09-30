@@ -12,7 +12,6 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import System.Exit (exitFailure)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
-import Worldbuilder.ParseFile (parseAdventureFile)
 import System.FilePath ((</>))
 import System.IO (hSetEncoding, stdout, utf8, openTempFile, hClose)
 import Control.Exception (try, SomeException)
@@ -524,6 +523,27 @@ testChapterSugar = do
             _ -> expectTrue "goto_chapter compiles" False
     pure (r1 && r2)
 
+-- | B3: the five mass-operation sugars compile to the engine effects.
+testMassOpSugar :: IO Bool
+testMassOpSugar = do
+    let spec = E.CountSpec E.CountItems (E.CountInRoom "halle") (Just "licht")
+    r1 <- case compileAActionOutcome (AODamageAll spec 5) of
+            E.DamageAll _ 5 -> expectTrue "damage_all compiles" True
+            _ -> expectTrue "damage_all compiles" False
+    r2 <- case compileAActionOutcome (AOMoveAll spec (E.CountInRoom "keller")) of
+            E.MoveAll _ (E.CountInRoom "keller") -> expectTrue "move_all compiles" True
+            _ -> expectTrue "move_all compiles" False
+    r3 <- case compileAActionOutcome (AORevealAll spec) of
+            E.RevealAll _ -> expectTrue "reveal_all compiles" True
+            _ -> expectTrue "reveal_all compiles" False
+    r4 <- case compileAActionOutcome (AOConsumeAll spec) of
+            E.ConsumeAll _ -> expectTrue "consume_all compiles" True
+            _ -> expectTrue "consume_all compiles" False
+    r5 <- case compileAActionOutcome (AOSetStateAll spec "brennend") of
+            E.SetStateAll _ "brennend" -> expectTrue "set_state_all compiles" True
+            _ -> expectTrue "set_state_all compiles" False
+    pure (r1 && r2 && r3 && r4 && r5)
+
 -- ---------------------------------------------------------------------------
 -- Pursuit (Tür IV)
 -- ---------------------------------------------------------------------------
@@ -605,7 +625,7 @@ testDevicesCompile = do
                         b7 <- expectEqual ["fackel"] (E.devFits d)
                         b8 <- expectEqual (Just "umlegen") (E.devFlipVerb d)
                         b9 <- expectEqual ["unten", "oben"] (E.devFlipStates d)
-                        pure (b1 && b2 && b3 && b4 && b5 && b6 && b7 && b8 && b9)
+                        pure (a && b1 && b2 && b3 && b4 && b5 && b6 && b7 && b8 && b9)
     pure (r0 && r1)
 
 testDeviceChecks :: IO Bool
@@ -3493,6 +3513,7 @@ tests =
     , ("chapters: next_chapter/goto_chapter sugar compiles", testChapterSugar)
     -- Pursuit (Tür IV)
     , ("pursuit: step_toward/step_away_from sugar compiles", testPursuitSugar)
+    , ("mass ops: damage/move/reveal/consume/set_state sugar (B3)", testMassOpSugar)
     , ("pursuit: section emits sorted on:turn triggers; checks", testPursuitSection)
     -- 5.3: include:
     , ("include: own sections first, then includes (5.3)", testIncludeMerge)

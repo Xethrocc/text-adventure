@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Geschlossene Mengen-Operationen (B3)
+
+- **Fünf geschlossene Effekte** ersetzen die 20-Zweig-Kaskaden: `damage_all`, `move_all`,
+  `reveal_all`, `consume_all`, `set_state_all`. „Geschlossen" ist der Vertrag — der Autor
+  liefert **nie** eine Effektliste als Schleifenkörper (keine Turing-Vollständigkeit, kein
+  Autoren-Kontrollfluss).
+- **Zielmengen in B2-Sprache**: `what` (items/npcs/alive_npcs) × `in: <raum>` / `by: <actor>`
+  × optionaler `tag:` — Abfrage und Wirkung sprechen eine Sprache. `move_all` hat zusätzlich
+  `to: {in: …}` / `to: {by: …}`.
+- **Wirkung pro Zielart**: `damage_all` → NPC-Health (wie `damage:`, keine Klemmung);
+  `move_all` → Item-Location / NPC-Position; `reveal_all` → `itemDiscovered`;
+  `consume_all` → `Removed`; `set_state_all` → `itemStatus` / `npcStatus`.
+- **Die Menge ist jedes Item am Ort — auch versteckte** (sonst fände `reveal_all` seine
+  Ziele nie); die B2-Zählung zählt damit auch versteckte Items (Autoren-Abfrage, keine
+  Sichtbarkeits-Abfrage).
+- **Tests**: 1 Engine- (**424**) + 1 Worldbuilder-Test (**198**); Fixture `massen.yaml`
+  (alle fünf Operationen als Regeln mit Markern) in CI-Stufe 4b. Zwei alte Test-Warnings
+  (unused binds) und ein Test-Defekt (`a` floss nicht ins Ergebnis ein) mit gefixt.
+
 ### Mengen- und Tag-Abfragen: Prädikate und die Zähl-Familie (B2)
 
 - **Tag-Prädikate** `HasTaggedItem ActorRef String` (`actor_has_tag: {actor, tag}`) und
