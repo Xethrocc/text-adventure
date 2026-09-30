@@ -78,7 +78,10 @@ run_e2e() {
             < "ci/e2e/$name.in" 2>&1 || true)"
     # One marker per line; every single one has to appear. A one-line .expect
     # behaves exactly as before, so the older cases stay untouched.
-    while IFS= read -r marker; do
+    # The `|| [ -n "$marker" ]` catches a final line without trailing newline:
+    # plain `while read` silently DROPS it — which left 16 of 50 .expect files
+    # unchecked (14 of them had only that one marker). Fixed 2026-09-29 (B1).
+    while IFS= read -r marker || [ -n "$marker" ]; do
         [ -n "$marker" ] || continue
         if grep -qF "$marker" <<<"$out"; then
             echo "OK   $name  (reached: $marker)"
