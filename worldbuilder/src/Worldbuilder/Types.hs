@@ -12,6 +12,7 @@ import Data.Maybe (fromMaybe)
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
+import Data.List (isPrefixOf)
 import qualified Data.Text as T
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Aeson.Key as K
@@ -59,6 +60,7 @@ data Adventure = Adventure
     , advChapters         :: [AChapterDef]               -- ^ chapters (W3, narrative order)
     , advFacts            :: [AFactDef]                  -- ^ knowledge facts (W1)
     , advCombines         :: [ACombineDef]               -- ^ derivation rules (W1)
+    , advDevices          :: [ADeviceDef]                -- ^ interactive devices/fixtures (W4)
     , advTests            :: [AContentTest]              -- ^ authored content tests (B1)
     , advRawValue         :: Maybe Value                 -- ^ raw parsed JSON/YAML value for schema validation
     } deriving (Show, Eq, Generic)
@@ -137,9 +139,25 @@ instance FromJSON Adventure where
         <*> o .:? "chapters"   .!= []
         <*> o .:? "facts"      .!= []
         <*> o .:? "combine"    .!= []
+        <*> parseDevicesField o
         <*> o .:? "tests" .!= []
         <*> pure (Just v)
     parseJSON _ = fail "Expected Adventure to be an object"
+
+-- | Parse 'devices' field: supports both a map (`devices: { halter: { ... } }`) and a list (`devices: [ { id: "halter", ... } ]`).
+parseDevicesField :: Object -> Parser [ADeviceDef]
+parseDevicesField o = do
+    mVal <- o .:? "devices"
+    case mVal of
+        Nothing -> pure []
+        Just (Array arr) -> mapM parseJSON (Foldable.toList arr)
+        Just (Object obj) ->
+            mapM (\(k, v) -> do
+                    dev <- parseJSON v
+                    let did = if null (adId dev) then K.toString k else adId dev
+                    pure dev { adId = did }
+                 ) (KM.toList obj)
+        Just _ -> fail "Expected 'devices' to be an object (map) or array (list)"
 
 -- | Parse 'cards' field: supports both a map (`cards: { strike: { ... } }`) and a list (`cards: [ { id: "strike", ... } ]`).
 parseCardsField :: Object -> Parser [ACard]
@@ -1177,6 +1195,53 @@ instance FromJSON AChapterDef where
         <*> o .:? "intro" .!= Nothing
         <*> o .:? "when"  .!= Nothing
 
+-- | An interactive device / fixture (W4) authored under `devices:`.
+data ADeviceDef = ADeviceDef
+    { adId          :: String
+    , adName        :: Maybe String
+    , adKeys        :: [String]
+    , adLocation    :: String
+    , adDescription :: Maybe String
+    , adFitsTag     :: Maybe String
+    , adFits        :: [String]
+    , adInsertMsg   :: Maybe String
+    , adRemoveMsg   :: Maybe String
+    , adOnInsert    :: [AActionOutcome]
+    , adOnRemove    :: [AActionOutcome]
+    , adFlipVerb    :: Maybe String
+    , adFlipStates  :: [String]
+    , adOnFlip      :: [(String, [AActionOutcome])]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ADeviceDef where
+    parseJSON = withObject "ADeviceDef" $ \o -> do
+        dId <- o .:? "id" .!= ""
+        dName <- o .:? "name"
+        dKeys <- o .:? "keys" .!= []
+        dLoc <- o .: "location"
+        mDesc1 <- o .:? "description"
+        mDesc2 <- o .:? "desc"
+        let dDesc = mDesc1 <|> mDesc2
+        dTag <- o .:? "fits_tag"
+        dFits <- o .:? "fits" .!= []
+        dInsMsg <- o .:? "insert_msg"
+        dRemMsg <- o .:? "remove_msg"
+        dOnIns <- o .:? "on_insert" .!= []
+        dOnRem <- o .:? "on_remove" .!= []
+        dFlipVerb <- o .:? "flip_verb"
+        dFlipStates <- o .:? "flip_states" .!= []
+        let km = KM.toList o
+            flatFlips = [ (drop 8 (K.toString k), v)
+                        | (k, v) <- km
+                        , "on_flip_" `isPrefixOf` K.toString k ]
+        parsedFlat <- mapM (\(s, v) -> do
+            effs <- parseJSON v
+            pure (s, effs)) flatFlips
+        dictFlips <- (do m <- o .:? "on_flip" :: Parser (Maybe (Map.Map String [AActionOutcome]))
+                         pure (maybe [] Map.toList m))
+                     <|> pure []
+        pure $ ADeviceDef dId dName dKeys dLoc dDesc dTag dFits dInsMsg dRemMsg dOnIns dOnRem dFlipVerb dFlipStates (parsedFlat ++ dictFlips)
+
 -- | An authored content test (B1): a command sequence and **ordered** output
 --   markers — every marker must appear in the rendered output, in the
 --   declared order (subsequence semantics).
@@ -1246,6 +1311,8 @@ data AActionOutcome
     | AOLearn String String            -- ^ learn: <fact> or learn: {fact, actor} (W1; actor defaults to player)
     | AONextChapter                    -- ^ next_chapter (W3)
     | AOGotoChapter String             -- ^ goto_chapter: <id> (W3)
+    | AOMount String String            -- ^ mount: { item: <item>, to: <device> } (W4)
+    | AOUnmount String                 -- ^ unmount: <item> (W4)
     | AOForget String String           -- ^ forget: <fact> - same shapes (W1)
     deriving (Show, Eq, Generic)
 
@@ -1417,6 +1484,15 @@ instance FromJSON AActionOutcome where
                         turn <- bObj .:? "turn" .!= False
                         pure (AOBlock mMsg turn)
                     _ -> fail "block must be string, bool, or object")
+        <|> (do m <- o .: "mount"
+                case m of
+                    Object mo -> AOMount <$> mo .: "item" <*> (mo .: "to" <|> mo .: "target" <|> mo .: "device")
+                    _         -> fail "mount must be { item: <item>, to: <device> }")
+        <|> (do u <- o .: "unmount"
+                case u of
+                    String s  -> pure (AOUnmount (T.unpack s))
+                    Object uo -> AOUnmount <$> uo .: "item"
+                    _         -> fail "unmount must be item id or { item: <item> }")
         <|> fail "Unknown outcome type. Use one of: msg, heal, damage, give, consume, set_flag, start_quest, etc."
         ) v
 
@@ -1464,7 +1540,7 @@ knownKeys EntAdventure = Set.fromList
     , "encounter_tables", "environment", "stealth", "patrol", "combat"
     , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
     , "handLimit", "hand_limit", "sandbox_zones", "procedures", "tests"
-    , "facts", "combine", "combine_verb", "journal", "chapters"
+    , "facts", "combine", "combine_verb", "journal", "chapters", "devices"
     ]
 knownKeys EntRoom = Set.fromList
     [ "id", "name", "desc", "description", "exits", "tags", "light_flag"

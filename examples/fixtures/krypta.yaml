@@ -1,0 +1,100 @@
+name: Krypta Fixture (W4)
+start_room: krypta
+
+rooms:
+  - id: krypta
+    name: Krypta
+    desc: Eine kalte Krypta mit feuchten Steinmauern.
+    tags: [dark]
+    light_flag: krypta_beleuchtet
+    exits:
+      north:
+        to: kammer
+        locked_by: tortraverse
+
+  - id: kammer
+    name: Kammer
+    desc: Eine kleine Kammer hinter dem Tor.
+    exits:
+      south:
+        to: krypta
+
+items:
+  - id: fackel
+    name: brennende Fackel
+    desc: Eine brennende Fackel, die warmes Licht spendet.
+    keys: [fackel]
+    location: krypta
+    tags: [feelable, lichtquelle]
+
+  - id: stein
+    name: schwerer Stein
+    desc: Ein unpassender, kantiger Kieselstein.
+    keys: [stein]
+    location: krypta
+    tags: [feelable]
+
+devices:
+  - id: fackelhalterung
+    name: eiserne Fackelhalterung
+    desc: Eine geschmiedete Wandhalterung für Fackeln.
+    keys: [halterung, fackelhalterung]
+    location: krypta
+    fits_tag: lichtquelle
+    insert_msg: "Die Fackel knistert in der Halterung. Die Krypta wird hell erleuchtet."
+    remove_msg: "Das Licht stirbt, als du die Fackel herausziehst."
+    on_insert:
+      - set_flag: krypta_beleuchtet
+        val: "true"
+    on_remove:
+      - set_flag: krypta_beleuchtet
+        val: "false"
+
+  - id: hebel_tor
+    name: Messinghebel
+    desc: Ein alter Messinghebel mit zwei Rastungen.
+    keys: [hebel, messinghebel]
+    location: krypta
+    flip_verb: umlegen
+    flip_states: [unten, oben]
+    on_flip_oben:
+      - msg: "Ein fernes Rollen erschüttert den Boden."
+      - set_state: tortraverse
+        to: offen
+    on_flip_unten:
+      - set_state: tortraverse
+        to: zu
+
+# B1: authored content tests — `worldbuilder test examples/fixtures/krypta.yaml`
+tests:
+  - name: "fackel einbauen, halterung untersuchen, hebel umlegen, ausbauen"
+    input:
+      - take fackel
+      - take stein
+      - stecke stein in halterung
+      - stecke fackel in halterung
+      - examine halterung
+      - stecke stein in halterung
+      - umlegen hebel
+      - umlegen hebel
+      - ziehe fackel aus halterung
+      - take fackel
+    expect:
+      - "You take the brennende Fackel."
+      - "You take the schwerer Stein."
+      - "The schwerer Stein does not fit into the eiserne Fackelhalterung."
+      - "Die Fackel knistert in der Halterung. Die Krypta wird hell erleuchtet."
+      - "Eine geschmiedete Wandhalterung für Fackeln."
+      - "Mounted: brennende Fackel."
+      - "There is already something in the eiserne Fackelhalterung."
+      - "You flip the Messinghebel to oben."
+      - "Ein fernes Rollen erschüttert den Boden."
+      - "You flip the Messinghebel to unten."
+      - "Das Licht stirbt, als du die Fackel herausziehst."
+      - "You take the brennende Fackel."
+
+  - name: "ablehnung wenn item nicht getragen"
+    input:
+      - stecke fackel in halterung
+    expect:
+      - "You are not carrying brennende Fackel."

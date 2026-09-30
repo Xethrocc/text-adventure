@@ -275,7 +275,7 @@ checkMissingEntitiesInDefs gw =
                            , Locked _ e <- Map.elems (roomConnections room) ]
         dynamicEntities = ["player", "chosen", "target", "current_target", "all", "all_enemies"]
         entityRefs = Set.fromList dynamicEntities
-            `Set.union` Set.fromList (Map.keys (itemDefs gw) ++ Map.keys (npcDefs gw) ++ lockEntities)
+            `Set.union` Set.fromList (Map.keys (itemDefs gw) ++ Map.keys (npcDefs gw) ++ Map.keys (deviceDefs gw) ++ lockEntities)
         allRefs = concatMap idsFromOutcomeEntity (allOutcomes gw)
                ++ concatMap idsFromPredicateEntity (allPredicates gw)
     in [MissingEntity eId "property" | eId <- nub allRefs, not (Set.member eId entityRefs)]
@@ -366,6 +366,8 @@ catMaybes xs = [x | Just x <- xs]
 idsFromOutcomeItem :: Effect -> [String]
 idsFromOutcomeItem outcome = case outcome of
     MoveEntity iId _             -> [iId]
+    Mount iId _                  -> [iId]
+    Unmount iId                  -> [iId]
     SetValue (VRItemProp iId _) _ -> [iId]
     ModifyValue (VRItemProp iId _) _ -> [iId]
     ComputeValue (VRItemProp iId _) _ -> [iId]
@@ -389,6 +391,7 @@ idsFromOutcomeEntity outcome = case outcome of
     SetValue (VRActorProp actor _) _    -> actorEntity actor
     ModifyValue (VRActorProp actor _) _ -> actorEntity actor
     ComputeValue (VRActorProp actor _) _ -> actorEntity actor
+    Mount _ actor                       -> actorEntity actor
     Sequence os                         -> concatMap idsFromOutcomeEntity os
     RandomChoice os                     -> concatMap (idsFromOutcomeEntity . snd) os
     Conditional _ t e                   -> idsFromOutcomeEntity t ++ idsFromOutcomeEntity e
@@ -449,6 +452,7 @@ idsFromPredicateEntity p = case p of
     PAll qs           -> concatMap idsFromPredicateEntity qs
     PAny qs           -> concatMap idsFromPredicateEntity qs
     Location actor _  -> actorEntity actor
+    ActorHas actor _  -> actorEntity actor
     Compare lhs _ rhs -> actorFromRef lhs ++ actorFromRef rhs
     _                 -> []
   where

@@ -362,6 +362,9 @@ applyOutcomeWith depth salt outcome targetId state
                     ( state, evMsg "chapter.refuse_back" [], salt )
                 | otherwise -> switchChapter cd state salt
 
+    Mount iId actor -> (mountItem iId actor state, [], salt)
+    Unmount iId     -> (unmountItem iId state, [], salt)
+
     Forget actor fact ->
         let key = "known." ++ actorId actor ++ "." ++ fact
         in if getVariable key state == Just (VVInt 1)

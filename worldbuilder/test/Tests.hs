@@ -60,6 +60,7 @@ minWorld = E.GameWorld
     , combineDefs = []
     , procDefs = Map.empty
     , chapterDefs = []
+    , deviceDefs = Map.empty
     }
 
 -- | Helper: a minimal valid SaveState referencing room_0
@@ -196,6 +197,7 @@ minAdventure room = Adventure
     , advChapters = []
     , advFacts = []
     , advCombines = []
+    , advDevices = []
     , advTests = []
     , advRawValue = Nothing
     }
@@ -516,6 +518,90 @@ testChapterSugar = do
             E.GotoChapter "finale" -> expectTrue "goto_chapter compiles" True
             _ -> expectTrue "goto_chapter compiles" False
     pure (r1 && r2)
+
+-- ---------------------------------------------------------------------------
+-- W4: devices (Hebel / Halterung)
+-- ---------------------------------------------------------------------------
+
+testDevicesCompile :: IO Bool
+testDevicesCompile = do
+    let empty = minAdventure (minRoom "loc_0")
+    r0 <- case compileAdventure empty of
+            Left errs -> expectTrue ("empty compile failed: " ++ issuesText errs) False
+            Right cr -> do
+                a <- expectEqual 0 (Map.size (E.deviceDefs (crWorld cr)))
+                b <- expectTrue "world.json omits empty deviceDefs"
+                        (not ("deviceDefs" `isInfixOf` BLC.unpack (Aeson.encode (crWorld cr))))
+                pure (a && b)
+    let dev = ADeviceDef "fackelhalterung" (Just "Fackelhalterung") ["halterung"] "loc_0" (Just "Eine Wandhalterung.") (Just "lichtquelle") ["fackel"] (Just "Knistern.") (Just "Erloschen.") [AOSetFlag "lit" "true"] [AOSetFlag "lit" "false"] (Just "umlegen") ["unten", "oben"] [("oben", [AOSetFlag "hebel_oben" "true"])]
+        adv = empty
+            { advItems = [ (minItem "fackel") { aiTags = ["lichtquelle"] } ]
+            , advDevices = [dev] }
+    r1 <- case compileAdventure adv of
+            Left errs -> expectTrue ("devices compile, got: " ++ issuesText errs) False
+            Right cr -> do
+                let devs = E.deviceDefs (crWorld cr)
+                a <- expectEqual 1 (Map.size devs)
+                case Map.lookup "fackelhalterung" devs of
+                    Nothing -> expectTrue "device fackelhalterung found" False
+                    Just d -> do
+                        b1 <- expectEqual "fackelhalterung" (E.devId d)
+                        b2 <- expectEqual "Fackelhalterung" (E.devName d)
+                        b3 <- expectEqual ["halterung"] (E.devKeys d)
+                        b4 <- expectEqual "loc_0" (E.devLocation d)
+                        b5 <- expectEqual (Just "Eine Wandhalterung.") (E.devDescription d)
+                        b6 <- expectEqual (Just "lichtquelle") (E.devFitsTag d)
+                        b7 <- expectEqual ["fackel"] (E.devFits d)
+                        b8 <- expectEqual (Just "umlegen") (E.devFlipVerb d)
+                        b9 <- expectEqual ["unten", "oben"] (E.devFlipStates d)
+                        pure (b1 && b2 && b3 && b4 && b5 && b6 && b7 && b8 && b9)
+    pure (r0 && r1)
+
+testDeviceChecks :: IO Bool
+testDeviceChecks = do
+    let base = (minAdventure (minRoom "loc_0"))
+            { advItems = [ (minItem "fackel") { aiTags = ["lichtquelle"] } ] }
+        mkDevs ds = base { advDevices = ds }
+        validDev = ADeviceDef "d1" Nothing [] "loc_0" Nothing (Just "lichtquelle") ["fackel"] Nothing Nothing [AOSetFlag "x" "true"] [] Nothing [] []
+
+    -- 1. Duplicate device ID -> DuplicateDevice
+    r1 <- case compileAdventure (mkDevs [validDev, validDev { adName = Just "Other" }]) of
+            Left errs -> expectTrue "duplicate device is DuplicateDevice"
+                (any (\i -> ciCode i == "DuplicateDevice") errs)
+            Right _ -> expectTrue "duplicate device must fail" False
+
+    -- 2. Unknown location -> UnknownDeviceLocation
+    r2 <- case compileAdventure (mkDevs [validDev { adLocation = "nowhere" }]) of
+            Left errs -> expectTrue "unknown location is UnknownDeviceLocation"
+                (any (\i -> ciCode i == "UnknownDeviceLocation") errs)
+            Right _ -> expectTrue "unknown location must fail" False
+
+    -- 3. Unknown item in fits -> UnknownDeviceItem
+    r3 <- case compileAdventure (mkDevs [validDev { adFits = ["ghost_item"] }]) of
+            Left errs -> expectTrue "unknown item in fits is UnknownDeviceItem"
+                (any (\i -> ciCode i == "UnknownDeviceItem") errs)
+            Right _ -> expectTrue "unknown item in fits must fail" False
+
+    -- 4. Fewer than 2 flip states -> DeviceFlipStateCount
+    r4 <- case compileAdventure (mkDevs [validDev { adFlipVerb = Just "flip", adFlipStates = ["single"] }]) of
+            Left errs -> expectTrue "fewer than 2 flip states is DeviceFlipStateCount"
+                (any (\i -> ciCode i == "DeviceFlipStateCount") errs)
+            Right _ -> expectTrue "fewer than 2 flip states must fail" False
+
+    -- 5. Unknown tag warning -> UnknownDeviceTag
+    r5 <- case compileAdventure (mkDevs [validDev { adFitsTag = Just "nonexistent_tag" }]) of
+            Right cr -> expectTrue "unknown fits_tag produces UnknownDeviceTag warning"
+                (any (\i -> ciCode i == "UnknownDeviceTag") (crWarnings cr))
+            Left errs -> expectTrue ("warn-only case must compile, got: " ++ issuesText errs) False
+
+    -- 6. Device without effects warning -> DeviceWithoutEffects
+    let noEffDev = ADeviceDef "d2" Nothing [] "loc_0" Nothing Nothing [] Nothing Nothing [] [] Nothing [] []
+    r6 <- case compileAdventure (mkDevs [noEffDev]) of
+            Right cr -> expectTrue "device without effects produces DeviceWithoutEffects warning"
+                (any (\i -> ciCode i == "DeviceWithoutEffects") (crWarnings cr))
+            Left errs -> expectTrue ("warn-only case must compile, got: " ++ issuesText errs) False
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
 
 -- | Rogue Phase 1: the authored `game:` block compiles to the engine
 --   GamePolicy. Absent block keeps the default; savezone rooms are validated
@@ -3065,6 +3151,9 @@ tests =
     , ("chapters: compile in order; empty chapterDefs omitted", testChaptersCompile)
     , ("chapters: static checks (Duplicate, Unknown, Backwards, Unreachable)", testChapterChecks)
     , ("chapters: next_chapter/goto_chapter sugar compiles", testChapterSugar)
+    -- W4: devices (Hebel / Halterung)
+    , ("devices: compile in order; empty deviceDefs omitted", testDevicesCompile)
+    , ("devices: static checks (Duplicate, Location, Item, FlipCount, Tag, NoEffects)", testDeviceChecks)
     -- Schritt 2 / Phase 2D: Cards & Deckbuilder
     , ("cards: map syntax and deck count-map compile (Phase 2D)", testCardGameYamlCompilation)
     , ("cards: list syntax and card outcomes compile (Phase 2D)", testCardGameListFormAndOutcomes)

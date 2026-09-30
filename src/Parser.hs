@@ -288,7 +288,10 @@ parseSimpleCommandWith defs tokens input = case tokens of
     "wear"  : targetParts | not (null targetParts)   -> EquipCmd (unwords (safeStripStopWords targetParts))
     "wield" : targetParts | not (null targetParts)   -> EquipCmd (unwords (safeStripStopWords targetParts))
     "unequip" : targetParts | not (null targetParts) -> UnequipCmd (unwords (safeStripStopWords targetParts))
-    "remove"  : targetParts | not (null targetParts) -> UnequipCmd (unwords (safeStripStopWords targetParts))
+    "remove"  : targetParts
+        | not (null targetParts)
+        , "from" `notElem` targetParts
+        , "aus" `notElem` targetParts -> UnequipCmd (unwords (safeStripStopWords targetParts))
     -- Complex parsing (supports multi-word targets with stop-word stripping)
     "look"  : "at"   : targetParts | not (null targetParts) -> Interact VLookAt (unwords (safeStripStopWords targetParts))
     "pick"  : "up"   : targetParts | not (null targetParts) -> Interact VTake (unwords (safeStripStopWords targetParts))
@@ -452,6 +455,7 @@ resolveCmdTarget cmd st = case cmd of
             ResolvedItem iid    -> (iid, "item")
             ResolvedNPC nid     -> (nid, "npc")
             ResolvedVehicle vid -> (vid, "vehicle")
+            ResolvedDevice did  -> (did, "device")
             Ambiguous _         -> (tgt, "ambiguous")
             NotFound _          -> (tgt, "none")
             BareVerb            -> ("", "none")
@@ -535,7 +539,8 @@ extractCommandArgs cmd = case cmd of
 --   or Right (state, messages) to proceed.
 checkBeforeVeto :: Command -> GameState -> Either (GameState, [OutputEvent], Bool) (GameState, [OutputEvent])
 checkBeforeVeto cmd st =
-    let stWithVars = bindCommandVars cmd st
+    let stClean = st { lastVeto = Nothing }
+        stWithVars = bindCommandVars cmd stClean
         (vName, _, _) = extractCommandArgs cmd
         (stAfterBefore, beforeMsgs) = fireTriggers (OnBefore vName) stWithVars
     in case lastVeto stAfterBefore of
@@ -902,6 +907,13 @@ dispatchCommandEv (Interact verb targetStr) state =
                 (stateWithVars, darkRoomEv room)
             | otherwise ->
                 interactVehicle verb veh targetStr stateWithVars
+        ITDevice dev
+            | isDarkRestricted verb
+            , Just room <- getCurrentRoom stateWithVars
+            , isDark room stateWithVars ->
+                (stateWithVars, darkRoomEv room)
+            | otherwise ->
+                interactDevice verb dev targetStr stateWithVars
         ITBareVerb
             | isDarkRestricted verb
             , Just room <- getCurrentRoom stateWithVars
@@ -1088,6 +1100,7 @@ data InteractTarget
     = ITItem    ItemDef    (Maybe ItemState)  -- ^ Item in current room or inventory
     | ITNpc     NPCDef     (Maybe NPCState)   -- ^ NPC in current room
     | ITVehicle VehicleDef                    -- ^ Vehicle attack candidate
+    | ITDevice  DeviceDef                     -- ^ Device in current room (W4)
     | ITBareVerb                              -- ^ Bare verb with no target (e.g. defend, flee, custom command)
     | ITNotFound String                       -- ^ Target not found
     | ITAmbiguous [String]                    -- ^ Target is ambiguous between multiple candidates
@@ -1098,6 +1111,7 @@ data TargetResolution
     = ResolvedItem String       -- ^ Item ID
     | ResolvedNPC String        -- ^ NPC ID
     | ResolvedVehicle String    -- ^ Vehicle ID
+    | ResolvedDevice String     -- ^ Device ID (W4)
     | Ambiguous [String]        -- ^ Candidate IDs when ambiguous
     | NotFound String           -- ^ Target string not found
     | BareVerb                  -- ^ Bare verb without target
@@ -1117,6 +1131,14 @@ pattern TargetNotFound s = NotFound s
 
 pattern TargetBare :: TargetResolution
 pattern TargetBare = BareVerb
+
+-- | Check if a target string matches a device definition by ID, name, or keywords (W4).
+matchesDeviceTarget :: String -> DeviceDef -> Bool
+matchesDeviceTarget tgt d
+    | null (words tgt) = False
+    | otherwise        = normalizeText tgt `elem` aliases
+  where
+    aliases = nub (map normalizeText (devId d : devName d : devKeys d))
 
 -- | Check if a target string matches a vehicle definition by ID, name, or keywords.
 matchesVehicleTarget :: String -> VehicleDef -> Bool
@@ -1156,6 +1178,8 @@ resolveTarget verb targetStr state
             roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
             invItems  = getItemsInLocation (CarriedBy ActorPlayer) state
             roomNPCs  = getNPCsInRoom (currentRoom (save state)) state
+            roomDevices = filter (\d -> devLocation d == currentRoom (save state))
+                                 (Map.elems (deviceDefs (world state)))
 
             matchingRoomItems = filter (matchesItemTarget resolved) roomItems
             matchingInvItems  = filter (matchesItemTarget resolved) invItems
@@ -1164,8 +1188,9 @@ resolveTarget verb targetStr state
                                 then filter (\v -> matchesVehicleTarget resolved v || matchesVehicleTarget targetStr v)
                                             (Map.elems (vehicleDefs (world state)))
                                 else []
+            matchingDevices   = filter (matchesDeviceTarget resolved) roomDevices
 
-            roomCandidateIds = nub (map itemId matchingRoomItems ++ map npcId matchingNPCs ++ map vehicleId matchingVehicles)
+            roomCandidateIds = nub (map itemId matchingRoomItems ++ map npcId matchingNPCs ++ map vehicleId matchingVehicles ++ map devId matchingDevices)
             invCandidateIds  = nub (map itemId matchingInvItems)
 
             (primaryCandidates, secondaryCandidates) =
@@ -1179,11 +1204,13 @@ resolveTarget verb targetStr state
 
             allVehIds = map vehicleId matchingVehicles
             allNpcIds = map npcId matchingNPCs
+            allDevIds = map devId matchingDevices
         in case allCandidates of
             [] -> NotFound targetStr
             [singleId]
                 | singleId `elem` allVehIds -> ResolvedVehicle singleId
                 | singleId `elem` allNpcIds -> ResolvedNPC singleId
+                | singleId `elem` allDevIds -> ResolvedDevice singleId
                 | otherwise                 -> ResolvedItem singleId
             _  -> Ambiguous allCandidates
 
@@ -1206,6 +1233,10 @@ resolveInteractTarget verb targetStr state = case resolveTarget verb targetStr s
     ResolvedVehicle vid ->
         case Map.lookup vid (vehicleDefs (world state)) of
             Just veh -> ITVehicle veh
+            Nothing  -> ITNotFound targetStr
+    ResolvedDevice did ->
+        case Map.lookup did (deviceDefs (world state)) of
+            Just dev -> ITDevice dev
             Nothing  -> ITNotFound targetStr
     Ambiguous ids -> ITAmbiguous ids
     NotFound s    -> ITNotFound s
@@ -1275,6 +1306,27 @@ interactVehicle verb _veh targetStr state
     | verb == VAttack, Just res <- tryAttackVehicle targetStr state = res
     | otherwise = (state, evMsg "target.not_seen" [("target", targetStr)])
 
+-- | W4: Execute interaction on a device / fixture.
+interactDevice :: Verb -> DeviceDef -> String -> GameState -> (GameState, [OutputEvent])
+interactDevice verb dev _targetStr state
+    | verb == VLookAt =
+        let baseDesc = case devDescription dev of
+                Just d  -> d
+                Nothing -> devName dev
+            mounted = [ item
+                      | item <- Map.elems (itemDefs (world state))
+                      , case Map.lookup (itemId item) (itemStates (save state)) of
+                          Just is -> itemLocation is == CarriedBy (ActorEntity (devId dev))
+                          Nothing -> False
+                      ]
+            mountedEv = case mounted of
+                (m:_) -> evMsg "device.examine_mounted" [("device", devName dev), ("item", itemName m)]
+                []    -> []
+            descEv = evRaw baseDesc
+        in (state, joinEv descEv mountedEv)
+    | hasOnCommandTrigger verb state = (state, [])
+    | otherwise = (state, evMsg "item.cant_do" [("item", devName dev)])
+
 -- | Execute a bare interaction command without a target string.
 interactBare :: Verb -> GameState -> (GameState, [OutputEvent])
 interactBare verb state
@@ -1321,6 +1373,7 @@ chosenResolution chosen state
     | Map.member chosen (itemDefs (world state))    = ResolvedItem chosen
     | Map.member chosen (npcDefs (world state))     = ResolvedNPC chosen
     | Map.member chosen (vehicleDefs (world state)) = ResolvedVehicle chosen
+    | Map.member chosen (deviceDefs (world state))  = ResolvedDevice chosen
     | otherwise = NotFound chosen
 
 -- | Phase 2.3: can this command be replayed once the player has chosen one of
@@ -1362,7 +1415,8 @@ candidateWordSource state eid =
     let itemWords = maybe [] itemKeywords (Map.lookup eid (itemDefs (world state)))
         npcWords  = maybe [] npcKeywords  (Map.lookup eid (npcDefs (world state)))
         vehWords  = maybe [] vehicleKeywords (Map.lookup eid (vehicleDefs (world state)))
-    in eid : entityDisplayName state eid : itemWords ++ npcWords ++ vehWords
+        devWords  = maybe [] devKeys (Map.lookup eid (deviceDefs (world state)))
+    in eid : entityDisplayName state eid : itemWords ++ npcWords ++ vehWords ++ devWords
 
 -- | Display name of an entity (item name, NPC name, or vehicle name).
 entityDisplayName :: GameState -> String -> String
@@ -1373,7 +1427,9 @@ entityDisplayName state eid =
             Just npc -> npcName npc
             Nothing  -> case Map.lookup eid (vehicleDefs (world state)) of
                 Just veh -> vehicleName veh
-                Nothing  -> eid
+                Nothing  -> case Map.lookup eid (deviceDefs (world state)) of
+                    Just dev -> devName dev
+                    Nothing  -> eid
 
 -- | Display name of a hotspot target (item first, then NPC, else the id).
 hotspotLabel :: GameState -> Hotspot -> String

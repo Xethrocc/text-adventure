@@ -28,6 +28,7 @@ module Game
     , getItemsInLocation
     , getNPCsInRoom
     , hasItem
+    , actorHasItem
     , playerHasTaggedItem
     , isLivingNPCInRoom
     , isDeadNPC
@@ -40,6 +41,18 @@ module Game
     , pickupItem
     , dropItem
     , giveItem
+    , mountItem
+    , unmountItem
+    , deviceInsertMsg
+    , deviceRemoveMsg
+    , deviceRejectMsg
+    , deviceOccupiedMsg
+    , deviceFlipMsg
+    , deviceNotCarriedMsg
+    , deviceNotInDeviceMsg
+    , deviceCantInsertMsg
+    , deviceCantRemoveMsg
+    , deviceCantFlipMsg
     , consumeItem
     , equipItem
     , unequipItem
@@ -160,6 +173,7 @@ emptyGameWorld = GameWorld
     , factDefs           = []
     , combineDefs        = []
     , chapterDefs        = []
+    , deviceDefs         = Map.empty
     }
 
 -- | Default empty game state
@@ -383,11 +397,20 @@ getItemsInLocation loc state =
     ]
 
 
+-- | W4: Check if an actor (player, NPC, device) carries an item
+actorHasItem :: ActorRef -> ItemID -> GameState -> Bool
+actorHasItem actor iId state = case Map.lookup iId (itemStates (save state)) of
+    Just itemState -> case itemLocation itemState of
+        CarriedBy a -> actorMatches actor a
+        _           -> False
+    Nothing        -> False
+  where
+    actorMatches ActorPlayer ActorPlayer = True
+    actorMatches a1 a2 = actorId a1 == actorId a2
+
 -- | Check if player has an item in inventory
 hasItem :: ItemID -> GameState -> Bool
-hasItem iId state = case Map.lookup iId (itemStates (save state)) of
-    Just itemState -> itemLocation itemState == CarriedBy ActorPlayer
-    Nothing        -> False
+hasItem iId state = actorHasItem ActorPlayer iId state
 
 -- | Check if an item is currently equipped
 isEquipped :: ItemID -> GameState -> Bool
@@ -482,6 +505,61 @@ dropItem iId state = relocateItem iId (InRoom (currentRoom (save state))) state
 -- | Give item directly to player inventory (e.g., NPC reward, loot)
 giveItem :: ItemID -> GameState -> GameState
 giveItem iId state = relocateItem iId (CarriedBy ActorPlayer) state
+
+-- | W4: Mount item to an actor (player, NPC, or device)
+mountItem :: ItemID -> ActorRef -> GameState -> GameState
+mountItem iId actor state = relocateItem iId (CarriedBy actor) state
+
+-- | W4: Unmount an item from its carrier back into the carrier's room
+unmountItem :: ItemID -> GameState -> GameState
+unmountItem iId state =
+    case Map.lookup iId (itemStates (save state)) of
+        Just is -> case itemLocation is of
+            CarriedBy (ActorEntity dId) ->
+                case Map.lookup dId (deviceDefs (world state)) of
+                    Just dev -> relocateItem iId (InRoom (devLocation dev)) state
+                    Nothing  -> relocateItem iId (InRoom (currentRoom (save state))) state
+            CarriedBy (ActorNPC nId) ->
+                case Map.lookup nId (npcStates (save state)) of
+                    Just ns -> case npcLocation ns of
+                        InRoom r -> relocateItem iId (InRoom r) state
+                        _        -> relocateItem iId (InRoom (currentRoom (save state))) state
+                    Nothing -> relocateItem iId (InRoom (currentRoom (save state))) state
+            CarriedBy ActorPlayer ->
+                relocateItem iId (InRoom (currentRoom (save state))) state
+            _ -> state
+        Nothing -> state
+
+-- | W4: Device message helpers for triggers and command execution
+deviceInsertMsg :: String -> String -> String
+deviceInsertMsg dev item = renderMsg "device.insert" [("device", dev), ("item", item)]
+
+deviceRemoveMsg :: String -> String -> String
+deviceRemoveMsg dev item = renderMsg "device.remove" [("device", dev), ("item", item)]
+
+deviceRejectMsg :: String -> String -> String
+deviceRejectMsg dev item = renderMsg "device.reject" [("device", dev), ("item", item)]
+
+deviceOccupiedMsg :: String -> String
+deviceOccupiedMsg dev = renderMsg "device.occupied" [("device", dev)]
+
+deviceFlipMsg :: String -> String -> String
+deviceFlipMsg dev st = renderMsg "device.flip" [("device", dev), ("state", st)]
+
+deviceNotCarriedMsg :: String -> String
+deviceNotCarriedMsg item = renderMsg "device.not_carried" [("item", item)]
+
+deviceNotInDeviceMsg :: String -> String -> String
+deviceNotInDeviceMsg dev item = renderMsg "device.not_in_device" [("device", dev), ("item", item)]
+
+deviceCantInsertMsg :: String
+deviceCantInsertMsg = renderMsg "device.cant_insert" []
+
+deviceCantRemoveMsg :: String
+deviceCantRemoveMsg = renderMsg "device.cant_remove" []
+
+deviceCantFlipMsg :: String
+deviceCantFlipMsg = renderMsg "device.cant_flip" []
 
 
 -- | Consume an item, removing it from play entirely
@@ -959,6 +1037,7 @@ evalPredicate (PNot p) st = not (evalPredicate p st)
 evalPredicate (PAll ps) st = all (\p -> evalPredicate p st) ps
 evalPredicate (PAny ps) st = any (\p -> evalPredicate p st) ps
 evalPredicate (PlayerHas iId) st = hasItem iId st
+evalPredicate (ActorHas actor iId) st = actorHasItem actor iId st
 evalPredicate (HasFlag f) st = getFlag f st == Just "true"
 evalPredicate (HasCondition cn) st = hasCondition cn st
 -- A state predicate checks the entity's state in whichever layer stores it:

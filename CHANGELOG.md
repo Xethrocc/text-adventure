@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Vorrichtungen & Halterungen: `devices:` für Hebel und Halterungen (W4)
+
+- **`devices:`-Sektion** (`ADeviceDef` → `DeviceDef`): ortsfeste Vorrichtungen im Raum mit Zuständen (`flip_states`), Fit-Regeln (`fits_tag` / `fits`), geschlossenen Effektlisten (`on_insert`, `on_remove`, `on_flip_*`) und optionaler Aufnahme für genau ein Item. Hebel und Halterung sind zwei Ausprägungen desselben Konzepts.
+- **Primitives (Tür I)**:
+  - Prädikat `ActorHas ActorRef ItemID` (verallgemeinert `PlayerHas`, deckt `ActorEntity <devId>` und `ActorNPC <npcId>` ab).
+  - Effekte `Mount ItemID ActorRef` (platziert Item bei Entität: `CarriedBy (ActorEntity devId)`) und `Unmount ItemID` (legt Item zurück in den Raum der Vorrichtung).
+- **Zero New `SaveState` Fields**: Item-Orte werden im bestehenden `itemStates`-Feld gespeichert (`CarriedBy (ActorEntity devId)`), Hebelzustände über das bestehende `actorProperties`-Zustandsmodell (`PState`).
+- **Fit-Kontrakt & Veto-Muster (2.2)**:
+  - Generierte `OnBefore`-Trigger weisen unpassende Items (`reject`), Mehrfachbelegung (`occupied`) und nicht getragene Items (`not_carried`) vor dem Zugverbrauch ab (`Block (Just msg) False`, 0 Züge).
+  - Erfolgreicher Einbau (`stecke <item> in <halterung>`) und Ausbau (`ziehe <item> aus <halterung>`) verbraucht einen regulären Spielzug und feuert `on_insert` bzw. `on_remove`.
+  - Lever-Flip toggelt atomar über `Conditional` zwischen den deklarierten Zuständen und führt richtungsabhängige Effekte (`on_flip_<state>`) aus.
+- **Sichtbarkeit**: `examine <device>` zeigt die Vorrichtungsbeschreibung und bei montiertem Item automatisch `Mounted: <Item-Name>.` an.
+- **Explizites Beleuchtungsmuster**: Ersetzt aufwändige Physik/Propagation durch explizite Flag-Kopplung (`on_insert: set_flag: lit, "true"`, `on_remove: set_flag: lit, "false"`).
+- **Compiler-Checks**: `DuplicateDevice`, `UnknownDeviceLocation`, `UnknownDeviceItem`, `DeviceFlipStateCount`, `UnknownDeviceTag` (Warnung), `DeviceWithoutEffects` (Warnung), `DeviceVerbClash`.
+- **Meldungskatalog**: 11 neue Schlüssel (`device.*`), Katalog bei **202 Keys**.
+- **Tests**: 3 Engine-Tests (**410**) + 2 Worldbuilder-Tests (**186**); Fixture `examples/fixtures/krypta.yaml` in CI-Stufe 4b.
+
 ### Kapitel: `chapters:` mit Auto-Gate und `next_chapter`/`goto_chapter` (W3)
 
 - **`chapters:`-Sektion** (`AChapterDef` → `ChapterDef`): benannte Kapitel in narrativer

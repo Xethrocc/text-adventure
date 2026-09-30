@@ -19,6 +19,7 @@ module Worldbuilder.Compile
     , checkKeywordCollisions
     , checkUnknownPlaceholders
     , checkDarkRoomDeadEnds
+    , checkDeviceRefs
     ) where
 
 import Worldbuilder.Types
@@ -32,7 +33,7 @@ import qualified Data.Set as Set
 import Data.Char (toLower, isDigit, isSpace)
 import Data.List (nub, stripPrefix, isPrefixOf, minimumBy, intercalate)
 import Data.Ord (comparing)
-import Data.Maybe (mapMaybe, fromMaybe, catMaybes, isNothing)
+import Data.Maybe (mapMaybe, fromMaybe, catMaybes, isNothing, isJust)
 import Data.Either (partitionEithers)
 import Text.Read (readMaybe)
 import qualified Data.Aeson as Aeson
@@ -160,6 +161,7 @@ allAOutcomes a =
         interactions = case advInteractions a of
             Just ai -> concatMap aiiEffects (aiItem ai)
             Nothing -> []
+        deviceOutcomes d = adOnInsert d ++ adOnRemove d ++ concatMap snd (adOnFlip d)
     in concat
         [ concatMap roomOutcomes (advRooms a)
         , concatMap atEffects (advTriggers a)
@@ -169,6 +171,7 @@ allAOutcomes a =
         , concatMap (maybe [] id . aqReward) (advQuests a)
         , concatMap acdOutcomes (advCards a)
         , concatMap apEffects (advProcedures a)
+        , concatMap deviceOutcomes (advDevices a)
         ]
 collisions :: Ord a => [(String, a)] -> [(a, [String])]
 collisions pairs =
@@ -232,11 +235,11 @@ compileAdventure adv =
 
         allTriggerDefs = triggerDefs ++ encounterDefs ++ envTriggerDefs ++ stealthTriggerDefs
             ++ patrolTriggerDefs ++ shipTriggerDefs
-            ++ knowledgeTriggers ++ journalTriggers
-        -- W1: inject the generated combine/notes verbs into the registry so
+            ++ knowledgeTriggers ++ journalTriggers ++ deviceTriggers
+        -- W1/W4: inject the generated combine/notes/device verbs into the registry so
         -- `parseCommandWith` understands them like any custom verb.
-        verbRegistryFull = Map.union verbRegistry (Map.union knowledgeVerb journalVerb)
-        knowledgeClashErrs = knowledgeVerbCollisions ++ journalVerbCollisions
+        verbRegistryFull = Map.unions [verbRegistry, knowledgeVerb, journalVerb, deviceVerbs]
+        knowledgeClashErrs = knowledgeVerbCollisions ++ journalVerbCollisions ++ deviceVerbCollisions
 
         -- Rogue Phase 1: the authored `game:` policy. Savezone rooms must
         -- exist (MissingRoom); ironman without savezones is a warning (legal
@@ -297,6 +300,15 @@ compileAdventure adv =
             [ ciError ("verbs." ++ v) "NotesVerbClash"
                 ("'" ++ v ++ "' collides with the generated notes command (journal: notes)")
             | v <- Map.keys verbRegistry, v `elem` ["notizen", "notes"], notesMode ]
+        compiledDevices = compileDevices (advDevices adv)
+        (deviceErrs, deviceWarns) = checkDeviceRefs (advDevices adv) adv
+        (deviceTriggers, deviceVerbs) = compileDeviceTriggers (advDevices adv) (advItems adv)
+        hasHolders = any (\d -> not (null (adFits d)) || isJust (adFitsTag d) || not (null (adOnInsert d)) || not (null (adOnRemove d))) (advDevices adv)
+        deviceVerbCollisions =
+            [ ciError ("verbs." ++ v) "DeviceVerbClash"
+                ("'" ++ v ++ "' collides with generated device verb")
+            | v <- Map.keys verbRegistry
+            , hasHolders && v `elem` ["stecke", "ziehe", "insert", "remove"] ]
         mStartingDeck = case advDeck adv of
             Just d  -> Just d
             Nothing -> advPlayer adv >>= apDeck
@@ -335,6 +347,7 @@ compileAdventure adv =
                 , E.chapterDefs = compiledChapters
                 , E.factDefs = compiledFacts
                 , E.combineDefs = compiledCombines
+                , E.deviceDefs = compiledDevices
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
@@ -381,6 +394,7 @@ compileAdventure adv =
                     ++ chapterVarErrs
                     ++ knowledgeClashErrs
                     ++ journalErrs
+                    ++ deviceErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -424,6 +438,7 @@ compileAdventure adv =
                 darkRoomWarns = checkDarkRoomDeadEnds adv
                 allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ darkRoomWarns
                           ++ chapterWarns
+                          ++ deviceWarns
             in Right (CompileResult gw startSave allWarns)
   where
     -- Every locked exit starts locked in entityStates
@@ -1505,6 +1520,338 @@ checkKnownVarReserved varDefs =
     | name <- Map.keys varDefs, "known." `isPrefixOf` name ]
 
 -- ---------------------------------------------------------------------------
+-- W4: Interactive Devices / Fixtures (Hebel / Halterung)
+-- ---------------------------------------------------------------------------
+
+compileDeviceActorRef :: String -> E.ActorRef
+compileDeviceActorRef "player" = E.ActorPlayer
+compileDeviceActorRef s        = E.ActorEntity s
+
+compileDevices :: [ADeviceDef] -> Map.Map String E.DeviceDef
+compileDevices devs = Map.fromList
+    [ (adId d, E.DeviceDef
+        { E.devId          = adId d
+        , E.devName        = fromMaybe (adId d) (adName d)
+        , E.devKeys        = if null (adKeys d) then [adId d] else adKeys d
+        , E.devLocation    = adLocation d
+        , E.devDescription = adDescription d
+        , E.devFitsTag     = adFitsTag d
+        , E.devFits        = adFits d
+        , E.devInsertMsg   = adInsertMsg d
+        , E.devRemoveMsg   = adRemoveMsg d
+        , E.devOnInsert    = map compileAActionOutcome (adOnInsert d)
+        , E.devOnRemove    = map compileAActionOutcome (adOnRemove d)
+        , E.devFlipVerb    = adFlipVerb d
+        , E.devFlipStates  = adFlipStates d
+        , E.devOnFlip      = Map.fromList [ (st, map compileAActionOutcome effs) | (st, effs) <- adOnFlip d ]
+        })
+    | d <- devs
+    ]
+
+checkDeviceRefs :: [ADeviceDef] -> Adventure -> ([CompileIssue], [CompileIssue])
+checkDeviceRefs devs adv =
+    let roomIds = Set.fromList (map arId (advRooms adv))
+        itemIds = Set.fromList (map aiId (advItems adv))
+        allTags = Set.fromList (concatMap aiTags (advItems adv))
+        devIds = map adId devs
+        dupIssues =
+            [ ciError ("devices." ++ did) "DuplicateDevice"
+                ("device '" ++ did ++ "' is declared more than once")
+            | (did, n) <- Map.toList (Map.fromListWith (+) [ (i, 1 :: Int) | i <- devIds ])
+            , n > 1 ]
+        locIssues =
+            [ ciError ("devices." ++ adId d ++ ".location") "UnknownDeviceLocation"
+                ("device '" ++ adId d ++ "' references unknown location '" ++ adLocation d ++ "'")
+            | d <- devs
+            , adLocation d `Set.notMember` roomIds ]
+        itemIssues =
+            [ ciError ("devices." ++ adId d ++ ".fits") "UnknownDeviceItem"
+                ("device '" ++ adId d ++ "' references unknown item '" ++ it ++ "' in fits")
+            | d <- devs
+            , it <- adFits d
+            , it `Set.notMember` itemIds ]
+        flipIssues =
+            [ ciError ("devices." ++ adId d ++ ".flip_states") "DeviceFlipStateCount"
+                ("device '" ++ adId d ++ "' specifies flip_verb '" ++ fv ++ "' but has fewer than 2 flip_states")
+            | d <- devs
+            , Just fv <- [adFlipVerb d]
+            , length (adFlipStates d) < 2 ]
+        tagWarns =
+            [ ciWarning ("devices." ++ adId d ++ ".fits_tag") "UnknownDeviceTag"
+                ("device '" ++ adId d ++ "' specifies fits_tag '" ++ tag ++ "', which matches no declared items")
+            | d <- devs
+            , Just tag <- [adFitsTag d]
+            , tag `Set.notMember` allTags ]
+        noEffWarns =
+            [ ciWarning ("devices." ++ adId d) "DeviceWithoutEffects"
+                ("device '" ++ adId d ++ "' has no insert, remove, or flip effects")
+            | d <- devs
+            , null (adOnInsert d)
+            , null (adOnRemove d)
+            , null (adOnFlip d)
+            , isNothing (adFlipVerb d) ]
+        hardErrors = dupIssues ++ locIssues ++ itemIssues ++ flipIssues
+        warnings = tagWarns ++ noEffWarns
+    in (hardErrors, warnings)
+
+compileDeviceTriggers
+    :: [ADeviceDef]
+    -> [AItem]
+    -> ([E.TriggerDef], Map.Map String E.VerbDef)
+compileDeviceTriggers devs items
+    | null devs = ([], Map.empty)
+    | otherwise =
+        let hasHolders = any (\d -> not (null (adFits d)) || isJust (adFitsTag d) || not (null (adOnInsert d)) || not (null (adOnRemove d))) devs
+            distinctFlipVerbs = nub [ fv | d <- devs, Just fv <- [adFlipVerb d], length (adFlipStates d) >= 2 ]
+
+            insertVerbDef = ("stecke", E.VerbDef "stecke" ["insert"])
+            removeVerbDef = ("ziehe", E.VerbDef "ziehe" ["remove"])
+            flipVerbDefs = [ (fv, E.VerbDef fv (flipAliases fv)) | fv <- distinctFlipVerbs ]
+            flipAliases "umlegen" = ["flip"]
+            flipAliases "flip"    = ["umlegen"]
+            flipAliases _         = []
+
+            verbsToInject = Map.fromList $
+                (if hasHolders then [insertVerbDef, removeVerbDef] else [])
+                ++ flipVerbDefs
+
+            (allInsertTrigs, allRemoveTrigs) = if hasHolders
+                then (concatMap compileInsertTriggers devs ++ [insertFallback], concatMap compileRemoveTriggers devs ++ [removeFallback])
+                else ([], [])
+
+            allFlipTrigs = concatMap (compileFlipTriggers devs) distinctFlipVerbs
+
+            insertFallback =
+                let handled = [ c | t <- concatMap compileInsertTriggers devs, Just c <- [E.trCondition t] ]
+                in E.TriggerDef
+                    { E.trId = "device.insert.fallback"
+                    , E.trEvent = E.OnBefore "stecke"
+                    , E.trCondition = Just (E.PNot (E.PAny handled))
+                    , E.trEffects = [ E.Block (Just "You cannot insert that.") False ]
+                    , E.trOnce = False
+                    , E.trCooldown = 0
+                    }
+
+            removeFallback =
+                let handled = [ c | t <- concatMap compileRemoveTriggers devs, Just c <- [E.trCondition t] ]
+                in E.TriggerDef
+                    { E.trId = "device.remove.fallback"
+                    , E.trEvent = E.OnBefore "ziehe"
+                    , E.trCondition = Just (E.PNot (E.PAny handled))
+                    , E.trEffects = [ E.Block (Just "You cannot remove that.") False ]
+                    , E.trOnce = False
+                    , E.trCooldown = 0
+                    }
+        in (allInsertTrigs ++ allRemoveTrigs ++ allFlipTrigs, verbsToInject)
+  where
+    compileInsertTriggers d =
+        let dId = adId d
+            dLoc = adLocation d
+            dName = fromMaybe dId (adName d)
+            dKeys = if null (adKeys d) then [dId] else nub (dId : adKeys d)
+            matchDevVar v = E.PAny [ E.VarIs v k | k <- dKeys ]
+            argMatchDev = E.PAny [ matchDevVar "cmd.arg2", matchDevVar "cmd.arg3" ]
+            allItemIds = [ aiId i | i <- items ]
+            deviceOccupiedPred = E.PAny [ E.ActorHas (E.ActorEntity dId) i | i <- allItemIds ]
+
+            itemFits it = (aiId it `elem` adFits d) || maybe False (\t -> t `elem` aiTags it) (adFitsTag d)
+            fitting = filter itemFits items
+            nonFitting = filter (not . itemFits) items
+
+            occupiedTrig = E.TriggerDef
+                { E.trId = "device." ++ dId ++ ".occupied"
+                , E.trEvent = E.OnBefore "stecke"
+                , E.trCondition = Just (E.PAll [ E.Location E.ActorPlayer dLoc, argMatchDev, deviceOccupiedPred ])
+                , E.trEffects = [ E.Block (Just ("There is already something in the " ++ dName ++ ".")) False ]
+                , E.trOnce = False
+                , E.trCooldown = 0
+                }
+
+            rejectTrig it =
+                let itKeys = nub (aiId it : aiKeywords it)
+                    argMatchItem = E.PAny [ E.VarIs "cmd.arg1" k | k <- itKeys ]
+                    itName = if null (aiName it) then aiId it else aiName it
+                in E.TriggerDef
+                    { E.trId = "device." ++ dId ++ ".reject." ++ aiId it
+                    , E.trEvent = E.OnBefore "stecke"
+                    , E.trCondition = Just (E.PAll
+                        [ E.Location E.ActorPlayer dLoc
+                        , argMatchDev
+                        , argMatchItem
+                        , E.PNot deviceOccupiedPred
+                        ])
+                    , E.trEffects = [ E.Block (Just ("The " ++ itName ++ " does not fit into the " ++ dName ++ ".")) False ]
+                    , E.trOnce = False
+                    , E.trCooldown = 0
+                    }
+
+            notCarriedTrig it =
+                let itKeys = nub (aiId it : aiKeywords it)
+                    argMatchItem = E.PAny [ E.VarIs "cmd.arg1" k | k <- itKeys ]
+                    itName = if null (aiName it) then aiId it else aiName it
+                in E.TriggerDef
+                    { E.trId = "device." ++ dId ++ ".not_carried." ++ aiId it
+                    , E.trEvent = E.OnBefore "stecke"
+                    , E.trCondition = Just (E.PAll
+                        [ E.Location E.ActorPlayer dLoc
+                        , argMatchDev
+                        , argMatchItem
+                        , E.PNot deviceOccupiedPred
+                        , E.PNot (E.ActorHas E.ActorPlayer (aiId it))
+                        ])
+                    , E.trEffects = [ E.Block (Just ("You are not carrying " ++ itName ++ ".")) False ]
+                    , E.trOnce = False
+                    , E.trCooldown = 0
+                    }
+
+            insertTrig it =
+                let itKeys = nub (aiId it : aiKeywords it)
+                    argMatchItem = E.PAny [ E.VarIs "cmd.arg1" k | k <- itKeys ]
+                    itName = if null (aiName it) then aiId it else aiName it
+                    insMsg = fromMaybe ("You insert the " ++ itName ++ " into the " ++ dName ++ ".") (adInsertMsg d)
+                in E.TriggerDef
+                    { E.trId = "device." ++ dId ++ ".insert." ++ aiId it
+                    , E.trEvent = E.OnCommand "stecke"
+                    , E.trCondition = Just (E.PAll
+                        [ E.Location E.ActorPlayer dLoc
+                        , argMatchDev
+                        , argMatchItem
+                        , E.PNot deviceOccupiedPred
+                        , E.ActorHas E.ActorPlayer (aiId it)
+                        ])
+                    , E.trEffects = [ E.SendMessage insMsg, E.Mount (aiId it) (E.ActorEntity dId) ]
+                                    ++ map compileAActionOutcome (adOnInsert d)
+                    , E.trOnce = False
+                    , E.trCooldown = 0
+                    }
+        in [occupiedTrig]
+           ++ map rejectTrig nonFitting
+           ++ map notCarriedTrig fitting
+           ++ map insertTrig fitting
+
+    compileRemoveTriggers d =
+        let dId = adId d
+            dLoc = adLocation d
+            dName = fromMaybe dId (adName d)
+            dKeys = if null (adKeys d) then [dId] else nub (dId : adKeys d)
+            matchDevVar v = E.PAny [ E.VarIs v k | k <- dKeys ]
+            argMatchDev = E.PAny [ matchDevVar "cmd.arg2", matchDevVar "cmd.arg3" ]
+
+            itemFits it = (aiId it `elem` adFits d) || maybe False (\t -> t `elem` aiTags it) (adFitsTag d)
+            fitting = filter itemFits items
+
+            removeTrig it =
+                let itKeys = nub (aiId it : aiKeywords it)
+                    argMatchItem = E.PAny [ E.VarIs "cmd.arg1" k | k <- itKeys ]
+                    itName = if null (aiName it) then aiId it else aiName it
+                    isMounted = E.ActorHas (E.ActorEntity dId) (aiId it)
+                    removeMatch = E.PAny
+                        [ E.PAll [ argMatchItem, argMatchDev ]
+                        , E.PAll [ argMatchItem, E.PAny [ E.CompareVar "cmd.count" E.CEq 1, E.VarIs "cmd.arg2" "raus", E.VarIs "cmd.arg2" "out" ] ]
+                        , E.PAll [ matchDevVar "cmd.arg1", E.CompareVar "cmd.count" E.CEq 1 ]
+                        ]
+                    remMsg = fromMaybe ("You remove the " ++ itName ++ " from the " ++ dName ++ ".") (adRemoveMsg d)
+                in E.TriggerDef
+                    { E.trId = "device." ++ dId ++ ".remove." ++ aiId it
+                    , E.trEvent = E.OnCommand "ziehe"
+                    , E.trCondition = Just (E.PAll
+                        [ E.Location E.ActorPlayer dLoc
+                        , removeMatch
+                        , isMounted
+                        ])
+                    , E.trEffects = [ E.SendMessage remMsg, E.Unmount (aiId it) ]
+                                    ++ map compileAActionOutcome (adOnRemove d)
+                    , E.trOnce = False
+                    , E.trCooldown = 0
+                    }
+
+            notInDevTrig it =
+                let itKeys = nub (aiId it : aiKeywords it)
+                    argMatchItem = E.PAny [ E.VarIs "cmd.arg1" k | k <- itKeys ]
+                    itName = if null (aiName it) then aiId it else aiName it
+                    isMounted = E.ActorHas (E.ActorEntity dId) (aiId it)
+                in E.TriggerDef
+                    { E.trId = "device." ++ dId ++ ".not_in_dev." ++ aiId it
+                    , E.trEvent = E.OnBefore "ziehe"
+                    , E.trCondition = Just (E.PAll
+                        [ E.Location E.ActorPlayer dLoc
+                        , E.PAll [ argMatchItem, argMatchDev ]
+                        , E.PNot isMounted
+                        ])
+                    , E.trEffects = [ E.Block (Just ("There is no " ++ itName ++ " in the " ++ dName ++ ".")) False ]
+                    , E.trOnce = False
+                    , E.trCooldown = 0
+                    }
+
+            emptyTrig = E.TriggerDef
+                { E.trId = "device." ++ dId ++ ".empty"
+                , E.trEvent = E.OnBefore "ziehe"
+                , E.trCondition = Just (E.PAll
+                    [ E.Location E.ActorPlayer dLoc
+                    , matchDevVar "cmd.arg1"
+                    , E.CompareVar "cmd.count" E.CEq 1
+                    , E.PNot (E.PAny [ E.ActorHas (E.ActorEntity dId) (aiId fit) | fit <- fitting ])
+                    ])
+                , E.trEffects = [ E.Block (Just ("There is nothing in the " ++ dName ++ ".")) False ]
+                , E.trOnce = False
+                , E.trCooldown = 0
+                }
+        in map removeTrig fitting
+           ++ map notInDevTrig fitting
+           ++ [emptyTrig]
+
+    compileFlipTriggers devsForFv fv =
+        let targetDevs = [ d | d <- devsForFv, adFlipVerb d == Just fv, length (adFlipStates d) >= 2 ]
+            trigsForDev d =
+                let dId = adId d
+                    dLoc = adLocation d
+                    dName = fromMaybe dId (adName d)
+                    dKeys = if null (adKeys d) then [dId] else nub (dId : adKeys d)
+                    matchDevVar v = E.PAny [ E.VarIs v k | k <- dKeys ]
+                    flipMatch = E.PAny [ matchDevVar "cmd.arg1", E.CompareVar "cmd.count" E.CEq 0 ]
+                    s1 = head (adFlipStates d)
+                    s2 = adFlipStates d !! 1
+                    authorS2 = case lookup s2 (adOnFlip d) of
+                        Just effs -> map compileAActionOutcome effs
+                        Nothing   -> []
+                    authorS1 = case lookup s1 (adOnFlip d) of
+                        Just effs -> map compileAActionOutcome effs
+                        Nothing   -> []
+                    flipMsgS2 = "You flip the " ++ dName ++ " to " ++ s2 ++ "."
+                    flipMsgS1 = "You flip the " ++ dName ++ " to " ++ s1 ++ "."
+                    toS2Effs = E.Sequence $
+                        [ E.SetValue (E.VRActorProp (E.ActorEntity dId) E.PState) (E.EVString s2)
+                        , E.SendMessage flipMsgS2
+                        ] ++ authorS2
+                    toS1Effs = E.Sequence $
+                        [ E.SetValue (E.VRActorProp (E.ActorEntity dId) E.PState) (E.EVString s1)
+                        , E.SendMessage flipMsgS1
+                        ] ++ authorS1
+                    toggleTrig = E.TriggerDef
+                        { E.trId = "device." ++ dId ++ ".flip"
+                        , E.trEvent = E.OnCommand fv
+                        , E.trCondition = Just (E.PAll
+                            [ E.Location E.ActorPlayer dLoc
+                            , flipMatch
+                            ])
+                        , E.trEffects = [ E.Conditional (E.EntityHasState dId s2) toS1Effs toS2Effs ]
+                        , E.trOnce = False
+                        , E.trCooldown = 0
+                        }
+                in [toggleTrig]
+            devTrigs = concatMap trigsForDev targetDevs
+            handled = [ c | t <- devTrigs, Just c <- [E.trCondition t] ]
+            fallbackTrig = E.TriggerDef
+                { E.trId = "device.flip." ++ fv ++ ".fallback"
+                , E.trEvent = E.OnBefore fv
+                , E.trCondition = Just (E.PNot (E.PAny handled))
+                , E.trEffects = [ E.Block (Just "You cannot flip that.") False ]
+                , E.trOnce = False
+                , E.trCooldown = 0
+                }
+        in devTrigs ++ [fallbackTrig]
+
+-- ---------------------------------------------------------------------------
 -- Phase 2.5 (D2): procedures
 -- ---------------------------------------------------------------------------
 
@@ -2169,6 +2516,8 @@ compileAActionOutcome ao = case ao of
     AOStandingAdd fid n -> E.ModifyValue (E.VRVariable ("faction." ++ fid)) n
     AOStandingSet fid n -> E.SetValue (E.VRVariable ("faction." ++ fid)) (E.EVInt n)
     AOSetEntityState e s -> E.SetValue (E.VRActorProp (E.ActorEntity e) E.PState) (E.EVString s)
+    AOMount i tgt -> E.Mount i (compileDeviceActorRef tgt)
+    AOUnmount i   -> E.Unmount i
     -- P1-17: previously unreachable engine effects, now authorable.
     AOApplyCondition name turns tick end hidden ->
         E.ApplyCondition name turns (outcomesMaybe tick) (outcomesMaybe end) hidden

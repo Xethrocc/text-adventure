@@ -109,6 +109,8 @@ module Types.Core
     , FactDef (..)
     , CombineDef (..)
     , ChapterDef (..)
+    , DeviceDef (..)
+    , DeviceID
       -- * Procedural Sandbox & Cutscenes
     , BiomeTemplate (..)
     , SandboxZone (..)
@@ -621,6 +623,7 @@ data Predicate
     | VarIs String String               -- ^ text variable equals a literal (`{ var: X, is: Y }`)
     | HasCondition String               -- ^ active condition/timer on player (Phase 2.1)
     | Knows ActorRef String             -- ^ W1: actor knows this fact (VarMap `known.<actor>.<fact>`)
+    | ActorHas ActorRef ItemID          -- ^ W4: does the actor (player, NPC, device) carry/hold this item?
     deriving (Show, Eq, Generic)
 
 -- | Serialize to the same compact object shape that FromJSON accepts
@@ -633,6 +636,7 @@ instance ToJSON Predicate where
         PAny qs            -> object [ "any"      .= qs ]
         Compare l op r     -> object [ "lhs" .= l, "op" .= op, "rhs" .= r ]
         PlayerHas i        -> object [ "has_item" .= i ]
+        ActorHas a i       -> object [ "actor_has" .= actorId a, "item" .= i ]
         EntityHasState e s -> object [ "state"    .= e, "is" .= s ]
         HasFlag f          -> object [ "has_flag" .= f ]
         RoomHasTag r t     -> object [ "room"     .= r, "has_tag" .= t ]
@@ -683,6 +687,9 @@ instance FromJSON Predicate where
         <|> (PNot  <$> o .: "not")
         <|> (PTrue <$ (o .: "true" :: Parser Bool))
         <|> (PlayerHas <$> o .: "has_item")
+        <|> (ActorHas  <$> o .: "actor_has" <*> o .: "item")
+        <|> (do ah <- o .: "actor_has"
+                ActorHas <$> ah .: "actor" <*> ah .: "item")
         <|> (HasFlag   <$> o .: "has_flag")
         <|> (HasCondition <$> o .: "has_condition")
         -- W1: knowledge — `knows: <fact>` (player) or `{knows: <actor>, fact: <fact>}`
@@ -807,6 +814,8 @@ data Effect
     | ShowNotes                                   -- ^ W1: render the player's notes book
     | NextChapter                                  -- ^ W3: to the next chapter (declaration order)
     | GotoChapter String                           -- ^ W3: to a named chapter (no backward jumps)
+    | Mount ItemID ActorRef                        -- ^ W4: place an item into a device/actor
+    | Unmount ItemID                               -- ^ W4: remove an item from its device/actor to the room
     | Noop                                        -- ^ Do nothing
     deriving (Show, Eq, Generic)
 
@@ -1612,6 +1621,29 @@ data ChapterDef = ChapterDef
 instance ToJSON ChapterDef
 instance FromJSON ChapterDef
 
+-- | A device / fixture (W4): an interactive entity with state and/or item mounting.
+data DeviceDef = DeviceDef
+    { devId          :: DeviceID
+    , devName        :: String
+    , devKeys        :: [String]
+    , devLocation    :: RoomID
+    , devDescription :: Maybe String
+    , devFitsTag     :: Maybe String
+    , devFits        :: [ItemID]
+    , devInsertMsg   :: Maybe String
+    , devRemoveMsg   :: Maybe String
+    , devOnInsert    :: [Effect]
+    , devOnRemove    :: [Effect]
+    , devFlipVerb    :: Maybe String
+    , devFlipStates  :: [String]
+    , devOnFlip      :: Map.Map String [Effect]
+    } deriving (Show, Eq, Generic)
+
+type DeviceID = String
+
+instance ToJSON DeviceDef
+instance FromJSON DeviceDef
+
 -- | Static world definition containing blueprint/map data
 data GameWorld = GameWorld
     { rooms              :: Map.Map RoomID Room
@@ -1637,6 +1669,7 @@ data GameWorld = GameWorld
     , factDefs           :: [FactDef]                                -- ^ Knowledge facts (W1), in declaration order; empty list is omitted
     , combineDefs        :: [CombineDef]                             -- ^ Derivation rules (W1); empty list is omitted
     , chapterDefs        :: [ChapterDef]                             -- ^ Chapters (W3) in narrative order; empty list is omitted
+    , deviceDefs         :: Map.Map DeviceID DeviceDef               -- ^ Interactive devices/fixtures (W4); empty map is omitted
     } deriving (Show, Eq)
 
 -- | A cutscene clip (Phase H/H4): a frame sequence played once at its own
@@ -1677,7 +1710,7 @@ instance ToJSON GameWorld where
         , "worldName"          .= worldName gw
         , "abilities"          .= abilities gw
         ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair ++ sandboxPair
-          ++ procPair ++ factPair ++ combinePair ++ chapterPair
+          ++ procPair ++ factPair ++ combinePair ++ chapterPair ++ devicePair
       where
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
@@ -1695,6 +1728,7 @@ instance ToJSON GameWorld where
         factPair = [ "factDefs" .= factDefs gw | not (null (factDefs gw)) ]
         combinePair = [ "combineDefs" .= combineDefs gw | not (null (combineDefs gw)) ]
         chapterPair = [ "chapterDefs" .= chapterDefs gw | not (null (chapterDefs gw)) ]
+        devicePair = [ "deviceDefs" .= deviceDefs gw | not (Map.null (deviceDefs gw)) ]
         endArt = Map.filter (not . isEmptyAscii) (worldEndArt gw)
         titleArt = worldTitleArt gw
 
@@ -1757,6 +1791,7 @@ instance FromJSON GameWorld where
         <*> o .:? "factDefs" .!= []
         <*> o .:? "combineDefs" .!= []
         <*> o .:? "chapterDefs" .!= []
+        <*> o .:? "deviceDefs" .!= Map.empty
 
 -- | Encode item-on-item outcomes as objects (P2-9).
 itemInteractionsToJSON :: Map.Map (String, String) Effect -> Value

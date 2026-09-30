@@ -1950,6 +1950,90 @@ rules:
   (`{if <var> == chapter...}`-artig mit `chapter.current` als Text-Variable — das
   `chapter.current`-Format ist eine Text-Variable, Werte = Kapitel-IDs).
 
+## Vorrichtungen & Halterungen: `devices:` (W4)
+
+Explizite Zustands- und Einbaumechanik für Hebel und Halterungen als genre-neutrale Primitive (Schlösser, Fackelhalterungen, Sicherungskästen, Konsolen, Altäre). Hebel und Halterung sind zwei Ausprägungen desselben Konzepts: Eine Vorrichtung ist eine ortsfeste Entität im Raum mit Zuständen, geschlossenen Effektlisten und optionaler Aufnahme für genau ein Item.
+
+```yaml
+devices:
+  - id: fackelhalterung
+    name: "Eiserne Wandhalterung"
+    desc: "Eine geschmiedete Wandhalterung für Fackeln."
+    keys: [halterung, wandhalterung]
+    location: krypta
+    fits_tag: lichtquelle               # oder: fits: [fackel_a, fackel_b]
+    insert_msg: "Die Fackel knistert in der Halterung."
+    remove_msg: "Das Licht stirbt, als du die Fackel herausziehst."
+    on_insert:
+      - set_flag: krypta_beleuchtet
+        val: "true"
+    on_remove:
+      - set_flag: krypta_beleuchtet
+        val: "false"
+
+  - id: hebel_tor
+    name: "Messinghebel"
+    desc: "Ein massiver Hebel mit zwei Rastungen."
+    keys: [hebel, messinghebel]
+    location: krypta
+    flip_verb: umlegen
+    flip_states: [unten, oben]
+    on_flip_oben:
+      - msg: "Ein fernes Rollen erschüttert den Boden."
+      - set_state: tortraverse
+        to: offen
+    on_flip_unten:
+      - set_state: tortraverse
+        to: zu
+```
+
+### Felder
+
+| Feld | Typ | Default | Beschreibung |
+|---|---|---|---|
+| `id` | String | **required** | Eindeutige Kennung der Vorrichtung |
+| `name` | String | `id` | Spieler-sichtbarer Name |
+| `desc` / `description` | String | `name` | Beschreibung beim Untersuchen (`examine <device>`) |
+| `keys` | [String] | `[id]` | Schlüsselwörter für Parser-Matching |
+| `location` | String | **required** | Raum-ID, in dem sich die Vorrichtung befindet |
+| `fits_tag` | String | — | Tag für passende Gegenstände (z. B. `lichtquelle`, `sicherung`) |
+| `fits` | [String] | `[]` | Liste expliziter Item-IDs, die eingesteckt werden können |
+| `insert_msg` | String | Default | Meldung beim Einbau des Items |
+| `remove_msg` | String | Default | Meldung beim Ausbau des Items |
+| `on_insert` | [AActionOutcome] | `[]` | Effekte beim erfolgreichen Einbau |
+| `on_remove` | [AActionOutcome] | `[]` | Effekte beim erfolgreichen Ausbau |
+| `flip_verb` | String | — | Verb zum Hin-/Herschalten (z. B. `umlegen`, `flip`) |
+| `flip_states` | [String] | `[]` | Liste der Zustände (mindestens 2; bei 2 Zuständen: Toggle) |
+| `on_flip_<state>` / `on_flip:` | [AActionOutcome] / Map | `[]` | Effekte beim Erreichen des jeweiligen Zustands |
+
+### Vokabel & Primitives (Tür I)
+
+- **Prädikat `ActorHas ActorRef ItemID`:** Prüft, ob ein Actor (Spieler `ActorPlayer`, NPC `ActorNPC <id>` oder Vorrichtung `ActorEntity <id>`) ein Item besitzt.
+- **Effekt `Mount ItemID ActorRef`:** Bewegt ein Item in den Besitz des angegebenen Actors (z. B. `CarriedBy (ActorEntity "fackelhalterung")`).
+- **Effekt `Unmount ItemID`:** Entfernt das eingesteckte Item aus der Vorrichtung und legt es zurück in den Raum der Vorrichtung.
+- **Persistenz:** Keine neuen `SaveState`-Felder. Eingesteckte Items liegen in der bestehenden `itemStates`-Map mit `itemLocation = CarriedBy (ActorEntity devId)`.
+
+### Fit-Kontrakt & Veto-Muster
+
+- **Einbau:** `stecke <item> in <halterung>` (bzw. `insert <item> into <halterung>`).
+  - Item passt, wenn `fits_tag` übereinstimmt **oder** die Item-ID in `fits` gelistet ist.
+  - Bereits belegt: Ablehnung mit Meldung, **kein Zugverbrauch** (2.2-Veto-Muster).
+  - Unpassendes Item: Ablehnung mit Meldung, **kein Zugverbrauch**.
+  - Item nicht getragen: Ablehnung mit Meldung, **kein Zugverbrauch**.
+  - Erfolg: Item wird gemountet, `insert_msg` ausgegeben, `on_insert`-Effektliste ausgeführt, Zug wird verbraucht.
+- **Ausbau:** `ziehe <item> aus <halterung>` bzw. `ziehe <halterung>` (oder `remove ...`).
+  - Vorrichtung leer: Ablehnung mit Meldung, kein Zugverbrauch.
+  - Erfolg: Item landet im Raum, `remove_msg` ausgegeben, `on_remove`-Effektliste ausgeführt, Zug wird verbraucht.
+- **Sichtbarkeit:** `examine <halterung>` zeigt die Beschreibung und bei montiertem Item automatisch den Hinweis `Mounted: <Item-Name>.` an. Ausgebaute Items erscheinen in der Raum-Itemliste.
+
+### Das Beleuchtungsmuster (Ersatz der Licht-Propagation)
+
+W4 ersetzt bewusst aufwändige Licht-Physik/Emergenz durch **explizite Zustände und Effekte**:
+- Raum als dunkel deklarieren: `tags: [dark]`, `light_flag: krypta_beleuchtet`.
+- Fackelhalterung im Raum schaltet bei `on_insert` das Flag `krypta_beleuchtet` auf `"true"`.
+- Bei `on_remove` schaltet die Halterung das Flag `krypta_beleuchtet` auf `"false"`.
+- Die Dunkelheitsprüfung des Spiels (`isDark`) wertet das `light_flag` des Raumes aus — ohne Emergenz, rein deterministisch und transparent für Autoren und Spieler.
+
 ## Validierungs-Warnungen (Compiler-Diagnosen)
 
 Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity = SError`) und **nicht-fatalen Warnungen** (`ciSeverity = SWarning`):
@@ -1964,5 +2048,7 @@ Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity =
 | `UnknownPlaceholder` | Ein `{name}`- oder `{var:name}`-Platzhalter in Texten referenziert eine nicht deklarierte Variable. | Variable in `variables:` deklarieren, Schreibfehler korrigieren oder wörtliche geschweifte Klammern maskieren (`\{...\}`, `{{...}}`). |
 | `DarkRoomDeadEnd` | Ein dunkler Raum (`dark: true` oder Tag `"dark"`) enthält Items, hat aber weder ein `light_flag`, noch existiert eine erreichbare Lichtquelle (`lightsource`), noch ist ein Item als `feelable` getaggt. | Raum mit `light_flag:` versehen, ein erreichbares Item als `tags: [lightsource]` deklarieren oder ertastbare Items mit `tags: [feelable]` kennzeichnen. |
 | `IronmanWithoutSavezones` | `ironman: true` ist im `game:`-Block aktiviert, aber `save_zones` ist leer. | `save_zones: [room1, ...]` angeben oder den Hardcore-Modus (ohne Speichermöglichkeit) bewusst beibehalten. |
+| `UnknownDeviceTag` | Das Feld `fits_tag` einer Vorrichtung matcht keinen Tag deklarierter Items. | Schreibweise des Tags prüfen oder sicherstellen, dass passende Items diesen Tag tragen. |
+| `DeviceWithoutEffects` | Eine Vorrichtung besitzt weder Insert-, Remove- noch Flip-Effekte. | Effekte für Interaktionen hinterlegen oder Vorrichtung bei rein dekorativem Zweck belassen. |
 
 

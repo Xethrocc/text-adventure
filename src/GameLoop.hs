@@ -188,13 +188,14 @@ newPending command evs
 --   so it can never leak into a later command.
 runCommandNoTurn :: Command -> LoopState -> (LoopState, [OutputEvent])
 runCommandNoTurn command loopState =
-    case checkBeforeVeto command (lsCurrent loopState) of
+    let curSt = (lsCurrent loopState) { lastVeto = Nothing }
+    in case checkBeforeVeto command curSt of
         Left (stBlocked, msgs, _) ->
-            (loopState { lsCurrent = stBlocked { chosenTarget = Nothing } }
-            , msgs ++ sideEvents (lsCurrent loopState) stBlocked)
+            (loopState { lsCurrent = stBlocked { chosenTarget = Nothing, lastVeto = Nothing } }
+            , msgs ++ sideEvents curSt stBlocked)
         Right (stAfterBefore, beforeMsgs) ->
-            let (lsDone, evsDone) = applyAfterVeto [OnTurn] command stAfterBefore beforeMsgs loopState
-            in (lsDone { lsCurrent = (lsCurrent lsDone) { chosenTarget = Nothing } }, evsDone)
+            let (lsDone, evsDone) = applyAfterVeto [OnTurn] command stAfterBefore beforeMsgs (loopState { lsCurrent = curSt })
+            in (lsDone { lsCurrent = (lsCurrent lsDone) { chosenTarget = Nothing, lastVeto = Nothing } }, evsDone)
 
 -- | Phase 2.3: shared tail of the non-turn dispatch path — dispatch, fire the
 --   command triggers and append the additive side events. 'skipEvents' removes
@@ -208,7 +209,7 @@ applyAfterVeto skipEvents command stAfterBefore beforeMsgs loopState =
             fireCommandTriggersSkipping skipEvents command (lsCurrent loopState) newState
         cmdMsg = joinBeforeAndCmd beforeMsgs message
         combined = joinEv cmdMsg triggerMsg ++ sideEvents (lsCurrent loopState) stateAfterTriggers
-    in (loopState { lsCurrent = stateAfterTriggers }, combined)
+    in (loopState { lsCurrent = stateAfterTriggers { lastVeto = Nothing } }, combined)
 
 applyLoopCommandCore :: Command -> LoopState -> (LoopState, [OutputEvent])
 applyLoopCommandCore Undo loopState
@@ -237,15 +238,16 @@ applyLoopCommandCore (Save _) loopState = (loopState, [])
 applyLoopCommandCore (Load _) loopState = (loopState, [])
 applyLoopCommandCore ListSaves loopState = (loopState, [])
 applyLoopCommandCore command loopState =
-    case checkBeforeVeto command (lsCurrent loopState) of
+    let curSt = (lsCurrent loopState) { lastVeto = Nothing }
+    in case checkBeforeVeto command curSt of
         Left (stBlocked, msgs, False) ->
             -- Vetoed without turn consumption (Phase 2.2 default)
-            (loopState { lsCurrent = stBlocked }
-            , msgs ++ sideEvents (lsCurrent loopState) stBlocked)
+            (loopState { lsCurrent = stBlocked { lastVeto = Nothing } }
+            , msgs ++ sideEvents curSt stBlocked)
 
         Left (stBlocked, msgs, True) ->
             -- Vetoed with consumesTurn = True: command action dropped, but turn ticks advance!
-            let oldState = lsCurrent loopState
+            let oldState = curSt
                 policy = worldGamePolicy (world oldState)
                 history' = if gpAllowUndo policy
                            then take maxUndoHistory (oldState : lsHistory loopState)
@@ -260,15 +262,15 @@ applyLoopCommandCore command loopState =
                 -- after the turn-trigger fold (W3.2).
                 (stateAfterChapter, chapterMsg) = checkChapterGate stateAfterTurnTriggers
                 fullMsg = if null allTickMsgs then msgs else tickText ++ msgs
-            in (loopState { lsCurrent = stateAfterChapter, lsHistory = history' }
+            in (loopState { lsCurrent = stateAfterChapter { lastVeto = Nothing }, lsHistory = history' }
                , joinEv fullMsg turnTrigMsg ++ chapterMsg ++ sideEvents oldState stateAfterChapter)
 
         Right (stAfterBefore, beforeMsgs)
-            | not (consumesTurnIn (lsCurrent loopState) command) ->
-                applyAfterVeto [] command stAfterBefore beforeMsgs loopState
+            | not (consumesTurnIn curSt command) ->
+                applyAfterVeto [] command stAfterBefore beforeMsgs (loopState { lsCurrent = curSt })
 
             | otherwise ->
-                let oldState = lsCurrent loopState
+                let oldState = curSt
                     policy = worldGamePolicy (world oldState)
                     -- Rogue Phase 1: with undo disabled the history is not tracked at
                     -- all (saves memory; the command is rejected before use anyway).
@@ -285,7 +287,7 @@ applyLoopCommandCore command loopState =
                        -- L11: the condition tick ended the game before the command ran
                        -- (the tick pipeline runs first). The player is already dead, so
                        -- the command is dropped — only the tick messages are reported.
-                       (loopState { lsCurrent = stateAfterVehicleTick, lsHistory = history' },
+                       (loopState { lsCurrent = stateAfterVehicleTick { lastVeto = Nothing }, lsHistory = history' },
                            tickText ++ sideEvents oldState stateAfterVehicleTick)
                    else
                        let (newState, message) = dispatchCommandEv command stateAfterVehicleTick
@@ -296,7 +298,7 @@ applyLoopCommandCore command loopState =
                            (stateAfterChapter, chapterMsg) = checkChapterGate stateAfterTriggers
                            cmdMsg = joinBeforeAndCmd beforeMsgs message
                            fullMessage = if null allTickMsgs then cmdMsg else tickText ++ cmdMsg
-                       in (loopState { lsCurrent = stateAfterChapter, lsHistory = history' },
+                       in (loopState { lsCurrent = stateAfterChapter { lastVeto = Nothing }, lsHistory = history' },
                            joinEv fullMessage triggerMsg ++ chapterMsg ++ sideEvents oldState stateAfterChapter)
 
 -- | Phase 1.2: additive side events derived from the state transition —

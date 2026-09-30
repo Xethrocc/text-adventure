@@ -5221,6 +5221,77 @@ testChapterOnChapterDoesNotCascade = do
     r3 <- expectTrue "no third chapter auto-fired" (not (chapterVisited "drei" (lsCurrent ls3)))
     pure (r1 && r2 && r2b && r3)
 
+-- ---------------------------------------------------------------------------
+-- W4: devices (Hebel / Halterung)
+-- ---------------------------------------------------------------------------
+
+mkTestRoom :: RoomID -> String -> Room
+mkTestRoom rId name = Room rId name (plainText name) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing
+
+-- | Helper: state with rooms, items (with locations), and devices installed.
+dstate :: [Room] -> [(ItemDef, Location)] -> [DeviceDef] -> GameState
+dstate rms its devs =
+    let gw = (world emptyGameState)
+            { rooms = Map.fromList [ (roomId r, r) | r <- rms ]
+            , itemDefs = Map.fromList [ (itemId i, i) | (i, _) <- its ]
+            , deviceDefs = Map.fromList [ (devId d, d) | d <- devs ]
+            }
+        sv = (save emptyGameState)
+            { currentRoom = if null rms then "" else roomId (head rms)
+            , itemStates = Map.fromList [ (itemId i, ItemState loc "intact" Map.empty False) | (i, loc) <- its ]
+            }
+    in emptyGameState { world = gw, save = sv }
+
+testActorHasPredicate :: IO Bool
+testActorHasPredicate = do
+    let r1 = mkTestRoom "krypta" "Krypta"
+        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty emptyAscii
+        it2 = ItemDef "schluessel" "Schlüssel" (plainText "Ein Schlüssel.") ["schluessel"] Set.empty Nothing [] False Nothing True Nothing Map.empty emptyAscii
+        it3 = ItemDef "kristall" "Kristall" (plainText "Ein Kristall.") ["kristall"] Set.empty Nothing [] False Nothing True Nothing Map.empty emptyAscii
+        dev1 = DeviceDef "halterung" "Halterung" ["halterung"] "krypta" (Just "Eine Halterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
+        st0 = dstate [r1] [ (it1, InRoom "krypta")
+                          , (it2, CarriedBy (ActorNPC "guard"))
+                          , (it3, CarriedBy (ActorEntity "halterung"))
+                          ] [dev1]
+    r1Check <- expectTrue "player does not have fackel yet" (not (evalPredicate (ActorHas ActorPlayer "fackel") st0))
+    r2Check <- expectTrue "npc has schluessel" (evalPredicate (ActorHas (ActorNPC "guard") "schluessel") st0)
+    r3Check <- expectTrue "device has kristall" (evalPredicate (ActorHas (ActorEntity "halterung") "kristall") st0)
+    let (st1, _, _) = applyOutcomeWith 0 0 (Mount "fackel" ActorPlayer) "" st0
+    r4Check <- expectTrue "player has fackel after mount to player" (evalPredicate (ActorHas ActorPlayer "fackel") st1)
+    pure (r1Check && r2Check && r3Check && r4Check)
+
+testMountAndUnmountEffects :: IO Bool
+testMountAndUnmountEffects = do
+    let r1 = mkTestRoom "krypta" "Krypta"
+        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty emptyAscii
+        dev1 = DeviceDef "halterung" "Halterung" ["halterung"] "krypta" (Just "Eine Halterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
+        st0 = dstate [r1] [(it1, InRoom "krypta")] [dev1]
+    let (st1, _, _) = applyOutcomeWith 0 0 (Mount "fackel" (ActorEntity "halterung")) "" st0
+    r1Check <- expectEqual (Just (CarriedBy (ActorEntity "halterung"))) (itemLocation <$> Map.lookup "fackel" (itemStates (save st1)))
+    r2Check <- expectTrue "device has fackel" (evalPredicate (ActorHas (ActorEntity "halterung") "fackel") st1)
+    let (st2, _, _) = applyOutcomeWith 0 0 (Unmount "fackel") "" st1
+    r3Check <- expectEqual (Just (InRoom "krypta")) (itemLocation <$> Map.lookup "fackel" (itemStates (save st2)))
+    r4Check <- expectTrue "device no longer has fackel" (not (evalPredicate (ActorHas (ActorEntity "halterung") "fackel") st2))
+    pure (r1Check && r2Check && r3Check && r4Check)
+
+testDeviceInteractionExamine :: IO Bool
+testDeviceInteractionExamine = do
+    let r1 = mkTestRoom "krypta" "Krypta"
+        it1 = ItemDef "fackel" "brennende Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty emptyAscii
+        dev1 = DeviceDef "halterung" "Fackelhalterung" ["halterung"] "krypta" (Just "Eine Wandhalterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
+        st0 = dstate [r1] [(it1, CarriedBy (ActorEntity "halterung"))] [dev1]
+        cmd = parseCommandWith Map.empty "examine halterung"
+        (_, evs) = applyLoopCommandEv cmd (initLoopState st0)
+        out = renderEvents evs
+    r1Check <- expectTrue "shows device description" ("Eine Wandhalterung." `isInfixOf` out)
+    r2Check <- expectTrue "shows mounted item" ("Mounted: brennende Fackel." `isInfixOf` out)
+    let (stUnmounted, _, _) = applyOutcomeWith 0 0 (Unmount "fackel") "" st0
+        (_, evsEmpty) = applyLoopCommandEv cmd (initLoopState stUnmounted)
+        outEmpty = renderEvents evsEmpty
+    r3Check <- expectTrue "shows description when empty" ("Eine Wandhalterung." `isInfixOf` outEmpty)
+    r4Check <- expectTrue "no mounted line when empty" (not ("Mounted:" `isInfixOf` outEmpty))
+    pure (r1Check && r2Check && r3Check && r4Check)
+
 -- | Rogue Phase 4c: run-seed derivation from slug and run index.
 --   Determinism, distinctness across runs, and distinctness across slugs.
 testDeriveRunSeed :: IO Bool
@@ -8053,6 +8124,9 @@ main = do
         , runTest "chapter auto-gate: first eligible, one per turn (W3)" testChapterGate
         , runTest "goto/next: refusal, diagnostics, OnChapter (W3)" testChapterSwitchEffects
         , runTest "chapter gate does not cascade (W3)" testChapterOnChapterDoesNotCascade
+        , runTest "ActorHas predicate for player, NPC and device entity (W4)" testActorHasPredicate
+        , runTest "Mount and Unmount effects move item location (W4)" testMountAndUnmountEffects
+        , runTest "device examine shows description and mounted item (W4)" testDeviceInteractionExamine
         , runTest "fatal condition tick stops the command (L11)" testFatalTickStopsCommand
         -- Review L4: constructor coverage in Validate
         , runTest "MissingRoom from a rule room reference (L4)" testValidateMissingRoomInRule

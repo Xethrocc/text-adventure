@@ -1382,6 +1382,7 @@ emitAdventure t plan seed =
             , advChapters          = []
             , advFacts             = []
             , advCombines          = []
+            , advDevices           = []
             , advTests             = []
             , advRawValue          = Nothing
             }
