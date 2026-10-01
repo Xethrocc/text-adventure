@@ -3618,6 +3618,11 @@ tests =
     , ("export: outcome traversal is recursive (B6)", testAllAOutcomesDeep)
     , ("export: bundle files, bytes and warnings (B6)", testExportBundle)
     , ("export: assets is a known key (B6)", testAssetsKnownKey)
+    -- B4: Regel-Diagnostik (dead content)
+    , ("dead content: trigger events that can never fire (B4)", testUnreachableTriggerEvents)
+    , ("dead content: unsatisfiable conditions (B4)", testUnsatisfiableConditions)
+    , ("dead content: exits that can never be taken (B4)", testDeadExits)
+    , ("dead content: rooms unreachable from start (B4)", testUnreachableRooms)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -5868,6 +5873,139 @@ testAssetsKnownKey = do
                 r1 <- expectTrue ("expected 0 unknown key warnings, got " ++ show (length keyWarns)) (null keyWarns)
                 r2 <- expectEqual ["README.txt"] (collectAssetRefs adv)
                 pure (r1 && r2)
+
+-- ===========================================================================
+-- B4: Regel-Diagnostik (dead content)
+-- ===========================================================================
+
+-- | Rules whose event can never fire: unknown room/item refs in `on:`,
+--   `custom X` without any `raise: X`, unknown chapter, `levelup` without a
+--   progression section — and the live counterparts stay silent.
+testUnreachableTriggerEvents :: IO Bool
+testUnreachableTriggerEvents = do
+    let mk tId on = ATrigger tId on Nothing [AOMessage "x"] False 0
+        deadRules = [ mk "t1" "enter nirwana", mk "t2" "take spiegel"
+                    , mk "t3" "custom sturm", mk "t4" "chapter ende"
+                    , mk "t5" "levelup 2" ]
+        dead = (minAdventure (minRoom "loc_0")) { advTriggers = deadRules }
+        live = (minAdventure (minRoom "loc_0"))
+            { advRooms = [minRoom "loc_0", minRoom "nirwana"]
+            , advItems = [(minItem "spiegel") { aiOnTake = Just [AORaiseEvent "sturm"] }]
+            , advTriggers = [ mk "t1" "enter nirwana", mk "t2" "take spiegel"
+                            , mk "t3" "custom sturm" ] }
+        codesOf code cr = [ ciMessage i | i <- crWarnings cr, ciCode i == code ]
+    case compileAdventure dead of
+        Left errs -> expectTrue ("compile: " ++ issuesText errs) False
+        Right cr -> do
+            let msgs = codesOf "UnreachableTrigger" cr
+            r1 <- expectEqual 5 (length msgs)
+            r2 <- expectTrue ("room ref: " ++ show msgs) (any ("no room 'nirwana'" `isInfixOf`) msgs)
+            r3 <- expectTrue ("item ref: " ++ show msgs) (any ("no item 'spiegel'" `isInfixOf`) msgs)
+            r4 <- expectTrue ("raise ref: " ++ show msgs) (any ("raises 'sturm'" `isInfixOf`) msgs)
+            r5 <- expectTrue ("chapter ref: " ++ show msgs) (any ("no chapter 'ende'" `isInfixOf`) msgs)
+            r6 <- expectTrue ("progression: " ++ show msgs) (any ("progression" `isInfixOf`) msgs)
+            case compileAdventure live of
+                Left errs2 -> expectTrue ("compile live: " ++ issuesText errs2) False
+                Right cr2 -> do
+                    r7 <- expectEqual [] (codesOf "UnreachableTrigger" cr2)
+                    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | Conditions that can never hold: literal contradictions, disjoint numeric
+--   bounds, conflicting text values, never-set flags — tautologies and live
+--   alternatives stay silent.
+testUnsatisfiableConditions :: IO Bool
+testUnsatisfiableConditions = do
+    let mk tId whenP = ATrigger tId "turn" (Just whenP) [AOMessage "x"] False 0
+        flagA = E.HasFlag "a"
+        rules =
+            [ mk "clash" (E.PAll [flagA, E.PNot flagA])
+            , mk "numeric" (E.PAll [ E.CompareVar "mana" E.CGte 5
+                                   , E.CompareVar "mana" E.CLt 3 ])
+            , mk "text" (E.PAll [E.VarIs "ort" "halle", E.VarIs "ort" "keller"])
+            , mk "neverset" (E.HasFlag "nie")
+            , mk "live" flagA
+            , mk "any" (E.PAny [E.HasFlag "nie", flagA])
+            ]
+        adv = (minAdventure (minRoom "loc_0"))
+            { advTriggers = rules
+            , advInitialFlags = Map.singleton "a" "true" }
+        msgsOf code cr = [ ciMessage i | i <- crWarnings cr, ciCode i == code ]
+    case compileAdventure adv of
+        Left errs -> expectTrue ("compile: " ++ issuesText errs) False
+        Right cr -> do
+            let msgs = msgsOf "UnsatisfiableCondition" cr
+            r1 <- expectEqual 4 (length msgs)
+            r2 <- expectTrue ("contradiction: " ++ show msgs) (any ("negation" `isInfixOf`) msgs)
+            r3 <- expectTrue ("numeric: " ++ show msgs) (any ("'mana'" `isInfixOf`) msgs)
+            r4 <- expectTrue ("text: " ++ show msgs) (any ("'ort'" `isInfixOf`) msgs)
+            r5 <- expectTrue ("never set: " ++ show msgs) (any ("'nie' is never set" `isInfixOf`) msgs)
+            pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Exits that can never be taken: guards that can never hold and locks that
+--   can never be opened. NPC-locks (dying unlocks), container-locks (the
+--   `unlock` verb) and explicit `set_state … unlocked` stay silent.
+testDeadExits :: IO Bool
+testDeadExits = do
+    let roomB = minRoom "b"
+        exitTo tgt lock whenP = AExitRef tgt lock whenP Nothing
+        wolf = (minNpcKey "wolf") { anLocation = "a" }
+        kiste = (minItem "kiste") { aiCapacity = Just 3, aiLocation = "a" }
+        hebel = (minItem "hebel")
+            { aiLocation = "a"
+            , aiOnTake = Just [AOSetEntityState "freigeschaltet" "unlocked"] }
+        roomA = (minRoom "a")
+            { arExits = Map.fromList
+                [ ("north", exitTo "b" Nothing (Just (E.PNot E.PTrue)))
+                , ("east",  exitTo "b" (Just "tuer") Nothing)
+                , ("south", exitTo "b" (Just "freigeschaltet") Nothing)
+                , ("west",  exitTo "b" (Just "wolf") Nothing)
+                , ("down",  exitTo "b" (Just "kiste") Nothing)
+                ] }
+        adv = (minAdventure roomA)
+            { advRooms = [roomA, roomB]
+            , advNPCs = [wolf]
+            , advItems = [kiste, hebel] }
+        msgsOf code cr = [ ciMessage i | i <- crWarnings cr, ciCode i == code ]
+    case compileAdventure adv of
+        Left errs -> expectTrue ("compile: " ++ issuesText errs) False
+        Right cr -> do
+            let msgs = msgsOf "DeadExit" cr
+            r1 <- expectEqual 2 (length msgs)
+            r2 <- expectTrue ("guard: " ++ show msgs) (any ("guard can never hold" `isInfixOf`) msgs)
+            r3 <- expectTrue ("lock: " ++ show msgs) (any ("'tuer'" `isInfixOf`) msgs)
+            r4 <- expectTrue ("set_state unlocks: " ++ show msgs)
+                    (not (any ("freigeschaltet" `isInfixOf`) msgs))
+            r5 <- expectTrue ("npc lock silent: " ++ show msgs)
+                    (not (any ("'wolf'" `isInfixOf`) msgs))
+            r6 <- expectTrue ("container lock silent: " ++ show msgs)
+                    (not (any ("'kiste'" `isInfixOf`) msgs))
+            pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | Rooms the player can never reach from start_room — exits and dynamic
+--   edges (set_exit, generate_room) count, explicit arrivals (`move:`) count
+--   as reachable.
+testUnreachableRooms :: IO Bool
+testUnreachableRooms = do
+    let roomC = minRoom "c"
+        roomB = minRoom "b"
+        roomBtoC = (minRoom "b") { arExits = Map.singleton "north" (AExitRef "c" Nothing Nothing Nothing) }
+        isolatedA = (minRoom "a") { arExits = Map.singleton "north" (AExitRef "b" Nothing Nothing Nothing) }
+        linkedA = (minRoom "a")
+            { arExits = Map.fromList
+                [ ("north", AExitRef "b" Nothing Nothing Nothing)
+                , ("east", AExitRef "c" Nothing Nothing Nothing) ] }
+        viaEffectA = isolatedA { arOnEnter = Just [AORoomTransition "c"] }
+        viaSetExitA = isolatedA { arOnEnter = Just [AOSetExit "a" "up" "c" Nothing] }
+        codesOf code cr = [ ciPath i | i <- crWarnings cr, ciCode i == code ]
+        runCase rms = case compileAdventure ((minAdventure (head rms)) { advRooms = rms }) of
+            Left errs  -> Left ("compile: " ++ issuesText errs)
+            Right cr   -> Right (codesOf "UnreachableRoom" cr)
+    r1 <- expectEqual (Right ["rooms.c"]) (runCase [isolatedA, roomB, roomC])
+    r2 <- expectEqual (Right []) (runCase [linkedA, roomB, roomC])
+    r3 <- expectEqual (Right []) (runCase [viaEffectA, roomB, roomC])
+    r4 <- expectEqual (Right []) (runCase [viaSetExitA, roomB, roomC])
+    r5 <- expectEqual (Right ["rooms.b", "rooms.c"]) (runCase [minRoom "a", roomBtoC, roomC])
+    pure (r1 && r2 && r3 && r4 && r5)
 
 main :: IO ()
 main = do

@@ -179,7 +179,7 @@ Jede Stufe: **erst Haskell komplett**, dann UI am Stück.
 |---|---|---|
 | B1 | **Content-Tests als Daten** (`tests:`-Sektion + `worldbuilder test`, CI-Stufe 4b) | **Erledigt (2026-09-29)** |
 | B6 | **Spiel-Export / Bündelung** — `worldbuilder export`: `world.json`/`save.json` byte-identisch zu `compile`, referenzierte Assets (`sfx:`/`music:` + `assets:`-Manifest, spielwurzel-relativ), `play.sh`/`play.bat`, `--with-engine` (Engine nach `bin/`), `--zip` (`zip`/`7z`); fehlende Assets = Warnung. CI-Stufe 9. | **Erledigt (2026-09-30, Commit `1d31a5f`)** |
-| B4 | **Regel-Diagnostik** („welche Regel hat nie gefeuert", unerfüllbare Bedingungen, nie passierbare Ausgänge) | offen |
+| B4 | **Regel-Diagnostik** — **Erledigt (2026-09-30)**: `UnreachableTrigger` (Regel-`on:` ohne Gegenstück), `UnsatisfiableCondition` (Widersprüche + nie gesetzte Flags), `DeadExit` (nie zutreffender Guard / nie aufschließbare `locked_by:`-Entity, inkl. NPC-Tod-/Verb-/Interaction-Unlock-Pfade), `UnreachableRoom` (BFS mit `set_exit`/`generate_room`-Kanten, `move:`-Ankünften) — konservativ-dreiwertig, alles SWarning im bestehenden Kanal. | **Erledigt (2026-09-30)** |
 | B5 | **Content-Fuzzer** (Zufalls-/Heuristikläufe: Abstürze, Sackgassen, Endlosschleifen) | offen |
 
 ### Aufwand & Haltepunkte

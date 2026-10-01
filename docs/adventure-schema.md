@@ -2473,6 +2473,24 @@ dist/mein-spiel/
   (`text-adventure`). Extra-Argumente werden durchgereicht (z.B. `play.sh --tui`).
 - `--zip` legt `<dir>.zip` neben dem Bundle an (benötigt `zip` oder `7z`).
 
+## Regel-Diagnostik (B4)
+
+Der Worldbuilder beantwortet vier Fragen zum **toten Inhalt** — beim Kompilieren,
+nicht beim Spielen. Die Analyse ist **konservativ** (dreiwertig, „nie" = garantiert):
+eine Warnung bedeutet, dass der Inhalt definitiv nie erreicht wird.
+
+| Frage | Warn-Code | Erkennung |
+|---|---|---|
+| „Welche Regel feuert nie?" | `UnreachableTrigger` | `on:`-Referenzen ohne Gegenstück (unbekannte Räume/Items, `custom X` ohne `raise: X`, `chapter` ohne Kapitel, `levelup` ohne `progression:`); dazu jeder `when:`-Widerspruch (`UnsatisfiableCondition` auf `rules.<id>`) |
+| „Welche Bedingung ist unerfüllbar?" | `UnsatisfiableCondition` | Widersprüche in `all:` (Bedingung + Negation, widersprüchliche Zahlen-Schranken einer Variablen, zwei Textwerte für eine Variable), `not: {true: true}`, `has_flag` auf **nie gesetzte** Flags (nur Flags: `set_flag`/`initial_flags` als Setz-Seite), `any:` nur-Falsch |
+| „Welcher Guard ist widersprüchlich?" | `DeadExit` | Ausgangs-`when:` garantiert falsch; `locked_by:`-Entity, die nie aufgeschlossen werden kann (Unlock-Pfade: NPC-Tod, Container-`unlock`-Verb, `interactions` mit `state: unlocked`, `set_state … to: unlocked`) |
+| „Welcher Ausgang ist nie passierbar?" | `DeadExit` / `UnreachableRoom` | Guard-Analyse plus BFS ab `start_room`: dynamische Kanten (`set_exit`, `generate_room`) und explizite Ankünfte (`move:`, Haltestellen) gelten als erreichbar — Ausgänge in/to solcher Räume sind nie passierbar, pro Raum einmal gemeldet |
+
+**Nicht analysiert** (bewusst): Variablen-Setz-Seiten (die Engine schreibt viele
+Namespaces selbst: `cmd.*`, `distance.*`, `combat.*` …), Bedingungen in Texten
+(`{if …}`), Laufzeit-Zufall (`random:`). `on: command/before <verb>` mit unbekanntem
+Verb ist ohnehin bereits ein harter Fehler (`UnknownCommandVerb`).
+
 ## Validierungs-Warnungen (Compiler-Diagnosen)
 
 Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity = SError`) und **nicht-fatalen Warnungen** (`ciSeverity = SWarning`):
@@ -2490,5 +2508,9 @@ Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity =
 | `UnknownDeviceTag` | Das Feld `fits_tag` einer Vorrichtung matcht keinen Tag deklarierter Items. | Schreibweise des Tags prüfen oder sicherstellen, dass passende Items diesen Tag tragen. |
 | `DeviceWithoutEffects` | Eine Vorrichtung besitzt weder Insert-, Remove- noch Flip-Effekte. | Effekte für Interaktionen hinterlegen oder Vorrichtung bei rein dekorativem Zweck belassen. |
 | `GainXpWithoutProgression` | Ein `gain_xp`-Effekt wird verwendet, aber das Abenteuer deklariert keine `progression:`-Sektion. | `progression:` mit Stufentabelle deklarieren oder den `gain_xp`-Aufruf entfernen. |
+| `UnreachableTrigger` | Eine Regel hört auf ein Ereignis, das nie eintreten kann (unbekannter Raum/Item in `on:`, `custom X` ohne `raise: X`, unbekanntes Kapitel, `levelup` ohne `progression:`). | `on:`-Referenz korrigieren, den `raise:`-Effekt ergänzen oder die Regel entfernen. |
+| `UnsatisfiableCondition` | Eine Bedingung (`when:`, `if:`, Tore wie `visible_when:`) kann nie wahr sein: Widerspruch in `all:` oder ein Flag, das nie gesetzt wird. | Widerspruch aufteilen, Flag per `set_flag`/`initial_flags` setzbar machen oder die Bedingung vereinfachen. |
+| `DeadExit` | Ein Ausgang ist nie passierbar: sein Guard kann nie zutreffen oder seine `locked_by:`-Entity kann nie aufgeschlossen werden. | Guard reparieren, einen Unlock-Pfad (`set_state … to: unlocked`, `interactions`, `unlock`-Verb) ergänzen oder den Ausgang entfernen. |
+| `UnreachableRoom` | Ein Raum ist ab `start_room` nicht erreichbar — alle seine Ausgänge sind nie passierbar. | Verbindenden Ausgang ergänzen, per `move:`/`set_exit` erreichbar machen oder den Raum entfernen (Sackgassen-Content wie Test-Fixtures sind legitim). |
 
 

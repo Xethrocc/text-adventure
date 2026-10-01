@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Regel-Diagnostik (B4)
+
+- **Vier Dead-Content-Diagnosen** im bestehenden Warnkanal (nicht fatal, stabile
+  `ciCode`s), konservativ-dreiwertig analysiert — eine Warnung heißt „garantiert nie":
+  - `UnreachableTrigger`: Regel-`on:` ohne Gegenstück (unbekannte Räume/Items,
+    `custom X` ohne `raise: X`, `chapter` ohne Kapitel, `levelup` ohne `progression:`).
+  - `UnsatisfiableCondition`: widersprüchliche Bedingungen (`all:` mit Negation,
+    disjunkte Zahlen-Schranken, zwei Textwerte) und `has_flag` auf nie gesetzte Flags
+    (`set_flag`/`initial_flags` als Setz-Seite) — Regeln, Tore und `if:`-Zweige.
+  - `DeadExit`: Ausgänge mit nie zutreffendem Guard oder nie aufschließbarer
+    `locked_by:`-Entity (Unlock-Pfade: NPC-Tod, `unlock`-Verb, `interactions` mit
+    `state: unlocked`, `set_state … to: unlocked`).
+  - `UnreachableRoom`: BFS ab `start_room` (Exits + `set_exit`/`generate_room` als
+    Kanten, `move:`/Haltestellen als Ankünfte) — nie erreichbare Räume samt Ausgängen.
+- **Compiler-Refactor**: `allAOutcomes` = `deepOutcomes` + `outcomeSurfaces` (jetzt
+  mit Diagnostik-Pfaden); die Oberflächen-Liste bleibt der eine Vertrag für
+  Referenzchecks, Asset-Sammlung und Diagnostik.
+- **Funde in gelieferten Inhalten**: 3 Fixtures mit echten Positivfunden
+  (krypta: `set_state … to: offen` schließt das `locked_by:`-Exit nie auf — echter
+  toter Inhalt; massen/pursuit: bewusste Test-Sackgassen). Inhalte unverändert
+  (Entscheidung), 26 gelieferte Abenteuer sauber.
+- **Tests**: +4 Worldbuilder-Tests (**217**).
+
 ### Spiel-Export (B6)
 
 - **`worldbuilder export <adventure> -o <dir> [--with-engine] [--zip] [--force]`**:

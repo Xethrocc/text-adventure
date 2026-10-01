@@ -12,6 +12,12 @@ module Worldbuilder.Compile
     , compileAActionOutcome
     , allWorldEffects
     , allAOutcomes
+    , deepOutcomes
+    , outcomeSurfaces
+    , checkUnreachableTriggers
+    , checkUnsatisfiableConditions
+    , checkDeadExits
+    , checkUnreachableRooms
     , EntityType(..)
     , knownKeys
     , checkUnknownYamlKeys
@@ -162,16 +168,45 @@ checkSetExitRefs roomKeys adv =
 --   ('checkSetExitRefs', 'checkNpcPossessionRefs') and the B6 asset collection
 --   ('Worldbuilder.Export.collectAssetRefs') — a missed surface silently skips
 --   all three.
-allAOutcomes :: Adventure -> [AActionOutcome]
-allAOutcomes a = concatMap deep (concat surfaces)
+-- | Flatten nested outcome branches (`if:`, `narrative: then:`, condition
+--   tick/end, `random:` alternatives) so every leaf outcome is listed once,
+--   parents before children.
+deepOutcomes :: [AActionOutcome] -> [AActionOutcome]
+deepOutcomes = concatMap deepOne
   where
-    deep o = o : case o of
-        AOConditional _ ts es        -> concatMap deep ts ++ concatMap deep es
-        AONarrative _ ts             -> concatMap deep ts
-        AOApplyCondition _ _ ts es _ -> concatMap deep ts ++ concatMap deep es
-        AORandomChoice branches      -> concatMap (concatMap deep . snd) branches
+    deepOne o = o : concatMap deepOutcomes (nested o)
+    nested o = case o of
+        AOConditional _ ts es        -> [ts, es]
+        AONarrative _ ts             -> [ts]
+        AOApplyCondition _ _ ts es _ -> [ts, es]
+        AORandomChoice branches      -> map snd branches
         _                            -> []
 
+-- | Every outcome-bearing surface with a diagnostic path prefix. Contract:
+--   a new outcome field must be added here — this list backs the reference
+--   checks ('checkSetExitRefs', 'checkNpcPossessionRefs'), the B6 asset
+--   collection ('Worldbuilder.Export.collectAssetRefs') and the B4
+--   diagnostics; a missed surface silently skips all of them.
+outcomeSurfaces :: Adventure -> [(String, [AActionOutcome])]
+outcomeSurfaces a =
+    [ ("rooms." ++ arId r, roomOutcomes r) | r <- advRooms a ]
+    ++ [ ("rules." ++ atId t, atEffects t) | t <- advTriggers a ]
+    ++ [ ("items." ++ aiId i, itemOutcomes i) | i <- advItems a ]
+    ++ [ ("npcs." ++ anId n, npcOutcomes n) | n <- advNPCs a ]
+    ++ [ ("interactions", interactions) ]
+    ++ [ ("quests." ++ aqId q, maybe [] id (aqReward q)) | q <- advQuests a ]
+    ++ [ ("vehicles." ++ avId v, vehicleOutcomes v) | v <- advVehicles a ]
+    ++ [ ("encounter_tables." ++ ertId t, encounterOutcomes t) | t <- advEncounterTables a ]
+    ++ [ ("environment", envOutcomes (advEnvironment a)) ]
+    ++ [ ("stealth", stealthOutcomes (advStealth a)) ]
+    ++ [ ("patrol", patrolOutcomes (advPatrol a)) ]
+    ++ [ ("combat", combatOutcomes (advCombat a)) ]
+    ++ [ ("abilities." ++ aabId ab, aabEffects ab) | ab <- advAbilities a ]
+    ++ [ ("cards." ++ acdId cd, acdOutcomes cd) | cd <- advCards a ]
+    ++ [ ("procedures." ++ apId pr, apEffects pr) | pr <- advProcedures a ]
+    ++ [ ("devices." ++ adId dv, deviceOutcomes dv) | dv <- advDevices a ]
+    ++ [ ("progression", maybe [] (concatMap alEffects . aplLevels) (advProgression a)) ]
+  where
     roomOutcomes r = concat (catMaybes [ arOnEnter r, arOnLook r, arOnExit r, arSearch r ])
     itemOutcomes i = maybe [] id (aiOnTake i) ++ concat (Map.elems (aiVerbMap i))
     dialogOutcomes tr =
@@ -197,25 +232,227 @@ allAOutcomes a = concatMap deep (concat surfaces)
         Nothing -> []
     deviceOutcomes d = adOnInsert d ++ adOnRemove d ++ concatMap snd (adOnFlip d)
 
-    surfaces =
-        [ concatMap roomOutcomes (advRooms a)
-        , concatMap atEffects (advTriggers a)
-        , concatMap itemOutcomes (advItems a)
-        , concatMap npcOutcomes (advNPCs a)
-        , interactions
-        , concatMap (maybe [] id . aqReward) (advQuests a)
-        , concatMap vehicleOutcomes (advVehicles a)
-        , concatMap encounterOutcomes (advEncounterTables a)
-        , envOutcomes (advEnvironment a)
-        , stealthOutcomes (advStealth a)
-        , patrolOutcomes (advPatrol a)
-        , combatOutcomes (advCombat a)
-        , concatMap aabEffects (advAbilities a)
-        , concatMap acdOutcomes (advCards a)
-        , concatMap apEffects (advProcedures a)
-        , concatMap deviceOutcomes (advDevices a)
-        , maybe [] (concatMap alEffects . aplLevels) (advProgression a)
+allAOutcomes :: Adventure -> [AActionOutcome]
+allAOutcomes a = concatMap (deepOutcomes . snd) (outcomeSurfaces a)
+
+-- ---------------------------------------------------------------------------
+-- B4: Regel-Diagnostik (dead content — nicht-fataler Warnkanal)
+-- ---------------------------------------------------------------------------
+
+-- | B4: three-valued truth for condition analysis. 'TruthFalse' carries the
+--   reason quoted in the diagnostic. Everything not statically decidable is
+--   'TruthUnknown' — the analysis never guesses, so a warning always means
+--   the content is definitely dead.
+data Truth = TruthTrue | TruthFalse String | TruthUnknown
+
+-- | B4: every flag that can ever become "true" — `initial_flags:` plus every
+--   `set_flag` effect anywhere (nested branches included).
+setFlagNames :: Adventure -> Set.Set String
+setFlagNames a =
+    Set.fromList (Map.keys (advInitialFlags a) ++ [f | AOSetFlag f _ <- allAOutcomes a])
+
+-- | B4: every condition with its diagnostic path — `if:` conditions nested in
+--   outcomes (per surface path) plus the named gates (rule `when:`, dialogue
+--   `visible_when:`, bark/encounter/weather/drain/station/chapter gates).
+--   Exit guards are deliberately absent — 'checkDeadExits' reports them.
+predicateSites :: Adventure -> [(String, E.Predicate)]
+predicateSites a =
+    [ (path, p)
+    | (path, outs) <- outcomeSurfaces a
+    , o <- deepOutcomes outs
+    , AOConditional p _ _ <- [o] ]
+    ++
+    concat
+        [ [ ("rules." ++ atId t, p) | t <- advTriggers a, Just p <- [atWhen t] ]
+        , [ ("npcs." ++ anId n ++ ".barks." ++ show k, p)
+          | n <- advNPCs a, (k, b) <- zip [1 :: Int ..] (anBarks n), Just p <- [abWhen b] ]
+        , [ ("npcs." ++ anId n ++ ".dialogue", p)
+          | n <- advNPCs a
+          , tr <- Map.elems (anDialogue n)
+          , node <- Map.elems (adtNodes tr)
+          , ch <- adnChoices node
+          , Just p <- [adcVisible ch] ]
+        , [ ("vehicles." ++ avId v ++ ".stations", p)
+          | v <- advVehicles a, st <- avStations v, Just p <- [astWhen st] ]
+        , [ ("encounter_tables." ++ ertId t, p) | t <- advEncounterTables a, Just p <- [ertWhen t] ]
+        , [ ("encounter_tables." ++ ertId t ++ ".entries", p)
+          | t <- advEncounterTables a, e <- ertEntries t, Just p <- [eneWhen e] ]
+        , [ ("environment.weather", p)
+          | Just env <- [advEnvironment a]
+          , wt <- maybe [] weaTransitions (envWeather env), Just p <- [wtWhen wt] ]
+        , [ ("environment.drains", p)
+          | Just env <- [advEnvironment a]
+          , d <- envDrains env, Just p <- [drWhen d] ]
+        , [ ("chapters." ++ achId c, p) | c <- advChapters a, Just p <- [achWhen c] ]
         ]
+
+-- | B4: evaluate a condition to 'TruthTrue' / 'TruthFalse reason' /
+--   'TruthUnknown'. Flags that are never set are statically false; `all:`
+--   and `any:` propagate; direct contradictions inside `all:` (a condition
+--   and its negation, disjoint numeric bounds on one variable, two different
+--   text values for one variable) are caught syntactically.
+evalTruth :: Set.Set String -> E.Predicate -> Truth
+evalTruth flagSet = go
+  where
+    go p = case p of
+        E.PTrue  -> TruthTrue
+        E.PNot q -> case go q of
+            TruthTrue    -> TruthFalse "it negates a condition that always holds"
+            TruthFalse _ -> TruthTrue
+            TruthUnknown -> TruthUnknown
+        E.PAll qs ->
+            let flat = flattenAll qs
+                rs = map go flat
+            in case [ f | f@(TruthFalse _) <- rs ] of
+                (f : _) -> f
+                [] -> case contradictionIn flat of
+                    Just reason -> TruthFalse reason
+                    Nothing | all isTrue rs -> TruthTrue
+                            | otherwise     -> TruthUnknown
+        E.PAny qs ->
+            let rs = map go qs
+            in if any isTrue rs then TruthTrue
+               else if all isFalse rs then TruthFalse "every alternative is impossible"
+               else TruthUnknown
+        E.HasFlag f | not (Set.member f flagSet) ->
+            TruthFalse ("flag '" ++ f ++ "' is never set")
+        _ -> TruthUnknown
+    isTrue TruthTrue = True
+    isTrue _         = False
+    isFalse (TruthFalse _) = True
+    isFalse _              = False
+    flattenAll = concatMap (\q -> case q of E.PAll inner -> flattenAll inner; _ -> [q])
+    contradictionIn ps =
+        case [ () | q <- ps, q `elem` [ neg | E.PNot neg <- ps ] ] of
+            (_ : _) -> Just "both a condition and its negation must hold"
+            [] -> case [ v | E.CompareVar v _ _ <- ps, boundsClash (boundsFor v ps) ] of
+                (v : _) -> Just ("numeric bounds on '" ++ v ++ "' cannot hold at once")
+                [] -> case [ v | E.VarIs v s1 <- ps, E.VarIs v' s2 <- ps
+                               , v == v', s1 /= s2 ] of
+                    (v : _) -> Just ("text variable '" ++ v ++ "' must be two different values at once")
+                    []      -> Nothing
+    boundsFor v ps = [ (op, n) | E.CompareVar v' op n <- ps, v' == v ]
+    boundsClash bounds =
+        let lowers = [ n + 1 | (E.CGt, n) <- bounds ] ++ [ n | (E.CGte, n) <- bounds ]
+                     ++ [ n | (E.CEq, n) <- bounds ]
+            uppers = [ n - 1 | (E.CLt, n) <- bounds ] ++ [ n | (E.CLte, n) <- bounds ]
+                     ++ [ n | (E.CEq, n) <- bounds ]
+            neqs   = [ n | (E.CNeq, n) <- bounds ]
+        in case (lowers, uppers) of
+            ((_ : _), (_ : _)) ->
+                let lo = maximum lowers
+                    hi = minimum uppers
+                in lo > hi || (lo == hi && lo `elem` neqs)
+            _ -> False
+
+-- | B4: rules whose event can never fire — unknown room/item references in
+--   `on:`, `on: custom <name>` without any `raise: <name>`, `on: chapter <id>`
+--   without that chapter, `on: levelup` without a `progression:` section.
+--   (`on: command/before <verb>` is already a hard error elsewhere.)
+checkUnreachableTriggers :: Adventure -> [CompileIssue]
+checkUnreachableTriggers a =
+    [ ciWarning ("rules." ++ atId t) "UnreachableTrigger"
+        ("rule listens on '" ++ atOn t ++ "', which can never fire: " ++ reason)
+    | t <- advTriggers a, Just reason <- [unreachableReason t] ]
+  where
+    outs = allAOutcomes a
+    rooms = Set.fromList (map arId (advRooms a) ++ [r | AOGenerateRoom r _ _ _ _ _ <- outs])
+    items = Set.fromList (map aiId (advItems a))
+    chapters = Set.fromList (map achId (advChapters a))
+    raised = Set.fromList [n | AORaiseEvent n <- outs]
+    roomReason r
+        | Set.member r rooms = Nothing
+        | otherwise          = Just ("no room '" ++ r ++ "' is declared")
+    itemReason i
+        | Set.member i items = Nothing
+        | otherwise          = Just ("no item '" ++ i ++ "' is declared")
+    unreachableReason t = case compileAtOn (atOn t) of
+        Left _              -> Nothing  -- BadTriggerEvent already fails the compile
+        Right (E.OnEnter r)  -> roomReason r
+        Right (E.OnLeave r)  -> roomReason r
+        Right (E.OnLook r)   -> roomReason r
+        Right (E.OnSearch r) -> roomReason r
+        Right (E.OnTake i)   -> itemReason i
+        Right (E.OnDrop i)   -> itemReason i
+        Right (E.OnUse i)    -> itemReason i
+        Right (E.OnCustomEvent n)
+            | not (Set.member n raised) ->
+                Just ("no effect ever raises '" ++ n ++ "'")
+        Right (E.OnChapter c)
+            | not (Set.member c chapters) ->
+                Just ("no chapter '" ++ c ++ "' is declared")
+        Right (E.OnLevelUp _) | isNothing (advProgression a) ->
+            Just "the adventure declares no 'progression:' section, so nobody ever levels up"
+        Right _ -> Nothing
+
+-- | B4: conditions that can never hold — rule `when:`, dialogue gates, bark,
+--   encounter, weather, drain, station and chapter gates, and `if:`
+--   conditions nested in outcomes. Reasons: contradictions (see 'evalTruth')
+--   or flags that no effect ever sets.
+checkUnsatisfiableConditions :: Adventure -> [CompileIssue]
+checkUnsatisfiableConditions a =
+    [ ciWarning path "UnsatisfiableCondition" ("condition can never hold: " ++ reason)
+    | (path, p) <- predicateSites a, TruthFalse reason <- [evalTruth flagSet p] ]
+  where
+    flagSet = setFlagNames a
+
+-- | B4: exits that can never be taken — guarded by a condition that can never
+--   hold, or locked by an entity nothing can ever unlock. Unlock paths
+--   modelled: NPCs unlock by dying, containers by the `lock`/`unlock` verbs,
+--   interactions (`use` with `state: unlocked`) and `set_state` effects.
+checkDeadExits :: Adventure -> [CompileIssue]
+checkDeadExits a = concatMap deadFor (advRooms a)
+  where
+    flagSet = setFlagNames a
+    outs = allAOutcomes a
+    unlockable = Set.fromList $
+        map anId (advNPCs a)
+        ++ map acnId (advContainers a)
+        ++ [ aiId i | i <- advItems a, isJust (aiCapacity i) ]
+        ++ [ e | AOSetEntityState e "unlocked" <- outs ]
+        ++ [ aeiTarget x | Just blk <- [advInteractions a], x <- aiEntity blk
+                         , aeiState x == "unlocked" ]
+    deadFor r =
+        [ ciWarning ("rooms." ++ arId r ++ ".exits." ++ dir) "DeadExit" msg
+        | (dir, ex) <- Map.toList (arExits r)
+        , msg <- exitReason ex ]
+    exitReason ex = case aeWhen ex of
+        Just g | TruthFalse reason <- evalTruth flagSet g ->
+            ["its guard can never hold: " ++ reason]
+        _ -> case aeLocked ex of
+            Just e | not (Set.member e unlockable) ->
+                ["it is locked by entity '" ++ e ++ "', which can never be unlocked"]
+            _ -> []
+
+-- | B4: rooms the player can never reach from `start_room`. Edges are the
+--   declared exits plus dynamic ones (`set_exit`, `generate_room`); explicit
+--   arrivals (`move:`, vehicle stops) count as reachable. Every exit of an
+--   unreachable room is never passable — reported once per room.
+checkUnreachableRooms :: Adventure -> [CompileIssue]
+checkUnreachableRooms a =
+    [ ciWarning ("rooms." ++ r) "UnreachableRoom"
+        ("room '" ++ r ++ "' is not reachable from start_room '" ++ advStartRoom a
+         ++ "' — its exits can never be taken")
+    | r <- map arId (advRooms a), not (Set.member r reachable) ]
+  where
+    outs = allAOutcomes a
+    roomIds = Set.fromList (map arId (advRooms a))
+    edges = Map.fromListWith (++)
+        ( [ (arId r, [aeTarget ex | ex <- Map.elems (arExits r)]) | r <- advRooms a ]
+          ++ [ (from, [to]) | AOSetExit from _ to _ <- outs ]
+          ++ [ (from, [newId]) | AOGenerateRoom newId _ _ from _ _ <- outs ] )
+    seeds = Set.toList (Set.fromList
+        (filter (`Set.member` roomIds) (advStartRoom a : explicitArrivals)))
+    explicitArrivals =
+        [ r | AORoomTransition r <- outs ]
+        ++ [ r | v <- advVehicles a
+               , r <- avEntryRoom v : maybe [] pure (avCockpit v)
+                         ++ map asRoom (Map.elems (avStops v)) ]
+    reachable = go Set.empty seeds
+    go seen [] = seen
+    go seen (x : rest)
+        | Set.member x seen = go seen rest
+        | otherwise         = go (Set.insert x seen) (Map.findWithDefault [] x edges ++ rest)
 collisions :: Ord a => [(String, a)] -> [(a, [String])]
 collisions pairs =
     [ (k, keys)
@@ -504,10 +741,13 @@ compileAdventure adv =
                 keywordWarns = checkKeywordCollisions adv
                 placeholderWarns = checkUnknownPlaceholders adv allVarDefs
                 darkRoomWarns = checkDarkRoomDeadEnds adv
+                deadContentWarns = checkUnreachableTriggers adv ++ checkUnsatisfiableConditions adv
+                                ++ checkDeadExits adv ++ checkUnreachableRooms adv
                 allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ darkRoomWarns
                           ++ chapterWarns
                           ++ deviceWarns
                           ++ gainXpWarns
+                          ++ deadContentWarns
             in Right (CompileResult gw startSave allWarns)
   where
     -- Every locked exit starts locked in entityStates
