@@ -14,6 +14,7 @@ import System.Exit (exitFailure)
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getTemporaryDirectory, removeDirectoryRecursive, removeFile, getPermissions, Permissions (..))
 import System.FilePath ((</>))
 import System.IO (hSetEncoding, stdout, utf8, openTempFile, hClose)
+import qualified System.Info as Info
 import Control.Exception (try, SomeException)
 import Worldbuilder.Types
 import Worldbuilder.Locate (lineForPath)
@@ -5831,8 +5832,11 @@ testExportBundle = do
             perms <- getPermissions (outDir </> "play.sh")
             shBody <- readFile (outDir </> "play.sh")
             batBody <- readFile (outDir </> "play.bat")
-            r2 <- expectTrue "launchers written, play.sh executable"
-                    (shExists && batExists && executable perms)
+            -- Windows has no POSIX owner-execute bit: `setPermissions` is a no-op
+            -- there and `getPermissions` always reports executable=False, while the
+            -- Windows launcher is play.bat. So the bit is asserted on POSIX only.
+            r2 <- expectTrue "launchers written (play.sh executable on POSIX)"
+                    (shExists && batExists && (Info.os == "mingw32" || executable perms))
             r2b <- expectEqual launcherSh shBody
             r2c <- expectEqual launcherBat batBody
             copiedTheme <- doesFileExist (outDir </> "audio" </> "theme.xm")
