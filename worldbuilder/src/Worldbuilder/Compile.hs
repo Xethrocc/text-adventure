@@ -11,6 +11,7 @@ module Worldbuilder.Compile
     , ciWarning
     , compileAActionOutcome
     , allWorldEffects
+    , allAOutcomes
     , EntityType(..)
     , knownKeys
     , checkUnknownYamlKeys
@@ -154,21 +155,62 @@ checkSetExitRefs roomKeys adv =
         toRooms = maybe [] (:[]) mTo
 -- Alle autorenbaren Outcome-Container (Spiegel von 'allWorldEffects',
 -- aber auf dem Rohtext-Level — wichtig fuer die Richtungs-Pruefung).
+-- | Every authored outcome in the adventure — **recursively** (nested `if:`,
+--   `narrative: then:`, condition tick/end and `random:` branches included)
+--   and over **every** outcome-bearing surface. Contract: a new outcome field
+--   must be added here. This list backs the reference checks
+--   ('checkSetExitRefs', 'checkNpcPossessionRefs') and the B6 asset collection
+--   ('Worldbuilder.Export.collectAssetRefs') — a missed surface silently skips
+--   all three.
 allAOutcomes :: Adventure -> [AActionOutcome]
-allAOutcomes a =
-    let roomOutcomes r = concat (catMaybes [ arOnEnter r, arOnLook r, arOnExit r, arSearch r ])
-        itemOutcomes i = maybe [] id (aiOnTake i) ++ concat (Map.elems (aiVerbMap i))
-        interactions = case advInteractions a of
-            Just ai -> concatMap aiiEffects (aiItem ai)
-            Nothing -> []
-        deviceOutcomes d = adOnInsert d ++ adOnRemove d ++ concatMap snd (adOnFlip d)
-    in concat
+allAOutcomes a = concatMap deep (concat surfaces)
+  where
+    deep o = o : case o of
+        AOConditional _ ts es        -> concatMap deep ts ++ concatMap deep es
+        AONarrative _ ts             -> concatMap deep ts
+        AOApplyCondition _ _ ts es _ -> concatMap deep ts ++ concatMap deep es
+        AORandomChoice branches      -> concatMap (concatMap deep . snd) branches
+        _                            -> []
+
+    roomOutcomes r = concat (catMaybes [ arOnEnter r, arOnLook r, arOnExit r, arSearch r ])
+    itemOutcomes i = maybe [] id (aiOnTake i) ++ concat (Map.elems (aiVerbMap i))
+    dialogOutcomes tr =
+        concatMap (concatMap adcOutcomes . adnChoices) (Map.elems (adtNodes tr))
+    npcOutcomes n =
+        concat (Map.elems (anVerbMap n))
+        ++ Map.elems (anTopics n)
+        ++ maybe [] pure (anOnTalk n)
+        ++ concatMap dialogOutcomes (Map.elems (anDialogue n))
+    vehicleOutcomes v =
+        concat (Map.elems (avConditions v))
+        ++ concatMap astEffects (avStations v)
+    encounterOutcomes tbl = concatMap eneEffects (ertEntries tbl)
+    envOutcomes mEnv = case mEnv of
+        Nothing -> []
+        Just env -> concatMap wtEffects (maybe [] weaTransitions (envWeather env))
+                    ++ concatMap drAtZero (envDrains env)
+    stealthOutcomes mSt = maybe [] (concatMap obOnHear . stObservers) mSt
+    patrolOutcomes mPt = maybe [] (concatMap ahAttack . ptHostiles) mPt
+    combatOutcomes mC = maybe [] (\c -> acOnWin c ++ acOnLose c) mC
+    interactions = case advInteractions a of
+        Just ai -> concatMap aiiEffects (aiItem ai)
+        Nothing -> []
+    deviceOutcomes d = adOnInsert d ++ adOnRemove d ++ concatMap snd (adOnFlip d)
+
+    surfaces =
         [ concatMap roomOutcomes (advRooms a)
         , concatMap atEffects (advTriggers a)
         , concatMap itemOutcomes (advItems a)
-        , concatMap (concat . Map.elems . anVerbMap) (advNPCs a)
+        , concatMap npcOutcomes (advNPCs a)
         , interactions
         , concatMap (maybe [] id . aqReward) (advQuests a)
+        , concatMap vehicleOutcomes (advVehicles a)
+        , concatMap encounterOutcomes (advEncounterTables a)
+        , envOutcomes (advEnvironment a)
+        , stealthOutcomes (advStealth a)
+        , patrolOutcomes (advPatrol a)
+        , combatOutcomes (advCombat a)
+        , concatMap aabEffects (advAbilities a)
         , concatMap acdOutcomes (advCards a)
         , concatMap apEffects (advProcedures a)
         , concatMap deviceOutcomes (advDevices a)

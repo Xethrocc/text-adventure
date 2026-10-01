@@ -2429,6 +2429,50 @@ rules:
   mitten in der Verfolgung rechnet identisch weiter.
 - **`-1` ist der einzige Unerreichbar-Sentinel** (dokumentiert und getestet).
 
+## Spiel-Export: `assets:` und `worldbuilder export` (B6)
+
+Ein fertiges Spiel verlässt das Repo als **ein** Verzeichnis: die kompilierte Welt, alle
+referenzierten Asset-Dateien und ein Launcher.
+
+```yaml
+# spielwurzel-relativ wie alle Laufzeit-Pfade
+assets:
+  - handbuch.txt          # Extra-Dateien (README, Cover, Handbücher)
+  - audio/hinweis.wav
+```
+
+**Asset-Pfade** (`sfx:`/`music:`-Effekte **und** die `assets:`-Liste) sind
+**spielwurzel-relativ** — aufgelöst gegen das Verzeichnis der Hauptdatei beim Export und
+gegen das Bundle-Wurzelverzeichnis (Arbeitsverzeichnis des Launchers) zur Laufzeit. Die
+Pfadstrings in der kompilierten Welt ändern sich dadurch **nie**. Kunst und Clips brauchen
+keine Dateien: sie sind zur Compile-Zeit eingebettet (D14).
+
+```bash
+worldbuilder export mein-spiel.yaml -o dist/mein-spiel [--with-engine] [--zip] [--force]
+```
+
+**Bundle-Layout:**
+
+```
+dist/mein-spiel/
+  world.json        # byte-identisch zu `worldbuilder compile`
+  save.json
+  play.sh           # Unix/macOS: cd ins Bundle, Engine-Suche, Audio-Helper-Autodetect
+  play.bat          # Windows (wie packaging/windows/play.bat)
+  bin/              # nur mit --with-engine: text-adventure Binary
+  audio/...         # referenzierte Assets (relatives Layout unverändert)
+```
+
+**Verträge:**
+
+- `world.json`/`save.json` sind **byte-identisch** zum `compile`-Output — der Export legt
+  nur Dateien darum herum.
+- Fehlende Assets sind **Warnungen** (das Bundle wird trotzdem geschrieben); Pfade, die
+  über das Bundle hinausweisen (`..`, absolute Pfade), werden verworfen und gemeldet.
+- Der Launcher sucht die Engine zuerst in `bin/` (nur mit `--with-engine`), dann auf `PATH`
+  (`text-adventure`). Extra-Argumente werden durchgereicht (z.B. `play.sh --tui`).
+- `--zip` legt `<dir>.zip` neben dem Bundle an (benötigt `zip` oder `7z`).
+
 ## Validierungs-Warnungen (Compiler-Diagnosen)
 
 Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity = SError`) und **nicht-fatalen Warnungen** (`ciSeverity = SWarning`):

@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Spiel-Export (B6)
+
+- **`worldbuilder export <adventure> -o <dir> [--with-engine] [--zip] [--force]`**:
+  Bündelt ein fertiges Spiel — `world.json`/`save.json` (**byte-identisch** zu
+  `worldbuilder compile`), alle referenzierten Asset-Dateien und `play.sh`/`play.bat`
+  (Layout wie `packaging/windows/play.bat`: cd ins Bundle, Engine-Suche, Audio-Helper-
+  Autodetect). `--with-engine` kopiert die Engine nach `bin/`, `--zip` legt `<dir>.zip`
+  an (`zip`/`7z`).
+- **`assets:`**-Sektion am Adventure: explizite Extra-Dateien (README, Cover) für das
+  Bundle; zusammen mit den `sfx:`/`music:`-Referenzen aus **allen** Effekt-Flächen
+  (inkl. verschachtelter `if:`/`random:`-Zweige) automatisch eingesammelt.
+- **Asset-Pfade sind spielwurzel-relativ** (Hauptdatei-Verzeichnis beim Export,
+  Bundle-Wurzel zur Laufzeit) — die Pfadstrings in der Welt bleiben unverändert.
+  Fehlende Assets und nicht-relativierbare Pfade (`..`, absolut) sind Warnungen.
+- **Compiler-Härtung**: `allAOutcomes` traversiert jetzt **alle** Outcome-Flächen
+  (Dialoge, Topics, on_talk, Vehicle-Bedingungen/Stations, Wetter, Drains, Beobachter,
+  Patrouillen, Kampf, Abilities, Encounter) und verschachtelte Zweige rekursiv —
+  `set_exit`/`give`-Referenzchecks gewinnen dieselbe Abdeckung.
+- **Tests**: +4 Worldbuilder-Tests (**213**); CI-Stufe 9 (export bundle): Datei-Set,
+  Byte-Identität zu `compile`, Playthrough durch das eigene `play.sh`, Zip-Smoke.
+  Fixture `buendel.yaml` + Platzhalter-Assets in `examples/fixtures/assets/`.
+
 ### NPC-Besitz (B7)
 
 - **Autorenform**: `carried_by: <npc-id>` am Item (wie `in_container:`) — das Item startet

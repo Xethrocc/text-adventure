@@ -11,7 +11,7 @@ import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import System.Exit (exitFailure)
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getTemporaryDirectory, removeDirectoryRecursive, removeFile)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getTemporaryDirectory, removeDirectoryRecursive, removeFile, getPermissions, Permissions (..))
 import System.FilePath ((</>))
 import System.IO (hSetEncoding, stdout, utf8, openTempFile, hClose)
 import Control.Exception (try, SomeException)
@@ -19,6 +19,7 @@ import Worldbuilder.Types
 import Worldbuilder.Locate (lineForPath)
 import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome, allWorldEffects)
 import Worldbuilder.Test (checkMarkers, executeContentTest)
+import Worldbuilder.Export (collectAssetRefs, bundleFiles, exportBundle, launcherSh, launcherBat)
 import Worldbuilder.ParseFile (parseAdventureFile)
 import Worldbuilder.Rng
 import Worldbuilder.Generate
@@ -204,6 +205,7 @@ minAdventure room = Adventure
     , advProgression = Nothing
     , advTests = []
     , advRawValue = Nothing
+    , advAssets = []
     }
 
 -- ===== Rogue Phase 1: authored game policy =====
@@ -3611,6 +3613,11 @@ tests =
     , ("give: string and object form compile (B7)", testGiveToSugar)
     , ("give: unknown to-npc is a hard error (B7)", testGiveToUnknownNpcFails)
     , ("known keys: carried_by and capacity warn nowhere (B7)", testNpcPossessionKnownKeysClean)
+    -- B6: game export (bundle)
+    , ("export: asset refs over every surface incl. nested (B6)", testCollectAssetRefs)
+    , ("export: outcome traversal is recursive (B6)", testAllAOutcomesDeep)
+    , ("export: bundle files, bytes and warnings (B6)", testExportBundle)
+    , ("export: assets is a known key (B6)", testAssetsKnownKey)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -5749,6 +5756,118 @@ testNpcPossessionKnownKeysClean = do
             Right cr -> do
                 let keyWarns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
                 expectTrue ("expected 0 unknown key warnings, got " ++ show (length keyWarns)) (null keyWarns)
+
+-- ===========================================================================
+-- B6: game export (bundle)
+-- ===========================================================================
+
+-- | Asset collection: sfx:/music: over every surface — nested `if:`/`random:`
+--   branches included — plus the `assets:` manifest; sorted and deduplicated.
+testCollectAssetRefs :: IO Bool
+testCollectAssetRefs = do
+    let npc = (minNpcKey "sprecher")
+            { anLocation = "loc_0"
+            , anTopics = Map.fromList [("geruecht", AOPlaySfx "audio/da.wav")]
+            , anOnTalk = Just (AOPlaySfx "audio/hi.wav")
+            , anDialogue = Map.singleton "alive" (ADialogueTree "e"
+                (Map.singleton "e" (ADialogueNode "Hallo."
+                    [ ADialogueChoice "Tschuess" Nothing Nothing [AOPlayMusic "audio/end.xm"] ])))
+            }
+        item = (minItem "radio")
+            { aiOnTake = Just
+                [ AOPlayMusic "audio/theme.xm"
+                , AOConditional (E.HasFlag "x") [AOPlaySfx "audio/da.wav"] []
+                , AORandomChoice [(1, [AOPlaySfx "audio/rand.wav"])]
+                ] }
+        adv = (advWithItem item) { advNPCs = [npc], advAssets = ["README.txt", "audio/theme.xm"] }
+    expectEqual [ "README.txt", "audio/da.wav", "audio/end.xm"
+                , "audio/hi.wav", "audio/rand.wav", "audio/theme.xm" ]
+                (collectAssetRefs adv)
+
+-- | The outcome traversal is recursive (B6 contract): a `give: {to:}` nested
+--   in an `if:` branch is validated like a top-level one.
+testAllAOutcomesDeep :: IO Bool
+testAllAOutcomesDeep = do
+    let item = (minItem "schluessel")
+            { aiOnTake = Just [AOConditional (E.HasFlag "x") [AOGiveTo "schluessel" "niemand"] []] }
+    case compileAdventure (advWithItem item) of
+        Left errs -> expectTrue ("nested give.to caught: " ++ issuesText errs)
+                        (any (\i -> ciCode i == "UnknownNpc") errs)
+        Right _ -> expectTrue "expected a compile error" False
+
+-- | exportBundle writes the compile bytes verbatim, both launchers and the
+--   referenced assets in their relative layout; missing assets and paths that
+--   escape the bundle root are warnings, not errors.
+testExportBundle :: IO Bool
+testExportBundle = do
+    tmpRoot <- getTemporaryDirectory
+    let srcDir = tmpRoot </> "wb-b6-src"
+        outDir = tmpRoot </> "wb-b6-bundle"
+        cleanDir d = do
+            ex <- doesDirectoryExist d
+            when ex (removeDirectoryRecursive d)
+    mapM_ cleanDir [srcDir, outDir]
+    createDirectoryIfMissing True (srcDir </> "audio")
+    writeFile (srcDir </> "audio" </> "theme.xm") "placeholder"
+    writeFile (srcDir </> "liesmich.txt") "hallo"
+    let item = (minItem "radio")
+            { aiOnTake = Just [AOPlayMusic "audio/theme.xm", AOPlaySfx "audio/fehlt.wav"] }
+        adv = (advWithItem item) { advAssets = ["liesmich.txt", "../escape.bin"] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile failed: " ++ issuesText errs
+            pure False
+        Right cr -> do
+            warns <- exportBundle srcDir outDir (crWorld cr) (crSave cr) (collectAssetRefs adv) False
+            worldBytes <- BLC.readFile (outDir </> "world.json")
+            r1 <- expectEqual (Aeson.encode (crWorld cr)) worldBytes
+            shExists <- doesFileExist (outDir </> "play.sh")
+            batExists <- doesFileExist (outDir </> "play.bat")
+            perms <- getPermissions (outDir </> "play.sh")
+            shBody <- readFile (outDir </> "play.sh")
+            batBody <- readFile (outDir </> "play.bat")
+            r2 <- expectTrue "launchers written, play.sh executable"
+                    (shExists && batExists && executable perms)
+            r2b <- expectEqual launcherSh shBody
+            r2c <- expectEqual launcherBat batBody
+            copiedTheme <- doesFileExist (outDir </> "audio" </> "theme.xm")
+            copiedReadme <- doesFileExist (outDir </> "liesmich.txt")
+            r3 <- expectTrue "assets copied in relative layout" (copiedTheme && copiedReadme)
+            r4 <- expectTrue ("missing asset warns: " ++ show warns)
+                    (any ("not found" `isInfixOf`) warns)
+            r5 <- expectTrue ("path escape warns: " ++ show warns)
+                    (any ("not game-root-relative" `isInfixOf`) warns)
+            r6 <- expectEqual [ "world.json", "save.json", "play.sh", "play.bat"
+                              , "../escape.bin", "audio/fehlt.wav", "audio/theme.xm", "liesmich.txt" ]
+                    (bundleFiles (collectAssetRefs adv))
+            mapM_ cleanDir [srcDir, outDir]
+            pure (r1 && r2 && r2b && r2c && r3 && r4 && r5 && r6)
+
+-- | `assets:` is a known adventure key and feeds the collection.
+testAssetsKnownKey :: IO Bool
+testAssetsKnownKey = do
+    let yaml = unlines
+            [ "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Halle"
+            , "    desc: Eine Halle."
+            , "assets:"
+            , "  - README.txt"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let keyWarns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
+                r1 <- expectTrue ("expected 0 unknown key warnings, got " ++ show (length keyWarns)) (null keyWarns)
+                r2 <- expectEqual ["README.txt"] (collectAssetRefs adv)
+                pure (r1 && r2)
 
 main :: IO ()
 main = do

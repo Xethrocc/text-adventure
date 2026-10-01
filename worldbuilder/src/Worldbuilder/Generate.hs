@@ -1391,6 +1391,7 @@ emitAdventure t plan seed =
             , advProgression       = Nothing
             , advTests             = []
             , advRawValue          = Nothing
+            , advAssets            = []
             }
     in (adv, dpWarnings plan ++ popWarns)
 

@@ -173,6 +173,15 @@ Jede Stufe: **erst Haskell komplett**, dann UI am Stück.
 | 5.2 | **Synth-Tab:** zuerst Designphase (Sounds/Musik als Daten im Adventure? Rendern im Browser vs. Export als Datei für CLI/TUI?), dann Umsetzung über die vorhandene Audio-Abstraktion (`PlaySfx`/`PlayMusic`). |
 | 5.3 | **Include & Pakete:** `include:` für YAML, Procedure-Bibliotheken und Sprachpakete als wiederverwendbare Pakete. |
 
+### Phase 6 — Autorenwerkzeuge & Nachweise (B-Reihe)
+
+| Stufe | Inhalt | Status |
+|---|---|---|
+| B1 | **Content-Tests als Daten** (`tests:`-Sektion + `worldbuilder test`, CI-Stufe 4b) | **Erledigt (2026-09-29)** |
+| B6 | **Spiel-Export / Bündelung** — `worldbuilder export`: `world.json`/`save.json` byte-identisch zu `compile`, referenzierte Assets (`sfx:`/`music:` + `assets:`-Manifest, spielwurzel-relativ), `play.sh`/`play.bat`, `--with-engine` (Engine nach `bin/`), `--zip` (`zip`/`7z`); fehlende Assets = Warnung. CI-Stufe 9. | **Erledigt (2026-09-30)** |
+| B4 | **Regel-Diagnostik** („welche Regel hat nie gefeuert", unerfüllbare Bedingungen, nie passierbare Ausgänge) | offen |
+| B5 | **Content-Fuzzer** (Zufalls-/Heuristikläufe: Abstürze, Sackgassen, Endlosschleifen) | offen |
+
 ### Aufwand & Haltepunkte
 
 Grobe Größen (Vorschlag, keine Schätzung aus der Review): Phase 0 **S–M** (0.6 = M),

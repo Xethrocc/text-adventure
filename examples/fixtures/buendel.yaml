@@ -1,0 +1,25 @@
+name: Buendel Fixture
+start_room: halle
+
+rooms:
+  - id: halle
+    name: Halle
+    desc: Eine Halle mit einer alten Musikbox an der Wand.
+    on_enter:
+      - music: assets/theme.xm
+      - sfx: assets/ton.wav
+
+items:
+  - id: knopf
+    name: Knopf
+    desc: Ein grosser roter Knopf unter der Musikbox.
+    location: halle
+    keys: [knopf]
+    verb_map:
+      use,intact:
+        - sfx: assets/ton.wav
+        - msg: "Der Knopf summt leise."
+
+# B6: explizite Extra-Dateien fuer das Export-Buendel (spielwurzel-relativ)
+assets:
+  - assets/README-spiel.txt

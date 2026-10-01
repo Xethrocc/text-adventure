@@ -8,6 +8,7 @@ import Worldbuilder.Generate (parseTemplate, validateTemplate, generateDungeon, 
 import Worldbuilder.Rng (deriveRuntimeSeed)
 import Worldbuilder.Run (RunConfig (..), runRunner)
 import Worldbuilder.Test (runContentTests)
+import Worldbuilder.Export (collectAssetRefs, bundleFiles, exportBundle, makeZip)
 
 -- JSON encoding (output only)
 import Data.Aeson (encode)
@@ -23,7 +24,7 @@ import qualified Types as E
 import System.Environment (getArgs)
 import System.Exit (exitFailure, exitSuccess)
 import System.Directory (createDirectoryIfMissing)
-import System.FilePath ((</>))
+import System.FilePath ((</>), takeBaseName, takeDirectory)
 import System.IO (hSetEncoding, stdout, stderr, stdin, utf8)
 import Control.Monad (unless)
 import Worldbuilder.Locate (lineForPath)
@@ -41,6 +42,7 @@ runCLI = do
     case args of
         ("validate" : path : _)    -> validate path
         ("compile" : path : rest)  -> compile path rest
+        ("export" : path : rest)   -> exportCmd path rest
         ("generate" : path : rest) -> generateCmd path rest
         ("run" : path : rest)      -> runCmd path rest
         ("check" : path : _)       -> checkStats path
@@ -67,6 +69,13 @@ usage = unlines
     , "                                              --force writes even if validation has issues"
     , "  worldbuilder check <adventure.json>         Print content statistics"
     , "  worldbuilder test <adventure.json> [name]   Run the authored content tests (`tests:` section)"
+    , ""
+    , "  worldbuilder export <adventure.json> -o <dir> [--with-engine] [--zip] [--force]"
+    , "                                              Bundle a finished game: world.json + save.json"
+    , "                                              + referenced assets (sfx:/music: + assets:) +"
+    , "                                              play.sh/play.bat. --with-engine copies the engine"
+    , "                                              into bin/, --zip wraps the bundle in <dir>.zip."
+    , "                                              Default -o: dist/<adventure name>."
     , ""
     , "  worldbuilder generate <template.yaml> --seed N -o <dir> [--force]"
     , "                                              Generate a dungeon from a template and emit"
@@ -256,6 +265,61 @@ compile path rest = do
                     else do
                         putStrLn "Validation warnings (written with --force):"
                         mapM_ (\e -> putStrLn ("  - " ++ showValidationError e)) errors
+                    exitSuccess
+
+-- | B6: export a finished game as a playable bundle — world.json/save.json
+--   (byte-identical to `compile`), the referenced assets (sfx:/music: effects
+--   plus the `assets:` manifest) and play.sh/play.bat launchers.
+--   `--with-engine` copies the `text-adventure` binary into bin/, `--zip`
+--   wraps the bundle in <dir>.zip.
+exportCmd :: FilePath -> [String] -> IO ()
+exportCmd path rest = do
+    let outDir = case rest of
+            ("-o" : d : _)       -> d
+            ("--output" : d : _) -> d
+            _                    -> "dist" </> takeBaseName path
+        withEngine = "--with-engine" `elem` rest
+        wantZip    = "--zip" `elem` rest
+        force      = "--force" `elem` rest
+    advResult <- parseAdventureFile path
+    case advResult of
+        Left err -> do
+            putStrLn $ "Failed to parse adventure file: " ++ err
+            exitFailure
+        Right adv -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn "Compilation errors:"
+                printCompileIssues path errs
+                putStrLn ""
+                putStrLn $ show (length errs) ++ " hard error(s); bundle not written."
+                exitFailure
+            Right cr -> do
+                unless (null (crWarnings cr)) $ do
+                    putStrLn "Compiler warnings:"
+                    printCompileIssues path (crWarnings cr)
+                    putStrLn ""
+                let errors = validateWorld (crWorld cr) ++ validateGameState (crWorld cr) (crSave cr)
+                if not (null errors) && not force
+                then do
+                    putStrLn "Validation found issues (use --force to write anyway):"
+                    mapM_ (\e -> putStrLn ("  - " ++ showValidationError e)) errors
+                    exitFailure
+                else do
+                    let assets = collectAssetRefs adv
+                    warns <- exportBundle (takeDirectory path) outDir (crWorld cr) (crSave cr)
+                                assets withEngine
+                    mapM_ (\w -> putStrLn ("Warning: " ++ w)) warns
+                    putStrLn $ "Wrote bundle " ++ outDir
+                        ++ " (" ++ show (length (bundleFiles assets)) ++ " files, "
+                        ++ show (length assets) ++ " assets, "
+                        ++ show (length warns) ++ " warnings)"
+                    if wantZip
+                    then makeZip outDir >>= \z -> case z of
+                        Left e  -> do
+                            putStrLn $ "Zip failed: " ++ e
+                            exitFailure
+                        Right zPath -> putStrLn $ "Wrote " ++ zPath
+                    else pure ()
                     exitSuccess
 
 -- ---------------------------------------------------------------------------

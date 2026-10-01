@@ -27,7 +27,7 @@ profiles and gameplay modules are all content.
 **Worldbuilder (`worldbuilder/`)**
 
 - Authoring schema for everything above, in YAML or JSON, with structured diagnostics
-- CLI: `validate`, `compile`, `check`
+- CLI: `validate`, `compile`, `check`, `test` (authored content tests), `generate`/`run` (worldgen), `export` (game bundle)
 - Optional gameplay modules (Phase 7): factions/standing, trade, encounter tables, survival/weather, stealth, tactical combat & abilities, party/companions, starships with duels — see `docs/modules.md`
 
 ## Quick start
@@ -54,8 +54,9 @@ redirected with `--saves-dir DIR` or the `TA_SAVES_DIR` environment variable
 (the flag wins) — used by tests and CI for hermetic runs.
 
 Whole pipeline — build, all six test suites, validation of 26 shipped
-adventures, 47 scripted playthroughs (34 happy paths + 13 non-victory runs), authored
-content tests (`worldbuilder test`), plus the worldgen and run-regeneration checks:
+adventures, 49 scripted playthroughs (36 happy paths + 13 non-victory runs), authored
+content tests (`worldbuilder test`), the export-bundle check and the worldgen and
+run-regeneration checks:
 
 ```bash
 bash scripts/ci.sh
@@ -167,7 +168,7 @@ no own state file. Their state lives in the existing `VarMap`
 
 ```bash
 cabal build all
-cabal test all --test-show-details=direct    # 431 engine tests, 209 worldbuilder tests, 20 TUI tests, plus the img2ascii/text2ascii tool suites
+cabal test all --test-show-details=direct    # 431 engine tests, 213 worldbuilder tests, 20 TUI tests, plus the img2ascii/text2ascii tool suites
 bash scripts/ci.sh                           # build + tests + validation + 49 E2E playthroughs
 cabal run worldbuilder -- check examples/thefog.yaml   # content statistics
 ```

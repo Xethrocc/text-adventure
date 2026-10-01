@@ -66,6 +66,7 @@ data Adventure = Adventure
     , advProgression      :: Maybe AProgressionDef       -- ^ player progression (W2)
     , advTests            :: [AContentTest]              -- ^ authored content tests (B1)
     , advInclude          :: [String]                    -- ^ include: library files (5.3, merged first-own-then-includes)
+    , advAssets           :: [String]                    -- ^ B6: extra asset files for the export bundle (game-root-relative)
     , advRawValue         :: Maybe Value                 -- ^ raw parsed JSON/YAML value for schema validation
     } deriving (Show, Eq, Generic)
 
@@ -149,6 +150,7 @@ instance FromJSON Adventure where
         <*> o .:? "progression"
         <*> o .:? "tests" .!= []
         <*> o .:? "include" .!= []
+        <*> o .:? "assets"  .!= []
         <*> pure (Just v)
     parseJSON _ = fail "Expected Adventure to be an object"
 
@@ -1687,7 +1689,7 @@ knownKeys EntAdventure = Set.fromList
     , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
     , "handLimit", "hand_limit", "sandbox_zones", "procedures", "tests", "include"
     , "facts", "combine", "combine_verb", "journal", "chapters", "devices", "pursuit", "containers"
-    , "progression"
+    , "progression", "assets"
     ]
 knownKeys EntRoom = Set.fromList
     [ "id", "name", "desc", "description", "exits", "tags", "light_flag"

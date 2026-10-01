@@ -291,5 +291,60 @@ save_load_case() {
 save_load_case save-load examples/thefog.yaml
 save_load_case save-load-death examples/modules/patrol.yaml
 
+# ---------------------------------------------------------------------------
+# B6: game export — a finished game leaves the repo as one playable bundle:
+# world/save (byte-identical to `compile`), the referenced assets and both
+# launchers. The bundle is then played through its own play.sh.
+# ---------------------------------------------------------------------------
+echo "== 9. export bundle (B6) =="
+eng="$(cabal list-bin "text-adventure-cli:exe:text-adventure" 2>/dev/null)"
+PATH="$PATH:$(dirname "$eng")" "${WORLDBUILDER[@]}" export examples/fixtures/buendel.yaml \
+    -o "$tmp/buendel-bundle" --with-engine > "$tmp/export.log" 2>&1
+for f in world.json save.json play.sh play.bat bin/text-adventure \
+         assets/theme.xm assets/ton.wav assets/README-spiel.txt; do
+    if [ -f "$tmp/buendel-bundle/$f" ]; then
+        echo "OK   export-file ($f)"
+    else
+        echo "FAIL export-file ($f missing)"
+        cat "$tmp/export.log"
+        exit 1
+    fi
+done
+"${WORLDBUILDER[@]}" compile examples/fixtures/buendel.yaml -o "$tmp/buendel-plain" >/dev/null
+if cmp -s "$tmp/buendel-bundle/world.json" "$tmp/buendel-plain/world.json" \
+   && cmp -s "$tmp/buendel-bundle/save.json" "$tmp/buendel-plain/save.json"; then
+    echo "OK   export-bytes (bundle world/save byte-identical to compile)"
+else
+    echo "FAIL export-bytes (bundle world/save differ from compile)"
+    exit 1
+fi
+mkdir -p "$tmp/buendel-saves"
+out="$(TA_SAVES_DIR="$tmp/buendel-saves" bash "$tmp/buendel-bundle/play.sh" \
+        < ci/e2e/buendel.in 2>&1 || true)"
+export_failed=0
+while IFS= read -r marker || [ -n "$marker" ]; do
+    [ -n "$marker" ] || continue
+    if grep -qF "$marker" <<<"$out"; then
+        echo "OK   export-play (reached: $marker)"
+    else
+        echo "FAIL export-play (expected: $marker)"
+        echo "---- last output ----"
+        tail -20 <<<"$out"
+        export_failed=1
+    fi
+done < "ci/e2e/buendel.expect"
+[ "$export_failed" -eq 0 ] || exit 1
+if command -v zip >/dev/null 2>&1 || command -v 7z >/dev/null 2>&1; then
+    "${WORLDBUILDER[@]}" export examples/fixtures/buendel.yaml -o "$tmp/buendel-zip" --zip >/dev/null 2>&1
+    if [ -f "$tmp/buendel-zip.zip" ]; then
+        echo "OK   export-zip (archive written next to the bundle)"
+    else
+        echo "FAIL export-zip (no archive written)"
+        exit 1
+    fi
+else
+    echo "OK   export-zip (skipped: no zip tool available)"
+fi
+
 echo
 echo "All checks passed."

@@ -240,6 +240,7 @@ mergeSources ((_, main) : incls) = foldl mergeOne main { advInclude = [] } incls
         , advCombines        = advCombines acc ++ advCombines inc
         , advDevices         = advDevices acc ++ advDevices inc
         , advTests           = advTests acc ++ advTests inc
+        , advAssets          = advAssets acc ++ advAssets inc
         , advInitialVariables = Map.union (advInitialVariables acc) (advInitialVariables inc)
         , advInitialFlags     = Map.union (advInitialFlags acc) (advInitialFlags inc)
         , advEndArt           = Map.union (advEndArt acc) (advEndArt inc)

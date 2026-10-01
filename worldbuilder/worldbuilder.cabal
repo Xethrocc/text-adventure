@@ -17,6 +17,7 @@ library
   exposed-modules:     Worldbuilder.Types
                        Worldbuilder.Compile
                        Worldbuilder.CLI
+                       Worldbuilder.Export
                        Worldbuilder.Locate
                        Worldbuilder.ParseFile
                        Worldbuilder.Rng
