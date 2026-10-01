@@ -36,7 +36,10 @@ import Messages (evMsg)
 import Quests (canStartQuest, startQuest, advanceQuest, completeQuestWith)
 import Vehicles (vehicleConditionTickWith)
 import Data.List (intercalate, foldl', find)
-import Data.Bits (shiftR)
+import Data.Bits (shiftR, xor)
+import Data.Char (ord)
+import Data.Word (Word64)
+import Numeric (readHex, showHex)
 import Data.Maybe (listToMaybe, fromMaybe, isJust)
 import Control.Monad (guard)
 import qualified Data.Map.Strict as Map
@@ -123,6 +126,71 @@ stepLevels depth prog st acc salt =
 -- | W1: message decision for a newly learned fact — no message (NPC or
 --   silent fact), the catalog default, or an author template.
 data LearnMsg = NoMsg | DefaultMsg | AuthorMsg (Maybe String)
+
+-- ---------------------------------------------------------------------------
+-- B8: named RNG streams
+-- ---------------------------------------------------------------------------
+
+-- | Weighted random pick (B8). The default stream (@""@) is the historical
+--   single @rngState@ channel — its maths and draw order are literally
+--   unchanged (byte contract). A named stream lives in the VarMap under
+--   @rng.<name>@ as a hex text, is initialised from name-hash + the *current*
+--   default state on first use (the default state is only read, never
+--   advanced) and is fully decoupled from the default stream afterwards.
+applyRandomChoice :: String -> [(Int, Effect)] -> Int -> Int -> ItemID
+                  -> GameState -> (GameState, [OutputEvent], Int)
+applyRandomChoice streamName weighted depth salt targetId state =
+    let totalWeight = max 1 (sum (map fst weighted))
+        (rng, st') = drawStreamRng streamName salt state
+        pick = fromIntegral ((rng `shiftR` 33) `mod` fromIntegral totalWeight)
+        go :: Int -> [(Int, Effect)] -> Effect
+        go _ [(_, e)] = e
+        go acc ((w, e):rest)
+            | pick < acc + w = e
+            | otherwise = go (acc + w) rest
+        go _ [] = Noop
+    in applyOutcomeWith (depth + 1) (salt + 1) (go 0 weighted) targetId st'
+
+-- | Draw one value from an RNG stream and persist its advanced state.
+drawStreamRng :: String -> Int -> GameState -> (Word64, GameState)
+drawStreamRng "" salt st =
+    let rng = nextRng (rngState (save st) + fromIntegral salt)
+    in (rng, st { save = (save st) { rngState = rng } })
+drawStreamRng streamName salt st =
+    let rng = nextRng (streamState streamName st + fromIntegral salt)
+    in (rng, setVariable (streamVarKey streamName) (VVText (showHexWord64 rng)) st)
+
+-- | VarMap home of a named stream (engine namespace @rng.*@ — writable only by
+--   the engine; the worldbuilder rejects authored writes at compile time).
+streamVarKey :: String -> String
+streamVarKey name = "rng." ++ name
+
+-- | Current state of a named stream. Read directly from the VarMap (never
+--   through 'getVariable' — procedure scopes must not be able to shadow a
+--   stream). Uninitialised (or unparsable) values are seeded deterministically
+--   from name-hash + the current default state — the default stream itself is
+--   not consumed by the initialisation.
+streamState :: String -> GameState -> Word64
+streamState name st =
+    case Map.lookup (streamVarKey name) (variables (save st)) of
+        Just (VVText t) -> maybe initSeed id (readHexWord64 t)
+        _               -> initSeed
+  where
+    initSeed = nextRng (rngState (save st) + hashStreamName name)
+
+-- | FNV-1a over the stream name — gives every name an independent seed.
+hashStreamName :: String -> Word64
+hashStreamName = foldl' step 0xcbf29ce484222325
+  where
+    step h c = (h `xor` fromIntegral (ord c)) * 0x100000001b3
+
+showHexWord64 :: Word64 -> String
+showHexWord64 w = showHex w ""
+
+readHexWord64 :: String -> Maybe Word64
+readHexWord64 s = case readHex s of
+    [(w, "")] -> Just w
+    _         -> Nothing
 
 applyOutcomeWith :: Int -> Int -> Effect -> ItemID -> GameState -> (GameState, [OutputEvent], Int)
 applyOutcomeWith depth salt outcome targetId state
@@ -242,18 +310,10 @@ applyOutcomeWith depth salt outcome targetId state
         else applyOutcomeWith (depth + 1) salt elseOutcome targetId state
 
     RandomChoice [] -> (state, [], salt)
-    RandomChoice weighted ->
-        let totalWeight = max 1 (sum (map fst weighted))
-            rng = nextRng (rngState (save state) + fromIntegral salt)
-            pick = fromIntegral ((rng `shiftR` 33) `mod` fromIntegral totalWeight)
-            st' = state { save = (save state) { rngState = rng } }
-            go :: Int -> [(Int, Effect)] -> Effect
-            go _ [(_, e)] = e
-            go acc ((w, e):rest)
-                | pick < acc + w = e
-                | otherwise = go (acc + w) rest
-            go _ [] = Noop
-        in applyOutcomeWith (depth + 1) (salt + 1) (go 0 weighted) targetId st'
+    RandomChoice weighted -> applyRandomChoice "" weighted depth salt targetId state
+    RandomChoiceOn _ [] -> (state, [], salt)
+    RandomChoiceOn streamName weighted ->
+        applyRandomChoice streamName weighted depth salt targetId state
 
     GameEnd reason msg -> (endGame reason state, evRaw (formatWithVars msg state), salt)
 

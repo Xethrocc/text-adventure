@@ -18,7 +18,7 @@ import qualified System.Info as Info
 import Control.Exception (try, SomeException)
 import Worldbuilder.Types
 import Worldbuilder.Locate (lineForPath)
-import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome, allWorldEffects)
+import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome, allWorldEffects, checkUnknownYamlKeys)
 import Worldbuilder.Test (checkMarkers, executeContentTest)
 import Worldbuilder.Fuzz (FindingKind (..), FuzzFinding (..), FuzzVocab (..),
                           frozenWindow, fuzzRun, fuzzVocab, genInputs, runSeedFor)
@@ -1726,8 +1726,13 @@ testP117EffectSugar = do
               (dec (BLC.pack "{\"clear_condition\": \"poisoned\"}"))
     r4 <- expectEqual (Just (AOModifySkill "lockpick" 1))
               (dec (BLC.pack "{\"skill\": {\"name\": \"lockpick\", \"delta\": 1}}"))
-    r5 <- expectEqual (Just (AORandomChoice [(3, [AOMessage "a"]), (1, [AOMessage "b"])]))
+    r5 <- expectEqual (Just (AORandomChoice "" [(3, [AOMessage "a"]), (1, [AOMessage "b"])]))
               (dec (BLC.pack "{\"random\": [[3, [{\"msg\": \"a\"}]], [1, [{\"msg\": \"b\"}]]]}"))
+    -- B8: object form with a named stream (and without one = default stream)
+    r5b <- expectEqual (Just (AORandomChoice "beute" [(2, [AOMessage "a"]), (1, [AOMessage "b"])]))
+              (dec (BLC.pack "{\"random\": {\"stream\": \"beute\", \"choices\": [[2, [{\"msg\": \"a\"}]], [1, [{\"msg\": \"b\"}]]]}}"))
+    r5c <- expectEqual (Just (AORandomChoice "" [(2, [AOMessage "a"])]))
+              (dec (BLC.pack "{\"random\": {\"choices\": [[2, [{\"msg\": \"a\"}]]]}}"))
     c1 <- expectEqual (E.Narrative ["a"] (E.SendMessage "x"))
               (compileAActionOutcome (AONarrative ["a"] [AOMessage "x"]))
     c2 <- expectEqual (E.ApplyCondition "p" 2 (Just (E.SendMessage "t")) (Just (E.SendMessage "e")) False)
@@ -1737,8 +1742,10 @@ testP117EffectSugar = do
     c3 <- expectEqual (E.ClearCondition "p") (compileAActionOutcome (AOClearCondition "p"))
     c4 <- expectEqual (E.ModifySkill "s" 2) (compileAActionOutcome (AOModifySkill "s" 2))
     c5 <- expectEqual (E.RandomChoice [(2, E.SendMessage "a")])
-              (compileAActionOutcome (AORandomChoice [(2, [AOMessage "a"])]))
-    pure (and [r1, r2, r2b, r3, r4, r5, c1, c2, c2b, c3, c4, c5])
+              (compileAActionOutcome (AORandomChoice "" [(2, [AOMessage "a"])]))
+    c5b <- expectEqual (E.RandomChoiceOn "beute" [(2, E.SendMessage "a")])
+              (compileAActionOutcome (AORandomChoice "beute" [(2, [AOMessage "a"])]))
+    pure (and [r1, r2, r2b, r3, r4, r5, r5b, r5c, c1, c2, c2b, c3, c4, c5, c5b])
 
 -- | Audio Phase 1 & 2: `sfx:`, `music:`, `stop_music:` decode and compile.
 testAudioOutcomes :: IO Bool
@@ -3635,6 +3642,8 @@ tests =
     , ("fuzz: non-terminating steps are hang findings (B5)", testFuzzHangDetection)
     , ("fuzz: veto soft-lock is a loop finding (B5)", testFuzzLoopEndToEnd)
     , ("fuzz: clean world fuzzes without findings (B5)", testFuzzSmoke)
+    -- B8: named RNG streams
+    , ("rng: authored writes on rng.* are hard errors (B8)", testRngVarWriteGuard)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -5794,7 +5803,7 @@ testCollectAssetRefs = do
             { aiOnTake = Just
                 [ AOPlayMusic "audio/theme.xm"
                 , AOConditional (E.HasFlag "x") [AOPlaySfx "audio/da.wav"] []
-                , AORandomChoice [(1, [AOPlaySfx "audio/rand.wav"])]
+                , AORandomChoice "" [(1, [AOPlaySfx "audio/rand.wav"])]
                 ] }
         adv = (advWithItem item) { advNPCs = [npc], advAssets = ["README.txt", "audio/theme.xm"] }
     expectEqual [ "README.txt", "audio/da.wav", "audio/end.xm"
@@ -6169,6 +6178,52 @@ testFuzzSmoke = do
             case found of
                 Nothing -> expectTrue "clean run" True
                 Just f  -> expectTrue ("unexpected finding: " ++ show f) False
+
+-- ---------------------------------------------------------------------------
+-- B8: named RNG streams (authoring side)
+-- ---------------------------------------------------------------------------
+
+-- | B8: the `rng.*` namespace is engine-internal — every authored write
+--   (`set_var`/`set_text_var`/`add_var`/`compute_var`, `variables:`
+--   declarations, `initial_variables:` entries, procedure params, also
+--   nested inside `random:` branches) is a hard compile error. Stream
+--   *reads* via `random: {stream: …}` are fine, and the object form carries
+--   no unknown YAML keys.
+testRngVarWriteGuard :: IO Bool
+testRngVarWriteGuard = do
+    let rngRule effs = ATrigger
+            { atId = "t", atOn = "turn", atWhen = Nothing
+            , atEffects = effs, atOnce = False, atCooldown = 0 }
+        advWithEffects effs = (minAdventure (minRoom "a")) { advTriggers = [rngRule effs] }
+        rngErrCount adv = case compileAdventure adv of
+            Left errs -> length [ e | e <- errs, ciCode e == "RngVarWrite" ]
+            Right _   -> 0
+        textVarDecl = AVariable
+            { avbVarName = "rng.d", avbVarType = "int", avbInitial = Nothing
+            , avbMin = Nothing, avbMax = Nothing }
+        procWithRngParam = AProcDef
+            { apId = "p", apParams = ["rng.p"], apEffects = [] }
+        rawRandomVal = maybe (Aeson.object []) id (Aeson.decode (BLC.pack
+            ("{\"rules\": [{\"id\": \"t\", \"on\": \"turn\", \"effects\": ["
+             ++ "{\"random\": {\"stream\": \"beute\", \"choices\": [[1, [{\"msg\": \"x\"}]]]}}]}]}")))
+        cleanAdv = advWithEffects [AOSetVar "foo" 1, AORandomChoice "beute" [(1, [AOMessage "hi"])]]
+    r1 <- expectEqual 1 (rngErrCount (advWithEffects [AOSetVar "rng.x" 1]))
+    r2 <- expectEqual 1 (rngErrCount (advWithEffects [AOAddVar "rng.y" 3]))
+    r3 <- expectEqual 1 (rngErrCount (advWithEffects [AOComputeVar "rng.z" (E.ELit 1)]))
+    r4 <- expectEqual 1 (rngErrCount (advWithEffects [AOSetTextVar "rng.t" "s"]))
+    r5 <- expectEqual 1 (rngErrCount ((minAdventure (minRoom "a"))
+            { advInitialVariables = Map.singleton "rng.q" (Aeson.Number 1) }))
+    r6 <- expectEqual 1 (rngErrCount ((minAdventure (minRoom "a"))
+            { advVariables = [textVarDecl] }))
+    r7 <- expectEqual 1 (rngErrCount ((minAdventure (minRoom "a"))
+            { advProcedures = [procWithRngParam] }))
+    r8 <- expectEqual 1 (rngErrCount
+            (advWithEffects [AORandomChoice "" [(1, [AOSetVar "rng.n" 1])]]))
+    r9 <- expectEqual 0 (rngErrCount cleanAdv)
+    r10 <- expectRight (compileAdventure cleanAdv)
+    r11 <- expectTrue "random object form has no UnknownYamlKey"
+            (null [ () | e <- checkUnknownYamlKeys rawRandomVal, ciCode e == "UnknownYamlKey" ])
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11])
 
 main :: IO ()
 main = do

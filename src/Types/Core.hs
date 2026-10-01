@@ -952,6 +952,7 @@ data Effect
     = Sequence [Effect]                          -- ^ Do many effects in order
     | Conditional Predicate Effect Effect         -- ^ Branch: if (pred) then this else that
     | RandomChoice [(Int, Effect)]               -- ^ Weighted random pick from candidates
+    | RandomChoiceOn String [(Int, Effect)]      -- ^ B8: weighted pick on a named RNG stream (`rng.<name>` in the VarMap)
     | SetValue ValueRef EffectValue                     -- ^ Set any value (flag, variable, property)
     | ModifyValue ValueRef Int                    -- ^ Modify a numeric value (hp, skill, prop, etc.)
     | MoveEntity EntityID Location                -- ^ Move an entity to a location

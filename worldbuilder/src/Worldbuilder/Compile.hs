@@ -25,6 +25,7 @@ module Worldbuilder.Compile
     , formatUnknownKey
     , checkKeywordCollisions
     , checkUnknownPlaceholders
+    , checkRngVarWrites
     , checkDarkRoomDeadEnds
     , checkDeviceRefs
     ) where
@@ -143,7 +144,7 @@ checkSetExitRefs roomKeys adv =
         | not (null from), from `notElem` ["current", "current_room"], from `Set.notMember` roomKeys, not (isSandboxZoneTarget from) ]
     go (AOConditional _ ts es) = go' ts ++ go' es
     go (AONarrative _ follow)  = go' follow
-    go (AORandomChoice cs)     = concatMap go' (map snd cs)
+    go (AORandomChoice _ cs)   = concatMap go' (map snd cs)
     go (AOApplyCondition _ _ t e _) = go' (t ++ e)
     go _                         = []
     go' = concatMap go
@@ -179,7 +180,7 @@ deepOutcomes = concatMap deepOne
         AOConditional _ ts es        -> [ts, es]
         AONarrative _ ts             -> [ts]
         AOApplyCondition _ _ ts es _ -> [ts, es]
-        AORandomChoice branches      -> map snd branches
+        AORandomChoice _ branches    -> map snd branches
         _                            -> []
 
 -- | Every outcome-bearing surface with a diagnostic path prefix. Contract:
@@ -661,6 +662,7 @@ compileAdventure adv =
         clipErrs = checkClips (advClips adv) gw
         procCallErrs = checkProcRefs (advProcedures adv) adv
         possessionErrs = checkNpcPossessionRefs adv
+        rngVarErrs = checkRngVarWrites adv
 
 
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
@@ -700,6 +702,7 @@ compileAdventure adv =
                     ++ progConflictErrs
                     ++ progVarErrs
                     ++ possessionErrs
+                    ++ rngVarErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -1671,7 +1674,7 @@ checkChapterRefs cs adv = (dupErrs ++ targetErrs ++ backwardErrs, unreachableWar
         AOGotoChapter t  -> [t]
         AOConditional _ ts es -> concatMap gotoTargets ts ++ concatMap gotoTargets es
         AONarrative _ follow  -> concatMap gotoTargets follow
-        AORandomChoice cs'    -> concatMap (concatMap gotoTargets . snd) cs'
+        AORandomChoice _ cs'  -> concatMap (concatMap gotoTargets . snd) cs'
         AOApplyCondition _ _ t e _ -> concatMap gotoTargets t ++ concatMap gotoTargets e
         _ -> []
     -- A `goto_chapter: X` fired from chapter Y's own on: chapter rule set is
@@ -1852,7 +1855,7 @@ checkFactRefs fdefs gw adv =
         AOForget f _ -> [("forget", f)]
         AOConditional _ ts es -> concatMap factRefsIn ts ++ concatMap factRefsIn es
         AONarrative _ follow  -> concatMap factRefsIn follow
-        AORandomChoice cs     -> concatMap (concatMap factRefsIn . snd) cs
+        AORandomChoice _ cs   -> concatMap (concatMap factRefsIn . snd) cs
         AOApplyCondition _ _ t e _ -> concatMap factRefsIn t ++ concatMap factRefsIn e
         _ -> []
 
@@ -2296,7 +2299,7 @@ hasGainXpOutcome ao = case ao of
     AOGainXp _                   -> True
     AOConditional _ t e          -> any hasGainXpOutcome t || any hasGainXpOutcome e
     AONarrative _ f              -> any hasGainXpOutcome f
-    AORandomChoice cs            -> any (any hasGainXpOutcome . snd) cs
+    AORandomChoice _ cs          -> any (any hasGainXpOutcome . snd) cs
     AOApplyCondition _ _ tk ed _ -> any hasGainXpOutcome tk || any hasGainXpOutcome ed
     _                            -> False
 
@@ -2368,7 +2371,7 @@ checkProcRefs procs adv = concatMap siteIssues callSites ++ recursionErrs
         go (AOCallProc name _)          = [name]
         go (AOConditional _ ts es)      = callsIn ts ++ callsIn es
         go (AONarrative _ follow)       = callsIn follow
-        go (AORandomChoice cs)          = concatMap (callsIn . snd) cs
+        go (AORandomChoice _ cs)        = concatMap (callsIn . snd) cs
         go (AOApplyCondition _ _ t e _) = callsIn t ++ callsIn e
         go _                            = []
     recursionErrs =
@@ -3014,8 +3017,9 @@ compileAActionOutcome ao = case ao of
     AORemoveExit from dir ->
         E.RemoveExit from (dirOf dir)
     AOModifySkill skillId delta -> E.ModifySkill skillId delta
-    AORandomChoice weighted ->
-        E.RandomChoice [ (w, compileOutcomes os) | (w, os) <- weighted ]
+    AORandomChoice streamName weighted ->
+        (if null streamName then E.RandomChoice else E.RandomChoiceOn streamName)
+            [ (w, compileOutcomes os) | (w, os) <- weighted ]
     AORaiseEvent name -> E.RaiseEvent name
     AOPlayClip clipId -> E.PlayClip clipId
     AOPlaySfx path -> E.PlaySfx path
@@ -3535,6 +3539,35 @@ checkKeywordCollisions adv =
         trimSpaces = dropWhile isSpace . reverse . dropWhile isSpace . reverse
     in concatMap issuesForRoom (Map.toList byRoom)
 
+-- | B8: @rng.*@ is the engine namespace of named RNG streams. Authored
+--   writes (@set_var@/@set_text_var@/@add_var@/@compute_var@), @variables:@
+--   declarations and @initial_variables:@ entries on that namespace would
+--   break the reproducibility contract — every one is a hard compile error.
+--   Walks 'outcomeSurfaces' + 'deepOutcomes', the one surface contract.
+checkRngVarWrites :: Adventure -> [CompileIssue]
+checkRngVarWrites adv =
+    concatMap surfaceIssues (outcomeSurfaces adv)
+    ++ [ ciError ("variables." ++ n) "RngVarWrite" (reservedMsg n)
+       | n <- map avbVarName (advVariables adv), isRngName n ]
+    ++ [ ciError ("initial_variables." ++ n) "RngVarWrite" (reservedMsg n)
+       | n <- Map.keys (advInitialVariables adv), isRngName n ]
+    ++ [ ciError ("procedures." ++ apId pr ++ ".params." ++ n) "RngVarWrite" (reservedMsg n)
+       | pr <- advProcedures adv, n <- apParams pr, isRngName n ]
+  where
+    isRngName n = "rng." `isPrefixOf` n
+    reservedMsg n = "variable '" ++ n
+        ++ "' is reserved for named RNG streams (B8) and cannot be written by content"
+    surfaceIssues (path, os) = concatMap (writeIssues path) (deepOutcomes os)
+    writeIssues path ao =
+        [ ciError (path ++ "." ++ key) "RngVarWrite" (reservedMsg n)
+        | (key, n) <- writes ao, isRngName n ]
+    writes ao = case ao of
+        AOSetVar name _     -> [("set_var", name)]
+        AOSetTextVar name _ -> [("set_text_var", name)]
+        AOAddVar name _     -> [("add_var", name)]
+        AOComputeVar name _ -> [("compute_var", name)]
+        _                   -> []
+
 -- | Phase 0.4: warn when texts reference an unknown variable placeholder '{name}'.
 checkUnknownPlaceholders :: Adventure -> Map.Map String E.VarDef -> [CompileIssue]
 checkUnknownPlaceholders adv varDefs =
@@ -3611,7 +3644,7 @@ checkUnknownPlaceholders adv varDefs =
         AOComputeVar name _       -> [name]
         AOConditional _ ts es     -> concatMap outcomeWrittenVars (ts ++ es)
         AONarrative _ follow      -> concatMap outcomeWrittenVars follow
-        AORandomChoice cs         -> concatMap (concatMap outcomeWrittenVars . snd) cs
+        AORandomChoice _ cs       -> concatMap (concatMap outcomeWrittenVars . snd) cs
         AOApplyCondition _ _ ts es _ -> concatMap outcomeWrittenVars (ts ++ es)
         _                         -> []
 
@@ -3676,7 +3709,7 @@ checkUnknownPlaceholders adv varDefs =
         AOGameEnd _ (Just s)       -> [(path, s)]
         AOConditional _ ts es      -> concatMap (outcomeTexts path) (ts ++ es)
         AONarrative ls follow      -> [ (path, l) | l <- ls ] ++ concatMap (outcomeTexts path) follow
-        AORandomChoice cs          -> concatMap (concatMap (outcomeTexts path) . snd) cs
+        AORandomChoice _ cs        -> concatMap (concatMap (outcomeTexts path) . snd) cs
         AOApplyCondition _ _ ts es _ -> concatMap (outcomeTexts path) (ts ++ es)
         _                          -> []
 

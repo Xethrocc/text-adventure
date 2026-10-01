@@ -8588,6 +8588,52 @@ tokensHallwayState bothFeelable =
     in initSampleGame { world = gw', save = sv }
 
 
+-- ---------------------------------------------------------------------------
+-- B8: named RNG streams
+-- ---------------------------------------------------------------------------
+
+-- | B8: drawing on a named stream neither consumes the default stream nor
+--   touches other named streams — interleaved draws stay invisible to them.
+testNamedRngStreamDecoupled :: IO Bool
+testNamedRngStreamDecoupled = do
+    let drawOn name st = case applyOutcomeWith 0 0 (RandomChoiceOn name [(1, Noop)]) "" st of
+            (st', _, _) -> st'
+        stB1  = drawOn "beute" initSampleGame
+        stB2  = drawOn "beute" stB1
+        stW1  = drawOn "wetter" initSampleGame
+        stW2  = drawOn "wetter" stB2
+    r1 <- expectTrue "default stream is not consumed by named draws"
+            (rngState (save stB2) == rngState (save initSampleGame))
+    r2 <- expectEqual (getVariable "rng.wetter" stW1) (getVariable "rng.wetter" stW2)
+    r3 <- expectTrue "a stream advances across its own draws"
+            (getVariable "rng.beute" stB1 /= getVariable "rng.beute" stB2)
+    r4 <- expectTrue "different names get different seeds"
+            (getVariable "rng.beute" stB1 /= getVariable "rng.wetter" stW1)
+    r5 <- expectTrue "streams are created on first use" (isJust (getVariable "rng.beute" stB1))
+    pure (and [r1, r2, r3, r4, r5])
+
+-- | B8: the default stream keeps its exact historical draw (byte contract):
+--   one draw is @nextRng (rngState + salt)@, and a named draw leaves the
+--   default state alone.
+testDefaultRngStreamUnchanged :: IO Bool
+testDefaultRngStreamUnchanged = do
+    let (st1, _, _) = applyOutcomeWith 0 0 (RandomChoice [(1, Noop)]) "" initSampleGame
+        (st2, _, _) = applyOutcomeWith 0 0 (RandomChoiceOn "beute" [(1, Noop)]) "" initSampleGame
+    r1 <- expectEqual (nextRng (rngState (save initSampleGame))) (rngState (save st1))
+    r2 <- expectEqual (rngState (save initSampleGame)) (rngState (save st2))
+    pure (r1 && r2)
+
+-- | B8: stream state lives in the VarMap (@rng.<name>@, hex text) and
+--   survives the save/load round-trip like every other variable.
+testNamedRngStreamSaveRoundtrip :: IO Bool
+testNamedRngStreamSaveRoundtrip = do
+    let (st1, _, _) = applyOutcomeWith 0 0 (RandomChoiceOn "beute" [(1, Noop)]) "" initSampleGame
+        decoded = Aeson.decode (Aeson.encode (save st1)) :: Maybe SaveState
+    r1 <- expectTrue "save round-trips" (isJust decoded)
+    r2 <- expectEqual (getVariable "rng.beute" st1)
+            (decoded >>= \sv -> Map.lookup "rng.beute" (variables sv))
+    pure (r1 && r2)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -9085,5 +9131,9 @@ main = do
         , runTest "progression: negative xp clamp and anti-delevel guarantee (W2)" testNegativeXpClampAndAntiDelevel
         , runTest "progression: stats formatting (W2)" testStatsProgression
         , runTest "progression: GameWorld progressionDef M2 invariant (W2)" testProgressionGameWorldM2Invariant
+        -- B8: named RNG streams
+        , runTest "rng streams: named draws are decoupled (B8)" testNamedRngStreamDecoupled
+        , runTest "rng streams: default stream draw unchanged (B8)" testDefaultRngStreamUnchanged
+        , runTest "rng streams: stream state survives save/load (B8)" testNamedRngStreamSaveRoundtrip
         ]
     when (not (and results)) exitFailure

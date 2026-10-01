@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+### Benannte Zufallsströme (B8)
+
+- **`random: {stream: <name>, choices: [[gewicht, [effekte]], ...]}`** zieht aus
+  einem eigenen Zufallsstrom `rng.<name>` statt aus dem gemeinsamen Default-Strom:
+  Ziehungen auf einem Strom verschieben weder den Default-Strom noch andere
+  Ströme — Zufall bleibt stabil gegenüber Inhaltsänderungen anderer Systeme.
+  Die alte Listenform `random: [[gewicht, [effekte]], ...]` und die
+  `encounter:`-Tabellen bleiben unveraendert auf dem Default-Strom
+  (**byte-identisch**, neuer Effekt-Konstruktor `RandomChoiceOn`, alter
+  unangetastet).
+- **Speicher ohne neue SaveState-Felder** (Regel 6): Strom-Zustand in der VarMap
+  unter `rng.<name>` (Hex-Text), Init beim ersten Zugriff aus Name-Hash +
+  aktuellem Default-Strom **ohne Verbrauch** des Default-Stroms.
+- **`rng.*` ist engine-reserviert:** `set_var`/`set_text_var`/`add_var`/
+  `compute_var`, `variables:`-Deklarationen, `initial_variables:`-Eintraege und
+  Prozedur-Parameter auf dem Namensraum sind harte Compile-Fehler
+  (`RngVarWrite`) — schuetzt den Reproduzierbarkeitsvertrag.
+- **Tests:** +3 Engine-Tests (**434**) + 1 Worldbuilder-Test (**226**); neues
+  E2E-Fixture `stroeme` (geordnete Marker pinnen die exakte Ziehungsfolge).
+
 ### Content-Fuzzer (B5)
 
 - **`worldbuilder fuzz <adventure> [--seed N] [--runs N] [--steps N] [--timeout-ms N]

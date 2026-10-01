@@ -417,6 +417,7 @@ description:
 | `{ clear_condition: id }` | ClearCondition — remove a condition/timer early |
 | `{ skill: { name: id, delta: N } }` | ModifySkill — Skill um `N` verändern (auch negativ) |
 | `{ random: [[gewicht, [effekte]], ...] }` | RandomChoice — gewichtete Zufallsauswahl (Gewicht ≥ 1) |
+| `{ random: {stream: name, choices: [[gewicht, [effekte]], ...]} }` | RandomChoiceOn (B8) — gewichtete Zufallsauswahl auf dem benannten Zufallsstrom `rng.name` (s.u.) |
 | `{ raise: name }` | RaiseEvent — feuert alle Regeln `on: custom <name>` (P1-20) |
 | `{ sfx: "pfad/datei.wav" }` | PlaySfx — Sound-Effekt einmalig asynchron abspielen (Audio Phase 1) |
 | `{ music: "pfad/datei.xm" }` | PlayMusic — Hintergrundmusik-Loop starten/wechseln (Audio Phase 2; `.xm`, `.mid`, `.wav/.ogg/.mp3`) |
@@ -426,6 +427,22 @@ description:
 Flags sind für Prädikate faktisch boolesch: `has_flag` prüft, ob ein Flag gesetzt
 ist (`"true"`). Ein Vergleich gegen einen *anderen* String-Wert ist über Flags
 nicht ausdrückbar — dafür gibt es Text-Variablen.
+
+**Benannte Zufallsströme (B8):** `random:` zieht standardmäßig aus dem
+unbenannten Default-Strom — die alte Listenform bleibt unverändert (byte-identisch),
+`encounter:`-Tabellen ebenfalls. Mit der Objektform
+`random: {stream: <name>, choices: …}` zieht die Auswahl aus dem eigenen Strom
+`<name>`: Ziehungen auf einem Strom verschieben weder den Default-Strom noch
+andere Ströme — Inhaltsänderungen an einem System (Loot, Wetter …) bleiben ohne
+Wirkung auf die Zufallsfolge eines anderen. Der Zustand eines Stroms lebt in der
+VarMap unter `rng.<name>` (Hex-Text) und wird beim ersten Zugriff aus
+Name-Hash + aktuellem Default-Strom initialisiert (ohne den Default-Strom zu
+verbrauchen; gleicher Name = gleiche Folge, verschiedene Namen = verschiedene
+Folgen). `rng.*` ist ein Engine-Reservierter Namensraum: `set_var`,
+`set_text_var`, `add_var` und `compute_var` darauf, `variables:`-Deklarationen,
+`initial_variables:`-Einträge und Prozedur-Parameter sind Compile-Fehler
+(`RngVarWrite`) — sonst wäre die Reproduzierbarkeit deterministischer Läufe
+(Fuzzer-Funde, `tests:`-Marker) nicht garantiert.
 
 **Text-Variablen** (`variables:` mit `type: text`) werden mit
 `{ var: <name>, is: <text> }` abgefragt; ihren Startwert setzt die Deklaration

@@ -1363,7 +1363,9 @@ data AActionOutcome
         -- ^ condition: {name, turns, tick, end, hidden} — timed status effect (Phase 2.1)
     | AOClearCondition String          -- ^ clear_condition: <name>
     | AOModifySkill String Int         -- ^ skill: {name, delta}
-    | AORandomChoice [(Int, [AActionOutcome])]  -- ^ random: [[weight, [outcomes]], ...]
+    | AORandomChoice String [(Int, [AActionOutcome])]
+        -- ^ `random: [[weight, [outcomes]], ...]` (default stream, Stream-Name "")
+        --   oder B8-Objektform `random: {stream: <name>, choices: [[weight, [outcomes]], ...]}`
     | AORaiseEvent String              -- ^ raise: <name> — fires `on: custom <name>` (P1-20)
     | AOPlayClip String                -- ^ play_clip: <clip-id> — queues a cutscene (Phase H/H4)
     | AOPlaySfx String                 -- ^ sfx: <file> — queues a sound effect (Audio Phase 1)
@@ -1412,6 +1414,20 @@ parseProcArg (String s) = pure (E.EVString (T.unpack s))
 parseProcArg _          = fail "procedure arguments must be int, bool or text literals"
 
 -- Parse an outcome from an object with a single recognized key
+-- | B8: `random:` accepts two shapes — the classic weighted list (draws from
+--   the default RNG stream) and the object form
+--   `random: {stream: <name>, choices: [[weight, [outcomes]], ...]}` (draws
+--   from the named stream `rng.<name>`; `stream:` missing/empty = default).
+parseRandomChoiceValue :: Value -> Parser AActionOutcome
+parseRandomChoiceValue v =
+    (do cs <- parseJSON v :: Parser [(Int, [AActionOutcome])]
+        pure (AORandomChoice "" cs))
+    <|>
+    (do obj <- parseJSON v :: Parser Object
+        streamName <- obj .:? "stream" .!= ""
+        cs <- obj .: "choices"
+        pure (AORandomChoice streamName cs))
+
 instance FromJSON AActionOutcome where
     parseJSON (String s)
         | s == "discard_hand" = pure AODiscardHand
@@ -1478,7 +1494,7 @@ instance FromJSON AActionOutcome where
         <|> (o .: "dialog_end" >>= \b -> if b :: Bool then pure AODialogEnd else empty)
         <|> (do sk <- o .: "skill"
                 AOModifySkill <$> sk .: "name" <*> sk .: "delta")
-        <|> (AORandomChoice <$> o .: "random")
+        <|> (o .: "random" >>= parseRandomChoiceValue)
         <|> (AORaiseEvent <$> o .: "raise")
         <|> (AOPlayClip <$> o .: "play_clip")
         <|> (AOPlaySfx <$> o .: "sfx")

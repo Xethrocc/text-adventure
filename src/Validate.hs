@@ -96,6 +96,7 @@ idsFromOutcomeRoom outcome = case outcome of
     GenerateRoom _ _ _ from _ _                                 -> if from `elem` ["current", "current_room"] then [] else [from]
     Sequence os                                              -> concatMap idsFromOutcomeRoom os
     RandomChoice os                                          -> concatMap (idsFromOutcomeRoom . snd) os
+    RandomChoiceOn _ os                                      -> concatMap (idsFromOutcomeRoom . snd) os
     Conditional _ t e                                        -> idsFromOutcomeRoom t ++ idsFromOutcomeRoom e
     _                                                        -> []
 
@@ -127,6 +128,7 @@ dynamicExitTargets gw =
     nestedTargets (GenerateRoom newId _ _ _ _ _) = [newId]
     nestedTargets (Sequence os)                  = concatMap nestedTargets os
     nestedTargets (RandomChoice os)              = concatMap (nestedTargets . snd) os
+    nestedTargets (RandomChoiceOn _ os)          = concatMap (nestedTargets . snd) os
     nestedTargets (Conditional _ t e)            = nestedTargets t ++ nestedTargets e
     nestedTargets (Narrative _ f)                = nestedTargets f
     nestedTargets (ApplyCondition _ _ t e _)     = concatMap (maybe [] nestedTargets) [t, e]
@@ -373,6 +375,7 @@ idsFromOutcomeItem outcome = case outcome of
     ComputeValue (VRItemProp iId _) _ -> [iId]
     Sequence os                  -> concatMap idsFromOutcomeItem os
     RandomChoice os              -> concatMap (idsFromOutcomeItem . snd) os
+    RandomChoiceOn _ os          -> concatMap (idsFromOutcomeItem . snd) os
     Conditional _ t e            -> idsFromOutcomeItem t ++ idsFromOutcomeItem e
     _                            -> []
 
@@ -381,6 +384,7 @@ idsFromOutcomeNPC outcome = case outcome of
     MoveEntity nId _             -> [nId]
     Sequence os                  -> concatMap idsFromOutcomeNPC os
     RandomChoice os              -> concatMap (idsFromOutcomeNPC . snd) os
+    RandomChoiceOn _ os          -> concatMap (idsFromOutcomeNPC . snd) os
     Conditional _ t e            -> idsFromOutcomeNPC t ++ idsFromOutcomeNPC e
     _                            -> []
 
@@ -394,6 +398,7 @@ idsFromOutcomeEntity outcome = case outcome of
     Mount _ actor                       -> actorEntity actor
     Sequence os                         -> concatMap idsFromOutcomeEntity os
     RandomChoice os                     -> concatMap (idsFromOutcomeEntity . snd) os
+    RandomChoiceOn _ os                 -> concatMap (idsFromOutcomeEntity . snd) os
     Conditional _ t e                   -> idsFromOutcomeEntity t ++ idsFromOutcomeEntity e
     Narrative _ followUp                -> idsFromOutcomeEntity followUp
     _                                   -> []
@@ -410,6 +415,7 @@ idsFromOutcomeQuest outcome = case outcome of
     QuestOp CompleteQuest qId    -> [qId]
     Sequence os                  -> concatMap idsFromOutcomeQuest os
     RandomChoice os              -> concatMap (idsFromOutcomeQuest . snd) os
+    RandomChoiceOn _ os          -> concatMap (idsFromOutcomeQuest . snd) os
     Conditional _ t e            -> idsFromOutcomeQuest t ++ idsFromOutcomeQuest e
     _                            -> []
 
@@ -424,6 +430,7 @@ idsFromOutcomeVehicle outcome = case outcome of
     ComputeValue (VRVariable n) _                -> shipFromVar n
     Sequence os                                  -> concatMap idsFromOutcomeVehicle os
     RandomChoice os                              -> concatMap (idsFromOutcomeVehicle . snd) os
+    RandomChoiceOn _ os                          -> concatMap (idsFromOutcomeVehicle . snd) os
     Conditional p t e                            -> idsFromPredicateVehicle p
                                                  ++ idsFromOutcomeVehicle t
                                                  ++ idsFromOutcomeVehicle e
@@ -612,5 +619,6 @@ scanSetFlags acc outcome = case outcome of
     ComputeValue (VRFlag n) _     -> Set.insert n acc
     Sequence os                   -> foldl' scanSetFlags acc os
     RandomChoice os               -> foldl' scanSetFlags acc (map snd os)
+    RandomChoiceOn _ os           -> foldl' scanSetFlags acc (map snd os)
     Conditional _ t e             -> scanSetFlags (scanSetFlags acc t) e
     _                             -> acc

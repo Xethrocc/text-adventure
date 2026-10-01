@@ -1,0 +1,81 @@
+name: Zufallsstroeme
+start_room: markt
+
+# B8: named RNG streams. Two objects draw from their own streams (`beutestrom`,
+# `wolken`), one from the unnamed default stream (classic list form). Draws on
+# one stream never shift another — the whole point of `random: {stream: …}`.
+# The ordered markers below pin the exact deterministic draw sequence (stream
+# seeds derive from name-hash + default state), so any change to the seeding or
+# the draw maths shows up here as a marker failure.
+
+rooms:
+  - id: markt
+    name: Marktplatz
+    desc: "Ein Platz mit drei Objekten: eine Beutekiste, eine Wetterkiste und ein Gluecksstein."
+    exits:
+      east: halle
+
+  - id: halle
+    name: Halle
+    desc: Eine leere Halle.
+    exits:
+      west: markt
+
+items:
+  - id: beutekiste
+    name: Beutekiste
+    desc: Sie zieht aus dem benannten Strom 'beutestrom'.
+    keys: [beutekiste, beute]
+    location: markt
+    verb_map:
+      use,intact:
+        - random:
+            stream: beutestrom
+            choices:
+              - [2, [{msg: "Aus der Beutekiste faellt eine Muenze."}]]
+              - [1, [{msg: "Die Beutekiste ist leer."}]]
+
+  - id: wetterkiste
+    name: Wetterkiste
+    desc: Sie zieht aus dem benannten Strom 'wolken'.
+    keys: [wetterkiste, wetter]
+    location: markt
+    verb_map:
+      use,intact:
+        - random:
+            stream: wolken
+            choices:
+              - [1, [{msg: "Die Sonne scheint."}]]
+              - [1, [{msg: "Es regnet."}]]
+
+  - id: gluecksstein
+    name: Gluecksstein
+    desc: Er zieht aus dem unbenannten Default-Strom (alte Listenform).
+    keys: [gluecksstein, stein]
+    location: markt
+    verb_map:
+      use,intact:
+        - random:
+            - [1, [{msg: "Der Stein glaenzt."}]]
+            - [1, [{msg: "Der Stein ist stumpf."}]]
+
+tests:
+  - name: "benannte Stroeme ziehen unabhaengig, der Default-Strom bleibt dabei stabil"
+    input:
+      - use wetterkiste
+      - use beutekiste
+      - use wetterkiste
+      - use beutekiste
+      - use beutekiste
+      - use gluecksstein
+      - use gluecksstein
+      - use wetterkiste
+    expect:
+      - "Es regnet."
+      - "Aus der Beutekiste faellt eine Muenze."
+      - "Die Sonne scheint."
+      - "Die Beutekiste ist leer."
+      - "Aus der Beutekiste faellt eine Muenze."
+      - "Der Stein ist stumpf."
+      - "Der Stein glaenzt."
+      - "Es regnet."
