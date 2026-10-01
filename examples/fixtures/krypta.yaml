@@ -59,11 +59,13 @@ devices:
     flip_states: [unten, oben]
     on_flip_oben:
       - msg: "Ein fernes Rollen erschüttert den Boden."
+      # NB: `locked_by:`-Exits öffnen nur bei Entity-Status "unlocked" —
+      # "offen" wäre ein stiller No-op (B4-Fund: DeadExit).
       - set_state: tortraverse
-        to: offen
+        to: unlocked
     on_flip_unten:
       - set_state: tortraverse
-        to: zu
+        to: locked
 
 # B1: authored content tests — `worldbuilder test examples/fixtures/krypta.yaml`
 tests:
@@ -98,3 +100,15 @@ tests:
       - stecke fackel in halterung
     expect:
       - "You are not carrying brennende Fackel."
+
+  - name: "hebel hebt das tortraverse — der nordausgang wird passierbar"
+    input:
+      - go north
+      - umlegen hebel
+      - go north
+      - look
+    expect:
+      - "The door is locked."
+      - "Ein fernes Rollen erschüttert den Boden."
+      - "You move North."
+      - "Eine kleine Kammer hinter dem Tor."
