@@ -7,7 +7,7 @@ module Worldbuilder.Types where
 
 import Data.Aeson
 import Data.Aeson.Types (Parser)
-import Control.Applicative ((<|>))
+import Control.Applicative ((<|>), empty)
 import Data.Maybe (fromMaybe)
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
@@ -1470,7 +1470,7 @@ instance FromJSON AActionOutcome where
                 AOSetStateAll <$> parseJSON (Object o') <*> o' .: "state")
         <|> (AOSetInventoryLimit <$> o .: "set_inventory_limit")
         <|> (AOSayNode <$> o .: "say_node")
-        <|> (AODialogEnd <$ (o .: "dialog_end" :: Parser Bool))
+        <|> (o .: "dialog_end" >>= \b -> if b :: Bool then pure AODialogEnd else empty)
         <|> (do sk <- o .: "skill"
                 AOModifySkill <$> sk .: "name" <*> sk .: "delta")
         <|> (AORandomChoice <$> o .: "random")

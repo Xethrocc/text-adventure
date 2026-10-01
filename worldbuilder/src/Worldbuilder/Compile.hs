@@ -2880,7 +2880,7 @@ compileTriggers triggers npcs =
 --   these ids (encounter.<id>, environment.*, stealth.*, ship.*, party.*) and
 --   they share the runtime `triggerStates` namespace with author `rules:` ids.
 reservedTriggerPrefixes :: [String]
-reservedTriggerPrefixes = ["encounter.", "environment.", "stealth.", "ship.", "party."]
+reservedTriggerPrefixes = ["encounter.", "environment.", "stealth.", "ship.", "party.", "bark.", "talk."]
 
 -- | Validate authored trigger rules: ids must be unique and must not use a
 --   compiler-owned prefix (which would silently hijack a module trigger).

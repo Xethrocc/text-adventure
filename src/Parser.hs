@@ -255,16 +255,16 @@ parseSimpleCommandWith defs tokens input = case tokens of
     -- can never mean "take item <n>" — the keyword list is matched before
     -- `parseVerbWith`. Intended, and pinned by
     -- `testDialoguePickKeywordAlias` in test/Tests.hs.
-    ("ask" : who : "about" : whatParts) | not (null whatParts) ->
-        AskCmd who (unwords whatParts)
-    ("tell" : who : "about" : whatParts) | not (null whatParts) ->
-        TellCmd who (unwords whatParts)
-    ("ask" : who : "nach" : whatParts) | not (null whatParts) ->
-        AskCmd who (unwords whatParts)
-    ("frag" : who : "nach" : whatParts) | not (null whatParts) ->
-        AskCmd who (unwords whatParts)
-    ("erzaehl" : who : "von" : whatParts) | not (null whatParts) ->
-        TellCmd who (unwords whatParts)
+    ("ask" : rest) | (whoParts@(_:_), "about" : whatParts@(_:_)) <- break (== "about") rest ->
+        AskCmd (unwords (safeStripStopWords whoParts)) (unwords whatParts)
+    ("tell" : rest) | (whoParts@(_:_), "about" : whatParts@(_:_)) <- break (== "about") rest ->
+        TellCmd (unwords (safeStripStopWords whoParts)) (unwords whatParts)
+    ("ask" : rest) | (whoParts@(_:_), "nach" : whatParts@(_:_)) <- break (== "nach") rest ->
+        AskCmd (unwords (safeStripStopWords whoParts)) (unwords whatParts)
+    ("frag" : rest) | (whoParts@(_:_), "nach" : whatParts@(_:_)) <- break (== "nach") rest ->
+        AskCmd (unwords (safeStripStopWords whoParts)) (unwords whatParts)
+    ("erzaehl" : rest) | (whoParts@(_:_), "von" : whatParts@(_:_)) <- break (== "von") rest ->
+        TellCmd (unwords (safeStripStopWords whoParts)) (unwords whatParts)
     ["choose", nStr] | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
     ["pick", nStr]   | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
     ["option", nStr] | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
@@ -668,11 +668,6 @@ findScopeItem targetStr state =
   where
     scopeItems = visibleItemsAt (InRoom (currentRoom (save state))) state
                 ++ getItemsInLocation (CarriedBy ActorPlayer) state
-
--- | 4.4: the item sits directly in this container.
-itemInContainer :: ItemID -> String -> GameState -> Bool
-itemInContainer iId cid state =
-    fmap itemLocation (Map.lookup iId (itemStates (save state))) == Just (InContainer cid)
 
 -- | 4.4: the container holds as many items as its capacity allows.
 containerFull :: String -> GameState -> Bool

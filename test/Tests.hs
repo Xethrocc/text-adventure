@@ -1077,7 +1077,13 @@ testExitAndEffectJsonCompatibility = do
     let evBefore = OnBefore "take"
     r8 <- expectEqual (Just evBefore) (Aeson.decode (Aeson.encode evBefore))
 
-    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+    -- 5. EventType OnTalk round-trip (4.5, including the wildcard form)
+    let evTalk = OnTalk "wirt" "bier"
+    r9 <- expectEqual (Just evTalk) (Aeson.decode (Aeson.encode evTalk))
+    let evTalkGlobal = OnTalk "" ""
+    r10 <- expectEqual (Just evTalkGlobal) (Aeson.decode (Aeson.encode evTalkGlobal))
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10)
 
 -- ===========================================================================
 -- Phase 2.3: Disambiguation
@@ -5057,7 +5063,7 @@ testContainerTakePut = do
 --   refusal messages.
 testTopics :: IO Bool
 testTopics = do
-    let npc = NPCDef "gelehrter" "Gelehrter" (plainText "Ein Gelehrter.") Map.empty [] (Just 20) 5 5
+    let npc = NPCDef "gelehrter" "Gelehrter" (plainText "Ein Gelehrter.") Map.empty ["alter gelehrter"] (Just 20) 5 5
                 Map.empty emptyAscii
                 (Map.fromList
                     [ ("altes schloss", SetValue (VRVariable "wissen") (EVInt 1))
@@ -5076,7 +5082,9 @@ testTopics = do
             ("no one by that name" `isInfixOf` renderEvents (evsOf (run "ask niemand about x" st0')))
     r5 <- expectTrue "tell works the same"
             ("Geruechte gibt es viele." `isInfixOf` renderEvents (evsOf (run "tell gelehrter about geruechte" st0')))
-    pure (r1 && r2 && r3 && r4 && r5)
+    r6 <- expectTrue "multi-word npc keyword works"
+            ("Geruechte gibt es viele." `isInfixOf` renderEvents (evsOf (run "ask alter gelehrter about geruechte" st0')))
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
 
 -- | 4.5: `on_talk` triggers fire when ask/tell targets the matching NPC.
 testOnTalkTriggerFires :: IO Bool
@@ -5515,7 +5523,7 @@ testChapterSwitchEffects = do
         (st6, _, _) = applyOutcomeWith 0 0 NextChapter "" st5
     r6 <- expectEqual "zwei" (currentChapterId st6)
     let (st7, _, _) = applyOutcomeWith 0 0 (GotoChapter "drei") "" st1
-        (st8, evs8, _) = applyOutcomeWith 0 0 NextChapter "" st7
+        (st8, _, _) = applyOutcomeWith 0 0 NextChapter "" st7
     r7 <- expectEqual "drei" (currentChapterId st8)
     r8 <- expectTrue "no_next diagnosed" (not (null (diagnostics st8)))
     -- unknown target diagnosed

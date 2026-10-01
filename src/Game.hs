@@ -611,9 +611,6 @@ countNpcMembers cs st = case csWhat cs of
                               | (nId, ns) <- Map.toList (npcStates (save st))
                               , npcLocation ns == InRoom r ]
         CountCarriedBy _   -> []
-    tagged i = case csTag cs of
-        Nothing -> True
-        Just t  -> Set.member t (itemTags i)
 
 -- | The room an actor currently occupies. 'Nothing' when the actor is not in
 --   a room (carried, removed, unknown).
