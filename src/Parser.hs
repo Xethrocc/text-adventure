@@ -255,11 +255,16 @@ parseSimpleCommandWith defs tokens input = case tokens of
     -- can never mean "take item <n>" — the keyword list is matched before
     -- `parseVerbWith`. Intended, and pinned by
     -- `testDialoguePickKeywordAlias` in test/Tests.hs.
-    ["ask", who, "about", what]  -> AskCmd who what
-    ["tell", who, "about", what] -> TellCmd who what
-    ["ask", who, "nach", what]   -> AskCmd who what
-    ["frag", who, "nach", what]  -> AskCmd who what
-    ["erzaehl", who, "von", what] -> TellCmd who what
+    ("ask" : who : "about" : whatParts) | not (null whatParts) ->
+        AskCmd who (unwords whatParts)
+    ("tell" : who : "about" : whatParts) | not (null whatParts) ->
+        TellCmd who (unwords whatParts)
+    ("ask" : who : "nach" : whatParts) | not (null whatParts) ->
+        AskCmd who (unwords whatParts)
+    ("frag" : who : "nach" : whatParts) | not (null whatParts) ->
+        AskCmd who (unwords whatParts)
+    ("erzaehl" : who : "von" : whatParts) | not (null whatParts) ->
+        TellCmd who (unwords whatParts)
     ["choose", nStr] | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
     ["pick", nStr]   | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
     ["option", nStr] | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
@@ -1857,9 +1862,16 @@ talkTopic who what state =
              , let w = map toLower who
              , npcId n == who || w `elem` map (map toLower) (npcKeywords n) ] of
         (npc : _) ->
-            case Map.lookup (map toLower what) (npcTopics npc) of
-                Just eff -> applyOutcomeEv eff (npcId npc) state
-                Nothing -> (state, evMsg "dialog.no_topic" [("npc", npcName npc), ("topic", what)])
+            let topicEff = case Map.lookup (map toLower what) (npcTopics npc) of
+                    Just eff -> applyOutcomeEv eff (npcId npc) state
+                    Nothing -> (state, evMsg "dialog.no_topic" [("npc", npcName npc), ("topic", what)])
+                (st1, evs1) = topicEff
+                -- 4.5: `on: talk` triggers see the npc and the topic in the VarMap
+                st2 = st1 { save = (save st1) { variables =
+                            Map.insert "talk.npc" (VVText (npcId npc))
+                              (Map.insert "talk.topic" (VVText what) (variables (save st1))) } }
+                (st3, evs2) = fireTriggers (OnTalk (npcId npc) what) st2
+            in (st3, evs1 ++ evs2)
         [] -> (state, evMsg "dialog.no_npc" [])
 
 renderDialogue :: NPCDef -> DialogueTree -> Maybe NPCState -> GameState -> (GameState, [OutputEvent])

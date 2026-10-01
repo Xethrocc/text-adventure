@@ -533,6 +533,9 @@ Item-Felder für Container:
 | `verb_map` | Object | `{}` | `{ "verb,state": [effects] }` |
 | `ascii` | String / Object | — | Zustandsabhängige ASCII-Kunst (CondText, siehe Room) |
 | `party` | Object | — | Begleiter-Block (Module 7g, siehe unten) |
+| `topics` | Object | `{}` | Topic-Tabelle für `ask`/`tell` (Key=Topic, Value=Effekt) |
+| `barks` | [Object] | `[]` | Ambient-One-Liner (Compiler-Sugar für `on: turn` mit Cooldown) |
+| `on_talk` | Effekt | — | Zusätzlicher Effekt bei jedem `ask`/`tell` auf diesen NPC (Compiler-Sugar für `on: talk`) |
 
 ### Dialogue Tree
 
@@ -547,11 +550,78 @@ dialogue:
           - text: "Wer bist du?"
             next: who
           - text: "Tschüss."
-  who:
-    text: "Ich bin der Wächter."
-    choices:
-      - text: "Leb wohl."
+            outcome:
+              - dialogEnd
+      who:
+        text: "Ich bin der Wächter."
+        choices:
+          - text: "Leb wohl."
+            outcome:
+              - dialogEnd
 ```
+
+- `nodes.<id>.text` — Text des Knotens.
+- `choices` — Liste von Optionen.
+  - `text` — Anzeigetext.
+  - `next` — ID des nächsten Knotens (optional; bei Fehlen oder `dialogEnd` endet der Dialog).
+  - `visible_when` — Prädikat, das erfüllt sein muss, damit die Option angezeigt wird (optional).
+  - `outcome` — Effekte, die bei Wahl dieser Option ausgeführt werden (optional; kann `say_node: <id>` oder `dialogEnd` enthalten).
+
+#### Dialogue Sugars (`say_node`, `dialogEnd`)
+
+- `say_node: <node-id>` — Setzt den aktiven Dialogknoten auf `<node-id>` (Sugar für `set_var dialog_node`).
+- `dialogEnd: true` — Beendet den Dialog, indem `dialog_node` geleert wird (Sugar für `set_var dialog_node` mit leerem String).
+
+### Topics, Barks und `on_talk` (4.5)
+
+#### Topics (`topics:`)
+
+Eine Tabelle von Themen, die der Spieler mit `ask <npc>` / `tell <npc>` über ein Thema ansprechen kann:
+
+```yaml
+npcs:
+  - id: wirt
+    name: Wirt
+    topics:
+      bier: "Unser Bier ist das beste im ganzen Land!"
+      preis: "Ein Krug kostet zwei Kupfermuenzen."
+```
+
+- Key = Topic-Name (wird case-insensitiv gematcht).
+- Value = Effekt (String wird zu `msg:`, komplexe Effekte als Liste/Object).
+- `ask wirt about bier` und `tell wirt about bier` führen denselben Effekt aus.
+- Unbekanntes Topic → `dialog.no_topic` (Template: `{npc} has nothing to say about {topic}.`).
+- Unbekannter NPC → `dialog.no_npc` (`There is no one by that name.`).
+
+#### Barks (`barks:`)
+
+Ambient-One-Liner, die der NPC zufällig in den Raum wirft (Compiler-Sugar für `on: turn`-Trigger mit Cooldown):
+
+```yaml
+    barks:
+      - text: "Der Wirt wischt ein Glas ab."
+      - text: "Kauft euch was, setzt euch!"
+        cooldown: 5
+        when: { has_flag: offen }
+```
+
+- `text` — Nachricht (required).
+- `cooldown` — Züge zwischen zwei Ausgaben (Default 20).
+- `when` — Prädikat, unter dem der Bark feuern darf (optional).
+- Der Compiler erzeugt `bark.<npc>.N`-Trigger (`on: turn`, `SendMessage`).
+
+#### `on_talk:`
+
+Ein Effekt, der bei jedem `ask`/`tell` über diesen NPC zusätzlich zum Topic-Effekt feuert (Compiler-Sugar für `on: talk`-Trigger):
+
+```yaml
+    on_talk:
+      msg: "Der Wirt nickt freundlich."
+```
+
+- Kompiliert zu einem Trigger `talk.<npc>` mit `on: talk`.
+- Feuert für jedes `ask`/`tell`-Kommando, das auf diesen NPC zielt — unabhängig davon, ob das Topic bekannt ist.
+- Globale `on: talk`-Regeln (`rules:`) feuern ebenfalls; `talk.<npc>` filtert auf den NPC.
 
 ---
 

@@ -5049,6 +5049,53 @@ testContainerTakePut = do
             renderEvents (evsOf (run "take lampe" st7)))
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10)
 
+-- ---------------------------------------------------------------------------
+-- 4.5: topic table
+-- ---------------------------------------------------------------------------
+
+-- | `ask X about Y` runs the topic's effect; unknown topic/npc report their
+--   refusal messages.
+testTopics :: IO Bool
+testTopics = do
+    let npc = NPCDef "gelehrter" "Gelehrter" (plainText "Ein Gelehrter.") Map.empty [] (Just 20) 5 5
+                Map.empty emptyAscii
+                (Map.fromList
+                    [ ("altes schloss", SetValue (VRVariable "wissen") (EVInt 1))
+                    , ("geruechte", SendMessage "Geruechte gibt es viele.") ])
+        st0 = cstate2 [mkTestRoom "halle" "Halle"] [] [] Map.empty
+        st0' = st0 { world = (world st0) { npcDefs = Map.singleton "gelehrter" npc } }
+        run cmd st = applyLoopCommandEv (parseCommand cmd) (initLoopState st)
+        evsOf = snd
+    r1 <- expectTrue "topic effect runs"
+            (Map.member "wissen" (variables (save (lsCurrent (fst (run "ask gelehrter about altes schloss" st0'))))))
+    r2 <- expectTrue "topic message shows"
+            ("Geruechte gibt es viele." `isInfixOf` renderEvents (evsOf (run "ask gelehrter about geruechte" st0')))
+    r3 <- expectTrue "unknown topic reports"
+            ("nothing to say" `isInfixOf` renderEvents (evsOf (run "ask gelehrter about unwichtiges" st0')))
+    r4 <- expectTrue "unknown npc reports"
+            ("no one by that name" `isInfixOf` renderEvents (evsOf (run "ask niemand about x" st0')))
+    r5 <- expectTrue "tell works the same"
+            ("Geruechte gibt es viele." `isInfixOf` renderEvents (evsOf (run "tell gelehrter about geruechte" st0')))
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | 4.5: `on_talk` triggers fire when ask/tell targets the matching NPC.
+testOnTalkTriggerFires :: IO Bool
+testOnTalkTriggerFires = do
+    let trig = TriggerDef "test_talk" (OnTalk "gelehrter" "") Nothing [SendMessage "Der Gelehrte runzelt die Stirn."] False 0
+        npc = NPCDef "gelehrter" "Gelehrter" (plainText "Ein Gelehrter.") Map.empty [] (Just 20) 5 5
+                Map.empty emptyAscii
+                (Map.fromList [("altes schloss", SendMessage "Altes Schloss?")])
+        st0 = cstate2 [mkTestRoom "halle" "Halle"] [] [] Map.empty
+        st0' = st0 { world = (world st0) { npcDefs = Map.singleton "gelehrter" npc
+                                         , triggerDefs = [trig] } }
+        run cmd st = applyLoopCommandEv (parseCommand cmd) (initLoopState st)
+        evsOf = snd
+    r1 <- expectTrue "on_talk trigger fires on ask"
+            ("runzelt die Stirn" `isInfixOf` renderEvents (evsOf (run "ask gelehrter about altes schloss" st0')))
+    r2 <- expectTrue "on_talk trigger fires on tell"
+            ("runzelt die Stirn" `isInfixOf` renderEvents (evsOf (run "tell gelehrter about altes schloss" st0')))
+    pure (r1 && r2)
+
 -- | L13: `consumesTurn` ends in a `_ -> True` catch-all, so a new `Command`
 --   constructor silently becomes turn-consuming — that is how P1-16 happened.
 --   `expectedConsumesTurn` matches every constructor **without** a wildcard and
@@ -8716,6 +8763,8 @@ main = do
         , runTest "mass ops: damage/move/reveal/consume/set_state (B3)" testMassOps
         , runTest "container verbs: open/close/lock/unlock (4.4)" testContainerVerbs
         , runTest "container take/put: scope, capacity, nesting, limit (4.4)" testContainerTakePut
+        , runTest "topic table: ask/tell runs effects (4.5)" testTopics
+        , runTest "on_talk trigger fires on ask/tell (4.5)" testOnTalkTriggerFires
         , runTest "ActorHas predicate for player, NPC and device entity (W4)" testActorHasPredicate
         , runTest "Mount and Unmount effects move item location (W4)" testMountAndUnmountEffects
         , runTest "device examine shows description and mounted item (W4)" testDeviceInteractionExamine

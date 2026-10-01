@@ -196,7 +196,7 @@ compileAdventure adv =
         (entityInteractions, itemInteractions) = compileInteractions (advInteractions adv)
         
         (varErrs, varDefs, varInitials) = compileVariables (advVariables adv)
-        (trigErrs, triggerDefs) = compileTriggers (advTriggers adv)
+        (trigErrs, triggerDefs) = compileTriggers (advTriggers adv) (advNPCs adv)
         (encErrs, encounterDefs) = compileEncounterTables (advEncounterTables adv)
         (facErrs, factionDefs, factionInitials) = compileFactions (advFactions adv)
         (facConflictErrs, facVarDefs, facVarInitials) =
@@ -2699,6 +2699,8 @@ compileAActionOutcome ao = case ao of
     AOConsumeAll cs -> E.ConsumeAll cs
     AOSetStateAll cs newStatus -> E.SetStateAll cs newStatus
     AOSetInventoryLimit n -> E.SetValue (E.VRVariable "inventory.limit") (E.EVInt n)
+    AOSayNode node -> E.SetValue (E.VRVariable "dialog_node") (E.EVString node)
+    AODialogEnd -> E.SetValue (E.VRVariable "dialog_node") (E.EVString "")
     AOForget f a -> E.Forget (compileActorRef a) f
     AONarrative ls follow -> E.Narrative ls (compileOutcomes follow)
     AOStandingAdd fid n -> E.ModifyValue (E.VRVariable ("faction." ++ fid)) n
@@ -2832,13 +2834,37 @@ compileAscii a = E.AsciiArt
 -- ---------------------------------------------------------------------------
 
 -- | Compile authored trigger rules into engine TriggerDefs.
-compileTriggers :: [ATrigger] -> ([CompileIssue], [E.TriggerDef])
-compileTriggers triggers =
+compileTriggers :: [ATrigger] -> [ANPC] -> ([CompileIssue], [E.TriggerDef])
+compileTriggers triggers npcs =
     let results = map compileOne triggers
         errors = concat [e | Left e <- results]
         defs = [d | Right d <- results]
-    in (errors, defs)
+    in (errors, defs ++ barkDefs ++ talkDefs)
   where
+    -- 4.5 sugar: `barks:` on an NPC becomes `on: turn` triggers with a
+    -- cooldown (one mechanism, the compiler owns the ids).
+    barkDefs = concat
+        [ [ E.TriggerDef
+            { E.trId = "bark." ++ anId n ++ "." ++ show k
+            , E.trEvent = E.OnTurn
+            , E.trCondition = abWhen b
+            , E.trEffects = [E.SendMessage (abText b)]
+            , E.trOnce = False
+            , E.trCooldown = fromMaybe 20 (abCooldown b)
+            }
+          | (k, b) <- zip [(1 :: Int) ..] (anBarks n) ]
+        | n <- npcs ]
+    -- 4.5 sugar: `on_talk:` becomes an `on: talk` trigger filtered on the NPC.
+    talkDefs =
+        [ E.TriggerDef
+            { E.trId = "talk." ++ anId n
+            , E.trEvent = E.OnTalk (anId n) ""
+            , E.trCondition = Nothing
+            , E.trEffects = [compileAActionOutcome eff]
+            , E.trOnce = False
+            , E.trCooldown = 0
+            }
+        | n <- npcs, Just eff <- [anOnTalk n] ]
     compileOne t = case compileAtOn (atOn t) of
         Left err -> Left [ciError ("rules." ++ atId t) "BadTriggerEvent" err]
         Right ev -> Right E.TriggerDef
@@ -2906,6 +2932,7 @@ compileAtOn :: String -> Either String E.EventType
 compileAtOn s =
     case words (map toLower s) of
         ["turn"]                     -> Right E.OnTurn
+        ["talk"]                     -> Right (E.OnTalk "" "")
         ["enter", r]                 -> Right (E.OnEnter r)
         ["leave", r]                 -> Right (E.OnLeave r)
         ["look", r]                  -> Right (E.OnLook r)

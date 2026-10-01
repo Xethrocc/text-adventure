@@ -1739,6 +1739,7 @@ data EventType
     | OnLearn String                   -- ^ W1: fired once per newly learned fact, in learning order
     | OnChapter String                 -- ^ W3: fired when entering chapter <id>
     | OnLevelUp Int                    -- ^ W2: fired when player reaches level <n>
+    | OnTalk String String             -- ^ 4.5: fired on ask/tell (npc id, topic)
     deriving (Show, Eq, Generic)
 
 instance ToJSON EventType

@@ -822,8 +822,13 @@ fireTriggersWithDepth depth event state
         , [] )
     | otherwise =
         let triggers = triggerDefs (world state)
-            matching = filter (\t -> trEvent t == event) triggers
+            matching = filter (\t -> matchesEvent (trEvent t) event) triggers
         in fireTriggerList depth matching state
+  where
+    -- OnTalk supports wildcards: empty npc/topic strings match everything.
+    matchesEvent (OnTalk patNpc patTopic) (OnTalk evNpc evTopic) =
+        (null patNpc || patNpc == evNpc) && (null patTopic || patTopic == evTopic)
+    matchesEvent a b = a == b
 
 -- | Fire a specific list of triggers.
 fireTriggerList :: Int -> [TriggerDef] -> GameState -> (GameState, [OutputEvent])

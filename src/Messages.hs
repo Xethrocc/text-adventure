@@ -107,6 +107,8 @@ catalogEntries =
     , ("dialogue.nothing_more",   "{name} has nothing more to say.")
     , ("dialogue.nothing_to_say", "{name} has nothing to say.")
     , ("dialogue.ended",          "Dialogue ended.")
+    , ("dialog.no_topic",        "{npc} has nothing to say about {topic}.")
+    , ("dialog.no_npc",          "There is no one by that name.")
     , ("dialogue.line",          "{name}: \"{text}\"")
     , ("dialogue.choice_line",   "  [{i}] {text}")
     , ("choice.invalid",          "Invalid choice. Please select a number from 1 to {max}.")

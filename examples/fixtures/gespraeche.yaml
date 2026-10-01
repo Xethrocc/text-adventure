@@ -1,0 +1,67 @@
+name: Gespraeche Fixture
+start_room: marktplatz
+
+rooms:
+  - id: marktplatz
+    name: Marktplatz
+    desc: Ein belebter Marktplatz mit einem alten Brunnen in der Mitte.
+    exits:
+      east: taverne
+
+  - id: taverne
+    name: Taverne
+    desc: Eine rauchige Taverne mit hölzernen Tischen.
+    exits:
+      west: marktplatz
+
+npcs:
+  - id: wirt
+    name: Wirt
+    desc: Ein freundlicher Wirt mit einem weissen Bart.
+    location: taverne
+    topics:
+      bier: "Unser Bier ist das beste im ganzen Land!"
+      preis: "Ein Krug kostet zwei Kupfermuenzen."
+    barks:
+      - text: "Der Wirt wischt ein Glas ab."
+        cooldown: 1
+    on_talk:
+      msg: "Der Wirt nickt hoeflich."
+    dialogue:
+      alive:
+        entry: willkommen
+        nodes:
+          willkommen:
+            text: "Willkommen in meiner Taverne! Was kann ich fuer euch tun?"
+            choices:
+              - text: "Ein Bier, bitte."
+                next: bier_preis
+              - text: "Erzaehl mir eine Geschichte."
+                next: geschichte
+              - text: "Auf Wiedersehen."
+                outcome:
+                  - dialog_end
+          bier_preis:
+            text: "Zwei Kupfermuenzen fuer einen kuehlen Krug."
+            choices:
+              - text: "Hier ist das Geld."
+                outcome:
+                  - say_node: danke
+              - text: "Zu teuer."
+                outcome:
+                  - dialog_end
+          danke:
+            text: "Danke schoen! Prost!"
+            choices:
+              - text: "Prost."
+                outcome:
+                  - dialog_end
+          geschichte:
+            text: "Es war einmal ein tapferer Ritter..."
+            choices:
+              - text: "Faszinierend."
+                outcome:
+                  - dialog_end
+              - text: "Genug davon."
+                outcome:
+                  - dialog_end

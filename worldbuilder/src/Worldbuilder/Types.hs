@@ -574,6 +574,8 @@ data ANPC = ANPC
     , anVerbMap     :: Map.Map String [AActionOutcome]
     , anParty       :: Maybe AParty          -- ^ party / companion block (Phase 7g)
     , anTopics      :: Map.Map String AActionOutcome  -- ^ 4.5: ask/tell X about <topic>
+    , anBarks       :: [ABark]                         -- ^ 4.5: ambient one-liners (trigger sugar)
+    , anOnTalk      :: Maybe AActionOutcome            -- ^ 4.5: on_talk hook (trigger sugar)
     } deriving (Show, Eq, Generic)
 
 -- | The `party:` block on an NPC (Phase 7g): the NPC can be recruited,
@@ -615,6 +617,21 @@ instance FromJSON ANPC where
         <*> o .:? "verb_map"  .!= Map.empty
         <*> o .:? "party"
         <*> o .:? "topics" .!= Map.empty
+        <*> o .:? "barks" .!= []
+        <*> o .:? "on_talk"
+
+-- | 4.5: one ambient bark: a line and an optional context condition.
+data ABark = ABark
+    { abText     :: String
+    , abWhen     :: Maybe E.Predicate
+    , abCooldown :: Maybe Int
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ABark where
+    parseJSON = withObject "ABark" $ \o -> ABark
+        <$> o .: "text"
+        <*> o .:? "when"
+        <*> o .:? "cooldown"
 
 -- | Dialogue tree: { entry: ..., nodes: { ... } }
 data ADialogueTree = ADialogueTree
@@ -1373,6 +1390,8 @@ data AActionOutcome
     | AOConsumeAll E.CountSpec              -- ^ consume_all: {what, in|by, tag?}
     | AOSetStateAll E.CountSpec String      -- ^ set_state_all: {what, in|by, tag?, state}
     | AOSetInventoryLimit Int               -- ^ set_inventory_limit: N (4.4, VarMap inventory.limit)
+    | AOSayNode String                      -- ^ 4.5: say_node: X (= set_var dialog_node)
+    | AODialogEnd                           -- ^ 4.5: dialog_end: (clears dialog_node)
     | AOMount String String            -- ^ mount: { item: <item>, to: <device> } (W4)
     | AOUnmount String                 -- ^ unmount: <item> (W4)
     | AOGainXp Int                     -- ^ gain_xp: <amount> (W2)
@@ -1450,6 +1469,8 @@ instance FromJSON AActionOutcome where
         <|> (do o' <- o .: "set_state_all" :: Parser Object
                 AOSetStateAll <$> parseJSON (Object o') <*> o' .: "state")
         <|> (AOSetInventoryLimit <$> o .: "set_inventory_limit")
+        <|> (AOSayNode <$> o .: "say_node")
+        <|> (AODialogEnd <$ (o .: "dialog_end" :: Parser Bool))
         <|> (do sk <- o .: "skill"
                 AOModifySkill <$> sk .: "name" <*> sk .: "delta")
         <|> (AORandomChoice <$> o .: "random")
@@ -1676,6 +1697,7 @@ knownKeys EntItem = Set.fromList
 knownKeys EntNPC = Set.fromList
     [ "id", "name", "desc", "description", "ascii", "keys", "location"
     , "state", "max_hp", "attack", "defense", "dialogue", "verb_map", "party"
+    , "topics", "barks", "on_talk"
     ]
 knownKeys EntQuest = Set.fromList
     [ "id", "name", "desc", "prereqs", "stages", "reward" ]

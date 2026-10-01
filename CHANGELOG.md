@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Konversation (4.5)
+
+- **Topic-Tabelle**: `topics:` am NPC — `ask <npc>` / `tell <npc>` über ein Thema führen den
+  zugeordneten Effekt aus. Unbekanntes Topic → `dialog.no_topic`, unbekannter NPC →
+  `dialog.no_npc`.
+- **Dialog-Sugars**: `say_node: <id>` (setzt den aktiven Dialogknoten) und
+  `dialogEnd: true` (beendet den Dialog) als Kurzformen für `set_var dialog_node`.
+- **Barks**: `barks:` am NPC — Ambient-One-Liner, Compiler-Sugar für `on: turn`-Trigger
+  mit Cooldown (Default 20). Optional mit `when`-Prädikat.
+- **`on_talk:`**: Zusätzlicher Effekt bei jedem `ask`/`tell` auf den NPC,
+  Compiler-Sugar für `on: talk`-Trigger (NPC-spezifisch).
+- **`OnTalk` Wildcard-Matching**: Trigger mit `OnTalk "" ""` feuern bei jedem `ask`/`tell`,
+  `OnTalk <npc-id> ""` feuert bei jedem Topic dieses NPCs.
+- **Messages**: 2 neue Schlüssel (`dialog.no_topic`, `dialog.no_npc`).
+- **Tests**: +1 Engine- (**427**) + 3 Worldbuilder-Tests (**203**); Fixture
+  `gespraeche.yaml` (Topics, Barks, on_talk, Dialogbaum mit say_node/dialogEnd) in
+  CI-Stufe 4.
+
 ### Container (4.4)
 
 - **Tragbare Container**: Items mit `capacity: N` (Truhe, Tasche) — Verschachtelung

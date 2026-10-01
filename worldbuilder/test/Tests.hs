@@ -6,7 +6,7 @@ module Main where
 import Control.Monad (forM, when)
 import Data.List (isInfixOf, isPrefixOf, nub, find)
 import qualified Data.Aeson as Aeson
-import Data.Maybe (listToMaybe)
+import Data.Maybe (isJust, listToMaybe)
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -2407,7 +2407,7 @@ testStealthCompiles = do
                     [ AOSetFlag "alarmed" "true", AOMessage "The guard heard you!" ]
         adv = (minAdventure (minRoom "loc_0"))
             { advStealth = Just (AStealth noise [guard])
-            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing Map.empty ] }
+            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing Map.empty [] Nothing ] }
     case compileAdventure adv of
         Left errs -> do
             putStrLn $ "  compile errors: " ++ show errs
@@ -2629,7 +2629,7 @@ testPatrolFixtureCompiles = do
 -- | The patrolling wolf the patrol tests declare.
 wolfNPC :: String -> ANPC
 wolfNPC loc = ANPC "wolf" "Wolf" (ACondText "Wolf" []) (AAscii (ACondText "" []) [] 0 [] Nothing)
-                    [] loc "alive" Nothing 8 3 Map.empty Map.empty Nothing Map.empty
+                    [] loc "alive" Nothing 8 3 Map.empty Map.empty Nothing Map.empty [] Nothing
 
 -- | The 7f combat segment: default without a block is CombatClassic; off /
 --   narrative compile to their profiles; tactical and unknown profiles are
@@ -2757,7 +2757,7 @@ testCombatFixturesCompile = do
 partySquire :: Maybe AParty -> ANPC
 partySquire party
     = ANPC "squire" "Knappe" (ACondText "Knappe" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive"
-        (Just 20) 3 1 Map.empty Map.empty party Map.empty
+        (Just 20) 3 1 Map.empty Map.empty party Map.empty [] Nothing
 
 followVerb :: AVerb
 followVerb = AVerb "follow" ["escort"]
@@ -3599,6 +3599,10 @@ tests =
     -- Phase 2.2: Guarded exit with when-predicate and failure msg; on: before <verb> and block: outcomes
     , ("schema: guarded exit with when predicate and msg compiles (Phase 2.2)", testGuardedExitCompilation)
     , ("schema: on before verb and block outcomes compile (Phase 2.2)", testOnBeforeAndBlockCompilation)
+    -- 4.5: conversation sugars
+    , ("say_node compiles to set_var dialog_node (4.5)", testSayNodeDialogEndSugar)
+    , ("barks: compile to turn triggers with cooldown (4.5)", testBarkTriggerSugar)
+    , ("on_talk: compiles to talk.<npc>-trigger (4.5)", testOnTalkTriggerSugar)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -5587,7 +5591,53 @@ minNpcKey nid = ANPC
     , anDefense = 1
     , anDialogue = Map.empty
     , anVerbMap = Map.empty
-    , anParty = Nothing, anTopics = Map.empty }
+    , anParty = Nothing, anTopics = Map.empty, anBarks = [], anOnTalk = Nothing }
+
+testSayNodeDialogEndSugar :: IO Bool
+testSayNodeDialogEndSugar = do
+    r1 <- expectEqual (E.SetValue (E.VRVariable "dialog_node") (E.EVString "knoten1"))
+                      (compileAActionOutcome (AOSayNode "knoten1"))
+    r2 <- expectEqual (E.SetValue (E.VRVariable "dialog_node") (E.EVString ""))
+                      (compileAActionOutcome AODialogEnd)
+    pure (r1 && r2)
+
+testBarkTriggerSugar :: IO Bool
+testBarkTriggerSugar = do
+    let npc = (minNpcKey "waechter")
+            { anBarks = [ABark "Es ist still..." Nothing Nothing, ABark "Wind weht." (Just (E.HasFlag "windig")) (Just 10)] }
+        adv = (minAdventure (minRoom "loc_0")) { advNPCs = [npc] }
+    case compileAdventure adv of
+        Left errs -> expectTrue ("bark compile: " ++ issuesText errs) False
+        Right cr -> do
+            let trigs = E.triggerDefs (crWorld cr)
+                bark1 = find (\t -> E.trId t == "bark.waechter.1") trigs
+                bark2 = find (\t -> E.trId t == "bark.waechter.2") trigs
+            r1 <- expectTrue "bark.1 exists" (isJust bark1)
+            let b1 = case bark1 of Just x -> x; Nothing -> error "b1"
+            r2 <- expectEqual E.OnTurn (E.trEvent b1)
+            r3 <- expectEqual [E.SendMessage "Es ist still..."] (E.trEffects b1)
+            r4 <- expectEqual 20 (E.trCooldown b1)
+            r5 <- expectTrue "bark.2 exists" (isJust bark2)
+            let b2 = case bark2 of Just x -> x; Nothing -> error "b2"
+            r6 <- expectEqual (Just (E.HasFlag "windig")) (E.trCondition b2)
+            r7 <- expectEqual 10 (E.trCooldown b2)
+            pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+testOnTalkTriggerSugar :: IO Bool
+testOnTalkTriggerSugar = do
+    let npc = (minNpcKey "waechter") { anOnTalk = Just (AOMessage "Der Waechter grunzt.") }
+        adv = (minAdventure (minRoom "loc_0")) { advNPCs = [npc] }
+    case compileAdventure adv of
+        Left errs -> expectTrue ("on_talk compile: " ++ issuesText errs) False
+        Right cr -> do
+            let trigs = E.triggerDefs (crWorld cr)
+                talkTrig = find (\t -> E.trId t == "talk.waechter") trigs
+            r1 <- expectTrue "talk.waechter exists" (isJust talkTrig)
+            let tt = case talkTrig of Just x -> x; Nothing -> error "tt"
+            r2 <- expectEqual (E.OnTalk "waechter" "") (E.trEvent tt)
+            r3 <- expectEqual [E.SendMessage "Der Waechter grunzt."] (E.trEffects tt)
+            r4 <- expectEqual 0 (E.trCooldown tt)
+            pure (r1 && r2 && r3 && r4)
 
 main :: IO ()
 main = do
