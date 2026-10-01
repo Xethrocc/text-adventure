@@ -461,6 +461,15 @@ collisions pairs =
         (Map.fromListWith (++) [(t, [src]) | (src, t) <- pairs])
     , length keys > 1 ]
 
+-- | Phase 4.2: group assigned phases by target; only targets assigned in more
+--   than one distinct phase are clashes.
+clashes :: Ord a => [(a, String)] -> [(a, [String])]
+clashes pairs =
+    [ (k, ps)
+    | (k, ps) <- Map.toList
+        (Map.fromListWith (++) [(t, [p]) | (t, p) <- pairs])
+    , length (nub ps) > 1 ]
+
 -- | Compile an Adventure into engine types, or return structured issues
 compileAdventure :: Adventure -> Either [CompileIssue] CompileResult
 compileAdventure adv =
@@ -1417,7 +1426,7 @@ mergePatrolVars varDefs varInitials patrolDefs patrolInitials =
 --   are merged by `addPartyVerbEntry`.
 compileParty :: Map.Map String E.VerbDef -> [ANPC]
              -> ( [CompileIssue]
-                , Map.Map E.NPCID ((E.Verb, String), E.Effect)
+                , Map.Map E.NPCID ((E.VerbPhase, E.Verb, String), E.Effect)
                 , Map.Map String E.VarDef
                 , Map.Map String E.VariableValue )
 compileParty registry npcs =
@@ -1433,7 +1442,7 @@ compileParty registry npcs =
             (E.Sequence [ E.SendMessage (fromMaybe (anName n ++ " falls in behind you.") (aptFollowMsg p))
                         , E.SetValue (E.VRVariable (varName n)) (E.EVInt 1) ])
         entries = Map.fromList
-            [ (anId n, ((E.VCustom verb, anState n), toggle n p))
+            [ (anId n, ((E.PhaseAfter, E.VCustom verb, anState n), toggle n p))
             | (n, p) <- parties
             , Just verb <- [resolveOrderVerb registry (aptOrderVerb p)] ]
         errors = concat
@@ -1459,7 +1468,7 @@ resolveOrderVerb registry w = case Verbs.resolveVerb registry w of
 -- | Merge an NPC's compiled party order verb into its def. An authored entry
 --   with the same `(verb, state)` key runs first; the membership toggle runs
 --   after it.
-addPartyVerbEntry :: Map.Map E.NPCID ((E.Verb, String), E.Effect) -> E.NPCID -> E.NPCDef -> E.NPCDef
+addPartyVerbEntry :: Map.Map E.NPCID ((E.VerbPhase, E.Verb, String), E.Effect) -> E.NPCID -> E.NPCDef -> E.NPCDef
 addPartyVerbEntry entries nId def = case Map.lookup nId entries of
     Nothing -> def
     Just (key, eff) -> def
@@ -2667,15 +2676,17 @@ compileItemDefSafe registry i =
         (_, Left es, _) -> Left es
         (_, _, Left es) -> Left es
         (Right slot, Right effects, Right verbMap) ->
-            -- Merge on_take into verb_map
+            -- Merge on_take into verb_map (Phase 4.2: `on_take:` is the
+            -- historical PhaseAfter take entry; an `instead:take,<state>`
+            -- entry replaces it and it does not run).
             let verbMap' = case aiOnTake i of
                     Nothing -> verbMap
                     Just outcomes ->
-                        if Map.member (E.VTake, aiState i) verbMap
-                        then Map.insert (E.VTake, aiState i)
-                             (E.Sequence [compileOutcomes outcomes, Map.findWithDefault (E.Noop) (E.VTake, aiState i) verbMap])
+                        if Map.member (E.PhaseAfter, E.VTake, aiState i) verbMap
+                        then Map.insert (E.PhaseAfter, E.VTake, aiState i)
+                             (E.Sequence [compileOutcomes outcomes, Map.findWithDefault (E.Noop) (E.PhaseAfter, E.VTake, aiState i) verbMap])
                              verbMap
-                        else Map.insert (E.VTake, aiState i) (compileOutcomes outcomes) verbMap
+                        else Map.insert (E.PhaseAfter, E.VTake, aiState i) (compileOutcomes outcomes) verbMap
             in Right (i, E.ItemDef
                 { E.itemId = aiId i
                 , E.itemName = aiName i
@@ -2911,30 +2922,52 @@ compileInteractions (Just ix) = (entityMap, itemMap)
 -- | Compile a verb map with structured diagnostics.  The path prefix points at
 --   the owning field (e.g. "items.crystal.verb_map").  The registry resolves
 --   custom verbs; unknown verbs are errors.
+-- | Compile a verb_map. Keys are `[before:|instead:]verb[,state]` (Phase 4.2):
+--   a `before:`/`instead:` prefix selects the phase, keys without one keep the
+--   historical 'E.PhaseAfter' behaviour. A `(verb, state)` pair may be
+--   assigned in only one phase ('VerbPhaseClash').
 compileVerbMapSafe :: Map.Map String E.VerbDef -> String -> Map.Map String [AActionOutcome]
-                   -> Either [CompileIssue] (Map.Map (E.Verb, String) E.Effect)
+                   -> Either [CompileIssue] (Map.Map (E.VerbPhase, E.Verb, String) E.Effect)
 compileVerbMapSafe registry pathPrefix vm =
     let entries = Map.toList vm
-        parsed = [ (key, parseVerbStrict registry verbStr, state)
+        parsed = [ (key, phase, parseVerbStrict registry verbStr, state)
                  | (key, _) <- entries
-                 , let (verbStr, rest) = break (== ',') key
+                 , let (phase, keyRest) = parsePhasePrefix key
+                 , let (verbStr, rest) = break (== ',') keyRest
                  , let state = case rest of
                          ',':s -> s
                          _     -> "intact" ]
         verbErrs =
             [ ciError (pathPrefix ++ "." ++ key) "UnknownVerb" msg
-            | (key, Left msg, _) <- parsed ]
-        -- (Verb, State) collisions, e.g. "use,intact" + "activate,intact"
+            | (key, _, Left msg, _) <- parsed ]
+        -- (Verb, State) collisions within one phase, e.g. "use,intact" + "activate,intact"
         collErrs =
             [ ciError pathPrefix "DuplicateVerbKey"
                 ("verb keys " ++ show keys ++ " all resolve to " ++ show verb ++ ":" ++ state)
-            | ((verb, state), keys) <- collisions [(k, (v, st)) | (k, Right v, st) <- parsed] ]
-    in if null (verbErrs ++ collErrs)
+            | ((verb, state), keys) <- collisions
+                [(k, (v, st)) | (k, _, Right v, st) <- parsed] ]
+        -- Phase 4.2: one (verb, state) pair, one phase — otherwise the lookup
+        -- order would silently shadow an entry.
+        clashErrs =
+            [ ciError pathPrefix "VerbPhaseClash"
+                ("verb key " ++ show verb ++ ":" ++ state ++ " is assigned in phases "
+                 ++ show phases ++ "; use exactly one")
+            | ((verb, state), phases) <- clashes
+                [((v, st), phaseTag ph) | (_, ph, Right v, st) <- parsed] ]
+    in if null (verbErrs ++ collErrs ++ clashErrs)
        then Right $ Map.fromList
-            [ ((verb, state), compileOutcomes outcomes)
-            | (key, Right verb, state) <- parsed
+            [ ((ph, verb, state), compileOutcomes outcomes)
+            | (key, ph, Right verb, state) <- parsed
             , Just outcomes <- [Map.lookup key vm] ]
-       else Left (verbErrs ++ collErrs)
+       else Left (verbErrs ++ collErrs ++ clashErrs)
+  where
+    parsePhasePrefix key = case key of
+        ('b':'e':'f':'o':'r':'e':':':rest)     -> (E.PhaseBefore, rest)
+        ('i':'n':'s':'t':'e':'a':'d':':':rest) -> (E.PhaseInstead, rest)
+        _                                     -> (E.PhaseAfter, key)
+    phaseTag E.PhaseAfter   = "after" :: String
+    phaseTag E.PhaseBefore  = "before"
+    phaseTag E.PhaseInstead = "instead"
 
 -- | Parse verb strings: core first, then custom verb registry.
 --   Replaces the previous hardcoded list with Verbs.resolveVerb.

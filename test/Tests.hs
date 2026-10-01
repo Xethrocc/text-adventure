@@ -3,7 +3,9 @@ module Main where
 
 import Control.Monad (when)
 import Data.List (intercalate, isInfixOf, isPrefixOf, isSuffixOf)
+import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key as AesonKey
 import qualified Data.Aeson.Types as AesonT
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
@@ -3716,7 +3718,7 @@ testTakeWithOnTakePicksUp = do
             { itemDefs = Map.insert "token"
                 (ItemDef "token" "token" (plainText "A token.") ["token"] Set.empty
                          Nothing [] False Nothing True Nothing
-                         (Map.singleton (VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))) Nothing emptyAscii)
+                         (Map.singleton (PhaseAfter, VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))) Nothing emptyAscii)
                 (itemDefs (world sample)) }
         here = currentRoom (save sample)
         st = sample { world = w
@@ -3848,7 +3850,7 @@ testItemVerbKeysResolve :: IO Bool
 testItemVerbKeysResolve = do
     let gw = world initSampleGame
         declared = Map.keys (verbDefs gw)
-        keys = [ (itemId i, v) | i <- Map.elems (itemDefs gw), (v, _) <- Map.keys (itemVerbMap i) ]
+        keys = [ (itemId i, v) | i <- Map.elems (itemDefs gw), (_, v, _) <- Map.keys (itemVerbMap i) ]
         bad = [ (iid, n) | (iid, VCustom n) <- keys, n `notElem` declared ]
     expectTrue "all custom item verbs are declared" (null bad)
 
@@ -4344,8 +4346,8 @@ tradeWorld stock credits =
             { itemDefs = Map.singleton "rope"
                 (ItemDef "rope" "rope" (plainText "A coil of rope.")
                     ["rope"] Set.empty Nothing [] False Nothing True Nothing
-                    (Map.singleton (VCustom "buy", "intact") buyEff
-                        `Map.union` Map.singleton (VCustom "sell", "intact") sellEff) Nothing emptyAscii)
+                    (Map.singleton (PhaseAfter, VCustom "buy", "intact") buyEff
+                        `Map.union` Map.singleton (PhaseAfter, VCustom "sell", "intact") sellEff) Nothing emptyAscii)
             , verbDefs = Map.singleton "buy" (VerbDef "buy" ["purchase"])
                 `Map.union` Map.singleton "sell" (VerbDef "sell" ["pawn"])
             }
@@ -4541,7 +4543,7 @@ testCompoundKeyRoundTrip = do
         item0 = snd (Map.findMin (itemDefs gw0))
         gw    = gw0
             { itemDefs = Map.insert "weird"
-                (item0 { itemVerbMap = Map.fromList [((VCustom "buy", "intact:v2"), SendMessage "a")] })
+                (item0 { itemVerbMap = Map.fromList [((PhaseAfter, VCustom "buy", "intact:v2"), SendMessage "a")] })
                 (itemDefs gw0)
             , entityInteractions = Map.fromList [(("a|b", "c"), ("unlocked", "msg"))]
             , itemInteractions   = Map.fromList [(("x:y", "z|w"), SendMessage "b")] }
@@ -4549,7 +4551,7 @@ testCompoundKeyRoundTrip = do
     -- legacy form of the verb map: "VTake:intact"
     let legacyVerbValue = Aeson.toJSON (Map.fromList [("VTake:intact", SendMessage "x")] :: Map.Map String Effect)
     r2 <- case AesonT.parseMaybe verbStateMapFromJSON legacyVerbValue of
-        Just m  -> expectEqual (Map.fromList [((VTake, "intact"), SendMessage "x")]) m
+        Just m  -> expectEqual (Map.fromList [((PhaseAfter, VTake, "intact"), SendMessage "x")]) m
         Nothing -> expectTrue "legacy verb-state map decodes" False
     -- legacy form of the interaction map: "a|b"
     let legacyTupleValue = Aeson.toJSON (Map.fromList [("a|b", ["u", "m"])] :: Map.Map String [String])
@@ -4704,10 +4706,10 @@ testGameWorldRoundTrip = do
     let item0 = snd (Map.findMin (itemDefs gw))
         gw2 = gw { itemDefs = Map.insert "custom"
                      (item0 { itemVerbMap = Map.fromList
-                                [((VCustom "buy", "intact"), SendMessage "ok")] })
+                                [((PhaseAfter, VCustom "buy", "intact"), SendMessage "ok")] })
                      (itemDefs gw) }
     r3 <- expectTrue "itemVerbMap with a VCustom key round-trips"
-              (any (\d -> Map.member (VCustom "buy", "intact") (itemVerbMap d))
+              (any (\d -> Map.member (PhaseAfter, VCustom "buy", "intact") (itemVerbMap d))
                     (Map.elems (maybe Map.empty itemDefs (Aeson.decode (Aeson.encode gw2)))))
     -- GameWorld with abilities round-trips
     let gw3 = gw { abilities = Map.singleton "strike" (PlayerAbility "strike" "Strike" "stamina" 5 2 [SendMessage "Pow!"]) }
@@ -8634,6 +8636,151 @@ testNamedRngStreamSaveRoundtrip = do
             (decoded >>= \sv -> Map.lookup "rng.beute" (variables sv))
     pure (r1 && r2)
 
+-- ---------------------------------------------------------------------------
+-- Phase 4.2: verb_map phases (before:/instead:)
+-- ---------------------------------------------------------------------------
+
+-- | Helper for the Phase 4.2 tests: the sample world with the healing
+--   potion's verb_map overridden (the potion starts in the player's room,
+--   status "intact").
+withPotionVerbMap :: Map.Map (VerbPhase, Verb, String) Effect -> GameState
+withPotionVerbMap vm =
+    let gw = world initSampleGame
+        def0 = Map.findWithDefault (error "missing potion") "potion_healing" (itemDefs gw)
+        gw' = gw { itemDefs = Map.insert "potion_healing" (def0 { itemVerbMap = vm }) (itemDefs gw) }
+    in initSampleGame { world = gw' }
+
+-- | The potion's current location — where did `take` leave it?
+potionLoc :: GameState -> Maybe Location
+potionLoc st = itemLocation <$> Map.lookup "potion_healing" (itemStates (save st))
+
+-- | Phase 4.2: `instead:take` replaces the pickup — the entry is the take.
+--   The standard guards (`take.already`, …) run first and gate every phase,
+--   so a repeat attempt cannot re-fire the entry.
+testVerbMapInsteadReplacesTake :: IO Bool
+testVerbMapInsteadReplacesTake = do
+    let vm = Map.singleton (PhaseInstead, VTake, "intact")
+                (Sequence [ MoveEntity "potion_healing" (CarriedBy ActorPlayer)
+                          , SendMessage "The vial is yours." ])
+        (ls1, evs1) = applyLoopCommandEv (Interact VTake "potion") (initLoopState (withPotionVerbMap vm))
+        out1 = renderEvents evs1
+    r1 <- expectTrue "instead entry runs" ("The vial is yours." `isInfixOf` out1)
+    r2 <- expectTrue "no standard take message"
+            (not (renderMsg "take.ok" [("item", "healing potion")] `isInfixOf` out1))
+    r3 <- expectEqual (Just (CarriedBy ActorPlayer)) (potionLoc (lsCurrent ls1))
+    let (_, evs2) = applyLoopCommandEv (Interact VTake "potion") ls1
+        out2 = renderEvents evs2
+    r4 <- expectTrue "guards gate every phase"
+            (renderMsg "take.already" [("item", "healing potion")] `isInfixOf` out2)
+    r5 <- expectTrue "the entry does not re-fire" (not ("The vial is yours." `isInfixOf` out2))
+    pure (and [r1, r2, r3, r4, r5])
+
+-- | Phase 4.2: a `before:` entry runs before the standard action and the
+--   action continues when the entry does not `block:`.
+testVerbMapBeforeRunsThenTake :: IO Bool
+testVerbMapBeforeRunsThenTake = do
+    let vm = Map.singleton (PhaseBefore, VTake, "intact") (SendMessage "You steady your grip.")
+        (ls1, evs1) = applyLoopCommandEv (Interact VTake "potion") (initLoopState (withPotionVerbMap vm))
+        out1 = renderEvents evs1
+    r1 <- expectTrue "before entry runs first"
+            (("You steady your grip.\n" ++ renderMsg "take.ok" [("item", "healing potion")])
+                `isInfixOf` out1)
+    r2 <- expectEqual (Just (CarriedBy ActorPlayer)) (potionLoc (lsCurrent ls1))
+    pure (r1 && r2)
+
+-- | Phase 4.2 (Veto Stufe 2): a `before:` entry with `block:` vetoes the
+--   standard action. Turn contract: the veto happens mid-command, so a
+--   turn-shaped command ticks like any failed attempt — `block:`'s `turn:`
+--   flag steers rule vetos (`on: before`), not verb_map phases.
+testVerbMapBeforeVetoBlocksTake :: IO Bool
+testVerbMapBeforeVetoBlocksTake = do
+    let vm = Map.singleton (PhaseBefore, VTake, "intact")
+                (Sequence [ SendMessage "The vial is fused to the shelf."
+                          , Block (Just "It will not come loose.") False ])
+        (ls1, evs1) = applyLoopCommandEv (Interact VTake "potion") (initLoopState (withPotionVerbMap vm))
+        st1 = lsCurrent ls1
+        out1 = renderEvents evs1
+    r1 <- expectTrue "veto message shown" ("It will not come loose." `isInfixOf` out1)
+    r2 <- expectTrue "the entry ran before the veto point" ("The vial is fused to the shelf." `isInfixOf` out1)
+    r3 <- expectEqual (Just (InRoom "start")) (potionLoc st1)
+    r4 <- expectTrue "no standard take message"
+            (not (renderMsg "take.ok" [("item", "healing potion")] `isInfixOf` out1))
+    r5 <- expectTrue "turn-shaped command ticks even when vetoed" (turnCount (save st1) == 1)
+    pure (and [r1, r2, r3, r4, r5])
+
+-- | Phase 4.2: historical entries (PhaseAfter, no key prefix) are frozen —
+--   on `take` the standard pickup AND the entry run, take.ok first.
+testVerbMapLegacyTakeUnchanged :: IO Bool
+testVerbMapLegacyTakeUnchanged = do
+    let vm = Map.singleton (PhaseAfter, VTake, "intact") (SendMessage "Magic hums.")
+        (ls1, evs1) = applyLoopCommandEv (Interact VTake "potion") (initLoopState (withPotionVerbMap vm))
+        out1 = renderEvents evs1
+    r1 <- expectTrue "pickup and entry run, take.ok first"
+            ((renderMsg "take.ok" [("item", "healing potion")] ++ "\nMagic hums.") `isInfixOf` out1)
+    r2 <- expectEqual (Just (CarriedBy ActorPlayer)) (potionLoc (lsCurrent ls1))
+    pure (r1 && r2)
+
+-- | Phase 4.2: historical entries on other verbs replace the standard action
+--   (frozen quirk: `drop` with an entry does not actually drop).
+testVerbMapLegacyNonTakeReplaces :: IO Bool
+testVerbMapLegacyNonTakeReplaces = do
+    let vm = Map.singleton (PhaseAfter, VDrop, "intact") (SendMessage "You keep hold of it.")
+        game = withPotionVerbMap vm
+        st0 = game { save = (save game) { itemStates =
+                Map.adjust (\is -> is { itemLocation = CarriedBy ActorPlayer })
+                           "potion_healing" (itemStates (save game)) } }
+        (ls1, evs1) = applyLoopCommandEv (Interact VDrop "potion") (initLoopState st0)
+        out1 = renderEvents evs1
+    r1 <- expectTrue "entry replaces the drop" ("You keep hold of it." `isInfixOf` out1)
+    r2 <- expectTrue "no standard drop message"
+            (not (renderMsg "drop.ok" [("item", "healing potion")] `isInfixOf` out1))
+    r3 <- expectEqual (Just (CarriedBy ActorPlayer)) (potionLoc (lsCurrent ls1))
+    pure (r1 && r2 && r3)
+
+-- | Phase 4.2: phase JSON. Legacy entries encode WITHOUT a `phase` field
+--   (byte contract for every pre-4.2 world.json), before:/instead: entries
+--   carry one, and all three round-trip.
+testVerbMapPhaseJson :: IO Bool
+testVerbMapPhaseJson = do
+    let legacy  = Map.singleton (PhaseAfter, VTake, "intact") (SendMessage "a") ::
+                    Map.Map (VerbPhase, Verb, String) Effect
+        phased  = Map.fromList [ ((PhaseBefore, VTake, "intact"), SendMessage "b")
+                               , ((PhaseInstead, VDrop, "open"), SendMessage "c") ]
+        legacyText = BLC.unpack (Aeson.encode (verbStateMapToJSON legacy))
+        phasedText = BLC.unpack (Aeson.encode (verbStateMapToJSON phased))
+    r1 <- expectTrue "legacy entries carry no phase field" (not ("phase" `isInfixOf` legacyText))
+    r2 <- expectTrue "phase entries carry the phase field" ("phase" `isInfixOf` phasedText)
+    r3 <- expectEqual (Just legacy) (AesonT.parseMaybe verbStateMapFromJSON (verbStateMapToJSON legacy))
+    r4 <- expectEqual (Just phased) (AesonT.parseMaybe verbStateMapFromJSON (verbStateMapToJSON phased))
+    r5 <- expectEqual (Just legacy)
+            (AesonT.parseMaybe verbStateMapFromJSON
+                (Aeson.toJSON [ Aeson.object
+                    [ AesonKey.fromString "verb" .= ("VTake" :: String)
+                    , AesonKey.fromString "state" .= ("intact" :: String)
+                    , AesonKey.fromString "effect" .= (SendMessage "a") ] ]))
+    pure (and [r1, r2, r3, r4, r5])
+
+-- | Phase 4.2: NPC verb_map phases work like item phases.
+testVerbMapPhasesOnNpc :: IO Bool
+testVerbMapPhasesOnNpc = do
+    let withNpc vm =
+            let gw = world initSampleGame
+                def0 = Map.findWithDefault (error "missing oldman") "oldman" (npcDefs gw)
+                gw' = gw { npcDefs = Map.insert "oldman" (def0 { npcVerbMap = vm }) (npcDefs gw) }
+            in initSampleGame { world = gw' }
+        insteadMap = Map.singleton (PhaseInstead, VTalk, "alive")
+                        (SendMessage "The old man only points at the door.")
+        vetoMap = Map.singleton (PhaseBefore, VTalk, "alive")
+                        (Block (Just "He is not listening.") False)
+        (_, evs1) = applyLoopCommandEv (Interact VTalk "old man") (initLoopState (withNpc insteadMap))
+        (_, evs2) = applyLoopCommandEv (Interact VTalk "old man") (initLoopState (withNpc vetoMap))
+    r1 <- expectTrue "instead entry replaces the talk"
+            ("The old man only points at the door." `isInfixOf` renderEvents evs1)
+    r2 <- expectTrue "no dialogue opens" (not ("Greetings, traveler!" `isInfixOf` renderEvents evs1))
+    r3 <- expectTrue "before entry vetoes the talk" ("He is not listening." `isInfixOf` renderEvents evs2)
+    r4 <- expectTrue "still no dialogue opens" (not ("Greetings, traveler!" `isInfixOf` renderEvents evs2))
+    pure (and [r1, r2, r3, r4])
+
 main :: IO ()
 main = do
     results <- sequence
@@ -9135,5 +9282,13 @@ main = do
         , runTest "rng streams: named draws are decoupled (B8)" testNamedRngStreamDecoupled
         , runTest "rng streams: default stream draw unchanged (B8)" testDefaultRngStreamUnchanged
         , runTest "rng streams: stream state survives save/load (B8)" testNamedRngStreamSaveRoundtrip
+        -- Phase 4.2: verb_map phases
+        , runTest "verb_map: instead: replaces the take (4.2)" testVerbMapInsteadReplacesTake
+        , runTest "verb_map: before: runs and the take continues (4.2)" testVerbMapBeforeRunsThenTake
+        , runTest "verb_map: before: + block: vetoes the take (4.2)" testVerbMapBeforeVetoBlocksTake
+        , runTest "verb_map: legacy take entries frozen (4.2)" testVerbMapLegacyTakeUnchanged
+        , runTest "verb_map: legacy non-take entries frozen (4.2)" testVerbMapLegacyNonTakeReplaces
+        , runTest "verb_map: phase JSON encoding (4.2)" testVerbMapPhaseJson
+        , runTest "verb_map: NPC phases (4.2)" testVerbMapPhasesOnNpc
         ]
     when (not (and results)) exitFailure

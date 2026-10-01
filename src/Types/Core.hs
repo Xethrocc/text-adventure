@@ -27,6 +27,7 @@ module Types.Core
     , Exit (..)
     , exitRoomID
     , Verb (..)
+    , VerbPhase (..)
     , VerbDef (..)
     , directionDelta
     , oppositeDirection
@@ -274,6 +275,18 @@ data Verb = VGo | VLook | VLookAt | VTake | VDrop | VInventory | VUse | VUseOn
 
 instance ToJSON Verb
 instance FromJSON Verb
+
+-- | Phase 4.2 (Veto Stufe 2): when a verb_map entry runs relative to the
+--   standard action. 'PhaseAfter' is the historical behaviour (entry without
+--   a phase prefix): on `take` the entry runs in addition to the standard
+--   pickup, on every other verb it replaces the standard action.
+--   'PhaseBefore' runs before the standard action and may veto it via a
+--   `block:` effect; 'PhaseInstead' replaces the standard action outright.
+--   The standard guards (`take.already`, `take.not_portable`,
+--   `inventory.full`) are checked before any phase and gate all of them —
+--   they describe state, not the action.
+data VerbPhase = PhaseAfter | PhaseBefore | PhaseInstead
+    deriving (Show, Read, Eq, Ord, Enum, Bounded, Generic)
 
 -- | A declared adventure verb: canonical name plus input aliases.
 --   The canonical name is what appears in verb_map keys ("cast,intact").
@@ -1285,13 +1298,21 @@ instance FromJSON Effect where
 -- JSON helpers for compound Map keys
 -- ---------------------------------------------------------------------------
 
--- | Encode a Map with (Verb, String) keys as `[{verb, state, effect}, …]`.
-verbStateMapToJSON :: Map.Map (Verb, String) Effect -> Value
+-- | Encode a Map with (VerbPhase, Verb, String) keys as
+--   `[{verb, state, phase?, effect}, …]`. The `phase` field is omitted for
+--   'PhaseAfter' so every legacy entry (and every pre-4.2 world.json) encodes
+--   byte-identically. Entry order is the map order; for an all-'PhaseAfter'
+--   map that is the old (verb, state) order.
+verbStateMapToJSON :: Map.Map (VerbPhase, Verb, String) Effect -> Value
 verbStateMapToJSON m =
-    toJSON [ object [ "verb" .= show v, "state" .= s, "effect" .= e ]
-           | ((v, s), e) <- Map.toList m ]
+    toJSON [ object (["verb" .= show v, "state" .= s] ++ phaseFields ph ++ ["effect" .= e])
+           | ((ph, v, s), e) <- Map.toList m ]
+  where
+    phaseFields PhaseAfter   = []
+    phaseFields PhaseBefore  = ["phase" .= ("before" :: String)]
+    phaseFields PhaseInstead = ["phase" .= ("instead" :: String)]
 
-verbStateMapFromJSON :: Value -> Parser (Map.Map (Verb, String) Effect)
+verbStateMapFromJSON :: Value -> Parser (Map.Map (VerbPhase, Verb, String) Effect)
 verbStateMapFromJSON v =
     (do xs <- parseJSON v :: Parser [Value]
         Map.fromList <$> mapM entry xs)
@@ -1301,24 +1322,28 @@ verbStateMapFromJSON v =
         vTxt <- o .: "verb"
         s    <- o .: "state"
         e    <- o .: "effect"
-        case reads vTxt of
-            [(verb, "")] -> pure ((verb, s), e)
-            _            -> fail ("Bad verb encoding: " ++ vTxt)
+        ph   <- o .:? "phase" .!= ("after" :: String)
+        case (reads vTxt, ph) of
+            ([(verb, "")], "after")   -> pure ((PhaseAfter, verb, s), e)
+            ([(verb, "")], "before")  -> pure ((PhaseBefore, verb, s), e)
+            ([(verb, "")], "instead") -> pure ((PhaseInstead, verb, s), e)
+            (_, "after")              -> fail ("Bad verb encoding: " ++ vTxt)
+            (_, other)                -> fail ("Bad phase encoding: " ++ other)
 
 -- | Legacy form: one string key per entry, `"VTake:intact"`. Only the first
 --   `:` separates verb and state, so a state containing `:` used to be
 --   corrupted (P2-9); kept for reading old `world.json` files.
-verbStateMapFromLegacyJSON :: Value -> Parser (Map.Map (Verb, String) Effect)
+verbStateMapFromLegacyJSON :: Value -> Parser (Map.Map (VerbPhase, Verb, String) Effect)
 verbStateMapFromLegacyJSON v = do
     m <- parseJSON v :: Parser (Map.Map String Effect)
     let parsePair k = case break (== ':') k of
             (vStr, ':':sStr) -> case reads vStr of
-                [(verb, "")] -> Right ((verb, sStr), ())
+                [(verb, "")] -> Right ((PhaseAfter, verb, sStr), ())
                 _            -> Left $ "Bad verb: " ++ vStr
             _                -> Left $ "Bad key format: " ++ k
     case mapM (\(k, val) -> case parsePair k of
-                Right ((verb, st), _) -> Right ((verb, st), val)
-                Left err              -> Left err
+                Right (key3, _) -> Right (key3, val)
+                Left err        -> Left err
               ) (Map.toList m) of
         Right parsedPairs -> pure $ Map.fromList parsedPairs
         Left err    -> fail err
@@ -1375,7 +1400,7 @@ data ItemDef = ItemDef
         , itemDiscoverText  :: Maybe String          -- ^ Message shown on discovery
         , itemPortable      :: Bool                  -- ^ Can the player pick this up?
         , itemTakeFailure   :: Maybe String          -- ^ Message when take fails (non-portable)
-        , itemVerbMap       :: Map.Map (Verb, String) Effect
+        , itemVerbMap       :: Map.Map (VerbPhase, Verb, String) Effect
         , itemCapacity      :: Maybe Int          -- ^ 4.4: container capacity (count of items), Nothing = not a container
         , itemAscii         :: AsciiArt              -- ^ Optional state-dependent, animated ASCII art
         } deriving (Show, Eq)
@@ -1490,7 +1515,7 @@ data NPCDef = NPCDef
     , npcMaxHealth     :: Maybe Int
     , npcAttackBase    :: Int
     , npcDefenseBase   :: Int
-    , npcVerbMap       :: Map.Map (Verb, String) Effect
+    , npcVerbMap       :: Map.Map (VerbPhase, Verb, String) Effect
     , npcAscii         :: AsciiArt              -- ^ Optional state-dependent, animated ASCII art
     , npcTopics        :: Map.Map String Effect    -- ^ 4.5: `ask`/`tell` X about <topic>
     } deriving (Show, Eq)

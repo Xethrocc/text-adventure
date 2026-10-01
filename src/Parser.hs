@@ -986,16 +986,14 @@ dispatchCommandEv (SearchCmd maybeTarget) state = case getCurrentRoom state of
                         Just item ->
                             let iId = itemId item
                                 currentStatus = maybe "unknown" itemStatus (Map.lookup iId (itemStates (save state)))
-                            in case Map.lookup (VSearch, currentStatus) (itemVerbMap item) of
-                                Just outcome -> applyOutcomeEv outcome iId state
-                                Nothing -> (state, evMsg "search.nothing_item" [("item", itemName item)])
+                            in runVerbMapEntry (itemVerbMap item) VSearch currentStatus iId
+                                (\st -> (st, evMsg "search.nothing_item" [("item", itemName item)])) state
                         Nothing -> case find (matchesNPCTarget targetStr) roomNPCs of
                             Just npc ->
                                 let nId = npcId npc
                                     currentStatus = maybe "unknown" npcStatus (Map.lookup nId (npcStates (save state)))
-                                in case Map.lookup (VSearch, currentStatus) (npcVerbMap npc) of
-                                    Just outcome -> applyOutcomeEv outcome nId state
-                                    Nothing -> (state, evMsg "search.nothing_npc" [("npc", npcName npc)])
+                                in runVerbMapEntry (npcVerbMap npc) VSearch currentStatus nId
+                                    (\st -> (st, evMsg "search.nothing_npc" [("npc", npcName npc)])) state
                             Nothing -> (state, evMsg "target.not_seen" [("target", targetStr)])
 
 dispatchCommandEv (WatchCmd maybeTarget) state = case getCurrentRoom state of
@@ -1504,16 +1502,68 @@ resolveInteractTarget verb targetStr state = case resolveTarget verb targetStr s
     NotFound s    -> ITNotFound s
     BareVerb      -> ITBareVerb
 
+-- | Phase 4.2 (Veto Stufe 2): run a verb_map entry for the target's current
+--   state, ordered by phase. Lookup order: 'PhaseInstead' (replaces the
+--   standard action), 'PhaseBefore' (runs first; a `block:` effect inside
+--   vetoes the standard action, like an `on: before` rule), 'PhaseAfter'
+--   (historical entries). Without a matching entry the standard action runs.
+--   The veto leaves no trace beyond its messages: turn bookkeeping is driven
+--   by the command shape ('consumesTurnIn'), like any failed attempt.
+runVerbMapEntry :: Map.Map (VerbPhase, Verb, String) Effect -> Verb -> String -> ItemID
+                -> (GameState -> (GameState, [OutputEvent]))
+                -> GameState -> (GameState, [OutputEvent])
+runVerbMapEntry vm verb currentStatus targetId standard state =
+    case Map.lookup (PhaseInstead, verb, currentStatus) vm of
+        Just outcome -> applyOutcomeEv outcome targetId state
+        Nothing -> case Map.lookup (PhaseBefore, verb, currentStatus) vm of
+            Just outcome ->
+                let (st1, msgs) = applyOutcomeEv outcome targetId state
+                in case lastVeto st1 of
+                    Just _  -> (st1 { lastVeto = Nothing }, msgs)
+                    Nothing ->
+                        let (st2, msgs2) = standard st1
+                        in (st2, joinEv msgs msgs2)
+            Nothing -> case Map.lookup (PhaseAfter, verb, currentStatus) vm of
+                Just outcome -> applyOutcomeEv outcome targetId state
+                Nothing      -> standard state
+
 -- | Execute interaction on an item.
+--   Phase 4.2: the standard guards (`take.already`, `take.not_portable`,
+--   `inventory.full`) run first and gate every phase — they describe state,
+--   not the action. The verb_map phases then decide what an attempt does:
+--   'PhaseInstead' replaces the pickup entirely, 'PhaseBefore' runs before it
+--   and may veto via `block:`, 'PhaseAfter' keeps the historical behaviour
+--   (entry in addition to the pickup).
 interactItem :: Verb -> ItemDef -> Maybe ItemState -> String -> GameState -> (GameState, [OutputEvent])
 interactItem verb item maybeItemState targetStr state =
     let iId = itemId item
         currentStatus = maybe "unknown" itemStatus maybeItemState
         notCarried = maybe True (\loc -> loc /= CarriedBy ActorPlayer) (fmap itemLocation maybeItemState)
-        vmLookup = Map.lookup (verb, currentStatus) (itemVerbMap item)
-    in case (verb, vmLookup) of
+        vm = itemVerbMap item
+        entry ph = Map.lookup (ph, verb, currentStatus) vm
+        insteadM = entry PhaseInstead
+        beforeM  = entry PhaseBefore
+        legacyM  = entry PhaseAfter
+        runBeforeThen outcome cont st =
+            let (st1, msgs) = applyOutcomeEv outcome iId st
+            in case lastVeto st1 of
+                Just _  -> (st1 { lastVeto = Nothing }, msgs)
+                Nothing ->
+                    let (st2, msgs2) = cont st1
+                    in (st2, joinEv msgs msgs2)
+        standard st =
+            if verb == VDrop && hasItem iId st
+            then (dropItem iId st, evMsg "drop.ok" [("item", itemName item)])
+            else if verb == VLookAt
+            then (st, lookWithArtEv (itemAscii item) st (resolveCondText (itemDescription item) st))
+            else case if verb == VAttack then tryAttackVehicle targetStr st else Nothing of
+                Just res -> res
+                Nothing
+                    | hasOnCommandTrigger verb st -> (st, [])
+                    | otherwise -> (st, evMsg "item.cant_do" [("item", itemName item)])
+    in case verb of
         -- Taking: enforce portability, then pick up AND run on_take.
-        (VTake, _)
+        VTake
             | not notCarried ->
                 (state, evMsg "take.already" [("item", itemName item)])
             | otherwise ->
@@ -1524,48 +1574,45 @@ interactItem verb item maybeItemState targetStr state =
                         | inventoryFull state ->
                             (state, evMsg "inventory.full" [])
                         | otherwise ->
-                        let (st', extra) = case vmLookup of
-                                Just outcome -> applyOutcomeEv outcome iId state
-                                Nothing      -> (state, [])
-                            takeMsg = evMsg "take.ok" [("item", itemName item)]
-                        in (pickupItem iId st',
-                            joinEv takeMsg extra)
-        _ -> case vmLookup of
-            Just outcome -> applyOutcomeEv outcome iId state
-            Nothing ->
-                if verb == VDrop && hasItem iId state
-                then (dropItem iId state, evMsg "drop.ok" [("item", itemName item)])
-                else if verb == VLookAt
-                then (state, lookWithArtEv (itemAscii item) state (resolveCondText (itemDescription item) state))
-                else case if verb == VAttack then tryAttackVehicle targetStr state else Nothing of
-                    Just res -> res
-                    Nothing
-                        | hasOnCommandTrigger verb state -> (state, [])
-                        | otherwise -> (state, evMsg "item.cant_do" [("item", itemName item)])
+                            let pickup st msgs =
+                                    (pickupItem iId st, joinEv msgs (evMsg "take.ok" [("item", itemName item)]))
+                            in case (insteadM, beforeM, legacyM) of
+                                -- instead: the entry IS the take.
+                                (Just outcome, _, _) -> applyOutcomeEv outcome iId state
+                                -- before: run first, veto or continue into the pickup.
+                                (Nothing, Just outcome, _) -> runBeforeThen outcome (\st -> pickup st []) state
+                                -- Historical behaviour (PhaseAfter): pickup AND entry.
+                                (Nothing, Nothing, Just outcome) ->
+                                    let (st', extra) = applyOutcomeEv outcome iId state
+                                        takeMsg = evMsg "take.ok" [("item", itemName item)]
+                                    in (pickupItem iId st', joinEv takeMsg extra)
+                                _ -> (pickupItem iId state, evMsg "take.ok" [("item", itemName item)])
+        _ -> runVerbMapEntry vm verb currentStatus iId standard state
 
--- | Execute interaction on an NPC.
+-- | Execute interaction on an NPC. Phase 4.2 like 'interactItem':
+--   'PhaseInstead' replaces the standard action, 'PhaseBefore' runs first and
+--   may veto via `block:`, 'PhaseAfter' keeps the historical behaviour
+--   (entry replaces the standard action).
 interactNpc :: Verb -> NPCDef -> Maybe NPCState -> String -> GameState -> (GameState, [OutputEvent])
 interactNpc verb npc maybeNpcState targetStr state =
     let nId = npcId npc
         currentStatus = maybe "unknown" npcStatus maybeNpcState
-        isCorpse = isDeadNPC nId state
-    in case Map.lookup (verb, currentStatus) (npcVerbMap npc) of
-        Just outcome -> applyOutcomeEv outcome nId state
-        Nothing
+        standard st =
             -- A body can be looked at, searched and targeted by authored
             -- verbs, but it neither fights nor talks.
-            | isCorpse, verb == VAttack ->
-                (state, evMsg "npc.already_dead" [("npc", npcName npc)])
-            | isCorpse, verb == VTalk ->
-                (state, evMsg "npc.dead_silent" [("npc", npcName npc)])
-            | verb == VTalk -> talkTo npc maybeNpcState state
-            | verb == VAttack -> executeAttack npc maybeNpcState targetStr state
-            | verb == VLookAt ->
-                ( state
-                , joinEv (lookWithArtEv (npcAscii npc) state (resolveCondText (npcDescription npc) state))
-                         (npcCarriedEv nId state) )
-            | hasOnCommandTrigger verb state -> (state, [])
-            | otherwise -> (state, evMsg "npc.cant_do" [("npc", npcName npc)])
+            if isDeadNPC nId st && verb == VAttack
+            then (st, evMsg "npc.already_dead" [("npc", npcName npc)])
+            else if isDeadNPC nId st && verb == VTalk
+            then (st, evMsg "npc.dead_silent" [("npc", npcName npc)])
+            else if verb == VTalk then talkTo npc maybeNpcState st
+            else if verb == VAttack then executeAttack npc maybeNpcState targetStr st
+            else if verb == VLookAt
+            then ( st
+                 , joinEv (lookWithArtEv (npcAscii npc) st (resolveCondText (npcDescription npc) st))
+                          (npcCarriedEv nId st) )
+            else if hasOnCommandTrigger verb st then (st, [])
+            else (st, evMsg "npc.cant_do" [("npc", npcName npc)])
+    in runVerbMapEntry (npcVerbMap npc) verb currentStatus nId standard state
 
 -- | B7: the carried-items line when looking at an NPC (mirrors the device
 --   "Mounted:" line; hidden items need discovery like everywhere else).

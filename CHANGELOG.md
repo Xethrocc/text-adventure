@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### Veto Stufe 2: `verb_map`-Phasen (4.2)
+
+- **`before:`/`instead:` als Phasen-Präfix in `verb_map`-Schluesseln** (Items und
+  NPCs): `before:take,intact:` laeuft **vor** der Standardaktion und vetot sie
+  mit einem `block:` darin (wie eine `on: before`-Regel); `instead:take,intact:`
+  **ersetzt** die Standardaktion vollstaendig. Schluessel ohne Praefix behalten
+  exakt das historische Verhalten (auf `take` Effekte *zusammen mit* dem
+  Aufheben, bei allen anderen Verben ersetzend).
+- **Ein `(verb, state)`-Paar, eine Phase:** Doppelbelegung ueber Phasen hinweg
+  ist ein harter Compile-Fehler (`VerbPhaseClash`). Die Lookup-Reihenfolge ist
+  `instead:` → `before:` → alter Eintrag → Standardaktion.
+- **Guards gelten phasenuebergreifend:** `take.already`, `take.not_portable`
+  und `inventory.full` laufen vor allen Phasen — ein `instead:`-Eintrag kann
+  nicht erneut feuern, sobald die Effekte das Item mit `give:` mitfuehren.
+- **Zugverbrauch:** Ein `verb_map`-Veto geschieht mitten im Kommando —
+  turnfoermige Kommandos verbrauchen den Zug wie jeder gescheiterte Versuch;
+  das `turn:`-Feld von `block:` steuert nur Regel-Vetos.
+- **Verhaltensänderung (Migration):** Die historischen `take`-Eintraege in
+  `fantasy`, `space-opera` und `cyberpunk` (kronen-/artefakt-/shard-Heben)
+  laufen bewusst neu als `instead:` + `give:` (echtes Ersetzen, Nutzerentscheid
+  2026-10-01). Sichtbarer Unterschied: bei diesen drei Items entfaellt die
+  Standard-Zeile `You take the …` — die Welten sind sonst spielidentisch.
+- **Byte-Vertrag:** Alte `verb_map`-Eintraege encodieren weiterhin **ohne**
+  `phase`-Feld im `world.json` (alle nicht migrierten Abenteuer bleiben
+  byte-identisch, per stash-Vergleich geprueft); nur `before:`/`instead:`
+  tragen das neue optionale Feld. P1-15 (Take-/Drop-Events am Zustandsdiff
+  statt am Kommando) war bereits durch die Phase-0.x-Bugfixes erledigt.
+- **Tests:** +7 Engine-Tests (**441**) inkl. Pins auf das Legacy-Verhalten und
+  die JSON-Kodierung; +2 Worldbuilder-Tests (**228**); neues E2E-Fixture
+  `phasen` (7 geordnete Marker: Veto, Ersetzen, Guards, Nachhall).
+
 ### Benannte Zufallsströme (B8)
 
 - **`random: {stream: <name>, choices: [[gewicht, [effekte]], ...]}`** zieht aus

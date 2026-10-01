@@ -95,7 +95,7 @@ run_e2e() {
     [ "$failed" -eq 0 ] || exit 1
 }
 
-for name in thefog pure-if fantasy cyberpunk space-opera detective horror economy_hamurabi deckbuilder_spire sandbox_wilderness factions trade encounters survival stealth patrol combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state combat-screen dark-feelable bomb waechter traglast disambiguation procedures gespraeche npc-besitz stroeme; do
+for name in thefog pure-if fantasy cyberpunk space-opera detective horror economy_hamurabi deckbuilder_spire sandbox_wilderness factions trade encounters survival stealth patrol combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state combat-screen dark-feelable bomb waechter traglast disambiguation procedures gespraeche npc-besitz stroeme phasen; do
     case "$name" in
         thefog)             src=examples/thefog.yaml ;;
         factions|trade|encounters|survival|stealth|patrol|combat-off|combat-narrative|combat-classic|combat-tactical|party|starship|combo|ship-duel)     src="examples/modules/$name.yaml" ;;
@@ -112,6 +112,7 @@ for name in thefog pure-if fantasy cyberpunk space-opera detective horror econom
         gespraeche)         src="examples/fixtures/gespraeche.yaml" ;;
         npc-besitz)         src="examples/fixtures/npc-besitz.yaml" ;;
         stroeme)            src="examples/fixtures/stroeme.yaml" ;;
+        phasen)             src="examples/fixtures/phasen.yaml" ;;
         *)                  src="examples/genres/$name.yaml" ;;
     esac
     run_e2e "$name" "$src"
@@ -121,7 +122,7 @@ echo "== 4b. author content tests (B1) =="
 # Content tests as data: the `tests:` section of an adventure runs through
 # `worldbuilder test` (ordered markers). Extend the list as adventures grow
 # their own tests.
-for name in procedures wissen kapitel krypta quest_rpg pursuit include_demo mengen massen behaelter stroeme; do
+for name in procedures wissen kapitel krypta quest_rpg pursuit include_demo mengen massen behaelter stroeme phasen; do
     case "$name" in
         procedures) src="examples/fixtures/procedures.yaml" ;;
         wissen)     src="examples/fixtures/wissen.yaml" ;;
@@ -134,6 +135,7 @@ for name in procedures wissen kapitel krypta quest_rpg pursuit include_demo meng
         massen)     src="examples/fixtures/massen.yaml" ;;
         behaelter)  src="examples/fixtures/behaelter.yaml" ;;
         stroeme)    src="examples/fixtures/stroeme.yaml" ;;
+        phasen)     src="examples/fixtures/phasen.yaml" ;;
     esac
     "${WORLDBUILDER[@]}" test "$src" || exit 1
 done

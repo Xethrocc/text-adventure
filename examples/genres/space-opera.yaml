@@ -141,7 +141,8 @@ items:
     keys: [artefact, alien]
     location: moon_cave
     verb_map:
-      take,intact:
+      instead:take,intact:
+        - {give: artefact}
         - {msg: "You lift the artefact. It hums, and the station's comms light up across the void."}
         - {set_flag: artefact_taken, val: "true"}
         - {add_var: morale, delta: 3}

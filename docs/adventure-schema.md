@@ -379,8 +379,8 @@ description:
 | `hidden` | Bool | `false` | Nur via `search` findbar |
 | `discover` | String | — | Text bei Entdeckung |
 | `props` | Object | `{}` | `{ uses: 3 }` — Integer-Eigenschaften |
-| `on_take` | [AActionOutcome] | — | Effekte beim Aufheben (wird in `verb_map` gemerged) |
-| `verb_map` | Object | `{}` | `{ "verb,state": [effects] }` |
+| `on_take` | [AActionOutcome] | — | Effekte beim Aufheben (wird in `verb_map` gemerged als historischer `take`-Eintrag) |
+| `verb_map` | Object | `{}` | `{ "[before:\|instead:]verb[,state]": [effects] }` — Phasen siehe Veto Stufe 2 |
 | `ascii` | String / Object | — | Zustandsabhängige ASCII-Kunst (CondText, siehe Room) |
 
 - **Validierungs-Warnung (`KeywordCollision`):** Teilen sich zwei Gegenstände oder ein Gegenstand und ein NPC im selben Raum dieselben Keywords (Namen, IDs oder `keys`-Aliase), meldet der Worldbuilder eine nicht-fatale Warnung (`KeywordCollision`). Dadurch wird frühzeitig auf mehrdeutige Spielerbefehle wie `take <name>` oder `examine <name>` hingewiesen.
@@ -549,7 +549,7 @@ Item-Felder für Container und NPC-Besitz:
 | `attack` | Int | 0 | Angriffswert |
 | `defense` | Int | 0 | Verteidigungswert |
 | `dialogue` | Object | `{}` | Dialogbäume (siehe unten) |
-| `verb_map` | Object | `{}` | `{ "verb,state": [effects] }` |
+| `verb_map` | Object | `{}` | `{ "[before:\|instead:]verb[,state]": [effects] }` — Phasen siehe Veto Stufe 2 |
 | `ascii` | String / Object | — | Zustandsabhängige ASCII-Kunst (CondText, siehe Room) |
 | `party` | Object | — | Begleiter-Block (Module 7g, siehe unten) |
 | `topics` | Object | `{}` | Topic-Tabelle für `ask`/`tell` (Key=Topic, Value=Effekt) |
@@ -1007,6 +1007,51 @@ entity ID. The question and the answer cost no turn of their own.
         msg: "The jammed lever resists your pull, wasting precious time!"
         turn: true
   ```
+
+### Veto Stufe 2: `before:` / `instead:` in `verb_map` (Phase 4.2)
+
+Items und NPCs können Aktionen direkt am Objekt abfangen oder ersetzen — ohne lose Regel. Die
+`verb_map`-Schlüssel tragen optional ein Phasen-Präfix:
+
+| Schlüssel | Bedeutung |
+|---|---|
+| `take,intact:` | **Historisch (`PhaseAfter`):** auf `take` laufen Standard-Aktion (Aufheben + `take.ok`) **und** die Effekte; bei allen anderen Verben ersetzen die Effekte die Standardaktion. |
+| `before:take,intact:` | Effekte laufen **vor** der Standardaktion. Ein `block:` darin vetot die Aktion (wie eine `on: before`-Regel); ohne `block:` läuft die Standardaktion danach weiter. |
+| `instead:take,intact:` | Effekte **ersetzen** die Standardaktion vollständig (kein Aufheben, keine Standardmeldung — alles selbst bauen, z. B. mit `give:`). |
+
+```yaml
+items:
+  - id: glued_idol
+    verb_map:
+      before:take:
+        - {msg: "The idol is fused to the shelf."}
+        - {block: "It will not come loose."}
+  - id: crown
+    verb_map:
+      instead:take,intact:
+        - {give: crown}
+        - {msg: "You lift the crown. The tower shudders once, and is still."}
+        - {set_flag: crown_taken, val: "true"}
+```
+
+Regeln und Feinheiten:
+
+- **State-Suffix** wie gehabt: `verb` oder `verb,state` (Default `intact`) — das Präfix steht davor,
+  also `before:use,primed:`. Der Vollständigkeit halber: `on_take:` ist der historische
+  `take`-Eintrag (`PhaseAfter`) und läuft mit `instead:take` **nicht** mit.
+- **Lookup-Reihenfolge** pro `(verb, state)`-Paar: `instead:` → `before:` → alter Eintrag →
+  Standardaktion. Ein `(verb, state)`-Paar darf nur in **einer** Phase belegt sein
+  (`VerbPhaseClash`, harter Compile-Fehler).
+- **Guards zuerst:** `take.already`, `take.not_portable` und `inventory.full` laufen vor allen
+  Phasen und gelten für alle — sie beschreiben den Zustand, nicht die Aktion. Ein
+  `instead:take`-Eintrag kann deshalb bei einem bereits getragenen Item nicht erneut feuern
+  (die Wiederholungssperre kommt von selbst, sobald die Effekte das Item mit `give:` mitführen).
+- **Zugverbrauch:** Ein `verb_map`-Veto geschieht mitten im Kommando — ein turnförmiges Kommando
+  (`take`, `use`, …) verbraucht den Zug wie jeder gescheiterte Versuch. Das `turn:`-Feld von
+  `block:` steuert nur Regel-Vetos (`on: before`), nicht die `verb_map`-Phasen.
+- **Verhaltensänderung 4.2 (Migration):** Die historischen `take`-Einträge in `fantasy`,
+  `space-opera` und `cyberpunk` laufen bewusst neu als `instead:` + `give:` (echtes Ersetzen).
+  Sichtbarer Unterschied: bei diesen drei Items entfällt die Standard-Zeile `You take the …`.
 
 
 ## Dynamische Ausgaenge: `set_exit` / `remove_exit` (Rogue Phase 3)

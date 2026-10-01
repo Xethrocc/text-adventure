@@ -129,7 +129,7 @@ initSampleGame = GameState
                 , itemDiscoverText = Nothing
                 , itemPortable = True
                 , itemTakeFailure = Nothing
-                , itemVerbMap = Map.singleton (VTake, "intact")
+                , itemVerbMap = Map.singleton (PhaseAfter, VTake, "intact")
                     (Sequence
                         [ QuestOp StartQuest "find_treasure"
                         , SetValue (VRFlag "quest_started") (EVString "true") ])
@@ -177,7 +177,7 @@ initSampleGame = GameState
                 , itemDiscoverText = Nothing
                 , itemPortable = True
                 , itemTakeFailure = Nothing
-                , itemVerbMap = Map.singleton (VUse, "intact")
+                , itemVerbMap = Map.singleton (PhaseAfter, VUse, "intact")
                     (Sequence
                         [ ModifyValue VRPlayerHealth 50
                         , SetValue (VRItemProp "potion_healing" "uses") (EVInt (-1))

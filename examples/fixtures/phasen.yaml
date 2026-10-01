@@ -1,0 +1,63 @@
+name: VerbPhasen
+start_room: schrank
+
+# Phase 4.2 (Veto Stufe 2): verb_map phases. `before:` runs before the standard
+# action and may veto it via `block:`; `instead:` replaces the action outright;
+# a bare key keeps the historical behaviour (on `take` the entry runs in
+# addition to the pickup — see the bell). The standard guards (`take.already`,
+# …) gate every phase: the second `take edelstein` cannot re-fire the instead
+# entry. The ordered markers pin all of this.
+
+rooms:
+  - id: schrank
+    name: Steinschrank
+    desc: "Ein Steinschrank traegt drei Kuriosa: ein Idol, ein Edelstein, ein Gloeckchen."
+    exits: {}
+
+items:
+  - id: idol
+    name: Lehm-Idol
+    desc: Ein Idol, fest mit dem Schrank verwachsen.
+    keys: [idol]
+    location: schrank
+    verb_map:
+      before:take:
+        - {msg: "Das Idol ist mit dem Schrank verwachsen."}
+        - {block: "Es loest sich nicht."}
+
+  - id: edelstein
+    name: heller Edelstein
+    desc: Ein Edelstein, der dich offenbar mag.
+    keys: [edelstein, stein]
+    location: schrank
+    verb_map:
+      instead:take,intact:
+        - {give: edelstein}
+        - {msg: "Der Edelstein huepft in deine Hand."}
+
+  - id: gloeckchen
+    name: kleines Gloeckchen
+    desc: Ein Gloeckchen mit kurzer Erinnerung.
+    keys: [gloeckchen, glocke]
+    location: schrank
+    verb_map:
+      take,intact:
+        - {msg: "Das Gloeckchen laeutet einmal."}
+
+tests:
+  - name: "before vetot, instead ersetzt, der alte Eintrag laeuft als Nachhall"
+    input:
+      - take idol
+      - take edelstein
+      - take edelstein
+      - take gloeckchen
+      - inventory
+      - quit
+    expect:
+      - "Das Idol ist mit dem Schrank verwachsen."
+      - "Es loest sich nicht."
+      - "Der Edelstein huepft in deine Hand."
+      - "You already have the heller Edelstein."
+      - "You take the kleines Gloeckchen."
+      - "Das Gloeckchen laeutet einmal."
+      - "Inventory:"

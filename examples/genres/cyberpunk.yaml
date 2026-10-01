@@ -119,7 +119,8 @@ items:
     keys: [datashard, shard, data]
     location: vault
     verb_map:
-      take,intact:
+      instead:take,intact:
+        - {give: datashard}
         - {msg: "You pocket the datashard. Alarm klaxons begin to wail."}
         - {set_flag: shard_taken, val: "true"}
         - {add_var: heat, delta: 4}

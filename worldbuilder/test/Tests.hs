@@ -1215,7 +1215,7 @@ testActivateVerbMapsToUse = do
             pure False
         Right cr -> do
             let def = Map.findWithDefault (error "missing") "shrine" (E.itemDefs (crWorld cr))
-            expectEqual (Just (E.VUse, "intact")) (Map.lookupMin (E.itemVerbMap def) >>= (\(k, _) -> Just k))
+            expectEqual (Just (E.PhaseAfter, E.VUse, "intact")) (Map.lookupMin (E.itemVerbMap def) >>= (\(k, _) -> Just k))
 
 testUnknownVerbFails :: IO Bool
 testUnknownVerbFails = do
@@ -1240,7 +1240,7 @@ testRepeatedVerbAliases = do
             pure False
         Right cr -> do
             let def = Map.findWithDefault (error "missing") "thing" (E.itemDefs (crWorld cr))
-                firstVerb = fst . fst <$> Map.lookupMin (E.itemVerbMap def)
+                firstVerb = (\((_, v, _), _) -> v) <$> Map.lookupMin (E.itemVerbMap def)
             expectEqual (Just E.VLookAt) firstVerb
 
 -- ---------------------------------------------------------------------------
@@ -1256,7 +1256,7 @@ testOnTakeMergedIntoVerbMap = do
             pure False
         Right cr -> do
             let def = Map.findWithDefault (error "missing") "crystal" (E.itemDefs (crWorld cr))
-            case Map.lookup (E.VTake, "intact") (E.itemVerbMap def) of
+            case Map.lookup (E.PhaseAfter, E.VTake, "intact") (E.itemVerbMap def) of
                 Just (E.SetValue (E.VRFlag f) (E.EVString v)) -> expectEqual ("took_crystal", "true") (f, v)
                 Just other -> do
                     putStrLn $ "  wrong outcome: " ++ show other
@@ -1275,7 +1275,7 @@ testOnTakeConflictMerges = do
             pure False
         Right cr -> do
             let def = Map.findWithDefault (error "missing") "crystal" (E.itemDefs (crWorld cr))
-            case Map.lookup (E.VTake, "intact") (E.itemVerbMap def) of
+            case Map.lookup (E.PhaseAfter, E.VTake, "intact") (E.itemVerbMap def) of
                 Just (E.Sequence _) -> pure True
                 Just other -> do
                     putStrLn $ "  expected MultipleOutcomes, got: " ++ show other
@@ -1704,7 +1704,7 @@ testConditionalOutcomeCompiles = do
             pure False
         Right cr -> do
             let def = Map.findWithDefault (error "missing") "shrine" (E.itemDefs (crWorld cr))
-            case Map.lookup (E.VUse, "intact") (E.itemVerbMap def) of
+            case Map.lookup (E.PhaseAfter, E.VUse, "intact") (E.itemVerbMap def) of
                 Just (E.Conditional (E.PlayerHas "crystal") _ _) -> pure True
                 other -> do
                     putStrLn $ "  unexpected effect: " ++ show other
@@ -2797,7 +2797,7 @@ testPartyCompiles = do
         Right cr -> do
             let vars = variables (crSave cr)
                 def = Map.lookup "squire" (E.npcDefs (crWorld cr))
-                entry = def >>= Map.lookup (E.VCustom "follow", "alive") . E.npcVerbMap
+                entry = def >>= Map.lookup (E.PhaseAfter, E.VCustom "follow", "alive") . E.npcVerbMap
             r1 <- expectEqual (Just (E.VVInt 0)) (Map.lookup "party.squire" vars)
             r2 <- expectTrue "follow variable declared" (Map.member "party.squire" (E.varDefs (crWorld cr)))
             r3 <- expectEqual (Just expectedToggle) entry
@@ -2874,7 +2874,7 @@ testDamageNpcCompiles = do
             Right cr -> expectEqual
                 (Just (E.ModifyValue (E.VRActorProp (E.ActorNPC "squire") E.PHealth) (-25)))
                 (Map.lookup "trapper" (E.npcDefs (crWorld cr))
-                    >>= Map.lookup (E.VCustom "stab", "alive") . E.npcVerbMap)
+                    >>= Map.lookup (E.PhaseAfter, E.VCustom "stab", "alive") . E.npcVerbMap)
     r2 <- case compileAdventure advBad of
             Left errs -> expectContains "UnknownDamageNPC" (issuesText errs)
             Right _   -> expectTrue "expected UnknownDamageNPC" False
@@ -3644,6 +3644,8 @@ tests =
     , ("fuzz: clean world fuzzes without findings (B5)", testFuzzSmoke)
     -- B8: named RNG streams
     , ("rng: authored writes on rng.* are hard errors (B8)", testRngVarWriteGuard)
+    , ("verb_map: before:/instead: key phases (4.2)", testVerbMapPhaseKeys)
+    , ("verb_map: one phase per (verb, state) pair (4.2)", testVerbMapPhaseClash)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -4228,7 +4230,7 @@ testGenLockKey =
                     (elem "lock_junction" (Map.keys (E.entityStates s)))
                 r3 <- expectTrue "key carries set_state (unlock) rule"
                     (case Map.lookup "key_iron" (E.itemDefs w) of
-                        Just it -> Map.member (E.VTake, "intact") (E.itemVerbMap it)
+                        Just it -> Map.member (E.PhaseAfter, E.VTake, "intact") (E.itemVerbMap it)
                                    && not (null [ () | E.SetValue _ _ <- [e | (_, e) <- Map.toList (E.itemVerbMap it)] ])
                         Nothing -> False)
                 pure (r1 && r2 && r3)
@@ -6224,6 +6226,56 @@ testRngVarWriteGuard = do
     r11 <- expectTrue "random object form has no UnknownYamlKey"
             (null [ () | e <- checkUnknownYamlKeys rawRandomVal, ciCode e == "UnknownYamlKey" ])
     pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11])
+
+-- ---------------------------------------------------------------------------
+-- Phase 4.2: verb_map phases (authoring side)
+-- ---------------------------------------------------------------------------
+
+-- | Phase 4.2: `verb_map` keys are `[before:|instead:]verb[,state]`. The
+--   phase prefix reaches the compiled map, bare keys keep the historical
+--   PhaseAfter behaviour, and the default state stays "intact".
+testVerbMapPhaseKeys :: IO Bool
+testVerbMapPhaseKeys = do
+    let itemWith vm = (minItem "gem") { aiVerbMap = vm }
+        compiled vm = case compileAdventure ((minAdventure (minRoom "a")) { advItems = [itemWith vm] }) of
+            Left errs -> Left (length errs)
+            Right cr  -> Right (E.itemVerbMap
+                (Map.findWithDefault (error "missing gem") "gem" (E.itemDefs (crWorld cr))))
+        one k v = Map.singleton k [v]
+        keysOf vm = fmap Map.keys (compiled vm)
+    r1 <- expectEqual (Right [(E.PhaseBefore, E.VTake, "intact")])
+            (keysOf (one "before:take,intact" (AOMessage "a")))
+    r2 <- expectEqual (Right [(E.PhaseInstead, E.VTake, "intact")])
+            (keysOf (one "instead:take" (AOMessage "a")))
+    r3 <- expectEqual (Right [(E.PhaseBefore, E.VUse, "primed")])
+            (keysOf (one "before:use,primed" (AOMessage "a")))
+    r4 <- expectEqual (Right [(E.PhaseAfter, E.VDrop, "intact")])
+            (keysOf (one "drop" (AOMessage "a")))
+    r5 <- expectEqual (Right [(E.PhaseAfter, E.VUse, "open")])
+            (keysOf (one "use,open" (AOMessage "a")))
+    pure (and [r1, r2, r3, r4, r5])
+
+-- | Phase 4.2: one (verb, state) pair may be assigned in exactly one phase —
+--   `VerbPhaseClash` is a hard error. Unknown verbs keep erroring with the
+--   prefix in place.
+testVerbMapPhaseClash :: IO Bool
+testVerbMapPhaseClash = do
+    let itemWith vm = (minItem "gem") { aiVerbMap = vm }
+        codes vm = case compileAdventure ((minAdventure (minRoom "a")) { advItems = [itemWith vm] }) of
+            Left errs -> [ ciCode e | e <- errs ]
+            Right _   -> []
+    r1 <- expectEqual 1 (length [ () | c <- codes (Map.fromList
+            [ ("take,intact", [AOSetFlag "a" "true"])
+            , ("instead:take,intact", [AOSetFlag "b" "true"]) ]), c == "VerbPhaseClash" ])
+    r2 <- expectEqual 1 (length [ () | c <- codes (Map.fromList
+            [ ("before:take", [AOSetFlag "a" "true"])
+            , ("instead:take", [AOSetFlag "b" "true"]) ]), c == "VerbPhaseClash" ])
+    r3 <- expectEqual 0 (length [ () | c <- codes (Map.fromList
+            [ ("before:take", [AOSetFlag "a" "true"])
+            , ("use,intact", [AOSetFlag "b" "true"]) ]), c == "VerbPhaseClash" ])
+    r4 <- expectTrue "unknown verb errors with prefix"
+            ("UnknownVerb" `elem` codes (Map.fromList [("before:frobnicate", [AOSetFlag "a" "true"])]))
+    pure (and [r1, r2, r3, r4])
 
 main :: IO ()
 main = do

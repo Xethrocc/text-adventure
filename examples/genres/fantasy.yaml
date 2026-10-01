@@ -158,7 +158,8 @@ items:
     keys: [crown, ember]
     location: tower_top
     verb_map:
-      take,intact:
+      instead:take,intact:
+        - {give: ember_crown}
         - {msg: "You lift the Ember Crown. The tower shudders once, and is still."}
         - {set_flag: crown_taken, val: "true"}
         - {game_end: victory, msg: "VICTORY — The Ember Crown rests on your brow. The Emberhold is cleansed."}
