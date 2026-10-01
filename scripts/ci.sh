@@ -186,7 +186,7 @@ mkdir -p "$tmp/worldgen-saves"
 out="$(TA_SAVES_DIR="$tmp/worldgen-saves" "${GAME[@]}" \
         --world "$tmp/worldgen-a/world.json" --save "$tmp/worldgen-a/save.json" \
         < "ci/e2e/worldgen.in" 2>&1 || true)"
-while IFS= read -r marker; do
+while IFS= read -r marker || [ -n "$marker" ]; do
     if grep -qF "$marker" <<<"$out"; then
         echo "OK   worldgen  (reached: $marker)"
     else
@@ -274,7 +274,7 @@ save_load_case() {
     out="$(TA_SAVES_DIR="$saves" "${GAME[@]}" \
             --world "$run_dir/world.json" --save "$run_dir/save.json" \
             < "ci/e2e/$name-read.in" 2>&1 || true)"
-    while IFS= read -r marker; do
+    while IFS= read -r marker || [ -n "$marker" ]; do
         [ -n "$marker" ] || continue
         if grep -qF "$marker" <<<"$out"; then
             echo "OK   $name-read (reached: $marker)"
