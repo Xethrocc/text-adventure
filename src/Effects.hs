@@ -206,8 +206,11 @@ applyOutcomeWith depth salt outcome targetId state
     MoveEntity eid (InRoom room) ->
         let state' = moveEntityToRoom eid room state
         in (state', [], salt)
-    MoveEntity eid (CarriedBy _) ->
-        let state' = giveItem eid state
+    MoveEntity eid (CarriedBy actor) ->
+        -- B7: honour the actor. The `give:` string form targets the player
+        -- ("give" => CarriedBy ActorPlayer), the object form
+        -- (`give: {item: …, to: …}`) can hand items to NPCs.
+        let state' = relocateItem eid (CarriedBy actor) state
         in (state', [], salt)
     MoveEntity eid Removed ->
         let state' = consumeItem eid state

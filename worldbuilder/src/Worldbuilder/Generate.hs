@@ -1313,6 +1313,7 @@ emitAdventure t plan seed =
                     , aiTakeFailure = Nothing
                     , aiInContainer = Nothing
                     , aiCapacity = Nothing
+                    , aiCarriedBy = Nothing
                     })
             _ -> Nothing
 

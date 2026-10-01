@@ -5104,6 +5104,100 @@ testOnTalkTriggerFires = do
             ("runzelt die Stirn" `isInfixOf` renderEvents (evsOf (run "tell gelehrter about altes schloss" st0')))
     pure (r1 && r2)
 
+-- ---------------------------------------------------------------------------
+-- B7: NPC possession
+-- ---------------------------------------------------------------------------
+
+-- | Helper: room "halle" with the NPC "waechter" in it and items at start
+--   locations (same shape as 'cstate2', plus the NPC).
+b7State :: [(ItemDef, Location)] -> GameState
+b7State its =
+    let waechter = NPCDef "waechter" "Waechter" (plainText "Ein Waechter.") Map.empty ["waechter"]
+                    (Just 20) 5 5 Map.empty emptyAscii Map.empty
+        st0 = cstate2 [mkTestRoom "halle" "Halle"] its [] Map.empty
+    in st0 { world = (world st0) { npcDefs = Map.singleton "waechter" waechter }
+           , save = (save st0) { npcStates = Map.singleton "waechter"
+                    (NPCState (InRoom "halle") "alive" (Just 20) Map.empty Nothing) } }
+
+-- | `take X from <npc>` and `give X to <npc>` move items between player and
+--   NPC possession (the real command path, containers keep precedence).
+testNpcTakeGive :: IO Bool
+testNpcTakeGive = do
+    let schluessel = mkTestItem "schluessel" "Schluessel"
+        stein = mkTestItem "stein" "Stein"
+        st0 = b7State [ (schluessel, CarriedBy (ActorNPC "waechter"))
+                      , (stein, CarriedBy ActorPlayer) ]
+        run cmd st = applyLoopCommandEv (parseCommand cmd) (initLoopState st)
+        stOf = lsCurrent . fst
+        evsOf = snd
+        itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+    -- take from the NPC
+    let st1 = stOf (run "take schluessel from waechter" st0)
+    r1 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "schluessel" st1)
+    r2 <- expectTrue "took_from message"
+            ("You take the Schluessel from Waechter." `isInfixOf`
+                renderEvents (evsOf (run "take schluessel from waechter" st0)))
+    r3 <- expectTrue "no such item on the npc"
+            ("You find no rostiger schluessel on Waechter." `isInfixOf`
+                renderEvents (evsOf (run "take rostiger schluessel from waechter" st0)))
+    r4 <- expectTrue "unknown holder keeps the container error"
+            ("is not a container" `isInfixOf`
+                renderEvents (evsOf (run "take schluessel from niemand" st0)))
+    -- give to the NPC
+    let st2 = stOf (run "give stein to waechter" st0)
+    r5 <- expectEqual (Just (CarriedBy (ActorNPC "waechter"))) (itemLoc "stein" st2)
+    r6 <- expectTrue "gave_to message"
+            ("You give the Stein to Waechter." `isInfixOf`
+                renderEvents (evsOf (run "give stein to waechter" st0)))
+    r7 <- expectTrue "must carry the item"
+            ("don't have" `isInfixOf`
+                renderEvents (evsOf (run "give lampe to waechter" st0)))
+    r8 <- expectTrue "unknown recipient"
+            ("don't see 'niemand' here" `isInfixOf`
+                renderEvents (evsOf (run "give stein to niemand" st0)))
+    -- German form and give/take round trip
+    let st3 = stOf (run "gib stein an waechter" st0)
+    r9 <- expectEqual (Just (CarriedBy (ActorNPC "waechter"))) (itemLoc "stein" st3)
+    let st4 = stOf (run "take stein from waechter" st3)
+    r10 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "stein" st4)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10)
+
+-- | `look at <npc>` lists what the NPC carries (hidden items need discovery)
+--   and the protocol snapshot carries the same list (omitted when empty).
+testNpcCarriedVisibility :: IO Bool
+testNpcCarriedVisibility = do
+    let schluessel = mkTestItem "schluessel" "Schluessel"
+        amulett = (mkTestItem "amulett" "Amulett") { itemHidden = True }
+        st0 = b7State [ (schluessel, CarriedBy (ActorNPC "waechter"))
+                      , (amulett, CarriedBy (ActorNPC "waechter")) ]
+        run cmd st = applyLoopCommandEv (parseCommand cmd) (initLoopState st)
+        evsOf = snd
+        out = renderEvents (evsOf (run "look at waechter" st0))
+    r1 <- expectTrue "carried items are shown" ("Carrying: Schluessel." `isInfixOf` out)
+    r2 <- expectTrue "hidden items stay hidden" (not ("Amulett" `isInfixOf` out))
+    r3 <- expectEqual ["Schluessel"]
+            [ isName i | n <- rsNpcs (snapRoom (makeSnapshot st0))
+                       , nsId n == "waechter", i <- nsCarried n ]
+    r4 <- expectTrue "no carried line when the npc carries nothing"
+            (not ("Carrying" `isInfixOf`
+                renderEvents (evsOf (run "look at waechter" (b7State [])))))
+    r5 <- expectTrue "empty carried list is omitted from json"
+            (not ("carried" `isInfixOf` BLC.unpack (Aeson.encode (head (rsNpcs (snapRoom (makeSnapshot (b7State []))))))))
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | The effect table: `MoveEntity x (CarriedBy <actor>)` honours the actor —
+--   the `give:` object form can hand items to NPCs, not just the player.
+testMoveEntityCarriedByActor :: IO Bool
+testMoveEntityCarriedByActor = do
+    let schluessel = mkTestItem "schluessel" "Schluessel"
+        st0 = b7State [(schluessel, InRoom "halle")]
+        (st1, _) = applyOutcomeEv (MoveEntity "schluessel" (CarriedBy (ActorNPC "waechter"))) "" st0
+        (st2, _) = applyOutcomeEv (MoveEntity "schluessel" (CarriedBy ActorPlayer)) "" st1
+        itemLoc st = fmap itemLocation (Map.lookup "schluessel" (itemStates (save st)))
+    r1 <- expectEqual (Just (CarriedBy (ActorNPC "waechter"))) (itemLoc st1)
+    r2 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc st2)
+    pure (r1 && r2)
+
 -- | L13: `consumesTurn` ends in a `_ -> True` catch-all, so a new `Command`
 --   constructor silently becomes turn-consuming — that is how P1-16 happened.
 --   `expectedConsumesTurn` matches every constructor **without** a wildcard and
@@ -5140,6 +5234,7 @@ expectedConsumesTurn cmd = case cmd of
     UnlockCmd _        -> True
     TakeFromCmd _ _    -> True
     PutInCmd _ _       -> True
+    GiveCmd _ _        -> True   -- B7: handing an item to an NPC is an action
     DriveToCmd _       -> True
     WaitCmd            -> True
     RefuelCmd _        -> True
@@ -8773,6 +8868,9 @@ main = do
         , runTest "container take/put: scope, capacity, nesting, limit (4.4)" testContainerTakePut
         , runTest "topic table: ask/tell runs effects (4.5)" testTopics
         , runTest "on_talk trigger fires on ask/tell (4.5)" testOnTalkTriggerFires
+        , runTest "npc possession: take from / give to (B7)" testNpcTakeGive
+        , runTest "npc possession: examine + snapshot visibility (B7)" testNpcCarriedVisibility
+        , runTest "npc possession: MoveEntity honours the carrier (B7)" testMoveEntityCarriedByActor
         , runTest "ActorHas predicate for player, NPC and device entity (W4)" testActorHasPredicate
         , runTest "Mount and Unmount effects move item location (W4)" testMountAndUnmountEffects
         , runTest "device examine shows description and mounted item (W4)" testDeviceInteractionExamine

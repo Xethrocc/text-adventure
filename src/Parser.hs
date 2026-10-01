@@ -92,6 +92,7 @@ data Command
     | UnlockCmd String           -- ^ 4.4: unlock a container
     | TakeFromCmd String String  -- ^ 4.4: take X from Y
     | PutInCmd String String     -- ^ 4.4: put X in Y
+    | GiveCmd String String      -- ^ B7: give X to <npc>
     | DriveToCmd String          -- ^ drive the current vehicle to a station
     | WaitCmd                    -- ^ advance an AutomaticRoute vehicle
     | RefuelCmd String           -- ^ refuel a vehicle (fuel item used via interactions)
@@ -337,6 +338,11 @@ parseSimpleCommandWith defs tokens input = case tokens of
         PutInCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
     "lege" : rest | Just (x, y) <- splitPrep ["in"] rest ->
         PutInCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
+    -- B7: give X to <npc> (NPC possession)
+    "give" : rest | Just (x, y) <- splitPrep ["to", "an", "zu"] rest ->
+        GiveCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
+    "gib"  : rest | Just (x, y) <- splitPrep ["to", "an", "zu"] rest ->
+        GiveCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
     -- Complex parsing (supports multi-word targets with stop-word stripping)
     "look"  : "at"   : targetParts | not (null targetParts) -> Interact VLookAt (unwords (safeStripStopWords targetParts))
     "pick"  : "up"   : targetParts | not (null targetParts) -> Interact VTake (unwords (safeStripStopWords targetParts))
@@ -560,6 +566,7 @@ extractCommandArgs cmd = case cmd of
     UnlockCmd t           -> ("unlock", t, words t)
     TakeFromCmd x y       -> ("take", x ++ " " ++ y, words (x ++ " " ++ y))
     PutInCmd x y          -> ("put", x ++ " " ++ y, words (x ++ " " ++ y))
+    GiveCmd x y           -> ("give", x ++ " " ++ y, words (x ++ " " ++ y))
     EquipCmd t            -> ("equip", t, words t)
     UnequipCmd t          -> ("unequip", t, words t)
     UnequipAllCmd         -> ("unequip", "all", ["all"])
@@ -669,7 +676,11 @@ findScopeItem targetStr state =
     scopeItems = visibleItemsAt (InRoom (currentRoom (save state))) state
                 ++ getItemsInLocation (CarriedBy ActorPlayer) state
 
--- | 4.4: the container holds as many items as its capacity allows.
+-- | B7: resolve an NPC target in the current room by id, name or keyword
+--   (same matching as combat/dialogue targets).
+findNpcTarget :: String -> GameState -> Maybe NPCDef
+findNpcTarget targetStr state =
+    find (matchesNPCTarget targetStr) (getNPCsInRoom (currentRoom (save state)) state)
 containerFull :: String -> GameState -> Bool
 containerFull cid state =
     case containerCapacityOf cid state of
@@ -1073,7 +1084,19 @@ dispatchCommandEv (UnlockCmd t) state =
 --   looked up inside Y, so a closed container reports "closed", not "missing").
 dispatchCommandEv (TakeFromCmd x y) state =
     case findContainerRef y state of
-        Nothing -> (state, evMsg "container.not_a_container" [("target", y)])
+        Nothing -> case findNpcTarget y state of
+            -- B7: not a container — maybe an NPC carries the item.
+            Nothing -> (state, evMsg "container.not_a_container" [("target", y)])
+            Just npc ->
+                case [ i | i <- getItemsInLocation (CarriedBy (ActorNPC (npcId npc))) state
+                         , matchesItemTarget x i ] of
+                    []      -> (state, evMsg "npc.no_item" [("item", x), ("npc", npcName npc)])
+                    (it : _)
+                        | inventoryFull state -> (state, evMsg "inventory.full" [])
+                        | otherwise ->
+                            ( relocateItem (itemId it) (CarriedBy ActorPlayer) state
+                            , evMsg "npc.took_from"
+                                [ ("item", itemName it), ("npc", npcName npc) ] )
         Just cid
             | not (containerChainOpen cid state) ->
                 (state, evMsg "container.is_locked" [("name", containerName cid state)])
@@ -1088,6 +1111,19 @@ dispatchCommandEv (TakeFromCmd x y) state =
                             ( relocateItem iId (CarriedBy ActorPlayer) state
                             , evMsg "container.took_from"
                                 [ ("item", x), ("name", containerName cid state) ] )
+
+-- | B7: `give X to Y` — hand a carried item to an NPC (who then carries it;
+--   `take X from <npc>` retrieves it).
+dispatchCommandEv (GiveCmd x y) state =
+    case findNpcTarget y state of
+        Nothing -> (state, evMsg "target.not_seen" [("target", y)])
+        Just npc ->
+            case [ i | i <- getItemsInLocation (CarriedBy ActorPlayer) state
+                     , matchesItemTarget x i ] of
+                []      -> (state, evMsg "target.not_carried" [("target", x)])
+                (it : _) ->
+                    ( relocateItem (itemId it) (CarriedBy (ActorNPC (npcId npc))) state
+                    , evMsg "npc.gave_to" [("item", itemName it), ("npc", npcName npc)] )
 
 -- | 4.4: `put X in Y` — one item into an open container (capacity checked).
 dispatchCommandEv (PutInCmd x y) state =
@@ -1524,9 +1560,20 @@ interactNpc verb npc maybeNpcState targetStr state =
                 (state, evMsg "npc.dead_silent" [("npc", npcName npc)])
             | verb == VTalk -> talkTo npc maybeNpcState state
             | verb == VAttack -> executeAttack npc maybeNpcState targetStr state
-            | verb == VLookAt -> (state, lookWithArtEv (npcAscii npc) state (resolveCondText (npcDescription npc) state))
+            | verb == VLookAt ->
+                ( state
+                , joinEv (lookWithArtEv (npcAscii npc) state (resolveCondText (npcDescription npc) state))
+                         (npcCarriedEv nId state) )
             | hasOnCommandTrigger verb state -> (state, [])
             | otherwise -> (state, evMsg "npc.cant_do" [("npc", npcName npc)])
+
+-- | B7: the carried-items line when looking at an NPC (mirrors the device
+--   "Mounted:" line; hidden items need discovery like everywhere else).
+npcCarriedEv :: NPCID -> GameState -> [OutputEvent]
+npcCarriedEv nId state =
+    case getItemsInLocation (CarriedBy (ActorNPC nId)) state of
+        []     -> []
+        items  -> evMsg "npc.carries" [("items", intercalate ", " (map itemName items))]
 
 -- | Execute interaction on a vehicle.
 interactVehicle :: Verb -> VehicleDef -> String -> GameState -> (GameState, [OutputEvent])

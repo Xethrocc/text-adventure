@@ -1192,6 +1192,7 @@ minItem iid = AItem
     , aiCapacity = Nothing, aiPortable = Nothing
     , aiTakeFailure = Nothing
     , aiInContainer = Nothing
+    , aiCarriedBy = Nothing
     }
 
 advWithItem :: AItem -> Adventure
@@ -3603,6 +3604,13 @@ tests =
     , ("say_node compiles to set_var dialog_node (4.5)", testSayNodeDialogEndSugar)
     , ("barks: compile to turn triggers with cooldown (4.5)", testBarkTriggerSugar)
     , ("on_talk: compiles to talk.<npc>-trigger (4.5)", testOnTalkTriggerSugar)
+    -- B7: NPC possession
+    , ("carried_by: compiles to CarriedBy on the npc (B7)", testCarriedByCompiles)
+    , ("carried_by: unknown npc is a hard error (B7)", testCarriedByUnknownNpcFails)
+    , ("carried_by: with in_container is a conflict error (B7)", testCarriedByConflictFails)
+    , ("give: string and object form compile (B7)", testGiveToSugar)
+    , ("give: unknown to-npc is a hard error (B7)", testGiveToUnknownNpcFails)
+    , ("known keys: carried_by and capacity warn nowhere (B7)", testNpcPossessionKnownKeysClean)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -5574,6 +5582,7 @@ minItemKey iid = AItem
     , aiCapacity = Nothing, aiPortable = Just True
     , aiTakeFailure = Nothing
     , aiInContainer = Nothing
+    , aiCarriedBy = Nothing
     }
 
 -- | Minimal usable ANPC for pool entries. Map.empty
@@ -5638,6 +5647,108 @@ testOnTalkTriggerSugar = do
             r3 <- expectEqual [E.SendMessage "Der Waechter grunzt."] (E.trEffects tt)
             r4 <- expectEqual 0 (E.trCooldown tt)
             pure (r1 && r2 && r3 && r4)
+
+-- ===========================================================================
+-- B7: NPC possession
+-- ===========================================================================
+
+-- | `carried_by:` compiles to CarriedBy (ActorNPC …) in the start item states;
+--   "player" is the engine's actor-string alias for the player.
+testCarriedByCompiles :: IO Bool
+testCarriedByCompiles = do
+    let npc = (minNpcKey "waechter") { anLocation = "loc_0" }
+        item = (minItem "schluessel") { aiCarriedBy = Just "waechter" }
+        brot = (minItem "brot") { aiCarriedBy = Just "player" }
+        adv = (advWithItem item) { advNPCs = [npc], advItems = [item, brot] }
+    case compileAdventure adv of
+        Left errs -> expectTrue ("carried_by compile: " ++ issuesText errs) False
+        Right cr -> do
+            let locOf i = fmap E.itemLocation (Map.lookup i (E.itemStates (crSave cr)))
+            r1 <- expectEqual (Just (E.CarriedBy (E.ActorNPC "waechter"))) (locOf "schluessel")
+            r2 <- expectEqual (Just (E.CarriedBy E.ActorPlayer)) (locOf "brot")
+            pure (r1 && r2)
+
+-- | `carried_by:` naming an unknown npc is a hard error (UnknownNpc).
+testCarriedByUnknownNpcFails :: IO Bool
+testCarriedByUnknownNpcFails = do
+    let item = (minItem "schluessel") { aiCarriedBy = Just "niemand" }
+    case compileAdventure (advWithItem item) of
+        Left errs -> expectTrue ("unknown npc error: " ++ issuesText errs)
+                        (any (\i -> ciCode i == "UnknownNpc") errs)
+        Right _ -> expectTrue "expected a compile error" False
+
+-- | `carried_by:` together with `in_container:` is a hard error
+--   (CarriedByConflict — one item can only start in one place).
+testCarriedByConflictFails :: IO Bool
+testCarriedByConflictFails = do
+    let npc = (minNpcKey "waechter") { anLocation = "loc_0" }
+        item = (minItem "schluessel") { aiCarriedBy = Just "waechter", aiInContainer = Just "kiste" }
+        adv = (advWithItem item) { advNPCs = [npc] }
+    case compileAdventure adv of
+        Left errs -> expectTrue ("conflict error: " ++ issuesText errs)
+                        (any (\i -> ciCode i == "CarriedByConflict") errs)
+        Right _ -> expectTrue "expected a compile error" False
+
+-- | The `give:` effect: the string form still targets the player (byte-compat),
+--   the object form ({item, to}) can hand items to NPCs. Both YAML shapes.
+testGiveToSugar :: IO Bool
+testGiveToSugar = do
+    r1 <- expectEqual (E.MoveEntity "schluessel" (E.CarriedBy E.ActorPlayer))
+                      (compileAActionOutcome (AOGiveItem "schluessel"))
+    r2 <- expectEqual (E.MoveEntity "schluessel" (E.CarriedBy (E.ActorNPC "waechter")))
+                      (compileAActionOutcome (AOGiveTo "schluessel" "waechter"))
+    r3 <- expectEqual (Just (AOGiveItem "schluessel"))
+                      (Aeson.decode (BLC.pack "{\"give\": \"schluessel\"}"))
+    r4 <- expectEqual (Just (AOGiveTo "schluessel" "waechter"))
+                      (Aeson.decode (BLC.pack "{\"give\": {\"item\": \"schluessel\", \"to\": \"waechter\"}}"))
+    pure (r1 && r2 && r3 && r4)
+
+-- | `give: {item, to}` naming an unknown npc is a hard error (UnknownNpc).
+testGiveToUnknownNpcFails :: IO Bool
+testGiveToUnknownNpcFails = do
+    let item = (minItem "schluessel") { aiOnTake = Just [AOGiveTo "schluessel" "niemand"] }
+    case compileAdventure (advWithItem item) of
+        Left errs -> expectTrue ("give.to unknown npc: " ++ issuesText errs)
+                        (any (\i -> ciCode i == "UnknownNpc") errs)
+        Right _ -> expectTrue "expected a compile error" False
+
+-- | `carried_by:` and `capacity:` are known item keys — no UnknownYamlKey
+--   (capacity was missing from knownKeys since 4.4, pinned here too).
+testNpcPossessionKnownKeysClean :: IO Bool
+testNpcPossessionKnownKeysClean = do
+    let yaml = unlines
+            [ "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Halle"
+            , "    desc: Eine Halle."
+            , "npcs:"
+            , "  - id: waechter"
+            , "    name: Waechter"
+            , "    location: loc_0"
+            , "items:"
+            , "  - id: schluessel"
+            , "    name: Schluessel"
+            , "    desc: Ein Schluessel."
+            , "    location: loc_0"
+            , "    carried_by: waechter"
+            , "  - id: kiste"
+            , "    name: Kiste"
+            , "    desc: Eine Kiste."
+            , "    location: loc_0"
+            , "    capacity: 3"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let keyWarns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
+                expectTrue ("expected 0 unknown key warnings, got " ++ show (length keyWarns)) (null keyWarns)
 
 main :: IO ()
 main = do

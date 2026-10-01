@@ -1,0 +1,42 @@
+name: NPC-Besitz Fixture
+start_room: halle
+
+rooms:
+  - id: halle
+    name: Wachhalle
+    desc: Die Halle der Stadtwache. Fackeln erhellen die steinernen Waende.
+    exits:
+      east: schatzkammer
+
+  - id: schatzkammer
+    name: Schatzkammer
+    desc: Ein kleiner Raum mit vergoldeten Waenden.
+    exits:
+      west: halle
+
+npcs:
+  - id: waechter
+    name: Waechter
+    desc: Ein streng aussehender Waechter mit wetterhartem Gesicht.
+    location: halle
+
+items:
+  # B7: startet in der Besitz des Waechters (carried_by:), nicht im Raum.
+  - id: schluessel
+    name: Schluessel
+    desc: Ein schwerer Schluessel aus Eisen.
+    location: halle
+    keys: [schluessel]
+    carried_by: waechter
+
+  - id: munze
+    name: Munze
+    desc: Eine Kupfermunze.
+    location: halle
+    keys: [munze, kupfermunze]
+
+  - id: kette
+    name: Goldkette
+    desc: Eine schimmernde Goldkette.
+    location: schatzkammer
+    keys: [kette, goldkette]

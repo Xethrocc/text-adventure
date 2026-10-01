@@ -143,6 +143,11 @@ catalogEntries =
     , ("npc.already_dead",     "The {npc} is already dead.")
     , ("npc.dead_silent",      "The {npc} is dead and says nothing.")
     , ("npc.cant_do",          "You can't do that to {npc}.")
+    -- -- NPC possession (B7) ------------------------------------------------
+    , ("npc.carries",          "\nCarrying: {items}.")
+    , ("npc.gave_to",          "You give the {item} to {npc}.")
+    , ("npc.no_item",          "You find no {item} on {npc}.")
+    , ("npc.took_from",        "You take the {item} from {npc}.")
     , ("disambiguate.prompt",  "Which do you mean: {names}?")
     , ("disambiguate.option",  "[{n}] {name}")
     -- -- combat --------------------------------------------------------------

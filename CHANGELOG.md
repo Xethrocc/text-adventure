@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### NPC-Besitz (B7)
+
+- **Autorenform**: `carried_by: <npc-id>` am Item (wie `in_container:`) — das Item startet
+  im Besitz eines NPCs (`CarriedBy (ActorNPC …)`). `carried_by: player` = Start im
+  Spielerinventar. Unbekannte NPC-IDs → harter Fehler `UnknownNpc`; `in_container:` +
+  `carried_by:` zusammen → harter Fehler `CarriedByConflict`.
+- **Befehle**: `take X from <npc>` (Bestehlen/Plündern, Zielauflösung erst Container,
+  dann NPC) und `give X to <npc>` / `gib X an <npc>` (Übergabe). Beide kosten einen Zug
+  (L13-Urteil `GiveCmd` = `True`).
+- **Sichtbarkeit**: `look at <npc>` zeigt getragene Items (`npc.carries`);
+  Protokoll-Snapshot `NpcSummary.carried` (leer = Feld entfällt, byte-kompatibel).
+- **Effekte**: `give: {item: X, to: <actor>}` (Objekt-Form) überreicht an NPCs — die
+  String-Form `give: <item>` bleibt bei „an den Spieler“ (byte-kompatibel).
+  `MoveEntity (CarriedBy <actor>)` respektiert jetzt den Ziel-Aktor (vorher fest Spieler).
+- **Bugfix (4.4 nachgeholt)**: `capacity:` fehlte in `knownKeys EntItem` und erzeugte
+  fälschlich `UnknownYamlKey`-Warnungen.
+- **Messages**: 4 neue Schlüssel (`npc.carries`, `npc.gave_to`, `npc.no_item`,
+  `npc.took_from`); Katalog jetzt **232** Keys.
+- **Tests**: +3 Engine- (**431**) + 6 Worldbuilder-Tests (**209**); Fixture
+  `npc-besitz.yaml` in CI-Stufe 4 (49 Playthroughs).
+
 ### Konversation (4.5)
 
 - **Topic-Tabelle**: `topics:` am NPC — `ask <npc>` / `tell <npc>` über ein Thema führen den

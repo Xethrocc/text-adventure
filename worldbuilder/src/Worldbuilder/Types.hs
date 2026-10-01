@@ -531,6 +531,7 @@ data AItem = AItem
     , aiTakeFailure :: Maybe String
     , aiInContainer :: Maybe String    -- ^ container item id; when set, item starts inside it
     , aiCapacity :: Maybe Int        -- ^ 4.4: container capacity (count of items); Nothing = not a container
+    , aiCarriedBy :: Maybe String    -- ^ B7: npc id (or "player") — the item starts in this actor's possession
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AItem where
@@ -554,6 +555,7 @@ instance FromJSON AItem where
         <*> o .:? "take_failure"
         <*> o .:? "in_container"
         <*> o .:? "capacity"
+        <*> o .:? "carried_by"
 
 -- ---------------------------------------------------------------------------
 -- NPCs
@@ -1331,6 +1333,7 @@ data AActionOutcome
     | AOHealPlayer Int
     | AODamagePlayer Int
     | AOGiveItem String
+    | AOGiveTo String String         -- ^ B7: give: { item: <item>, to: <actor> }
     | AOConsumeItem String
     | AOSetFlag String String
     | AOStartQuest String
@@ -1540,7 +1543,11 @@ instance FromJSON AActionOutcome where
         <|> (AOMessage <$> o .: "text")
         <|> (AOHealPlayer <$> o .: "heal")
         <|> (AODamagePlayer <$> o .: "damage")
-        <|> (AOGiveItem <$> o .: "give")
+        <|> (do gv <- o .: "give"
+                case gv of
+                    String s    -> pure (AOGiveItem (T.unpack s))
+                    Object gObj -> AOGiveTo <$> gObj .: "item" <*> (gObj .:? "to" .!= "player")
+                    _           -> fail "give must be an item id or { item: <item>, to: <actor> }")
         <|> (AOConsumeItem <$> o .: "consume")
         <|> (AOSetFlag <$> o .: "set_flag" <*> o .:? "val" .!= "true")
         <|> (AOStartQuest <$> o .: "start_quest")
@@ -1693,6 +1700,7 @@ knownKeys EntItem = Set.fromList
     [ "id", "name", "desc", "description", "ascii", "keys", "tags"
     , "location", "state", "slot", "effects", "hidden", "discover"
     , "props", "on_take", "verb_map", "portable", "take_failure", "in_container"
+    , "capacity", "carried_by"
     ]
 knownKeys EntNPC = Set.fromList
     [ "id", "name", "desc", "description", "ascii", "keys", "location"

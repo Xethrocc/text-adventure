@@ -381,6 +381,7 @@ compileAdventure adv =
         ambientErrs = checkAmbientRates gw
         clipErrs = checkClips (advClips adv) gw
         procCallErrs = checkProcRefs (advProcedures adv) adv
+        possessionErrs = checkNpcPossessionRefs adv
 
 
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
@@ -419,6 +420,7 @@ compileAdventure adv =
                     ++ progErrs
                     ++ progConflictErrs
                     ++ progVarErrs
+                    ++ possessionErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -2414,14 +2416,20 @@ compileItemStates items =
     in (errors, states)
 
 compileItemStateSafe :: AItem -> Either [CompileIssue] (String, E.ItemState)
-compileItemStateSafe i = Right (aiId i, E.ItemState
-    { E.itemLocation = case aiInContainer i of
-        Just cid -> E.InContainer cid
-        Nothing  -> E.InRoom (aiLocation i)
-    , E.itemStatus = aiState i
-    , E.itemProps = aiProps i
-    , E.itemDiscovered = not (aiHidden i)
-    })
+compileItemStateSafe i
+    | isJust (aiInContainer i), isJust (aiCarriedBy i) =
+        Left [ ciError ("items." ++ aiId i) "CarriedByConflict"
+                ("item '" ++ aiId i ++ "' sets both 'in_container' and 'carried_by' — it can only start in one place") ]
+    | otherwise = Right (aiId i, E.ItemState
+        { E.itemLocation = case aiInContainer i of
+            Just cid -> E.InContainer cid
+            Nothing  -> case aiCarriedBy i of
+                Just a  -> E.CarriedBy (compileActorRef a)
+                Nothing -> E.InRoom (aiLocation i)
+        , E.itemStatus = aiState i
+        , E.itemProps = aiProps i
+        , E.itemDiscovered = not (aiHidden i)
+        })
 
 compileSlot :: Maybe String -> Either String (Maybe E.EquipSlot)
 compileSlot Nothing = Right Nothing
@@ -2669,6 +2677,7 @@ compileAActionOutcome ao = case ao of
     AOHealPlayer n -> E.ModifyValue E.VRPlayerHealth n
     AODamagePlayer n -> E.ModifyValue E.VRPlayerHealth (-n)
     AOGiveItem i -> E.MoveEntity i (E.CarriedBy E.ActorPlayer)
+    AOGiveTo i tgt -> E.MoveEntity i (E.CarriedBy (compileActorRef tgt))
     AOConsumeItem i -> E.MoveEntity i E.Removed
     AOSetFlag f v -> E.SetValue (E.VRFlag f) (E.EVString v)
     AOStartQuest q -> E.QuestOp E.StartQuest q
@@ -3194,6 +3203,25 @@ compileSandboxZones zones =
 -- ---------------------------------------------------------------------------
 
 -- | Phase 0.4: warn when two entities (items, NPCs) placed in the same room share a keyword.
+-- | B7: NPC possession references must resolve — `carried_by:` on items and
+--   `give: {item: …, to: …}` outcomes may only name "player" or an existing
+--   NPC id (the engine's actor-string convention).
+checkNpcPossessionRefs :: Adventure -> [CompileIssue]
+checkNpcPossessionRefs adv =
+    concatMap itemGo (advItems adv) ++ concatMap outcomeGo (allAOutcomes adv)
+  where
+    npcIds = Set.fromList (map anId (advNPCs adv))
+    bad a = a /= "player" && a `Set.notMember` npcIds
+    itemGo i =
+        [ ciError ("items." ++ aiId i ++ ".carried_by") "UnknownNpc"
+            ("item '" ++ aiId i ++ "' starts on unknown npc '" ++ a ++ "'")
+        | Just a <- [aiCarriedBy i], bad a ]
+    outcomeGo (AOGiveTo _ tgt) =
+        [ ciError "outcomes.give.to" "UnknownNpc"
+            ("give target '" ++ tgt ++ "' is not 'player' or an existing npc id")
+        | bad tgt ]
+    outcomeGo _ = []
+
 checkKeywordCollisions :: Adventure -> [CompileIssue]
 checkKeywordCollisions adv =
     let roomItems =
@@ -3201,6 +3229,7 @@ checkKeywordCollisions adv =
             | i <- advItems adv
             , aiLocation i /= "inventory"
             , isNothing (aiInContainer i)
+            , isNothing (aiCarriedBy i)
             , kw <- nub (map (map toLower . trimSpaces) (aiKeywords i))
             , not (null kw)
             ]
@@ -3394,13 +3423,14 @@ checkDarkRoomDeadEnds adv =
             any (\i -> "lightsource" `elem` aiTags i
                        && aiLocation i /= "inventory"
                        && isNothing (aiInContainer i)
+                       && isNothing (aiCarriedBy i)
                        && aiLocation i `Set.member` reachable
                        && canPickUpLightsource i) items
 
         checkRoom r
             | "dark" `elem` arTags r =
                 let rId = arId r
-                    rItems = [ i | i <- items, aiLocation i == rId, isNothing (aiInContainer i) ]
+                    rItems = [ i | i <- items, aiLocation i == rId, isNothing (aiInContainer i), isNothing (aiCarriedBy i) ]
                     hasItems = not (null rItems)
                     hasFeelable = any (\i -> "feelable" `elem` aiTags i) rItems
                     hasLightFlag = maybe False (not . null) (arLightFlag r)

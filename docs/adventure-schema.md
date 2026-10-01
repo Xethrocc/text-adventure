@@ -394,7 +394,8 @@ description:
 | `"text"` oder `{ msg: "Hallo" }` | SendMessage |
 | `{ heal: 10 }` | ModifyValue VRPlayerHealth +10 |
 | `{ damage: 5 }` | ModifyValue VRPlayerHealth -5 |
-| `{ give: item_id }` | MoveEntity to CarriedBy "player" |
+| `{ give: item_id }` | MoveEntity to CarriedBy "player" (String-Form) |
+| `{ give: {item: id, to: actor} }` | MoveEntity to CarriedBy actor (B7: `"player"` oder NPC-ID) |
 | `{ consume: item_id }` | MoveEntity Removed |
 | `{ set_flag: name, val: "true" }` | SetValue (VRFlag name) "true" |
 | `{ if: { has_flag: name }, then: [...], else: [...] }` | Conditional HasFlag — Flag-Test (ersetzt das entfernte, nie dekodierbare `check_flag`, P1-18) |
@@ -508,11 +509,12 @@ Conditions represent active status effects or countdown timers on the player:
   - clear_condition: bomb_fuse
   ```
 
-Item-Felder für Container:
+Item-Felder für Container und NPC-Besitz:
 
 | Feld | Typ | Beschreibung |
 |---|---|---|
 | `in_container` | String | ID des Container-Items; das Item startet darin (`InContainer`). Mit `search <container>` herausnehmbar. |
+| `carried_by` | String | B7: NPC-ID (oder `"player"`); das Item startet in dessen Besitz (`CarriedBy`). Nicht zusammen mit `in_container`. |
 
 ---
 
@@ -2217,6 +2219,53 @@ beliebig tief (`look` zeigt den Inhalt offener Container).
   Überschreiten verweigert `take`/`take from` (`inventory.full`).
 - Die Kapazität (`capacity:`) zählt die **direkt** enthaltenen Items (zählbasiert, kein
   Gewicht/Volumen).
+
+## NPC-Besitz (B7)
+
+NPCs können Items **tragen** — der Wächter hat den Schlüssel, die Händlerin ihre Ware,
+der tote Räuber seine Beute. Der Zustand lebt wie bei Containern in den Item-Locations:
+`CarriedBy (ActorNPC …)`. **Kein neues SaveState-Feld** (Zero-New-Fields-Vertrag).
+
+```yaml
+items:
+  - id: schluessel
+    name: Schluessel
+    location: halle          # Raum, in dem der NPC steht (Scope/Keyword-Prüfung)
+    carried_by: waechter     # startet im Besitz des Waechters
+```
+
+**Autorenform:** `carried_by: <npc-id>` am Item (wie `in_container:`) — ein Item startet
+höchstens **einer** Quelle: `in_container:` + `carried_by:` zusammen ist ein harter
+Compiler-Fehler (`CarriedByConflict`). `carried_by: player` ist erlaubt (= Start im
+Spielerinventar). Unbekannte NPC-IDs sind ein harter Fehler (`UnknownNpc`).
+
+**Befehle** (gebaut, immer verfügbar):
+
+- `take X from <npc>` — nimmt ein getragenes Item an sich (Bestehlen, Leichen plündern;
+  `inventory.full` wird geprüft). Hat der NPC kein passendes Item: `npc.no_item`.
+- `give X to <npc>` / `gib X an <npc>` — übergibt ein eigenes Item; der NPC trägt es danach.
+  Beide kosten einen Zug (L13-Urteil `GiveCmd` = `True`).
+
+Reihenfolge der Zielauflösung bei `take X from Y`: erst Container (`findContainerRef`),
+dann NPC im Raum. Ein toter NPC bleibt ein gültiger Träger („die Leiche behält ihre
+Beute“).
+
+**Sichtbarkeit:** `look at <npc>` zeigt die getragenen Items als Katalog-Zeile
+(`npc.carries`, „Carrying: …“ — wie die „Mounted:“-Zeile bei `devices:`). Versteckte Items
+(`hidden: true`) erscheinen erst nach `discover`. Das Protokoll-Snapshot führt die Liste im
+`carried`-Feld von `NpcSummary` (leer = Feld wird weggelassen, byte-kompatibel).
+
+**Effekte:** `give: <item>` gibt weiterhin **an den Spieler** (byte-kompatibel); die
+Objekt-Form `give: {item: X, to: <npc-id>}` überreicht an NPCs (Validierung wie
+`carried_by:`). `mount:`/`unmount:` bleiben die Geräte-Vokabel (W4). `move_npc:` bewegt
+NPCs samt Besitz (Items hängen am Actor, nicht am Raum).
+
+**Diebstahl-Sperren** setzt der Autor per Veto-Regeln (`on: before` + `block:`, siehe
+Phase 2.2) — die Before-Phase läuft für alle Kommandos, `cmd.verb` ist `take` bzw. `give`.
+
+**Grenzen (bewusst):** keine NPC-**Ausrüstung** (`EquippedBy ActorNPC` ist im
+Zustandsmodell vorgesehen, aber noch nicht autorenseitig), kein automatisches Fallenlassen
+beim Tod, kein `take all from <npc>`.
 
 ## Geschlossene Mengen-Operationen (B3)
 
