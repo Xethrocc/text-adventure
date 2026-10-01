@@ -8,6 +8,7 @@ import Worldbuilder.Generate (parseTemplate, validateTemplate, generateDungeon, 
 import Worldbuilder.Rng (deriveRuntimeSeed)
 import Worldbuilder.Run (RunConfig (..), runRunner)
 import Worldbuilder.Test (runContentTests)
+import Worldbuilder.Fuzz (FuzzConfig (..), defaultFuzzConfig, runFuzzer)
 import Worldbuilder.Export (collectAssetRefs, bundleFiles, exportBundle, makeZip)
 
 -- JSON encoding (output only)
@@ -47,6 +48,7 @@ runCLI = do
         ("run" : path : rest)      -> runCmd path rest
         ("check" : path : _)       -> checkStats path
         ("test" : path : rest)     -> testCmd path rest
+        ("fuzz" : path : rest)     -> fuzzCmd path rest
         _                          -> putStrLn usage
 
 -- | B1: run the authored `tests:` content tests of an adventure. An
@@ -59,6 +61,27 @@ testCmd path rest = do
     failures <- runContentTests path mFilter
     unless (failures == 0) exitFailure
 
+-- | B5: run the content fuzzer against an adventure. Deterministic per seed;
+--   every finding is reproducible via --seed/--runs/--steps or --replay.
+fuzzCmd :: FilePath -> [String] -> IO ()
+fuzzCmd path rest = do
+    let defaults = defaultFuzzConfig path
+        intFlag k d = maybe d id (lookupFlag k rest >>= readIntArg)
+        cfg = defaults
+            { fcSeed      = maybe (fcSeed defaults) id (lookupFlag "--seed" rest >>= readMaybeW64)
+            , fcRuns      = intFlag "--runs" (fcRuns defaults)
+            , fcSteps     = intFlag "--steps" (fcSteps defaults)
+            , fcTimeoutMs = intFlag "--timeout-ms" (fcTimeoutMs defaults)
+            , fcWindow    = intFlag "--window" (fcWindow defaults)
+            , fcReplay    = lookupFlag "--replay" rest
+            }
+    findings <- runFuzzer cfg
+    unless (findings == 0) exitFailure
+  where
+    readIntArg s = case reads s of
+        [(n, "")] | n >= (0 :: Integer) -> Just (fromIntegral n :: Int)
+        _                               -> Nothing
+
 usage :: String
 usage = unlines
     [ "worldbuilder - text-adventure authoring toolchain"
@@ -69,6 +92,13 @@ usage = unlines
     , "                                              --force writes even if validation has issues"
     , "  worldbuilder check <adventure.json>         Print content statistics"
     , "  worldbuilder test <adventure.json> [name]   Run the authored content tests (`tests:` section)"
+    , ""
+    , "  worldbuilder fuzz <adventure.json> [--seed N] [--runs N] [--steps N]"
+    , "                                   [--timeout-ms N] [--window N] [--replay <file>]"
+    , "                                              B5: seeded fuzz runs (crashes, non-terminating"
+    , "                                              steps, frozen loops). Findings print their exact"
+    , "                                              command sequence; --replay feeds one command per"
+    , "                                              line from a file instead of generated runs."
     , ""
     , "  worldbuilder export <adventure.json> -o <dir> [--with-engine] [--zip] [--force]"
     , "                                              Bundle a finished game: world.json + save.json"

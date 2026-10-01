@@ -20,6 +20,8 @@ import Worldbuilder.Types
 import Worldbuilder.Locate (lineForPath)
 import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome, allWorldEffects)
 import Worldbuilder.Test (checkMarkers, executeContentTest)
+import Worldbuilder.Fuzz (FindingKind (..), FuzzFinding (..), FuzzVocab (..),
+                          frozenWindow, fuzzRun, fuzzVocab, genInputs, runSeedFor)
 import Worldbuilder.Export (collectAssetRefs, bundleFiles, exportBundle, launcherSh, launcherBat)
 import Worldbuilder.ParseFile (parseAdventureFile)
 import Worldbuilder.Rng
@@ -3624,6 +3626,15 @@ tests =
     , ("dead content: unsatisfiable conditions (B4)", testUnsatisfiableConditions)
     , ("dead content: exits that can never be taken (B4)", testDeadExits)
     , ("dead content: rooms unreachable from start (B4)", testUnreachableRooms)
+    -- B5: Content-Fuzzer
+    , ("fuzz: generated stream is seed-deterministic (B5)", testFuzzGenDeterministic)
+    , ("fuzz: vocabulary comes from the world (B5)", testFuzzVocabExtraction)
+    , ("fuzz: run seeds derive per run index (B5)", testFuzzRunSeeds)
+    , ("fuzz: frozen-window detector rules (B5)", testFuzzFrozenWindow)
+    , ("fuzz: engine exceptions are crash findings (B5)", testFuzzCrashDetection)
+    , ("fuzz: non-terminating steps are hang findings (B5)", testFuzzHangDetection)
+    , ("fuzz: veto soft-lock is a loop finding (B5)", testFuzzLoopEndToEnd)
+    , ("fuzz: clean world fuzzes without findings (B5)", testFuzzSmoke)
     ]
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
@@ -6010,6 +6021,154 @@ testUnreachableRooms = do
     r4 <- expectEqual (Right []) (runCase [viaSetExitA, roomB, roomC])
     r5 <- expectEqual (Right ["rooms.b", "rooms.c"]) (runCase [minRoom "a", roomBtoC, roomC])
     pure (r1 && r2 && r3 && r4 && r5)
+
+-- ---------------------------------------------------------------------------
+-- B5: content fuzzer
+-- ---------------------------------------------------------------------------
+
+-- | B5 helper: a tiny compiled world (one room, one item) for fuzzer runs.
+fuzzFixtureWorld :: IO (Maybe (E.GameWorld, E.SaveState))
+fuzzFixtureWorld = do
+    let lampe = (minItem "lampe") { aiLocation = "a" }
+        adv = (minAdventure (minRoom "a")) { advItems = [lampe] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn ("  compile: " ++ issuesText errs)
+            pure Nothing
+        Right cr  -> pure (Just (crWorld cr, crSave cr))
+
+-- | The generated stream is a pure function of the seed (B5): same seed, same
+--   200 inputs; a different seed diverges.
+testFuzzGenDeterministic :: IO Bool
+testFuzzGenDeterministic = do
+    let vocab = FuzzVocab
+            { fvActions = ["look", "take", "use"]
+            , fvNouns   = ["lampe", "wolf"]
+            , fvDirs    = ["north", "south"] }
+        sampleA = take 200 (genInputs 42 vocab)
+        sampleB = take 200 (genInputs 42 vocab)
+        sampleC = take 200 (genInputs 43 vocab)
+    r1 <- expectEqual sampleA sampleB
+    r2 <- expectTrue "different seeds produce different streams" (sampleA /= sampleC)
+    pure (r1 && r2)
+
+-- | The generator draws its target words from the compiled world (B5).
+testFuzzVocabExtraction :: IO Bool
+testFuzzVocabExtraction = do
+    let lampe = (minItem "lampe") { aiLocation = "a" }
+        wolf  = (minNpcKey "wolf") { anLocation = "a" }
+        adv   = (minAdventure (minRoom "a")) { advItems = [lampe], advNPCs = [wolf] }
+    case compileAdventure adv of
+        Left errs -> expectTrue ("compile: " ++ issuesText errs) False
+        Right cr -> do
+            let vocab = fuzzVocab (crWorld cr)
+                sample = take 300 (genInputs 7 vocab)
+            r1 <- expectTrue "item name is in the vocabulary" ("lampe" `elem` fvNouns vocab)
+            r2 <- expectTrue "npc name is in the vocabulary" ("wolf" `elem` fvNouns vocab)
+            r3 <- expectTrue "stream uses world nouns"
+                    (any ("lampe" `isInfixOf`) sample && any ("wolf" `isInfixOf`) sample)
+            r4 <- expectTrue "stream uses directions" (any (elem "north" . words) sample)
+            pure (r1 && r2 && r3 && r4)
+
+-- | Run seeds derive from the base seed plus the run index (B5): independent
+--   of how many runs ran before, reproducible per index.
+testFuzzRunSeeds :: IO Bool
+testFuzzRunSeeds = do
+    r1 <- expectTrue "run seeds differ per index" (runSeedFor 42 1 /= runSeedFor 42 2)
+    r2 <- expectEqual (runSeedFor 42 3) (runSeedFor 42 3)
+    r3 <- expectTrue "base seed influences run seeds" (runSeedFor 42 1 /= runSeedFor 43 1)
+    pure (r1 && r2 && r3)
+
+-- | The frozen-window detector (B5): identical state key over k steps, at
+--   least one turn-shaped command and at least three distinct inputs.
+testFuzzFrozenWindow :: IO Bool
+testFuzzFrozenWindow = do
+    let quartet = [("take x", "S1", True), ("take y", "S1", True)
+                  , ("take z", "S1", True), ("look", "S1", False)]
+        frozen = take 25 (cycle quartet)
+        noTurn = [ (i, k, False) | (i, k, _) <- frozen ]
+        changing = take 25 (cycle [("take x", "S1", True), ("take y", "S2", True)])
+        oneInput = replicate 25 ("take x", "S1", True)
+    r1 <- expectTrue "frozen window with turn command fires" (frozenWindow 25 frozen)
+    r2 <- expectTrue "no turn-shaped command: no window" (not (frozenWindow 25 noTurn))
+    r3 <- expectTrue "changing keys: no window" (not (frozenWindow 25 changing))
+    r4 <- expectTrue "window shorter than k: no window" (not (frozenWindow 25 (take 24 frozen)))
+    r5 <- expectTrue "one spammed input: no window" (not (frozenWindow 25 oneInput))
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Crash detection (B5): an exception raised inside the step is reported as
+--   a crash finding naming the exception.
+testFuzzCrashDetection :: IO Bool
+testFuzzCrashDetection = do
+    m <- fuzzFixtureWorld
+    case m of
+        Nothing -> pure False
+        Just (gw, sv) -> do
+            let broken = sv { E.turnCount = error "kaboom" }
+            found <- fuzzRun 1000000 5 25 1 99 gw broken ["take lampe", "go north"]
+            case found of
+                Just f -> do
+                    r1 <- expectEqual FCrash (ffKind f)
+                    r2 <- expectTrue ("detail names the exception: " ++ ffDetail f)
+                            ("kaboom" `isInfixOf` ffDetail f)
+                    pure (r1 && r2)
+                Nothing -> expectTrue "expected a crash finding" False
+
+-- | Hang detection (B5): a step that never returns is reported as a hang
+--   finding instead of blocking the run.
+testFuzzHangDetection :: IO Bool
+testFuzzHangDetection = do
+    m <- fuzzFixtureWorld
+    case m of
+        Nothing -> pure False
+        Just (gw, sv) -> do
+            let hangInt :: Int
+                hangInt = hangInt
+                hanging = sv { E.turnCount = hangInt }
+            found <- fuzzRun 200000 5 25 1 99 gw hanging ["take lampe", "go north"]
+            case found of
+                Just f  -> expectEqual FHang (ffKind f)
+                Nothing -> expectTrue "expected a hang finding" False
+
+-- | End-to-end loop finding (B5): a `before take` veto that never consumes a
+--   turn freezes the game — 25 steps without any state/turn progress must be
+--   reported as a loop finding at exactly the window boundary.
+testFuzzLoopEndToEnd :: IO Bool
+testFuzzLoopEndToEnd = do
+    let lampe = (minItem "lampe") { aiLocation = "a" }
+        blockTakes = ATrigger
+            { atId = "block_takes"
+            , atOn = "before take"
+            , atWhen = Nothing
+            , atEffects = [AOBlock (Just "nope") False]
+            , atOnce = False
+            , atCooldown = 0 }
+        adv = (minAdventure (minRoom "a")) { advItems = [lampe], advTriggers = [blockTakes] }
+    case compileAdventure adv of
+        Left errs -> expectTrue ("compile: " ++ issuesText errs) False
+        Right cr -> do
+            let blocked = take 30 (cycle ["take lampe", "take wolf", "take ding", "help"])
+            found <- fuzzRun 1000000 40 25 1 99 (crWorld cr) (crSave cr) blocked
+            case found of
+                Just f -> do
+                    r1 <- expectEqual FLoop (ffKind f)
+                    r2 <- expectEqual 25 (ffStep f)
+                    pure (r1 && r2)
+                Nothing -> expectTrue "expected a frozen-loop finding" False
+
+-- | A veto-free world can never freeze (turn-shaped commands always advance
+--   the clock) — a generated run over a clean world must stay clean (B5).
+testFuzzSmoke :: IO Bool
+testFuzzSmoke = do
+    m <- fuzzFixtureWorld
+    case m of
+        Nothing -> pure False
+        Just (gw, sv) -> do
+            let sample = take 80 (genInputs 42 (fuzzVocab gw))
+            found <- fuzzRun 1000000 80 25 1 42 gw sv sample
+            case found of
+                Nothing -> expectTrue "clean run" True
+                Just f  -> expectTrue ("unexpected finding: " ++ show f) False
 
 main :: IO ()
 main = do

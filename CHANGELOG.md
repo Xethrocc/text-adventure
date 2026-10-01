@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Content-Fuzzer (B5)
+
+- **`worldbuilder fuzz <adventure> [--seed N] [--runs N] [--steps N] [--timeout-ms N]
+  [--window N] [--replay <file>]`**: deterministische Zufalls-/Heuristiklaeufe
+  gegen ein kompiliertes Abenteuer (Befehle aus dem Weltvokabular, ~20%
+  Parser-Garbage). Drei Fund-Arten:
+  - **Absturz**: Exception im Parse-/Anwende-/Render-Pfad eines Schritts.
+  - **Haenger**: ein Schritt kehrt innerhalb des Timeouts nicht zurueck.
+  - **Endlosschleife**: `window` (Default 25) Schritte ohne jeden Fortschritt
+    (Zustand inkl. Zugzahl unveraendert, die `cmd.*`-Echos der Engine sind
+    ausgeblendet), obwohl mindestens ein Befehl zugfaehig war — die
+    Veto-Soft-Lock-Signatur.
+- **Reproduzierbarkeit**: gleicher Seed = gleiche Laeufe; jeder Fund nennt Seed,
+  Run, Schritt und die exakte Befehlsfolge — nachspielen per `--replay <datei>`
+  (eine Eingabe pro Zeile) oder per `--seed/--runs/--steps`.
+- **CI-Stufe 4c**: fester Seed 42 ueber alle gelieferten Abenteuer und Fixtures;
+  Funde lassen das Gate rot werden. Kein Engine-Risiko (Tuer III): die Engine
+  bleibt unangetastet, der Fuzzer treibt denselben reinen Schrittkern an wie
+  die Live-Schleife (`applyLoopCommandEv`).
+- **Tests**: +8 Worldbuilder-Tests (**225**) — inkl. Nachweis, dass alle drei
+  Fund-Arten wirklich feuern (Exception-Pfad, Timeout-Pfad, Veto-Soft-Lock).
+
 ### Regel-Diagnostik (B4)
 
 - **Vier Dead-Content-Diagnosen** im bestehenden Warnkanal (nicht fatal, stabile

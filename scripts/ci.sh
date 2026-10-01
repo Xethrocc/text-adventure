@@ -136,6 +136,19 @@ for name in procedures wissen kapitel krypta quest_rpg pursuit include_demo meng
     "${WORLDBUILDER[@]}" test "$src" || exit 1
 done
 
+echo "== 4c. content fuzzer (B5) =="
+# Deterministic fuzz runs (fixed seed) over every shipped adventure and
+# fixture: engine crashes, non-terminating steps and frozen loops (veto
+# soft-locks: 25 steps without any state/turn progress) fail the gate. Every
+# finding prints its exact command sequence and the --replay recipe.
+for f in "${adv[@]}" examples/fixtures/*.yaml; do
+    case "$f" in
+        *include_lib*) continue ;;   # include library, not a main adventure
+    esac
+    echo "-- fuzz $f"
+    "${WORLDBUILDER[@]}" fuzz "$f" --seed 42 --runs 10 --steps 120
+done
+
 echo "== 5. e2e non-victory paths =="
 # Review L12: stage 4 only covers one happy path per fixture. Each entry here
 # drives the same compiled world into a failure path — no funds, refused attack,

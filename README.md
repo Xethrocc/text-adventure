@@ -55,8 +55,9 @@ redirected with `--saves-dir DIR` or the `TA_SAVES_DIR` environment variable
 
 Whole pipeline — build, all six test suites, validation of 26 shipped
 adventures, 49 scripted playthroughs (36 happy paths + 13 non-victory runs), authored
-content tests (`worldbuilder test`), the export-bundle check and the worldgen and
-run-regeneration checks:
+tests (`worldbuilder test`), the content fuzzer (`worldbuilder fuzz`, seeded
+reproducible runs for crashes, non-terminating steps and frozen loops), the
+export-bundle check and the worldgen and run-regeneration checks:
 
 ```bash
 bash scripts/ci.sh
@@ -168,7 +169,7 @@ no own state file. Their state lives in the existing `VarMap`
 
 ```bash
 cabal build all
-cabal test all --test-show-details=direct    # 431 engine tests, 217 worldbuilder tests, 20 TUI tests, plus the img2ascii/text2ascii tool suites
+cabal test all --test-show-details=direct    # 431 engine tests, 225 worldbuilder tests, 20 TUI tests, plus the img2ascii/text2ascii tool suites
 bash scripts/ci.sh                           # build + tests + validation + 49 E2E playthroughs
 cabal run worldbuilder -- check examples/thefog.yaml   # content statistics
 ```
