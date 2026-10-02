@@ -66,6 +66,8 @@ minWorld = E.GameWorld
     , chapterDefs = []
     , deviceDefs = Map.empty, containerDefs = Map.empty
     , progressionDef = Nothing
+    , worldLanguage = Nothing
+    , worldMessages = Map.empty
     }
 
 -- | Helper: a minimal valid SaveState referencing room_0
@@ -209,6 +211,8 @@ minAdventure room = Adventure
     , advTests = []
     , advRawValue = Nothing
     , advAssets = []
+    , advLanguage = Nothing
+    , advMessages = Map.empty
     }
 
 -- ===== Rogue Phase 1: authored game policy =====
@@ -3646,7 +3650,90 @@ tests =
     , ("rng: authored writes on rng.* are hard errors (B8)", testRngVarWriteGuard)
     , ("verb_map: before:/instead: key phases (4.2)", testVerbMapPhaseKeys)
     , ("verb_map: one phase per (verb, state) pair (4.2)", testVerbMapPhaseClash)
+    -- Phase 4.3: language packs (D4)
+    , ("lang pack: language and messages compile into the world (4.3)", testLanguagePackCompile)
+    , ("lang pack: message override key/value checks (4.3)", testMessageOverrideChecks)
+    , ("lang pack: language and messages are known keys (4.3)", testLanguageKnownKeysClean)
     ]
+
+-- ---------------------------------------------------------------------------
+-- Phase 4.3: language packs (D4)
+-- ---------------------------------------------------------------------------
+
+-- | `language:` + `messages:` compile into the world's language fields and
+--   world.json carries them (omitted when absent — byte-stability contract);
+--   an unknown language code is a hard error ('UnknownLanguage').
+testLanguagePackCompile :: IO Bool
+testLanguagePackCompile = do
+    let base = (minAdventure (minRoom "loc_0"))
+            { advLanguage = Just "de"
+            , advMessages = Map.fromList [("move.ok", "Eigen: {dir}.")] }
+    r1 <- case compileAdventure base of
+            Left errs -> expectTrue ("language compiles, got: " ++ issuesText errs) False
+            Right cr -> do
+                a <- expectEqual (Just "de") (E.worldLanguage (crWorld cr))
+                b <- expectEqual (Map.fromList [("move.ok", "Eigen: {dir}.")]) (E.worldMessages (crWorld cr))
+                c <- expectTrue "world.json carries the language field"
+                        ("\"language\"" `isInfixOf` BLC.unpack (Aeson.encode (crWorld cr)))
+                d <- expectTrue "world.json carries the messages field"
+                        ("\"messages\"" `isInfixOf` BLC.unpack (Aeson.encode (crWorld cr)))
+                pure (a && b && c && d)
+    r2 <- case compileAdventure (base { advLanguage = Just "xx" }) of
+            Left errs -> expectContains "UnknownLanguage" (issuesText errs)
+            Right _   -> expectTrue "an unknown language must fail" False
+    r3 <- case compileAdventure (minAdventure (minRoom "loc_0")) of
+            Left errs -> expectTrue ("plain adventure compiles, got: " ++ issuesText errs) False
+            Right cr -> expectTrue "world.json omits language and messages"
+                            (not ("\"language\"" `isInfixOf` BLC.unpack (Aeson.encode (crWorld cr)))
+                              && not ("\"messages\"" `isInfixOf` BLC.unpack (Aeson.encode (crWorld cr))))
+    pure (r1 && r2 && r3)
+
+-- | Message overrides: an unknown catalog key only warns ('UnknownMsgKey' —
+--   the override silently does nothing), an empty value is a hard error
+--   ('EmptyMessageOverride' — an empty template would change engine behaviour).
+testMessageOverrideChecks :: IO Bool
+testMessageOverrideChecks = do
+    let withMsgs m = (minAdventure (minRoom "loc_0")) { advMessages = Map.fromList m }
+    r1 <- case compileAdventure (withMsgs [("no.such.key", "x")]) of
+            Left errs -> expectTrue ("unknown key must warn, not fail: " ++ issuesText errs) False
+            Right cr -> expectTrue "unknown key warns with UnknownMsgKey"
+                            (any (\i -> ciCode i == "UnknownMsgKey") (crWarnings cr))
+    r2 <- case compileAdventure (withMsgs [("move.ok", "")]) of
+            Left errs -> expectContains "EmptyMessageOverride" (issuesText errs)
+            Right _   -> expectTrue "an empty override value must fail" False
+    r3 <- case compileAdventure (withMsgs [("move.ok", "Eigen: {dir}.")]) of
+            Left errs -> expectTrue ("valid override compiles, got: " ++ issuesText errs) False
+            Right cr -> expectTrue "a valid override produces no warnings"
+                            (null (filter (\i -> ciCode i `elem` ["UnknownMsgKey", "EmptyMessageOverride"])
+                                          (crWarnings cr)))
+    pure (r1 && r2 && r3)
+
+-- | `language:` and `messages:` are known top-level keys — no UnknownYamlKey.
+testLanguageKnownKeysClean :: IO Bool
+testLanguageKnownKeysClean = do
+    let yaml = unlines
+            [ "start_room: loc_0"
+            , "language: de"
+            , "messages:"
+            , "  move.ok: \"Eigen: {dir}.\""
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Halle"
+            , "    desc: Eine Halle."
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let keyWarns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
+                a <- expectTrue ("expected 0 unknown key warnings, got " ++ show (length keyWarns)) (null keyWarns)
+                b <- expectEqual (Just "de") (E.worldLanguage (crWorld cr))
+                pure (a && b)
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
 --   author-declared variable in it is rejected, the same rule that guards the

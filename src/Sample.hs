@@ -381,6 +381,8 @@ initSampleGame = GameState
         , deviceDefs = Map.empty,
             containerDefs = Map.empty
         , progressionDef = Nothing
+        , worldLanguage = Nothing
+        , worldMessages = Map.empty
         }
     , save = SaveState
         { player = Player 100 100 10 5 (Map.singleton "lockpick" 2)

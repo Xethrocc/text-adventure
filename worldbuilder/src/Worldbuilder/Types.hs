@@ -67,6 +67,8 @@ data Adventure = Adventure
     , advTests            :: [AContentTest]              -- ^ authored content tests (B1)
     , advInclude          :: [String]                    -- ^ include: library files (5.3, merged first-own-then-includes)
     , advAssets           :: [String]                    -- ^ B6: extra asset files for the export bundle (game-root-relative)
+    , advLanguage         :: Maybe String                -- ^ 4.3: language pack code ("de" …); Nothing = plain English default
+    , advMessages         :: Map.Map String String       -- ^ 4.3: per-adventure message-catalog overrides (non-empty values)
     , advRawValue         :: Maybe Value                 -- ^ raw parsed JSON/YAML value for schema validation
     } deriving (Show, Eq, Generic)
 
@@ -151,6 +153,8 @@ instance FromJSON Adventure where
         <*> o .:? "tests" .!= []
         <*> o .:? "include" .!= []
         <*> o .:? "assets"  .!= []
+        <*> o .:? "language"
+        <*> o .:? "messages" .!= Map.empty
         <*> pure (Just v)
     parseJSON _ = fail "Expected Adventure to be an object"
 
@@ -1705,7 +1709,7 @@ knownKeys EntAdventure = Set.fromList
     , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
     , "handLimit", "hand_limit", "sandbox_zones", "procedures", "tests", "include"
     , "facts", "combine", "combine_verb", "journal", "chapters", "devices", "pursuit", "containers"
-    , "progression", "assets"
+    , "progression", "assets", "language", "messages"
     ]
 knownKeys EntRoom = Set.fromList
     [ "id", "name", "desc", "description", "exits", "tags", "light_flag"

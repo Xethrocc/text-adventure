@@ -1,0 +1,13 @@
+{
+  "language": "de",
+  "messages": {
+    "move.ok": "Du gehst nach {dir}.",
+    "move.door_locked": "Die T\u00fcr ist verschlossen.",
+    "move.no_exit": "In diese Richtung f\u00fchrt kein Weg.",
+    "move.blocked": "Dort kannst du nicht hindurch.",
+    "look.void": "Du befindest dich im Nichts. Hier gibt es nichts zu sehen.",
+    "look.see_nothing": "\nDu siehst nichts Interessantes.",
+    "look.items": "\nDu siehst: {names}.",
+    "look.npcs": "\nAu\u00dferdem sind hier: {names}."
+  }
+}

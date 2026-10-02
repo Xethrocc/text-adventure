@@ -88,7 +88,8 @@ includeForbiddenKeys :: [String]
 includeForbiddenKeys =
     [ "name", "start_room", "interactions", "player", "environment", "stealth"
     , "patrol", "combat", "game", "deck", "hand_limit", "handLimit"
-    , "combine_verb", "journal", "progression", "title_art", "titleArt" ]
+    , "combine_verb", "journal", "progression", "title_art", "titleArt"
+    , "language", "messages" ]
 
 -- | 5.3: a library may not set single-value fields (hard error, naming the
 --   file and the key).

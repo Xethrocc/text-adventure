@@ -1917,6 +1917,8 @@ data GameWorld = GameWorld
     , deviceDefs         :: Map.Map DeviceID DeviceDef               -- ^ Interactive devices/fixtures (W4); empty map is omitted
     , containerDefs      :: Map.Map EntityID ContainerDef            -- ^ Stationary containers (4.4); empty map is omitted
     , progressionDef     :: Maybe ProgressionDef                     -- ^ Player progression (W2); Nothing omitted from world.json
+    , worldLanguage      :: Maybe String                             -- ^ `language:` (4.3): language pack code ("de" …); Nothing = plain English default
+    , worldMessages      :: Map.Map String String                    -- ^ `messages:` (4.3): per-adventure catalog overrides (non-empty values only); empty map omitted from world.json
     } deriving (Show, Eq)
 
 -- | A cutscene clip (Phase H/H4): a frame sequence played once at its own
@@ -1958,6 +1960,7 @@ instance ToJSON GameWorld where
         , "abilities"          .= abilities gw
         ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair ++ sandboxPair
           ++ procPair ++ factPair ++ combinePair ++ chapterPair ++ devicePair ++ containerPair ++ progPair
+          ++ langPair ++ msgPair
       where
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
@@ -1978,6 +1981,10 @@ instance ToJSON GameWorld where
         devicePair = [ "deviceDefs" .= deviceDefs gw | not (Map.null (deviceDefs gw)) ]
         containerPair = [ "containerDefs" .= containerDefs gw | not (Map.null (containerDefs gw)) ]
         progPair = [ "progressionDef" .= p | Just p <- [progressionDef gw] ]
+        -- Phase 4.3 (D4): language + message overrides only when set, so every
+        -- existing world.json stays bit-identical (same contract as procDefs).
+        langPair = [ "language" .= l | Just l <- [worldLanguage gw] ]
+        msgPair  = [ "messages" .= worldMessages gw | not (Map.null (worldMessages gw)) ]
         endArt = Map.filter (not . isEmptyAscii) (worldEndArt gw)
         titleArt = worldTitleArt gw
 
@@ -2043,6 +2050,8 @@ instance FromJSON GameWorld where
         <*> o .:? "deviceDefs" .!= Map.empty
         <*> o .:? "containerDefs" .!= Map.empty
         <*> o .:? "progressionDef" .!= Nothing
+        <*> o .:? "language" .!= Nothing
+        <*> o .:? "messages" .!= Map.empty
 
 -- | Encode item-on-item outcomes as objects (P2-9).
 itemInteractionsToJSON :: Map.Map (String, String) Effect -> Value

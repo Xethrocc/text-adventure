@@ -193,6 +193,8 @@ emptyGameWorld = GameWorld
     , deviceDefs         = Map.empty
     , containerDefs      = Map.empty
     , progressionDef     = Nothing
+    , worldLanguage      = Nothing
+    , worldMessages      = Map.empty
     }
 
 -- | Default empty game state

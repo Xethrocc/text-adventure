@@ -2535,6 +2535,39 @@ dist/mein-spiel/
   (`text-adventure`). Extra-Argumente werden durchgereicht (z.B. `play.sh --tui`).
 - `--zip` legt `<dir>.zip` neben dem Bundle an (benötigt `zip` oder `7z`).
 
+## Sprachpakete: `language:` und `messages:` (Phase 4.3)
+
+Engine-Meldungen („You take the …", Meldungen zu Bewegung, Inventar, Kampf …)
+leben in einem **Katalog mit stabilen Schluesseln** (`docs/message-catalog.md`).
+Zwei autorenseitige Felder steuern die Sprache eines Abenteuers:
+
+```yaml
+language: de                 # Sprachpaket waehlen (en = Default, de = Deutsch)
+messages:                    # einzelne Engine-Meldungen ueberschreiben
+  move.ok: "Du gehst nach {dir}."
+  take.ok: "Du steckst {name} ein."
+```
+
+- **`language:`** waehlt das eingebaute Sprachpaket. Bekannt: `en` (Standard,
+  Feld kann entfallen) und `de`. Ein unbekannter Code ist ein harter Compile-
+  Fehler (`UnknownLanguage`) — die Engine wuerde sonst still auf Englisch
+  zurueckfallen. `de` ist derzeit teilweise uebersetzt (fehlende Schluessel
+  fallen zurueck auf den englischen Text; Volluebersetzung folgt).
+- **`messages:`** ueberschreibt einzelne Katalog-Eintraege pro Abenteuer.
+  Prioritaet: `messages:` > Sprachpaket > englischer Standard. Ein unbekannter
+  Schluessel ist eine Warnung (`UnknownMsgKey` — der Override tut nichts), ein
+  **leerer Wert** ist ein harter Fehler (`EmptyMessageOverride` — leere
+  Vorlagen wuerden das Verhalten der Ausgabe-Fragmentierung still aendern).
+  `{var}`-Platzhalter funktionieren wie in allen Texten.
+- **Nur in der Hauptdatei:** `language:` und `messages:` duerfen nicht aus
+  `include:`-Bibliotheken kommen (wie alle Einzelwert-Felder).
+- **In `world.json`** werden beide Felder nur bei Belegung geschrieben —
+  ohne `language:`/`messages:` bleibt die Welt byte-identisch.
+- **Grenzen:** Sprachpakete uebersetzen *Engine-Meldungen* (und ab 4.3.4 auch
+  die Eingabe-Aliase). **Inhalte** (Namen, Beschreibungen, `msg:`-Texte)
+  schreibt der Autor in einer Sprache — `messages:` ist kein mehrsprachiges
+  Content-System.
+
 ## Regel-Diagnostik (B4)
 
 Der Worldbuilder beantwortet vier Fragen zum **toten Inhalt** — beim Kompilieren,
@@ -2574,5 +2607,6 @@ Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity =
 | `UnsatisfiableCondition` | Eine Bedingung (`when:`, `if:`, Tore wie `visible_when:`) kann nie wahr sein: Widerspruch in `all:` oder ein Flag, das nie gesetzt wird. | Widerspruch aufteilen, Flag per `set_flag`/`initial_flags` setzbar machen oder die Bedingung vereinfachen. |
 | `DeadExit` | Ein Ausgang ist nie passierbar: sein Guard kann nie zutreffen oder seine `locked_by:`-Entity kann nie aufgeschlossen werden. | Guard reparieren, einen Unlock-Pfad (`set_state … to: unlocked`, `interactions`, `unlock`-Verb) ergänzen oder den Ausgang entfernen. |
 | `UnreachableRoom` | Ein Raum ist ab `start_room` nicht erreichbar — alle seine Ausgänge sind nie passierbar. | Verbindenden Ausgang ergänzen, per `move:`/`set_exit` erreichbar machen oder den Raum entfernen (Sackgassen-Content wie Test-Fixtures sind legitim). |
+| `UnknownMsgKey` | Ein `messages:`-Schluessel ist kein Engine-Katalogschluessel — der Override bleibt wirkungslos. | Schluessel aus `docs/message-catalog.md` verwenden oder den Eintrag entfernen. |
 
 

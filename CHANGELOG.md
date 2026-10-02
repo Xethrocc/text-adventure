@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Sprachpakete: Datenmodell & Katalog-Aufloesung (4.3, Teil 1)
+
+- **`language:` und `messages:`** am Abenteuer: `language: de` waehlt das
+  eingebaute Sprachpaket (`lang/de.json` → generiert nach
+  `src/Messages/LangDe.hs`), `messages: {key: text}` ueberschreibt einzelne
+  Engine-Katalog-Meldungen. Prioritaet: `messages:` > Sprachpaket > englischer
+  Standard; fehlende Paketschluessel fallen zurueck auf den englischen Text.
+- **Drei Schichten als Katalog-Arithmetik** (`effectiveCatalog` in
+  `src/Messages.hs`): englischer Default-Katalog, Sprachpaket-Templates und
+  per-Adventure-Overrides — `renderMsgIn` rendert gegen einen beliebigen
+  Katalog, `renderMsg` bleibt der englische Default.
+- **Welt-Felder `worldLanguage`/`worldMessages`** in `world.json`, nur bei
+  Belegung geschrieben (Byte-Vertrag wie bei `procDefs`) — ohne die neuen
+  YAML-Felder bleibt alles byte-identisch.
+- **Validierung:** unbekannter Sprachcode = harter Fehler (`UnknownLanguage`),
+  leerer Override-Wert = harter Fehler (`EmptyMessageOverride`), unbekannter
+  Katalogschluessel = Warnung (`UnknownMsgKey`). `language:`/`messages:` sind
+  nur in der Hauptdatei erlaubt (kein `include:`).
+- **Neues Gate `scripts/check-lang-pack.sh`** (CI-Stufe 2c): generiertes Modul
+  synchron zur JSON (sha256 im generierten Header), keine unbekannten
+  Katalogschluessel, Vollstaendigkeit mit `--require-complete` (greift hart,
+  sobald das de-Paket vollstaendig ist). Generator:
+  `python3 scripts/gen-lang-pack.py`.
+- **Derzeitiger Stand des de-Pakets:** 8 uebersetzte Meldungen (Bewegung/Look)
+  als Mechanik-Nachweis; Volluebersetzung, Eingabe-Aliase und Grammatikfelder
+  folgen in den Stufen 4.3.3–4.3.5.
+
 ### Veto Stufe 2: `verb_map`-Phasen (4.2)
 
 - **`before:`/`instead:` als Phasen-Präfix in `verb_map`-Schluesseln** (Items und

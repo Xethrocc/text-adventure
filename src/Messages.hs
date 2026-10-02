@@ -12,9 +12,16 @@
 --   for the YAML-text path ('Game.formatWithVars').
 module Messages
     ( MsgId
+    , MsgCatalog
     , renderMsg
+    , renderMsgIn
     , catalogEntries
     , defaultCatalog
+    , LangPack (..)
+    , emptyLangPack
+    , langPacks
+    , knownLanguages
+    , effectiveCatalog
     , formatStringWith
     , evalCondition
     , handleExpr
@@ -30,6 +37,7 @@ import qualified Data.List as List (lookup)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Text.Read (readMaybe)
+import Messages.LangDe (langDe)
 import Types.Output (MsgPayload (..), OutputEvent (..))
 import Types.Core (Expr (..), parseExpr)
 
@@ -37,13 +45,23 @@ import Types.Core (Expr (..), parseExpr)
 --   overlays YAML-provided keys on the same namespace.
 type MsgId = String
 
+-- | A message catalog: template per key. 'defaultCatalog' is the English one;
+--   language packs (Phase 4.3) and per-adventure @messages:@ overrides layer
+--   on top of it (see 'effectiveCatalog').
+type MsgCatalog = Map MsgId String
+
 -- | Render a catalog message: substitute @{arg}@ placeholders from the
 --   argument list (same syntax and modifiers as 'formatStringWith'). An
 --   unknown key renders as @\<msg:key\>@ — loud on purpose, unit tests and
 --   the E2E goldens must never see it.
 renderMsg :: MsgId -> [(String, String)] -> String
-renderMsg key args =
-    case Map.lookup key defaultCatalog of
+renderMsg = renderMsgIn defaultCatalog
+
+-- | 'renderMsg' against an arbitrary catalog (Phase 4.3: the effective
+--   catalog of a world, see 'effectiveCatalog').
+renderMsgIn :: MsgCatalog -> MsgId -> [(String, String)] -> String
+renderMsgIn catalog key args =
+    case Map.lookup key catalog of
         Nothing  -> "<msg:" ++ key ++ ">"
         Just tmpl -> formatStringWith tmpl (\k -> List.lookup k args)
 
@@ -391,6 +409,66 @@ helpTemplate = intercalate "\n"
 -- | English default catalog.
 defaultCatalog :: Map MsgId String
 defaultCatalog = Map.fromList catalogEntries
+
+-- ---------------------------------------------------------------------------
+-- Language packs (Phase 4.3 / D4)
+-- ---------------------------------------------------------------------------
+
+-- | A language pack: translated templates plus input vocabulary. The alias
+--   tables map alias words to their canonical English token (verbs,
+--   directions, command words, prepositions) — they extend the English input
+--   syntax, they never replace it. Term translations cover enumerable
+--   argument values (@dir.*@, @slot.*@, @card_type.*@).
+data LangPack = LangPack
+    { lpLanguage     :: String
+    , lpTemplates    :: MsgCatalog
+    , lpTerms        :: Map.Map String String
+    , lpVerbAliases  :: Map.Map String [String]
+    , lpDirAliases   :: Map.Map String [String]
+    , lpCmdAliases   :: Map.Map String [String]
+    , lpPrepositions :: Map.Map String [String]
+    } deriving (Show, Eq)
+
+-- | A pack with no data at all — the starting point for tests.
+emptyLangPack :: String -> LangPack
+emptyLangPack lang = LangPack lang Map.empty Map.empty Map.empty Map.empty Map.empty Map.empty
+
+-- | The built-in language packs, keyed by language code. Currently only
+--   @de@ (data from @lang/de.json@ via @scripts/gen-lang-pack.py@); @en@ is
+--   the bare 'defaultCatalog' and has no pack.
+langPacks :: Map.Map String LangPack
+langPacks = Map.fromList
+    [ (lpLanguage p, p)
+    | p <- [packFromTuple langDe] ]
+
+-- | Language codes the engine knows: the default @en@ plus every pack.
+--   Used by the worldbuilder for the @UnknownLanguage@ compile check.
+knownLanguages :: [String]
+knownLanguages = "en" : Map.keys langPacks
+
+-- | The catalog a world actually renders with: language pack on top of the
+--   English default, the adventure's @messages:@ overrides on top of that.
+--   A key missing from the pack falls back to the English template (never to
+--   the loud @\<msg:...\>@ form); a missing language has no pack and renders
+--   plain English.
+effectiveCatalog :: Maybe String -> Map.Map MsgId String -> MsgCatalog
+effectiveCatalog mLang overrides =
+    let pack = maybe Map.empty lpTemplates (mLang >>= (`Map.lookup` langPacks))
+    in Map.unions [overrides, pack, defaultCatalog]
+
+-- | Unpack a generated pack module's flat tuple into a 'LangPack'.
+packFromTuple :: ( String, [(String, String)], [(String, String)]
+                 , [(String, [String])], [(String, [String])]
+                 , [(String, [String])], [(String, [String])] ) -> LangPack
+packFromTuple (lang, msgs, terms, verbs, dirs, cmds, preps) = LangPack
+    { lpLanguage     = lang
+    , lpTemplates    = Map.fromList msgs
+    , lpTerms        = Map.fromList terms
+    , lpVerbAliases  = Map.fromList verbs
+    , lpDirAliases   = Map.fromList dirs
+    , lpCmdAliases   = Map.fromList cmds
+    , lpPrepositions = Map.fromList preps
+    }
 
 -- ---------------------------------------------------------------------------
 -- Template interpolation (moved verbatim from Game.hs in Phase 1.1 so the

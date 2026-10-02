@@ -53,6 +53,14 @@ echo "== 2b. message catalog gate =="
 # POSIX shell only: this script also runs on the Windows runner (Git Bash).
 ./scripts/check-msg-catalog.sh
 
+echo "== 2c. language pack gate =="
+# Phase 4.3: lang/<code>.json is the source of truth for a language pack, the
+# generated module is what ships. Catches a stale generated module (JSON
+# changed, generator not rerun), pack keys the engine catalog does not know,
+# and — once a pack claims completeness (4.3) — untranslated keys.
+# POSIX shell only: this script also runs on the Windows runner (Git Bash).
+./scripts/check-lang-pack.sh
+
 echo "== 3. validate adventures =="
 adv=(examples/demo.yaml examples/thefog.yaml)
 for f in examples/genres/*.yaml; do adv+=("$f"); done

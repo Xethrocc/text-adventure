@@ -31,7 +31,8 @@ import GameLoop (LoopState (..), initLoopState, PendingDisambiguation (..),
                  transitionDeathInput, transitionDeathLoadSlot,
                  transitionVictoryInput, advanceNarrative)
 import Frontend (Frontend (..), commandCompletion)
-import Messages (renderMsg, formatStringWith, catalogEntries, defaultCatalog)
+import Messages (renderMsg, formatStringWith, catalogEntries, defaultCatalog,
+                renderMsgIn, effectiveCatalog, langPacks, knownLanguages, LangPack (..))
 import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText, bindCommandVars,
                InteractTarget (..), resolveInteractTarget,
                TargetResolution (..), resolveTarget, preferInventoryTarget,
@@ -8781,6 +8782,61 @@ testVerbMapPhasesOnNpc = do
     r4 <- expectTrue "still no dialogue opens" (not ("Greetings, traveler!" `isInfixOf` renderEvents evs2))
     pure (and [r1, r2, r3, r4])
 
+-- ===========================================================================
+-- Phase 4.3: language packs (D4)
+-- ===========================================================================
+
+-- | Phase 4.3: language-pack layering — pack over English default, per-world
+--   `messages:` overrides over the pack, missing keys fall back to the English
+--   template (never the loud <msg:...> form).
+testLangPackCatalogLayers :: IO Bool
+testLangPackCatalogLayers = do
+    let cat = effectiveCatalog (Just "de") (Map.singleton "move.ok" "Eigen: {dir}.")
+    r1 <- expectTrue "the de pack is registered" (Map.member "de" langPacks)
+    r2 <- expectEqual (Just "Eigen: {dir}.") (Map.lookup "move.ok" cat)
+    r3 <- expectEqual (Just "Die Tür ist verschlossen.") (Map.lookup "move.door_locked" cat)
+    r4 <- expectEqual (Map.lookup "take.ok" defaultCatalog) (Map.lookup "take.ok" cat)
+    r5 <- expectTrue "unknown language renders the default catalog"
+             (effectiveCatalog (Just "xx") Map.empty == defaultCatalog)
+    r6 <- expectTrue "no language renders the default catalog"
+             (effectiveCatalog Nothing Map.empty == defaultCatalog)
+    r7 <- expectEqual "Eigen: Nord." (renderMsgIn cat "move.ok" [("dir", "Nord")])
+    r8 <- expectTrue "knownLanguages covers en and de"
+             (all (`elem` knownLanguages) ["en", "de"])
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8])
+
+-- | Phase 4.3: every de-pack template key is an engine catalog key and every
+--   template is non-empty — the English fallback must stay an exception.
+testLangPackKeysAreKnown :: IO Bool
+testLangPackKeysAreKnown =
+    case Map.lookup "de" langPacks of
+        Nothing -> expectTrue "the de pack is registered" False
+        Just p  -> do
+            let unknown   = [ k | k <- Map.keys (lpTemplates p), not (Map.member k defaultCatalog) ]
+                emptyVals = [ k | (k, v) <- Map.toList (lpTemplates p), null v ]
+            r1 <- expectEqual ([] :: [String]) unknown
+            r2 <- expectEqual ([] :: [String]) emptyVals
+            r3 <- expectTrue "the de pack translates at least one key" (not (Map.null (lpTemplates p)))
+            pure (r1 && r2 && r3)
+
+-- | Phase 4.3: world.json gains `language`/`messages` only when set — the M2
+--   byte-stability contract (same as procDefs).
+testGameWorldLanguageJson :: IO Bool
+testGameWorldLanguageJson = do
+    let plainJs = BLC.unpack (Aeson.encode emptyGameWorld)
+        full = emptyGameWorld
+            { worldLanguage = Just "de"
+            , worldMessages = Map.fromList [("move.ok", "Los geht's.")]
+            }
+        fullText = BLC.unpack (Aeson.encode full)
+    r1 <- expectTrue "plain world.json omits language and messages"
+             (not ("language" `isInfixOf` plainJs) && not ("messages" `isInfixOf` plainJs))
+    r2 <- expectTrue "set fields are emitted"
+             ("language" `isInfixOf` fullText && "messages" `isInfixOf` fullText)
+    r3 <- expectEqual (Just full) (Aeson.decode (Aeson.encode full))
+    r4 <- expectEqual (Just emptyGameWorld) (Aeson.decode (Aeson.encode emptyGameWorld))
+    pure (r1 && r2 && r3 && r4)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -9290,5 +9346,9 @@ main = do
         , runTest "verb_map: legacy non-take entries frozen (4.2)" testVerbMapLegacyNonTakeReplaces
         , runTest "verb_map: phase JSON encoding (4.2)" testVerbMapPhaseJson
         , runTest "verb_map: NPC phases (4.2)" testVerbMapPhasesOnNpc
+        -- Phase 4.3: language packs (D4)
+        , runTest "lang pack: catalog layering and fallback (4.3)" testLangPackCatalogLayers
+        , runTest "lang pack: template keys are catalog keys (4.3)" testLangPackKeysAreKnown
+        , runTest "lang pack: world.json language/messages M2 invariant (4.3)" testGameWorldLanguageJson
         ]
     when (not (and results)) exitFailure

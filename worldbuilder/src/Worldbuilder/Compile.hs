@@ -36,6 +36,7 @@ import Types hiding
     , vehicleDefs, vehicleStates, entityInteractions, itemInteractions
     , varDefs, triggerDefs, rooms )
 import qualified Types as E
+import qualified Messages as Msg
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Char (toLower, isDigit, isSpace)
@@ -77,6 +78,30 @@ ciError path code msg = CompileIssue path SError code msg
 -- | Build a warning diagnostic
 ciWarning :: String -> String -> String -> CompileIssue
 ciWarning path code msg = CompileIssue path SWarning code msg
+
+-- | 4.3 (D4): validate the `language:` / `messages:` language-pack fields.
+--   An unknown language code is a hard error ('UnknownLanguage' — the engine
+--   would silently fall back to English); override values must be non-empty
+--   ('EmptyMessageOverride' — an empty template would silently change the
+--   fragment-algebra behaviour, which drops empty fragments); overrides for
+--   keys the engine catalog does not know only warn ('UnknownMsgKey') since
+--   they silently do nothing. Returns (errors, warnings).
+checkLanguageFields :: Adventure -> ([CompileIssue], [CompileIssue])
+checkLanguageFields adv = (langErrs ++ emptyErrs, unknownKeyWarns)
+  where
+    langErrs =
+        [ ciError "language" "UnknownLanguage"
+            ("'" ++ l ++ "' is not a known language (expected one of: "
+                ++ intercalate ", " Msg.knownLanguages ++ ")")
+        | Just l <- [advLanguage adv], l `notElem` Msg.knownLanguages ]
+    emptyErrs =
+        [ ciError ("messages." ++ k) "EmptyMessageOverride"
+            "message override values must not be empty (an empty template would change engine behaviour)"
+        | (k, v) <- Map.toList (advMessages adv), null v ]
+    unknownKeyWarns =
+        [ ciWarning ("messages." ++ k) "UnknownMsgKey"
+            ("'" ++ k ++ "' is not an engine message key (this override does nothing)")
+        | k <- Map.keys (advMessages adv), k `Map.notMember` Msg.defaultCatalog ]
 
 -- | Rogue Phase 1: build an engine GamePolicy from the authored `game:` block.
 --   Absent block (or absent fields) keeps 'E.defaultGamePolicy' — the
@@ -656,6 +681,8 @@ compileAdventure adv =
                 , E.deviceDefs = compiledDevices
                 , E.containerDefs = compiledContainers
                 , E.progressionDef = compiledProgression
+                , E.worldLanguage = advLanguage adv
+                , E.worldMessages = advMessages adv
                 }
         facRefErrs = checkStandingRefs (advFactions adv) gw
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
@@ -672,6 +699,7 @@ compileAdventure adv =
         procCallErrs = checkProcRefs (advProcedures adv) adv
         possessionErrs = checkNpcPossessionRefs adv
         rngVarErrs = checkRngVarWrites adv
+        (langErrs, langWarns) = checkLanguageFields adv
 
 
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
@@ -712,6 +740,7 @@ compileAdventure adv =
                     ++ progVarErrs
                     ++ possessionErrs
                     ++ rngVarErrs
+                    ++ langErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -760,6 +789,7 @@ compileAdventure adv =
                           ++ deviceWarns
                           ++ gainXpWarns
                           ++ deadContentWarns
+                          ++ langWarns
             in Right (CompileResult gw startSave allWarns)
   where
     -- Every locked exit starts locked in entityStates
