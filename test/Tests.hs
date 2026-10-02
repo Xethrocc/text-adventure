@@ -35,7 +35,7 @@ import Messages (renderMsg, formatStringWith, catalogEntries, defaultCatalog,
                 renderMsgIn, msgPayload, localizeEvents, localizeEventsFor,
                 translateTerms, renderMsgFor,
                 effectiveCatalog, langPacks, knownLanguages, LangPack (..))
-import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText, bindCommandVars,
+import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, parseCommandFor, helpText, bindCommandVars,
                InteractTarget (..), resolveInteractTarget,
                TargetResolution (..), resolveTarget, preferInventoryTarget,
                defaultDarkMessage,
@@ -5160,8 +5160,8 @@ testNpcTakeGive = do
     r8 <- expectTrue "unknown recipient"
             ("don't see 'niemand' here" `isInfixOf`
                 renderEvents (evsOf (run "give stein to niemand" st0)))
-    -- German form and give/take round trip
-    let st3 = stOf (run "gib stein an waechter" st0)
+    -- give/take round trip (German input forms live in the 4.3.4 alias tests)
+    let st3 = stOf (run "give stein to waechter" st0)
     r9 <- expectEqual (Just (CarriedBy (ActorNPC "waechter"))) (itemLoc "stein" st3)
     let st4 = stOf (run "take stein from waechter" st3)
     r10 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "stein" st4)
@@ -7263,18 +7263,19 @@ testEndTurnDiscardsAndDraws = do
 -- | Phase 2B: Card and deck parser commands match intended constructors and arguments.
 testCardCommandsParsing :: IO Bool
 testCardCommandsParsing = do
+    let deParse = parseCommandFor (emptyGameWorld { worldLanguage = Just "de" })
     r1 <- expectEqual (PlayCardCmd 1 Nothing) (parseCommand "play 1")
     r2 <- expectEqual (PlayCardCmd 2 (Just "goblin")) (parseCommand "play 2 goblin")
     r3 <- expectEqual (PlayCardCmd 3 (Just "cave troll")) (parseCommand "play 3 the cave troll")
-    r4 <- expectEqual (PlayCardCmd 1 (Just "troll")) (parseCommand "spiele 1 auf troll")
-    r5 <- expectEqual (PlayCardCmd 2 Nothing) (parseCommand "spiele 2")
+    r4 <- expectEqual (PlayCardCmd 1 (Just "troll")) (deParse "spiele 1 auf troll")
+    r5 <- expectEqual (PlayCardCmd 2 Nothing) (deParse "spiele 2")
     r6 <- expectEqual HandCmd (parseCommand "hand")
-    r7 <- expectEqual HandCmd (parseCommand "karten")
+    r7 <- expectEqual HandCmd (deParse "karten")
     r8 <- expectEqual DeckCmd (parseCommand "deck")
     r9 <- expectEqual DiscardCmd (parseCommand "discard")
-    r10 <- expectEqual DiscardCmd (parseCommand "ablage")
+    r10 <- expectEqual DiscardCmd (deParse "ablage")
     r11 <- expectEqual EndTurnCmd (parseCommand "end turn")
-    r12 <- expectEqual EndTurnCmd (parseCommand "zug beenden")
+    r12 <- expectEqual EndTurnCmd (deParse "zug beenden")
     r13 <- expectEqual EndTurnCmd (parseCommand "pass")
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13)
 
@@ -8894,6 +8895,46 @@ testCardTypeLabelTerms = do
              (cardTypeLabelIn (Map.singleton "card_type.attack" "[Attack]") CardAttack)
     pure (r1 && r2 && r3)
 
+-- | Phase 4.3: the de pack's input aliases work in a `language: de` world —
+--   verbs, commands, directions and prepositions map to the canonical English
+--   tokens (P2 scope: the historical words plus the core completions).
+testGermanAliasesDeWorld :: IO Bool
+testGermanAliasesDeWorld = do
+    let de = parseCommandFor (emptyGameWorld { worldLanguage = Just "de" })
+    r1 <- expectEqual (Interact VTake "stein") (de "nimm stein")
+    r2 <- expectEqual (GiveCmd "stein" "waechter") (de "gib stein an waechter")
+    r3 <- expectEqual (TakeFromCmd "schluessel" "truhe") (de "nimm schluessel aus truhe")
+    r4 <- expectEqual (Go North) (de "nord")
+    r5 <- expectEqual (Go Northwest) (de "nordwest")
+    r6 <- expectEqual (Go Northeast) (de "no")
+    r7 <- expectEqual Inventory (de "inventar")
+    r8 <- expectEqual (SearchCmd Nothing) (de "suche")
+    r9 <- expectEqual (InteractWith VUseOn "fackel" "tuer") (de "benutze fackel auf tuer")
+    r10 <- expectEqual EndTurnCmd (de "zug beenden")
+    r11 <- expectEqual Undo (de "mache rueckgaengig")
+    r12 <- expectEqual (AskCmd "waechter" "geruecht") (de "frag waechter nach geruecht")
+    r13 <- expectEqual (OpenCmd "truhe") (de "oeffne truhe")
+    r14 <- expectEqual (Interact VAttack "goblin") (de "greife goblin")
+    r15 <- expectEqual (Interact VLookAt "truhe") (de "untersuche truhe")
+    r16 <- expectEqual (Interact VTalk "waechter") (de "sprich waechter")
+    r17 <- expectEqual StatsCmd (de "status")
+    r18 <- expectEqual MapCmd (de "karte")
+    r19 <- expectEqual (Save "savegame") (de "speichern")
+    r20 <- expectEqual Help (de "hilfe")
+    pure (and [ r1, r2, r3, r4, r5, r6, r7, r8, r9, r10
+              , r11, r12, r13, r14, r15, r16, r17, r18, r19, r20 ])
+
+-- | Phase 4.3: without `language:` the German words are rejected — the alias
+--   tables are part of the language pack, not of the parser.
+testGermanAliasesRequireLanguage :: IO Bool
+testGermanAliasesRequireLanguage = do
+    r1 <- expectEqual (Unknown "nimm stein") (parseCommand "nimm stein")
+    r2 <- expectEqual (Unknown "nord") (parseCommand "nord")
+    r3 <- expectEqual (Unknown "inventar") (parseCommand "inventar")
+    r4 <- expectEqual (Unknown "gib stein an waechter") (parseCommand "gib stein an waechter")
+    r5 <- expectEqual (Unknown "oeffne truhe") (parseCommand "oeffne truhe")
+    pure (and [r1, r2, r3, r4, r5])
+
 -- | Phase 4.3: the de pack is complete — every catalog key has a non-empty
 --   German template and nothing more (the sync gate enforces the same
 --   bijection on the JSON side).
@@ -9451,5 +9492,7 @@ main = do
         , runTest "lang pack: card type labels are terms (4.3)" testCardTypeLabelTerms
         , runTest "lang pack: de translations cover the catalog (4.3)" testLangPackComplete
         , runTest "lang pack: a German world renders German (4.3)" testGermanRunRendersGerman
+        , runTest "lang pack: de input aliases work with language: de (4.3)" testGermanAliasesDeWorld
+        , runTest "lang pack: de input aliases need language: de (4.3)" testGermanAliasesRequireLanguage
         ]
     when (not (and results)) exitFailure

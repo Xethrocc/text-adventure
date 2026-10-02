@@ -636,7 +636,7 @@ loopGame fe loopState
                 feEmitLine fe message
                 loopGame fe loopState { lsCurrent = newState }
             Just input ->
-                case parseCommandWith (verbDefs (world state)) input of
+                case parseCommandFor (world state) input of
                     Save name -> do
                         let (loopState', reqs, msgs) = transitionSave name loopState
                         mapM_ (executeRequest fe (lsCurrent loopState')) reqs

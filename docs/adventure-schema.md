@@ -2559,6 +2559,24 @@ messages:                    # einzelne Engine-Meldungen ueberschreiben
   **leerer Wert** ist ein harter Fehler (`EmptyMessageOverride` — leere
   Vorlagen wuerden das Verhalten der Ausgabe-Fragmentierung still aendern).
   `{var}`-Platzhalter funktionieren wie in allen Texten.
+- **Eingabe-Aliase:** Ein Sprachpaket bringt auch Eingabe-Vokabel mit — als
+  Alias-Tabellen zum kanonischen englischen Token:
+  - `verbs`: Verben (`nimm` -> `take`, `gib` -> `give`, `benutze` -> `use`, ...)
+  - `commands`: Befehlswörter (`inventar` -> `inventory`, `zug beenden` -> `end turn`, ...)
+  - `directions`: Richtungswörter (`nord` -> `north`, `no` -> `northeast`, ...)
+  - `prepositions`: Praepositionen je Rolle (`from`/`to`/`about`/`on`) — z. B. spielt
+    `nach` in `frag X nach Y` die Rolle von `about`, `aus` in `nimm X aus Y` die
+    von `from`.
+  Aliase sind **nur mit `language:` aktiv** (Verhaltensaenderung 4.3.4: die
+  frueher fest im Parser verdrahteten deutschen Woerter (`nimm`, `gib`,
+  `karten`, `oeffne`, ...) gelten nur noch in `language: de`-Welten). Die
+  kanonischen Tokens bleiben englisch — auch unter `language: de` gilt jedes
+  englische Wort weiterhin. Die deutsche `help`-Ausgabe zeigt genau die
+  funktionierenden Formen.
+- **Bekannte Grenzen der deutschen Eingabe (bewusst, P2-Umfang):** keine
+  Artikel-Streichung (bei `greife den goblin an` muss das Ziel ohne `den`
+  geschrieben werden), keine trennbaren Verbprefixe (`greife X` statt
+  `greife X an`), keine Mengen-/Rollenwoerter wie `alle`, `mit`, `geh`.
 - **Nur in der Hauptdatei:** `language:` und `messages:` duerfen nicht aus
   `include:`-Bibliotheken kommen (wie alle Einzelwert-Felder).
 - **In `world.json`** werden beide Felder nur bei Belegung geschrieben —

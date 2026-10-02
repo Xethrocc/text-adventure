@@ -4,7 +4,7 @@ give schluessel to waechter
 take rostiger schluessel from waechter
 take goldkette from waechter
 take munze
-gib munze an waechter
+give munze to waechter
 give kette to waechter
 look at waechter
 quit

@@ -1,4 +1,4 @@
--- | Generated from lang/de.json (sha256: df926bb9872f64f92ff777bc396d71648127af48dbd03192e750adc28f499548) by scripts/gen-lang-pack.py.
+-- | Generated from lang/de.json (sha256: 97f1916d337ab81e07410cf0eac91acccd7bb4e1338e77ed8a41d903196ba24f) by scripts/gen-lang-pack.py.
 --   DO NOT EDIT by hand - rerun the generator after changing the JSON.
 --
 --   Language-pack data (Phase 4.3): message templates keyed like the
@@ -46,7 +46,7 @@ langDe =
       , ("undo.nothing", "Nichts rückgängig zu machen.")
       , ("quit.bye", "Auf Wiedersehen!")
       , ("parse.unknown", "Ich verstehe '{input}' nicht. Tippe 'help' für eine Befehlsliste.")
-      , ("help.text", "=== Verfügbare Befehle ===\n\nBewegung:\n  geh/wandle <richtung>        - In eine Richtung gehen\n  <richtung>                   - Kurzform (z. B. nur 'nord')\n\nInteraktion:\n  schau / look                 - Raum ansehen\n  schau an / untersuche <ziel> - Gegenstand oder NPC ansehen\n  schau an <n>                 - Das n-te markierte Objekt ansehen (map)\n  beobachte [ziel]             - Animationsframes eines Gegenstands/NPC abspielen\n  karte / legend               - Grafik mit nummerierten Objekten zeigen\n  suche                        - Den Raum nach Verstecktem durchsuchen\n  nimm / take <gegenstand>     - Einen Gegenstand aufheben\n  nimm alle / take all         - Alle Gegenstaende im Raum aufheben\n  lege <gegenstand> ab / drop  - Einen Gegenstand ablegen\n  lege alle ab / drop all      - Alles ablegen\n  benutze <gegenstand> / use   - Einen Gegenstand aus dem Inventar benutzen\n  benutze <g> auf <ziel>       - Einen Gegenstand auf etwas benutzen\n  sprich mit <npc> / talk to   - Mit einer Figur sprechen\n  waehle <n> / <n>             - Eine Dialogoption waehlen\n  greife <npc> an / attack     - Einen Feind angreifen\n\nAusruestung:\n  rueste <gegenstand> aus / equip\n  lege <gegenstand> ab / unequip\n  lege alles ab / unequip all  - Gesamte Ausruestung ablegen\n  status / stats               - Gesundheit, Angriff, Verteidigung und Ausruestung\n\nKarten:\n  karten / hand                - Karten auf der Hand ansehen\n  spiele <n> [ziel] / play     - Die n-te Karte spielen\n  deck                         - Nachziehstapel ansehen\n  ablage / discard             - Ablagestapel ansehen\n  zug beenden / end turn       - Kampfzug beenden\n\nFahrzeuge:\n  steige in <fahrzeug> / enter - In ein Fahrzeug einsteigen\n  aussteigen / disembark       - Aktuelles Fahrzeug verlassen ('beenden' beendet das Spiel!)\n  fahre nach <station> / drive to - Fahren (PlayerControlled, aus dem Cockpit)\n  warte / wait                 - Zur naechsten Haltestelle (AutomaticRoute)\n  tanken [fahrzeug] / refuel   - Treibstoffstand anzeigen\n  repariere <problem> / repair - Fahrzeugzustand reparieren\n\nMehrere Gegenstaende:\n  nimm <g> und <g> / take      - Mehrere Gegenstaende aufheben\n\nSystem:\n  inventar / inv / i           - Ansehen, was du bei dir traegst\n  rueckgaengig / undo          - Vorherigen Spielstand wiederherstellen (bis 50)\n  speichern [name] / save      - Spiel speichern (Standard: savegame)\n  laden [name] / load          - Gespeichertes Spiel laden\n  saves                        - Alle Spielstaende anzeigen\n  neustart / restart           - Ein neues Spiel beginnen\n  hilfe / help                 - Diese Hilfe anzeigen\n  beenden / quit / q           - Spiel beenden\n\nTipp: Druecke Tab, um Befehle und Ziele automatisch zu vervollstaendigen.")
+      , ("help.text", "=== Verfügbare Befehle ===\n\nBewegung:\n  go/move/walk <richtung>    - In eine Richtung gehen\n  nord/sued/ost/west/hoch/runter - Kurzform (z. B. 'nord')\n  nordost/no, suedost/so, nordwest/nw, suedwest/sw - Diagonalen\n\nInteraktion:\n  look / untersuche <ziel>   - Gegenstand oder NPC ansehen\n  look at <n>                - Das n-te markierte Objekt ansehen (map)\n  watch [ziel]               - Animationsframes eines Gegenstands/NPC abspielen\n  map / karte / legend       - Grafik mit nummerierten Objekten zeigen\n  search / suche             - Den Raum nach Verstecktem durchsuchen\n  take / nimm <gegenstand>   - Einen Gegenstand aufheben\n  take all                   - Alle Gegenstaende im Raum aufheben\n  drop / put / lege <gegenstand> - Einen Gegenstand ablegen\n  drop all                   - Alles ablegen\n  use / benutze <gegenstand> [auf <ziel>] - Einen Gegenstand benutzen\n  talk to / sprich <npc>     - Mit einer Figur sprechen\n  ask <npc> about <thema> / frag <npc> nach <thema> - Fragen\n  tell <npc> about <thema> / erzaehl <npc> von <thema> - Erzaehlen\n  choose <n> / <n>           - Eine Dialogoption waehlen\n  attack / greife / attackiere <npc> - Einen Feind angreifen\n\nAusruestung:\n  equip / wear / wield <gegenstand> - Einen Gegenstand ausruesten\n  unequip / remove <gegenstand>     - Einen Gegenstand ablegen\n  unequip all                - Gesamte Ausruestung ablegen\n  stats / status             - Gesundheit, Angriff, Verteidigung, Ausruestung\n\nKarten:\n  hand / karten              - Karten auf der Hand ansehen\n  play <n> [ziel] / spiele <n> [auf <ziel>] - Die n-te Karte spielen\n  deck                       - Nachziehstapel ansehen\n  discard / ablage           - Ablagestapel ansehen\n  end turn / zug beenden / pass / passe - Kampfzug beenden\n\nFahrzeuge:\n  enter / board <fahrzeug>   - In ein Fahrzeug einsteigen\n  disembark                  - Aktuelles Fahrzeug verlassen ('quit' beendet das Spiel!)\n  drive to <station>         - Fahren (PlayerControlled, aus dem Cockpit)\n  wait                       - Zur naechsten Haltestelle (AutomaticRoute)\n  refuel [fahrzeug]          - Treibstoffstand anzeigen\n  repair <problem>           - Fahrzeugzustand reparieren\n\nMehrere Gegenstaende:\n  take <gegenstand> and <gegenstand> - Mehrere Gegenstaende aufheben\n\nSystem:\n  inventory / inv / i / inventar - Ansehen, was du bei dir traegst\n  undo / rueckgaengig / mache rueckgaengig - Vorherigen Spielstand wiederherstellen (bis 50)\n  save [name] / speichern [name] - Spiel speichern (Standard: savegame)\n  load [name] / laden [name] - Gespeichertes Spiel laden\n  saves                      - Alle Spielstaende anzeigen\n  restart                    - Ein neues Spiel beginnen\n  help / hilfe               - Diese Hilfe anzeigen\n  quit / exit / q            - Spiel beenden\n\nTipp: Druecke Tab, um Befehle und Ziele automatisch zu vervollstaendigen.")
       , ("dialogue.none_active", "Du führst gerade kein Gespräch.")
       , ("dialogue.partner_gone", "Die Person, mit der du gesprochen hast, ist weg.")
       , ("dialogue.nothing_more", "{name} hat nichts mehr zu sagen.")
@@ -276,15 +276,55 @@ langDe =
       ]
       -- TERMS END
     , -- VERBS BEGIN
-      []
+      [ ("take", ["nimm"])
+      , ("put", ["lege"])
+      , ("give", ["gib"])
+      , ("open", ["oeffne"])
+      , ("close", ["schliesse"])
+      , ("lock", ["verschliesse"])
+      , ("unlock", ["entsperre"])
+      , ("tell", ["erzaehl"])
+      , ("ask", ["frag"])
+      , ("play", ["spiele"])
+      , ("search", ["suche"])
+      , ("use", ["benutze"])
+      , ("talk", ["sprich"])
+      , ("attack", ["greife", "attackiere"])
+      , ("examine", ["untersuche"])
+      ]
       -- VERBS END
     , -- DIRECTIONS BEGIN
-      []
+      [ ("north", ["nord"])
+      , ("south", ["sued"])
+      , ("east", ["ost"])
+      , ("west", ["west"])
+      , ("up", ["hoch"])
+      , ("down", ["runter"])
+      , ("northeast", ["nordost", "no"])
+      , ("northwest", ["nordwest", "nw"])
+      , ("southeast", ["suedost", "so"])
+      , ("southwest", ["suedwest", "sw"])
+      ]
       -- DIRECTIONS END
     , -- COMMANDS BEGIN
-      []
+      [ ("hand", ["karten"])
+      , ("discard", ["ablage"])
+      , ("end turn", ["zug beenden"])
+      , ("pass", ["passe"])
+      , ("inventory", ["inventar"])
+      , ("map", ["karte"])
+      , ("stats", ["status"])
+      , ("undo", ["rueckgaengig", "mache rueckgaengig"])
+      , ("save", ["speichern"])
+      , ("load", ["laden"])
+      , ("help", ["hilfe"])
+      ]
       -- COMMANDS END
     , -- PREPOSITIONS BEGIN
-      []
+      [ ("from", ["aus", "von"])
+      , ("to", ["an", "zu"])
+      , ("about", ["nach", "von"])
+      , ("on", ["auf"])
+      ]
       -- PREPOSITIONS END
     )

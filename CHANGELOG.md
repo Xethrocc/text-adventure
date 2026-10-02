@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Sprachpakete: Alias-Paket & Eingabe (4.3, Teil 4)
+
+- **Verhaltensaenderung:** die bisher fest im Parser verdrahteten deutschen
+  Eingabewoerter (`nimm`, `lege`, `gib`, `oeffne`, `schliesse`,
+  `verschliesse`, `entsperre`, `erzaehl`, `frag`, `spiele`, `passe`,
+  `karten`, `ablage`, `zug beenden`, Praepositionen `an`/`auf`/`aus`/`nach`/
+  `von`/`zu`) sind **nur noch mit `language: de` aktiv** — sie sind jetzt
+  Alias-Tabellen im Sprachpaket. Ohne `language:` lehnt der Parser sie ab
+  (gepinnt). `ci/e2e/npc-besitz.in` schreibt seine eine deutsche Zeile
+  neu auf Englisch (Ausgabe byte-identisch, `.expect` unangetastet).
+- **Alias-Mechanik** (`AliasEnv` in `Parser.hs`): fuehrende Alias-Phrasen
+  (Verben + Befehlswörter) werden auf die kanonischen Tokens umgeschrieben
+  (laengster Treffer), Richtungswoerter und Praepositionsrollen
+  (`from`/`to`/`about`/`on`/`in`) werden rollenbezogen aufgeloest — keine
+  globale Wort-Ersetzung (die Wuerde z. B. englisches `take an apple`
+  zerstoeren). Aktiv nur bei `language:`.
+- **Umfang (P2):** historische 21 Tokens plus Vervollstaendigung —
+  `suche`/`benutze`/`sprich`/`greife`/`attackiere`/`untersuche` (Verben),
+  `inventar`/`karte`/`status`/`rueckgaengig`/`mache rueckgaengig`/
+  `speichern`/`laden`/`hilfe` (Befehle), Richtungen `nord`/`sued`/`ost`/
+  `west`/`hoch`/`runter` + Diagonalen (`nordost`/`no` usw.).
+- **Allgemein:** auch `play N on X` (Ziel nach Praeposition) und
+  `ask X about Y` mit Rollen-Praepositionen funktionieren jetzt
+  einheitlich; die deutsche Hilfe zeigt genau die funktionierenden Formen
+  (Grenzen: keine Artikel-Streichung, keine trennbaren Verbprefixe, kein
+  `alle`/`mit`/`geh` — bewusst nur der P2-Umfang).
+- **Neu verkabelt:** `worldbuilder test` und `worldbuilder fuzz` parsen mit
+  den Welt-Aliasen (Content-Tests deutscher Abenteuer koennen deutsche
+  Befehle schreiben); die Fuzz-Vokabelliste behaelt ihre deutschen Woerter
+  (fuer Nicht-de-Welten sind es Parser-Garbage).
+- 2 neue Engine-Tests (452): Alias-Akzeptanz in `language: de`-Welten
+  (20 Pins ueber Verben/Befehle/Richtungen/Prapositionen) und Ablehnung
+  ohne `language:`.
+
 ### Sprachpakete: de-Paket vollstaendig (4.3, Teil 3)
 
 - **Volluebersetzung:** `lang/de.json` deckt jetzt alle **232** Katalogschluessel

@@ -20,6 +20,12 @@ module Parser
       -- * Parsing
     , parseCommand
     , parseCommandWith
+    , parseCommandWithLang
+    , parseCommandFor
+    , AliasEnv (..)
+    , emptyAliasEnv
+    , aliasEnvFor
+    , prepsOf
     , parseVerbWith
     , preferInventoryTarget
       -- * Target resolution
@@ -49,7 +55,8 @@ module Parser
 
 import Types
 import Game
-import Messages (renderMsg, renderMsgFor, evMsg, renderMsgIn, localizeEventsFor, MsgCatalog, defaultCatalog)
+import Messages (renderMsg, renderMsgFor, evMsg, renderMsgIn, localizeEventsFor,
+                MsgCatalog, defaultCatalog, LangPack (..), langPackFor)
 import Vehicles
 import Effects
 import Quests
@@ -151,12 +158,23 @@ parseCommand = parseCommandWith Map.empty
 
 -- | Parse user input with the adventure's verb registry
 parseCommandWith :: Map.Map String VerbDef -> String -> Command
-parseCommandWith defs input =
-    let tokens = words (map toLower input)
+parseCommandWith = parseCommandWithLang emptyAliasEnv
+
+-- | Parse user input for a world: the world's verb registry plus its language
+--   pack's input aliases (Phase 4.3; empty environment without `language:`).
+parseCommandFor :: GameWorld -> String -> Command
+parseCommandFor w = parseCommandWithLang (aliasEnvFor w) (verbDefs w)
+
+-- | Parse user input with a verb registry and an alias environment. Leading
+--   alias phrases are rewritten to their canonical tokens before the
+--   (canonical) patterns match.
+parseCommandWithLang :: AliasEnv -> Map.Map String VerbDef -> String -> Command
+parseCommandWithLang env defs input =
+    let tokens = canonicalHead env (words (map toLower input))
     in case tokens of
         [] -> Unknown ""
-        _ | isCompoundCandidateWith defs tokens -> parseCompoundCommandWith defs tokens
-          | otherwise -> parseSimpleCommandWith defs tokens input
+        _ | isCompoundCandidateWith defs tokens -> parseCompoundCommandWith env defs tokens
+          | otherwise -> parseSimpleCommandWith env defs tokens input
 
 -- | Check if this looks like a compound command (has "and" after a verb)
 isCompoundCandidateWith :: Map.Map String VerbDef -> [String] -> Bool
@@ -168,17 +186,17 @@ isCompoundCandidateWith defs (v : rest) = case parseVerbWith defs v of
 isCompoundCandidateWith _ _ = False
 
 -- | Parse a compound command by splitting on last "and"
-parseCompoundCommandWith :: Map.Map String VerbDef -> [String] -> Command
-parseCompoundCommandWith defs tokens@(v : rest) =
+parseCompoundCommandWith :: AliasEnv -> Map.Map String VerbDef -> [String] -> Command
+parseCompoundCommandWith env defs tokens@(v : rest) =
     let targetParts = case rest of
             ("up" : parts) -> parts  -- "pick up X and Y"
             _              -> rest
     in case splitOnLastAnd targetParts of
         Just (_, after) ->
-            let cmd1 = parseSimpleCommandWith defs (v : rest `takeWhileNotLast` "and") (unwords tokens)
-                cmd2 = parseSimpleCommandWith defs (v : after) (unwords (v : after))
+            let cmd1 = parseSimpleCommandWith env defs (v : rest `takeWhileNotLast` "and") (unwords tokens)
+                cmd2 = parseSimpleCommandWith env defs (v : after) (unwords (v : after))
             in CompoundCommand [cmd1, cmd2]
-        Nothing -> parseSimpleCommandWith defs tokens (unwords tokens)
+        Nothing -> parseSimpleCommandWith env defs tokens (unwords tokens)
   where
     takeWhileNotLast :: [String] -> String -> [String]
     takeWhileNotLast ts target =
@@ -186,7 +204,7 @@ parseCompoundCommandWith defs tokens@(v : rest) =
         in case indices of
             [] -> ts
             _  -> take (last indices) ts
-parseCompoundCommandWith _ [] = Unknown ""
+parseCompoundCommandWith _ _ [] = Unknown ""
 
 -- | Parse a single (non-compound) command with the verb registry
 -- | 4.4: split a word list at the first occurrence of one of the prepositions
@@ -197,27 +215,100 @@ splitPrep preps ws =
         (x, _ : y) | not (null x) && not (null y) -> Just (x, y)
         _ -> Nothing
 
-parseSimpleCommandWith :: Map.Map String VerbDef -> [String] -> String -> Command
-parseSimpleCommandWith defs tokens input = case tokens of
+-- ---------------------------------------------------------------------------
+-- Input aliases (Phase 4.3): a language pack maps alias words to the
+--   canonical English tokens. Aliases are active only when the world declares
+--   `language:` — without a pack the parser accepts the canonical vocabulary
+--   only (the historical hardcoded German words are gone).
+-- ---------------------------------------------------------------------------
+
+-- | Parsed alias environment: head phrases (verbs + command words) rewritten
+--   to canonical tokens, direction words, and per-role preposition words.
+data AliasEnv = AliasEnv
+    { aeHead :: Map.Map [String] [String]  -- ^ alias phrase -> canonical phrase
+    , aeDirs :: Map.Map String Direction   -- ^ alias word -> direction
+    , aePreps :: Map.Map String [String]   -- ^ role -> extra words
+    } deriving (Show, Eq)
+
+-- | No aliases: the canonical vocabulary only.
+emptyAliasEnv :: AliasEnv
+emptyAliasEnv = AliasEnv Map.empty Map.empty Map.empty
+
+-- | The alias environment of a world (empty without `language:`).
+aliasEnvFor :: GameWorld -> AliasEnv
+aliasEnvFor w = maybe emptyAliasEnv aliasEnvOf (langPackFor w)
+
+-- | Build the alias environment of one language pack.
+aliasEnvOf :: LangPack -> AliasEnv
+aliasEnvOf pk = AliasEnv
+    { aeHead = Map.fromList
+        [ (words alias, words canon)
+        | (canon, aliases) <- Map.toList (lpVerbAliases pk) ++ Map.toList (lpCmdAliases pk)
+        , alias <- aliases ]
+    , aeDirs = Map.fromList
+        [ (alias, dir)
+        | (canon, aliases) <- Map.toList (lpDirAliases pk)
+        , alias <- aliases
+        , Just dir <- [directionWord canon] ]
+    , aePreps = lpPrepositions pk
+    }
+
+-- | The words that play one structural role ("from"/"to"/"about"/"on"/"in"):
+--   the canonical English words plus the pack's aliases.
+prepsOf :: AliasEnv -> String -> [String]
+prepsOf env role = nub (baseWords role ++ Map.findWithDefault [] role (aePreps env))
+  where
+    baseWords "from"  = ["from"]
+    baseWords "to"    = ["to"]
+    baseWords "about" = ["about"]
+    baseWords "on"    = ["on", "with"]
+    baseWords "in"    = ["in"]
+    baseWords other   = [other]
+
+-- | Rewrite a leading alias phrase to its canonical tokens (longest match).
+canonicalHead :: AliasEnv -> [String] -> [String]
+canonicalHead env ts = case best of
+    Nothing         -> ts
+    Just (n, canon) -> canon ++ drop n ts
+  where
+    best = foldl' pick Nothing
+        [ (length alias, canon)
+        | (alias, canon) <- Map.toList (aeHead env), alias `isPrefixOf` ts ]
+    pick Nothing x          = Just x
+    pick (Just acc@(n, _)) x@(m, _) = Just (if m > n then x else acc)
+
+-- | Canonical direction words ("north" … "nw") to directions.
+directionWord :: String -> Maybe Direction
+directionWord w = case w of
+    "north"     -> Just North
+    "south"     -> Just South
+    "east"      -> Just East
+    "west"      -> Just West
+    "up"        -> Just Up
+    "down"      -> Just Down
+    "southeast" -> Just Southeast
+    "se"        -> Just Southeast
+    "southwest" -> Just Southwest
+    "sw"        -> Just Southwest
+    "northeast" -> Just Northeast
+    "ne"        -> Just Northeast
+    "northwest" -> Just Northwest
+    "nw"        -> Just Northwest
+    _           -> Nothing
+
+-- | Resolve one direction word: canonical or pack alias.
+directionOf :: AliasEnv -> String -> Maybe Direction
+directionOf env w = directionWord w <|> Map.lookup w (aeDirs env)
+
+parseSimpleCommandWith :: AliasEnv -> Map.Map String VerbDef -> [String] -> String -> Command
+parseSimpleCommandWith env defs tokens input = case tokens of
     []                     -> Unknown ""
-    ["go", dir]            -> parseDirection dir input
-    ["go", "to", dir]      -> parseDirection dir input
-    ["move", dir]          -> parseDirection dir input
-    ["walk", dir]          -> parseDirection dir input
-    ["north"]              -> Go North
-    ["south"]              -> Go South
-    ["east"]               -> Go East
-    ["west"]               -> Go West
-    ["up"]                 -> Go Up
-    ["down"]               -> Go Down
-    ["southeast"]          -> Go Southeast
-    ["se"]                 -> Go Southeast
-    ["southwest"]          -> Go Southwest
-    ["sw"]                 -> Go Southwest
-    ["northeast"]          -> Go Northeast
-    ["ne"]                 -> Go Northeast
-    ["northwest"]          -> Go Northwest
-    ["nw"]                 -> Go Northwest
+    ["go", dir]            -> parseDirection env dir input
+    ["go", "to", dir]      -> parseDirection env dir input
+    ["move", dir]          -> parseDirection env dir input
+    ["walk", dir]          -> parseDirection env dir input
+    -- Bare direction shorthand (canonical words plus pack aliases, 4.3).
+    [d] | Just dir <- directionOf env d -> Go dir
     ["look"]               -> Look
     ["inventory"]          -> Inventory
     ["inv"]                -> Inventory
@@ -228,28 +319,21 @@ parseSimpleCommandWith defs tokens input = case tokens of
     ["undo"]               -> Undo
     -- Card & Deck commands (Phase 2B)
     ["hand"]               -> HandCmd
-    ["karten"]             -> HandCmd
     ["cards"]              -> HandCmd
     ["deck"]               -> DeckCmd
     ["discard"]            -> DiscardCmd
-    ["ablage"]             -> DiscardCmd
     ["end", "turn"]        -> EndTurnCmd
     ["endturn"]            -> EndTurnCmd
-    ["zug", "beenden"]     -> EndTurnCmd
     ["pass"]               -> EndTurnCmd
-    ["passe"]              -> EndTurnCmd
     "play" : nStr : rest | all isDigit nStr && not (null nStr) ->
-        let target = unwords (safeStripStopWords rest)
+        -- The target may be introduced by an on-role word (`play 1 on X`,
+        -- `spiele 1 auf X` via the pack aliases, Phase 4.3) — then it is what
+        -- follows that word (possibly at the front).
+        let target = case break (`elem` prepsOf env "on") rest of
+                (_, _ : after) | not (null after) -> unwords (safeStripStopWords after)
+                _ -> unwords (safeStripStopWords rest)
         in PlayCardCmd (read nStr) (if null target then Nothing else Just target)
     ["play", nStr] | all isDigit nStr && not (null nStr) ->
-        PlayCardCmd (read nStr) Nothing
-    "spiele" : nStr : "auf" : rest | all isDigit nStr && not (null nStr) ->
-        let target = unwords (safeStripStopWords rest)
-        in PlayCardCmd (read nStr) (if null target then Nothing else Just target)
-    "spiele" : nStr : rest | all isDigit nStr && not (null nStr) ->
-        let target = unwords (safeStripStopWords rest)
-        in PlayCardCmd (read nStr) (if null target then Nothing else Just target)
-    ["spiele", nStr] | all isDigit nStr && not (null nStr) ->
         PlayCardCmd (read nStr) Nothing
     -- Dialogue choice (Phase 4.6).
     -- `pick` is also a `take` alias (src/Verbs.hs) and `pick up <item>` is the
@@ -257,15 +341,9 @@ parseSimpleCommandWith defs tokens input = case tokens of
     -- can never mean "take item <n>" — the keyword list is matched before
     -- `parseVerbWith`. Intended, and pinned by
     -- `testDialoguePickKeywordAlias` in test/Tests.hs.
-    ("ask" : rest) | (whoParts@(_:_), "about" : whatParts@(_:_)) <- break (== "about") rest ->
+    ("ask" : rest) | (whoParts@(_:_), _sep : whatParts@(_:_)) <- break (`elem` prepsOf env "about") rest ->
         AskCmd (unwords (safeStripStopWords whoParts)) (unwords whatParts)
-    ("tell" : rest) | (whoParts@(_:_), "about" : whatParts@(_:_)) <- break (== "about") rest ->
-        TellCmd (unwords (safeStripStopWords whoParts)) (unwords whatParts)
-    ("ask" : rest) | (whoParts@(_:_), "nach" : whatParts@(_:_)) <- break (== "nach") rest ->
-        AskCmd (unwords (safeStripStopWords whoParts)) (unwords whatParts)
-    ("frag" : rest) | (whoParts@(_:_), "nach" : whatParts@(_:_)) <- break (== "nach") rest ->
-        AskCmd (unwords (safeStripStopWords whoParts)) (unwords whatParts)
-    ("erzaehl" : rest) | (whoParts@(_:_), "von" : whatParts@(_:_)) <- break (== "von") rest ->
+    ("tell" : rest) | (whoParts@(_:_), _sep : whatParts@(_:_)) <- break (`elem` prepsOf env "about") rest ->
         TellCmd (unwords (safeStripStopWords whoParts)) (unwords whatParts)
     ["choose", nStr] | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
     ["pick", nStr]   | all isDigit nStr && not (null nStr) -> ChooseCmd (read nStr)
@@ -318,31 +396,20 @@ parseSimpleCommandWith defs tokens input = case tokens of
     "unequip" : targetParts | not (null targetParts) -> UnequipCmd (unwords (safeStripStopWords targetParts))
     "remove"  : targetParts
         | not (null targetParts)
-        , "from" `notElem` targetParts
-        , "aus" `notElem` targetParts -> UnequipCmd (unwords (safeStripStopWords targetParts))
+        , not (any (`elem` prepsOf env "from") targetParts) -> UnequipCmd (unwords (safeStripStopWords targetParts))
     -- 4.4: container verbs (open/close/lock/unlock + take X from Y / put X in Y)
     "open"       : targetParts | not (null targetParts) -> OpenCmd (unwords (safeStripStopWords targetParts))
-    "oeffne"     : targetParts | not (null targetParts) -> OpenCmd (unwords (safeStripStopWords targetParts))
     "close"      : targetParts | not (null targetParts) -> CloseCmd (unwords (safeStripStopWords targetParts))
-    "schliesse"  : targetParts | not (null targetParts) -> CloseCmd (unwords (safeStripStopWords targetParts))
     "lock"       : targetParts | not (null targetParts) -> LockCmd (unwords (safeStripStopWords targetParts))
-    "verschliesse" : targetParts | not (null targetParts) -> LockCmd (unwords (safeStripStopWords targetParts))
     "unlock"     : targetParts | not (null targetParts) -> UnlockCmd (unwords (safeStripStopWords targetParts))
-    "entsperre"  : targetParts | not (null targetParts) -> UnlockCmd (unwords (safeStripStopWords targetParts))
-    "take" : rest | Just (x, y) <- splitPrep ["from", "aus"] rest ->
+    "take" : rest | Just (x, y) <- splitPrep (prepsOf env "from") rest ->
         TakeFromCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
-    "get"  : rest | Just (x, y) <- splitPrep ["from", "aus"] rest ->
+    "get"  : rest | Just (x, y) <- splitPrep (prepsOf env "from") rest ->
         TakeFromCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
-    "nimm" : rest | Just (x, y) <- splitPrep ["from", "aus"] rest ->
-        TakeFromCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
-    "put"  : rest | Just (x, y) <- splitPrep ["in"] rest ->
-        PutInCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
-    "lege" : rest | Just (x, y) <- splitPrep ["in"] rest ->
+    "put"  : rest | Just (x, y) <- splitPrep (prepsOf env "in") rest ->
         PutInCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
     -- B7: give X to <npc> (NPC possession)
-    "give" : rest | Just (x, y) <- splitPrep ["to", "an", "zu"] rest ->
-        GiveCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
-    "gib"  : rest | Just (x, y) <- splitPrep ["to", "an", "zu"] rest ->
+    "give" : rest | Just (x, y) <- splitPrep (prepsOf env "to") rest ->
         GiveCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
     -- Complex parsing (supports multi-word targets with stop-word stripping)
     "look"  : "at"   : targetParts | not (null targetParts) -> Interact VLookAt (unwords (safeStripStopWords targetParts))
@@ -359,7 +426,7 @@ parseSimpleCommandWith defs tokens input = case tokens of
         Interact (VCustom "use-ability") (unwords (safeStripStopWords abParts))
     "ability" : abParts | not (null abParts) ->
         Interact (VCustom "use-ability") (unwords (safeStripStopWords abParts))
-    "use"   : useParts -> parseUse useParts input
+    "use"   : useParts -> parseUse env useParts input
     -- Generic verb-noun parsing: resolve against registry (core + custom)
     v : targetParts | not (null targetParts) -> case parseVerbWith defs v of
         Just verb ->
@@ -374,28 +441,15 @@ parseSimpleCommandWith defs tokens input = case tokens of
     _ -> Unknown input
 
 
-parseDirection :: String -> String -> Command
-parseDirection dir input = case dir of
-    "north" -> Go North
-    "south" -> Go South
-    "east"  -> Go East
-    "west"  -> Go West
-    "up"    -> Go Up
-    "down"    -> Go Down
-    "southeast" -> Go Southeast
-    "se"      -> Go Southeast
-    "southwest" -> Go Southwest
-    "sw"      -> Go Southwest
-    "northeast" -> Go Northeast
-    "ne"      -> Go Northeast
-    "northwest" -> Go Northwest
-    "nw"      -> Go Northwest
-    _         -> Unknown input
+parseDirection :: AliasEnv -> String -> String -> Command
+parseDirection env dir input = case directionOf env dir of
+    Just d  -> Go d
+    Nothing -> Unknown input
 
-parseUse :: [String] -> String -> Command
-parseUse [] input = Unknown input
-parseUse useParts input =
-    case break (`elem` ["on", "with"]) useParts of
+parseUse :: AliasEnv -> [String] -> String -> Command
+parseUse _ [] input = Unknown input
+parseUse env useParts input =
+    case break (`elem` prepsOf env "on") useParts of
         (itemParts, _ : entityParts)
             | not (null itemParts) && not (null entityParts) ->
                 InteractWith VUseOn (unwords (safeStripStopWords itemParts)) (unwords (safeStripStopWords entityParts))

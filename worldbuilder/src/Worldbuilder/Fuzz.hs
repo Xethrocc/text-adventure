@@ -45,7 +45,7 @@ import System.Timeout (timeout)
 
 import qualified Types as E
 import GameLoop (LoopState (..), applyLoopCommandEv, consumesTurnIn, initLoopState)
-import Parser (parseCommandWith)
+import Parser (parseCommandFor)
 import Worldbuilder.Compile (CompileResult (..), CompileIssue (..), compileAdventure)
 import Worldbuilder.ParseFile (parseAdventureFile)
 import Worldbuilder.Rng (Rng, newRng, rngGolden, stepRng)
@@ -325,7 +325,7 @@ data StepResult = StepResult
 --   that path are attributed to exactly this input.
 forceStep :: LoopState -> String -> StepResult
 forceStep ls inp =
-    let cmd = parseCommandWith (E.verbDefs (E.world (lsCurrent ls))) inp
+    let cmd = parseCommandFor (E.world (lsCurrent ls)) inp
         (ls', evs) = applyLoopCommandEv cmd ls
         turnShaped = consumesTurnIn (lsCurrent ls) cmd
         result = StepResult ls' (E.renderEvents evs) turnShaped

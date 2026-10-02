@@ -15,7 +15,7 @@ import Data.List (isInfixOf, isPrefixOf)
 import Types as E
 import GameLoop (LoopState (..), initLoopState, applyLoopCommandEv)
 import Messages (localizeEventsFor)
-import Parser (Command (..), parseCommandWith)
+import Parser (Command (..), parseCommandFor)
 import Worldbuilder.Types (AContentTest (..), Adventure (..))
 import Worldbuilder.Compile (CompileResult (..), CompileIssue (..), compileAdventure)
 import Worldbuilder.ParseFile (parseAdventureFile)
@@ -53,7 +53,7 @@ executeContentTest ct gw sv =
     checkMarkers (concat (go (initLoopState st0) commands)) (actExpect ct)
   where
     st0 = E.GameState gw sv Nothing Nothing Nothing [] Nothing [] Nothing Nothing []
-    commands = Look : map (parseCommandWith (E.verbDefs gw)) (actInput ct)
+    commands = Look : map (parseCommandFor gw) (actInput ct)
     go _ [] = []
     go ls (cmd:rest)
         | E.gameOver (E.save (lsCurrent ls)) = []

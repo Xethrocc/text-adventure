@@ -22,6 +22,7 @@ module Messages
     , localizeEvents
     , effectiveCatalogFor
     , effectiveTermsFor
+    , langPackFor
     , localizeEventsFor
     , renderMsgFor
     , catalogEntries
@@ -537,6 +538,10 @@ effectiveCatalogFor w = effectiveCatalog (worldLanguage w) (worldMessages w)
 -- | The effective term table of a world (Phase 4.3).
 effectiveTermsFor :: GameWorld -> Map.Map String String
 effectiveTermsFor w = effectiveTerms (worldLanguage w)
+
+-- | The language pack of a world (Phase 4.3): 'Nothing' without `language:`.
+langPackFor :: GameWorld -> Maybe LangPack
+langPackFor w = worldLanguage w >>= (`Map.lookup` langPacks)
 
 -- | 'localizeEvents' with a world's effective catalog and terms.
 localizeEventsFor :: GameWorld -> [OutputEvent] -> [OutputEvent]
