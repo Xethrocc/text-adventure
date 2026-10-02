@@ -32,7 +32,9 @@ import GameLoop (LoopState (..), initLoopState, PendingDisambiguation (..),
                  transitionVictoryInput, advanceNarrative)
 import Frontend (Frontend (..), commandCompletion)
 import Messages (renderMsg, formatStringWith, catalogEntries, defaultCatalog,
-                renderMsgIn, effectiveCatalog, langPacks, knownLanguages, LangPack (..))
+                renderMsgIn, msgPayload, localizeEvents, localizeEventsFor,
+                translateTerms, renderMsgFor,
+                effectiveCatalog, langPacks, knownLanguages, LangPack (..))
 import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, helpText, bindCommandVars,
                InteractTarget (..), resolveInteractTarget,
                TargetResolution (..), resolveTarget, preferInventoryTarget,
@@ -2202,7 +2204,7 @@ cannedFrontendWith startState script = do
                   case queue of
                       []       -> pure Nothing
                       (x : xs) -> writeIORef inRef xs >> pure x
-            , feReadPause   = pure ()
+            , feReadPause   = \_prompt -> pure ()
             , fePlayFrames  = \micros frames -> modifyIORef' playRef ((micros, frames) :)
             , feDiagnostics = \ms -> modifyIORef' diagRef (++ ms)
             , fePlaySfx     = \_ -> pure ()
@@ -2232,7 +2234,7 @@ driveDeathScreen startState slot script = do
                   case queue of
                       []       -> pure Nothing
                       (x : xs) -> writeIORef inRef xs >> pure x
-            , feReadPause   = pure ()
+            , feReadPause   = \_prompt -> pure ()
             , fePlayFrames  = \_ _ -> pure ()
             , feDiagnostics = \_ -> pure ()
             , fePlaySfx     = \_ -> pure ()
@@ -4576,8 +4578,8 @@ testSaveListEntryCompat = do
             , saveName       = "slot1"
             , saveData       = save st0
             }
-        compatibleEntry = formatSaveEntry csum (mkSave csum)
-        mismatchEntry   = formatSaveEntry csum (mkSave "12345")
+        compatibleEntry = formatSaveEntry (world st0) csum (mkSave csum)
+        mismatchEntry   = formatSaveEntry (world st0) csum (mkSave "12345")
     r1 <- expectTrue "matching world reports compatible"
               ("(compatible)" `isInfixOf` compatibleEntry)
     r2 <- expectTrue "different world reports mismatch"
@@ -5340,10 +5342,10 @@ testSavesDirOverride = withSavesIsolation $ do
     files <- SaveLoad.savesDir >>= listDirectory
     r3 <- expectEqual ["p0slot.json"] files
     -- deleteSaveSlot removes the file; missing slots are idempotent
-    SaveLoad.deleteSaveSlot "p0slot"
+    SaveLoad.deleteSaveSlot (world st0) "p0slot"
     gone <- doesFileExist slotPath
     r4 <- expectTrue "deleteSaveSlot removed the file" (not gone)
-    SaveLoad.deleteSaveSlot "p0slot"   -- must not throw
+    SaveLoad.deleteSaveSlot (world st0) "p0slot"   -- must not throw
     pure (r1 && r2 && r3 && r4)
 
 -- | Rogue Phase 0: the default directory (no `TA_SAVES_DIR`) stays the
@@ -8837,6 +8839,61 @@ testGameWorldLanguageJson = do
     r4 <- expectEqual (Just emptyGameWorld) (Aeson.decode (Aeson.encode emptyGameWorld))
     pure (r1 && r2 && r3 && r4)
 
+-- | Phase 4.3: the localization pass re-renders keyed messages from key+args
+--   against the effective catalog — overrides win, term args are translated,
+--   unkeyed payloads and non-message events stay raw; with the default
+--   catalog it is the identity.
+testLocalizeEventsPass :: IO Bool
+testLocalizeEventsPass = do
+    let keyed = msgPayload "move.ok" [("dir", "North")]
+        raw = MsgPayload Nothing [] "Eigen: roh bleibt roh."
+        evs = [EvMessage keyed, EvMessage raw, EvSfx "x.wav"]
+        cat = Map.fromList [("move.ok", "Eigen: {dir}.")]
+        terms = Map.singleton "dir.north" "Norden"
+        out = localizeEvents cat terms evs
+        texts = [mpText p | EvMessage p <- out]
+    r1 <- expectEqual ["Eigen: Norden.", "Eigen: roh bleibt roh."] texts
+    r2 <- expectEqual (EvMessage raw) (out !! 1)
+    r3 <- expectEqual (EvSfx "x.wav") (out !! 2)
+    r4 <- expectTrue "default catalog + no terms is the identity"
+             (localizeEvents defaultCatalog Map.empty evs == evs)
+    r5 <- expectTrue "emptyGameWorld is the identity"
+             (localizeEventsFor emptyGameWorld evs == evs)
+    pure (and [r1, r2, r3, r4, r5])
+
+-- | Phase 4.3: term slots translate enumerable arg values (case-insensitive
+--   slot.value lookup); non-slot args pass through unchanged.
+testTranslateTermsSlots :: IO Bool
+testTranslateTermsSlots = do
+    let terms = Map.fromList [("dir.north", "Norden"), ("slot.head", "Kopf")]
+    r1 <- expectEqual [("dir", "Norden"), ("name", "North Wind")]
+             (translateTerms terms [("dir", "North"), ("name", "North Wind")])
+    r2 <- expectEqual [("dir", "South")] (translateTerms terms [("dir", "South")])
+    r3 <- expectEqual [("slot", "Kopf")] (translateTerms terms [("slot", "Head")])
+    pure (r1 && r2 && r3)
+
+-- | Phase 4.3: renderMsgFor renders against a world's effective catalog —
+--   pack templates apply, unknown keys fall back to English, no language is
+--   the plain default.
+testRenderMsgForWorld :: IO Bool
+testRenderMsgForWorld = do
+    let w = emptyGameWorld { worldLanguage = Just "de" }
+    r1 <- expectEqual "Die Tür ist verschlossen." (renderMsgFor w "move.door_locked" [])
+    r2 <- expectEqual (renderMsg "take.ok" [("item", "X")]) (renderMsgFor w "take.ok" [("item", "X")])
+    r3 <- expectEqual (renderMsg "move.door_locked" [])
+             (renderMsgFor emptyGameWorld "move.door_locked" [])
+    pure (r1 && r2 && r3)
+
+-- | Phase 4.3: card type labels are frozen by default (byte contract) and
+--   overridable via the card_type.* terms of a language pack.
+testCardTypeLabelTerms :: IO Bool
+testCardTypeLabelTerms = do
+    r1 <- expectEqual "[Angriff]" (cardTypeLabel CardAttack)
+    r2 <- expectEqual "[Fertigkeit]" (cardTypeLabelIn Map.empty CardSkill)
+    r3 <- expectEqual "[Attack]"
+             (cardTypeLabelIn (Map.singleton "card_type.attack" "[Attack]") CardAttack)
+    pure (r1 && r2 && r3)
+
 main :: IO ()
 main = do
     results <- sequence
@@ -9350,5 +9407,9 @@ main = do
         , runTest "lang pack: catalog layering and fallback (4.3)" testLangPackCatalogLayers
         , runTest "lang pack: template keys are catalog keys (4.3)" testLangPackKeysAreKnown
         , runTest "lang pack: world.json language/messages M2 invariant (4.3)" testGameWorldLanguageJson
+        , runTest "lang pack: localization pass re-renders keyed messages (4.3)" testLocalizeEventsPass
+        , runTest "lang pack: term slots translate enumerable args (4.3)" testTranslateTermsSlots
+        , runTest "lang pack: renderMsgFor uses the world catalog (4.3)" testRenderMsgForWorld
+        , runTest "lang pack: card type labels are terms (4.3)" testCardTypeLabelTerms
         ]
     when (not (and results)) exitFailure

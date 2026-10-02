@@ -33,6 +33,7 @@ import qualified Data.YAML.Aeson as YA
 
 import qualified SaveLoad
 import qualified Types as E
+import Game (emptyGameWorld)
 import Validate (validateWorld, validateGameState)
 import Worldbuilder.Compile (compileAdventure, CompileResult (..), CompileIssue (..), Severity (..))
 import Worldbuilder.Generate (DTemplate (..), parseTemplate, validateTemplate, generateDungeon)
@@ -102,7 +103,7 @@ prepareRun cfg = do
                             -- Read existing meta file for the slug (scoped to baseSaves)
                             oldMetaDir <- lookupEnv "TA_META_DIR"
                             setEnv "TA_META_DIR" baseSaves
-                            metaVarsMap <- SaveLoad.loadMetaForSlug slug
+                            metaVarsMap <- SaveLoad.loadMetaForSlug emptyGameWorld slug
                             case oldMetaDir of
                                 Just d  -> setEnv "TA_META_DIR" d
                                 Nothing -> pure ()

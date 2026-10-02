@@ -43,12 +43,13 @@ module Parser
     , defaultDarkMessage
     , isCurrentRoomDark
     , helpText
+    , helpTextIn
     , isValidChoice
     ) where
 
 import Types
 import Game
-import Messages (renderMsg, evMsg)
+import Messages (renderMsg, evMsg, renderMsgIn, localizeEventsFor, MsgCatalog, defaultCatalog)
 import Vehicles
 import Effects
 import Quests
@@ -2115,7 +2116,7 @@ executeTacticalAction action state =
 executeCommand :: Command -> GameState -> CommandResult
 executeCommand cmd state =
     let (st', evs) = executeCommandEv cmd state
-    in (st', renderEvents evs)
+    in (st', renderEvents (localizeEventsFor (world state) evs))
 
 -- ---------------------------------------------------------------------------
 -- Help text
@@ -2123,5 +2124,10 @@ executeCommand cmd state =
 
 -- | Formatted help text (Phase 1.1: template lebt im Message-Katalog,
 --   Key help.text — byte-identisch zum bisherigen intercalate-Block).
+--   Phase 4.3: 'helpTextIn' rendert gegen den effektiven Katalog einer Welt.
 helpText :: String
-helpText = renderMsg "help.text" []
+helpText = helpTextIn defaultCatalog
+
+-- | 'helpText' against an arbitrary catalog (Phase 4.3).
+helpTextIn :: MsgCatalog -> String
+helpTextIn cat = renderMsgIn cat "help.text" []

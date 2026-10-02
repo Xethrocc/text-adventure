@@ -15,6 +15,15 @@ module Messages
     , MsgCatalog
     , renderMsg
     , renderMsgIn
+    , msgPayload
+    , msgPayloadIn
+    , translateTerms
+    , effectiveTerms
+    , localizeEvents
+    , effectiveCatalogFor
+    , effectiveTermsFor
+    , localizeEventsFor
+    , renderMsgFor
     , catalogEntries
     , defaultCatalog
     , LangPack (..)
@@ -27,11 +36,10 @@ module Messages
     , handleExpr
     , splitIfPipes
     , matchBrace
-    , msgPayload
     , evMsg
     ) where
 
-import Data.Char (isDigit, isSpace, isAlphaNum)
+import Data.Char (isDigit, isSpace, isAlphaNum, toLower)
 import Data.List (intercalate, isPrefixOf)
 import qualified Data.List as List (lookup)
 import Data.Map.Strict (Map)
@@ -39,7 +47,7 @@ import qualified Data.Map.Strict as Map
 import Text.Read (readMaybe)
 import Messages.LangDe (langDe)
 import Types.Output (MsgPayload (..), OutputEvent (..))
-import Types.Core (Expr (..), parseExpr)
+import Types.Core (Expr (..), parseExpr, GameWorld (..))
 
 -- | Stable message key. Plain alias: the catalog is data, and Phase 4.3
 --   overlays YAML-provided keys on the same namespace.
@@ -68,7 +76,11 @@ renderMsgIn catalog key args =
 -- | A catalog message as a structured payload: key, args and the rendered
 --   text (byte-identical to 'renderMsg'). Phase 1.2.
 msgPayload :: MsgId -> [(String, String)] -> MsgPayload
-msgPayload key args = MsgPayload (Just key) args (renderMsg key args)
+msgPayload = msgPayloadIn defaultCatalog
+
+-- | 'msgPayload' against an arbitrary catalog (Phase 4.3).
+msgPayloadIn :: MsgCatalog -> MsgId -> [(String, String)] -> MsgPayload
+msgPayloadIn cat key args = MsgPayload (Just key) args (renderMsgIn cat key args)
 
 -- | A catalog message as a one-element event fragment (the form command
 --   handlers return). Phase 1.2.
@@ -469,6 +481,71 @@ packFromTuple (lang, msgs, terms, verbs, dirs, cmds, preps) = LangPack
     , lpCmdAliases   = Map.fromList cmds
     , lpPrepositions = Map.fromList preps
     }
+
+-- ---------------------------------------------------------------------------
+-- Term translation and the localization pass (Phase 4.3)
+-- ---------------------------------------------------------------------------
+
+-- | The closed set of argument slots whose values are enumerable engine
+--   terms (Phase 4.3 decision: @dir@ = directions, @slot@ = equip slots).
+--   Every other argument is authored content in the author's language and is
+--   passed through unchanged. @card_type.*@ terms are not args — the card
+--   screen resolves them directly (see 'termValue').
+termSlots :: [String]
+termSlots = ["dir", "slot"]
+
+-- | Translate one enumerable argument value via the @slot.value@ term table;
+--   unknown values pass through unchanged (English tokens stay canonical).
+termValue :: Map.Map String String -> String -> String -> String
+termValue terms slot value =
+    Map.findWithDefault value (slot ++ "." ++ map toLower value) terms
+
+-- | Translate the term-slot arguments of one message (Phase 4.3).
+translateTerms :: Map.Map String String -> [(String, String)] -> [(String, String)]
+translateTerms terms args =
+    [ (k, if k `elem` termSlots then termValue terms k v else v) | (k, v) <- args ]
+
+-- | The effective term table of a world (Phase 4.3): the language pack's
+--   terms. Term lookups fall back to the untranslated value, so an
+--   untranslated pack is the identity.
+effectiveTerms :: Maybe String -> Map.Map String String
+effectiveTerms mLang = maybe Map.empty lpTerms (mLang >>= (`Map.lookup` langPacks))
+
+-- | The localization pass (Phase 4.3): re-render every keyed message from
+--   its key and args against the effective catalog, translating term-valued
+--   args first. Structure-preserving — event count, order and every non-keyed
+--   event (including @mpKey = Nothing@ payloads: authored @msg:@/@SendMessage@
+--   text) stay untouched; with the default catalog and no terms it is the
+--   identity. Call it at the output edge before 'Types.Output.renderEvents'
+--   or protocol encoding. NOTE (non-empty contract): the fragment algebra
+--   ('joinEv' etc.) decides emptiness on the *default-rendered* text, so
+--   templates and @messages:@ overrides must never render empty — the
+--   compiler enforces this ('EmptyMessageOverride'), the packs are generated
+--   non-empty.
+localizeEvents :: MsgCatalog -> Map.Map String String -> [OutputEvent] -> [OutputEvent]
+localizeEvents cat terms = map go
+  where
+    go ev = case ev of
+        EvMessage p | Just key <- mpKey p ->
+            EvMessage (msgPayloadIn cat key (translateTerms terms (mpArgs p)))
+        _ -> ev
+
+-- | The effective catalog of a world (Phase 4.3).
+effectiveCatalogFor :: GameWorld -> MsgCatalog
+effectiveCatalogFor w = effectiveCatalog (worldLanguage w) (worldMessages w)
+
+-- | The effective term table of a world (Phase 4.3).
+effectiveTermsFor :: GameWorld -> Map.Map String String
+effectiveTermsFor w = effectiveTerms (worldLanguage w)
+
+-- | 'localizeEvents' with a world's effective catalog and terms.
+localizeEventsFor :: GameWorld -> [OutputEvent] -> [OutputEvent]
+localizeEventsFor w = localizeEvents (effectiveCatalogFor w) (effectiveTermsFor w)
+
+-- | 'renderMsgIn' with a world's effective catalog (Phase 4.3: the chrome
+--   lines the loop and 'SaveLoad' print outside the event stream).
+renderMsgFor :: GameWorld -> MsgId -> [(String, String)] -> String
+renderMsgFor w = renderMsgIn (effectiveCatalogFor w)
 
 -- ---------------------------------------------------------------------------
 -- Template interpolation (moved verbatim from Game.hs in Phase 1.1 so the

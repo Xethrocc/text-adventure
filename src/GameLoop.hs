@@ -46,7 +46,7 @@ module GameLoop
 
 import Types
 import Game
-import Messages (renderMsg, evMsg)
+import Messages (evMsg, renderMsgFor, renderMsgIn, localizeEventsFor, effectiveCatalogFor, MsgCatalog, defaultCatalog)
 import Effects
 import Parser
 import Verbs (verbCanonicalName)
@@ -341,7 +341,7 @@ sideEvents before after = concat
 applyLoopCommand :: Command -> LoopState -> (LoopState, String)
 applyLoopCommand cmd loopState =
     let (ls', evs) = applyLoopCommandEv cmd loopState
-    in (ls', renderEvents evs)
+    in (ls', renderEvents (localizeEventsFor (world (lsCurrent loopState)) evs))
 
 -- | Rogue (Empfehlung 3, pure): a restart begins a fresh run with a freshly
 --   derived rngState — carrying the old stream over would replay identical
@@ -396,7 +396,7 @@ saveBlockedMessage :: GameState -> Maybe String
 saveBlockedMessage st
     | not (gpIronman policy) = Nothing
     | currentRoom (save st) `elem` gpSaveZones policy = Nothing
-    | otherwise = Just (renderMsg "save.savezone_only" [])
+    | otherwise = Just (renderMsgFor (world st) "save.savezone_only" [])
   where
     policy = worldGamePolicy (world st)
 
@@ -405,15 +405,19 @@ saveBlockedMessage st
 --   to make final.
 loadBlockedMessage :: GameState -> Maybe String
 loadBlockedMessage st
-    | gpIronman (worldGamePolicy (world st)) = Just (renderMsg "load.ironman_blocked" [])
+    | gpIronman (worldGamePolicy (world st)) = Just (renderMsgFor (world st) "load.ironman_blocked" [])
     | otherwise = Nothing
 
 -- | The menu line under the death screen. Permadeath (and ironman, which
 --   deletes the checkpoint) offer no undo/load, only restart or quit.
 deathMenuText :: GamePolicy -> String
-deathMenuText policy
-    | gpPermadeath policy || gpIronman policy = renderMsg "menu.restart_quit" []
-    | otherwise = renderMsg "menu.death_full" []
+deathMenuText = deathMenuTextIn defaultCatalog
+
+-- | 'deathMenuText' against an arbitrary catalog (Phase 4.3).
+deathMenuTextIn :: MsgCatalog -> GamePolicy -> String
+deathMenuTextIn cat policy
+    | gpPermadeath policy || gpIronman policy = renderMsgIn cat "menu.restart_quit" []
+    | otherwise = renderMsgIn cat "menu.death_full" []
 
 -- | Rogue Phase 2 (pure, testable): carry the old run's meta.* variables into
 --   the fresh state — souls earned survive the restart, everything else
@@ -654,7 +658,7 @@ loopGame fe loopState
                         loopGame fe loopState
                     Restart -> runRestart fe loopState
                     Help -> do
-                        feEmitLine fe helpText
+                        feEmitLine fe (helpTextIn (effectiveCatalogFor (world state)))
                         loopGame fe loopState
                     command -> do
                         let (loopState', message) = applyLoopCommand command loopState
@@ -727,8 +731,8 @@ executeRequest _fe st (ReqLoad slot)        = do
             diskMeta <- loadMeta (world loadedState)
             pure (Just (Loaded loadedState diskMeta))
 executeRequest _fe st ReqPersistMeta        = persistMeta st >> pure Nothing
-executeRequest fe _st ReqPause              = feReadPause fe >> pure Nothing
-executeRequest _fe _st (ReqDeleteSave slot)  = deleteSaveSlot slot >> pure Nothing
+executeRequest fe st ReqPause              = feReadPause fe (renderMsgFor (world st) "ui.press_enter" []) >> pure Nothing
+executeRequest _fe st (ReqDeleteSave slot)  = deleteSaveSlot (world st) slot >> pure Nothing
 executeRequest _fe st ReqListSaves          = listSaves (world st) >> pure Nothing
 
 -- | The first value-producing outcome of a request batch (there is at most one
@@ -780,7 +784,7 @@ transitionRestart seed loopState =
     let (restarted, lookMsg) = applyLoopCommand Restart loopState
         freshCurrent = reseedRng seed . bumpMetaRuns $ lsCurrent restarted
         freshLoop = restarted { lsCurrent = freshCurrent }
-        lines' = [renderMsg "game.restart_start" [], lookMsg]
+        lines' = [renderMsgFor (world (lsCurrent loopState)) "game.restart_start" [], lookMsg]
     in (freshLoop, [ReqPersistMeta], lines')
 
 -- | Pure formatting of end-game screen lines: blank line, resolved end art
@@ -789,17 +793,17 @@ endScreenLines :: GameState -> GameOverReason -> [String]
 endScreenLines st reason =
     let fallback = case reason of
             Death ->
-                [ renderMsg "end.rule_line" []
-                , renderMsg "death.title" []
-                , renderMsg "end.rule_line" []
+                [ renderMsgFor (world st) "end.rule_line" []
+                , renderMsgFor (world st) "death.title" []
+                , renderMsgFor (world st) "end.rule_line" []
                 ]
             Victory ->
-                [ renderMsg "end.rule_line" []
-                , renderMsg "victory.title" []
-                , renderMsg "end.rule_line" []
+                [ renderMsgFor (world st) "end.rule_line" []
+                , renderMsgFor (world st) "victory.title" []
+                , renderMsgFor (world st) "end.rule_line" []
                 ]
             Custom msg ->
-                [ renderMsg "gameover.custom" [("msg", msg)] ]
+                [ renderMsgFor (world st) "gameover.custom" [("msg", msg)] ]
         artLines = case endArtFor reason st of
             Just art -> [resolveAsciiArt art st]
             Nothing  -> fallback
@@ -819,9 +823,9 @@ transitionGameOver loopState =
             Just _ -> [ReqPersistMeta]
             Nothing -> [ReqPersistMeta]
         (nextSession, promptLine) = case mbReason of
-            Just Death -> (SessionDeath loopState, [deathMenuText policy])
-            Just Victory -> (SessionVictory loopState Victory, [renderMsg "menu.restart_quit" []])
-            Just (Custom msg) -> (SessionVictory loopState (Custom msg), [renderMsg "menu.restart_quit" []])
+            Just Death -> (SessionDeath loopState, [deathMenuTextIn (effectiveCatalogFor (world st)) policy])
+            Just Victory -> (SessionVictory loopState Victory, [renderMsgFor (world st) "menu.restart_quit" []])
+            Just (Custom msg) -> (SessionVictory loopState (Custom msg), [renderMsgFor (world st) "menu.restart_quit" []])
             Nothing -> (SessionEnded, [])
         lines' = case mbReason of
             Just reason -> endScreenLines st reason ++ promptLine
@@ -835,13 +839,13 @@ transitionDeathUndo loopState =
     let st = lsCurrent loopState
         policy = worldGamePolicy (world st)
     in if gpPermadeath policy
-       then (SessionDeath loopState, [], [renderMsg "undo.permadeath" []])
+       then (SessionDeath loopState, [], [renderMsgFor (world st) "undo.permadeath" []])
        else if gpIronman policy
-       then (SessionDeath loopState, [], [renderMsg "undo.ironman" []])
+       then (SessionDeath loopState, [], [renderMsgFor (world st) "undo.ironman" []])
        else if not (gpAllowUndo policy)
-       then (SessionDeath loopState, [], [renderMsg "undo.disabled" []])
+       then (SessionDeath loopState, [], [renderMsgFor (world st) "undo.disabled" []])
        else case lsHistory loopState of
-           [] -> (SessionDeath loopState, [], [renderMsg "undo.nothing" []])
+           [] -> (SessionDeath loopState, [], [renderMsgFor (world st) "undo.nothing" []])
            _  ->
                let (restored, msg) = applyLoopCommand Undo loopState
                in (SessionPlaying restored, [], [msg])
@@ -851,10 +855,10 @@ transitionDeathCanLoad :: LoopState -> (Bool, [String])
 transitionDeathCanLoad loopState =
     let policy = worldGamePolicy (world (lsCurrent loopState))
     in if gpPermadeath policy
-       then (False, [renderMsg "load.permadeath" []])
+       then (False, [renderMsgFor (world (lsCurrent loopState)) "load.permadeath" []])
        else if gpIronman policy
-       then (False, [renderMsg "load.ironman_blocked" []])
-       else (True, [renderMsg "load.prompt" []])
+       then (False, [renderMsgFor (world (lsCurrent loopState)) "load.ironman_blocked" []])
+       else (True, [renderMsgFor (world (lsCurrent loopState)) "load.prompt" []])
 
 -- | Pure determination of slot name and load request for death menu load.
 transitionDeathLoadSlot :: Maybe String -> (String, SessionRequest)
@@ -875,13 +879,13 @@ transitionDeathInput seed inputResult loopState =
         "r" ->
             let (freshLoop, reqs, lines') = transitionRestart seed loopState
             in (SessionPlaying freshLoop, reqs, lines')
-        "q" -> (SessionEnded, [], [renderMsg "quit.thanks" []])
+        "q" -> (SessionEnded, [], [renderMsgFor (world (lsCurrent loopState)) "quit.thanks" []])
         "l" ->
             let (canLoad, msgs) = transitionDeathCanLoad loopState
             in if canLoad
                then (SessionDeathPromptLoad loopState, [], msgs)
                else (SessionDeath loopState, [], msgs)
-        _   -> (SessionDeath loopState, [], [deathMenuText policy])
+        _   -> (SessionDeath loopState, [], [deathMenuTextIn (effectiveCatalogFor (world (lsCurrent loopState))) policy])
 
 -- | Pure transition for victory screen choices: 'r' (restart), 'q' (quit),
 --   or invalid input.
@@ -892,8 +896,8 @@ transitionVictoryInput seed inputResult loopState reason =
         "r" ->
             let (freshLoop, reqs, lines') = transitionRestart seed loopState
             in (SessionPlaying freshLoop, reqs, lines')
-        "q" -> (SessionEnded, [], [renderMsg "quit.thanks" []])
-        _   -> (SessionVictory loopState reason, [], [renderMsg "menu.restart_quit" []])
+        "q" -> (SessionEnded, [], [renderMsgFor (world (lsCurrent loopState)) "quit.thanks" []])
+        _   -> (SessionVictory loopState reason, [], [renderMsgFor (world (lsCurrent loopState)) "menu.restart_quit" []])
 
 -- | Pure narrative step: advances pending narrative lines with pauses (ReqPause)
 --   between lines, executes the follow-up outcome, and clears pendingNarrative.
@@ -961,9 +965,9 @@ deathLoop fe loopState = do
                             loopGame fe freshLoop
                         Nothing -> deathLoop fe loopState
         "r" -> runRestart fe loopState
-        "q" -> feEmitLine fe (renderMsg "quit.thanks" [])
+        "q" -> feEmitLine fe (renderMsgFor (world (lsCurrent loopState)) "quit.thanks" [])
         _ -> do
-            feEmitLine fe (deathMenuText policy)
+            feEmitLine fe (deathMenuTextIn (effectiveCatalogFor (world (lsCurrent loopState))) policy)
             deathLoop fe loopState
 
 -- | Victory/custom game-over input loop
@@ -972,7 +976,7 @@ victoryLoop fe loopState = do
     inputResult <- feReadPlain fe (lsCurrent loopState) "> "
     case map toLower (fromMaybe "q" inputResult) of
         "r" -> runRestart fe loopState
-        "q" -> feEmitLine fe (renderMsg "quit.thanks" [])
+        "q" -> feEmitLine fe (renderMsgFor (world (lsCurrent loopState)) "quit.thanks" [])
         _ -> do
-            feEmitLine fe (renderMsg "menu.restart_quit" [])
+            feEmitLine fe (renderMsgFor (world (lsCurrent loopState)) "menu.restart_quit" [])
             victoryLoop fe loopState

@@ -14,7 +14,6 @@ module Frontend
   ) where
 
 import Types (GameState)
-import Messages (renderMsg)
 import Completion (completionFor)
 import Control.Concurrent (threadDelay)
 import Control.Monad (void)
@@ -39,8 +38,10 @@ data Frontend = Frontend
       -- ^ read a bare line without completion/history (game-over menus).
       --   Carries the state so state-driven frontends (TUI) can refresh their
       --   HUD on the death/victory screen too (Rogue Phase 5, M10).
-    , feReadPause   :: IO ()
-      -- ^ narrative continuation: wait until the player confirms
+    , feReadPause   :: String -> IO ()
+      -- ^ narrative continuation: show the given prompt line and wait until
+      --   the player confirms (the prompt is catalog text — the loop renders
+      --   it localized, Phase 4.3)
     , fePlayFrames  :: Int -> [String] -> IO ()
       -- ^ play animation frames in order, waiting `micros` between them
       --   (the rate comes from the art via the pure core, Phase H/H1)
@@ -60,7 +61,7 @@ haskelineFrontend f = Frontend
     , feEmitRaw     = putStr . f
     , feReadInput   = \st p -> runInputT (haskelineSettings st) (getInputLine p)
     , feReadPlain   = \_st p -> runInputT defaultSettings (getInputLine p)
-    , feReadPause   = putStr (f (renderMsg "ui.press_enter" [])) >> void getLine
+    , feReadPause   = \prompt -> putStr (f prompt) >> void getLine
     , fePlayFrames  = \micros -> mapM_ (\fr -> putStrLn (f fr) >> threadDelay micros)
     , feDiagnostics = mapM_ (hPutStrLn stderr)
     , fePlaySfx     = \_ -> pure ()  -- Audio Phase 1: no-op default; overridden by Main when audio helpers are available

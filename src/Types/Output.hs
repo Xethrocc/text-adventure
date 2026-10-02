@@ -358,6 +358,12 @@ instance FromJSON OutputEvent where
 --   unlines with trailing newline, intercalate including empty parts). The
 --   fragment algebra below replicates each idiom exactly on event lists, so
 --   'renderEvents' reproduces the old string byte for byte.
+--
+--   NON-EMPTY CONTRACT (Phase 4.3): the drop-empty decisions below run on the
+--   *default-rendered* message text, before any localization pass. Catalog
+--   templates and `messages:` overrides must therefore never render empty --
+--   the worldbuilder rejects empty override values ('EmptyMessageOverride')
+--   and the language-pack generator rejects empty templates.
 -- ---------------------------------------------------------------------------
 
 -- | The text contribution of one event; non-text events contribute @""@ and

@@ -701,6 +701,10 @@ decodeServerMsg bs = case Aeson.eitherDecode bs of
 
 -- | Bridge session transition text lines into protocol wire events (Plan 1.4, constraint 6).
 --   Wraps each plain line into an 'EvText' event without styling spans.
+--   Phase 4.3: the caller renders these lines with the world's effective
+--   catalog ('Messages.renderMsgFor') — the wire carries final text. Keyed
+--   events in a 'ServerMsg' must likewise pass 'Messages.localizeEventsFor'
+--   at the server boundary before encoding.
 sessionLinesToEvents :: [String] -> [OutputEvent]
 sessionLinesToEvents = map (EvText . styledText)
 

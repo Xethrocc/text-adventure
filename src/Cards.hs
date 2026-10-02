@@ -11,7 +11,9 @@ module Cards
     , wrapWords
     , cardTypeAnsiColor
     , cardTypeLabel
+    , cardTypeLabelIn
     , renderCardBox
+    , renderCardBoxIn
     , hcatBoxes
     , renderDeckCombatHud
     , showHand
@@ -21,7 +23,7 @@ module Cards
 
 import Types
 import Game
-import Messages (renderMsg, evMsg)
+import Messages (renderMsg, evMsg, effectiveTermsFor)
 import Effects (applyOutcomeEv)
 import Ansi (stripAnsi)
 import Data.Char (toLower)
@@ -209,17 +211,40 @@ cardTypeAnsiColor CardPower  = "\ESC[38;2;240;190;40m"
 cardTypeAnsiColor CardCurse  = "\ESC[38;2;160;60;200m"
 cardTypeAnsiColor CardStatus = "\ESC[38;2;150;150;150m"
 
+-- | Default label for card types (Phase 4.3: frozen byte for byte — these
+--   German strings have always been the labels, in every language).
+defaultCardTypeLabel :: CardType -> String
+defaultCardTypeLabel CardAttack = "[Angriff]"
+defaultCardTypeLabel CardSkill  = "[Fertigkeit]"
+defaultCardTypeLabel CardPower  = "[Macht]"
+defaultCardTypeLabel CardCurse  = "[Fluch]"
+defaultCardTypeLabel CardStatus = "[Status]"
+
+-- | Canonical token of a card type — the @card_type.<token>@ term key.
+cardTypeToken :: CardType -> String
+cardTypeToken CardAttack = "attack"
+cardTypeToken CardSkill  = "skill"
+cardTypeToken CardPower  = "power"
+cardTypeToken CardCurse  = "curse"
+cardTypeToken CardStatus = "status"
+
 -- | German localized label for card types.
 cardTypeLabel :: CardType -> String
-cardTypeLabel CardAttack = "[Angriff]"
-cardTypeLabel CardSkill  = "[Fertigkeit]"
-cardTypeLabel CardPower  = "[Macht]"
-cardTypeLabel CardCurse  = "[Fluch]"
-cardTypeLabel CardStatus = "[Status]"
+cardTypeLabel = cardTypeLabelIn Map.empty
+
+-- | 'cardTypeLabel' against a term table (Phase 4.3): a language pack's
+--   @card_type.*@ terms override the default labels.
+cardTypeLabelIn :: Map.Map String String -> CardType -> String
+cardTypeLabelIn terms ct =
+    Map.findWithDefault (defaultCardTypeLabel ct) ("card_type." ++ cardTypeToken ct) terms
 
 -- | Render a single card as a multi-line box (width 16).
 renderCardBox :: Int -> Card -> [String]
-renderCardBox idx card =
+renderCardBox = renderCardBoxIn Map.empty
+
+-- | 'renderCardBox' against a term table (Phase 4.3).
+renderCardBoxIn :: Map.Map String String -> Int -> Card -> [String]
+renderCardBoxIn terms idx card =
     let topBorder = "┌──────────────┐"
         botBorder = "└──────────────┘"
         emptyInner = "│              │"
@@ -234,7 +259,7 @@ renderCardBox idx card =
         headerLine = "│" ++ take 14 (prefix ++ namePart ++ replicate gapLen ' ' ++ costStr ++ replicate 14 ' ') ++ "│"
 
         cColor = cardTypeAnsiColor (cardType card)
-        cLabel = cardTypeLabel (cardType card)
+        cLabel = cardTypeLabelIn terms (cardType card)
         rawTag = cColor ++ cLabel ++ "\ESC[0m"
         tagVisible = length cLabel
         leftPad = max 0 ((14 - tagVisible) `div` 2)
@@ -363,7 +388,7 @@ showHand st = case deckState (save st) of
                           then hudLines ++ [renderMsg "card.hand_empty" []]
                           else
                               let lookupCardBox idx cId = case Map.lookup cId (cardDefs (world st)) of
-                                      Just c  -> renderCardBox idx c
+                                      Just c  -> renderCardBoxIn (effectiveTermsFor (world st)) idx c
                                       Nothing ->
                                           [ "┌──────────────┐"
                                           , "│ " ++ padRightVisible 12 (show idx ++ ". " ++ take 8 cId) ++ " │"

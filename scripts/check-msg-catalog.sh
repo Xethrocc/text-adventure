@@ -10,8 +10,10 @@
 #                       the loud "<msg:key>" fallback instead of a message)
 #
 # It compares the catalog against the keys that production code passes as string
-# literals to renderMsg/msgPayload/evMsg. Only src/ is scanned (tests may use
-# deliberate dummy keys such as "no.such.key").
+# literals to renderMsg/msgPayload/evMsg and their catalog-aware Phase 4.3
+# variants renderMsgIn/renderMsgFor/msgPayloadIn (the In/For forms take the
+# catalog or world as an extra argument before the key). Only src/ is scanned
+# (tests may use deliberate dummy keys such as "no.such.key").
 #
 # POSIX shell + grep/sed only: scripts/ci.sh also runs on the Windows runner
 # (Git Bash), which has no guaranteed python3.
@@ -21,7 +23,7 @@ cd "$(dirname "$0")/.."
 catalog_keys="$(sed -n '/^catalogEntries =/,/^defaultCatalog/p' src/Messages.hs \
     | grep -oE '^[[:space:]]*[,(]?[[:space:]]*\("[^"]+"' \
     | grep -oE '"[^"]+"' | tr -d '"' | sort -u)"
-used_keys="$(grep -rhoE '\b(renderMsg|msgPayload|evMsg)[[:space:]]+"[^"]+"' src/ \
+used_keys="$(grep -rhoE '\b(renderMsgIn|renderMsgFor|msgPayloadIn|renderMsg|msgPayload|evMsg)\b[^"]*"[^"]+"' src/ \
     --include='*.hs' --exclude='Messages.hs' \
     | grep -oE '"[^"]+"' | tr -d '"' | sort -u)"
 

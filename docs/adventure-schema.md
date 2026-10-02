@@ -2563,6 +2563,16 @@ messages:                    # einzelne Engine-Meldungen ueberschreiben
   `include:`-Bibliotheken kommen (wie alle Einzelwert-Felder).
 - **In `world.json`** werden beide Felder nur bei Belegung geschrieben —
   ohne `language:`/`messages:` bleibt die Welt byte-identisch.
+- **Term-Tabelle:** Sprachpakete uebersetzen zusaetzlich die Werte von
+  Aufzaehlungs-Argumenten: `dir` (Richtungen in `move.ok`), `slot`
+  (Ausruestungsplaetze in `equip.line`) und die Kartentyp-Labels auf dem
+  Karten-Bildschirm (`card_type.attack`, `card_type.skill`, `card_type.power`,
+  `card_type.curse`, `card_type.status`). Alle uebrigen Argumente sind Content
+  in der Sprache des Autors und bleiben unveraendert.
+- **Nicht-Leerheits-Vertrag:** Vorlagen und `messages:`-Werte duerfen nie leer
+  rendern — die Ausgabe-Fragmentierung (leere Fragmente verwerfen) wuerde sich
+  still aendern. Der Compiler lehnt leere Werte ab, der Generator erzwingt
+  nicht-leere Vorlagen.
 - **Grenzen:** Sprachpakete uebersetzen *Engine-Meldungen* (und ab 4.3.4 auch
   die Eingabe-Aliase). **Inhalte** (Namen, Beschreibungen, `msg:`-Texte)
   schreibt der Autor in einer Sprache — `messages:` ist kein mehrsprachiges

@@ -360,3 +360,14 @@ To ensure that the protocol wire format remains uniformly `[OutputEvent]`:
 1. **Protocol Boundary Adaptation:** The function `sessionLinesToEvents :: [String] -> [OutputEvent]` wraps each prose string into an `EvText (styledText line)` event.
 2. **Unified Wire Representation:** When `ServerEvents` messages are transmitted over the wire, all session feedback is formatted as standard `[OutputEvent]` items.
 3. **Internal Contract Preservation:** Internal engine functions continue returning `[String]` for CLI/TUI backwards-compatibility and unit test stability without breaking existing test assertions.
+
+## 8. Localization at the Server Boundary (Phase 4.3)
+
+The wire carries **final text**: `MsgPayload` keeps `mpKey`/`mpArgs`, but `mpText`
+is what the client displays. A server must therefore run the localization pass
+`Messages.localizeEventsFor :: GameWorld -> [OutputEvent] -> [OutputEvent]` over
+the event stream — and render session transition lines with
+`Messages.renderMsgFor` — **before** encoding a `ServerMsg`. The pass is
+structure-preserving (event count, order, non-keyed events and `mpKey = Nothing`
+payloads with authored text are untouched) and is the identity for worlds
+without `language:`/`messages:`. Clients never localize.

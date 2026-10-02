@@ -14,6 +14,7 @@ import Data.List (isInfixOf, isPrefixOf)
 
 import Types as E
 import GameLoop (LoopState (..), initLoopState, applyLoopCommandEv)
+import Messages (localizeEventsFor)
 import Parser (Command (..), parseCommandWith)
 import Worldbuilder.Types (AContentTest (..), Adventure (..))
 import Worldbuilder.Compile (CompileResult (..), CompileIssue (..), compileAdventure)
@@ -58,7 +59,7 @@ executeContentTest ct gw sv =
         | E.gameOver (E.save (lsCurrent ls)) = []
         | otherwise =
             let (ls', evs) = applyLoopCommandEv cmd ls
-            in renderEvents evs : go ls' rest
+            in renderEvents (localizeEventsFor gw evs) : go ls' rest
 
 -- | Run the content tests of one adventure file. Prints a CI-style report
 --   (one line per test) and returns the number of failures (0 = success).

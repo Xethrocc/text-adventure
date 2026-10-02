@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Sprachpakete: Render-Pass am Rand (4.3, Teil 2)
+
+- **Lokalisierungs-Pass** (`Messages.localizeEvents`): keyed Meldungen werden
+  am Ausgabekanal aus Key + Args neu gerendert — `messages:`-Overrides und
+  Sprachpaket-Templates greifen ohne dass die ~229 `evMsg`-Call-Sites sich
+  aendern. Struktur-erhaltend (Event-Anzahl/Reihenfolge, `mpKey = Nothing` =
+  Autoren-Text bleibt roh), ohne `language:`/`messages:` ist der Pass die
+  Identitaet.
+- **Term-Uebersetzung** (`translateTerms`): die Aufzaehlungs-Argumente `dir`
+  (Richtungen) und `slot` (Ausruestungsplaetze) werden ueber die
+  `slot.value`-Tabelle des Sprachpakets uebersetzt; Kartentyp-Labels laufen
+  ueber dieselbe Tabelle (`card_type.*`) — der Default bleibt byte-identisch
+  (die historischen deutschen Labels).
+- **Ausgabekanten eingebunden:** `applyLoopCommand`/`executeCommand`
+  (Kommando-Events), GameLoop-Chrome (Menues, Tod/Sieg-Bildschirme,
+  Speicher-Tore, `help`, `ui.press_enter` ueber `feReadPause :: String -> IO ()`)
+  und die SaveLoad-Ausgaben (`formatSaveEntry`/`deleteSaveSlot`/
+  `loadMetaForSlug` nehmen jetzt die Welt entgegen) rendern katalog-bewusst;
+  `worldbuilder test` lokalisiert seine Marker-Texte. Protokoll: die Wire-
+  Events tragen finalen Text — der Server lokalisiert vor dem Kodieren
+  (`docs/protocol-v1.md` Sektion 8).
+- **Nicht-Leerheits-Vertrag** dokumentiert (`Types/Output.hs` Fragment-Algebra,
+  `docs/adventure-schema.md`): die Verwerf-Logik fuer leere Fragmente wertet
+  den englischen Default-Text — Templates/Overrides duerfen nie leer rendern.
+- 4 neue Engine-Tests (448): Pass-Verhalten (Override/Terms/Identitaet/Roh-
+  Payloads), Term-Slots, `renderMsgFor`, Kartentyp-Terms.
+
 ### Sprachpakete: Datenmodell & Katalog-Aufloesung (4.3, Teil 1)
 
 - **`language:` und `messages:`** am Abenteuer: `language: de` waehlt das

@@ -196,7 +196,7 @@ tuiFrontend shared chan = Frontend
         writeBChan chan EvHud
         syncAmbientPanel st
         Just <$> nextLine shared
-    , feReadPause   = void (nextLine shared)
+    , feReadPause   = \_prompt -> void (nextLine shared)
     , fePlayFrames  = \micros frames -> do
         -- H4b: in-place playback. Set the panel, let the ticker advance it,
         -- and block until the UI signals the last frame (cutscenes may block,
