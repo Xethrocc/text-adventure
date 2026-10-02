@@ -1,0 +1,70 @@
+# 4.3.6: Genre-Demo (P4-Entscheidung) — eine deutsche Fantasy-Variante auf
+# Basis von examples/genres/fantasy.yaml, reduziert auf den Kernpfad bis zum
+# Sieg. Realismus-Nachweis: `language: de`, Grammatikfelder `article:`/
+# `gender:`, deutsche Eingabe-Aliase und Meldung + Content in einer Sprache.
+# Additiv — kein Byte-Effekt auf die bestehenden Genres.
+name: Glutkrone (Fantasy-Deutsch)
+start_room: furt
+
+language: de
+
+rooms:
+  - id: furt
+    name: Furt
+    desc: Eine seichte Furt. Der Weg nach Norden fuehrt hinauf ins Dorf.
+    exits:
+      north: {to: dorfplatz}
+
+  - id: dorfplatz
+    name: Dorfplatz
+    desc: Verlassene Marktstaende. Im Norden ragt ein alter Turm auf.
+    exits:
+      south: {to: furt}
+      north: {to: turm}
+
+  - id: turm
+    name: Turm
+    desc: Die Spitze eines alten Turms. Auf einem Steinsockel ruht eine Krone.
+    exits:
+      south: {to: dorfplatz}
+
+items:
+  - id: rostschwert
+    name: Rostschwert
+    desc: Eine Klinge voller Rost, aber sie schneidet noch.
+    keys: [schwert, rostschwert]
+    location: dorfplatz
+    slot: weapon
+    effects: ["attack+2"]
+    article: {nom: das, acc: das, dat: dem}
+    gender: n
+
+  - id: glutkrone
+    name: Glutkrone
+    desc: Ein schlichter Reif, warm wie eine glimmende Kohle.
+    keys: [krone, glutkrone]
+    location: turm
+    article:
+      nom: die
+      acc: die
+      dat: der
+    gender: f
+    verb_map:
+      instead:take,intact:
+        - {give: glutkrone}
+        - {msg: "Du hebst die Glutkrone. Der Turm bebt einmal und wird still."}
+        - {game_end: victory, msg: "SIEG - Die Glutkrone ruht auf deinem Haupt."}
+
+npcs:
+  - id: turmwaechter
+    name: Turmwaechter
+    desc: Eine gebeugte Gestalt in einem abgetragenen Mantel.
+    keys: [waechter, turmwaechter]
+    location: turm
+    max_hp: 8
+    attack: 2
+    defense: 1
+    article: {nom: der, acc: den, dat: dem}
+    gender: m
+    topics:
+      krone: {msg: "Der Turmwaechter sagt: 'Die Glutkrone gehoert dem, der sie hebt.'"}

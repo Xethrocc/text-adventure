@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Sprachpakete: Beispiel-Abenteuer & Genre-Demo (4.3, Teil 6)
+
+- `examples/fixtures/sprache.yaml`: durchspielbares Mini-Abenteuer mit
+  `language: de`, `messages:`-Override (`take.ok` mit `{article_acc}`),
+  Grammatikfeldern an allen Items/NPCs, deutschen Eingaben (`nimm`/`schliesse`/
+  `oeffne`/`gib … an …`/`nord`/`inventar`) und einer `tests:`-Sektion
+  (7 deutsche Marker). E2E `ci/e2e/sprache.{in,expect}` (CI-Stufen 4/4b).
+- `examples/genres/fantasy-de.yaml`: deutsche Fantasy-Variante auf Basis von
+  `fantasy.yaml`, reduziert auf den Kernpfad bis zum Sieg um die Glutkrone —
+  Realismus-Nachweis fuer Sprachpaket + Grammatikfelder + deutsche Eingabe in
+  einem Genre-Abenteuer (P4-Entscheidung). E2E `ci/e2e/fantasy-de.{in,expect}`
+  (CI-Stufe 4), additiv ohne Byte-Effekt auf die bestehenden Genres.
+- `docs/message-catalog.md` zeigt die Katalog-Templates jetzt en/de
+  nebeneinander (`scripts/gen-msg-catalog.py` erweitert); `lang/README.md`
+  dokumentiert das Paketformat, die Werkzeuge und das Anlegen neuer Sprachen.
+
 ### Grammatikfelder `article:`/`gender:` (4.3.5, Teil 5)
 
 - **Neue optionale Felder an Items und NPCs** (Variante A aus dem

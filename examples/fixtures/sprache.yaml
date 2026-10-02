@@ -1,0 +1,80 @@
+# 4.3.6: Beispiel-Abenteuer für Sprachpakete — `language: de`, ein
+# `messages:`-Override mit Grammatik-Platzhaltern, `article:`/`gender:` an
+# Items/NPCs und deutsche Eingabe-Aliase in einem durchspielbaren
+# Mini-Abenteuer (Planzeile 4.3, "Tab"-unabhängig).
+name: "Sprachpaket-Demo (language: de)"
+start_room: halle
+
+language: de
+messages:
+  take.ok: "Du steckst {article_acc} {item} ein."
+
+rooms:
+  - id: halle
+    name: Halle
+    desc: Die Eingangshalle mit einer schweren Holztruhe.
+    exits:
+      north: garten
+
+  - id: garten
+    name: Garten
+    desc: Ein ruhiger Garten hinter der Halle.
+    exits:
+      south: halle
+
+items:
+  - id: schluessel
+    name: Schluessel
+    desc: Ein messingener Schluessel.
+    location: halle
+    keys: [schluessel]
+    article: {nom: der, acc: den, dat: dem}
+    gender: m
+
+  - id: truhe
+    name: Truhe
+    desc: Eine schwere Holztruhe mit eisernen Baendern.
+    location: halle
+    keys: [truhe]
+    capacity: 3
+    article: {nom: die, acc: die, dat: der}
+    gender: f
+
+  - id: munze
+    name: Munze
+    desc: Eine goldene Munze.
+    in_container: truhe
+    keys: [munze, goldmunze]
+    article: {nom: die, acc: die, dat: der}
+    gender: f
+
+npcs:
+  - id: waechter
+    name: Waechter
+    desc: Ein freundlicher Waechter in gruener Uniform.
+    location: halle
+    keys: [waechter]
+    article: {nom: der, acc: den, dat: dem}
+    gender: m
+    topics:
+      garten: {msg: "Der Waechter sagt: 'Hinter der Halle liegt der Garten.'"}
+
+tests:
+  - name: "deutsche Ausgaben mit Artikeln (messages:-Override + Grammatikfelder)"
+    input:
+      - nimm Schluessel
+      - schliesse Truhe
+      - oeffne Truhe
+      - nimm Munze aus Truhe
+      - gib Munze an Waechter
+      - nord
+      - inventar
+      - quit
+    expect:
+      - "Du steckst den Schluessel ein."
+      - "Jetzt ist die Truhe geschlossen."
+      - "Jetzt ist die Truhe offen."
+      - "Du nimmst die munze aus der Truhe."
+      - "Du gibst die Munze an den Waechter."
+      - "Du gehst nach Norden."
+      - "Inventar:"

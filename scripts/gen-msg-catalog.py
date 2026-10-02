@@ -14,12 +14,14 @@ Only generation needs python3 (a manual step); the CI gate
 `scripts/check-msg-catalog.sh` stays POSIX shell, since a CI run also happens on
 the Windows runner (Git Bash, no guaranteed python3).
 """
+import json
 import re
 import sys
 
 ROOT = __file__.rsplit("/", 2)[0]
 SRC = f"{ROOT}/src/Messages.hs"
 DOC = f"{ROOT}/docs/message-catalog.md"
+LANG = f"{ROOT}/lang/de.json"
 
 src = open(SRC, encoding="utf-8").read()
 block = src.split("catalogEntries =", 1)[1].split("\ndefaultCatalog", 1)[0]
@@ -70,6 +72,14 @@ dupes = {k for k, _ in entries if [x for x, _ in entries].count(k) > 1}
 if dupes:
     sys.exit(f"duplicate catalog keys: {sorted(dupes)}")
 
+# Language-pack column (Phase 4.3.6): the German pack's template per key —
+# the doc shows both languages side by side. Missing translations render as
+# an empty cell (the pack gate enforces completeness separately).
+try:
+    de_msgs = json.load(open(LANG, encoding="utf-8")).get("messages", {})
+except OSError:
+    de_msgs = {}
+
 LIMIT = 120
 
 
@@ -81,7 +91,7 @@ def cell(t):
 
 
 rows = "\n".join(
-    f"| {i} | `{k}` | `{cell(t)}` |"
+    f"| {i} | `{k}` | `{cell(t)}` | `{cell(de_msgs.get(k, ''))}` |"
     for i, (k, t) in enumerate(sorted(entries), start=1))
 
 doc = open(DOC, encoding="utf-8").read()
@@ -89,7 +99,7 @@ pattern = re.compile(r"(<!-- BEGIN GENERATED.*?-->)(.*?)(<!-- END GENERATED -->)
 if not pattern.search(doc):
     sys.exit("generated markers not found in docs/message-catalog.md")
 
-table = f"\n| # | MsgId | Template |\n|---|---|---|\n{rows}\n\n"
+table = f"\n| # | MsgId | Template (en) | Template (de) |\n|---|---|---|---|\n{rows}\n\n"
 doc = pattern.sub(lambda m: m.group(1) + table + m.group(3), doc)
 doc = re.sub(r"(\*\*Kataloggröße: )\d+( Keys\*\*)", rf"\g<1>{len(entries)}\g<2>", doc)
 open(DOC, "w", encoding="utf-8").write(doc)

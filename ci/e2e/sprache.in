@@ -1,0 +1,8 @@
+nimm Schluessel
+schliesse Truhe
+oeffne Truhe
+nimm Munze aus Truhe
+gib Munze an Waechter
+nord
+inventar
+quit
