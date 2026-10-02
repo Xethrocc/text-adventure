@@ -103,6 +103,40 @@ checkLanguageFields adv = (langErrs ++ emptyErrs, unknownKeyWarns)
             ("'" ++ k ++ "' is not an engine message key (this override does nothing)")
         | k <- Map.keys (advMessages adv), k `Map.notMember` Msg.defaultCatalog ]
 
+-- | 4.3.5 (Variante A): grammar metadata checks. Items and NPCs should carry
+--   `article:`/`gender:` whenever the effective catalog templates for their
+--   message keys reference the grammar placeholders — otherwise those render
+--   as empty strings at the output edge ('MissingGrammar'). Conservative: the
+--   warning only fires in language-pack worlds (`language:` set) and only when
+--   the templates actually demand the args — an article-less `messages:`
+--   override silences it. `gender:` is a closed tag set (hard error).
+checkGrammarFields :: Adventure -> ([CompileIssue], [CompileIssue])
+checkGrammarFields adv = (genderErrs, missingWarns)
+  where
+    langWorld = isJust (advLanguage adv)
+    catalog = Msg.effectiveCatalog (advLanguage adv) (advMessages adv)
+    wants keys = any (\k -> maybe False (not . null . Msg.templateGrammarKeys)
+                               (Map.lookup k catalog)) keys
+    itemWants = wants Msg.itemGrammarMsgKeys
+    npcWants  = wants Msg.npcGrammarMsgKeys
+    validGenders = ["m", "f", "n"]
+    genderErrs =
+        [ ciError ("items." ++ aiId i ++ ".gender") "InvalidGender"
+            ("'" ++ g ++ "' is not a valid gender tag (expected one of: m, f, n)")
+        | i <- advItems adv, Just g <- [E.gGender (aiGrammar i)], g `notElem` validGenders ]
+        ++
+        [ ciError ("npcs." ++ anId n ++ ".gender") "InvalidGender"
+            ("'" ++ g ++ "' is not a valid gender tag (expected one of: m, f, n)")
+        | n <- advNPCs adv, Just g <- [E.gGender (anGrammar n)], g `notElem` validGenders ]
+    missingWarns =
+        [ ciWarning ("items." ++ aiId i ++ ".article") "MissingGrammar"
+            "item has no article:/gender: but the language templates use grammar placeholders — they render empty"
+        | langWorld, itemWants, i <- advItems adv, E.grammarEmpty (aiGrammar i) ]
+        ++
+        [ ciWarning ("npcs." ++ anId n ++ ".article") "MissingGrammar"
+            "NPC has no article:/gender: but the language templates use grammar placeholders — they render empty"
+        | langWorld, npcWants, n <- advNPCs adv, E.grammarEmpty (anGrammar n) ]
+
 -- | Rogue Phase 1: build an engine GamePolicy from the authored `game:` block.
 --   Absent block (or absent fields) keeps 'E.defaultGamePolicy' — the
 --   Default-Invariante. Validation: savezone rooms must exist (MissingRoom);
@@ -700,6 +734,7 @@ compileAdventure adv =
         possessionErrs = checkNpcPossessionRefs adv
         rngVarErrs = checkRngVarWrites adv
         (langErrs, langWarns) = checkLanguageFields adv
+        (gramErrs, gramWarns) = checkGrammarFields adv
 
 
         allErrors = verbErrs ++ roomErrs ++ itemErrs ++ npcErrs ++ vehicleErrs
@@ -741,6 +776,7 @@ compileAdventure adv =
                     ++ possessionErrs
                     ++ rngVarErrs
                     ++ langErrs
+                    ++ gramErrs
     in case allErrors of
         (_:_) -> Left allErrors
         [] ->
@@ -790,6 +826,7 @@ compileAdventure adv =
                           ++ gainXpWarns
                           ++ deadContentWarns
                           ++ langWarns
+                          ++ gramWarns
             in Right (CompileResult gw startSave allWarns)
   where
     -- Every locked exit starts locked in entityStates
@@ -2732,6 +2769,7 @@ compileItemDefSafe registry i =
                 , E.itemTakeFailure = aiTakeFailure i
                 , E.itemVerbMap = verbMap'
                 , E.itemCapacity = aiCapacity i
+                , E.itemGrammar = aiGrammar i
                 })
 
 compileItemStates :: [AItem] -> ([CompileIssue], Map.Map String E.ItemState)
@@ -2812,6 +2850,7 @@ compileNPCDefSafe registry n =
             , E.npcAttackBase = anAttack n
             , E.npcDefenseBase = anDefense n
             , E.npcVerbMap = verbMap
+            , E.npcGrammar = anGrammar n
             })
 
 compileDialogueTrees :: Map.Map String ADialogueTree -> Map.Map String E.DialogueTree

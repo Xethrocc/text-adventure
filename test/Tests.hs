@@ -34,7 +34,8 @@ import Frontend (Frontend (..), commandCompletion)
 import Messages (renderMsg, formatStringWith, catalogEntries, defaultCatalog,
                 renderMsgIn, msgPayload, localizeEvents, localizeEventsFor,
                 translateTerms, renderMsgFor,
-                effectiveCatalog, langPacks, knownLanguages, LangPack (..))
+                effectiveCatalog, langPacks, knownLanguages, LangPack (..),
+                grammarArgs, templateGrammarKeys, isGrammarArgKey)
 import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, parseCommandFor, helpText, bindCommandVars,
                InteractTarget (..), resolveInteractTarget,
                TargetResolution (..), resolveTarget, preferInventoryTarget,
@@ -499,7 +500,7 @@ testCombatNarrativeLose = do
 -- | A minimal companion-capable NPC used by the party tests.
 squireDef :: NPCDef
 squireDef = NPCDef "squire" "squire" (plainText "A loyal squire with a chipped blade.")
-    Map.empty ["squire", "knappe"] (Just 20) 3 1 Map.empty emptyAscii Map.empty
+    Map.empty ["squire", "knappe"] (Just 20) 3 1 Map.empty emptyAscii Map.empty emptyGrammar
 
 -- | Sample game plus a `squire`. Joining is just the roster convention:
 --   the follow variable `party.squire` set to 1.
@@ -2096,7 +2097,7 @@ testDefaultSaveStateFieldsInitialised = do
 -- | Second companion used by the P0-2 combat regressions.
 guardDef :: NPCDef
 guardDef = NPCDef "guard" "guard" (plainText "A silent guard.")
-    Map.empty ["guard"] (Just 20) 3 1 Map.empty emptyAscii Map.empty
+    Map.empty ["guard"] (Just 20) 3 1 Map.empty emptyAscii Map.empty emptyGrammar
 
 -- | P0-2 fixture: sample game in the hallway with two companions (guard,
 --   squire) and a rule that announces the goblin's death. `goblinHp` decides
@@ -3469,7 +3470,7 @@ testTakeEventOnlyOnSuccess = do
     let base = initSampleGame
         nonPortable = ItemDef "statue" "statue" (plainText "A heavy stone statue.")
                           ["statue"] Set.empty Nothing [] False Nothing False
-                          (Just "The statue will not budge.") Map.empty Nothing emptyAscii
+                          (Just "The statue will not budge.") Map.empty Nothing emptyAscii emptyGrammar
         st0 = base { world = (world base)
                          { itemDefs = Map.insert "statue" nonPortable (itemDefs (world base)) }
                    , save  = (save base)
@@ -3690,7 +3691,7 @@ testOnUseTriggerMultiWordAlias = do
         w = (world sample)
             { itemDefs = Map.insert "oil_can"
                 (ItemDef "oil_can" "oil can" (plainText "A dented oil can.") ["oil", "can"]
-                         Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii)
+                         Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar)
                 (itemDefs (world sample))
             , triggerDefs =
                 [ TriggerDef "light_lantern" (OnUse "oil_can") Nothing
@@ -3721,7 +3722,7 @@ testTakeWithOnTakePicksUp = do
             { itemDefs = Map.insert "token"
                 (ItemDef "token" "token" (plainText "A token.") ["token"] Set.empty
                          Nothing [] False Nothing True Nothing
-                         (Map.singleton (PhaseAfter, VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))) Nothing emptyAscii)
+                         (Map.singleton (PhaseAfter, VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))) Nothing emptyAscii emptyGrammar)
                 (itemDefs (world sample)) }
         here = currentRoom (save sample)
         st = sample { world = w
@@ -3742,7 +3743,7 @@ testTakeNonPortableFails = do
             { itemDefs = Map.insert "statue"
                 (ItemDef "statue" "statue" (plainText "A statue.") ["statue"] Set.empty
                          Nothing [] False Nothing False (Just "Too heavy to lift.")
-                         Map.empty Nothing emptyAscii)
+                         Map.empty Nothing emptyAscii emptyGrammar)
                 (itemDefs (world sample)) }
         here = currentRoom (save sample)
         st = sample { world = w
@@ -3760,7 +3761,7 @@ testTakeNonPortableFails = do
 -- Helper: an equippable item placed in the player's inventory.
 invItem :: String -> ItemDef
 invItem iid = ItemDef iid iid (plainText "x") [iid] Set.empty
-    (Just Weapon) [] False Nothing True Nothing Map.empty Nothing emptyAscii
+    (Just Weapon) [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar
 
 -- | Equipped items are always also carried.
 testEquippedImpliesCarried :: IO Bool
@@ -4313,7 +4314,7 @@ testStandingOutcomeViaDialogue = do
                                 (DialogueNode "intro" "Join us."
                                     [ DialogueChoice "I accept." Nothing Nothing
                                         (ModifyValue (VRVariable "faction.smugglers") 20) ]))))
-                    ["recruiter"] Nothing 0 0 Map.empty emptyAscii Map.empty)
+                    ["recruiter"] Nothing 0 0 Map.empty emptyAscii Map.empty emptyGrammar)
                 (npcDefs (world sample)) }
         st0 = sample { world = w
                      , save = (save sample)
@@ -4350,7 +4351,7 @@ tradeWorld stock credits =
                 (ItemDef "rope" "rope" (plainText "A coil of rope.")
                     ["rope"] Set.empty Nothing [] False Nothing True Nothing
                     (Map.singleton (PhaseAfter, VCustom "buy", "intact") buyEff
-                        `Map.union` Map.singleton (PhaseAfter, VCustom "sell", "intact") sellEff) Nothing emptyAscii)
+                        `Map.union` Map.singleton (PhaseAfter, VCustom "sell", "intact") sellEff) Nothing emptyAscii emptyGrammar)
             , verbDefs = Map.singleton "buy" (VerbDef "buy" ["purchase"])
                 `Map.union` Map.singleton "sell" (VerbDef "sell" ["pawn"])
             }
@@ -4524,7 +4525,7 @@ testVisitedAcceptsBool = do
 testItemWithoutStateIsReported :: IO Bool
 testItemWithoutStateIsReported = do
     let lamp = ItemDef "lamp" "lamp" (plainText "A brass lamp.") ["lamp"] Set.empty
-                    Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii
+                    Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar
         gw = (world initSampleGame)
                 { itemDefs = Map.insert "lamp" lamp (itemDefs (world initSampleGame)) }
     r1 <- expectTrue "MissingItemState is reported"
@@ -5072,7 +5073,7 @@ testTopics = do
                 Map.empty emptyAscii
                 (Map.fromList
                     [ ("altes schloss", SetValue (VRVariable "wissen") (EVInt 1))
-                    , ("geruechte", SendMessage "Geruechte gibt es viele.") ])
+                    , ("geruechte", SendMessage "Geruechte gibt es viele.") ]) emptyGrammar
         st0 = cstate2 [mkTestRoom "halle" "Halle"] [] [] Map.empty
         st0' = st0 { world = (world st0) { npcDefs = Map.singleton "gelehrter" npc } }
         run cmd st = applyLoopCommandEv (parseCommand cmd) (initLoopState st)
@@ -5097,7 +5098,7 @@ testOnTalkTriggerFires = do
     let trig = TriggerDef "test_talk" (OnTalk "gelehrter" "") Nothing [SendMessage "Der Gelehrte runzelt die Stirn."] False 0
         npc = NPCDef "gelehrter" "Gelehrter" (plainText "Ein Gelehrter.") Map.empty [] (Just 20) 5 5
                 Map.empty emptyAscii
-                (Map.fromList [("altes schloss", SendMessage "Altes Schloss?")])
+                (Map.fromList [("altes schloss", SendMessage "Altes Schloss?")]) emptyGrammar
         st0 = cstate2 [mkTestRoom "halle" "Halle"] [] [] Map.empty
         st0' = st0 { world = (world st0) { npcDefs = Map.singleton "gelehrter" npc
                                          , triggerDefs = [trig] } }
@@ -5118,7 +5119,7 @@ testOnTalkTriggerFires = do
 b7State :: [(ItemDef, Location)] -> GameState
 b7State its =
     let waechter = NPCDef "waechter" "Waechter" (plainText "Ein Waechter.") Map.empty ["waechter"]
-                    (Just 20) 5 5 Map.empty emptyAscii Map.empty
+                    (Just 20) 5 5 Map.empty emptyAscii Map.empty emptyGrammar
         st0 = cstate2 [mkTestRoom "halle" "Halle"] its [] Map.empty
     in st0 { world = (world st0) { npcDefs = Map.singleton "waechter" waechter }
            , save = (save st0) { npcStates = Map.singleton "waechter"
@@ -5900,7 +5901,7 @@ mkTestRoom rId name = Room rId name (plainText name) Map.empty Set.empty Nothing
 --   helper without devices.
 mkTestItem :: String -> String -> ItemDef
 mkTestItem i n =
-    ItemDef i n (plainText n) [i] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii
+    ItemDef i n (plainText n) [i] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar
 
 mstate :: [Room] -> [(ItemDef, Location)] -> GameState
 mstate rms its =
@@ -5982,9 +5983,9 @@ dstate rms its devs =
 testActorHasPredicate :: IO Bool
 testActorHasPredicate = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii
-        it2 = ItemDef "schluessel" "Schlüssel" (plainText "Ein Schlüssel.") ["schluessel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii
-        it3 = ItemDef "kristall" "Kristall" (plainText "Ein Kristall.") ["kristall"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii
+        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar
+        it2 = ItemDef "schluessel" "Schlüssel" (plainText "Ein Schlüssel.") ["schluessel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar
+        it3 = ItemDef "kristall" "Kristall" (plainText "Ein Kristall.") ["kristall"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar
         dev1 = DeviceDef "halterung" "Halterung" ["halterung"] "krypta" (Just "Eine Halterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [ (it1, InRoom "krypta")
                           , (it2, CarriedBy (ActorNPC "guard"))
@@ -6000,7 +6001,7 @@ testActorHasPredicate = do
 testMountAndUnmountEffects :: IO Bool
 testMountAndUnmountEffects = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii
+        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar
         dev1 = DeviceDef "halterung" "Halterung" ["halterung"] "krypta" (Just "Eine Halterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [(it1, InRoom "krypta")] [dev1]
     let (st1, _, _) = applyOutcomeWith 0 0 (Mount "fackel" (ActorEntity "halterung")) "" st0
@@ -6014,7 +6015,7 @@ testMountAndUnmountEffects = do
 testDeviceInteractionExamine :: IO Bool
 testDeviceInteractionExamine = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "brennende Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii
+        it1 = ItemDef "fackel" "brennende Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar
         dev1 = DeviceDef "halterung" "Fackelhalterung" ["halterung"] "krypta" (Just "Eine Wandhalterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [(it1, CarriedBy (ActorEntity "halterung"))] [dev1]
         cmd = parseCommandWith Map.empty "examine halterung"
@@ -7600,6 +7601,7 @@ mkTestKey iid name = ItemDef
     , itemTakeFailure = Nothing
     , itemVerbMap = Map.empty
     , itemCapacity = Nothing, itemAscii = emptyAscii
+    , itemGrammar = emptyGrammar
     }
 
 -- | Phase 0.1: Test central resolveTarget for Item, NPC, Vehicle, Bare, NotFound, and Ambiguous
@@ -7844,6 +7846,7 @@ mkTestEquip iid name slot = ItemDef
     , itemTakeFailure = Nothing
     , itemVerbMap = Map.empty
     , itemCapacity = Nothing, itemAscii = emptyAscii
+    , itemGrammar = emptyGrammar
     }
 
 -- | Phase 0.2: Direct test of search order and preferInventoryTarget predicate
@@ -8798,7 +8801,7 @@ testLangPackCatalogLayers = do
     r1 <- expectTrue "the de pack is registered" (Map.member "de" langPacks)
     r2 <- expectEqual (Just "Eigen: {dir}.") (Map.lookup "move.ok" cat)
     r3 <- expectEqual (Just "Die Tür ist verschlossen.") (Map.lookup "move.door_locked" cat)
-    r4 <- expectEqual (Just "Du nimmst {item}.") (Map.lookup "take.ok" cat)
+    r4 <- expectEqual (Just "Du nimmst {article_acc} {item}.") (Map.lookup "take.ok" cat)
     r5 <- expectTrue "unknown language renders the default catalog"
              (effectiveCatalog (Just "xx") Map.empty == defaultCatalog)
     r6 <- expectTrue "no language renders the default catalog"
@@ -8880,10 +8883,11 @@ testRenderMsgForWorld :: IO Bool
 testRenderMsgForWorld = do
     let w = emptyGameWorld { worldLanguage = Just "de" }
     r1 <- expectEqual "Die Tür ist verschlossen." (renderMsgFor w "move.door_locked" [])
-    r2 <- expectEqual "Du nimmst X." (renderMsgFor w "take.ok" [("item", "X")])
+    r2 <- expectEqual "Du nimmst den X." (renderMsgFor w "take.ok" [("item", "X"), ("article_acc", "den")])
+    r2b <- expectEqual "Du nimmst  X." (renderMsgFor w "take.ok" [("item", "X")])
     r3 <- expectEqual (renderMsg "move.door_locked" [])
              (renderMsgFor emptyGameWorld "move.door_locked" [])
-    pure (r1 && r2 && r3)
+    pure (r1 && r2 && r2b && r3)
 
 -- | Phase 4.3: card type labels are frozen by default (byte contract) and
 --   overridable via the card_type.* terms of a language pack.
@@ -8972,6 +8976,108 @@ testGermanRunRendersGerman = do
              (not (any (`isInfixOf` allTxt)
                        ["You move ", "You take the ", "Inventory: ", "You're not carrying"]))
     pure (and [r1, r2, r3, r4, r5])
+
+-- ---------------------------------------------------------------------------
+-- Phase 4.3.5: Grammatikfelder article:/gender: (Variante A)
+-- ---------------------------------------------------------------------------
+
+-- | 4.3.5: 'grammarArgs' attaches article/gender args per entity slot; the
+--   flat names accompany the primary entity only; the short form fills the
+--   nominative only; empty grammars attach nothing at all.
+testGrammarArgs :: IO Bool
+testGrammarArgs = do
+    let full = Grammar (Just "der") (Just "den") (Just "dem") (Just "m")
+        short = Grammar (Just "die") Nothing Nothing Nothing
+    r1 <- expectEqual [ ("item_article_nom", "der"), ("item_article_acc", "den")
+                      , ("item_article_dat", "dem"), ("item_gender", "m")
+                      , ("article_nom", "der"), ("article_acc", "den")
+                      , ("article_dat", "dem"), ("gender", "m") ]
+             (grammarArgs True "item" full)
+    r2 <- expectEqual [ ("npc_article_nom", "der"), ("npc_article_acc", "den")
+                      , ("npc_article_dat", "dem"), ("npc_gender", "m") ]
+             (grammarArgs False "npc" full)
+    r3 <- expectEqual [("item_article_nom", "die"), ("article_nom", "die")]
+             (grammarArgs True "item" short)
+    r4 <- expectEqual ([] :: [(String, String)]) (grammarArgs True "item" emptyGrammar)
+    pure (and [r1, r2, r3, r4])
+
+-- | 4.3.5: missing grammar args render as an empty string (the pinned
+--   contract — never the literal placeholder, never <error: …>); supplied
+--   args render normally, flat and per-slot.
+testGrammarPlaceholdersRenderEmpty :: IO Bool
+testGrammarPlaceholdersRenderEmpty = do
+    let cat = Map.fromList
+            [ ("take.ok", "Du nimmst {article_acc} {item}.")
+            , ("put", "Du legst {item_article_acc} {item} in {name_article_dat} {name}.") ]
+    r1 <- expectEqual "Du nimmst den X."
+             (renderMsgIn cat "take.ok" [("item", "X"), ("article_acc", "den")])
+    r2 <- expectEqual "Du nimmst  X." (renderMsgIn cat "take.ok" [("item", "X")])
+    r3 <- expectEqual "Du legst den Stein in der Truhe."
+             (renderMsgIn cat "put" [ ("item", "Stein"), ("name", "Truhe")
+                                    , ("item_article_acc", "den"), ("name_article_dat", "der") ])
+    r4 <- expectEqual "Du legst  Stein in  Truhe."
+             (renderMsgIn cat "put" [("item", "Stein"), ("name", "Truhe")])
+    r5 <- expectTrue "grammar key names are recognised"
+             (isGrammarArgKey "article_acc" && isGrammarArgKey "item_gender"
+              && isGrammarArgKey "gender" && not (isGrammarArgKey "item"))
+    pure (and [r1, r2, r3, r4, r5])
+
+-- | 4.3.5: ItemDef JSON — grammar fields are omitted when empty (byte
+--   contract), the short form encodes the plain string variant, the object
+--   form round-trips with only the set cases.
+testGrammarJson :: IO Bool
+testGrammarJson = do
+    let base = mkTestKey "k" "K"
+        plainJs = BLC.unpack (Aeson.encode base)
+        short = base { itemGrammar = Grammar (Just "der") Nothing Nothing Nothing }
+        obj = base { itemGrammar = Grammar (Just "der") (Just "den") (Just "dem") (Just "m") }
+        shortJs = BLC.unpack (Aeson.encode short)
+        objJs = BLC.unpack (Aeson.encode obj)
+    r1 <- expectTrue "empty grammar omits article and gender"
+             (not ("article" `isInfixOf` plainJs) && not ("gender" `isInfixOf` plainJs))
+    r2 <- expectTrue "short form encodes the plain string"
+             ("\"article\":\"der\"" `isInfixOf` shortJs && not ("nom" `isInfixOf` shortJs))
+    r3 <- expectTrue "object form encodes nom/acc/dat and gender"
+             (all (`isInfixOf` objJs)
+                  ["\"nom\":\"der\"", "\"acc\":\"den\"", "\"dat\":\"dem\"", "\"gender\":\"m\""])
+    r4 <- expectEqual (Just short) (Aeson.decode (Aeson.encode short))
+    r5 <- expectEqual (Just obj) (Aeson.decode (Aeson.encode obj))
+    pure (and [r1, r2, r3, r4, r5])
+
+-- | 4.3.5: the German pack templates use the grammar placeholders (flat for
+--   single-entity messages, per-slot for two-entity messages); the English
+--   default catalog carries none (byte contract).
+testGermanTemplatesUseArticles :: IO Bool
+testGermanTemplatesUseArticles =
+    case Map.lookup "de" langPacks of
+        Nothing -> expectTrue "the de pack is registered" False
+        Just p  -> do
+            let keysOf k = maybe [] templateGrammarKeys (Map.lookup k (lpTemplates p))
+            r1 <- expectTrue "take.ok uses the flat accusative article"
+                     ("article_acc" `elem` keysOf "take.ok")
+            r2 <- expectTrue "container.put uses per-slot articles"
+                     (all (`elem` keysOf "container.put") ["item_article_acc", "name_article_acc"])
+            r3 <- expectTrue "the English catalog uses no grammar placeholders"
+                     (null (concatMap templateGrammarKeys (Map.elems defaultCatalog)))
+            pure (r1 && r2 && r3)
+
+-- | 4.3.5: end-to-end — a `language: de` world renders the authored article
+--   of the taken item (the {article_acc} template at the take call site); an
+--   unannotated item renders the placeholder empty (pinned determinism).
+testGrammarEndToEndTake :: IO Bool
+testGrammarEndToEndTake = do
+    let mkIt g = (mkTestKey "schluessel" "Schluessel") { itemGrammar = g }
+        mk g = let st = cstate2 [mkTestRoom "halle" "Halle"] [(mkIt g, InRoom "halle")] [] Map.empty
+               in st { world = (world st) { worldLanguage = Just "de" } }
+        takeTxt = snd (applyLoopCommand (parseCommand "take schluessel")
+                          (initLoopState (mk (Grammar (Just "der") (Just "den") (Just "dem") (Just "m")))))
+        takeTxt2 = snd (applyLoopCommand (parseCommand "take schluessel")
+                           (initLoopState (mk emptyGrammar)))
+    r1 <- expectTrue "German take message carries the article"
+             ("Du nimmst den Schluessel." `isInfixOf` takeTxt)
+    r2 <- expectTrue "missing grammar renders empty (pinned)"
+             ("Du nimmst  Schluessel." `isInfixOf` takeTxt2)
+    pure (r1 && r2)
 
 main :: IO ()
 main = do
@@ -9494,5 +9600,11 @@ main = do
         , runTest "lang pack: a German world renders German (4.3)" testGermanRunRendersGerman
         , runTest "lang pack: de input aliases work with language: de (4.3)" testGermanAliasesDeWorld
         , runTest "lang pack: de input aliases need language: de (4.3)" testGermanAliasesRequireLanguage
+        -- Phase 4.3.5: Grammatikfelder article:/gender: (Variante A)
+        , runTest "grammar: args flat and per-slot (4.3.5)" testGrammarArgs
+        , runTest "grammar: placeholders render empty when missing (4.3.5)" testGrammarPlaceholdersRenderEmpty
+        , runTest "grammar: JSON omission and round-trip (4.3.5)" testGrammarJson
+        , runTest "grammar: de templates use the article placeholders (4.3.5)" testGermanTemplatesUseArticles
+        , runTest "grammar: take renders the authored article (4.3.5)" testGrammarEndToEndTake
         ]
     when (not (and results)) exitFailure

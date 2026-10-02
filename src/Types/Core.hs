@@ -90,6 +90,12 @@ module Types.Core
     , tupleMapToJSON
     , tupleMapFromJSON
     , tupleMapFromLegacyJSON
+      -- * Grammar metadata (4.3.5)
+    , Grammar (..)
+    , emptyGrammar
+    , grammarEmpty
+    , grammarJSONFields
+    , grammarFromJSONFields
       -- * Items
     , ItemDef (..)
     , ItemState (..)
@@ -164,7 +170,7 @@ import Control.Applicative ((<|>))
 import Control.Monad (guard)
 import Data.Char (toLower, isDigit, isAlpha, isAlphaNum, isSpace)
 import Data.List (intercalate, stripPrefix, foldl')
-import Data.Maybe (isNothing)
+import Data.Maybe (isNothing, isJust)
 import qualified Data.Foldable as Foldable
 import Text.Read (readMaybe)
 
@@ -1384,6 +1390,64 @@ tupleMapFromLegacyJSON v = do
         Left err    -> fail err
 
 -- ---------------------------------------------------------------------------
+-- Grammar metadata (4.3.5, plan-sprachpakete.md "Variante A")
+-- ---------------------------------------------------------------------------
+
+-- | Optional grammar metadata for localized message templates (4.3.5): the
+--   author supplies article forms and a gender tag per item/NPC; templates
+--   consume them as the placeholders @{article_nom}@/@{article_acc}@/
+--   @{article_dat}@/@{gender}@ (plus @{<slot>_article_*}@ per entity slot, see
+--   'Messages.grammarArgs'). No declension tables and no grammar logic in the
+--   core — the author steers every form exactly (including specials);
+--   case-free phrasing stays possible.
+data Grammar = Grammar
+    { gNom    :: Maybe String  -- ^ article in nominative case (the short form @article: "der"@ fills only this)
+    , gAcc    :: Maybe String  -- ^ article in accusative case
+    , gDat    :: Maybe String  -- ^ article in dative case
+    , gGender :: Maybe String  -- ^ gender tag, closed set @"m"@ | @"f"@ | @"n"@ (compiler-checked)
+    } deriving (Show, Eq)
+
+-- | No grammar metadata at all (default).
+emptyGrammar :: Grammar
+emptyGrammar = Grammar Nothing Nothing Nothing Nothing
+
+-- | True when no field is set — such grammars never add JSON fields.
+grammarEmpty :: Grammar -> Bool
+grammarEmpty g = all isNothing [gNom g, gAcc g, gDat g, gGender g]
+
+-- | The @article@/@gender@ fields appended to the ItemDef/NPCDef JSON objects.
+--   Empty grammars add NO fields (byte contract, rule 5); a grammar with only
+--   the nominative set encodes the short string form.
+grammarJSONFields :: Grammar -> [Pair]
+grammarJSONFields g =
+    [ "article" .= articleValue g | any isJust [gNom g, gAcc g, gDat g] ]
+    ++ [ "gender" .= gen | Just gen <- [gGender g] ]
+
+-- | The @article@ JSON value: short string form when only the nominative is
+--   set, otherwise an object with the set cases in nom/acc/dat order.
+articleValue :: Grammar -> Value
+articleValue g = case (gNom g, gAcc g, gDat g) of
+    (Just n, Nothing, Nothing) -> toJSON n
+    _ -> object $     [ "nom" .= n | Just n <- [gNom g] ]
+                  ++ [ "acc" .= a | Just a <- [gAcc g] ]
+                  ++ [ "dat" .= d | Just d <- [gDat g] ]
+
+-- | Parse the @article@/@gender@ fields (engine @world.json@ and the
+--   worldbuilder YAML parser share this). @article@ accepts both encodings:
+--   the short string form fills the nominative only.
+grammarFromJSONFields :: Object -> Parser Grammar
+grammarFromJSONFields o = do
+    art <- o .:? "article"
+    (n, a, d) <- parseArticleForms art
+    Grammar n a d <$> o .:? "gender"
+
+parseArticleForms :: Maybe Value -> Parser (Maybe String, Maybe String, Maybe String)
+parseArticleForms Nothing           = pure (Nothing, Nothing, Nothing)
+parseArticleForms (Just (String t)) = pure (Just (T.unpack t), Nothing, Nothing)
+parseArticleForms (Just v)          = withObject "article"
+    (\ao -> (,,) <$> ao .:? "nom" <*> ao .:? "acc" <*> ao .:? "dat") v
+
+-- ---------------------------------------------------------------------------
 -- Items
 -- ---------------------------------------------------------------------------
 
@@ -1403,6 +1467,7 @@ data ItemDef = ItemDef
         , itemVerbMap       :: Map.Map (VerbPhase, Verb, String) Effect
         , itemCapacity      :: Maybe Int          -- ^ 4.4: container capacity (count of items), Nothing = not a container
         , itemAscii         :: AsciiArt              -- ^ Optional state-dependent, animated ASCII art
+        , itemGrammar       :: Grammar               -- ^ 4.3.5: optional article/gender metadata (empty = none)
         } deriving (Show, Eq)
 
 instance ToJSON ItemDef where
@@ -1421,6 +1486,7 @@ instance ToJSON ItemDef where
         , "itemVerbMap"      .= verbStateMapToJSON (itemVerbMap def)
         ] ++ maybe [] (\c -> ["itemCapacity" .= c]) (itemCapacity def)
           ++ asciiPair "itemAscii" (itemAscii def)
+          ++ grammarJSONFields (itemGrammar def)
 
 instance FromJSON ItemDef where
     parseJSON = withObject "ItemDef" $ \o -> ItemDef
@@ -1438,6 +1504,7 @@ instance FromJSON ItemDef where
         <*> (o .: "itemVerbMap" >>= verbStateMapFromJSON)
         <*> o .:? "itemCapacity"     .!= Nothing
         <*> o .:? "itemAscii"        .!= emptyAscii
+        <*> grammarFromJSONFields o
 
 -- | Dynamic item state
 data ItemState = ItemState
@@ -1518,6 +1585,7 @@ data NPCDef = NPCDef
     , npcVerbMap       :: Map.Map (VerbPhase, Verb, String) Effect
     , npcAscii         :: AsciiArt              -- ^ Optional state-dependent, animated ASCII art
     , npcTopics        :: Map.Map String Effect    -- ^ 4.5: `ask`/`tell` X about <topic>
+    , npcGrammar       :: Grammar               -- ^ 4.3.5: optional article/gender metadata (empty = none)
     } deriving (Show, Eq)
 
 instance ToJSON NPCDef where
@@ -1533,6 +1601,7 @@ instance ToJSON NPCDef where
         , "npcVerbMap"       .= verbStateMapToJSON (npcVerbMap def)
         ] ++ (if Map.null (npcTopics def) then [] else ["topics" .= npcTopics def])
           ++ asciiPair "npcAscii" (npcAscii def)
+          ++ grammarJSONFields (npcGrammar def)
 
 instance FromJSON NPCDef where
     parseJSON = withObject "NPCDef" $ \o -> NPCDef
@@ -1547,6 +1616,7 @@ instance FromJSON NPCDef where
         <*> (o .: "npcVerbMap" >>= verbStateMapFromJSON)
         <*> o .:? "npcAscii"         .!= emptyAscii
         <*> o .:? "topics" .!= Map.empty
+        <*> grammarFromJSONFields o
 
 -- | Dynamic NPC state
 data NPCState = NPCState

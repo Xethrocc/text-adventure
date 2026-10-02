@@ -2605,6 +2605,59 @@ messages:                    # einzelne Engine-Meldungen ueberschreiben
   ("[Unbekannt]"/"Nicht gefunden") ist ein historischer Hardcode wie die
   Kartentyp-Labels.
 
+## Grammatikfelder: `article:` und `gender:` (Phase 4.3.5)
+
+Für Textvorlagen, die einen Artikel zum Namen einer Entity stellen, tragen
+Items und NPCs optionale Grammatikfelder:
+
+```yaml
+items:
+  - id: schwert
+    name: Schwert
+    article:              # Artikel-Formen (Variante A: der Autor bestimmt exakt)
+      nom: das            # Nominativ
+      acc: das            # Akkusativ
+      dat: dem            # Dativ
+    gender: n             # m | f | n
+npcs:
+  - id: waechter
+    name: Waechter
+    article: der          # Kurzform = nur Nominativ
+    gender: m
+```
+
+- **`article:`** — die Kurzform (String) belegt nur `nom`; die Objektform
+  `{nom: …, acc: …, dat: …}` belegt die Fälle einzeln. Alles ist freier Text —
+  es gibt **keine** Deklinationstabellen und keine Grammatiklogik in der
+  Engine: der Autor steuert auch Sonderfälle exakt (z.B. `article: {nom: kein,
+  acc: keinen, dat: keinem}`).
+- **`gender:`** — geschlossene Wertemenge `m` | `f` | `n` (unbekannt =
+  Compile-Fehler `InvalidGender`). Das Tag ist ein reiner Wert für die
+  Templates — z.B. über `{if gender==m|Er hat|Sie hat}` in `messages:`-
+  Überschreibungen — die Engine leitet daraus nichts ab.
+- Beide Felder gelten für **Items und NPCs** (nicht für die `containers:`-
+  Sektion — deren Einträge sind keine Items) und sind optional; in `world.json`
+  werden sie weggelassen, wenn leer (Byte-Vertrag).
+- **Platzhalter in Katalog-Templates:** `{article_nom}` / `{article_acc}` /
+  `{article_dat}` / `{gender}` begleiten die **Primär-Entity** einer Meldung;
+  pro Argument-Slot stehen zusätzlich `{<slot>_article_*}` / `{<slot>_gender}`
+  zur Verfügung (z.B. `{item_article_acc}` und `{name_article_dat}` bei
+  `container.put`). Beispiel für eine eigene Vorlage:
+  `messages: {take.ok: "Du nimmst {article_acc} {item}."}`
+- **Fehlende Felder:** der Platzhalter rendert als **leerer String** (nie
+  `<msg:…>`/`<error:…>` — beachte das dann entstehende doppelte Leerzeichen).
+  Der Compiler warnt (`MissingGrammar`), wenn `language:` gesetzt ist, die
+  wirksamen Templates der Entity-Keys Grammatik-Platzhalter referenzieren und
+  die Entity keine Felder trägt; artikellose Überschreibungen dieser Templates
+  schalten die Warnung ab.
+- **Verdrahtete Meldungen** (Call-Sites mit Grammatik-Args): `take.*`,
+  `drop.ok`, `use.ok`, `equip.ok`, `unequip.*`, `item.cant_do`,
+  `search.nothing_item`, `search.reveal`, `search.nothing_npc`,
+  `npc.gave_to`/`npc.took_from` (Item + NPC) und die `container.*`-Meldungen
+  (Container = Item). Meldungen, in denen die Entity bewusst *nicht existiert*
+  (`npc.no_item`, `container.no_item`), tragen für sie keine Grammatik — dort
+  ist kein Artikel möglich.
+
 ## Regel-Diagnostik (B4)
 
 Der Worldbuilder beantwortet vier Fragen zum **toten Inhalt** — beim Kompilieren,

@@ -140,8 +140,16 @@ def check_against_catalog(path, messages):
     keys = re.findall(r'\("([a-z0-9_.]+)",', block)
     values = dict(re.findall(r'\("([a-z0-9_.]+)",\s*"((?:[^"\\]|\\.)*)"', block))
 
+    # Grammar placeholders (4.3.5) carry no English counterpart — the English
+    # templates bake their articles in — so they are exempt from the parity
+    # check on BOTH sides (the flat names plus the per-slot names).
+    GRAMMAR_KEYS = ("article_nom", "article_acc", "article_dat", "gender")
+    GRAMMAR_SUFFIXES = ("_article_nom", "_article_acc", "_article_dat", "_gender")
+
     def slots(tmpl):
-        return sorted(re.findall(r"\{([a-z_][a-z_.]*)", tmpl))
+        names = re.findall(r"\{([a-z_][a-z_.]*)", tmpl)
+        return sorted(n for n in names
+                      if n not in GRAMMAR_KEYS and not n.endswith(GRAMMAR_SUFFIXES))
 
     for key, value in messages:
         if key not in keys:

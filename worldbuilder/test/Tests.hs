@@ -1202,6 +1202,7 @@ minItem iid = AItem
     , aiTakeFailure = Nothing
     , aiInContainer = Nothing
     , aiCarriedBy = Nothing
+    , aiGrammar = E.emptyGrammar
     }
 
 advWithItem :: AItem -> Adventure
@@ -2424,7 +2425,7 @@ testStealthCompiles = do
                     [ AOSetFlag "alarmed" "true", AOMessage "The guard heard you!" ]
         adv = (minAdventure (minRoom "loc_0"))
             { advStealth = Just (AStealth noise [guard])
-            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing Map.empty [] Nothing ] }
+            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing Map.empty [] Nothing E.emptyGrammar ] }
     case compileAdventure adv of
         Left errs -> do
             putStrLn $ "  compile errors: " ++ show errs
@@ -2646,7 +2647,7 @@ testPatrolFixtureCompiles = do
 -- | The patrolling wolf the patrol tests declare.
 wolfNPC :: String -> ANPC
 wolfNPC loc = ANPC "wolf" "Wolf" (ACondText "Wolf" []) (AAscii (ACondText "" []) [] 0 [] Nothing)
-                    [] loc "alive" Nothing 8 3 Map.empty Map.empty Nothing Map.empty [] Nothing
+                    [] loc "alive" Nothing 8 3 Map.empty Map.empty Nothing Map.empty [] Nothing E.emptyGrammar
 
 -- | The 7f combat segment: default without a block is CombatClassic; off /
 --   narrative compile to their profiles; tactical and unknown profiles are
@@ -2774,7 +2775,7 @@ testCombatFixturesCompile = do
 partySquire :: Maybe AParty -> ANPC
 partySquire party
     = ANPC "squire" "Knappe" (ACondText "Knappe" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive"
-        (Just 20) 3 1 Map.empty Map.empty party Map.empty [] Nothing
+        (Just 20) 3 1 Map.empty Map.empty party Map.empty [] Nothing E.emptyGrammar
 
 followVerb :: AVerb
 followVerb = AVerb "follow" ["escort"]
@@ -3654,6 +3655,10 @@ tests =
     , ("lang pack: language and messages compile into the world (4.3)", testLanguagePackCompile)
     , ("lang pack: message override key/value checks (4.3)", testMessageOverrideChecks)
     , ("lang pack: language and messages are known keys (4.3)", testLanguageKnownKeysClean)
+    , ("grammar: article/gender compile into the world (4.3.5)", testGrammarFieldsCompile)
+    , ("grammar: YAML forms and knownKeys clean (4.3.5)", testGrammarYamlKnownKeysClean)
+    , ("grammar: gender tag validation (4.3.5)", testGrammarGenderValidation)
+    , ("grammar: MissingGrammar warning for unannotated entities (4.3.5)", testMissingGrammarWarning)
     ]
 
 -- ---------------------------------------------------------------------------
@@ -3734,6 +3739,125 @@ testLanguageKnownKeysClean = do
                 a <- expectTrue ("expected 0 unknown key warnings, got " ++ show (length keyWarns)) (null keyWarns)
                 b <- expectEqual (Just "de") (E.worldLanguage (crWorld cr))
                 pure (a && b)
+
+-- ---------------------------------------------------------------------------
+-- Phase 4.3.5: grammar fields article:/gender: (Variante A)
+-- ---------------------------------------------------------------------------
+
+-- | 4.3.5: `article:` (short form = nominative, object form = nom/acc/dat)
+--   and `gender:` compile into the item/NPC grammar; world.json carries them
+--   and omits them when empty (byte contract).
+testGrammarFieldsCompile :: IO Bool
+testGrammarFieldsCompile = do
+    let item = (minItem "i") { aiGrammar = E.Grammar (Just "der") (Just "den") (Just "dem") (Just "m") }
+        npc = (minNpcKey "n") { anGrammar = E.Grammar (Just "die") Nothing Nothing Nothing }
+        adv = (minAdventure (minRoom "loc_0")) { advItems = [item], advNPCs = [npc] }
+    r1 <- case compileAdventure adv of
+            Left errs -> expectTrue ("grammar fields compile, got: " ++ issuesText errs) False
+            Right cr -> do
+                let it = E.itemDefs (crWorld cr) Map.! "i"
+                    ni = E.npcDefs (crWorld cr) Map.! "n"
+                a <- expectEqual (Just "den") (E.gAcc (E.itemGrammar it))
+                b <- expectEqual (Just "die") (E.gNom (E.npcGrammar ni))
+                c <- expectTrue "world.json carries article and gender"
+                        (all (`isInfixOf` BLC.unpack (Aeson.encode (crWorld cr)))
+                             ["\"article\"", "\"gender\"", "\"acc\":\"den\""])
+                pure (a && b && c)
+    r2 <- case compileAdventure (minAdventure (minRoom "loc_0")) of
+            Left errs -> expectTrue ("plain adventure compiles, got: " ++ issuesText errs) False
+            Right cr -> expectTrue "world.json omits article and gender"
+                            (not ("\"article\"" `isInfixOf` BLC.unpack (Aeson.encode (crWorld cr)))
+                              && not ("\"gender\"" `isInfixOf` BLC.unpack (Aeson.encode (crWorld cr))))
+    pure (r1 && r2)
+
+-- | 4.3.5: YAML accepts both `article:` forms and `gender:` on items and NPCs
+--   (knownKeys clean — no UnknownYamlKey).
+testGrammarYamlKnownKeysClean :: IO Bool
+testGrammarYamlKnownKeysClean = do
+    let yaml = unlines
+            [ "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Halle"
+            , "    desc: Eine Halle."
+            , "items:"
+            , "  - id: schwert"
+            , "    name: Schwert"
+            , "    desc: Ein Schwert."
+            , "    location: loc_0"
+            , "    article:"
+            , "      nom: das"
+            , "      acc: das"
+            , "      dat: dem"
+            , "    gender: n"
+            , "npcs:"
+            , "  - id: waechter"
+            , "    name: Waechter"
+            , "    desc: Ein Waechter."
+            , "    location: loc_0"
+            , "    article: der"
+            , "    gender: m"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let keyWarns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
+                    it = E.itemDefs (crWorld cr) Map.! "schwert"
+                    ni = E.npcDefs (crWorld cr) Map.! "waechter"
+                a <- expectTrue ("expected 0 unknown key warnings, got " ++ show (length keyWarns)) (null keyWarns)
+                b <- expectEqual (E.Grammar (Just "das") (Just "das") (Just "dem") (Just "n")) (E.itemGrammar it)
+                c <- expectEqual (E.Grammar (Just "der") Nothing Nothing (Just "m")) (E.npcGrammar ni)
+                pure (a && b && c)
+
+-- | 4.3.5: `gender:` is a closed tag set — an unknown value is a hard error.
+testGrammarGenderValidation :: IO Bool
+testGrammarGenderValidation = do
+    let item = (minItem "i") { aiGrammar = E.Grammar Nothing Nothing Nothing (Just "x") }
+        npc = (minNpcKey "n") { anGrammar = E.Grammar Nothing Nothing Nothing (Just "d") }
+        adv = (minAdventure (minRoom "loc_0")) { advItems = [item], advNPCs = [npc] }
+    r1 <- case compileAdventure adv of
+            Left errs -> expectContains "InvalidGender" (issuesText errs)
+            Right _  -> expectTrue "an unknown gender tag must fail" False
+    r2 <- case compileAdventure (adv { advNPCs = [] }) of
+            Left errs -> expectTrue "the issue points at the item field"
+                            (any (\i -> ciCode i == "InvalidGender" && ciPath i == "items.i.gender") errs)
+            Right _  -> expectTrue "an unknown gender tag must fail" False
+    pure (r1 && r2)
+
+-- | 4.3.5: 'MissingGrammar' warns for unannotated items/NPCs when the
+--   effective catalog templates reference the grammar placeholders
+--   (language-pack worlds only); annotated entities stay silent, and so do
+--   worlds without `language:`.
+testMissingGrammarWarning :: IO Bool
+testMissingGrammarWarning = do
+    let langAdv = (minAdventure (minRoom "loc_0"))
+            { advItems = [minItem "i"], advNPCs = [minNpcKey "n"], advLanguage = Just "de" }
+        annotated = (minAdventure (minRoom "loc_0"))
+            { advItems = [(minItem "i") { aiGrammar = E.Grammar (Just "der") Nothing Nothing Nothing }]
+            , advNPCs = [(minNpcKey "n") { anGrammar = E.Grammar (Just "die") Nothing Nothing Nothing }]
+            , advLanguage = Just "de" }
+        plain = (minAdventure (minRoom "loc_0"))
+            { advItems = [minItem "i"], advNPCs = [minNpcKey "n"] }
+        warns c = map ciCode (filter (\i -> ciCode i == "MissingGrammar") (crWarnings c))
+    r1 <- case compileAdventure langAdv of
+            Left errs -> expectTrue ("compiles, got: " ++ issuesText errs) False
+            Right cr -> expectTrue "unannotated entities warn in a language world"
+                            (length (warns cr) == 2)
+    r2 <- case compileAdventure annotated of
+            Left errs -> expectTrue ("compiles, got: " ++ issuesText errs) False
+            Right cr -> expectTrue "annotated entities stay silent"
+                            (null (warns cr))
+    r3 <- case compileAdventure plain of
+            Left errs -> expectTrue ("compiles, got: " ++ issuesText errs) False
+            Right cr -> expectTrue "no language: no warning"
+                            (null (warns cr))
+    pure (r1 && r2 && r3)
 
 -- | 7f-3 A1: `combat.` is the engine's namespace for the combat round state — an
 --   author-declared variable in it is rejected, the same rule that guards the
@@ -5705,6 +5829,7 @@ minItemKey iid = AItem
     , aiTakeFailure = Nothing
     , aiInContainer = Nothing
     , aiCarriedBy = Nothing
+    , aiGrammar = E.emptyGrammar
     }
 
 -- | Minimal usable ANPC for pool entries. Map.empty
@@ -5722,7 +5847,8 @@ minNpcKey nid = ANPC
     , anDefense = 1
     , anDialogue = Map.empty
     , anVerbMap = Map.empty
-    , anParty = Nothing, anTopics = Map.empty, anBarks = [], anOnTalk = Nothing }
+    , anParty = Nothing, anTopics = Map.empty, anBarks = [], anOnTalk = Nothing
+    , anGrammar = E.emptyGrammar }
 
 testSayNodeDialogEndSugar :: IO Bool
 testSayNodeDialogEndSugar = do

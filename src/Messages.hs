@@ -38,17 +38,23 @@ module Messages
     , splitIfPipes
     , matchBrace
     , evMsg
+    , grammarArgs
+    , grammarArgKeys
+    , isGrammarArgKey
+    , templateGrammarKeys
+    , itemGrammarMsgKeys
+    , npcGrammarMsgKeys
     ) where
 
 import Data.Char (isDigit, isSpace, isAlphaNum, toLower)
-import Data.List (intercalate, isPrefixOf)
+import Data.List (intercalate, isPrefixOf, isSuffixOf)
 import qualified Data.List as List (lookup)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Text.Read (readMaybe)
 import Messages.LangDe (langDe)
 import Types.Output (MsgPayload (..), OutputEvent (..))
-import Types.Core (Expr (..), parseExpr, GameWorld (..))
+import Types.Core (Expr (..), parseExpr, GameWorld (..), Grammar (..))
 
 -- | Stable message key. Plain alias: the catalog is data, and Phase 4.3
 --   overlays YAML-provided keys on the same namespace.
@@ -72,7 +78,84 @@ renderMsgIn :: MsgCatalog -> MsgId -> [(String, String)] -> String
 renderMsgIn catalog key args =
     case Map.lookup key catalog of
         Nothing  -> "<msg:" ++ key ++ ">"
-        Just tmpl -> formatStringWith tmpl (\k -> List.lookup k args)
+        Just tmpl -> formatStringWith tmpl lookupArg
+  where
+    -- Grammar placeholders (4.3.5) render as an empty string when their arg
+    -- is missing: deterministic, never the literal placeholder and never
+    -- <error: …>. Everything else keeps 'formatStringWith' behaviour.
+    lookupArg k = case List.lookup k args of
+        Just v  -> Just v
+        Nothing | isGrammarArgKey k -> Just ""
+        Nothing -> Nothing
+
+-- | 4.3.5 (Variante A): the flat grammar-placeholder names. They accompany
+--   the PRIMARY entity of a message ('grammarArgs' with primary = True);
+--   per-slot names (@{item_article_acc}@, @{npc_gender}@, …) accompany any
+--   entity argument.
+grammarArgKeys :: [String]
+grammarArgKeys = ["article_nom", "article_acc", "article_dat", "gender"]
+
+grammarSlotSuffixes :: [String]
+grammarSlotSuffixes = ["_article_nom", "_article_acc", "_article_dat", "_gender"]
+
+-- | True for every grammar-placeholder name (flat or per-slot).
+isGrammarArgKey :: String -> Bool
+isGrammarArgKey k =
+    k `elem` grammarArgKeys || any (`isSuffixOf` k) grammarSlotSuffixes
+
+-- | Grammar args for one entity slot (4.3.5). The slot is the message
+--   argument the entity fills (@"item"@, @"npc"@, @"name"@, …). Only PRESENT
+--   fields become args — missing fields mean missing args, and the renderer
+--   defaults grammar placeholders to the empty string. With primary = True
+--   the flat article/gender names are emitted as well (they accompany the
+--   message's primary entity).
+grammarArgs :: Bool -> String -> Grammar -> [(String, String)]
+grammarArgs primary slot g =
+    slotArgs ++ (if primary then flatArgs else [])
+  where
+    forms    = [ ("article_nom", gNom g), ("article_acc", gAcc g)
+               , ("article_dat", gDat g), ("gender", gGender g) ]
+    slotArgs = [ (slot ++ "_" ++ n, v) | (n, Just v) <- forms ]
+    flatArgs = [ (n, v) | (n, Just v) <- forms ]
+
+-- | The grammar placeholders a template references (placeholder scan; grammar
+--   args inside @{if …}@ conditions are not counted — conservative). Used by
+--   the compiler warning for entities without grammar fields.
+templateGrammarKeys :: String -> [String]
+templateGrammarKeys = filter isGrammarArgKey . templateSlots
+  where
+    templateSlots [] = []
+    templateSlots (c:cs)
+        | c == '{' = case matchBrace cs of
+            Just (inside, rest) -> slotName inside : templateSlots rest
+            Nothing             -> templateSlots cs
+        | otherwise = templateSlots cs
+    slotName inside =
+        let stripped = trimStr inside
+            afterVar = if "var:" `isPrefixOf` stripped then drop 4 stripped else stripped
+        in takeWhile (\ch -> ch /= ':' && ch /= ' ') afterVar
+
+-- | The catalog keys whose call sites attach ITEM grammar args (Parser.hs:
+--   take/drop/use/equip/examine/container plus the item half of the B7 NPC
+--   possession messages). Keep in sync with the call sites — the worldbuilder
+--   MissingGrammar warning uses these sets.
+itemGrammarMsgKeys :: [MsgId]
+itemGrammarMsgKeys =
+    [ "take.ok", "take.already", "take.not_portable", "drop.ok", "use.ok"
+    , "item.cant_do", "search.nothing_item", "search.reveal"
+    , "equip.ok", "unequip.ok", "unequip.not_equipped"
+    , "npc.took_from", "npc.gave_to"
+    , "container.empty", "container.contains", "container.opened"
+    , "container.closed", "container.locked", "container.unlocked"
+    , "container.is_locked", "container.is_closed", "container.not_locked"
+    , "container.already_open", "container.already_closed", "container.full"
+    , "container.no_item", "container.took_from", "container.put"
+    ]
+
+-- | The catalog keys whose call sites attach NPC grammar args.
+npcGrammarMsgKeys :: [MsgId]
+npcGrammarMsgKeys =
+    [ "search.nothing_npc", "npc.no_item", "npc.took_from", "npc.gave_to" ]
 
 -- | A catalog message as a structured payload: key, args and the rendered
 --   text (byte-identical to 'renderMsg'). Phase 1.2.

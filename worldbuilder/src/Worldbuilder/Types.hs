@@ -538,6 +538,7 @@ data AItem = AItem
     , aiInContainer :: Maybe String    -- ^ container item id; when set, item starts inside it
     , aiCapacity :: Maybe Int        -- ^ 4.4: container capacity (count of items); Nothing = not a container
     , aiCarriedBy :: Maybe String    -- ^ B7: npc id (or "player") — the item starts in this actor's possession
+    , aiGrammar :: E.Grammar         -- ^ 4.3.5: article:/gender: grammar metadata (empty = none)
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AItem where
@@ -562,6 +563,7 @@ instance FromJSON AItem where
         <*> o .:? "in_container"
         <*> o .:? "capacity"
         <*> o .:? "carried_by"
+        <*> E.grammarFromJSONFields o
 
 -- ---------------------------------------------------------------------------
 -- NPCs
@@ -584,6 +586,7 @@ data ANPC = ANPC
     , anTopics      :: Map.Map String AActionOutcome  -- ^ 4.5: ask/tell X about <topic>
     , anBarks       :: [ABark]                         -- ^ 4.5: ambient one-liners (trigger sugar)
     , anOnTalk      :: Maybe AActionOutcome            -- ^ 4.5: on_talk hook (trigger sugar)
+    , anGrammar     :: E.Grammar                       -- ^ 4.3.5: article:/gender: grammar metadata (empty = none)
     } deriving (Show, Eq, Generic)
 
 -- | The `party:` block on an NPC (Phase 7g): the NPC can be recruited,
@@ -627,6 +630,7 @@ instance FromJSON ANPC where
         <*> o .:? "topics" .!= Map.empty
         <*> o .:? "barks" .!= []
         <*> o .:? "on_talk"
+        <*> E.grammarFromJSONFields o
 
 -- | 4.5: one ambient bark: a line and an optional context condition.
 data ABark = ABark
@@ -1722,12 +1726,12 @@ knownKeys EntItem = Set.fromList
     [ "id", "name", "desc", "description", "ascii", "keys", "tags"
     , "location", "state", "slot", "effects", "hidden", "discover"
     , "props", "on_take", "verb_map", "portable", "take_failure", "in_container"
-    , "capacity", "carried_by"
+    , "capacity", "carried_by", "article", "gender"
     ]
 knownKeys EntNPC = Set.fromList
     [ "id", "name", "desc", "description", "ascii", "keys", "location"
     , "state", "max_hp", "attack", "defense", "dialogue", "verb_map", "party"
-    , "topics", "barks", "on_talk"
+    , "topics", "barks", "on_talk", "article", "gender"
     ]
 knownKeys EntQuest = Set.fromList
     [ "id", "name", "desc", "prereqs", "stages", "reward" ]

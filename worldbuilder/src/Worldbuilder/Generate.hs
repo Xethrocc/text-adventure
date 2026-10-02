@@ -83,6 +83,7 @@ import Worldbuilder.Types
     , arExits
     , arFloor
     )
+import qualified Types as E
 import Worldbuilder.Compile (CompileIssue (..), Severity (..))
 import Worldbuilder.Rng (Rng, newRng, pickWeighted, randInt, shuffle, deriveRuntimeSeed)
 
@@ -1314,6 +1315,7 @@ emitAdventure t plan seed =
                     , aiInContainer = Nothing
                     , aiCapacity = Nothing
                     , aiCarriedBy = Nothing
+                    , aiGrammar = E.emptyGrammar
                     })
             _ -> Nothing
 

@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Grammatikfelder `article:`/`gender:` (4.3.5, Teil 5)
+
+- **Neue optionale Felder an Items und NPCs** (Variante A aus dem
+  Sprachpakete-Plan): `article: "der"` (Kurzform = nur Nominativ) oder
+  `article: {nom: "der", acc: "den", dat: "dem"}` plus `gender: m|f|n`
+  (geschlossene Wertemenge, unbekannt = Compile-Fehler `InvalidGender`).
+  Alles freier Text — **keine** Deklinationstabellen, keine Grammatiklogik in
+  der Engine; der Autor steuert auch Sonderfaelle exakt. In `world.json`
+  werden beide Felder bei leer weggelassen (Byte-Vertrag).
+- **Platzhalter fuer Katalog-Templates:** `{article_nom}`/`{article_acc}`/
+  `{article_dat}`/`{gender}` begleiten die Praimar-Entity einer Meldung,
+  dazu pro Argument-Slot `{<slot>_article_*}`/`{<slot>_gender}` (z. B.
+  `{item_article_acc}`/`{name_article_dat}` bei `container.put`). Verdrahtet
+  an den Take/Give/Drop/Use/Equip/Search/Container-Call-Sites; die deutschen
+  Sprachpaket-Templates nutzen sie jetzt. Fehlende Felder: der Platzhalter
+  rendert als **leerer String** (gepinnt, nie `<msg:…>`/`<error:…>`).
+- **Compiler-Warnung `MissingGrammar`:** in Sprachpaket-Welten (`language:`
+  gesetzt) warnt der Compiler fuer Items/NPCs ohne Grammatikfelder, sobald
+  die wirksamen Templates Grammatik-Platzhalter referenzieren (konservativ —
+  artikellose Template-Ueberschreibungen schalten das ab).
+- 5 neue Engine-Tests (457), 4 neue Worldbuilder-Tests (235).
+
 ### Sprachpakete: Alias-Paket & Eingabe (4.3, Teil 4)
 
 - **Verhaltensaenderung:** die bisher fest im Parser verdrahteten deutschen

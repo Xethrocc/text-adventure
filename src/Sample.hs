@@ -116,6 +116,7 @@ initSampleGame = GameState
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
+                , itemGrammar = emptyGrammar
                 })
             , ("key", ItemDef
                 { itemId = "key"
@@ -134,6 +135,7 @@ initSampleGame = GameState
                         [ QuestOp StartQuest "find_treasure"
                         , SetValue (VRFlag "quest_started") (EVString "true") ])
                 , itemCapacity = Nothing, itemAscii = emptyAscii
+                , itemGrammar = emptyGrammar
                 })
             , ("gold", ItemDef
                 { itemId = "gold"
@@ -149,6 +151,7 @@ initSampleGame = GameState
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
+                , itemGrammar = emptyGrammar
                 })
             , ("jewel", ItemDef
                 { itemId = "jewel"
@@ -164,6 +167,7 @@ initSampleGame = GameState
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
+                , itemGrammar = emptyGrammar
                 })
             , ("potion_healing", ItemDef
                 { itemId = "potion_healing"
@@ -183,6 +187,7 @@ initSampleGame = GameState
                         , SetValue (VRItemProp "potion_healing" "uses") (EVInt (-1))
                         , SetValue (VRActorProp (ActorEntity "potion_healing") PState) (EVString "empty") ])
                 , itemCapacity = Nothing, itemAscii = emptyAscii
+                , itemGrammar = emptyGrammar
                 })
             -- Equipment examples
             , ("sword_rusty", ItemDef
@@ -199,6 +204,7 @@ initSampleGame = GameState
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
+                , itemGrammar = emptyGrammar
                 })
             , ("leather_armor", ItemDef
                 { itemId = "leather_armor"
@@ -214,6 +220,7 @@ initSampleGame = GameState
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
+                , itemGrammar = emptyGrammar
                 })
             , ("ring_vigor", ItemDef
                 { itemId = "ring_vigor"
@@ -229,6 +236,7 @@ initSampleGame = GameState
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
+                , itemGrammar = emptyGrammar
                 })
             -- Hidden item, found via `search`
             , ("note_old", ItemDef
@@ -245,6 +253,7 @@ initSampleGame = GameState
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
+                , itemGrammar = emptyGrammar
                 })
             -- Vehicle demo (Phase 3)
             , ("carriage", ItemDef
@@ -261,6 +270,7 @@ initSampleGame = GameState
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
+                , itemGrammar = emptyGrammar
                 })
             , ("hay", ItemDef
                 { itemId = "hay"
@@ -276,6 +286,7 @@ initSampleGame = GameState
                 , itemTakeFailure = Nothing
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
+                , itemGrammar = emptyGrammar
                 })
             ]
         , npcDefs = Map.fromList
@@ -304,6 +315,7 @@ initSampleGame = GameState
                 , npcVerbMap = Map.empty
                 , npcAscii = emptyAscii
                 , npcTopics = Map.empty
+                , npcGrammar = emptyGrammar
                 })
             , ("goblin", NPCDef
                 { npcId = "goblin"
@@ -317,6 +329,7 @@ initSampleGame = GameState
                 , npcVerbMap = Map.empty
                 , npcAscii = emptyAscii
                 , npcTopics = Map.empty
+                , npcGrammar = emptyGrammar
                 })
             ]
         , entityInteractions = Map.fromList

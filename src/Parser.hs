@@ -55,7 +55,7 @@ module Parser
 
 import Types
 import Game
-import Messages (renderMsg, renderMsgFor, evMsg, renderMsgIn, localizeEventsFor,
+import Messages (renderMsg, renderMsgFor, evMsg, grammarArgs, renderMsgIn, localizeEventsFor,
                 MsgCatalog, defaultCatalog, LangPack (..), langPackFor)
 import Vehicles
 import Effects
@@ -697,6 +697,12 @@ executeCommandEv cmd state =
 
 
 -- | 4.4: the display name of a container (item name, else the containers: name).
+-- | 4.3.5: the grammar metadata of an item id in the current state (empty for
+--   ids without an item definition — e.g. plain `containers:`-section
+--   containers, which have no grammar fields by design).
+grammarOfItem :: ItemID -> GameState -> Grammar
+grammarOfItem iId st = maybe emptyGrammar itemGrammar (lookupItem iId st)
+
 containerName :: String -> GameState -> String
 containerName cid state =
     case lookupItem cid state of
@@ -815,9 +821,9 @@ dispatchCommandEv Look state = case getCurrentRoom state of
                     , containerStateOf (conId c) state == "open" ]
                 containerDesc = concat
                     [ case itemsInContainer cid state of
-                        [] -> evMsg "container.empty" [("name", cname)]
+                        [] -> evMsg "container.empty" ([("name", cname)] ++ grammarArgs True "name" (grammarOfItem cid state))
                         contents -> evMsg "container.contains"
-                            [("name", cname), ("items", intercalate ", " (map itemName contents))]
+                            ([("name", cname), ("items", intercalate ", " (map itemName contents))] ++ grammarArgs True "name" (grammarOfItem cid state))
                     | (cid, cname) <- openContainers ]
                 npcDesc = if null livingHere
                           then []
@@ -954,7 +960,7 @@ dispatchCommandEv (EquipCmd targetStr) state =
                 Just item ->
                     case equipItem iid stateWithVars of
                         Left err     -> (stateWithVars, evRaw err)
-                        Right state' -> (state', evMsg "equip.ok" [("item", itemName item)])
+                        Right state' -> (state', evMsg "equip.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
                 Nothing -> (stateWithVars, evMsg "target.not_carried" [("target", targetStr)])
         TargetAmbiguous ids ->
             let equippableIds = filter (\i -> maybe False (isJust . itemEquipSlot) (Map.lookup i (itemDefs (world stateWithVars)))) ids
@@ -964,7 +970,7 @@ dispatchCommandEv (EquipCmd targetStr) state =
                         Just item ->
                             case equipItem singleEquippable stateWithVars of
                                 Left err     -> (stateWithVars, evRaw err)
-                                Right state' -> (state', evMsg "equip.ok" [("item", itemName item)])
+                                Right state' -> (state', evMsg "equip.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
                         Nothing -> interactAmbiguous ids stateWithVars
                 (e1:e2:es) -> interactAmbiguous (e1:e2:es) stateWithVars
                 []         -> interactAmbiguous ids stateWithVars
@@ -976,15 +982,15 @@ dispatchCommandEv (UnequipCmd targetStr) state =
         TargetItem iid ->
             case Map.lookup iid (itemDefs (world stateWithVars)) of
                 Just item
-                    | isEquipped iid stateWithVars -> (unequipItem iid stateWithVars, evMsg "unequip.ok" [("item", itemName item)])
-                    | otherwise                    -> (stateWithVars, evMsg "unequip.not_equipped" [("item", itemName item)])
+                    | isEquipped iid stateWithVars -> (unequipItem iid stateWithVars, evMsg "unequip.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
+                    | otherwise                    -> (stateWithVars, evMsg "unequip.not_equipped" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
                 Nothing -> (stateWithVars, evMsg "target.not_carried" [("target", targetStr)])
         TargetAmbiguous ids ->
             let equippedIds = filter (`isEquipped` stateWithVars) ids
             in case equippedIds of
                 [singleEquipped] ->
                     case Map.lookup singleEquipped (itemDefs (world stateWithVars)) of
-                        Just item -> (unequipItem singleEquipped stateWithVars, evMsg "unequip.ok" [("item", itemName item)])
+                        Just item -> (unequipItem singleEquipped stateWithVars, evMsg "unequip.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
                         Nothing   -> interactAmbiguous ids stateWithVars
                 (e1:e2:es)       -> interactAmbiguous (e1:e2:es) stateWithVars
                 []               -> interactAmbiguous ids stateWithVars
@@ -1042,13 +1048,13 @@ dispatchCommandEv (SearchCmd maybeTarget) state = case getCurrentRoom state of
                             let iId = itemId item
                                 currentStatus = maybe "unknown" itemStatus (Map.lookup iId (itemStates (save state)))
                             in runVerbMapEntry (itemVerbMap item) VSearch currentStatus iId
-                                (\st -> (st, evMsg "search.nothing_item" [("item", itemName item)])) state
+                                (\st -> (st, evMsg "search.nothing_item" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))) state
                         Nothing -> case find (matchesNPCTarget targetStr) roomNPCs of
                             Just npc ->
                                 let nId = npcId npc
                                     currentStatus = maybe "unknown" npcStatus (Map.lookup nId (npcStates (save state)))
                                 in runVerbMapEntry (npcVerbMap npc) VSearch currentStatus nId
-                                    (\st -> (st, evMsg "search.nothing_npc" [("npc", npcName npc)])) state
+                                    (\st -> (st, evMsg "search.nothing_npc" ([("npc", npcName npc)] ++ grammarArgs True "npc" (npcGrammar npc)))) state
                             Nothing -> (state, evMsg "target.not_seen" [("target", targetStr)])
 
 dispatchCommandEv (WatchCmd maybeTarget) state = case getCurrentRoom state of
@@ -1103,35 +1109,35 @@ dispatchCommandEv (OpenCmd t) state =
     case findContainerRef t state of
         Nothing -> (state, evMsg "container.not_a_container" [("target", t)])
         Just cid -> case containerStateOf cid state of
-            "locked" -> (state, evMsg "container.is_locked" [("name", containerName cid state)])
-            "open"   -> (state, evMsg "container.already_open" [("name", containerName cid state)])
+            "locked" -> (state, evMsg "container.is_locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
+            "open"   -> (state, evMsg "container.already_open" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
             _        -> (setEntityState cid "open" state
-                        , evMsg "container.opened" [("name", containerName cid state)])
+                        , evMsg "container.opened" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
 
 dispatchCommandEv (CloseCmd t) state =
     case findContainerRef t state of
         Nothing -> (state, evMsg "container.not_a_container" [("target", t)])
         Just cid -> case containerStateOf cid state of
-            "locked" -> (state, evMsg "container.is_locked" [("name", containerName cid state)])
-            "closed" -> (state, evMsg "container.already_closed" [("name", containerName cid state)])
+            "locked" -> (state, evMsg "container.is_locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
+            "closed" -> (state, evMsg "container.already_closed" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
             _        -> (setEntityState cid "closed" state
-                        , evMsg "container.closed" [("name", containerName cid state)])
+                        , evMsg "container.closed" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
 
 dispatchCommandEv (LockCmd t) state =
     case findContainerRef t state of
         Nothing -> (state, evMsg "container.not_a_container" [("target", t)])
         Just cid -> case containerStateOf cid state of
-            "locked" -> (state, evMsg "container.is_locked" [("name", containerName cid state)])
+            "locked" -> (state, evMsg "container.is_locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
             _        -> (setEntityState cid "locked" state
-                        , evMsg "container.locked" [("name", containerName cid state)])
+                        , evMsg "container.locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
 
 dispatchCommandEv (UnlockCmd t) state =
     case findContainerRef t state of
         Nothing -> (state, evMsg "container.not_a_container" [("target", t)])
         Just cid -> case containerStateOf cid state of
             "locked" -> (setEntityState cid "closed" state
-                        , evMsg "container.unlocked" [("name", containerName cid state)])
-            _        -> (state, evMsg "container.not_locked" [("name", containerName cid state)])
+                        , evMsg "container.unlocked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
+            _        -> (state, evMsg "container.not_locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
 
 -- | 4.4: `take X from Y` — one item out of an open container (the item is
 --   looked up inside Y, so a closed container reports "closed", not "missing").
@@ -1143,27 +1149,27 @@ dispatchCommandEv (TakeFromCmd x y) state =
             Just npc ->
                 case [ i | i <- getItemsInLocation (CarriedBy (ActorNPC (npcId npc))) state
                          , matchesItemTarget x i ] of
-                    []      -> (state, evMsg "npc.no_item" [("item", x), ("npc", npcName npc)])
+                    []      -> (state, evMsg "npc.no_item" ([("item", x), ("npc", npcName npc)] ++ grammarArgs False "npc" (npcGrammar npc)))
                     (it : _)
                         | inventoryFull state -> (state, evMsg "inventory.full" [])
                         | otherwise ->
                             ( relocateItem (itemId it) (CarriedBy ActorPlayer) state
                             , evMsg "npc.took_from"
-                                [ ("item", itemName it), ("npc", npcName npc) ] )
+                                ([ ("item", itemName it), ("npc", npcName npc) ] ++ grammarArgs True "item" (itemGrammar it) ++ grammarArgs False "npc" (npcGrammar npc)) )
         Just cid
             | not (containerChainOpen cid state) ->
-                (state, evMsg "container.is_locked" [("name", containerName cid state)])
+                (state, evMsg "container.is_locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
             | containerStateOf cid state /= "open" ->
-                (state, evMsg "container.is_closed" [("name", containerName cid state)])
+                (state, evMsg "container.is_closed" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
             | otherwise ->
                 case [ itemId i | i <- itemsInContainer cid state, matchesItemTarget x i ] of
-                    [] -> (state, evMsg "container.no_item" [("item", x), ("name", containerName cid state)])
+                    [] -> (state, evMsg "container.no_item" ([("item", x), ("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
                     (iId : _)
                         | inventoryFull state -> (state, evMsg "inventory.full" [])
                         | otherwise ->
                             ( relocateItem iId (CarriedBy ActorPlayer) state
                             , evMsg "container.took_from"
-                                [ ("item", x), ("name", containerName cid state) ] )
+                                ([ ("item", x), ("name", containerName cid state) ] ++ grammarArgs False "item" (grammarOfItem iId state) ++ grammarArgs True "name" (grammarOfItem cid state)) )
 
 -- | B7: `give X to Y` — hand a carried item to an NPC (who then carries it;
 --   `take X from <npc>` retrieves it).
@@ -1176,7 +1182,7 @@ dispatchCommandEv (GiveCmd x y) state =
                 []      -> (state, evMsg "target.not_carried" [("target", x)])
                 (it : _) ->
                     ( relocateItem (itemId it) (CarriedBy (ActorNPC (npcId npc))) state
-                    , evMsg "npc.gave_to" [("item", itemName it), ("npc", npcName npc)] )
+                    , evMsg "npc.gave_to" ([("item", itemName it), ("npc", npcName npc)] ++ grammarArgs True "item" (itemGrammar it) ++ grammarArgs False "npc" (npcGrammar npc)) )
 
 -- | 4.4: `put X in Y` — one item into an open container (capacity checked).
 dispatchCommandEv (PutInCmd x y) state =
@@ -1184,18 +1190,18 @@ dispatchCommandEv (PutInCmd x y) state =
         Nothing -> (state, evMsg "container.not_a_container" [("target", y)])
         Just cid
             | not (containerChainOpen cid state) ->
-                (state, evMsg "container.is_locked" [("name", containerName cid state)])
+                (state, evMsg "container.is_locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
             | containerStateOf cid state /= "open" ->
-                (state, evMsg "container.is_closed" [("name", containerName cid state)])
+                (state, evMsg "container.is_closed" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
             | containerFull cid state ->
-                (state, evMsg "container.full" [("name", containerName cid state)])
+                (state, evMsg "container.full" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
             | otherwise ->
                 case findScopeItem x state of
-                    Nothing -> (state, evMsg "container.no_item" [("item", x), ("name", y)])
+                    Nothing -> (state, evMsg "container.no_item" ([("item", x), ("name", y)] ++ grammarArgs True "name" (grammarOfItem cid state)))
                     Just iId ->
                         ( relocateItem iId (InContainer cid) state
                         , evMsg "container.put"
-                            [ ("item", x), ("name", containerName cid state) ] )
+                            ([ ("item", x), ("name", containerName cid state) ] ++ grammarArgs False "item" (grammarOfItem iId state) ++ grammarArgs True "name" (grammarOfItem cid state)) )
 
 dispatchCommandEv (Interact verb targetStr) state =
     let stateWithVars = bindCommandVars (Interact verb targetStr) state
@@ -1311,7 +1317,7 @@ dispatchCommandEv (InteractWith VUseOn itemStr entityStr) state =
                     Nothing -> (st1, evMsg "refuel.not_needed" [("vehicle", entityStr)])
                     Just (st2, fuelMsgs) ->
                         (consumeItem (itemId item) st2,
-                         joinEv (evMsg "use.ok" [("item", itemName item)]) fuelMsgs)
+                         joinEv (evMsg "use.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item))) fuelMsgs)
             Nothing -> (st1, evMsg "use.nothing" [])
     findVehicleTarget st = case currentVehicle (save st) of
         Just vId | isJust (lookupVehicle vId st) -> Just vId
@@ -1608,29 +1614,29 @@ interactItem verb item maybeItemState targetStr state =
                     in (st2, joinEv msgs msgs2)
         standard st =
             if verb == VDrop && hasItem iId st
-            then (dropItem iId st, evMsg "drop.ok" [("item", itemName item)])
+            then (dropItem iId st, evMsg "drop.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
             else if verb == VLookAt
             then (st, lookWithArtEv (itemAscii item) st (resolveCondText (itemDescription item) st))
             else case if verb == VAttack then tryAttackVehicle targetStr st else Nothing of
                 Just res -> res
                 Nothing
                     | hasOnCommandTrigger verb st -> (st, [])
-                    | otherwise -> (st, evMsg "item.cant_do" [("item", itemName item)])
+                    | otherwise -> (st, evMsg "item.cant_do" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
     in case verb of
         -- Taking: enforce portability, then pick up AND run on_take.
         VTake
             | not notCarried ->
-                (state, evMsg "take.already" [("item", itemName item)])
+                (state, evMsg "take.already" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
             | otherwise ->
                 case itemPortable item of
-                    False -> (state, fromMaybe (evMsg "take.not_portable" [("item", itemName item)])
+                    False -> (state, fromMaybe (evMsg "take.not_portable" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
                                              (fmap evRaw (itemTakeFailure item)))
                     True
                         | inventoryFull state ->
                             (state, evMsg "inventory.full" [])
                         | otherwise ->
                             let pickup st msgs =
-                                    (pickupItem iId st, joinEv msgs (evMsg "take.ok" [("item", itemName item)]))
+                                    (pickupItem iId st, joinEv msgs (evMsg "take.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item))))
                             in case (insteadM, beforeM, legacyM) of
                                 -- instead: the entry IS the take.
                                 (Just outcome, _, _) -> applyOutcomeEv outcome iId state
@@ -1639,9 +1645,9 @@ interactItem verb item maybeItemState targetStr state =
                                 -- Historical behaviour (PhaseAfter): pickup AND entry.
                                 (Nothing, Nothing, Just outcome) ->
                                     let (st', extra) = applyOutcomeEv outcome iId state
-                                        takeMsg = evMsg "take.ok" [("item", itemName item)]
+                                        takeMsg = evMsg "take.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item))
                                     in (pickupItem iId st', joinEv takeMsg extra)
-                                _ -> (pickupItem iId state, evMsg "take.ok" [("item", itemName item)])
+                                _ -> (pickupItem iId state, evMsg "take.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
         _ -> runVerbMapEntry vm verb currentStatus iId standard state
 
 -- | Execute interaction on an NPC. Phase 4.2 like 'interactItem':
@@ -1931,7 +1937,7 @@ searchRoom state = case getCurrentRoom state of
                      , not (itemDiscovered st)
                      ]
             stateAfterReveal = foldr discoverItem state hidden
-            discoveredMsgs = [ maybe (evMsg "search.reveal" [("item", iId)]) evRaw
+            discoveredMsgs = [ maybe (evMsg "search.reveal" ([("item", iId)] ++ grammarArgs True "item" (grammarOfItem iId state))) evRaw
                                  (Map.lookup iId (itemDefs (world state)) >>= itemDiscoverText)
                              | iId <- hidden ]
             (stateFinal, hookMsg) =
