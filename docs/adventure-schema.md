@@ -1081,7 +1081,7 @@ rooms:
 - Alle Konsumenten (Bewegung, Tür-Aliase im Parser, Tab-Completion) sehen
   dynamische Ausgänge wie statische.
 
-## Interactions (Item-auf-Entity / Crafting)
+## Interactions (Item-auf-Entity / Crafting / Item-auf-NPC)
 
 ```yaml
 interactions:
@@ -1095,7 +1095,30 @@ interactions:
       effects:
         - {msg: "You grind the herb into a paste."}
         - {set_flag: paste_made, val: "true"}
+  # Item-auf-NPC (B9): use <item> on <npc> laesst diese Effektliste laufen
+  npc:
+    - item: verband
+      target: waechter
+      effects:
+        - {msg: "Du legst dem Waechter den Verband an."}
+        - {consume: verband}
+        - {set_state_all: {what: npcs, in: halle, state: versorgt}}
 ```
+
+**Die drei Zielarten:** `entity:` setzt nur einen Zustand am Ziel (der
+Schluessel oeffnet), `item:` ist freie Effektliste (Crafting), `npc:` ist
+freie Effektliste mit einer Figur als Ziel (B9). `entity:` und `item:` bleiben
+unveraendert; `npc:` ist die einzige neue Liste.
+
+**Reihenfolge von `use <item> on <npc>`:** Ohne passenden `npc:`-Eintrag greift
+weiter der **Angriffs-Fallback** — `use` auf eine lebende Figur ist ein
+Angriff. Ein Eintrag unterbricht das: die Effektliste laeuft, der Angriff
+findet nicht statt (das Item bleibt in der Hand, ausser ein Effekt bewegt es).
+Beide Seiten des Eintrags muessen aufloesen: unbekanntes Item
+(`UnknownNpcInteractionItem`) oder unbekannte Figur (`UnknownNpc`) sind harte
+Compile-Fehler — ein Tippfehler im Item-Namen wuerde sonst still angreifen.
+
+Vollstaendiges Beispiel: `examples/fixtures/npc-interaktion.yaml`.
 
 ## Factions (Standing — Module 7a)
 

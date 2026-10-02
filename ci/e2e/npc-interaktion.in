@@ -1,0 +1,7 @@
+take verband
+take heiltrank
+use verband on waechter
+use verband on waechter
+use heiltrank on waechter
+look at waechter
+quit

@@ -288,7 +288,7 @@ outcomeSurfaces a =
     patrolOutcomes mPt = maybe [] (concatMap ahAttack . ptHostiles) mPt
     combatOutcomes mC = maybe [] (\c -> acOnWin c ++ acOnLose c) mC
     interactions = case advInteractions a of
-        Just ai -> concatMap aiiEffects (aiItem ai)
+        Just ai -> concatMap aiiEffects (aiItem ai) ++ concatMap aniEffects (aiNpc ai)
         Nothing -> []
     deviceOutcomes d = adOnInsert d ++ adOnRemove d ++ concatMap snd (adOnFlip d)
 
@@ -541,7 +541,7 @@ compileAdventure adv =
         
         questDefs = compileQuests (advQuests adv)
         (vehicleErrs, vehicleDefs, vehicleStates) = compileVehicles (advVehicles adv)
-        (entityInteractions, itemInteractions) = compileInteractions (advInteractions adv)
+        (entityInteractions, itemInteractions, npcIx) = compileInteractions (advInteractions adv)
         
         (varErrs, varDefs, varInitials) = compileVariables (advVariables adv)
         (trigErrs, triggerDefs) = compileTriggers (advTriggers adv) (advNPCs adv)
@@ -694,6 +694,7 @@ compileAdventure adv =
                 , E.npcDefs = npcDefsWithParty
                 , E.entityInteractions = entityInteractions
                 , E.itemInteractions = itemInteractions
+                , E.npcInteractions = npcIx
                 , E.questDefs = questDefs
                 , E.vehicleDefs = vehicleDefs
                 , E.verbDefs = verbRegistryFull
@@ -732,6 +733,7 @@ compileAdventure adv =
         clipErrs = checkClips (advClips adv) gw
         procCallErrs = checkProcRefs (advProcedures adv) adv
         possessionErrs = checkNpcPossessionRefs adv
+        npcIxErrs = checkNpcInteractionRefs adv
         rngVarErrs = checkRngVarWrites adv
         (langErrs, langWarns) = checkLanguageFields adv
         (gramErrs, gramWarns) = checkGrammarFields adv
@@ -774,6 +776,7 @@ compileAdventure adv =
                     ++ progConflictErrs
                     ++ progVarErrs
                     ++ possessionErrs
+                    ++ npcIxErrs
                     ++ rngVarErrs
                     ++ langErrs
                     ++ gramErrs
@@ -2588,6 +2591,7 @@ allWorldEffects gw = concat
     , [ e | Just e <- map questReward (Map.elems (E.questDefs gw)) ]
     , concatMap (Map.elems . vehicleConditionEffects) (Map.elems (E.vehicleDefs gw))
     , Map.elems (E.itemInteractions gw)
+    , Map.elems (E.npcInteractions gw)
     , concatMap E.paEffects (Map.elems (E.abilities gw))
     , concatMap E.cardEffects (Map.elems (E.cardDefs gw))
     , concatMap E.procEffects (Map.elems (E.procDefs gw))
@@ -2973,9 +2977,13 @@ compileVehicleState v = E.VehicleState
 -- Interactions
 -- ---------------------------------------------------------------------------
 
-compileInteractions :: Maybe AInteractions -> (Map.Map (String, String) (String, String), Map.Map (String, String) E.Effect)
-compileInteractions Nothing = (Map.empty, Map.empty)
-compileInteractions (Just ix) = (entityMap, itemMap)
+compileInteractions :: Maybe AInteractions
+                    -> ( Map.Map (String, String) (String, String)
+                       , Map.Map (String, String) E.Effect
+                       , Map.Map (String, String) E.Effect
+                       )
+compileInteractions Nothing = (Map.empty, Map.empty, Map.empty)
+compileInteractions (Just ix) = (entityMap, itemMap, npcMap)
   where
     entityMap = Map.fromList
         [ ((aeiItem e, aeiTarget e), (aeiState e, fromMaybe "" (aeiMsg e)))
@@ -2983,6 +2991,9 @@ compileInteractions (Just ix) = (entityMap, itemMap)
     itemMap = Map.fromList
         [ ((aiiItem1 i, aiiItem2 i), compileOutcomes (aiiEffects i))
         | i <- aiItem ix ]
+    npcMap = Map.fromList
+        [ ((aniItem n, aniTarget n), compileOutcomes (aniEffects n))
+        | n <- aiNpc ix ]
 
 -- ---------------------------------------------------------------------------
 -- Verb maps (strict — unknown verb = compile error, custom verbs resolved)
@@ -3609,6 +3620,23 @@ checkNpcPossessionRefs adv =
             ("give target '" ++ tgt ++ "' is not 'player' or an existing npc id")
         | bad tgt ]
     outcomeGo _ = []
+
+-- | B9: both halves of an `interactions: npc:` entry must resolve. A typo in
+--   the item id would silently fall through to the attack fallback, so both
+--   references are hard errors (same contract as `devices.*.fits`).
+checkNpcInteractionRefs :: Adventure -> [CompileIssue]
+checkNpcInteractionRefs adv = concatMap entryGo (maybe [] aiNpc (advInteractions adv))
+  where
+    npcIds = Set.fromList (map anId (advNPCs adv))
+    itemIds = Set.fromList (map aiId (advItems adv))
+    entryGo n = concat
+        [ [ ciError ("interactions.npc[" ++ aniItem n ++ "]") "UnknownNpcInteractionItem"
+            ("npc interaction references unknown item '" ++ aniItem n ++ "'")
+        | aniItem n `Set.notMember` itemIds ]
+        , [ ciError ("interactions.npc[" ++ aniItem n ++ "]") "UnknownNpc"
+            ("npc interaction references unknown npc '" ++ aniTarget n ++ "'")
+        | aniTarget n `Set.notMember` npcIds ]
+        ]
 
 checkKeywordCollisions :: Adventure -> [CompileIssue]
 checkKeywordCollisions adv =

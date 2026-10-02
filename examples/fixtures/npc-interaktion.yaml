@@ -1,0 +1,73 @@
+name: NPC-Interaktion Fixture
+start_room: halle
+
+rooms:
+  - id: halle
+    name: Wachhalle
+    desc: Die Halle der Stadtwache. Ein alter Waechter sitzt auf einer Bank.
+    exits:
+      east: hof
+
+  - id: hof
+    name: Hof
+    desc: Der kalte Hof hinter dem Tor.
+    exits:
+      west: halle
+
+combat:
+  profile: classic
+
+npcs:
+  - id: waechter
+    name: Waechter
+    desc: Ein alter Waechter mit verbandstem Arm.
+    keys: [waechter, wache]
+    location: halle
+    state: alive
+    max_hp: 30
+    attack: 3
+    defense: 1
+
+items:
+  # Beide Items liegen in der Halle; der Lauf nimmt sie erst (der Befehl
+  # verlangt das Item in der Hand des Spielers).
+  - id: verband
+    name: Verband
+    desc: Ein frischer Leinenverband.
+    location: halle
+    keys: [verband, leinenverband]
+
+  - id: heiltrank
+    name: Heiltrank
+    desc: Eine dunkelrote Fluessigkeit im Glas.
+    location: halle
+    keys: [heiltrank, trank]
+
+interactions:
+  entity: []
+  item: []
+  npc:
+    # B9: `use verband on waechter` laesst genau diese Effektliste laufen und
+    # greift dem Angriffs-Fallback vor. `heiltrank` ist bewusst nicht
+    # deklariert — dort bleibt der Angriff stehen (unveraenderter Vertrag).
+    - item: verband
+      target: waechter
+      effects:
+        - msg: "Du legst dem Waechter den Verband an. Er verbeugt sich dankbar."
+        - consume: verband
+        - set_state_all: {what: npcs, in: halle, state: versorgt}
+
+tests:
+  - name: "deklariertes Paar laeuft die Effekte, ohne Eintrag greift der Angriff"
+    input:
+      - take verband
+      - take heiltrank
+      - use verband on waechter
+      - use verband on waechter
+      - use heiltrank on waechter
+      - look at waechter
+      - quit
+    expect:
+      - "Du legst dem Waechter den Verband an."
+      - "You need to be carrying 'verband' to use it."
+      - "You hit for 9"

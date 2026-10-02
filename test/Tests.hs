@@ -10,7 +10,7 @@ import qualified Data.Aeson.Types as AesonT
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.Maybe (isJust, isNothing)
+import Data.Maybe (isJust, isNothing, fromMaybe)
 import Data.Either (isLeft)
 import System.Timeout (timeout)
 import Control.Exception (bracket, evaluate, try, SomeException)
@@ -5191,6 +5191,57 @@ testNpcCarriedVisibility = do
             (not ("carried" `isInfixOf` BLC.unpack (Aeson.encode (head (rsNpcs (snapRoom (makeSnapshot (b7State []))))))))
     pure (r1 && r2 && r3 && r4 && r5)
 
+-- | B9: `use <item> on <npc>` with a declared `interactions: npc:` entry runs
+--   that entry's effect list; without an entry the attack fallback is unchanged.
+testNpcItemInteraction :: IO Bool
+testNpcItemInteraction = do
+    let verband = mkTestItem "verband" "Verband"
+        heiltrank = mkTestItem "heiltrank" "Heiltrank"
+        bandage = Sequence
+            [ SendMessage "Du verbindest den Waechter."
+            , MoveEntity "verband" Removed ]
+        withIx ixs items =
+            let st0 = b7State items
+            in st0 { world = (world st0) { npcInteractions = ixs } }
+        stDeclared = withIx (Map.singleton ("verband", "waechter") bandage)
+                            [ (verband, CarriedBy ActorPlayer)
+                            , (heiltrank, CarriedBy ActorPlayer) ]
+        stOpen = b7State [ (verband, CarriedBy ActorPlayer)
+                         , (heiltrank, CarriedBy ActorPlayer) ]
+        run cmd st = applyLoopCommandEv (parseCommand cmd) (initLoopState st)
+        stOf = lsCurrent . fst
+        out = renderEvents . snd
+        npcHp st = maybe 0 (fromMaybe 0 . npcHealth) (Map.lookup "waechter" (npcStates (save st)))
+        itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+    r1 <- expectTrue "declared interaction runs its effects"
+            ("Du verbindest den Waechter." `isInfixOf` out (run "use verband on waechter" stDeclared))
+    r2 <- expectEqual (Just Removed) (itemLoc "verband" (stOf (run "use verband on waechter" stDeclared)))
+    r3 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "heiltrank" (stOf (run "use verband on waechter" stDeclared)))
+    r4 <- expectEqual 20 (npcHp (stOf (run "use verband on waechter" stDeclared)))
+    -- no entry for the second item: the attack fallback is still in charge
+    r5 <- expectTrue "undeclared pair still attacks"
+            (npcHp (stOf (run "use heiltrank on waechter" stOpen)) /= 20)
+    r6 <- expectTrue "undeclared pair leaves the item in hand"
+            (not ("Du verbindest den Waechter." `isInfixOf` out (run "use heiltrank on waechter" stOpen)))
+    r7 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "heiltrank" (stOf (run "use heiltrank on waechter" stOpen)))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | B9: the engine field is omitted from world.json when no interaction is
+--   declared, so every existing world stays byte-identical.
+testNpcInteractionsOmittedWhenEmpty :: IO Bool
+testNpcInteractionsOmittedWhenEmpty = do
+    r1 <- expectTrue "empty npcInteractions stays out of the world json"
+            (not ("npcInteractions" `isInfixOf` BLC.unpack (Aeson.encode emptyGameWorld)))
+    r2 <- expectTrue "declared npcInteractions are written"
+            ("npcInteractions" `isInfixOf` BLC.unpack
+                (Aeson.encode emptyGameWorld { npcInteractions = Map.singleton ("verband", "waechter") (SendMessage "x") }))
+    r3 <- expectTrue "round trip through json"
+            (let w = Aeson.decode (BLC.pack (BLC.unpack (Aeson.encode emptyGameWorld { npcInteractions = Map.singleton ("verband", "waechter") (SendMessage "x") })))
+             in case (w :: Maybe GameWorld) of
+                    Just g -> Map.size (npcInteractions g) == 1
+                    Nothing -> False)
+    pure (r1 && r2 && r3)
+
 -- | The effect table: `MoveEntity x (CarriedBy <actor>)` honours the actor —
 --   the `give:` object form can hand items to NPCs, not just the player.
 testMoveEntityCarriedByActor :: IO Bool
@@ -9361,6 +9412,8 @@ main = do
         , runTest "on_talk trigger fires on ask/tell (4.5)" testOnTalkTriggerFires
         , runTest "npc possession: take from / give to (B7)" testNpcTakeGive
         , runTest "npc possession: examine + snapshot visibility (B7)" testNpcCarriedVisibility
+        , runTest "item-on-npc interaction: effects + attack fallback (B9)" testNpcItemInteraction
+        , runTest "npc interactions omitted from json when empty (B9)" testNpcInteractionsOmittedWhenEmpty
         , runTest "npc possession: MoveEntity honours the carrier (B7)" testMoveEntityCarriedByActor
         , runTest "ActorHas predicate for player, NPC and device entity (W4)" testActorHasPredicate
         , runTest "Mount and Unmount effects move item location (W4)" testMountAndUnmountEffects

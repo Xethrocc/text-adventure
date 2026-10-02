@@ -1966,6 +1966,7 @@ data GameWorld = GameWorld
     , npcDefs            :: Map.Map NPCID NPCDef
     , entityInteractions :: Map.Map (String, String) (String, String)
     , itemInteractions   :: Map.Map (String, String) Effect  -- ^ (Item, Item) -> outcome
+    , npcInteractions    :: Map.Map (String, String) Effect  -- ^ (Item, NPC) -> outcome (B9); empty map is omitted
     , questDefs          :: Map.Map QuestID Quest                    -- ^ Static quest definitions
     , vehicleDefs        :: Map.Map VehicleID VehicleDef             -- ^ Static vehicle definitions (Phase 3)
     , verbDefs           :: Map.Map String VerbDef                   -- ^ Adventure-declared verbs (Phase 3a)
@@ -2030,7 +2031,7 @@ instance ToJSON GameWorld where
         , "abilities"          .= abilities gw
         ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair ++ sandboxPair
           ++ procPair ++ factPair ++ combinePair ++ chapterPair ++ devicePair ++ containerPair ++ progPair
-          ++ langPair ++ msgPair
+          ++ langPair ++ msgPair ++ npcInteractionPair
       where
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
@@ -2055,6 +2056,13 @@ instance ToJSON GameWorld where
         -- existing world.json stays bit-identical (same contract as procDefs).
         langPair = [ "language" .= l | Just l <- [worldLanguage gw] ]
         msgPair  = [ "messages" .= worldMessages gw | not (Map.null (worldMessages gw)) ]
+        -- B9: item-on-NPC outcomes share the (item, target) -> outcome shape of
+        -- `itemInteractions`; the field is omitted when empty so world.json of
+        -- every existing adventure stays bit-identical (same contract as
+        -- procDefs).
+        npcInteractionPair =
+            [ "npcInteractions" .= itemInteractionsToJSON (npcInteractions gw)
+            | not (Map.null (npcInteractions gw)) ]
         endArt = Map.filter (not . isEmptyAscii) (worldEndArt gw)
         titleArt = worldTitleArt gw
 
@@ -2099,6 +2107,7 @@ instance FromJSON GameWorld where
         <*> o .:  "npcDefs"
         <*> (o .: "entityInteractions" >>= tupleMapFromJSON)
         <*> (o .:? "itemInteractions" >>= maybe (pure Map.empty) parseItemInteractions)
+        <*> (o .:? "npcInteractions" >>= maybe (pure Map.empty) parseItemInteractions)
         <*> o .:? "questDefs" .!= Map.empty
         <*> o .:? "vehicleDefs" .!= Map.empty
         <*> o .:? "verbDefs" .!= Map.empty

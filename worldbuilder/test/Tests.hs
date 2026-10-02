@@ -46,6 +46,7 @@ minWorld = E.GameWorld
     , npcDefs = Map.empty
     , entityInteractions = Map.empty
     , itemInteractions = Map.empty
+    , npcInteractions = Map.empty
     , questDefs = Map.empty
     , vehicleDefs = Map.empty
     , verbDefs = Map.empty
@@ -1886,7 +1887,8 @@ testItemInteractionCompiles :: IO Bool
 testItemInteractionCompiles = do
     let ix = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction "herb" "mortar" [AOMessage "paste made"] ] }
+            , aiItem = [ AItemInteraction "herb" "mortar" [AOMessage "paste made"] ]
+            , aiNpc = [] }
         adv = (minAdventure (minRoom "loc_0")) { advInteractions = Just ix }
     case compileAdventure adv of
         Left errs -> do
@@ -1900,7 +1902,8 @@ testEntityInteractionCompiles :: IO Bool
 testEntityInteractionCompiles = do
     let ix = AInteractions
             { aiEntity = [ AEntityInteraction "key" "door" "unlocked" (Just "It opens.") ]
-            , aiItem = [] }
+            , aiItem = []
+            , aiNpc = [] }
         adv = (minAdventure (minRoom "loc_0")) { advInteractions = Just ix }
     case compileAdventure adv of
         Left errs -> do
@@ -3628,6 +3631,10 @@ tests =
     , ("give: string and object form compile (B7)", testGiveToSugar)
     , ("give: unknown to-npc is a hard error (B7)", testGiveToUnknownNpcFails)
     , ("known keys: carried_by and capacity warn nowhere (B7)", testNpcPossessionKnownKeysClean)
+    -- B9: item-on-NPC interactions
+    , ("interactions npc: compiles to an outcome map (B9)", testNpcInteractionCompiles)
+    , ("interactions npc: unknown item/npc refs fail (B9)", testNpcInteractionRefsFail)
+    , ("known keys: interactions npc: warns nowhere (B9)", testNpcInteractionKnownKeysClean)
     -- B6: game export (bundle)
     , ("export: asset refs over every surface incl. nested (B6)", testCollectAssetRefs)
     , ("export: outcome traversal is recursive (B6)", testAllAOutcomesDeep)
@@ -5997,6 +6004,92 @@ testNpcPossessionKnownKeysClean = do
             Right cr -> do
                 let keyWarns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
                 expectTrue ("expected 0 unknown key warnings, got " ++ show (length keyWarns)) (null keyWarns)
+
+-- ===========================================================================
+-- B9: item-on-NPC interactions
+-- ===========================================================================
+
+-- | `interactions: npc:` compiles into the (item, npc) -> outcome map; the
+--   effect list is compiled like every other outcome surface.
+testNpcInteractionCompiles :: IO Bool
+testNpcInteractionCompiles = do
+    let ix = AInteractions
+            { aiEntity = []
+            , aiItem = []
+            , aiNpc = [ ANPCInteraction "verband" "waechter" [AOMessage "Du verbindest den Waechter."] ] }
+        npc = (minNpcKey "waechter") { anLocation = "loc_0" }
+        adv = (minAdventure (minRoom "loc_0"))
+            { advNPCs = [npc]
+            , advItems = [minItem "verband"]
+            , advInteractions = Just ix }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ issuesText errs
+            pure False
+        Right cr -> do
+            let effs = Map.lookup ("verband", "waechter") (E.npcInteractions (crWorld cr))
+            r1 <- expectTrue "npc interaction present" (Map.member ("verband", "waechter") (E.npcInteractions (crWorld cr)))
+            r2 <- expectEqual (Just (E.SendMessage "Du verbindest den Waechter.")) effs
+            pure (r1 && r2)
+
+-- | Both halves of an `interactions: npc:` entry must resolve: a typo in the
+--   item id would silently fall through to the attack fallback.
+testNpcInteractionRefsFail :: IO Bool
+testNpcInteractionRefsFail = do
+    let npc = (minNpcKey "waechter") { anLocation = "loc_0" }
+        withIx n adv = adv { advNPCs = [npc], advItems = [minItem "verband"]
+                           , advInteractions = Just (AInteractions
+                                { aiEntity = [], aiItem = [], aiNpc = [n] }) }
+        base = minAdventure (minRoom "loc_0")
+    r1 <- case compileAdventure (withIx (ANPCInteraction "verbandt" "waechter" []) base) of
+        Left errs -> expectTrue ("unknown item: " ++ issuesText errs)
+                        (any (\i -> ciCode i == "UnknownNpcInteractionItem") errs)
+        Right _ -> expectTrue "expected a compile error (unknown item)" False
+    r2 <- case compileAdventure (withIx (ANPCInteraction "verband" "niemand" []) base) of
+        Left errs -> expectTrue ("unknown npc: " ++ issuesText errs)
+                        (any (\i -> ciCode i == "UnknownNpc") errs)
+        Right _ -> expectTrue "expected a compile error (unknown npc)" False
+    pure (r1 && r2)
+
+-- | `npc:` is a known key of the interactions section — no UnknownYamlKey.
+testNpcInteractionKnownKeysClean :: IO Bool
+testNpcInteractionKnownKeysClean = do
+    let yaml = unlines
+            [ "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Halle"
+            , "    desc: Eine Halle."
+            , "npcs:"
+            , "  - id: waechter"
+            , "    name: Waechter"
+            , "    location: loc_0"
+            , "items:"
+            , "  - id: verband"
+            , "    name: Verband"
+            , "    desc: Ein Verband."
+            , "    location: loc_0"
+            , "interactions:"
+            , "  npc:"
+            , "    - item: verband"
+            , "      target: waechter"
+            , "      effects:"
+            , "        - msg: \"Du verbindest den Waechter.\""
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let keyWarns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
+                r1 <- expectTrue ("expected 0 unknown key warnings, got " ++ show (length keyWarns)) (null keyWarns)
+                r2 <- expectTrue "npc interaction survived the yaml round trip"
+                        (Map.member ("verband", "waechter") (E.npcInteractions (crWorld cr)))
+                pure (r1 && r2)
 
 -- ===========================================================================
 -- B6: game export (bundle)

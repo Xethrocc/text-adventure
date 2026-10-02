@@ -1136,6 +1136,7 @@ instance FromJSON AAbility where
 data AInteractions = AInteractions
     { aiEntity  :: [AEntityInteraction]
     , aiItem    :: [AItemInteraction]
+    , aiNpc     :: [ANPCInteraction]
     } deriving (Show, Eq, Generic)
 
 -- | `use <item> on <target>` -> sets the target entity's state.
@@ -1153,6 +1154,16 @@ data AItemInteraction = AItemInteraction
     , aiiEffects :: [AActionOutcome]
     } deriving (Show, Eq, Generic)
 
+-- | B9: Item-on-NPC interaction: `use <item> on <npc>`. The target is an NPC
+--   present in the room, the outcome is a free effect list (the item stays in
+--   the player's hand unless an effect moves it). Without a matching entry the
+--   engine's attack fallback applies, as before.
+data ANPCInteraction = ANPCInteraction
+    { aniItem    :: String
+    , aniTarget  :: String
+    , aniEffects :: [AActionOutcome]
+    } deriving (Show, Eq, Generic)
+
 instance FromJSON AEntityInteraction where
     parseJSON = withObject "AEntityInteraction" (\o -> AEntityInteraction
         <$> o .:  "item"
@@ -1166,10 +1177,17 @@ instance FromJSON AItemInteraction where
         <*> o .:  "item2"
         <*> o .:? "effects" .!= [])
 
+instance FromJSON ANPCInteraction where
+    parseJSON = withObject "ANPCInteraction" (\o -> ANPCInteraction
+        <$> o .:  "item"
+        <*> o .:  "target"
+        <*> o .:? "effects" .!= [])
+
 instance FromJSON AInteractions where
     parseJSON = withObject "AInteractions" (\o -> AInteractions
         <$> o .:? "entity" .!= []
-        <*> o .:? "item"   .!= [])
+        <*> o .:? "item"   .!= []
+        <*> o .:? "npc"    .!= [])
 
 -- ---------------------------------------------------------------------------
 -- Action outcomes (YAML-friendly — each has exactly one key)
@@ -1782,7 +1800,7 @@ knownKeys EntCombat = Set.fromList
 knownKeys EntCombatScreen = Set.fromList
     [ "art", "bar_width", "scene", "footer" ]
 knownKeys EntInteractions = Set.fromList
-    [ "entity", "item" ]
+    [ "entity", "item", "npc" ]
 knownKeys EntProgression = Set.fromList
     [ "levels" ]
 knownKeys EntLevel = Set.fromList

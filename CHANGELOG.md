@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Item-auf-NPC-Interaktionen (B9)
+
+- **Neue Zielart `interactions: npc:`:** `use <item> on <npc>` laesst die
+  deklarierte Effektliste laufen (Heilen, Bestechen, Fesseln, Ausgeben … als
+  Content — die Engine kennt weiter nur `use`). Der Eintrag greift **vor** dem
+  Angriffs-Fallback: ohne Eintrag bleibt `use` auf eine lebende Figur ein
+  Angriff (unveraenderter Vertrag, per Nutzer-Entscheidung so festgehalten).
+  Das Item bleibt in der Hand, ausser ein Effekt bewegt es (`consume:`, `give:`).
+- **Harte Compile-Fehler** fuer beide Seiten eines Eintrags: unbekanntes Item
+  (`UnknownNpcInteractionItem`) und unbekannte Figur (`UnknownNpc`) — ein
+  Tippfehler im Item-Namen wuerde sonst still angreifen.
+- **Byte-Vertrag unveraendert:** `npcInteractions` wird in `world.json` nur
+  geschrieben, wenn das Abenteuer Eintraege hat (gleiche Regel wie `procDefs`),
+  und `Location`/`ActorRef` koennen NPCs schon als Ziel — **kein** neues
+  `SaveState`-Feld. `entity:` und `item:` bleiben unangetastet.
+- Beispiele: `examples/fixtures/npc-interaktion.yaml` (deklariertes Paar laeuft,
+  verbrauchtes Item, Angriffs-Fallback beim nicht deklarierten Paar, `tests:`-
+  Sektion) + `ci/e2e/npc-interaktion.{in,expect}` (CI-Stufen 4/4b); Doku in
+  `docs/adventure-schema.md`.
+- Offen im B9-Rest (bewusst nicht hier): NPC-Ausruestung
+  (`EquippedBy ActorNPC`, Autorenform `give: {item, to, equip: true}` laut
+  Nutzer-Entscheidung), `take all from <npc>`, Fallenlassen beim NPC-Tod.
+
 ### Sprachpakete: Beispiel-Abenteuer & Genre-Demo (4.3, Teil 6)
 
 - `examples/fixtures/sprache.yaml`: durchspielbares Mini-Abenteuer mit

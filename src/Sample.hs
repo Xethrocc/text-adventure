@@ -337,6 +337,7 @@ initSampleGame = GameState
             , (("key", "treasure_door"), ("unlocked", "You insert the brass key into the door. It clicks open!"))
             ]
         , itemInteractions = Map.empty
+        , npcInteractions = Map.empty
         , questDefs = Map.fromList
             [ ("find_treasure", Quest
                 "find_treasure"

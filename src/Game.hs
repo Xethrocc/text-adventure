@@ -172,6 +172,7 @@ emptyGameWorld = GameWorld
     , npcDefs            = Map.empty
     , entityInteractions = Map.empty
     , itemInteractions   = Map.empty
+    , npcInteractions    = Map.empty
     , questDefs          = Map.empty
     , vehicleDefs        = Map.empty
     , verbDefs           = Map.empty

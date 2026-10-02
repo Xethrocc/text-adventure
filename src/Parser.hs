@@ -1290,6 +1290,8 @@ dispatchCommandEv (InteractWith VUseOn itemStr entityStr) state =
                             state' = setEntityState resolvedEntity newState state
                         in (state', evRaw msg)
                     Nothing
+                        | Just result <- tryItemOnNpc (itemId item) entityTarget state ->
+                            result
                         | isLivingNPCInRoom entityTarget state ->
                             dispatchCommandEv (Interact VAttack entityTarget) state
                         | otherwise ->
@@ -1297,15 +1299,30 @@ dispatchCommandEv (InteractWith VUseOn itemStr entityStr) state =
                                 Just result -> result
                                 Nothing -> tryRefuelByItem item state
             else
-                if isLivingNPCInRoom entityTarget state
-                then dispatchCommandEv (Interact VAttack entityTarget) state
-                else case tryItemOnItem (itemId item) entityTarget state of
-                        Just result -> result
-                        Nothing ->
-                            case maybeVehicle of
-                                Just _ -> tryRefuelByItem item state
-                                Nothing -> (state, evMsg "use.unreachable" [("entity", entityStr)])
+                case tryItemOnNpc (itemId item) entityTarget state of
+                    Just result -> result
+                    Nothing
+                        | isLivingNPCInRoom entityTarget state ->
+                            dispatchCommandEv (Interact VAttack entityTarget) state
+                        | otherwise -> case tryItemOnItem (itemId item) entityTarget state of
+                                Just result -> result
+                                Nothing ->
+                                    case maybeVehicle of
+                                        Just _ -> tryRefuelByItem item state
+                                        Nothing -> (state, evMsg "use.unreachable" [("entity", entityStr)])
   where
+    -- B9: `use <item> on <npc>` with a declared `interactions: npc:` entry.
+    -- The outcome is a free effect list applied to the player (the item stays
+    -- in hand unless an effect moves it). Without an entry the engine's
+    -- attack fallback is unchanged, so the interaction must be declared.
+    tryItemOnNpc usedId targetStr' st =
+        let roomNPCs = getNPCsInRoom (currentRoom (save st)) st
+            targetKeys = resolveEntityCandidates targetStr' st
+        in case find (\n -> any (`elem` targetKeys) (npcId n : npcAliases n)) roomNPCs of
+            Nothing -> Nothing
+            Just npc -> case Map.lookup (usedId, npcId npc) (npcInteractions (world st)) of
+                Just outcome -> Just (applyOutcomeEv outcome (npcId npc) st)
+                Nothing      -> Nothing
     -- Vehicle refuelling: `use <fuel item> on <vehicle>` adds the item's
     -- "fuel" prop value (default 1) to the vehicle's tank, consuming the item.
     tryRefuelByItem item st =
