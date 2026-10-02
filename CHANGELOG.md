@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### Sprachpakete: de-Paket vollstaendig (4.3, Teil 3)
+
+- **Volluebersetzung:** `lang/de.json` deckt jetzt alle **232** Katalogschluessel
+  ab (Vorher: 8) — inkl. `help.text` (deutsche Hilfe mit den Aliasen aus
+  4.3.4) — plus **22 Term-Eintraege** (10 Richtungen, 7 Ausruestungsplaetze,
+  5 Kartentypen). Platzhalter-Validierung beim Generieren: jede Vorlage
+  behaelt exakt ihre `{arg}`-Menge.
+- **Gate hart:** CI-Stufe 2c laeuft mit `--require-complete` — ein neuer
+  Katalogschluessel braucht ab sofort eine Uebersetzung im selben Commit
+  (kein stiller Englisch-Fallback mehr).
+- **Inventar unkatalogisierte Ausgaben (4.3.3):** 33 weitere Renderstellen auf
+  katalog-bewusstes Rendering umgestellt (`renderMsgFor`) — Vehicles-Fehler-
+  und Statuszeilen (15), Equip-Befehle/-Liste (7), Karten-Bildschirme (10),
+  Disambiguation-Optionen (1); englische Vorlage byte-identisch. Bewusst
+  unuebersetzt bleiben: CLI-/TUI-Chrome ohne Schluessel (Prompts,
+  "Loaded world: …"), die Welt-Ladefehler (vor der geladenen Welt) und die
+  zehn derzeit unerreichten W4-`device*Msg`-Reservemeldungen in `Game.hs` —
+  alle in `docs/adventure-schema.md` inventarisiert.
+- **Funde:** (a) `help.text` referenziert eine `helpTemplate`-Bindung statt
+  eines Literals — reine Literal-Extraktion findet 231 statt 232 Schluessel;
+  (b) die `device*Msg`-Helfer in `Game.hs` haben keine Aufrufer (ihre
+  Meldungen sind unerreichbar); (c) der "[Unbekannt]"-Kartenkasten ist wie
+  die Kartentyp-Labels ein historischer Deutscher Hardcode.
+- 2 neue Engine-Tests (450): Paket-Vollstaendigkeit (Bijektion im Haskell-
+  Test) und ein deutscher Probelauf (kein `<msg:`, kein englischer
+  Katalogtext, Richtungs-Term end-to-end "Du gehst nach Norden.").
+
 ### Sprachpakete: Render-Pass am Rand (4.3, Teil 2)
 
 - **Lokalisierungs-Pass** (`Messages.localizeEvents`): keyed Meldungen werden

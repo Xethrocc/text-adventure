@@ -23,7 +23,7 @@ module Cards
 
 import Types
 import Game
-import Messages (renderMsg, evMsg, effectiveTermsFor)
+import Messages (renderMsgFor, evMsg, effectiveTermsFor)
 import Effects (applyOutcomeEv)
 import Ansi (stripAnsi)
 import Data.Char (toLower)
@@ -385,7 +385,7 @@ showHand st = case deckState (save st) of
         let curHand = hand ds
             hudLines = renderDeckCombatHud st ds
             screenLines = if null curHand
-                          then hudLines ++ [renderMsg "card.hand_empty" []]
+                          then hudLines ++ [renderMsgFor (world st) "card.hand_empty" []]
                           else
                               let lookupCardBox idx cId = case Map.lookup cId (cardDefs (world st)) of
                                       Just c  -> renderCardBoxIn (effectiveTermsFor (world st)) idx c
@@ -417,12 +417,12 @@ showDeck st = case deckState (save st) of
                 Just c  -> cardName c
                 Nothing -> cId
             cardCounts = Map.toList (Map.fromListWith (+) [(nameOf cId, 1 :: Int) | cId <- curDraw])
-            cardLines = [ renderMsg "card.pile_line" [("name", name)]
-                            ++ (if cnt > 1 then renderMsg "card.count_suffix" [("count", show cnt)] else "")
+            cardLines = [ renderMsgFor (world st) "card.pile_line" [("name", name)]
+                            ++ (if cnt > 1 then renderMsgFor (world st) "card.count_suffix" [("count", show cnt)] else "")
                         | (name, cnt) <- cardCounts ]
-            header = renderMsg "card.draw_pile_header" [("n", show (length curDraw)), ("total", show total)]
-            body = if null cardLines then [renderMsg "card.pile_empty" []] else cardLines
-            footer = renderMsg "card.piles_footer"
+            header = renderMsgFor (world st) "card.draw_pile_header" [("n", show (length curDraw)), ("total", show total)]
+            body = if null cardLines then [renderMsgFor (world st) "card.pile_empty" []] else cardLines
+            footer = renderMsgFor (world st) "card.piles_footer"
                      [("hand", show (length curHand)), ("discard", show (length curDisc)),
                       ("exhaust", show (length curExh))]
         in (st, [EvArt (ArtPayload (intercalate "\n" ([header] ++ body ++ [footer])) [])])
@@ -437,9 +437,9 @@ showDiscard st = case deckState (save st) of
                 Just c  -> cardName c
                 Nothing -> cId
             cardCounts = Map.toList (Map.fromListWith (+) [(nameOf cId, 1 :: Int) | cId <- curDisc])
-            cardLines = [ renderMsg "card.pile_line" [("name", name)]
-                            ++ (if cnt > 1 then renderMsg "card.count_suffix" [("count", show cnt)] else "")
+            cardLines = [ renderMsgFor (world st) "card.pile_line" [("name", name)]
+                            ++ (if cnt > 1 then renderMsgFor (world st) "card.count_suffix" [("count", show cnt)] else "")
                         | (name, cnt) <- cardCounts ]
-            header = renderMsg "card.discard_pile_header" [("n", show (length curDisc))]
-            body = if null cardLines then [renderMsg "card.pile_empty" []] else cardLines
+            header = renderMsgFor (world st) "card.discard_pile_header" [("n", show (length curDisc))]
+            body = if null cardLines then [renderMsgFor (world st) "card.pile_empty" []] else cardLines
         in (st, [EvArt (ArtPayload (intercalate "\n" ([header] ++ body)) [])])

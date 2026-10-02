@@ -152,7 +152,7 @@ module Game
 
 import Types
 import Pursuit (bfsDistances, stepToward, stepAway)
-import Messages (formatStringWith, renderMsg)
+import Messages (formatStringWith, renderMsg, renderMsgFor)
 import Data.List (foldl', isPrefixOf, nub, stripPrefix)
 import Data.Bits (shiftR)
 import Data.Char (toLower, isDigit, isSpace)
@@ -803,15 +803,15 @@ lookupItem iId state = Map.lookup iId (itemDefs (world state))
 equipItem :: ItemID -> GameState -> Either String GameState
 equipItem iId state =
     case lookupItem iId state of
-        Nothing -> Left (renderMsg "item.no_id" [("id", iId)])
+        Nothing -> Left (renderMsgFor (world state) "item.no_id" [("id", iId)])
         Just def -> case itemEquipSlot def of
-            Nothing -> Left (renderMsg "equip.not_equippable" [("item", itemName def)])
+            Nothing -> Left (renderMsgFor (world state) "equip.not_equippable" [("item", itemName def)])
             Just slot ->
                 if not (hasItem iId state)
-                then Left (renderMsg "equip.need_carried" [("item", itemName def)])
+                then Left (renderMsgFor (world state) "equip.need_carried" [("item", itemName def)])
                 else case equippedInSlot slot state of
                     Just other | other /= iId ->
-                        Left (renderMsg "equip.slot_occupied" [("item", other)])
+                        Left (renderMsgFor (world state) "equip.slot_occupied" [("item", other)])
                     _ -> Right $ state { save = (save state) { equipment = Map.insert slot iId (equipment (save state)) } }
 
 -- | Unequip an item by id
@@ -861,10 +861,10 @@ effectiveMaxHealth state = playerMaxHealth (player (save state)) + sumEquipBonus
 -- | Human-readable equipment summary
 equipmentSummary :: GameState -> String
 equipmentSummary state
-    | Map.null (equipment (save state)) = renderMsg "equip.nothing" []
+    | Map.null (equipment (save state)) = renderMsgFor (world state) "equip.nothing" []
     | otherwise =
-        renderMsg "equip.header" [] ++ unlines
-            [ renderMsg "equip.line" [("slot", show slot), ("name", nameFor iId)]
+        renderMsgFor (world state) "equip.header" [] ++ unlines
+            [ renderMsgFor (world state) "equip.line" [("slot", show slot), ("name", nameFor iId)]
             | (slot, iId) <- Map.toList (equipment (save state))
             ]
   where

@@ -2577,6 +2577,15 @@ messages:                    # einzelne Engine-Meldungen ueberschreiben
   die Eingabe-Aliase). **Inhalte** (Namen, Beschreibungen, `msg:`-Texte)
   schreibt der Autor in einer Sprache — `messages:` ist kein mehrsprachiges
   Content-System.
+- **Bewusst nicht lokalisiert** (Inventar 4.3.3): CLI-/TUI-Chrome ohne
+  Katalogschluessel (Prompts `"> "`, "Loaded world: …" in
+  `text-adventure-cli/app/Main.hs`, Tab-Completion, HUD-Labels), die
+  Welt-Ladefehler (`world.file_unreadable`/`world.save_unreadable` — sie
+  fallen an, bevor eine Welt mit Sprache geladen ist) und die zehn
+  W4-Reserve-Meldungen der derzeit unerreichten `device*Msg`-Helfer in
+  `Game.hs`. Der unbekannte-Karten-Kasten auf dem Karten-Bildschirm
+  ("[Unbekannt]"/"Nicht gefunden") ist ein historischer Hardcode wie die
+  Kartentyp-Labels.
 
 ## Regel-Diagnostik (B4)
 

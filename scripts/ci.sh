@@ -57,9 +57,11 @@ echo "== 2c. language pack gate =="
 # Phase 4.3: lang/<code>.json is the source of truth for a language pack, the
 # generated module is what ships. Catches a stale generated module (JSON
 # changed, generator not rerun), pack keys the engine catalog does not know,
-# and — once a pack claims completeness (4.3) — untranslated keys.
+# and untranslated catalog keys (English fallback). Since 4.3.3 packs are
+# complete by contract (--require-complete): a new catalog key needs a
+# translation in the same commit.
 # POSIX shell only: this script also runs on the Windows runner (Git Bash).
-./scripts/check-lang-pack.sh
+./scripts/check-lang-pack.sh --require-complete
 
 echo "== 3. validate adventures =="
 adv=(examples/demo.yaml examples/thefog.yaml)

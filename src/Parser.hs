@@ -49,7 +49,7 @@ module Parser
 
 import Types
 import Game
-import Messages (renderMsg, evMsg, renderMsgIn, localizeEventsFor, MsgCatalog, defaultCatalog)
+import Messages (renderMsg, renderMsgFor, evMsg, renderMsgIn, localizeEventsFor, MsgCatalog, defaultCatalog)
 import Vehicles
 import Effects
 import Quests
@@ -1686,7 +1686,7 @@ interactNotFound verb targetStr state
 interactAmbiguous :: [String] -> GameState -> (GameState, [OutputEvent])
 interactAmbiguous ids state =
     let names = map (entityDisplayName state) ids
-        options = zipWith (\n name -> renderMsg "disambiguate.option" [("n", show (n :: Int)), ("name", name)])
+        options = zipWith (\n name -> renderMsgFor (world state) "disambiguate.option" [("n", show (n :: Int)), ("name", name)])
                            [1 ..] names
     in (state, EvDisambiguate ids : evMsg "disambiguate.prompt" [("names", intercalate ", " options)])
 

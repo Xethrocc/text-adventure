@@ -32,6 +32,7 @@ import glob
 import hashlib
 import json
 import os
+import re
 import sys
 
 ALIAS_SECTIONS = ("verbs", "directions", "commands", "prepositions")
@@ -126,6 +127,31 @@ def hs_pairs_aliases(pairs):
             (hs_string(kv[0]), ", ".join(hs_string(a) for a in kv[1])))
 
 
+def check_against_catalog(path, messages):
+    """Message keys must be engine catalog keys; translations must keep the
+    placeholder set of their English template (literal-valued entries only --
+    keys with a non-literal value binding, like help.text, carry no {arg} to
+    compare)."""
+    try:
+        src = open(os.path.join("src", "Messages.hs"), encoding="utf-8").read()
+        block = src[src.index("catalogEntries ="):src.index("defaultCatalog ::")]
+    except (OSError, ValueError) as exc:
+        die("cannot read the engine catalog from src/Messages.hs: %s" % exc)
+    keys = re.findall(r'\("([a-z0-9_.]+)",', block)
+    values = dict(re.findall(r'\("([a-z0-9_.]+)",\s*"((?:[^"\\]|\\.)*)"', block))
+
+    def slots(tmpl):
+        return sorted(re.findall(r"\{([a-z_][a-z_.]*)", tmpl))
+
+    for key, value in messages:
+        if key not in keys:
+            die("%s: messages.%s is not an engine catalog key" % (path, key))
+        tmpl = values.get(key)
+        if tmpl is not None and slots(tmpl) != slots(value):
+            die("%s: messages.%s placeholders differ: en=%s de=%s"
+                % (path, key, slots(tmpl), slots(value)))
+
+
 def gen_module(path):
     with open(path, "rb") as fh:
         raw = fh.read()
@@ -161,6 +187,7 @@ def gen_module(path):
     messages = check_string_map(sections.get("messages", []), path + ": messages")
     if not messages:
         die("%s: 'messages' must not be empty" % path)
+    check_against_catalog(path, messages)
     terms = check_string_map(sections.get("terms", []), path + ": terms")
     aliases = {name: check_alias_map(sections.get(name, []), path + ": " + name)
                for name in ALIAS_SECTIONS}

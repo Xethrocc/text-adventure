@@ -8797,7 +8797,7 @@ testLangPackCatalogLayers = do
     r1 <- expectTrue "the de pack is registered" (Map.member "de" langPacks)
     r2 <- expectEqual (Just "Eigen: {dir}.") (Map.lookup "move.ok" cat)
     r3 <- expectEqual (Just "Die Tür ist verschlossen.") (Map.lookup "move.door_locked" cat)
-    r4 <- expectEqual (Map.lookup "take.ok" defaultCatalog) (Map.lookup "take.ok" cat)
+    r4 <- expectEqual (Just "Du nimmst {item}.") (Map.lookup "take.ok" cat)
     r5 <- expectTrue "unknown language renders the default catalog"
              (effectiveCatalog (Just "xx") Map.empty == defaultCatalog)
     r6 <- expectTrue "no language renders the default catalog"
@@ -8879,7 +8879,7 @@ testRenderMsgForWorld :: IO Bool
 testRenderMsgForWorld = do
     let w = emptyGameWorld { worldLanguage = Just "de" }
     r1 <- expectEqual "Die Tür ist verschlossen." (renderMsgFor w "move.door_locked" [])
-    r2 <- expectEqual (renderMsg "take.ok" [("item", "X")]) (renderMsgFor w "take.ok" [("item", "X")])
+    r2 <- expectEqual "Du nimmst X." (renderMsgFor w "take.ok" [("item", "X")])
     r3 <- expectEqual (renderMsg "move.door_locked" [])
              (renderMsgFor emptyGameWorld "move.door_locked" [])
     pure (r1 && r2 && r3)
@@ -8893,6 +8893,44 @@ testCardTypeLabelTerms = do
     r3 <- expectEqual "[Attack]"
              (cardTypeLabelIn (Map.singleton "card_type.attack" "[Attack]") CardAttack)
     pure (r1 && r2 && r3)
+
+-- | Phase 4.3: the de pack is complete — every catalog key has a non-empty
+--   German template and nothing more (the sync gate enforces the same
+--   bijection on the JSON side).
+testLangPackComplete :: IO Bool
+testLangPackComplete =
+    case Map.lookup "de" langPacks of
+        Nothing -> expectTrue "the de pack is registered" False
+        Just pk -> do
+            let de = lpTemplates pk
+                missing = [ k | k <- Map.keys defaultCatalog, maybe True null (Map.lookup k de) ]
+                extra = [ k | k <- Map.keys de, not (Map.member k defaultCatalog) ]
+            r1 <- expectEqual ([] :: [String]) missing
+            r2 <- expectEqual ([] :: [String]) extra
+            pure (r1 && r2)
+
+-- | Phase 4.3: a German world renders German — a short scripted run shows no
+--   English catalog text, no <msg:...> fallback, and the direction term is
+--   translated end to end ("Du gehst nach Norden.").
+testGermanRunRendersGerman :: IO Bool
+testGermanRunRendersGerman = do
+    let deWorld = (world initSampleGame) { worldLanguage = Just "de" }
+        st0 = initSampleGame { world = deWorld }
+        runL cmd st = applyLoopCommand (parseCommand cmd) (initLoopState st)
+        takeTxt = snd (runL "take nichtda" st0)
+        moveTxt = snd (runL "go north" st0)
+        statsTxt = snd (runL "stats" st0)
+        allTxt = unwords [takeTxt, moveTxt, statsTxt, snd (runL "inventory" st0)]
+    r1 <- expectTrue "no <msg: fallback" (not ("<msg:" `isInfixOf` allTxt))
+    r2 <- expectTrue "take refusal is German"
+             ("nicht" `isInfixOf` takeTxt && not ("You " `isInfixOf` takeTxt))
+    r3 <- expectTrue "movement is German with translated term"
+             ("Du gehst nach Norden." `isInfixOf` moveTxt)
+    r4 <- expectTrue "stats are German" ("Gesundheit" `isInfixOf` statsTxt)
+    r5 <- expectTrue "no English catalog text"
+             (not (any (`isInfixOf` allTxt)
+                       ["You move ", "You take the ", "Inventory: ", "You're not carrying"]))
+    pure (and [r1, r2, r3, r4, r5])
 
 main :: IO ()
 main = do
@@ -9411,5 +9449,7 @@ main = do
         , runTest "lang pack: term slots translate enumerable args (4.3)" testTranslateTermsSlots
         , runTest "lang pack: renderMsgFor uses the world catalog (4.3)" testRenderMsgForWorld
         , runTest "lang pack: card type labels are terms (4.3)" testCardTypeLabelTerms
+        , runTest "lang pack: de translations cover the catalog (4.3)" testLangPackComplete
+        , runTest "lang pack: a German world renders German (4.3)" testGermanRunRendersGerman
         ]
     when (not (and results)) exitFailure
