@@ -18,6 +18,8 @@ import qualified System.Info as Info
 import Control.Exception (try, SomeException)
 import Worldbuilder.Types
 import Worldbuilder.Locate (lineForPath)
+import Worldbuilder.YamlDoc (parseYamlDoc, ydResolveIssuePath, ydScalarSpan,
+                             setScalarAt, splitIssuePath, ssText, YamlSeg (..))
 import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome, allWorldEffects, checkUnknownYamlKeys)
 import Worldbuilder.Test (checkMarkers, executeContentTest)
 import Worldbuilder.Fuzz (FindingKind (..), FuzzFinding (..), FuzzVocab (..),
@@ -30,8 +32,11 @@ import Worldbuilder.Run (RunConfig (..), RunResult (..), defaultRunConfig, prepa
 import qualified SaveLoad
 import Data.List (sort, sortOn, stripPrefix)
 import Data.YAML.Aeson (decode1)
-import Data.YAML (posLine)
+import Data.YAML (posLine, posColumn)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
+import qualified Data.ByteString.Lazy as BL
+import qualified Data.ByteString as BS
 import Types as E
 import Game (emptyGameState, evalPredicate)
 import Validate (validateWorld, validateWorldWithFlags, validateGameState, ValidationError (..))
@@ -2169,6 +2174,209 @@ testLocateLineForPath = do
     pure (and [r1, r2, r3, r4, r5])
   where isNothing = maybe True (const False)
 
+-- ---------------------------------------------------------------------------
+-- W5 Stufe 2: exakte YAML-Positionen und der positionstreue Schreiber
+-- ---------------------------------------------------------------------------
+
+-- W5-Testdokument: Verschachtelung, Listen mit `id:`, Flow-Style und ein
+-- Wert mit `": "` (die YAML-Falle aus 4.3.6), dazu Kommentare als
+-- Erhaltungsprobe.
+ydTestYaml :: String
+ydTestYaml = unlines
+    [ "# Kommentar oben"
+    , "name: Doc"
+    , "rooms:"
+    , "  - id: keller"
+    , "    name: Keller"
+    , "    desc: \"Ein Keller: drei Faesser.\""      -- Wert mit Doppelpunkt
+    , "    tags: [dark, safe]"
+    , "    exits:"
+    , "      east: { to: gange }"
+    , "      west:"
+    , "        to: gange"
+    , "        locked_by: tuer"
+    , "  - id: gange"
+    , "    name: Gang"
+    , "    desc: Ein Gang."
+    , "items:"
+    , "  - id: fass"
+    , "    name: Fass"
+    , "    location: keller"
+    , "    keys: [fass, tonne]"
+    , "    ascii: |"
+    , "      +---+"
+    , "      | X |"
+    , "      +---+"
+    ]
+
+-- | W5 Stufe 2, Lesen: dotted Issue-Pfade lösen auf exakte Zeilen auf. Der
+--   Punkt ist nicht nur "gefunden", sondern dass die Zeile die *richtige* ist —
+--   die Stufe-1-Heuristik springt bei `rooms.gange` in der Sprach-Fixture in
+--   einen 40 Zeilen späteren `topics:`-Eintrag.
+testYamlDocPositions :: IO Bool
+testYamlDocPositions = do
+    let bytes = BLC.pack ydTestYaml
+        lines' = ydTestYaml
+    case parseYamlDoc bytes of
+        Left err -> do
+            putStrLn $ "  parse failed: " ++ err
+            pure False
+        Right doc -> do
+            let at dotted = fmap (\p -> (posLine p, posColumn p)) (ydResolveIssuePath doc dotted)
+            r1 <- expectEqual (Just (4, 4)) (at "rooms.keller")
+            r2 <- expectEqual (Just (5, 4)) (at "rooms.keller.name")
+            r3 <- expectEqual (Just (9, 6)) (at "rooms.keller.exits.east")
+            r4 <- expectEqual (Just (11, 8)) (at "rooms.keller.exits.west.to")
+            r5 <- expectEqual (Just (20, 17)) (at "items.fass.keys[1]")
+            -- unknown paths stay Nothing so the caller falls back to Locate
+            r6 <- expectTrue "unknown room -> Nothing" (isNothing' (at "rooms.nope"))
+            r7 <- expectTrue "unknown top segment -> Nothing" (isNothing' (at "monsters.x"))
+            -- the bracket form the B9 reference checks emit
+            r8 <- expectEqual (Just (20, 11)) (at "items.fass.keys[0]")
+            -- path splitting, including the bracket and index shapes
+            r9 <- expectEqual [SegKey (T.pack "rooms"), SegKey (T.pack "keller")]
+                            (splitIssuePath "rooms.keller")
+            r10 <- expectEqual [SegKey (T.pack "items"), SegKey (T.pack "fass"),
+                             SegKey (T.pack "keys"), SegIndex 1]
+                            (splitIssuePath "items.fass.keys[1]")
+            -- agreement with the Stufe-1 heuristic on a plain path: the exact
+            -- line must at least be the same line Locate names
+            r11 <- expectEqual
+                            (fmap posLine (ydResolveIssuePath doc "items.fass.location"))
+                            (fmap fst (lineForPath lines' "items.fass.location"))
+            pure (and [r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11])
+  where
+    isNothing' = maybe True (const False)
+
+-- | W5 Stufe 2, Schreiben: ein Wert wird ersetzt, **alle anderen Bytes bleiben
+--   gleich** (Kommentare, Reihenfolge, Leerzeilen, Flow-Style). Die
+--   Idempotenz ist der Kernvertrag: denselben Wert noch einmal setzen ergibt
+--   das Original.
+testYamlDocWriter :: IO Bool
+testYamlDocWriter = do
+    let bytes = BLC.pack ydTestYaml
+    case parseYamlDoc bytes of
+        Left err -> do
+            putStrLn $ "  parse failed: " ++ err
+            pure False
+        Right doc -> do
+            r1 <- case ydScalarSpan doc "items.fass.location" of
+                Left e -> expectTrue ("span failed: " ++ show e) False
+                Right sp -> do
+                    r1a <- expectEqual "keller" (BLC.unpack (ssText sp))
+                    -- idempotent by construction
+                    r1b <- expectEqual
+                        (Right bytes) (setScalarAt doc "items.fass.location" (ssText sp))
+                    r1c <- expectEqual
+                        (Right (BLC.pack (replaceIn ydTestYaml 19 "keller" "gange")))
+                        (setScalarAt doc "items.fass.location" (BLC.pack "gange"))
+                    pure (r1a && r1b && r1c)
+            r2 <- expectTrue "comments survive a write"
+                (contains "# Kommentar oben"
+                    (either (const BLC.empty) id (setScalarAt doc "items.fass.location" (BLC.pack "gange"))))
+            r3 <- expectTrue "the flow-style exit line is untouched by an unrelated write"
+                (contains "east: { to: gange }"
+                    (either (const BLC.empty) id (setScalarAt doc "items.fass.location" (BLC.pack "gange"))))
+            r4 <- expectTrue "a quoted value is refused (re-quoting is the caller's job)"
+                (case setScalarAt doc "rooms.keller.desc" (BLC.pack "\"Ein alter Keller.\"") of
+                    Left _ -> True
+                    Right _ -> False)
+            -- UTF-8: the spans are BYTE offsets, so a multi-byte value earlier in
+            -- the file must not shift what the writer splices. (The harness
+            -- packs this one properly; BLC.pack would truncate the umlaut.)
+            r5 <- case parseYamlDoc (utf8Bytes umlautYaml) of
+                Left err -> expectTrue ("utf8 parse failed: " ++ err) False
+                Right udoc -> do
+                    r5a <- expectEqual (utf8Bytes "Keller")
+                                (either (const BLC.empty) ssText (ydScalarSpan udoc "rooms.keller.name"))
+                    r5b <- expectTrue "an earlier umlaut shifts nothing: the write hits the right bytes"
+                        (case setScalarAt udoc "rooms.keller.name" (utf8Bytes "Foyer") of
+                            Right out -> contains "name: Foyer" out
+                                        && containsBytes (utf8Bytes "f\252r Fu\223bote") out
+                                        && not (contains "name: Keller" out)
+                            Left _ -> False)
+                    pure (r5a && r5b)
+            pure (and [r1, r2, r3, r4, r5])
+
+-- | W5 Stufe 2: alles, was der Schreiber nicht *sicher* tun kann, lehnt er ab —
+--   mit benanntem Grund und ohne die Datei anzufassen. Raten ist verboten:
+--   ein halb geschriebener Block-Skalar wäre ein zerstörtes Abenteuer.
+testYamlDocRefusals :: IO Bool
+testYamlDocRefusals = do
+    let bytes = BLC.pack ydTestYaml
+    case parseYamlDoc bytes of
+        Left err -> do
+            putStrLn $ "  parse failed: " ++ err
+            pure False
+        Right doc -> do
+            let refuses p = case ydScalarSpan doc p of
+                    Left _ -> True
+                    Right _ -> False
+            r1 <- expectTrue "a mapping is not a scalar" (refuses "rooms.keller")
+            r2 <- expectTrue "a sequence is not a scalar" (refuses "items.fass.keys")
+            r3 <- expectTrue "a flow mapping is not a scalar" (refuses "rooms.keller.exits.east")
+            r4 <- expectTrue "a block scalar is refused" (refuses "items.fass.ascii")
+            r5 <- expectTrue "a quoted scalar is refused" (refuses "rooms.keller.desc")
+            r6 <- expectTrue "an unknown path is refused" (refuses "rooms.nope.name")
+            r7 <- expectTrue "a value with a line break is refused"
+                (case setScalarAt doc "items.fass.location" (BLC.pack "a\nb") of
+                    Left _ -> True
+                    Right _ -> False)
+            -- a folded continuation must not be spliced
+            let folded = BLC.pack (unlines
+                    [ "name: F"
+                    , "desc: this value"
+                    , "  continues on the next line"
+                    , "start_room: x"
+                    ])
+            r8 <- case parseYamlDoc folded of
+                Left _ -> expectTrue "folded parse failed" False
+                Right fdoc -> expectTrue "a folded multi-line scalar is refused"
+                    (case ydScalarSpan fdoc "desc" of { Left _ -> True; Right _ -> False })
+            pure (and [r1,r2,r3,r4,r5,r6,r7,r8])
+
+-- | Ein Dokument mit Mehrbyte-Zeichen *vor* dem Zielwert — genau der Fall, an
+--   dem ein Schreiber mit Zeichen- statt Byte-Offsets verrutscht.
+umlautYaml :: String
+umlautYaml = unlines
+    [ "name: Umlaut-Dokument f\252r Fu\223bote"
+    , "rooms:"
+    , "  - id: keller"
+    , "    name: Keller"
+    , "    desc: Ein Keller."
+    ]
+
+-- | UTF-8-korrekte Bytes. `BLC.pack` kappt auf 8 Bit und wuerde Umlaute zerstoeren.
+utf8Bytes :: String -> BLC.ByteString
+utf8Bytes = utf8FromStrict . TE.encodeUtf8 . T.pack
+  where utf8FromStrict = BL.fromStrict
+
+-- | Enthaelt-Operator fuer die Writer-Erwartungen (BLC hat kein isInfixOf).
+contains :: String -> BLC.ByteString -> Bool
+contains needle hay = needle `isInfixOf` BLC.unpack hay
+
+-- | Byteweise Teilstring-Pruefung (fuer UTF-8: BLC.unpack zaeuert Bytes, nicht
+--   Zeichen, deshalb reicht `contains` dort nicht).
+containsBytes :: BLC.ByteString -> BLC.ByteString -> Bool
+containsBytes needle hay = BS.isInfixOf (BL.toStrict needle) (BL.toStrict hay)
+
+-- | Ersetzt Zeile @n@ (1-basiert) inhaltlich — nur fuer die Byte-Erwartung im
+--   Writer-Test.
+replaceIn :: String -> Int -> String -> String -> String
+replaceIn content n old new =
+    let ls = lines content
+    in unlines [ if i == n then replaceOnce old new l else l | (i, l) <- zip [1 ..] ls ]
+  where
+    replaceOnce o nw l = case breakOn o l of
+        Just (pre, post) -> pre ++ nw ++ post
+        Nothing -> l
+    breakOn needle hay = go "" hay
+      where
+        go _ [] = Nothing
+        go acc s@(c:cs)
+            | needle `isPrefixOf` s = Just (reverse acc, drop (length needle) s)
+            | otherwise = go (c:acc) cs
+
 -- | P1-14: core command names (`examine`) and declared custom verbs both pass
 --   the command-verb check.
 testKnownCommandVerbCompiles :: IO Bool
@@ -3503,6 +3711,9 @@ tests =
     , ("combat. namespace is reserved (7f-3 A1)", testCombatVariableClash)
     , ("cooldown_ condition namespace is reserved (F6)", testCooldownConditionClash)
     , ("lineForPath finds issue source lines (W5)", testLocateLineForPath)
+    , ("exact YAML positions resolve dotted issue paths (W5)", testYamlDocPositions)
+    , ("the YAML writer is position-exact and byte-faithful (W5)", testYamlDocWriter)
+    , ("the YAML writer refuses what it cannot do safely (W5)", testYamlDocRefusals)
     -- Rogue Phase 4a: SplitMix64 generator RNG
     , ("rng: SplitMix64 known-answer vectors", testRngKnownVectors)
     , ("rng: same seed, identical stream (determinism)", testRngDeterminism)

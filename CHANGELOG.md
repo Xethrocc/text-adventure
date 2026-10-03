@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### W5 Stufe 2: exakte YAML-Positionen und ein positionstreuer Schreiber (4.6, S1)
+
+- **Neues Modul `Worldbuilder.YamlDoc`:** die Datei wird ein zweites Mal als
+  `Node Pos` gelesen (`Data.YAML.decode1` hat eine `FromJSON (Node Pos)`-Instanz,
+  jeder Knoten trägt `posLine`/`posColumn`/`posByteOffset`) — **ohne** neue
+  Abhängigkeit und **ohne** Eingriff in den `FromJSON`-Compile-Pfad. Damit hat
+  jeder dotted Issue-Pfad (`rooms.hall.exits.north`, `items.fass.keys[0]`,
+  `interactions.npc[verband]`) eine exakte Fundstelle.
+- **`printCompileIssues` nimmt erst die exakte Position und fällt dann auf die
+  Stufe-1-Heuristik (`Worldbuilder.Locate`) zurück** — unverändert für Pfade,
+  die keinen Knoten benennen (synthetische Felder wie `outcomes.set_exit.to`) und
+  für Parse-Fehler. Gemessen über alle gelieferten Abenteure, 53 859 dotted
+  Pfade: beide lösen für 3 634 (3 455 gleiche Zeile, **179 verschiedene**), nur
+  exakt 497, nur Locate 13 109 (das sind Pfade, die es gar nicht gibt — Locate
+  erfand dafür eine Zeile). In **allen** geprüften Abweichungen hat die exakte
+  Position recht: Locate zeigte auf den Sektions-Header (129 Fälle) oder auf
+  einen völlig anderen Treffer (50 Fälle). Beispiel `sprache.yaml`, Fehler in
+  `rooms.garten`: **vorher** `line 61` (ein `garten:`-Topic beim NPC, 42 Zeilen
+  daneben), **nachher** `line 19` (die `rooms.garten`-Zeile selbst).
+- **Schreibende Hälfte:** `setScalarAt` ersetzt einen **einfachen** Skalar und
+  lässt alle anderen Bytes stehen — Kommentare, Schlüsselreihenfolge, Format,
+  Leerzeilen. Der Idempotenz-Vertrag (`set(pfad, alter Wert) == Original`) ist
+  gepinnt. Verweigert wird, was nicht sicher geht, jeweils mit benanntem Grund
+  und Exit 1, **ohne** die Datei anzufassen: Map/Sequenz, quotierte Skalare,
+  Block-Skalare (`|`, `>`), über mehrere Zeilen gefaltete Plain-Skalare und
+  Werte mit Zeilenumbruch. (Ein gefalteter Wert still zu ersetzen hieße, ihm
+  seine Fortsetzungszeilen zu lassen — der Wert änderte sich ohne, dass jemand
+  es merkt.)
+- **Neue CLI-Kommandos:** `worldbuilder yaml-pos <datei> <pfad>` (Position
+  nachschlagen, zum Vergleichen mit der Heuristik) und
+  `worldbuilder yaml-set <datei> <pfad> <wert>` (einen Skalar in-place
+  ersetzen). Der Map-Editor in S2 setzt darüber `map:`-Koordinaten.
+- **Kein Byte-Change:** alle 61 gelieferten Abenteure kompilieren byte-identisch
+  (die neue Diagnosezeile ändert nur Meldungen, keine Artefakte). 3 neue Tests
+  (246 Worldbuilder-Tests), CI grün, 0 Warnungen.
+
 ### Quest-Kette `on_complete:` (4.6, S0) + harte Quest-Referenzen
 
 - **`on_complete:` wird jetzt gelesen — vorher fiel das Feld still weg.** Der

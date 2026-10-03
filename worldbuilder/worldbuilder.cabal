@@ -19,6 +19,7 @@ library
                        Worldbuilder.CLI
                        Worldbuilder.Export
                        Worldbuilder.Locate
+                       Worldbuilder.YamlDoc
                        Worldbuilder.ParseFile
                        Worldbuilder.Rng
                        Worldbuilder.Generate

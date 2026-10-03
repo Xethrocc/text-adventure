@@ -148,6 +148,10 @@
 #              (ids are case-sensitive).
 #
 # Read the line number, open your file there, fix, re-run check.bat.
+# The line number is the exact position of the field the message names (the
+# compiler reads your YAML a second time as a node tree just to know it); a
+# few messages name a place that is not a field of their own ("outcomes.*"
+# for effects inside a rule) and then carry no line at all.
 # Common mistakes, in order of how often they happen:
 #
 #   - A typo in an id (hutt vs hut)            -> UnknownRoom / UnknownNPC
