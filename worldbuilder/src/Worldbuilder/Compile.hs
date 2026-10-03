@@ -3079,7 +3079,7 @@ compileAActionOutcome ao = case ao of
     AOGiveItem i -> E.MoveEntity i (E.CarriedBy E.ActorPlayer)
     AOGiveTo i tgt -> E.MoveEntity i (E.CarriedBy (compileActorRef tgt))
     -- B9: NPC equipment. The engine keeps the slot in the item's own
-    -- definition (`equip_slot`), so no new SaveState field is needed; the
+    -- definition (`itemEquipSlot`, YAML `slot:`), so no new SaveState field is needed; the
     -- actor comes from the same `to` field as the B7 give-sugar.
     AOGiveEquipTo i tgt -> E.MoveEntity i (E.EquippedBy (compileActorRef tgt))
     AOConsumeItem i -> E.MoveEntity i E.Removed

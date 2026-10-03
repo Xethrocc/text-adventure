@@ -3638,7 +3638,6 @@ tests =
     , ("give: unknown to-npc is a hard error (B7)", testGiveToUnknownNpcFails)
     , ("give: equip: true is a variant of the give-sugar (B9)", testGiveEquipSugar)
     , ("drops_on_death: known key, compiles, json omission (B9)", testDropsOnDeathFlag)
-    , ("give: equip: true is a variant of the give-sugar (B9)", testGiveEquipSugar)
     , ("known keys: carried_by and capacity warn nowhere (B7)", testNpcPossessionKnownKeysClean)
     -- B9: item-on-NPC interactions
     , ("interactions npc: compiles to an outcome map (B9)", testNpcInteractionCompiles)
