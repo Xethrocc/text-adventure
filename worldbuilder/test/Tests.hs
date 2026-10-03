@@ -5,7 +5,6 @@ module Main where
 
 import Control.Monad (forM, when)
 import Data.List (isInfixOf, isPrefixOf, nub, find)
-import Data.Maybe (listToMaybe)
 import qualified Data.Aeson as Aeson
 import Data.Maybe (isJust, listToMaybe)
 import qualified Data.ByteString.Lazy.Char8 as BLC
