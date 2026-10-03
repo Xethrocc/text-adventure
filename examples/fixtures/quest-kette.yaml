@@ -1,0 +1,118 @@
+# 4.6: Quest-Kette via `on_complete:` — die abgeschlossene Quest startet ihre
+# Folge-Quest, nachdem die eigene Belohnung gelaufen ist.
+#
+# Deckt ab:
+#   * `on_complete:` wird ueberhaupt gelesen (vor 4.6 fiel das Feld still weg:
+#     in `docs/adventure-schema.md` dokumentiert, von keinem Parser beruehrt —
+#     `knownKeys` meldete es sogar als unbekannten Schluessel)
+#   * zwei Kettenstufen hintereinander (erste -> zweite -> dritte), jede Stufe
+#     setzt ihre Belohnung vorher ab
+#   * die Kette laeuft genau eine Ebene: das Abschliessen von `erste` startet
+#     `zweite`, nicht `dritte`
+#
+# Bewusst NICHT hier, sondern im Engine-Test
+# `testQuestOnCompleteStartsChain`: eine nicht startbare Folge-Quest
+# (fehlende Voraussetzung) startet nicht und meldet nichts. Als Fixture laesst
+# sich das nicht ausdruecken — `expect` ist eine geordnete Teilmenge der Ausgabe,
+# also kein Negativmarker; und eine unerfuellbare Voraussetzung ist fuer den
+# Validator von sich aus ein harter Fehler (`UnknownQuestPrereq`).
+name: Quest-Kette
+start_room: keller
+
+rooms:
+  - id: keller
+    name: Keller
+    desc: "Ein feuchter Keller."
+    exits:
+      east: { to: gange }
+
+  - id: gange
+    name: Gang
+    desc: "Ein enger Gang."
+    exits:
+      west: { to: keller }
+
+items:
+  - id: laterne
+    name: Laterne
+    desc: "Eine rostige Laterne."
+    location: keller
+    on_take:
+      - { start_quest: erste }
+
+  - id: seil
+    name: Seil
+    desc: "Ein nasses Seil."
+    location: keller
+
+  - id: schluessel
+    name: Schluessel
+    desc: "Ein kleiner Schluessel."
+    location: gange
+    on_take:
+      - { complete_quest: zweite }
+
+quests:
+  - id: erste
+    name: Laterne sichern
+    desc: "Sichere die Laterne im Keller."
+    stages:
+      - id: holen
+        desc: "Nimm die Laterne."
+        hint: "Sie steht hier herum."
+    reward:
+      - msg: "Du sicherst die Laterne."
+    on_complete: zweite
+
+  - id: zweite
+    name: Schluessel holen
+    desc: "Hole den Schluessel im Gang."
+    stages:
+      - id: laufe
+        desc: "Geh in den Gang und nimm den Schluessel."
+    on_complete: dritte
+
+  - id: dritte
+    name: Das Tor
+    desc: "Endet die Kette — diese Quest hat keine Folge mehr."
+    stages:
+      - id: ende
+        desc: "Der letzte Auftrag."
+
+rules:
+  - id: seil_genommen
+    on: "take seil"
+    effects: [ { complete_quest: erste } ]
+
+tests:
+  - name: "die Kette startet die Folge-Quest nach der Belohnung"
+    input:
+      - take laterne
+      - journal
+      - take seil
+      - journal
+    expect:
+      - "Active:"
+      - "Laterne sichern: Nimm die Laterne."
+      - "Du sicherst die Laterne."
+      - "Schluessel holen: Geh in den Gang"
+      - "Laterne sichern (completed)"
+
+  - name: "die zweite Kettestufe startet die dritte Quest"
+    input:
+      - take laterne
+      - take seil
+      - east
+      - take schluessel
+      - journal
+    expect:
+      - "You take the Schluessel."
+      - "Active:"
+      - "Das Tor: Der letzte Auftrag."
+      - "Completed:"
+      - "Laterne sichern (completed)"
+      - "Schluessel holen (completed)"
+
+# Die Reihenfolge der abgeschlossenen Quests im Journal ist Karten-Reihenfolge
+# (Quest-ID), nicht die Reihenfolge des Abschliessens: `erste` vor `zweite`.
+# Wer die Marker umstellt, prueft vorher die echte Ausgabe.

@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Quest-Kette `on_complete:` (4.6, S0) + harte Quest-Referenzen
+
+- **`on_complete:` wird jetzt gelesen — vorher fiel das Feld still weg.** Der
+  Schluessel stand in `docs/adventure-schema.md` in der Quest-Tabelle, aber
+  `AQuest` hatte kein Feld dafuer: der Wert wurde verworfen, und `knownKeys`
+  meldete ihn sogar als unbekannten YAML-Schluessel (`UnknownYamlKey`). Jetzt
+  parst der Compiler ihn, `Quest.questOnComplete` traegt ihn, und das Feld
+  steht im `world.json` **nur, wenn es gesetzt ist** (Hand-`ToJSON`; alle
+  bisherigen Schluessel bleiben unveraendert, `questReward: null` bleibt
+  wie gewohnt stehen).
+- **Verdrahtet:** ist eine Quest abgeschlossen, startet `on_complete:` die
+  Folge-Quest an Stufe 0 — **nach** der Belohnung der abgeschlossenen Quest
+  (die Belohnung darf Flags setzen, die die Folge-Quest als Voraussetzung
+  braucht). Startet die Folge-Quest nicht (Voraussetzung nicht erfuellt), ist
+  das **still**: es ist ein Zustandsfall und kein Spielereignis, also kein
+  neuer Katalog-Key und keine Ausgabeaenderung. Die Kette ist genau eine
+  Ebene tief — eine abgeschlossene Quest kann sich nicht selbst neu starten.
+- **Harte Compile-Fehler `UnknownQuestEffect` / `UnknownOnComplete`:** ein
+  Tippfehler in `start_quest:`/`advance_quest:`/`complete_quest:` oder in
+  `on_complete:` faellt jetzt beim Kompilieren auf, mit Pfad und Fundstelle
+  (verschachtelte `if:`/`random:`-Zweige eingeschlossen). Die Welt-Validierung
+  meldete dieselbe Klasse schon als `MissingQuest`, aber erst nach dem
+  Kompilieren, ohne Fundstelle — und `--force` schrieb trotzdem.
+- **Kein neues `SaveState`-Feld:** die Kette lebt in `activeQuests`, das es
+  schon gibt. Wirkt an der einen Stelle (`Quests.completeQuestWith`).
+- Tests: `testQuestOnCompleteStartsChain`, `testQuestOnCompleteJsonOmission`,
+  `testQuestOnCompleteParsed`, `testQuestRefErrors`. Content:
+  `examples/fixtures/quest-kette.yaml` (zwei Kettenstufen, 2 `tests:`-Abschnitte)
+  + `ci/e2e/quest-kette.{in,expect}` (CI-Stufen 4/4b).
+
 ### Fehlalarm der Validierung bei `initial_flags:` (4.6, S0)
 
 - **Befund (gemessen):** ein Abenteuer mit `initial_flags: { started: "true" }`

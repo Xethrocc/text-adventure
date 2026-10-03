@@ -734,6 +734,7 @@ compileAdventure adv =
         procCallErrs = checkProcRefs (advProcedures adv) adv
         possessionErrs = checkNpcPossessionRefs adv
         npcIxErrs = checkNpcInteractionRefs adv
+        questRefErrs = checkQuestRefs adv
         rngVarErrs = checkRngVarWrites adv
         (langErrs, langWarns) = checkLanguageFields adv
         (gramErrs, gramWarns) = checkGrammarFields adv
@@ -777,6 +778,7 @@ compileAdventure adv =
                     ++ progVarErrs
                     ++ possessionErrs
                     ++ npcIxErrs
+                    ++ questRefErrs
                     ++ rngVarErrs
                     ++ langErrs
                     ++ gramErrs
@@ -2909,6 +2911,7 @@ compileQuest q =
         , E.questPrereqs = Map.fromList [(flag, "true") | flag <- aqPrereqs q]
         , E.questStages = [E.QuestStage (aqsId s) (aqsDesc s) (aqsHint s) | s <- aqStages q]
         , E.questReward = compileMaybeOutcomes (aqReward q)
+        , E.questOnComplete = aqOnComplete q
         }
     )
 
@@ -3647,6 +3650,41 @@ checkNpcInteractionRefs adv = concatMap entryGo (maybe [] aiNpc (advInteractions
             ("npc interaction references unknown npc '" ++ aniTarget n ++ "'")
         | aniTarget n `Set.notMember` npcIds ]
         ]
+
+-- | 4.6: every quest reference must resolve, and resolve *here* — with a
+--   diagnostic path, so @Locate@ can point at the authoring line. The world
+--   validator reports the same class as 'MissingQuest', but only after the
+--   world exists, without a Fundstelle, and @--force@ writes anyway (measured:
+--   a typo'd @start_quest:@ exits 1 today, so this is a sharpening of the
+--   diagnostic, not a new gap). Two surfaces:
+--
+--   * quest-effect targets (@start_quest:@/@advance_quest:@/@complete_quest:@)
+--     in every outcome surface, nested branches included ('deepOutcomes');
+--   * @on_complete:@ on a quest, which used to be parsed by nobody at all.
+checkQuestRefs :: Adventure -> [CompileIssue]
+checkQuestRefs adv =
+    concatMap surfaceGo (outcomeSurfaces adv) ++ concatMap questGo (advQuests adv)
+  where
+    questIds = Set.fromList (map aqId (advQuests adv))
+    surfaceGo (path, outs) =
+        [ err
+        | o <- deepOutcomes outs
+        , (kind, qId) <- questRef o
+        , Just err <- [badEffect path kind qId] ]
+    questRef o = case o of
+        AOStartQuest qId    -> [("start_quest", qId)]
+        AOAdvanceQuest qId  -> [("advance_quest", qId)]
+        AOCompleteQuest qId -> [("complete_quest", qId)]
+        _ -> []
+    badEffect path kind qId
+        | qId `Set.member` questIds = Nothing
+        | otherwise = Just $ ciError path "UnknownQuestEffect"
+            (kind ++ " references unknown quest '" ++ qId ++ "'")
+    questGo q = case aqOnComplete q of
+        Just next | next `Set.notMember` questIds ->
+            [ ciError ("quests." ++ aqId q ++ ".on_complete") "UnknownOnComplete"
+                ("on_complete references unknown quest '" ++ next ++ "'") ]
+        _ -> []
 
 checkKeywordCollisions :: Adventure -> [CompileIssue]
 checkKeywordCollisions adv =

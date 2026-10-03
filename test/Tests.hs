@@ -2909,6 +2909,47 @@ testUndoRestoresAfterDeath = do
 
 -- | Quest-Rewards unterstützen jetzt beliebige Outcomes (z.B. GiveItem),
 --   nicht nur SendMessage – der vollständige Interpreter wird verwendet.
+-- | 4.6: `on_complete:` starts the named quest once this one completes. The
+--   chain target must be active at stage 0 afterwards, and the reward still
+--   runs first (it may set the flags the chained quest requires).
+testQuestOnCompleteStartsChain :: IO Bool
+testQuestOnCompleteStartsChain = do
+    let first = Quest "q1" "First" "d" Map.empty [QuestStage "s1" "step" Nothing] Nothing (Just "q2")
+        second = Quest "q2" "Second" "d" Map.empty [QuestStage "s1" "step" Nothing] Nothing Nothing
+        gated = Quest "q2" "Second" "d" (Map.singleton "unlock_q2" "true")
+                    [QuestStage "s1" "step" Nothing] Nothing Nothing
+        withQuests q2state = initSampleGame
+            { world = (world initSampleGame)
+                { questDefs = Map.fromList [("q1", first), ("q2", q2state)] } }
+        started = fst (applyOutcome (QuestOp StartQuest "q1") "" (withQuests second))
+        completed = fst (applyOutcome (QuestOp CompleteQuest "q1") "" started)
+        chainedOn = fst (applyOutcome (QuestOp StartQuest "q1") "" (withQuests gated))
+        gatedDone = fst (applyOutcome (QuestOp CompleteQuest "q1") "" chainedOn)
+    r1 <- expectTrue "chained quest becomes active at stage 0"
+            (Map.lookup "q2" (activeQuests (save completed)) == Just 0)
+    r2 <- expectTrue "chained quest is not completed, only active"
+            (not ("q2" `Set.member` completedQuests (save completed)))
+    r3 <- expectTrue "chained quest with unmet prereq is not started"
+            (Map.notMember "q2" (activeQuests (save gatedDone)))
+    r4 <- expectTrue "the finished quest is completed either way"
+            ("q1" `Set.member` completedQuests (save gatedDone))
+    pure (r1 && r2 && r3 && r4)
+
+-- | 4.6 byte contract: `questOnComplete` is written only when set, while
+--   `questReward` stays in the JSON even as `null` (four shipped quests have
+--   no reward, and those bytes are pinned). Round-trips through the parser.
+testQuestOnCompleteJsonOmission :: IO Bool
+testQuestOnCompleteJsonOmission = do
+    let plain = Quest "q" "Q" "d" Map.empty [QuestStage "s1" "s" Nothing] Nothing Nothing
+        chained = plain { questOnComplete = Just "q2" }
+        enc q = BLC.unpack (Aeson.encode q)
+    r1 <- expectTrue "questOnComplete omitted when unset" (not ("questOnComplete" `isInfixOf` enc plain))
+    r2 <- expectTrue "questReward still written as null" ("questReward\":null" `isInfixOf` (filter (/= ' ') (enc plain)))
+    r3 <- expectTrue "questOnComplete written when set" ("questOnComplete\":\"q2\"" `isInfixOf` (filter (/= ' ') (enc chained)))
+    r4 <- expectEqual (Just (Just "q2")) (Aeson.decode (Aeson.encode chained) >>= Just . questOnComplete)
+    r5 <- expectEqual (Just Nothing) (fmap questOnComplete (Aeson.decode (Aeson.encode plain)))
+    pure (r1 && r2 && r3 && r4 && r5)
+
 -- | 4.6: `initial_flags:` lives in the save, not the world — but a flag set
 --   there *is* set when the game starts. Both flag checks ask "is this flag
 --   ever set?", so both used to report a false positive and refuse to compile
@@ -2924,7 +2965,7 @@ testInitialFlagsCountAsSet = do
                 -- generous heuristic), so reusing one name would mask the case
                 , questDefs = Map.singleton "q" (Quest "q" "Q" "d"
                                     (Map.singleton "tor_offen" "true")
-                                    [QuestStage "s1" "s" Nothing] Nothing) }
+                                    [QuestStage "s1" "s" Nothing] Nothing Nothing) }
         stWith = (save initSampleGame) { flags = Map.singleton "tor_offen" "true" }
         stWithout = save initSampleGame
         isMissingSetFlag e = case e of
@@ -2950,6 +2991,7 @@ testQuestRewardGiveItemWorks = do
                     Map.empty
                     [QuestStage "s1" "step one" Nothing]
                     (Just (MoveEntity "torch" (CarriedBy ActorPlayer)))
+                    Nothing
         withQuest = initSampleGame
             { world = (world initSampleGame)
                 { questDefs = Map.insert "test_quest" quest (questDefs (world initSampleGame)) } }
@@ -9563,6 +9605,8 @@ main = do
         -- Phase 1: Outcome-Interpreter (1a)
         , runTest "quest reward can GiveItem via full interpreter" testQuestRewardGiveItemWorks
         -- 4.6: quest chain + on_complete byte contract
+        , runTest "quest on_complete starts the chained quest" testQuestOnCompleteStartsChain
+        , runTest "quest on_complete JSON omission and round-trip" testQuestOnCompleteJsonOmission
         -- 4.6: initial_flags as validation input
         , runTest "initial_flags count as set for flag validation (4.6)" testInitialFlagsCountAsSet
         , runTest "condition tick can GiveItem via full interpreter" testConditionTickGiveItemWorks

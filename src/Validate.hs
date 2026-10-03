@@ -301,6 +301,7 @@ checkMissingQuestsInDefs :: GameWorld -> [ValidationError]
 checkMissingQuestsInDefs gw =
     let questRefs = Set.fromList (Map.keys (questDefs gw))
         allRefs = concatMap idsFromOutcomeQuest (allOutcomes gw)
+               ++ concat [ [c] | Just c <- map (questOnComplete . snd) (Map.toList (questDefs gw)) ]
     in [MissingQuest qId | qId <- nub allRefs, not (Set.member qId questRefs)]
 
 -- | Vehicle IDs referenced from the world: `ship.<vehicleId>.<system>`

@@ -1452,7 +1452,7 @@ testInvalidNPCLocationDetected = do
 -- | Quest ohne Stages wird erkannt (benötigt Welt mit einer Quest)
 testEmptyQuestStagesDetected :: IO Bool
 testEmptyQuestStagesDetected = do
-    let badQuest = E.Quest "q1" "Empty Quest" "no stages" Map.empty [] Nothing
+    let badQuest = E.Quest "q1" "Empty Quest" "no stages" Map.empty [] Nothing Nothing
         badWorld = minWorld { questDefs = Map.singleton "q1" badQuest }
     expectTrue "EmptyQuestStages detected"
         (EmptyQuestStages "q1" `elem` validateGameState badWorld minSave)
@@ -1462,7 +1462,7 @@ testUnknownQuestPrereqDetected :: IO Bool
 testUnknownQuestPrereqDetected = do
     let badQuest = E.Quest "q2" "Bad prereq" "flag never set"
                     (Map.singleton "never_set_flag" "true")
-                    [E.QuestStage "s1" "step one" Nothing] Nothing
+                    [E.QuestStage "s1" "step one" Nothing] Nothing Nothing
         badWorld = minWorld { questDefs = Map.singleton "q2" badQuest }
     expectTrue "UnknownQuestPrereq detected"
         (UnknownQuestPrereq "q2" "never_set_flag" `elem` validateGameState badWorld minSave)
@@ -3637,6 +3637,8 @@ tests =
     , ("give: string and object form compile (B7)", testGiveToSugar)
     , ("give: unknown to-npc is a hard error (B7)", testGiveToUnknownNpcFails)
     , ("give: equip: true is a variant of the give-sugar (B9)", testGiveEquipSugar)
+    , ("on_complete: is parsed, wired and known (4.6)", testQuestOnCompleteParsed)
+    , ("quest references must resolve at compile time (4.6)", testQuestRefErrors)
     , ("initial_flags satisfy the flag validation (4.6)", testInitialFlagsSatisfyValidation)
     , ("drops_on_death: known key, compiles, json omission (B9)", testDropsOnDeathFlag)
     , ("known keys: carried_by and capacity warn nowhere (B7)", testNpcPossessionKnownKeysClean)
@@ -6170,6 +6172,74 @@ testNpcInteractionKnownKeysClean = do
                 r2 <- expectTrue "npc interaction survived the yaml round trip"
                         (Map.member ("verband", "waechter") (E.npcInteractions (crWorld cr)))
                 pure (r1 && r2)
+
+-- | 4.6: `on_complete:` is parsed at last (it was documented in
+--   `docs/adventure-schema.md` but dropped on the floor — the field reached no
+--   parser at all), survives into the compiled world, and produces no
+--   `UnknownYamlKey` warning.
+testQuestOnCompleteParsed :: IO Bool
+testQuestOnCompleteParsed = do
+    let yaml = unlines
+            [ "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Halle"
+            , "    desc: Eine Halle."
+            , "quests:"
+            , "  - id: q1"
+            , "    name: Erste"
+            , "    desc: \"Etwas tun.\""
+            , "    stages:"
+            , "      - id: s1"
+            , "        desc: \"Ein Schritt.\""
+            , "    on_complete: q2"
+            , "  - id: q2"
+            , "    name: Zweite"
+            , "    stages:"
+            , "      - id: s1"
+            , "        desc: \"Der Folge-Schritt.\""
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let keyWarns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
+                    q1 = Map.lookup "q1" (E.questDefs (crWorld cr))
+                r1 <- expectTrue ("expected 0 unknown key warnings, got " ++ show (length keyWarns)) (null keyWarns)
+                r2 <- expectEqual (Just (Just "q2")) (fmap E.questOnComplete q1)
+                r3 <- expectEqual (Just Nothing) (fmap E.questOnComplete (Map.lookup "q2" (E.questDefs (crWorld cr))))
+                pure (r1 && r2 && r3)
+
+-- | 4.6: quest references must resolve at compile time, with a path (the world
+--   validator catches the same class as `MissingQuest`, but only after
+--   compilation, without a Fundstelle, and `--force` writes anyway).
+testQuestRefErrors :: IO Bool
+testQuestRefErrors = do
+    let base = minAdventure (minRoom "loc_0")
+        questErrs adv = case compileAdventure adv of
+            Left errs -> Just errs
+            Right _ -> Nothing
+        withRule o adv = adv { advTriggers = [ATrigger "r1" "enter loc_0" Nothing [o] False 0] }
+        codeIn c m = maybe False (any (\i -> ciCode i == c)) m
+    r1 <- expectTrue "start_quest to an unknown quest is a hard error"
+            (codeIn "UnknownQuestEffect" (questErrs (withRule (AOStartQuest "nope") base)))
+    r2 <- expectTrue "advance_quest to an unknown quest is a hard error"
+            (codeIn "UnknownQuestEffect" (questErrs (withRule (AOAdvanceQuest "nope") base)))
+    r3 <- expectTrue "complete_quest to an unknown quest is a hard error"
+            (codeIn "UnknownQuestEffect" (questErrs (withRule (AOCompleteQuest "nope") base)))
+    r4 <- expectTrue "on_complete to an unknown quest is a hard error"
+            (codeIn "UnknownOnComplete" (questErrs base { advQuests = [AQuest "q1" "Q" "" [] [] Nothing (Just "nope")] }))
+    r5 <- expectTrue "a known quest target compiles clean"
+            (questErrs (withRule (AOStartQuest "q1") base { advQuests = [AQuest "q1" "Q" "" [] [] Nothing Nothing] }) == Nothing)
+    r6 <- expectTrue "nested branches are covered too"
+            (codeIn "UnknownQuestEffect"
+                (questErrs (withRule (AOConditional (E.HasFlag "x") [] [AOStartQuest "nope"]) base)))
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
 
 -- | 4.6: `initial_flags:` belongs to the start save, so the world validator
 --   has to be told about it. Before the fix, this adventure was rejected with

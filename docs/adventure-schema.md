@@ -672,6 +672,22 @@ quests:
       - { id: laufe, desc: "Geh in den Gang." }
 ```
 
+**Reihenfolge und Reichweite von `on_complete:` (seit 4.6):**
+
+- Die **Belohnung läuft zuerst**, danach startet die Folge-Quest — sie darf also
+  Flags setzen, die die Folge-Quest als `prereqs` verlangt.
+- Startet die Folge-Quest nicht (Voraussetzung nicht erfüllt), ist das **still**:
+  kein neuer Meldungsschlüssel, keine Ausgabe. Ein Zustandsfall soll den Spieler
+  nicht mit einer Autoren-Diagnose belästigen.
+- Die Kette ist **eine Ebene tief**: sie startet die nächste Quest, aber deren
+  eigene `on_complete:` nicht mit. Zyklen und `on_complete:` auf sich selbst
+  können deshalb nicht laufen.
+- Unbekannte Quest-IDs sind **harte Compile-Fehler**
+  (`UnknownQuestEffect`, `UnknownOnComplete`) mit Pfad und Fundstelle — auch
+  hinter `--force`.
+
+---
+
 ## Vehicle
 
 ```yaml

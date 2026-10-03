@@ -689,12 +689,13 @@ instance FromJSON ADialogueChoice where
 -- ---------------------------------------------------------------------------
 
 data AQuest = AQuest
-    { aqId      :: String
-    , aqName    :: String
-    , aqDesc    :: String
-    , aqPrereqs :: [String]
-    , aqStages  :: [AQuestStage]
-    , aqReward  :: Maybe [AActionOutcome]
+    { aqId          :: String
+    , aqName        :: String
+    , aqDesc        :: String
+    , aqPrereqs     :: [String]
+    , aqStages      :: [AQuestStage]
+    , aqReward      :: Maybe [AActionOutcome]
+    , aqOnComplete  :: Maybe String
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AQuest where
@@ -705,6 +706,7 @@ instance FromJSON AQuest where
         <*> o .:? "prereqs" .!= []
         <*> o .:? "stages"  .!= []
         <*> o .:? "reward"
+        <*> o .:? "on_complete"
 
 data AQuestStage = AQuestStage
     { aqsId   :: String
@@ -1766,7 +1768,7 @@ knownKeys EntNPC = Set.fromList
     , "topics", "barks", "on_talk", "drops_on_death", "article", "gender"
     ]
 knownKeys EntQuest = Set.fromList
-    [ "id", "name", "desc", "prereqs", "stages", "reward" ]
+    [ "id", "name", "desc", "prereqs", "stages", "reward", "on_complete" ]
 knownKeys EntQuestStage = Set.fromList
     [ "id", "desc", "hint" ]
 knownKeys EntRule = Set.fromList

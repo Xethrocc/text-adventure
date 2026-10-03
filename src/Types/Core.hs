@@ -1743,9 +1743,27 @@ data Quest = Quest
     , questPrereqs     :: Map.Map FlagID String -- ^ Flags that must match before StartQuest works
     , questStages      :: [QuestStage]
     , questReward      :: Maybe Effect
+    , questOnComplete  :: Maybe QuestID          -- ^ 4.6: quest started when this one completes
     } deriving (Show, Eq, Generic)
 
-instance ToJSON Quest
+-- | Hand-written, not derived: 'questOnComplete' is written only when set (the
+--   byte contract, same pattern as 'roomIntro'/'roomFloor'). Every key the
+--   derived instance wrote keeps its name and stays unconditional — notably
+--   'questReward', which the pinned bytes carry as @null@ for the four shipped
+--   quests without a reward.
+instance ToJSON Quest where
+    toJSON q = object $
+        [ "questId"          .= questId q
+        , "questName"        .= questName q
+        , "questDescription" .= questDescription q
+        , "questPrereqs"     .= questPrereqs q
+        , "questStages"      .= questStages q
+        , "questReward"      .= questReward q
+        ]
+      ++ [ "questOnComplete" .= c | Just c <- [questOnComplete q] ]
+
+-- | Derived: the generic parser treats a @Maybe@ field as optional, so a world
+--   without 'questOnComplete' decodes to 'Nothing'.
 instance FromJSON Quest
 
 

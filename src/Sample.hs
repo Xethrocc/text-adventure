@@ -350,13 +350,15 @@ initSampleGame = GameState
                 , QuestStage "find_key" "Find the brass key."              Nothing
                 , QuestStage "open_up"  "Unlock the treasure room door."   Nothing
                 ]
-                (Just (SendMessage "The treasure is yours! Well, what's left of it after the goblin.")))
+                (Just (SendMessage "The treasure is yours! Well, what's left of it after the goblin."))
+                Nothing)
             , ("gated_quest", Quest
                 "gated_quest"
                 "A Favor for the Old Man"
                 "The old man asked for help — once you've actually talked to him."
                 (Map.singleton "met_oldman" "true")
                 [ QuestStage "do_thing" "Do the thing." Nothing ]
+                Nothing
                 Nothing)
             ]
         , vehicleDefs = Map.fromList

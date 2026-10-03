@@ -63,13 +63,30 @@ advanceQuest qId state =
 
 -- | Mark a quest completed and fire its reward with a runner.
 --   Returns the new state plus the reward events (empty if none).
+--
+--   4.6: after the reward has run, @on_complete:@ starts the named quest. The
+--   reward runs *first* on purpose — it may set the flags the chained quest
+--   requires. Staying silent when the target is missing or not startable is
+--   deliberate: an unknown id is a compile error ('UnknownOnComplete'), and an
+--   unmet prereq is a runtime content state, not a player-facing event — so no
+--   new catalog key and no output change for existing adventures.
 completeQuestWith :: (Effect -> EntityID -> GameState -> (GameState, [OutputEvent]))
                   -> QuestID -> GameState -> (GameState, [OutputEvent])
 completeQuestWith runOutcome qId state =
     let withoutActive = completeQuest qId state
-    in case lookupQuest qId state >>= questReward of
-        Nothing -> (withoutActive, [])
-        Just outcome -> runOutcome outcome "" withoutActive
+        (rewarded, evs) = case lookupQuest qId state >>= questReward of
+            Nothing -> (withoutActive, [])
+            Just outcome -> runOutcome outcome "" withoutActive
+    in (startChainedQuest qId rewarded, evs)
+
+-- | Start the quest named by @on_complete:@, if there is one and it is
+--   startable. A self-reference or a cycle can never loop here: a completed
+--   quest fails 'canStartQuest', so at most one level is ever started.
+startChainedQuest :: QuestID -> GameState -> GameState
+startChainedQuest qId state =
+    case lookupQuest qId state >>= questOnComplete of
+        Just next | canStartQuest next state -> startQuest next state
+        _                                    -> state
 
 -- | Journal (Phase 1.2): active quests with their current stage, then
 --   completed ones — as event fragments, byte-identical to the former text.
