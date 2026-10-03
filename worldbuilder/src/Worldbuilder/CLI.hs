@@ -9,6 +9,7 @@ import Worldbuilder.Rng (deriveRuntimeSeed)
 import Worldbuilder.Run (RunConfig (..), runRunner)
 import Worldbuilder.Test (runContentTests)
 import Worldbuilder.Fuzz (FuzzConfig (..), defaultFuzzConfig, runFuzzer)
+import Worldbuilder.ProjectView (buildProjectView, renderProjectView, encodeProjectView)
 import Worldbuilder.Export (collectAssetRefs, bundleFiles, exportBundle, makeZip)
 
 -- JSON encoding (output only)
@@ -57,6 +58,7 @@ runCLI = do
         ("yaml-pos" : path : rest) -> yamlPos path rest
         ("yaml-set" : path : rest) -> yamlSet path rest
         ("map-set" : path : rest)  -> mapSet path rest
+        ("map" : path : rest)      -> mapView path rest
         ("test" : path : rest)     -> testCmd path rest
         ("fuzz" : path : rest)     -> fuzzCmd path rest
         _                          -> putStrLn usage
@@ -109,6 +111,14 @@ usage = unlines
     , "                                              Replace one plain scalar in place; comments,"
     , "                                              key order and formatting stay byte-identical."
     , "                                              Refuses quoted/block/multi-line/non-scalars."
+    , "  worldbuilder map <adventure.yaml> [-o map.json] [-] [--width N]"
+    , "                                              Project view (4.6): rooms with positions,"
+    , "                                              edges, reachability, quests, issues. Text by"
+    , "                                              default; -o writes the JSON (`-` = stdout,"
+    , "                                              sorted keys like protocol v1)."
+    , "                                              `*` marks an authored position."
+    , "  worldbuilder map-set <file.yaml> <room> <x> <y>"
+    , "                                              Pin a room's map position in the source."
     , "  worldbuilder test <adventure.json> [name]   Run the authored content tests (`tests:` section)"
     , ""
     , "  worldbuilder fuzz <adventure.json> [--seed N] [--runs N] [--steps N]"
@@ -176,6 +186,12 @@ readFileBsSafe path = do
 -- | UTF-8 with replacement characters, so a stray byte can never throw here.
 decodeLenientUtf8 :: BL.ByteString -> String
 decodeLenientUtf8 raw = T.unpack (TE.decodeUtf8With TEE.lenientDecode (BL.toStrict raw))
+
+-- | One issue line for the `map` command. It deliberately uses the **exact**
+--   node position (S1) rather than the Locate heuristic: the view is read by
+--   an author who wants to jump to the line.
+renderOne :: CompileIssue -> String
+renderOne = showIssue "" Nothing
 
 showIssue :: String -> Maybe YamlDoc -> CompileIssue -> String
 showIssue content mdoc i =
@@ -415,6 +431,60 @@ yamlPos path rest = case rest of
                                 ++ "\t" ++ dotted
     [] -> putStrLn "yaml-pos: missing dotted path"
       where _ = path
+
+-- | @map <adventure.yaml> [-o map.json] [--width N]@ (4.6, S3): the project view.
+--
+--   Text by default, JSON with @-o@ (or @--json@ for stdout). The JSON is the
+--   machine-readable half a map/quest editor would consume: no world state, no
+--   inventory, no flags — only what the adventure *declares* plus the resolved
+--   layout, so two runs of the same file are byte-identical and a diff between
+--   two commits shows exactly what the author changed.
+--
+--   The view is built from a **compile**, so its issues are the ones the build
+--   itself would report. Compile errors (not warnings) are printed and exit 1:
+--   a view of an adventure that does not compile would be a lie.
+mapView :: FilePath -> [String] -> IO ()
+mapView path rest = case rest of
+    []           -> run Nothing 14
+    _            -> case parseArgs rest of
+        Left err       -> putStrLn ("map: " ++ err) >> exitFailure
+        Right (out, w) -> run out w
+  where
+    parseArgs :: [String] -> Either String (Maybe FilePath, Int)
+    parseArgs args = case args of
+        []                     -> Right (Nothing, 14)
+        ("-o" : file : more)   -> do (_, w) <- parseArgs more; pure (Just file, w)
+        ("-o" : _)             -> Left "-o needs a file name"
+        ("--width" : n : more) -> case reads n of
+            [(k, "")] | k > 0  -> do (o, _) <- parseArgs more; pure (o, k)
+            _                  -> Left "--width needs a positive number"
+        ("--width" : _)        -> Left "--width needs a number"
+        (flag : _)             -> Left ("unknown flag: " ++ flag)
+
+    run :: Maybe FilePath -> Int -> IO ()
+    run out width = do
+        advResult <- parseAdventureFile path
+        view <- case advResult of
+            Left err -> do
+                putStrLn ("Failed to parse adventure file: " ++ err)
+                exitFailure
+            Right adv -> case compileAdventure adv of
+                Left errs -> do
+                    putStrLn "compile failed:"
+                    mapM_ (putStrLn . renderOne) errs
+                    exitFailure
+                Right cr -> pure (buildProjectView adv (crWarnings cr))
+        case out of
+            Nothing -> putStr (renderProjectView width view)
+            Just "-" -> BLC.putStr (encodeProjectView view)
+            Just f -> do
+                w <- try (BL.writeFile f (encodeProjectView view))
+                     :: IO (Either SomeException ())
+                case w of
+                    Left err -> do
+                        putStrLn ("write failed: " ++ show err)
+                        exitFailure
+                    Right () -> putStrLn ("wrote " ++ f)
 
 -- | @map-set <file> <room> <x> <y>@ (4.6): pin a room's map position in the
 --   authored YAML.

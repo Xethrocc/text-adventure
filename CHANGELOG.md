@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+### Projekt-View und Quest-Diagnostik (4.6, S3)
+
+- **`worldbuilder map <adventure.yaml> [-o map.json] [-] [--width N]`** — die
+  Projekt-View als Text (ein Raster je `floor:`, Zeilen mit `y=`, Spalten mit
+  `x=`, `*` vor vom Autor gesetzten Positionen) und als JSON. Das JSON folgt
+  `docs/protocol-v1.md`: snake_case, `version`-Feld, `encodeSorted` (Keys auf
+  jeder Tiefe sortiert) und **kein Weltzustand** — nur, was das Abenteuer
+  deklariert, plus das aufgelöste Layout. Zwei Läufe sind byte-identisch, ein
+  Diff zwischen zwei Commits zeigt genau die Autorenänderung.
+  Inhalt: Räume (id, name, x, y, floor, `source: authored|layout`), Kanten (from,
+  to, direction, `locked`, `guard`, `guard_holds`), Erreichbarkeit, Quests (id,
+  name, prereqs, stages, on_complete, `startable`, `progressed`), Issues.
+- **Das Raster lügt nicht:** die Zellbreite wächst auf die längste ID plus eins
+  (`loc_1` und `loc_17` unterschieden sich sonst nicht mehr), Zeilen tragen ihr
+  `y`, nur **echte IDs** stehen im Feld — Namen wären Prosa, keine Koordinaten.
+- **Zwei neue weiche Quest-Befunde** im B4-Kanal (konservativ, `SWarning`):
+  - `QuestNeverStarted` — nichts startet die Quest: kein `start_quest:` und kein
+    `on_complete:` auf sie (transitiv über Ketten).
+  - `QuestNeverProgressed` — startbar, aber weder `advance_quest:` noch
+    `complete_quest:` zielt auf sie; der Spieler sähe Stufe 0 für immer.
+  - **Bewusst *nicht* neu gebaut:** ein Prereq-Flag, das nie gesetzt wird. Das
+    ist bereits der harte `UnknownQuestPrereq` aus S0 — eine zweite, weichere
+    Formulierung desselben Befunds wäre nur Lärm (Plan 5.5 sagt das ausdrücklich).
+  - **Erster Fund im Bestand:** `examples/demo.yaml` → `find_treasure` startet
+    beim Nehmen des Schlüssels und hat zwei Stufen plus `reward:`, aber keinen
+    einzigen Fortschritts-Effekt. Die Quest bleibt auf Stufe 0, „Quest
+    complete!" feuert nie. **Nicht angefasst:** ein geliefertes Abenteuer zu
+    ändern, bricht die Byte-Zusage; die Warnung stehen zu lassen ist der
+    ehrlichere Zustand und der Beweis, dass der Kanal arbeitet.
+- Neu: `Worldbuilder.QuestCheck` (nimmt die Outcomes als Parameter — `allAOutcomes`
+  gehört `Worldbuilder.Compile`, das dieses Modul braucht; eine zweite
+  Outcome-Sammlung hieße eine zweite Wahrheit) und `Worldbuilder.ProjectView`.
+  `unreachableRoomIds` und `predicateTruth` wurden aus `Compile` herausgelöst,
+  damit die View die Erreichbarkeit **wiederverwendet** statt sie zu duplizieren.
+- Tests: `testQuestDiagnostics` (inkl. „Kette ist ein Startweg" und „reiner Zyklus
+  ist toter Inhalt"), `testProjectView` (Struktur, Deklarationsreihenfolge,
+  Byte-Stabilität, sortierte Keys), `testMapGridTellsRoomsApart`. CI-Stufe 10 prüft
+  `map` und `map-set` gegen die echte Datei.
+- **Dokumentierte Selbstkorrektur:** der Kommentar im Code nannte die
+  Startweg-Berechnung „größter Fixpunkt". Sie ist die transitive
+  Vorwärtsreichweite; ein reiner `a: b` / `b: a`-Zyklus ohne `start_quest:` ist
+  damit **nicht** startbar und wird gemeldet — was stimmt, denn kein Ereignis
+  erreicht ihn. Der größte Fixpunkt hätte jede Quest für startbar gehalten und
+  gar nichts gemeldet.
+
 ### Kartenpositionen `map:` + Auto-Layout (4.6, S2)
 
 - **Neues Autorenfeld `map: {x: n, y: m}` am Raum.** Reine Raster-Kosmetik für

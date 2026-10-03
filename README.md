@@ -169,9 +169,11 @@ no own state file. Their state lives in the existing `VarMap`
 
 ```bash
 cabal build all
-cabal test all --test-show-details=direct    # 466 engine tests, 250 worldbuilder tests, 20 TUI tests, plus the img2ascii/text2ascii tool suites
+cabal test all --test-show-details=direct    # 466 engine tests, 253 worldbuilder tests, 20 TUI tests, plus the img2ascii/text2ascii tool suites
 bash scripts/ci.sh                           # build + tests + validation + 54 E2E playthroughs
 cabal run worldbuilder -- check examples/thefog.yaml   # content statistics
+cabal run worldbuilder -- map examples/thefog.yaml     # project view: rooms, edges, quests, issues
+cabal run worldbuilder -- map-set examples/thefog.yaml tor 3 1   # pin a room's map position
 ```
 
 Adding a feature end to end: an adventure in `examples/` (with a fixture under

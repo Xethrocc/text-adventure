@@ -2834,6 +2834,8 @@ eine Warnung bedeutet, dass der Inhalt definitiv nie erreicht wird.
 | „Welche Bedingung ist unerfüllbar?" | `UnsatisfiableCondition` | Widersprüche in `all:` (Bedingung + Negation, widersprüchliche Zahlen-Schranken einer Variablen, zwei Textwerte für eine Variable), `not: {true: true}`, `has_flag` auf **nie gesetzte** Flags (nur Flags: `set_flag`/`initial_flags` als Setz-Seite), `any:` nur-Falsch |
 | „Welcher Guard ist widersprüchlich?" | `DeadExit` | Ausgangs-`when:` garantiert falsch; `locked_by:`-Entity, die nie aufgeschlossen werden kann (Unlock-Pfade: NPC-Tod, Container-`unlock`-Verb, `interactions` mit `state: unlocked`, `set_state … to: unlocked`) |
 | „Welcher Ausgang ist nie passierbar?" | `DeadExit` / `UnreachableRoom` | Guard-Analyse plus BFS ab `start_room`: dynamische Kanten (`set_exit`, `generate_room`) und explizite Ankünfte (`move:`, Haltestellen) gelten als erreichbar — Ausgänge in/to solcher Räume sind nie passierbar, pro Raum einmal gemeldet |
+| „Welche Quest startet nie?" | `QuestNeverStarted` | Kein `start_quest:`-Effekt und kein `on_complete:` zeigt auf sie (transitive Kette: eine Quest kann auch durch die Folgequest einer startbaren Quest starten) |
+| „Welche Quest kommt nie voran?" | `QuestNeverProgressed` | Die Quest ist startbar, aber weder `advance_quest:` noch `complete_quest:` zielt auf sie — der Spieler sieht Stufe 0 für immer, `reward:`/`on_complete:` feuern nie |
 
 **Nicht analysiert** (bewusst): Variablen-Setz-Seiten (die Engine schreibt viele
 Namespaces selbst: `cmd.*`, `distance.*`, `combat.*` …), Bedingungen in Texten
@@ -2861,6 +2863,8 @@ Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity =
 | `UnsatisfiableCondition` | Eine Bedingung (`when:`, `if:`, Tore wie `visible_when:`) kann nie wahr sein: Widerspruch in `all:` oder ein Flag, das nie gesetzt wird. | Widerspruch aufteilen, Flag per `set_flag`/`initial_flags` setzbar machen oder die Bedingung vereinfachen. |
 | `DeadExit` | Ein Ausgang ist nie passierbar: sein Guard kann nie zutreffen oder seine `locked_by:`-Entity kann nie aufgeschlossen werden. | Guard reparieren, einen Unlock-Pfad (`set_state … to: unlocked`, `interactions`, `unlock`-Verb) ergänzen oder den Ausgang entfernen. |
 | `UnreachableRoom` | Ein Raum ist ab `start_room` nicht erreichbar — alle seine Ausgänge sind nie passierbar. | Verbindenden Ausgang ergänzen, per `move:`/`set_exit` erreichbar machen oder den Raum entfernen (Sackgassen-Content wie Test-Fixtures sind legitim). |
+| `QuestNeverStarted` | Nichts startet diese Quest: kein `start_quest:`-Effekt, kein `on_complete:` darauf (auch nicht indirekt über eine Kette). | `start_quest:`-Effekt ergänzen, die Quest per `on_complete:` an eine erreichbare Vorquest hängen oder sie entfernen. |
+| `QuestNeverProgressed` | Die Quest lässt sich starten, wird aber nie fortgeschrieben — kein `advance_quest:`, kein `complete_quest:`. Stufe 0 bleibt für immer stehen, `reward:` und `on_complete:` feuern nie. | `advance_quest:`- oder `complete_quest:`-Effekt ergänzen (`advance_quest:` auf der letzten Stufe schließt die Quest ab) oder die Quest auf eine Stufe kürzen. |
 | `UnknownMsgKey` | Ein `messages:`-Schluessel ist kein Engine-Katalogschluessel — der Override bleibt wirkungslos. | Schluessel aus `docs/message-catalog.md` verwenden oder den Eintrag entfernen. |
 
 

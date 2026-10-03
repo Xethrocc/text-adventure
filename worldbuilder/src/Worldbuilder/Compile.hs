@@ -18,6 +18,9 @@ module Worldbuilder.Compile
     , checkUnsatisfiableConditions
     , checkDeadExits
     , checkUnreachableRooms
+    , checkQuestProgress
+    , unreachableRoomIds
+    , predicateTruth
     , EntityType(..)
     , knownKeys
     , checkUnknownYamlKeys
@@ -32,6 +35,7 @@ module Worldbuilder.Compile
 
 import Worldbuilder.Types
 import Worldbuilder.MapLayout (mapFloorOf)
+import Worldbuilder.QuestCheck (QuestDiagnostic (..), questDiagnostics)
 import Types hiding
     ( itemDefs, itemStates, npcDefs, npcStates, questDefs
     , vehicleDefs, vehicleStates, entityInteractions, itemInteractions
@@ -352,6 +356,14 @@ predicateSites a =
 --   and `any:` propagate; direct contradictions inside `all:` (a condition
 --   and its negation, disjoint numeric bounds on one variable, two different
 --   text values for one variable) are caught syntactically.
+-- | Can this predicate hold at all? @Just False@ means provably never,
+--   @Nothing@ means we cannot tell (a runtime value we do not model).
+predicateTruth :: Adventure -> E.Predicate -> Maybe Bool
+predicateTruth a p = case evalTruth (setFlagNames a) p of
+    TruthTrue    -> Just True
+    TruthFalse _ -> Just False
+    TruthUnknown -> Nothing
+
 evalTruth :: Set.Set String -> E.Predicate -> Truth
 evalTruth flagSet = go
   where
@@ -485,6 +497,14 @@ checkDeadExits a = concatMap deadFor (advRooms a)
                 ["it is locked by entity '" ++ e ++ "', which can never be unlocked"]
             _ -> []
 
+-- | B4: dead quest content (4.6, S3) — a quest nothing starts, or one that can
+--   be started but never advances. See "Worldbuilder.QuestCheck" for why the
+--   fixpoint and the missing reachability modelling are deliberate.
+checkQuestProgress :: Adventure -> [CompileIssue]
+checkQuestProgress a =
+    [ ciWarning (qdPath d) (qdCode d) (qdReason d)
+    | d <- questDiagnostics (allAOutcomes a) a ]
+
 -- | B4: rooms the player can never reach from `start_room`. Edges are the
 --   declared exits plus dynamic ones (`set_exit`, `generate_room`); explicit
 --   arrivals (`move:`, vehicle stops) count as reachable. Every exit of an
@@ -494,7 +514,15 @@ checkUnreachableRooms a =
     [ ciWarning ("rooms." ++ r) "UnreachableRoom"
         ("room '" ++ r ++ "' is not reachable from start_room '" ++ advStartRoom a
          ++ "' — its exits can never be taken")
-    | r <- map arId (advRooms a), not (Set.member r reachable) ]
+    | r <- unreachableRoomIds a ]
+
+-- | Rooms the player can never reach, in **declaration order**.
+--
+--   Extracted from 'checkUnreachableRooms' so the project view can show reach
+--   without a second copy of the rules (dynamic exits, generated rooms,
+--   explicit arrivals) — a second copy would be a second truth.
+unreachableRoomIds :: Adventure -> [String]
+unreachableRoomIds a = [ r | r <- map arId (advRooms a), not (Set.member r reachable) ]
   where
     outs = allAOutcomes a
     roomIds = Set.fromList (map arId (advRooms a))
@@ -828,6 +856,7 @@ compileAdventure adv =
                 darkRoomWarns = checkDarkRoomDeadEnds adv
                 deadContentWarns = checkUnreachableTriggers adv ++ checkUnsatisfiableConditions adv
                                 ++ checkDeadExits adv ++ checkUnreachableRooms adv
+                                ++ checkQuestProgress adv
                 allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ darkRoomWarns
                           ++ chapterWarns
                           ++ deviceWarns

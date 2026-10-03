@@ -387,5 +387,71 @@ else
     echo "OK   export-zip (skipped: no zip tool available)"
 fi
 
+# ---------------------------------------------------------------------------
+# 4.6: project view + position writer. Both commands are checked against the
+# real file: the grid must place the pinned room, the JSON must be deterministic,
+# and map-set must keep the comments while making the pin visible.
+# ---------------------------------------------------------------------------
+echo "== 10. project view and map-set (4.6) =="
+view="$("${WORLDBUILDER[@]}" map examples/fixtures/karte.yaml 2>/dev/null)"
+map_failed=0
+check_view() {
+    if grep -qF -- "$1" <<<"$view"; then
+        echo "OK   map-view ($2)"
+    else
+        echo "FAIL map-view (expected: $1)"
+        echo "$view" | head -30
+        map_failed=1
+    fi
+}
+check_view "-- floor 0 --" "one block per floor"
+check_view "-- floor 1 --" "floor 1 is its own grid"
+check_view "*gipfel" "an authored position is starred"
+check_view "y=2" "rows carry their y"
+check_view "rooms: 5" "room count"
+check_view "unreachable: none" "reachability"
+check_view "hinauf" "quests are listed"
+[ "$map_failed" -eq 0 ] || exit 1
+"${WORLDBUILDER[@]}" map examples/fixtures/karte.yaml -o "$tmp/view1.json" >/dev/null 2>&1
+"${WORLDBUILDER[@]}" map examples/fixtures/karte.yaml -o "$tmp/view2.json" >/dev/null 2>&1
+if cmp -s "$tmp/view1.json" "$tmp/view2.json"; then
+    echo "OK   map-json (two runs byte-identical)"
+else
+    echo "FAIL map-json (output differs between runs)"
+    exit 1
+fi
+for key in '"version": 1' '"source": "authored"' '"direction": "north"' '"startable": true'; do
+    if grep -qF -- "$key" "$tmp/view1.json"; then
+        echo "OK   map-json (contains $key)"
+    else
+        echo "FAIL map-json (missing $key)"
+        exit 1
+    fi
+done
+cp examples/fixtures/karte.yaml "$tmp/map-set.yaml"
+if "${WORLDBUILDER[@]}" map-set "$tmp/map-set.yaml" weg 3 1 >/dev/null 2>&1 \
+   && grep -qF "map: {x: 3, y: 1}" "$tmp/map-set.yaml" \
+   && grep -qF "# vom Autor gepinnt" "$tmp/map-set.yaml" \
+   && grep -qF "# 4.6: Kartenpositionen" "$tmp/map-set.yaml"; then
+    echo "OK   map-set (position written, comments kept)"
+else
+    echo "FAIL map-set (position missing or comments lost)"
+    diff "$tmp/map-set.yaml" examples/fixtures/karte.yaml | head -10
+    exit 1
+fi
+pinned="$("${WORLDBUILDER[@]}" map "$tmp/map-set.yaml" 2>/dev/null)"
+if grep -qF "*weg" <<<"$pinned"; then
+    echo "OK   map-set (the new pin shows up in the view)"
+else
+    echo "FAIL map-set (the new pin does not show up in the view)"
+    exit 1
+fi
+if "${WORLDBUILDER[@]}" map-set "$tmp/map-set.yaml" gibtsnicht 1 1 >/dev/null 2>&1; then
+    echo "FAIL map-set (an unknown room should be refused)"
+    exit 1
+else
+    echo "OK   map-set (unknown room refused)"
+fi
+
 echo
 echo "All checks passed."

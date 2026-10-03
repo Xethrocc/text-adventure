@@ -5,6 +5,7 @@ module Main where
 
 import Control.Monad (forM, when)
 import Data.List (isInfixOf, isPrefixOf, nub, find)
+import Data.Maybe (listToMaybe)
 import qualified Data.Aeson as Aeson
 import Data.Maybe (isJust, listToMaybe)
 import qualified Data.ByteString.Lazy.Char8 as BLC
@@ -22,7 +23,11 @@ import Worldbuilder.YamlDoc (parseYamlDoc, ydResolveIssuePath, ydScalarSpan,
                              setScalarAt, setScalarsAt, insertKeys, splitIssuePath,
                              ssText, YamlSeg (..))
 import Worldbuilder.MapLayout (MapCell (..), roomLayout)
-import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome, allWorldEffects, checkUnknownYamlKeys)
+import Worldbuilder.QuestCheck (questDiagnostics, QuestDiagnostic (..))
+import Worldbuilder.ProjectView (ProjectView (..), PVRoom (..), PVEdge (..),
+                                 PVReachability (..), PVQuest (..),
+                                 buildProjectView, encodeProjectView, renderMapGrid)
+import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome, allWorldEffects, allAOutcomes, checkUnknownYamlKeys)
 import Worldbuilder.Test (checkMarkers, executeContentTest)
 import Worldbuilder.Fuzz (FindingKind (..), FuzzFinding (..), FuzzVocab (..),
                           frozenWindow, fuzzRun, fuzzVocab, genInputs, runSeedFor)
@@ -3858,6 +3863,9 @@ tests =
     , ("the auto-layout is layered and honours anchors (4.6)", testMapLayout)
     , ("two rooms on one cell is a hard error (4.6)", testMapOverlapIsAnError)
     , ("map-set pins a position and keeps the file byte-faithful (4.6)", testMapSetInsertsAndReplaces)
+    , ("dead quests: nothing starts it, nothing moves it (4.6)", testQuestDiagnostics)
+    , ("the project view is sorted, stable and complete (4.6)", testProjectView)
+    , ("the map grid never hides which room is where (4.6)", testMapGridTellsRoomsApart)
     , ("drops_on_death: known key, compiles, json omission (B9)", testDropsOnDeathFlag)
     , ("known keys: carried_by and capacity warn nowhere (B7)", testNpcPossessionKnownKeysClean)
     -- B9: item-on-NPC interactions
@@ -6686,6 +6694,166 @@ testMapSetInsertsAndReplaces = do
                         Left _ -> True
                         Right _ -> False)
             pure (and [r1,r2,r3])
+
+-- ---------------------------------------------------------------------------
+-- 4.6 S3: quest diagnostics + project view
+-- ---------------------------------------------------------------------------
+
+-- | The two dead-quest findings, and just as important: the cases that must
+--   stay silent. An @on_complete:@ chain is a start path, @advance_quest:@ is a
+--   progress path, and a pure @a -> b / b -> a@ cycle is left alone (largest
+--   fixpoint, conservative).
+testQuestDiagnostics :: IO Bool
+testQuestDiagnostics = do
+    let base = (minAdventure (minRoom "loc_0"))
+            { advRooms = [ minRoom "loc_0", minRoom "loc_1" ] }
+        diagOf adv = questDiagnostics (allAOutcomes adv) adv
+        codes adv = map qdCode (diagOf adv)
+        q qid stages onComplete = AQuest
+            { aqId = qid, aqName = qid, aqDesc = "", aqPrereqs = []
+            , aqStages = [ AQuestStage { aqsId = st, aqsDesc = st, aqsHint = Nothing }
+                         | st <- stages ]
+            , aqReward = Nothing, aqOnComplete = onComplete }
+        advWith quests outcomes = base
+            { advQuests = quests
+            , advTriggers = [ ATrigger { atId = "r", atOn = "enter loc_0", atWhen = Nothing
+                                       , atEffects = outcomes, atOnce = False, atCooldown = 0 } ] }
+    -- a: started directly, advances. b: only reachable through a's on_complete,
+    -- advances. c: nothing starts it. d: started, but never advances.
+    let allQuests = [ q "a" ["s1","s2"] (Just "b")
+                    , q "b" ["s1"] Nothing
+                    , q "c" ["s1"] Nothing
+                    , q "d" ["s1"] Nothing ]
+        outAll = [ AOStartQuest "a", AOAdvanceQuest "a", AOAdvanceQuest "b"
+                 , AOStartQuest "d" ]
+    r1 <- expectEqual
+            (codes (advWith [q "x" ["s1"] Nothing] [AOStartQuest "x"]))
+            ["QuestNeverProgressed"]
+    r2 <- expectEqual
+            (codes (advWith [q "x" ["s1"] Nothing] [AOAdvanceQuest "x"]))
+            ["QuestNeverStarted"]
+    r3 <- expectEqual
+            (codes (advWith allQuests outAll))
+            ["QuestNeverStarted", "QuestNeverProgressed"]
+    r4 <- expectEqual (map qdQuest (diagOf (advWith allQuests outAll))) ["c", "d"]
+    r5 <- expectTrue "the reason names the missing effect"
+            (all (\d -> contains "start_quest" (BLC.pack (qdReason d))
+                          || contains "advance_quest" (BLC.pack (qdReason d)))
+                (diagOf (advWith allQuests outAll)))
+    -- a chain counts as a start path: y starts z, z advances, both silent
+    r6 <- expectEqual
+            (codes (advWith [ q "y" ["s1"] (Just "z"), q "z" ["s1"] Nothing ]
+                            [AOStartQuest "y", AOAdvanceQuest "y", AOAdvanceQuest "z"]))
+            []
+    -- a pure cycle is dead content, and saying so is true, not noisy
+    r7 <- expectEqual
+            (codes (advWith [ q "p" ["s1"] (Just "r"), q "r" ["s1"] (Just "p") ]
+                            [AOAdvanceQuest "p"]))
+            ["QuestNeverStarted", "QuestNeverStarted"]
+    -- advance_quest alone is progress: it completes the last stage
+    r8 <- expectEqual
+            (codes (advWith [q "s" ["only"] Nothing] [AOStartQuest "s", AOAdvanceQuest "s"]))
+            []
+    pure (and [r1,r2,r3,r4,r5,r6,r7,r8])
+
+-- | The project view: the machine-readable half an editor consumes. Keys sorted
+--   at every depth, two runs byte-identical, room order = declaration order,
+--   and the authored position marked as such.
+testProjectView :: IO Bool
+testProjectView = do
+    let yaml = unlines
+            [ "name: View"
+            , "start_room: a"
+            , "rooms:"
+            , "  - id: a"
+            , "    name: A"
+            , "    desc: \"Start.\""
+            , "    exits:"
+            , "      north: { to: b }"
+            , "    map: {x: 2, y: 2}"
+            , "  - id: b"
+            , "    name: B"
+            , "    desc: Ende."
+            , "    floor: 1"
+            , "  - id: abseits"
+            , "    name: Abseits"
+            , "    desc: \"Nirgendwohin.\""
+            , "rules:"
+            , "  - id: start_it"
+            , "    on: \"enter a\""
+            , "    effects:"
+            , "      - {start_quest: q1}"
+            , "      - {advance_quest: q1}"
+            , "quests:"
+            , "  - id: q1"
+            , "    name: Q1"
+            , "    stages:"
+            , "      - {id: s1, desc: S1}"
+            , "    on_complete: q2"
+            , "  - id: q2"
+            , "    name: Q2"
+            , "    stages:"
+            , "      - {id: s1, desc: S1}"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let view = buildProjectView adv (crWarnings cr)
+                    enc = encodeProjectView view
+                    j = BLC.unpack enc
+                    rooms' = pvRooms view
+                    roomOf :: String -> Maybe PVRoom
+                    roomOf i = listToMaybe [ r | r <- rooms', pvrId r == i ]
+                    indexOf needle hay = T.length (fst (T.breakOn (T.pack needle) (T.pack hay)))
+                r1 <- expectTrue "version field" (contains "\"version\": 1" enc)
+                r2 <- expectTrue "rooms in declaration order"
+                        (map pvrId rooms' == ["a", "b", "abseits"])
+                r3 <- expectEqual (fmap (\r -> (pvrX r, pvrY r)) (roomOf "a")) (Just (2, 2))
+                r4 <- expectEqual (fmap pvrSource (roomOf "a")) (Just "authored")
+                r5 <- expectEqual (fmap pvrSource (roomOf "b")) (Just "layout")
+                r6 <- expectEqual (fmap pvrFloor (roomOf "b")) (Just 1)
+                r7 <- expectEqual (pvrUnreachable (pvReachability view)) ["abseits"]
+                r8 <- expectEqual (map (\e -> (pveFrom e, pveTo e, pveDirection e)) (pvEdges view))
+                                   [("a","b","north")]
+                r9 <- expectEqual
+                        (map (\q -> (pvqId q, pvqOnComplete q, pvqStartable q, pvqProgressed q))
+                            (pvQuests view))
+                        ([("q1",Just "q2",True,True), ("q2",Nothing,True,False)]
+                            :: [(String, Maybe String, Bool, Bool)])
+                r10 <- expectTrue "the unreached quest shows up as an issue"
+                        (contains "QuestNeverProgressed" enc)
+                r11 <- expectEqual (encodeProjectView (buildProjectView adv (crWarnings cr))) enc
+                r12 <- expectTrue "keys are sorted at every depth"
+                        (indexOf "direction" j < indexOf "from" j
+                         && indexOf "edges" j < indexOf "rooms" j)
+                pure (and [r1,r2,r3,r4,r5,r6,r7,r8,r9,r10,r11,r12])
+
+testMapGridTellsRoomsApart :: IO Bool
+testMapGridTellsRoomsApart = do
+    let mk i x y = PVRoom { pvrId = i, pvrName = i, pvrX = x, pvrY = y
+                          , pvrFloor = 0, pvrSource = "layout" }
+        pin i x y = (mk i x y) { pvrSource = "authored" }
+        grid = unlines (renderMapGrid 4 [ mk "loc_1" 0 0, mk "loc_17" 1 0
+                                       , mk "loc_3" 0 1, pin "wacht" 1 1
+                                       , (mk "tief" 0 0) { pvrFloor = 1 } ])
+        txt = BLC.pack grid
+    r1 <- expectTrue "the long id is not cut" (contains "loc_17" txt)
+    r2 <- expectTrue "no cut marker on an id that fits" (not (contains "~" txt))
+    r3 <- expectTrue "rows carry their y" (contains "y=1" txt)
+    r4 <- expectTrue "columns carry their x" (contains "x=1" txt)
+    r5 <- expectTrue "an authored position is starred" (contains "*wacht" txt)
+    r6 <- expectTrue "an id too long for any sane cell is marked, not silently cut"
+            (contains "~" (BLC.pack (unlines
+                (renderMapGrid 4 [ mk "raum_mit_einer_sehr_ausfuehrlichen_id" 0 0 ]))))
+    r7 <- expectEqual
+            2 (length [ () | l <- lines grid, "-- floor" `contains` BLC.pack l ])
+    pure (and [r1,r2,r3,r4,r5,r6,r7])
 
 -- ===========================================================================
 -- B6: game export (bundle)
