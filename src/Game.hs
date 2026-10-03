@@ -380,6 +380,7 @@ generateSandboxRoom sz x y z fromRoom fromDir st =
             , roomAscii         = rAscii
             , roomIntro         = Nothing
             , roomFloor         = szDefaultFloor sz <|> Just 1
+            , roomMapPos        = Nothing
             }
         newDyn = Map.insert rId room (dynamicRooms (save st))
         st' = st { save = (save st) { dynamicRooms = newDyn } }

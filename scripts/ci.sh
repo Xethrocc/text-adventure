@@ -105,7 +105,7 @@ run_e2e() {
     [ "$failed" -eq 0 ] || exit 1
 }
 
-for name in thefog pure-if fantasy cyberpunk space-opera detective horror economy_hamurabi deckbuilder_spire sandbox_wilderness factions trade encounters survival stealth patrol combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state combat-screen dark-feelable bomb waechter traglast disambiguation procedures gespraeche npc-besitz npc-interaktion npc-massen npc-ausruestung npc-tod quest-kette stroeme phasen sprache fantasy-de; do
+for name in thefog pure-if fantasy cyberpunk space-opera detective horror economy_hamurabi deckbuilder_spire sandbox_wilderness factions trade encounters survival stealth patrol combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state combat-screen dark-feelable bomb waechter traglast disambiguation procedures gespraeche npc-besitz npc-interaktion npc-massen npc-ausruestung npc-tod quest-kette karte stroeme phasen sprache fantasy-de; do
     case "$name" in
         thefog)             src=examples/thefog.yaml ;;
         factions|trade|encounters|survival|stealth|patrol|combat-off|combat-narrative|combat-classic|combat-tactical|party|starship|combo|ship-duel)     src="examples/modules/$name.yaml" ;;
@@ -126,6 +126,7 @@ for name in thefog pure-if fantasy cyberpunk space-opera detective horror econom
         npc-ausruestung)    src="examples/fixtures/npc-ausruestung.yaml" ;;
         npc-tod)            src="examples/fixtures/npc-tod.yaml" ;;
         quest-kette)        src="examples/fixtures/quest-kette.yaml" ;;
+        karte)              src="examples/fixtures/karte.yaml" ;;
         stroeme)            src="examples/fixtures/stroeme.yaml" ;;
         phasen)             src="examples/fixtures/phasen.yaml" ;;
         sprache)            src="examples/fixtures/sprache.yaml" ;;
@@ -138,7 +139,7 @@ echo "== 4b. author content tests (B1) =="
 # Content tests as data: the `tests:` section of an adventure runs through
 # `worldbuilder test` (ordered markers). Extend the list as adventures grow
 # their own tests.
-for name in procedures wissen kapitel krypta quest_rpg pursuit include_demo mengen massen behaelter stroeme phasen sprache npc-interaktion npc-massen npc-ausruestung npc-tod quest-kette; do
+for name in procedures wissen kapitel krypta quest_rpg pursuit include_demo mengen massen behaelter stroeme phasen sprache npc-interaktion npc-massen npc-ausruestung npc-tod quest-kette karte; do
     case "$name" in
         procedures) src="examples/fixtures/procedures.yaml" ;;
         wissen)     src="examples/fixtures/wissen.yaml" ;;
@@ -158,6 +159,7 @@ for name in procedures wissen kapitel krypta quest_rpg pursuit include_demo meng
         npc-ausruestung) src="examples/fixtures/npc-ausruestung.yaml" ;;
         npc-tod)         src="examples/fixtures/npc-tod.yaml" ;;
         quest-kette)     src="examples/fixtures/quest-kette.yaml" ;;
+        karte)           src="examples/fixtures/karte.yaml" ;;
     esac
     "${WORLDBUILDER[@]}" test "$src" || exit 1
 done

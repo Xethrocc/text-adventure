@@ -118,6 +118,7 @@ module Types.Core
     , QuestStage (..)
       -- * Rooms
     , Room (..)
+    , MapPos (..)
       -- * Events and Triggers
     , EventType (..)
     , TriggerDef (..)
@@ -1771,6 +1772,32 @@ instance FromJSON Quest
 -- Rooms
 -- ---------------------------------------------------------------------------
 
+-- | Position of a room on the author's map grid (4.6). @x@ is the column,
+--   @y@ the row -- the layering the compiler's auto-layout uses (row = BFS
+--   depth, column = index within that layer). The third dimension is
+--   'roomFloor', which already exists, so a multi-level world keeps its floors
+--   apart without a new field here.
+--
+--   Only *authored* positions live in the world ('roomMapPos'); the computed
+--   layout stays a worldbuilder-side function, so a world without @map:@ is
+--   byte-identical to one written before this field existed.
+data MapPos = MapPos
+    { mapPosX :: Int
+    , mapPosY :: Int
+    } deriving (Show, Eq, Ord, Generic)
+
+-- Hand-written, not derived: the author-facing keys are @x@/@y@ (the YAML form
+--   @map: {x: 2, y: 3}@), not the record field names. The same instance pair
+--   serves the YAML front end and the compiled world, so a position survives a
+--   round trip through either without renaming.
+instance ToJSON MapPos where
+    toJSON p = object [ "x" .= mapPosX p, "y" .= mapPosY p ]
+
+instance FromJSON MapPos where
+    parseJSON = withObject "MapPos" $ \o -> MapPos
+        <$> o .: "x"
+        <*> o .: "y"
+
 -- | Room with connections and static data.
 --   Note: `roomVisited` lives in SaveState (dynamic), not here.
 data Room = Room
@@ -1788,6 +1815,7 @@ data Room = Room
     , roomAscii           :: AsciiArt                  -- ^ Optional ASCII art banner (state-dependent since Phase B, animated since Phase D)
     , roomIntro           :: Maybe String              -- ^ Clip id played once when entering (Phase H/H4)
     , roomFloor           :: Maybe Int                 -- ^ Optional floor / dungeon level index (Phase 4b)
+    , roomMapPos          :: Maybe MapPos              -- ^ Author-set map position (4.6); written only when set
     } deriving (Show, Eq, Generic)
 
 instance ToJSON Room where
@@ -1805,6 +1833,7 @@ instance ToJSON Room where
         ] ++ asciiPair "roomAscii" (roomAscii r)
           ++ [ "roomIntro" .= i | Just i <- [roomIntro r] ]
           ++ [ "roomFloor" .= fl | Just fl <- [roomFloor r] ]
+          ++ [ "roomMapPos" .= p | Just p <- [roomMapPos r] ]
           ++ [ "roomDarkMsg" .= dm | Just dm <- [roomDarkMsg r] ]
 
 instance FromJSON Room where
@@ -1829,10 +1858,11 @@ instance FromJSON Room where
         <*> o .:? "roomSearchOutcome"   .!= Nothing
         <*> o .:? "roomAscii"           .!= emptyAscii
         <*> o .:? "roomIntro"           .!= Nothing
-        <*> (do mf <- o .:? "roomFloor"
+        <*> (do mf <- o .:? "floor"
                 case mf of
                     Just _  -> pure mf
-                    Nothing -> o .:? "floor")
+                    Nothing -> o .:? "roomFloor")
+        <*> o .:? "roomMapPos" .!= Nothing
 
 -- | Player inventory
 type Inventory = [ItemID]

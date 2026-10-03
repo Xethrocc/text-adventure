@@ -30,7 +30,8 @@ import System.IO (hSetEncoding, stdout, stderr, stdin, utf8)
 import Control.Monad (unless)
 import Worldbuilder.Locate (lineForPath)
 import Worldbuilder.YamlDoc (YamlDoc, parseYamlDoc, ydResolveIssuePath, ydScalarSpan,
-                             setScalarAt, renderYEditError, ssText)
+                             setScalarAt, setScalarsAt, insertKeys,
+                             renderYEditError, ssText, ydPosOf, splitIssuePath)
 import Data.YAML (Pos (posLine, posColumn))
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -55,6 +56,7 @@ runCLI = do
         ("check" : path : _)       -> checkStats path
         ("yaml-pos" : path : rest) -> yamlPos path rest
         ("yaml-set" : path : rest) -> yamlSet path rest
+        ("map-set" : path : rest)  -> mapSet path rest
         ("test" : path : rest)     -> testCmd path rest
         ("fuzz" : path : rest)     -> fuzzCmd path rest
         _                          -> putStrLn usage
@@ -413,6 +415,55 @@ yamlPos path rest = case rest of
                                 ++ "\t" ++ dotted
     [] -> putStrLn "yaml-pos: missing dotted path"
       where _ = path
+
+-- | @map-set <file> <room> <x> <y>@ (4.6): pin a room's map position in the
+--   authored YAML.
+--
+--   The first real user of the S1 writer. If the room already has a @map:@
+--   (block or flow form), the two scalars are replaced in place; otherwise the
+--   key is inserted at the end of the room block with the block's own
+--   indentation. Comments, key order and everything else stay byte-for-byte.
+--   Refusals (unknown room, quoted value, flow room mapping) print the reason
+--   and exit 1 **without** writing.
+mapSet :: FilePath -> [String] -> IO ()
+mapSet path rest = case rest of
+    (room:x:y:_) ->
+        let pos = case (reads x :: [(Int, String)], reads y :: [(Int, String)]) of
+                ([(a, "")], [(b, "")]) -> Right (a, b)
+                _ -> Left "x and y must be whole numbers"
+        in case pos of
+            Left err -> putStrLn ("map-set: " ++ err) >> exitFailure
+            Right (mx, my) -> do
+                raw <- readFileBsSafe path
+                case parseYamlDoc raw of
+                    Left err -> do
+                        putStrLn $ "YAML parse failed: " ++ err
+                        exitFailure
+                    Right doc -> do
+                        let roomPath = "rooms." ++ room
+                        case setRoomPos doc roomPath mx my of
+                            Left err -> do
+                                putStrLn $ "refused: " ++ renderYEditError err
+                                exitFailure
+                            Right out -> do
+                                w <- try (BL.writeFile path out) :: IO (Either SomeException ())
+                                case w of
+                                    Left err -> do
+                                        putStrLn $ "write failed: " ++ show err
+                                        exitFailure
+                                    Right () -> putStrLn
+                                        ("map-set " ++ room ++ ": map: {x: " ++ x ++ ", y: " ++ y ++ "}")
+    _ -> putStrLn "map-set: usage: map-set <file.yaml> <room> <x> <y>"
+  where
+    -- Existing `map:` -> replace both coordinates (sequentially, see
+    -- `setScalarsAt`); otherwise insert the key at the end of the room block.
+    setRoomPos doc roomPath mx my
+        | hasMap = setScalarsAt doc (roomPath ++ ".map") [("x", show mx), ("y", show my)]
+        | otherwise = insertKeys doc roomPath [("map", "{x: " ++ show mx ++ ", y: " ++ show my ++ "}")]
+      where
+        -- A room may carry `map:` in block form or as a flow mapping; both
+        -- expose the coordinates as scalars, so the probe is the same.
+        hasMap = ydPosOf doc (splitIssuePath (roomPath ++ ".map")) /= Nothing
 
 -- | @yaml-set <file> <dotted.path> <value>@: replace one plain scalar in place.
 --   Everything else in the file — comments, key order, quoting, blank lines — is

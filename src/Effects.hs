@@ -551,6 +551,7 @@ applyOutcomeWith depth salt outcome targetId state
                 , roomAscii = emptyAscii
                 , roomIntro = Nothing
                 , roomFloor = newFloor
+                , roomMapPos = Nothing
                 }
             dyn' = Map.insert newId newRoom (dynamicRooms ss)
             overrides' = Map.insert (fromId, toDir) (Just (Open newId)) (exitOverrides ss)

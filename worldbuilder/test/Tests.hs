@@ -19,7 +19,9 @@ import Control.Exception (try, SomeException)
 import Worldbuilder.Types
 import Worldbuilder.Locate (lineForPath)
 import Worldbuilder.YamlDoc (parseYamlDoc, ydResolveIssuePath, ydScalarSpan,
-                             setScalarAt, splitIssuePath, ssText, YamlSeg (..))
+                             setScalarAt, setScalarsAt, insertKeys, splitIssuePath,
+                             ssText, YamlSeg (..))
+import Worldbuilder.MapLayout (MapCell (..), roomLayout)
 import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome, allWorldEffects, checkUnknownYamlKeys)
 import Worldbuilder.Test (checkMarkers, executeContentTest)
 import Worldbuilder.Fuzz (FindingKind (..), FuzzFinding (..), FuzzVocab (..),
@@ -45,7 +47,7 @@ import Validate (validateWorld, validateWorldWithFlags, validateGameState, Valid
 minWorld :: E.GameWorld
 minWorld = E.GameWorld
     { rooms = Map.fromList
-        [ ("room_0", E.Room "room_0" "Room 0" (E.CondText "test" []) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing Nothing (E.AsciiArt (E.CondText "" []) [] 0 [] Nothing) Nothing Nothing)
+        [ ("room_0", E.Room "room_0" "Room 0" (E.CondText "test" []) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing Nothing (E.AsciiArt (E.CondText "" []) [] 0 [] Nothing) Nothing Nothing Nothing)
         ]
     , itemDefs = Map.empty
     , npcDefs = Map.empty
@@ -169,6 +171,7 @@ minRoom rid = ARoom
     , arAscii = AAscii (ACondText "" []) [] 0 [] Nothing
     , arIntro = Nothing
     , arFloor = Nothing
+    , arMapPos = Nothing
     }
 
 -- | Build a minimal adventure with one room
@@ -3851,6 +3854,10 @@ tests =
     , ("on_complete: is parsed, wired and known (4.6)", testQuestOnCompleteParsed)
     , ("quest references must resolve at compile time (4.6)", testQuestRefErrors)
     , ("initial_flags satisfy the flag validation (4.6)", testInitialFlagsSatisfyValidation)
+    , ("map: is parsed, known and written only when set (4.6)", testRoomMapPosRoundTrip)
+    , ("the auto-layout is layered and honours anchors (4.6)", testMapLayout)
+    , ("two rooms on one cell is a hard error (4.6)", testMapOverlapIsAnError)
+    , ("map-set pins a position and keeps the file byte-faithful (4.6)", testMapSetInsertsAndReplaces)
     , ("drops_on_death: known key, compiles, json omission (B9)", testDropsOnDeathFlag)
     , ("known keys: carried_by and capacity warn nowhere (B7)", testNpcPossessionKnownKeysClean)
     -- B9: item-on-NPC interactions
@@ -4845,7 +4852,7 @@ testGenMultiLevelRoomFloors = case generateDungeon multiLevelTemplate 42 of
 testRoomFloorJsonDefaultInvariant :: IO Bool
 testRoomFloorJsonDefaultInvariant = do
     let rNoFloor = E.Room "r1" "Room 1" (E.plainText "desc") Map.empty Set.empty Nothing
-                    Nothing Nothing Nothing Nothing Nothing E.emptyAscii Nothing Nothing
+                    Nothing Nothing Nothing Nothing Nothing E.emptyAscii Nothing Nothing Nothing
         rWithFloor = rNoFloor { E.roomFloor = Just 2 }
         sNoFloor = BLC.unpack (Aeson.encode rNoFloor)
         sWithFloor = BLC.unpack (Aeson.encode rWithFloor)
@@ -6497,6 +6504,188 @@ testInitialFlagsSatisfyValidation = do
                 r2 <- expectTrue "the flag really is in the start save"
                         (Map.member "started" (E.flags (crSave cr)))
                 pure (r1 && r2)
+
+-- ---------------------------------------------------------------------------
+-- 4.6 S2: map positions, auto-layout, MapOverlap, map-set
+-- ---------------------------------------------------------------------------
+
+-- | `map: {x: n, y: m}` at a room: parsed, a known key, and written to the
+--   world **only when set** (the byte contract of roomIntro/roomFloor).
+testRoomMapPosRoundTrip :: IO Bool
+testRoomMapPosRoundTrip = do
+    let yaml = unlines
+            [ "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Halle"
+            , "    desc: Eine Halle."
+            , "    map: {x: 3, y: 4}"
+            , "  - id: loc_1"
+            , "    name: Gang"
+            , "    desc: Ein Gang."
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let warns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
+                    wsRooms = E.rooms (crWorld cr)
+                    enc = Aeson.encode
+                r1 <- expectTrue ("expected 0 unknown key warnings, got " ++ show (length warns)) (null warns)
+                r2 <- expectEqual (Just (E.MapPos 3 4)) (E.roomMapPos (wsRooms Map.! "loc_0"))
+                r3 <- expectTrue "a room without map: has no position" (isNothing' (E.roomMapPos (wsRooms Map.! "loc_1")))
+                r4 <- expectTrue "roomMapPos is omitted when unset"
+                        (not (contains "\"roomMapPos\"" (enc (wsRooms Map.! "loc_1"))))
+                r5 <- expectTrue "roomMapPos is written when set"
+                        (contains "\"roomMapPos\"" (enc (wsRooms Map.! "loc_0")))
+                r6 <- expectTrue "position survives a JSON round trip"
+                        (fmap E.roomMapPos (Aeson.decode (Aeson.encode (wsRooms Map.! "loc_0")))
+                            == Just (Just (E.MapPos 3 4)))
+                pure (and [r1,r2,r3,r4,r5,r6])
+  where
+    isNothing' = maybe True (const False)
+
+-- | The auto-layout: row = BFS depth from start_room, column = order inside the
+--   layer (north before south, because the exit keys are canonical), an authored
+--   `map:` is an anchor the walk must not touch, unreachable rooms get their own
+--   row below, and `floor:` separates the grids.
+testMapLayout :: IO Bool
+testMapLayout = do
+    let yaml = unlines
+            [ "start_room: a"
+            , "rooms:"
+            , "  - id: a"
+            , "    name: A"
+            , "    desc: Start."
+            , "    exits:"
+            , "      east: { to: b }"
+            , "      north: { to: c }"
+            , "  - id: b"
+            , "    name: B"
+            , "    desc: B."
+            , "    map: {x: 5, y: 1}"
+            , "    exits:"
+            , "      north: { to: d }"
+            , "  - id: c"
+            , "    name: C"
+            , "    desc: C."
+            , "  - id: d"
+            , "    name: D"
+            , "    desc: D."
+            , "  - id: e"
+            , "    name: E"
+            , "    desc: Abgeschnitten."
+            , "  - id: f"
+            , "    name: F"
+            , "    desc: Andere Ebene."
+            , "    floor: 2"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> do
+            let cells = Map.fromList [ (mcRoom c, (mcX c, mcY c)) | c <- roomLayout adv ]
+                flagged = Set.fromList [ mcRoom c | c <- roomLayout adv, mcSet c ]
+                floors = Map.fromList [ (mcRoom c, mcFloor c) | c <- roomLayout adv ]
+            r1 <- expectEqual (Just (0, 0)) (Map.lookup "a" cells)
+            r2 <- expectEqual
+                            (Just [(0, 1), (5, 1)]) (fmap id (sequence [Map.lookup "c" cells, Map.lookup "b" cells]))
+            r3 <- expectEqual (Just (0, 2)) (Map.lookup "d" cells)
+            r4 <- expectEqual (Just (0, 3)) (Map.lookup "e" cells)
+            r5 <- expectEqual (Just 2) (Map.lookup "f" floors)
+            r6 <- expectEqual (Set.fromList ["b"]) flagged
+            r7 <- expectEqual
+                            (["a","b","c","d","e","f"]) (map mcRoom (roomLayout adv))
+            pure (and [r1,r2,r3,r4,r5,r6,r7])
+
+-- | Two rooms on one cell of one floor is a hard error naming both rooms; the
+--   same coordinates on different floors are fine, because `floor:` is the z axis.
+testMapOverlapIsAnError :: IO Bool
+testMapOverlapIsAnError = do
+    let withPos a b = (minAdventure (minRoom "loc_0"))
+            { advRooms = [ (minRoom "loc_0") { arMapPos = Just (E.MapPos a b) }
+                         , (minRoom "loc_1") { arMapPos = Just (E.MapPos a b) } ] }
+        codes adv = case compileAdventure adv of
+            Left errs -> map ciCode errs
+            Right _ -> []
+        msgs adv = case compileAdventure adv of
+            Left errs -> concatMap ciMessage errs
+            Right _ -> []
+        twoFloors = (minAdventure (minRoom "loc_0"))
+            { advRooms = [ (minRoom "loc_0") { arMapPos = Just (E.MapPos 2 2) }
+                         , (minRoom "loc_1") { arMapPos = Just (E.MapPos 2 2), arFloor = Just 2 } ] }
+    r1 <- expectTrue "same cell, same floor -> MapOverlap"
+            ("MapOverlap" `elem` codes (withPos 2 2))
+    r2 <- expectTrue "the message names the other room"
+            (contains "loc_1" (BLC.pack (msgs (withPos 2 2))))
+    r3 <- expectTrue "the same cell on different floors is fine"
+            (not ("MapOverlap" `elem` codes twoFloors))
+    pure (and [r1,r2,r3])
+
+-- | `map-set` is the first real user of the S1 writer: insert the key when the
+--   room has none, replace both coordinates when it has one — and keep every
+--   other byte, comments included.
+testMapSetInsertsAndReplaces :: IO Bool
+testMapSetInsertsAndReplaces = do
+    let doc0 = BLC.pack (unlines
+            [ "# Karte"
+            , "name: M"
+            , "start_room: a"
+            , "rooms:"
+            , "  - id: a"
+            , "    name: A"
+            , "    desc: \"Start.\"   # Kommentar"
+            , "  - id: b"
+            , "    name: B"
+            , "    desc: Ende."
+            ])
+    case parseYamlDoc doc0 of
+        Left err -> do
+            putStrLn $ "  parse failed: " ++ err
+            pure False
+        Right doc -> do
+            let inserted = insertKeys doc "rooms.a" [("map", "{x: 4, y: 1}")]
+            r1 <- case inserted of
+                Left e -> expectTrue ("insert failed: " ++ show e) False
+                Right out -> do
+                    r1a <- expectTrue "the key is inserted at the room's indentation"
+                            (contains "    map: {x: 4, y: 1}" out)
+                    r1b <- expectTrue "the comment on the last line survives"
+                            (contains "# Kommentar\n" out)
+                    r1c <- expectTrue "the other room is untouched"
+                            (contains "  - id: b\n    name: B\n    desc: Ende." out)
+                    -- the inserted document must still parse, with the position where we put it
+                    r1d <- case parseYamlDoc out of
+                        Left e -> expectTrue ("re-parse failed: " ++ e) False
+                        Right doc2 -> expectTrue "the inserted map resolves"
+                                (fmap posLine (ydResolveIssuePath doc2 "rooms.a.map.x") /= Nothing)
+                    pure (r1a && r1b && r1c && r1d)
+            -- The replace path needs a document that already has `map:` — take
+            -- the inserted one. Applying both coordinates to the *original* doc
+            -- is exactly the bug `setScalarsAt` exists to prevent.
+            r2 <- case inserted of
+                Left e -> expectTrue ("insert failed: " ++ show e) False
+                Right out -> case parseYamlDoc out of
+                    Left e -> expectTrue ("re-parse failed: " ++ e) False
+                    Right doc2 -> case setScalarsAt doc2 "rooms.a.map" [("x", "9"), ("y", "3")] of
+                        Left e -> expectTrue ("set failed: " ++ show e) False
+                        Right out2 -> do
+                            r2a <- expectTrue "both coordinates are replaced"
+                                    (contains "map: {x: 9, y: 3}" out2)
+                            r2b <- expectTrue "the rest of the file is unchanged"
+                                    (contains "# Kommentar" out2 && contains "  - id: b" out2)
+                            pure (r2a && r2b)
+            r3 <- expectTrue "a flow mapping cannot take a new line"
+                    (case insertKeys doc "rooms.a.map" [("x", "1")] of
+                        Left _ -> True
+                        Right _ -> False)
+            pure (and [r1,r2,r3])
 
 -- ===========================================================================
 -- B6: game export (bundle)

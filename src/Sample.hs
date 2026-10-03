@@ -27,6 +27,7 @@ initSampleGame = GameState
                 , roomAscii = emptyAscii
                 , roomIntro = Nothing
                 , roomFloor = Nothing
+                , roomMapPos = Nothing
                 })
             , ("hallway", Room
                 { roomId = "hallway"
@@ -46,6 +47,7 @@ initSampleGame = GameState
                 , roomAscii = emptyAscii
                 , roomIntro = Nothing
                 , roomFloor = Nothing
+                , roomMapPos = Nothing
                 })
             , ("treasure", Room
                 { roomId = "treasure"
@@ -62,6 +64,7 @@ initSampleGame = GameState
                 , roomAscii = emptyAscii
                 , roomIntro = Nothing
                 , roomFloor = Nothing
+                , roomMapPos = Nothing
                 })
             -- Vehicle demo (Phase 3): a horse-drawn carriage
             , ("meadow", Room
@@ -83,6 +86,7 @@ initSampleGame = GameState
                 , roomAscii = emptyAscii
                 , roomIntro = Nothing
                 , roomFloor = Nothing
+                , roomMapPos = Nothing
                 })
             , ("carriage_cabin", Room
                 { roomId = "carriage_cabin"
@@ -99,6 +103,7 @@ initSampleGame = GameState
                 , roomAscii = emptyAscii
                 , roomIntro = Nothing
                 , roomFloor = Nothing
+                , roomMapPos = Nothing
                 })
             ]
         , itemDefs = Map.fromList

@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Kartenpositionen `map:` + Auto-Layout (4.6, S2)
+
+- **Neues Autorenfeld `map: {x: n, y: m}` am Raum.** Reine Raster-Kosmetik für
+  einen Karteneditor — kein Weg, kein Kampf und kein Befehl liest sie.
+  `roomMapPos` steht im `world.json` **nur, wenn `map:` gesetzt ist**
+  (Byte-Vertrag wie `roomIntro`/`roomFloor`): alle 62 gelieferten Abenteure
+  bleiben byte-identisch.
+- **`floor:` ist die z-Achse.** Räume mit verschiedenem `floor:` liegen auf
+  getrennten Rastern; gleiche Zelle auf derselben Ebene ist der harte Fehler
+  `MapOverlap` (nennt beide Räume, mit Fundstelle).
+- **Auto-Layout** (`Worldbuilder.MapLayout`, reine Funktion über das Autoren-
+  Adventure): Zeile = BFS-Tiefe ab `start_room`, Spalte = Reihenfolge in der
+  Schicht (Richtungen kanonisch, also `north` vor `south`), gesetzte `map:`-Räume
+  sind **Anker** und werden nie überschrieben, nicht erreichbare Räume kommen in
+  eine eigene Zeile darunter — in **Deklarationsreihenfolge**, nie in
+  `Map`/`Ord`-Reihenfolge (Projektregel 9). Das Layout lebt nur im Worldbuilder
+  und wandert **nicht** in die Welt; die Welt kennt nur die gesetzten Positionen.
+  Gemessen an den gelieferten Abenteueren: `fantasy.yaml` wird 14 Zeilen × 3
+  Spalten, `thefog.yaml` 14 × 8 — die Einschätzung aus dem Plan trifft zu.
+- **`worldbuilder map-set <datei> <raum> <x> <y>`:** der erste echte Anwendungs-
+  fall des S1-Schreibers. Fehlt `map:`, wird der Schlüssel am Ende des
+  Raum-Blocks in der Einrückung des Blocks eingefügt; vorhandene Koordinaten
+  werden ersetzt (Flow- und Block-Form). Kommentare, Reihenfolge und Format
+  bleiben byte-treu; Verweigerungen (unbekannter Raum, nicht ganzzahlig,
+  Flow-Raum-Mapping) schreiben **nicht**.
+- Tests: `testRoomMapPosRoundTrip`, `testMapLayout`, `testMapOverlapIsAnError`,
+  `testMapSetInsertsAndReplaces`. Content: `examples/fixtures/karte.yaml`
+  (gepinnter Gipfel, eigene Ebene im Verlies, 2 `tests:`-Abschnitte) +
+  `ci/e2e/karte.{in,expect}` in CI-Stufen 4/4b.
+
 ### W5 Stufe 2: exakte YAML-Positionen und ein positionstreuer Schreiber (4.6, S1)
 
 - **Neues Modul `Worldbuilder.YamlDoc`:** die Datei wird ein zweites Mal als

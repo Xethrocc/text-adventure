@@ -399,6 +399,7 @@ data ARoom = ARoom
     , arAscii       :: AAscii
     , arIntro       :: Maybe String               -- ^ clip id played once on enter (Phase H/H4)
     , arFloor       :: Maybe Int                  -- ^ optional floor / dungeon level index (Phase 4b)
+    , arMapPos      :: Maybe E.MapPos             -- ^ authored map position (4.6): map: {x: n, y: m}
     } deriving (Show, Eq, Generic)
 
 instance FromJSON ARoom where
@@ -424,6 +425,7 @@ instance FromJSON ARoom where
         <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0 [] Nothing
         <*> o .:? "intro"     .!= Nothing
         <*> o .:? "floor"     .!= Nothing
+        <*> o .:? "map"       .!= Nothing
 
 -- | Exit reference: target room + optional lock entity, when predicate, and failure message (Phase 2.2)
 data AExitRef = AExitRef
@@ -1752,7 +1754,7 @@ knownKeys EntAdventure = Set.fromList
 knownKeys EntRoom = Set.fromList
     [ "id", "name", "desc", "description", "exits", "tags", "light_flag"
     , "dark_msg", "dark_message", "roomDarkMsg"
-    , "on_enter", "on_look", "on_exit", "search", "ascii", "intro", "floor"
+    , "on_enter", "on_look", "on_exit", "search", "ascii", "intro", "floor", "map"
     ]
 knownKeys EntExitRef = Set.fromList
     [ "to", "locked_by", "when", "msg", "message" ]

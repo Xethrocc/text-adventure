@@ -31,6 +31,7 @@ module Worldbuilder.Compile
     ) where
 
 import Worldbuilder.Types
+import Worldbuilder.MapLayout (mapFloorOf)
 import Types hiding
     ( itemDefs, itemStates, npcDefs, npcStates, questDefs
     , vehicleDefs, vehicleStates, entityInteractions, itemInteractions
@@ -735,6 +736,7 @@ compileAdventure adv =
         possessionErrs = checkNpcPossessionRefs adv
         npcIxErrs = checkNpcInteractionRefs adv
         questRefErrs = checkQuestRefs adv
+        mapOverlapErrs = checkMapPositions adv
         rngVarErrs = checkRngVarWrites adv
         (langErrs, langWarns) = checkLanguageFields adv
         (gramErrs, gramWarns) = checkGrammarFields adv
@@ -779,6 +781,7 @@ compileAdventure adv =
                     ++ possessionErrs
                     ++ npcIxErrs
                     ++ questRefErrs
+                    ++ mapOverlapErrs
                     ++ rngVarErrs
                     ++ langErrs
                     ++ gramErrs
@@ -1102,6 +1105,7 @@ compileRoom r =
             , E.roomAscii = compileAscii (arAscii r)
             , E.roomIntro = arIntro r
             , E.roomFloor = arFloor r
+            , E.roomMapPos = arMapPos r
             }
        else Left allErrs
   where
@@ -3650,6 +3654,29 @@ checkNpcInteractionRefs adv = concatMap entryGo (maybe [] aiNpc (advInteractions
             ("npc interaction references unknown npc '" ++ aniTarget n ++ "'")
         | aniTarget n `Set.notMember` npcIds ]
         ]
+
+-- | 4.6: two authored map positions on the same cell of the same floor. A hard
+--   error like every other duplicate in the schema (cf. `DuplicateDirection`):
+--   the map cannot say which room owns the cell, and the editor would draw one
+--   on top of the other. Only *authored* positions can collide — the auto-layout
+--   never places a room on an occupied cell — so this cannot fire on computed
+--   positions.
+checkMapPositions :: Adventure -> [CompileIssue]
+checkMapPositions adv = concatMap floorCells floors
+  where
+    floors = Set.toAscList (Set.fromList (map mapFloorOf (advRooms adv)))
+    floorCells f =
+        [ ciError ("rooms." ++ rid) "MapOverlap"
+            ("map position (" ++ show x ++ "," ++ show y ++ ") on floor "
+             ++ show f ++ " is already taken by room '" ++ other ++ "'")
+        | (x, y, rid, other) <- hits ]
+      where
+        placed = [ (arId r, p) | r <- advRooms adv, mapFloorOf r == f, Just p <- [arMapPos r] ]
+        hits = [ (E.mapPosX p, E.mapPosY p, a, b)
+               | (a, p) <- placed, (b, q) <- placed
+               , a < b
+               , E.mapPosX p == E.mapPosX q
+               , E.mapPosY p == E.mapPosY q ]
 
 -- | 4.6: every quest reference must resolve, and resolve *here* — with a
 --   diagnostic path, so @Locate@ can point at the authoring line. The world

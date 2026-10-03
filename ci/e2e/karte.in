@@ -1,0 +1,9 @@
+take fackel
+journal
+north
+look
+north
+look
+journal
+ask waechter about gipfel
+quit

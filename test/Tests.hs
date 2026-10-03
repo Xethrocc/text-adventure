@@ -3628,7 +3628,7 @@ testSampleWorldIsValid = do
 testDanglingExitDetected :: IO Bool
 testDanglingExitDetected = do
     let roomA = Room "roomA" "Room A" (plainText "desc.") (Map.singleton North (Open "roomZ")) Set.empty Nothing
-            Nothing Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing
+            Nothing Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing Nothing
         gw = (world initSampleGame) { rooms = Map.singleton "roomA" roomA }
         errors = validateWorld gw
     expectTrue "dangling exit detected" (DanglingExit "roomA" North "roomZ" `elem` errors)
@@ -3637,7 +3637,7 @@ testDuplicateIDsBetweenItemsAndRooms :: IO Bool
 testDuplicateIDsBetweenItemsAndRooms = do
     let gw = (world initSampleGame)
                 { rooms = Map.insert "key" (Room "key" "Duplicate" (plainText "desc.") Map.empty Set.empty Nothing
-                    Nothing Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing) (rooms (world initSampleGame)) }
+                    Nothing Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing Nothing) (rooms (world initSampleGame)) }
         errors = validateWorld gw
     expectTrue "duplicate key found" (any isDup errors)
   where
@@ -3647,7 +3647,7 @@ testDuplicateIDsBetweenItemsAndRooms = do
 testUnreachableRoomDetected :: IO Bool
 testUnreachableRoomDetected = do
     let roomIsolated = Room "isolated" "Isolated" (plainText "Alone.") Map.empty Set.empty Nothing
-            Nothing Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing
+            Nothing Nothing Nothing Nothing Nothing (emptyAscii) Nothing Nothing Nothing
         gw = (world initSampleGame)
                 { rooms = Map.insert "isolated" roomIsolated (rooms (world initSampleGame)) }
         -- Reachability is checked where the real start room is known, i.e. in
@@ -6247,7 +6247,7 @@ testMassOps = do
 -- ---------------------------------------------------------------------------
 
 mkTestRoom :: RoomID -> String -> Room
-mkTestRoom rId name = Room rId name (plainText name) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing
+mkTestRoom rId name = Room rId name (plainText name) Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing Nothing
 
 -- ---------------------------------------------------------------------------
 -- B2: tag predicates and the count family
@@ -7224,7 +7224,7 @@ testSaveStateDynamicRoomsM2Invariant = do
     -- "dynamicRooms" must not appear in JSON when dynamicRooms is empty
     r1 <- expectEqual False (isInfixOf "\"dynamicRooms\"" (BLC.unpack enc))
     -- Round-trip with dynamicRooms populated
-    let dynRoom = Room "dyn_1" "Dynamischer Raum" (plainText "Ein magischer Raum.") Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing
+    let dynRoom = Room "dyn_1" "Dynamischer Raum" (plainText "Ein magischer Raum.") Map.empty Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing Nothing
         ssWithDyn = ss { dynamicRooms = Map.singleton "dyn_1" dynRoom }
         encWithDyn = Aeson.encode ssWithDyn
     r2 <- expectTrue "dynamicRooms key present when non-empty" (isInfixOf "\"dynamicRooms\"" (BLC.unpack encWithDyn))
@@ -7285,7 +7285,7 @@ testMoveIntoSandboxGeneratesRoom = do
     let bForest = BiomeTemplate "forest" 10 "Dichter Wald [{x}, {y}]" (plainText "Tiefer Wald.") ["forest"] emptyAscii [North, South, East, West]
         sz = SandboxZone "wildnis" (0, 0, 0) [bForest] (Just 1)
         gw = emptyGameWorld
-            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Schlosstor") (Map.singleton North (Open "sandbox_wildnis")) Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing)
+            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Schlosstor") (Map.singleton North (Open "sandbox_wildnis")) Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing Nothing)
             , sandboxZones = Map.singleton "wildnis" sz
             }
         st0 = emptyGameState { world = gw, save = (save emptyGameState) { currentRoom = "gate" } }
@@ -7309,7 +7309,7 @@ testReciprocalExitWiring = do
     let bForest = BiomeTemplate "forest" 10 "Wald [{x}, {y}]" (plainText "Wald.") ["forest"] emptyAscii [North, South, East, West]
         sz = SandboxZone "wildnis" (0, 0, 0) [bForest] (Just 1)
         gw = emptyGameWorld
-            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Schlosstor") (Map.singleton North (Open "sandbox_wildnis_0_0_0")) Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing)
+            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Schlosstor") (Map.singleton North (Open "sandbox_wildnis_0_0_0")) Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing Nothing)
             , sandboxZones = Map.singleton "wildnis" sz
             }
         st0 = emptyGameState { world = gw, save = (save emptyGameState) { currentRoom = "gate" } }
@@ -7421,7 +7421,7 @@ testBiomeAsciiArtVariantsDayNight = do
         bForest = BiomeTemplate "forest" 10 "Wald [{x}, {y}]" (plainText "Dichter Wald.") ["forest"] artVariants [North, South, East, West]
         sz = SandboxZone "wildnis" (0, 0, 0) [bForest] (Just 1)
         gw = emptyGameWorld
-            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Tor") (Map.singleton North (Open "sandbox_wildnis")) Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing)
+            { rooms = Map.singleton "gate" (Room "gate" "Tor" (plainText "Tor") (Map.singleton North (Open "sandbox_wildnis")) Set.empty Nothing Nothing Nothing Nothing Nothing Nothing emptyAscii Nothing Nothing Nothing)
             , sandboxZones = Map.singleton "wildnis" sz
             }
         st0 = emptyGameState { world = gw, save = (save emptyGameState) { currentRoom = "gate" } }
@@ -8790,7 +8790,7 @@ testRoomDarkMsgJsonRoundTrip :: IO Bool
 testRoomDarkMsgJsonRoundTrip = do
     let baseRoom = Room "dark_chamber" "Dunkle Kammer" (plainText "Ein dunkler Ort.")
                         Map.empty (Set.singleton "dark") Nothing Nothing Nothing Nothing Nothing Nothing
-                        emptyAscii Nothing Nothing
+                        emptyAscii Nothing Nothing Nothing
     -- 1. Default invariant: roomDarkMsg Nothing is omitted from JSON
     let rNothing = baseRoom { roomDarkMsg = Nothing }
         encNothing = BLC.unpack (Aeson.encode rNothing)

@@ -38,6 +38,42 @@ Das war's. Der Worldbuilder füllt den Rest mit Defaults.
 | `on_exit` | [AActionOutcome] | — | Effekte beim Verlassen |
 | `search` | [AActionOutcome] | — | Effekte bei `search` |
 | `ascii` | String / Object | — | Zustandsabhängige ASCII-Kunst (String = fester Banner, Object = CondText; siehe unten) |
+| `floor` | Int | — | Ebene im Gebäude/Dungeon (z-Achse der Karte, Rogue Phase 4b) |
+| `map` | Object | — | Kartenposition `{x: n, y: m}` (4.6); fehlt sie, rechnet der Compiler eine |
+
+### Kartenpositionen: `map:` (4.6)
+
+```yaml
+rooms:
+  - id: gipfel
+    name: Gipfel
+    desc: "Fels und Wind."
+    map: {x: 0, y: 2}      # x = Spalte, y = Zeile
+  - id: keller
+    name: Verlies
+    floor: 1               # eigene Ebene -> eigenes Raster
+```
+
+**Was `map:` ist und was nicht:**
+
+- **Nur Kosmetik am Raster.** Die Position beeinflusst *nichts* im Spiel — kein
+  Weg, kein Kampf, kein Befehl liest sie. Sie ist Content für einen
+  Karteneditor, genau wie `ascii:` es für die Darstellung ist.
+- **`floor:` ist die dritte Dimension.** Räume mit verschiedenem `floor:`
+  liegen auf getrennten Rastern; zwei Räume dürfen dieselbe Zelle auf
+  *verschiedenen* Ebenen belegen. Auf derselben Ebene ist dieselbe Zelle ein
+  harter Fehler `MapOverlap` (nennt beide Räume).
+- **Fehlt `map:`, rechnet der Compiler eine Position** (`worldbuilder map`):
+  Zeile = BFS-Tiefe ab `start_room`, Spalte = Reihenfolge in der Schicht
+  (Richtungen in kanonischer Reihenfolge, also `north` vor `south`). Ein
+  gesetztes `map:` ist ein **Anker** und wird nie überschrieben.
+- **Byte-Vertrag:** `roomMapPos` steht im `world.json` **nur, wenn `map:`
+  gesetzt ist**. Ein Abenteuer ohne `map:` ist byte-identisch zu einem von vor
+  4.6.
+- **Setzen von Hand:** `worldbuilder map-set <datei> <raum> <x> <y>` schreibt
+  die Position in-place; Kommentare, Reihenfolge und Format bleiben
+  byte-treu. Fehlt `map:`, wird der Schlüssel am Ende des Raum-Blocks
+  eingefügt.
 
 ### Guarded Exits (`when:`, `msg:` / `message:`, Phase 2.2)
 

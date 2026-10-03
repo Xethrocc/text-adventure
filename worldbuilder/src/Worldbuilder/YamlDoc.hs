@@ -40,8 +40,10 @@ module Worldbuilder.YamlDoc
       -- * Writing
     , ScalarSpan (..)
     , ydScalarSpan
+    , insertKeys
     , YEditError (..)
     , setScalarAt
+    , setScalarsAt
     , renderYEditError
     ) where
 
@@ -50,6 +52,9 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
+import qualified Data.ByteString.Lazy.Char8 as BLC
+import Data.Word (Word8)
+import qualified Data.Text.Encoding as TE
 
 -- ---------------------------------------------------------------------------
 -- Documents
@@ -239,6 +244,7 @@ data ScalarSpan = ScalarSpan
 data YEditError
     = YEditPathNotFound String   -- ^ the path does not resolve to a node
     | YEditNotScalar String      -- ^ the node is a mapping or a sequence
+    | YEditFlowMapping String    -- ^ flow mapping (@{a: 1}@): no lines to append to
     | YEditQuoted String         -- ^ @'…'@ or @"…"@: re-quoting is the caller's job
     | YEditBlockScalar String    -- ^ @|@ or @>@ block scalar
     | YEditMultiline String      -- ^ plain scalar continued on the next line
@@ -253,6 +259,7 @@ renderYEditError :: YEditError -> String
 renderYEditError e = case e of
     YEditPathNotFound p -> "no YAML node at path '" ++ p ++ "'"
     YEditNotScalar p    -> "'" ++ p ++ "' is a map or sequence, not a scalar"
+    YEditFlowMapping p  -> "'" ++ p ++ "' is a flow mapping ({...}) — no line to append to"
     YEditQuoted p       -> "'" ++ p ++ "' is a quoted scalar — refusing to change its quotes"
     YEditBlockScalar p  -> "'" ++ p ++ "' is a block scalar (| or >) — refusing to touch it"
     YEditMultiline p    -> "'" ++ p ++ "' spans several lines — refusing to touch it"
@@ -283,6 +290,7 @@ ydScalarSpan doc path = do
     src = ydSource doc
     strictSrc = BL.toStrict src
     len = BS.length strictSrc
+    resolveValue :: String -> Maybe (Node Pos)
     resolveValue p = fst <$> resolve (ydRoot doc) (splitIssuePath p)
     slice a b = BL.take (fromIntegral (b - a)) (BL.drop (fromIntegral a) src)
 
@@ -347,6 +355,167 @@ ydScalarSpan doc path = do
            else Just (trimEndOf (BS.drop 1 afterEol))
     isEol c = c == 0x0a || c == 0x0d
     trimEndOf = BS.takeWhile (not . isEol)
+
+-- | Set several scalars under one mapping, one after the other.
+--
+--   Each step re-parses the result before the next one, because a second
+--   'setScalarAt' on the *original* document would compute its offsets against
+--   text that the first edit has already changed — two coordinates in the same
+--   flow mapping would then silently undo each other.
+setScalarsAt :: YamlDoc -> String -> [(String, String)] -> Either YEditError BL.ByteString
+setScalarsAt doc basePath pairs = go doc pairs
+  where
+    go d [] = Right (ydSource d)
+    go d ((key, value):rest) = do
+        out <- setScalarAt d (basePath ++ "." ++ key) (BLC.pack value)
+        case parseYamlDoc out of
+            Left err -> Left (YEditValueRejected (basePath ++ "." ++ key ++ ": " ++ err))
+            Right d' -> go d' rest
+
+-- | Insert whole key lines into an existing **block** mapping, right after the
+--   mapping's last line.
+--
+--   Needed as soon as an editor adds a field the author never wrote: pinning a
+--   room's @map:@ for the first time cannot work by replacing a scalar. The
+--   indentation comes from the mapping's own keys, so the result matches the
+--   surrounding style; a mapping without any key yet uses the parent's
+--   indentation plus two.
+--
+--   Refused for flow mappings (@rooms.a: {x: 1}@ — everything on one line),
+--   because appending a line there would change the document's structure.
+insertKeys :: YamlDoc -> String -> [(String, String)] -> Either YEditError BL.ByteString
+insertKeys doc path pairs
+    | null pairs = Right (ydSource doc)
+    | otherwise = do
+        node <- maybe (Left (YEditPathNotFound path)) Right (resolveValue path)
+        case node of
+            -- `else do` on purpose: a `let` directly after an `if/then/else`
+            -- at the same indentation is a parse error in a do block.
+            Mapping p _ _ ->
+                if firstByteAt (posByteOffset p) == 0x7b       -- '{' = flow style
+                then Left (YEditFlowMapping path)
+                else do
+                    let sl = srcLines (ydSource doc)
+                        atStart = lineAt sl (posLine p)
+                        endLine = blockEnd sl (posLine p) (slIndent atStart)
+                        indent = keyIndentOf sl (posLine p) (slIndent atStart)
+                        hasNext = slNo (lineAt sl (endLine + 1)) > endLine
+                        total = fromIntegral (BL.length (ydSource doc)) :: Int
+                        endsWithNl = not (BL.null (ydSource doc))
+                                      && BLC.unpack (BL.drop (fromIntegral (total - 1)) (ydSource doc)) == "\n"
+                        pad = BS.replicate indent 0x20
+                        rendered = [ pad <> TE.encodeUtf8 (T.pack (k ++ ": " ++ v)) | (k, v) <- pairs ]
+                        -- Insert before the next line; at the end of the file,
+                        -- before a final newline if there is one, else at the
+                        -- very end (supplying the newline ourselves).
+                        (insertAt, body) = insertPoint sl endLine total endsWithNl hasNext rendered
+                        splice = BL.take (fromIntegral insertAt) (ydSource doc)
+                                 <> body
+                                 <> BL.drop (fromIntegral insertAt) (ydSource doc)
+                    pure splice
+            _ -> Left (YEditNotScalar path)
+  where
+    resolveValue :: String -> Maybe (Node Pos)
+    resolveValue p = fst <$> resolve (ydRoot doc) (splitIssuePath p)
+    firstByteAt :: Int -> Word8
+    firstByteAt i = case BS.uncons (BS.take (i + 1) (BL.toStrict (ydSource doc))) of
+        Just (c, _) -> c
+        Nothing -> 0
+    -- Where to splice, and what: before the next line, or before a final
+    -- newline at the end of the file, or at the very end.
+    insertPoint :: [SrcLine] -> Int -> Int -> Bool -> Bool -> [BS.ByteString]
+                -> (Int, BL.ByteString)
+    -- A comment at the end of the block's last line is part of that line, so the
+    -- insertion always starts at a *line* boundary: before the next line, or at
+    -- the (empty) line behind a final newline, or — at a file whose last line has
+    -- no newline — after a newline of our own.
+    insertPoint sl endLine total endsWithNl hasNext rendered
+        | hasNext = (offsetOfLine sl (endLine + 1), joinedWithNls rendered True)
+        | endsWithNl = (total - 1, joinedWithNls rendered True)
+        | otherwise = (total, BL.concat (BLC.pack "\n" : [ BL.fromStrict b | b <- rendered ])
+                                    <> BLC.pack "\n")
+
+    -- Rendered lines with newlines between them, plus a trailing one when the
+    -- document does not already provide it.
+    joinedWithNls :: [BS.ByteString] -> Bool -> BL.ByteString
+    joinedWithNls ls trailing =
+        BL.concat ([ BL.fromStrict b <> nl' | b <- init ls ]
+                   <> [ BL.fromStrict (last ls) <> (if trailing then nl' else BL.empty) ])
+      where nl' = BL.fromStrict (BS.pack [0x0a])
+
+-- | One source line with everything the writer needs to reason about it.
+data SrcLine = SrcLine
+    { slNo     :: Int             -- ^ 1-based line number
+    , slOffset :: Int             -- ^ byte offset of the line start
+    , slIndent :: Int             -- ^ leading spaces
+    , slBlank  :: Bool            -- ^ empty or only whitespace
+    , slKey    :: Bool            -- ^ looks like a mapping key or a list item
+    , slBytes  :: BS.ByteString
+    } deriving (Eq, Show)
+
+-- | Split the source into lines, once, with offsets and classification. The
+--   offsets are what make the insert byte-exact.
+srcLines :: BL.ByteString -> [SrcLine]
+srcLines bs = go 1 0 (map (fromIntegral :: Word8 -> Int) (BS.unpack (BL.toStrict bs)))
+  where
+    go :: Int -> Int -> [Int] -> [SrcLine]
+    go n off cs = case break isEol cs of
+        (before, 10:rest) -> mk n off before : go (n + 1) (off + length before + 1) rest
+        (before, 13:13:rest) -> mk n off before : go (n + 1) (off + length before + 2) rest
+        (before, _:rest) -> mk n off before : go (n + 1) (off + length before + 1) rest
+        (before, []) -> [mk n off before]
+    isEol c = c == 10 || c == 13
+    mk :: Int -> Int -> [Int] -> SrcLine
+    mk n off ls = SrcLine
+        { slNo = n
+        , slOffset = off
+        , slIndent = length (takeWhile (== 0x20) ls)
+        , slBlank = null (dropWhile (== 0x20) ls)
+        , slKey = not (null (dropWhile (== 0x20) ls)) && looksLikeKeyOrItem ls
+        , slBytes = BS.pack (map (fromIntegral :: Int -> Word8) ls)
+        }
+    looksLikeKeyOrItem ls =
+        case dropWhile (== 0x20) ls of
+            (0x2d:rest) -> null rest || head rest == 0x20
+            _ -> case break (== 0x3a) ls of
+                (k, 0x3a:after) ->
+                    not (null k) && (null after || head after == 0x20 || head after == 0x09)
+                _ -> False
+
+lineAt :: [SrcLine] -> Int -> SrcLine
+lineAt sl n = case drop (n - 1) sl of
+    (l:_) -> l
+    [] -> case sl of
+        (l:_) -> l
+        [] -> SrcLine 0 0 0 True False BS.empty
+
+offsetOfLine :: [SrcLine] -> Int -> Int
+offsetOfLine sl n = slOffset (lineAt sl n)
+
+-- | Indentation for a new key inside a mapping that starts at @startLine@: the
+--   indentation of its first own key, or the parent's plus two when it has none.
+keyIndentOf :: [SrcLine] -> Int -> Int -> Int
+keyIndentOf sl startLine parentIndent =
+    case [ slIndent l | l <- sl, slNo l > startLine, slKey l, slIndent l > parentIndent ] of
+        (i:_) -> i
+        [] -> parentIndent + 2
+
+-- | Last line of the block starting at @startLine@ with the given indentation:
+--   the last line before a non-blank line at the same or a lower indentation.
+blockEnd :: [SrcLine] -> Int -> Int -> Int
+blockEnd sl startLine indent = go startLine startLine
+  where
+    -- The last *non-blank* line of the block: trailing blank lines must not
+    -- extend it, or the insertion point slides onto the line before them (a
+    -- comment line, or the last real line of the file).
+    go i lastContent
+        | i > total = lastContent      -- `>` not `>=`: the last line still counts
+        | i > startLine, not (slBlank l), slIndent l <= indent = lastContent
+        | slBlank l = go (i + 1) lastContent
+        | otherwise = go (i + 1) i
+      where
+        l = lineAt sl i
+    total = length sl
 
 -- | Replace one plain scalar's bytes; every other byte of the document is
 --   returned unchanged. A replacement containing a line break is refused — it

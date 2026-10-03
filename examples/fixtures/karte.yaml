@@ -1,0 +1,104 @@
+# 4.6: Kartenpositionen (`map:`) — der Autor pinnt traeumlich selbst, der Rest
+# kommt aus dem Auto-Layout (Worldbuilder.MapLayout: Zeile = BFS-Tiefe ab
+# `start_room`, Spalte = Reihenfolge in der Schicht, `floor:` = z-Achse).
+#
+# Deckt ab:
+#   * `map:` ist ein bekannter Schluessel (kein `UnknownYamlKey`) und kommt im
+#     `world.json` an, **nur wenn es gesetzt ist** — der Byte-Vertrag gilt auch
+#     fuer ein neues Feld
+#   * ein gepinnter Raum bleibt gepinnt (gipfel: x=0, y=2), die anderen werden
+#     gerechnet — sichtbar ueber `worldbuilder map`
+#   * `worldbuilder map-set` schreibt Positionen in-place (Kommentare bleiben)
+#   * `floor:` trennt die Ebenen: keller liegt auf Ebene 1, nicht im Bergmassiv
+#   * das Spiel laeuft mit Positionen genau wie ohne
+name: Karte
+start_room: tor
+rooms:
+  - id: tor
+    name: Torhaus
+    desc: "Ein steinernes Torhaus am Fuss des Berges."
+    exits:
+      north: { to: weg }
+      east: { to: wacht }
+
+  - id: weg
+    name: Bergweg
+    desc: "Ein schmaler Weg bergauf."
+    exits:
+      south: { to: tor }
+      north: { to: gipfel }
+
+  - id: gipfel
+    name: Gipfel
+    desc: "Fels und Wind. Von hier unten sieht man die Glutkrone."
+    exits:
+      south: { to: weg }
+    # vom Autor gepinnt: dritte Etage der Skizze
+    map: {x: 0, y: 2}
+
+  - id: wacht
+    name: Wachthaus
+    desc: "Ein Wachthaus neben dem Tor."
+    exits:
+      west: { to: tor }
+      down: { to: keller }
+
+  - id: keller
+    name: Verlies
+    desc: "Ein tiefes Verlies unter dem Wachthaus."
+    floor: 1
+    exits:
+      north: { to: wacht }
+
+items:
+  - id: fackel
+    name: Fackel
+    desc: "Eine Fackel."
+    location: tor
+    on_take:
+      - { start_quest: hinauf }
+
+npcs:
+  - id: waechter
+    name: Waechter
+    desc: "Ein Waechter am Tor."
+    location: tor
+    topics:
+      gipfel: "Oben ist es kalt, aber der Weg ist frei."
+
+quests:
+  - id: hinauf
+    name: Den Gipfel erreichen
+    desc: "Erkunde den Bergweg."
+    stages:
+      - id: hinauf
+        desc: "Geh ueber den Bergweg zum Gipfel."
+
+rules:
+  - id: am_gipfel
+    on: "enter gipfel"
+    effects:
+      - complete_quest: hinauf
+
+tests:
+  - name: "Positionen stoeren den Lauf nicht"
+    input:
+      - take fackel
+      - journal
+      - north
+      - look
+      - north
+      - look
+      - journal
+    expect:
+      - "Active:"
+      - "Den Gipfel erreichen: Geh ueber den Bergweg zum Gipfel."
+      - "Ein schmaler Weg bergauf."
+      - "Fels und Wind."
+      - "Den Gipfel erreichen (completed)"
+
+  - name: "ein Gespraech am Tor laeuft wie immer"
+    input:
+      - ask waechter about gipfel
+    expect:
+      - "Oben ist es kalt, aber der Weg ist frei."
