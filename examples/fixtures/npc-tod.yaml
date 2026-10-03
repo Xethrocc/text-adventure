@@ -1,0 +1,94 @@
+# B9: `drops_on_death: true` — die Leiche laesst ihre Habe fallen.
+# Der Default ist das Gegenteil (die Leiche behaelt alles), damit bestehende
+# Abenteuer byte-identisch bleiben; der Autor schaltet es je NPC frei.
+name: NPC-Tod Fixture
+start_room: wirtshaus
+
+combat:
+  profile: classic
+
+rooms:
+  - id: wirtshaus
+    name: Wirtshaus
+    desc: Ein schummriges Wirtshaus mit knarrenden Dielen.
+
+npcs:
+  # laesst beim Tod fallen: getragene **und** ausgeruestete Items
+  - id: bandit
+    name: Bandit
+    desc: Ein verhullter Bandit mit tiefem Hut.
+    keys: [bandit, strassenrauber]
+    location: wirtshaus
+    state: alive
+    max_hp: 8
+    attack: 2
+    defense: 0
+    drops_on_death: true
+
+  # ohne Flag: die Leiche behaelt alles (der Default-Vertrag)
+  - id: kellner
+    name: Kellner
+    desc: Ein Kellner, der argwoernisch zuruecktritt.
+    keys: [kellner, wirt]
+    location: wirtshaus
+    state: alive
+    max_hp: 12
+    attack: 1
+    defense: 0
+
+items:
+  - id: beutel
+    name: Beutel
+    desc: Ein Lederbeutel, der bei jeder Bewegung klappert.
+    location: wirtshaus
+    keys: [beutel]
+    carried_by: bandit
+
+  - id: dolch
+    name: Dolch
+    desc: Ein kurzer Dolch mit schmaler Klinge.
+    location: wirtshaus
+    keys: [dolch]
+    slot: weapon
+    effects: [attack+2]
+    carried_by: bandit
+
+  - id: servescheibe
+    name: Servierscheibe
+    desc: Eine Servierscheibe mit truembem Silber.
+    location: wirtshaus
+    keys: [servescheibe, scheibe]
+    carried_by: kellner
+
+tests:
+  - name: "der tote Bandit laesst Habe und Ausruestung liegen"
+    input:
+      - look at bandit
+      - attack bandit
+      - look
+      - quit
+    expect:
+      - "Carrying: Beutel, Dolch."
+      - "Bandit drops: Beutel, Dolch."
+      - "You see: Beutel, Dolch."
+
+  - name: "ohne Flag behaelt die Leiche alles (der Default-Vertrag)"
+    input:
+      - attack kellner
+      - attack kellner
+      - look at kellner
+      - quit
+    expect:
+      - "You attack the kellner and kill it!"
+      - "Carrying: Servierscheibe."
+
+  - name: "die gefallene Habe laesst sich aufnehmen"
+    input:
+      - attack bandit
+      - take beutel
+      - take dolch
+      - quit
+    expect:
+      - "Bandit drops: Beutel, Dolch."
+      - "You take the Beutel."
+      - "You take the Dolch."

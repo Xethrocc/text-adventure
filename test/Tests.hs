@@ -500,7 +500,7 @@ testCombatNarrativeLose = do
 -- | A minimal companion-capable NPC used by the party tests.
 squireDef :: NPCDef
 squireDef = NPCDef "squire" "squire" (plainText "A loyal squire with a chipped blade.")
-    Map.empty ["squire", "knappe"] (Just 20) 3 1 Map.empty emptyAscii Map.empty emptyGrammar
+    Map.empty ["squire", "knappe"] (Just 20) 3 1 Map.empty False emptyAscii Map.empty emptyGrammar
 
 -- | Sample game plus a `squire`. Joining is just the roster convention:
 --   the follow variable `party.squire` set to 1.
@@ -2097,7 +2097,7 @@ testDefaultSaveStateFieldsInitialised = do
 -- | Second companion used by the P0-2 combat regressions.
 guardDef :: NPCDef
 guardDef = NPCDef "guard" "guard" (plainText "A silent guard.")
-    Map.empty ["guard"] (Just 20) 3 1 Map.empty emptyAscii Map.empty emptyGrammar
+    Map.empty ["guard"] (Just 20) 3 1 Map.empty False emptyAscii Map.empty emptyGrammar
 
 -- | P0-2 fixture: sample game in the hallway with two companions (guard,
 --   squire) and a rule that announces the goblin's death. `goblinHp` decides
@@ -4314,7 +4314,7 @@ testStandingOutcomeViaDialogue = do
                                 (DialogueNode "intro" "Join us."
                                     [ DialogueChoice "I accept." Nothing Nothing
                                         (ModifyValue (VRVariable "faction.smugglers") 20) ]))))
-                    ["recruiter"] Nothing 0 0 Map.empty emptyAscii Map.empty emptyGrammar)
+                    ["recruiter"] Nothing 0 0 Map.empty False emptyAscii Map.empty emptyGrammar)
                 (npcDefs (world sample)) }
         st0 = sample { world = w
                      , save = (save sample)
@@ -5070,7 +5070,7 @@ testContainerTakePut = do
 testTopics :: IO Bool
 testTopics = do
     let npc = NPCDef "gelehrter" "Gelehrter" (plainText "Ein Gelehrter.") Map.empty ["alter gelehrter"] (Just 20) 5 5
-                Map.empty emptyAscii
+                Map.empty False emptyAscii
                 (Map.fromList
                     [ ("altes schloss", SetValue (VRVariable "wissen") (EVInt 1))
                     , ("geruechte", SendMessage "Geruechte gibt es viele.") ]) emptyGrammar
@@ -5097,7 +5097,7 @@ testOnTalkTriggerFires :: IO Bool
 testOnTalkTriggerFires = do
     let trig = TriggerDef "test_talk" (OnTalk "gelehrter" "") Nothing [SendMessage "Der Gelehrte runzelt die Stirn."] False 0
         npc = NPCDef "gelehrter" "Gelehrter" (plainText "Ein Gelehrter.") Map.empty [] (Just 20) 5 5
-                Map.empty emptyAscii
+                Map.empty False emptyAscii
                 (Map.fromList [("altes schloss", SendMessage "Altes Schloss?")]) emptyGrammar
         st0 = cstate2 [mkTestRoom "halle" "Halle"] [] [] Map.empty
         st0' = st0 { world = (world st0) { npcDefs = Map.singleton "gelehrter" npc
@@ -5119,7 +5119,7 @@ testOnTalkTriggerFires = do
 b7State :: [(ItemDef, Location)] -> GameState
 b7State its =
     let waechter = NPCDef "waechter" "Waechter" (plainText "Ein Waechter.") Map.empty ["waechter"]
-                    (Just 20) 5 5 Map.empty emptyAscii Map.empty emptyGrammar
+                    (Just 20) 5 5 Map.empty False emptyAscii Map.empty emptyGrammar
         st0 = cstate2 [mkTestRoom "halle" "Halle"] its [] Map.empty
     in st0 { world = (world st0) { npcDefs = Map.singleton "waechter" waechter }
            , save = (save st0) { npcStates = Map.singleton "waechter"
@@ -5312,7 +5312,7 @@ testNpcEquipment = do
         zweitSchwert = (mkTestEquip "zweit" "Zweitschwert" Weapon) { itemEquipEffects = [] }
         stein = mkTestItem "stein" "Stein"   -- no equip slot at all
         waechter2 = NPCDef "waechter2" "Waechter2" (plainText "Ein zweiter Waechter.")
-                    Map.empty ["waechter2"] (Just 20) 5 5 Map.empty
+                    Map.empty ["waechter2"] (Just 20) 5 5 Map.empty False
                     emptyAscii Map.empty emptyGrammar
         st0 = b7State [ (schwert, InRoom "halle"), (ruestung, InRoom "halle")
                       , (zweitSchwert, InRoom "halle"), (stein, InRoom "halle") ]
@@ -5400,6 +5400,74 @@ testNpcEquipmentAffectsCombat = do
     r2 <- expectTrue "the reported hit drops too"
             (("You hit for " ++ show dmgArmored) `isInfixOf` msgArmored)
     pure (r1 && r2)
+
+-- | B9: `drops_on_death:` — the author decides whether a corpse lets go of
+--   what it carried and wore. The default is the byte-frozen contract (the
+--   corpse keeps everything), so existing adventures are untouched.
+testNpcDropsOnDeath :: IO Bool
+testNpcDropsOnDeath = do
+    let schluessel = mkTestItem "schluessel" "Schluessel"
+        stein = mkTestItem "stein" "Stein"
+        ruestung = (mkTestEquip "ruestung" "Ruestung" Body) { itemEquipEffects = [DefenseBonus 2] }
+        -- one state with the flag, one without; same items in the same places
+        dying flag its =
+            let s0 = b7State its
+                def = case Map.lookup "waechter" (npcDefs (world s0)) of
+                        Just d  -> d
+                        Nothing -> error "b7State must carry the waechter"
+                def' = def { npcDropsOnDeath = flag }
+            in s0 { world = (world s0) { npcDefs = Map.insert "waechter" def' (npcDefs (world s0)) } }
+        load = [ (schluessel, CarriedBy (ActorNPC "waechter"))
+               , (ruestung, EquippedBy (ActorNPC "waechter"))
+               , (stein, CarriedBy ActorPlayer) ]
+        die st = killNPCWithMsg "waechter" st
+        itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+        evsOf = renderEvents
+    -- default: the corpse keeps everything (byte-frozen)
+    let (kept, keptMsgs) = die (dying False load)
+    r1 <- expectEqual (Just (CarriedBy (ActorNPC "waechter"))) (itemLoc "schluessel" kept)
+    r2 <- expectEqual (Just (EquippedBy (ActorNPC "waechter"))) (itemLoc "ruestung" kept)
+    r3 <- expectTrue "no drop line without the flag" (not ("drops" `isInfixOf` evsOf keptMsgs))
+    r4 <- expectEqual (Just "dead") (npcStatus <$> Map.lookup "waechter" (npcStates (save kept)))
+    -- with the flag: carried and worn items land in the room of the corpse
+    let (dropped, droppedMsgs) = die (dying True load)
+    r5 <- expectEqual (Just (InRoom "halle")) (itemLoc "schluessel" dropped)
+    r6 <- expectEqual (Just (InRoom "halle")) (itemLoc "ruestung" dropped)
+    r7 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "stein" dropped)
+    r8 <- expectTrue "the drop line names the npc and the items"
+            (let o = evsOf droppedMsgs
+             in "Waechter" `isInfixOf` o && "Schluessel" `isInfixOf` o && "Ruestung" `isInfixOf` o)
+    -- a second death is a no-op (no double message, no second drop)
+    let (again, againMsgs) = die dropped
+    r9 <- expectTrue "a corpse does not drop twice" (null againMsgs)
+    r10 <- expectEqual (Just (InRoom "halle")) (itemLoc "schluessel" again)
+    -- an empty load drops nothing (no empty line)
+    r11 <- expectTrue "an empty load stays silent"
+            (snd (die (dying True [(stein, CarriedBy ActorPlayer)])) == [])
+    -- end to end: the real command path (an attack that kills in the classic
+    -- profile) must drop the load exactly like `killNPC` does
+    let run cmd st = applyLoopCommandEv (parseCommand cmd) (initLoopState st)
+        fragile = let s0 = dying True load
+                      s1 = s0 { world = (world s0) { npcDefs = Map.adjust (\d -> d { npcMaxHealth = Just 5 }) "waechter" (npcDefs (world s0)) } }
+                      s2 = s1 { save = (save s1) { npcStates = Map.adjust (\ns -> ns { npcHealth = Just 5 }) "waechter" (npcStates (save s1)) } }
+                      s3 = s2 { save = (save s2) { player = (player (save s2)) { playerHealth = 500, playerMaxHealth = 500, playerAttack = 20, playerDefense = 0 } } }
+                      s4 = s3 { save = (save s3) { equipment = Map.empty } }
+                      s5 = s4 { world = (world s4) { combatProfile = CombatClassic Nothing } }
+                  in s5
+        stCorpse = lsCurrent (fst (run "attack waechter" fragile))
+    r12 <- expectEqual (Just "dead") (npcStatus <$> Map.lookup "waechter" (npcStates (save stCorpse)))
+    r12b <- expectEqual (Just (InRoom "halle")) (itemLoc "schluessel" stCorpse)
+    r12c <- expectEqual (Just (InRoom "halle")) (itemLoc "ruestung" stCorpse)
+    -- the flag is omitted from the world json unless set (byte contract)
+    r13 <- expectTrue "the flag stays out of the json when unset"
+            (not ("npcDropsOnDeath" `isInfixOf` BLC.unpack (Aeson.encode (npcDefs (world (dying False []))))))
+    r14 <- expectTrue "the flag is written when set"
+            ("npcDropsOnDeath" `isInfixOf` BLC.unpack (Aeson.encode (npcDefs (world (dying True [])))))
+    r15 <- expectTrue "round trip through json"
+            (case (Aeson.decode (BLC.pack (BLC.unpack (Aeson.encode (npcDefs (world (dying True []))))))) :: Maybe (Map.Map String NPCDef) of
+                Just m  -> maybe False npcDropsOnDeath (Map.lookup "waechter" m)
+                Nothing -> False)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r12b && r12c && r13 && r14 && r15)
 
 -- | B9: the effect table: `MoveEntity x (CarriedBy <actor>)` honours the actor —
 --   the `give:` object form can hand items to NPCs, not just the player.
@@ -9576,6 +9644,7 @@ main = do
         , runTest "npc interactions omitted from json when empty (B9)" testNpcInteractionsOmittedWhenEmpty
         , runTest "npc equipment: location, slots, combat bonus, visibility (B9)" testNpcEquipment
         , runTest "npc equipment changes the classic combat round (B9)" testNpcEquipmentAffectsCombat
+        , runTest "drops_on_death: the corpse keeps or drops its load (B9)" testNpcDropsOnDeath
         , runTest "take all from <npc> (B9)" testNpcTakeAll
         , runTest "npc possession: MoveEntity honours the carrier (B7)" testMoveEntityCarriedByActor
         , runTest "ActorHas predicate for player, NPC and device entity (W4)" testActorHasPredicate

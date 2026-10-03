@@ -261,6 +261,7 @@ catalogEntries =
     , ("npc.carries",          "\nCarrying: {items}.")
     -- -- NPC equipment (B9) -------------------------------------------------
     , ("npc.wears",            "\nWearing: {items}.")
+    , ("npc.drops_items",      "\n{npc} drops: {items}.")
     , ("npc.gave_to",          "You give the {item} to {npc}.")
     , ("npc.no_item",          "You find no {item} on {npc}.")
     , ("npc.took_from",        "You take the {item} from {npc}.")

@@ -2854,6 +2854,8 @@ compileNPCDefSafe registry n =
             , E.npcAttackBase = anAttack n
             , E.npcDefenseBase = anDefense n
             , E.npcVerbMap = verbMap
+            -- B9: written only when set (byte contract of the NPCDef encoder)
+            , E.npcDropsOnDeath = anDropsOnDeath n
             , E.npcGrammar = anGrammar n
             })
 

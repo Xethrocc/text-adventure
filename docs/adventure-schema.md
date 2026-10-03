@@ -2387,12 +2387,39 @@ interactions:
   (`equip.not_equippable`) — der Autor erfährt es im Lauf, weil die Kompilierung
   die Reihenfolge der Laeufe nicht kennt.
 
+### Fallenlassen beim Tod (B9)
+
+`drops_on_death: true` am NPC: die Leiche laesst ihre **getragenen und
+ausgeruesteten** Items im Raum liegen, in dem sie steht (`npc.drops_items`).
+
+```yaml
+npcs:
+  - id: bandit
+    name: Bandit
+    location: wirtshaus
+    max_hp: 8
+    drops_on_death: true
+```
+
+- **Default ist „die Leiche behaelt alles“** — das ist der byte-gefrorene Vertrag
+  aller bestehenden Abenteuer (die Engine hat nie automatisch fallen gelassen).
+  Der Schalter ist je NPC, nicht global.
+- Getragen (`CarriedBy`) **und** getragen-ausgeruestet (`EquippedBy`) fallen in
+  `InRoom <raum der leiche>`; ein NPC ohne Raum (`Removed`) behaelt seine Habe.
+- Die Zeile nennt Figur und Items (eine Zeile, Katalog-Key `npc.drops_items`).
+  Danach ist die Beute ganz normale Raum-Habe: `take X`, `take all`,
+  `take all from <npc>`.
+- Ein zweiter Tod passiert nicht (kein Doppel-Drop, keine zweite Zeile).
+- Der Compiler kennt `drops_on_death` (kein `UnknownYamlKey`); im `world.json`
+  steht das Flag **nur, wenn es gesetzt** ist — die NPCDef-Ausgabe laesst leere
+  Felder weg.
+
 **Diebstahl-Sperren** setzt der Autor per Veto-Regeln (`on: before` + `block:`, siehe
 Phase 2.2) — die Before-Phase läuft für alle Kommandos, `cmd.verb` ist `take` bzw. `give`.
 
-**Grenzen (bewusst):** keine NPC-**Ausrüstung** (`EquippedBy ActorNPC` ist im
-Zustandsmodell vorgesehen, aber noch nicht autorenseitig), kein automatisches Fallenlassen
-beim Tod.
+**Grenzen (bewusst):** keine Spieler-Vokabel zum Ausrüsten eines NPC (das ist die
+Autorenform `give: {…, equip: true}`), kein globales Fallenlassen beim Tod (je NPC
+über `drops_on_death:`).
 
 ## Geschlossene Mengen-Operationen (B3)
 

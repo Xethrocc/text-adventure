@@ -586,6 +586,7 @@ data ANPC = ANPC
     , anTopics      :: Map.Map String AActionOutcome  -- ^ 4.5: ask/tell X about <topic>
     , anBarks       :: [ABark]                         -- ^ 4.5: ambient one-liners (trigger sugar)
     , anOnTalk      :: Maybe AActionOutcome            -- ^ 4.5: on_talk hook (trigger sugar)
+    , anDropsOnDeath :: Bool                          -- ^ B9: the corpse lets go of carried + worn items (default = keeps everything)
     , anGrammar     :: E.Grammar                       -- ^ 4.3.5: article:/gender: grammar metadata (empty = none)
     } deriving (Show, Eq, Generic)
 
@@ -630,6 +631,7 @@ instance FromJSON ANPC where
         <*> o .:? "topics" .!= Map.empty
         <*> o .:? "barks" .!= []
         <*> o .:? "on_talk"
+        <*> o .:? "drops_on_death" .!= False
         <*> E.grammarFromJSONFields o
 
 -- | 4.5: one ambient bark: a line and an optional context condition.
@@ -1761,7 +1763,7 @@ knownKeys EntItem = Set.fromList
 knownKeys EntNPC = Set.fromList
     [ "id", "name", "desc", "description", "ascii", "keys", "location"
     , "state", "max_hp", "attack", "defense", "dialogue", "verb_map", "party"
-    , "topics", "barks", "on_talk", "article", "gender"
+    , "topics", "barks", "on_talk", "drops_on_death", "article", "gender"
     ]
 knownKeys EntQuest = Set.fromList
     [ "id", "name", "desc", "prereqs", "stages", "reward" ]

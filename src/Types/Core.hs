@@ -1583,6 +1583,7 @@ data NPCDef = NPCDef
     , npcAttackBase    :: Int
     , npcDefenseBase   :: Int
     , npcVerbMap       :: Map.Map (VerbPhase, Verb, String) Effect
+    , npcDropsOnDeath  :: Bool                  -- ^ B9: the corpse lets go of what it carried/wore (default False = keeps everything)
     , npcAscii         :: AsciiArt              -- ^ Optional state-dependent, animated ASCII art
     , npcTopics        :: Map.Map String Effect    -- ^ 4.5: `ask`/`tell` X about <topic>
     , npcGrammar       :: Grammar               -- ^ 4.3.5: optional article/gender metadata (empty = none)
@@ -1600,6 +1601,9 @@ instance ToJSON NPCDef where
         , "npcDefenseBase"   .= npcDefenseBase def
         , "npcVerbMap"       .= verbStateMapToJSON (npcVerbMap def)
         ] ++ (if Map.null (npcTopics def) then [] else ["topics" .= npcTopics def])
+          -- B9: byte contract — the flag is written only when it is set, so
+          -- every existing world.json stays byte-identical
+          ++ (if npcDropsOnDeath def then ["npcDropsOnDeath" .= True] else [])
           ++ asciiPair "npcAscii" (npcAscii def)
           ++ grammarJSONFields (npcGrammar def)
 
@@ -1614,6 +1618,7 @@ instance FromJSON NPCDef where
         <*> o .:  "npcAttackBase"
         <*> o .:  "npcDefenseBase"
         <*> (o .: "npcVerbMap" >>= verbStateMapFromJSON)
+        <*> o .:? "npcDropsOnDeath"  .!= False
         <*> o .:? "npcAscii"         .!= emptyAscii
         <*> o .:? "topics" .!= Map.empty
         <*> grammarFromJSONFields o

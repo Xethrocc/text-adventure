@@ -1211,6 +1211,12 @@ advWithItem item =
     let adv = minAdventure (minRoom "loc_0")
     in adv { advItems = [item] }
 
+-- | A minimal adventure carrying one NPC (B9: the `drops_on_death:` tests).
+advWithNPC :: ANPC -> Adventure
+advWithNPC npc =
+    let adv = minAdventure (minRoom "loc_0")
+    in adv { advNPCs = [npc { anLocation = "loc_0" }] }
+
 testActivateVerbMapsToUse :: IO Bool
 testActivateVerbMapsToUse = do
     let vm = Map.fromList [("activate,intact", [AOMessage "activated"])]
@@ -2428,7 +2434,7 @@ testStealthCompiles = do
                     [ AOSetFlag "alarmed" "true", AOMessage "The guard heard you!" ]
         adv = (minAdventure (minRoom "loc_0"))
             { advStealth = Just (AStealth noise [guard])
-            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing Map.empty [] Nothing E.emptyGrammar ] }
+            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing Map.empty [] Nothing False E.emptyGrammar ] }
     case compileAdventure adv of
         Left errs -> do
             putStrLn $ "  compile errors: " ++ show errs
@@ -2650,7 +2656,7 @@ testPatrolFixtureCompiles = do
 -- | The patrolling wolf the patrol tests declare.
 wolfNPC :: String -> ANPC
 wolfNPC loc = ANPC "wolf" "Wolf" (ACondText "Wolf" []) (AAscii (ACondText "" []) [] 0 [] Nothing)
-                    [] loc "alive" Nothing 8 3 Map.empty Map.empty Nothing Map.empty [] Nothing E.emptyGrammar
+                    [] loc "alive" Nothing 8 3 Map.empty Map.empty Nothing Map.empty [] Nothing False E.emptyGrammar
 
 -- | The 7f combat segment: default without a block is CombatClassic; off /
 --   narrative compile to their profiles; tactical and unknown profiles are
@@ -2778,7 +2784,7 @@ testCombatFixturesCompile = do
 partySquire :: Maybe AParty -> ANPC
 partySquire party
     = ANPC "squire" "Knappe" (ACondText "Knappe" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive"
-        (Just 20) 3 1 Map.empty Map.empty party Map.empty [] Nothing E.emptyGrammar
+        (Just 20) 3 1 Map.empty Map.empty party Map.empty [] Nothing False E.emptyGrammar
 
 followVerb :: AVerb
 followVerb = AVerb "follow" ["escort"]
@@ -3630,6 +3636,8 @@ tests =
     , ("carried_by: with in_container is a conflict error (B7)", testCarriedByConflictFails)
     , ("give: string and object form compile (B7)", testGiveToSugar)
     , ("give: unknown to-npc is a hard error (B7)", testGiveToUnknownNpcFails)
+    , ("give: equip: true is a variant of the give-sugar (B9)", testGiveEquipSugar)
+    , ("drops_on_death: known key, compiles, json omission (B9)", testDropsOnDeathFlag)
     , ("give: equip: true is a variant of the give-sugar (B9)", testGiveEquipSugar)
     , ("known keys: carried_by and capacity warn nowhere (B7)", testNpcPossessionKnownKeysClean)
     -- B9: item-on-NPC interactions
@@ -5856,6 +5864,7 @@ minNpcKey nid = ANPC
     , anDialogue = Map.empty
     , anVerbMap = Map.empty
     , anParty = Nothing, anTopics = Map.empty, anBarks = [], anOnTalk = Nothing
+    , anDropsOnDeath = False
     , anGrammar = E.emptyGrammar }
 
 testSayNodeDialogEndSugar :: IO Bool
@@ -5958,6 +5967,51 @@ testGiveToSugar = do
     r4 <- expectEqual (Just (AOGiveTo "schluessel" "waechter"))
                       (Aeson.decode (BLC.pack "{\"give\": {\"item\": \"schluessel\", \"to\": \"waechter\"}}"))
     pure (r1 && r2 && r3 && r4)
+
+-- | B9: `drops_on_death:` is a known npc key that reaches the engine flag and
+--   is omitted from the world json when it is not set (byte contract).
+testDropsOnDeathFlag :: IO Bool
+testDropsOnDeathFlag = do
+    let npc = (minNpcKey "waechter") { anDropsOnDeath = True }
+        adv = advWithNPC npc
+        plain = advWithNPC (minNpcKey "waechter")
+        compiles adv' f = case compileAdventure adv' of
+            Right cr -> pure (f (E.npcDefs (crWorld cr)))
+            Left errs -> expectTrue ("compile: " ++ issuesText errs) False
+    r1 <- compiles adv (\defs -> maybe False npcDropsOnDeath (Map.lookup "waechter" defs))
+    r2 <- compiles adv (\defs -> "npcDropsOnDeath" `isInfixOf` BLC.unpack (Aeson.encode defs))
+    r3 <- compiles plain (\defs -> not ("npcDropsOnDeath" `isInfixOf` BLC.unpack (Aeson.encode defs)))
+    let yaml = unlines
+            [ "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Halle"
+            , "    desc: Eine Halle."
+            , "npcs:"
+            , "  - id: waechter"
+            , "    name: Waechter"
+            , "    location: loc_0"
+            , "    max_hp: 10"
+            , "    drops_on_death: true"
+            ]
+        yamlPlain = unlines (take (length (lines yaml) - 2) (lines yaml))
+    -- the same key must survive the YAML front door without a UnknownYamlKey
+    -- warning (the B7 lesson: a new key without knownKeys warns everywhere)
+    r4 <- case decode1 (BLC.pack yaml) of
+        Left err -> expectTrue ("yaml parse failed: " ++ show err) False
+        Right (rawAdv :: Adventure) -> do
+            r4a <- expectEqual True (anDropsOnDeath (head (advNPCs rawAdv)))
+            case compileAdventure rawAdv of
+                Left errs -> do r4b <- expectTrue ("compile: " ++ issuesText errs) False
+                                pure (r4a && r4b)
+                Right cr -> do
+                    let keyWarns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
+                    r4b <- expectTrue ("unknown key warnings: " ++ show (length keyWarns)) (null keyWarns)
+                    pure (r4a && r4b)
+    r5 <- case decode1 (BLC.pack yamlPlain) of
+        Left err -> expectTrue ("yaml parse failed: " ++ show err) False
+        Right (rawAdv :: Adventure) -> expectEqual False (anDropsOnDeath (head (advNPCs rawAdv)))
+    pure (r1 && r2 && r3 && r4 && r5)
 
 -- | B9: `give: {item, to, equip: true}` compiles to `EquippedBy` (the B7
 --   sugar, not a new player command), `equip: false` stays `CarriedBy`, and an

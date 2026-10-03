@@ -769,6 +769,42 @@ vehicleConditionTick = vehicleConditionTickWith applyOutcomeEv
 killNPC :: String -> GameState -> GameState
 killNPC targetNpcId state = fst (killNPCWithMsg targetNpcId state)
 
+-- | B9: what a corpse lets go of. Only with the author flag `drops_on_death:
+--   true` — the default keeps everything on the body, which is the byte-frozen
+--   contract of every existing adventure. Carried *and* worn items drop into
+--   the room the NPC is standing in (an NPC without a room keeps its load).
+dropOnDeath :: String -> GameState -> (GameState, [OutputEvent])
+dropOnDeath targetNpcId state
+    | not (dropsOnDeath targetNpcId state) = (state, [])
+    | otherwise = case (npcLocation <$> Map.lookup targetNpcId (npcStates (save state))) of
+        Just (InRoom room) ->
+            let dropped = [ iId | iId <- droppedItemIds targetNpcId state ]
+                state'  = foldl' (\s iId -> relocateItem iId (InRoom room) s) state dropped
+            in if null dropped
+               then (state, [])
+               else ( state'
+                    , evMsg "npc.drops_items"
+                        ([ ("npc", npcNameOf targetNpcId state)
+                         , ("items", intercalate ", " [ nm | iId <- dropped, let nm = itemNameOf iId state ]) ]) )
+        _ -> (state, [])
+
+-- | B9: does this NPC let go of its load when it dies? The author flag
+--   `drops_on_death:` on the NPC (default False = the corpse keeps everything).
+dropsOnDeath :: NPCID -> GameState -> Bool
+dropsOnDeath nId state = maybe False npcDropsOnDeath (Map.lookup nId (npcDefs (world state)))
+
+-- | Items on an NPC's person: what it carries in its hands and what it wears.
+droppedItemIds :: NPCID -> GameState -> [ItemID]
+droppedItemIds nId state =
+    [ iId | (iId, is) <- Map.toList (itemStates (save state))
+         , itemLocation is `elem` [CarriedBy (ActorNPC nId), EquippedBy (ActorNPC nId)] ]
+
+npcNameOf :: NPCID -> GameState -> String
+npcNameOf nId state = maybe nId npcName (Map.lookup nId (npcDefs (world state)))
+
+itemNameOf :: ItemID -> GameState -> String
+itemNameOf iId state = maybe iId itemName (Map.lookup iId (itemDefs (world state)))
+
 -- | `killNPC`, keeping the messages of the fired `OnStateChange` trigger rules.
 killNPCWithMsg :: String -> GameState -> (GameState, [OutputEvent])
 killNPCWithMsg targetNpcId state =
@@ -780,7 +816,9 @@ killNPCWithMsg targetNpcId state =
                         { npcStates = Map.adjust (\s -> s { npcStatus = "dead" }) targetNpcId (npcStates (save state))
                         , entityStates = Map.insert targetNpcId "unlocked" (entityStates (save state))
                         } }
-            in fireTriggers (OnStateChange targetNpcId) state'
+                (stateDropped, dropMsgs) = dropOnDeath targetNpcId state'
+                (stateDead, triggerMsgs) = fireTriggers (OnStateChange targetNpcId) stateDropped
+            in (stateDead, dropMsgs ++ triggerMsgs)
 
 -- | Set an entity's state and fire its `OnStateChange` event.
 setEntityStateWithEvents :: String -> String -> GameState -> (GameState, [OutputEvent])

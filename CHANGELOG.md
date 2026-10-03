@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Fallenlassen beim NPC-Tod (B9, Teil 3) — **B9 abgeschlossen**
+
+- **Neues NPC-Feld `drops_on_death: true`:** die Leiche laesst ihre **getragenen
+  und ausgeruesteten** Items im Raum liegen, in dem sie steht (Katalog-Zeile
+  `npc.drops_items`). Getragen ist getragen — `take all from <npc>` findet die
+  Beute danach nicht mehr, sie liegt ganz normal im Raum.
+- **Default ist „die Leiche behaelt alles“**: byte-gefroren (die Engine hat nie
+  automatisch fallen gelassen), also aendert sich kein bestehendes Abenteuer.
+  Das Flag steht im `world.json` nur, wenn es gesetzt ist (NPCDef-Ausgabe
+  laesst leere Felder weg), und ist in `knownKeys EntNPC` eingetragen.
+- Wirkt an der **einen** Stelle (`killNPCWithMsg` → `dropOnDeath`), damit
+  jeder Todesweg (Kampf, `damage_npc`, `set_state: … dead`, `unlock`) dieselbe
+  Regel hat. Ein zweiter Tod ist ein No-op (kein Doppel-Drop).
+- Tests: `testNpcDropsOnDeath` (Default behaelt, Flag laesst fallen, eigene
+  Zeile, zweiter Tod still, leere Habe still, Ende-zu-Ende ueber den echten
+  `attack`-Befehl, JSON-Auslassung + Round-Trip) + `testDropsOnDeathFlag`
+  (Compile, JSON mit/ohne Flag, YAML-Front ohne `UnknownYamlKey`).
+- Content: `examples/fixtures/npc-tod.yaml` (Bandit mit Flag, Kellner ohne —
+  derselbe Lauf zeigt beide Seiten, 3 `tests:`-Abschnitte) +
+  `ci/e2e/npc-tod.{in,expect}` (CI-Stufen 4/4b).
+
 ### NPC-Ausruestung (B9, Teil 2)
 
 - **Neue Autorenform `give: {item: X, to: <npc-id>, equip: true}`** — eine
@@ -77,7 +98,8 @@
   verbrauchtes Item, Angriffs-Fallback beim nicht deklarierten Paar, `tests:`-
   Sektion) + `ci/e2e/npc-interaktion.{in,expect}` (CI-Stufen 4/4b); Doku in
   `docs/adventure-schema.md`.
-- Offen im B9-Rest (bewusst nicht hier): Fallenlassen beim NPC-Tod.
+- Offen im B9-Rest: nichts — `take all from <npc>` (Teil 1), NPC-Ausruestung
+  (Teil 2) und Fallenlassen beim Tod (Teil 3) sind erledigt.
 
 ### Sprachpakete: Beispiel-Abenteuer & Genre-Demo (4.3, Teil 6)
 
