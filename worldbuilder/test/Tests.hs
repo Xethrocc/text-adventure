@@ -34,7 +34,7 @@ import Data.YAML (posLine)
 import qualified Data.Text as T
 import Types as E
 import Game (emptyGameState, evalPredicate)
-import Validate (validateWorld, validateGameState, ValidationError (..))
+import Validate (validateWorld, validateWorldWithFlags, validateGameState, ValidationError (..))
 
 -- | Helper: a minimal room set for validateGameState tests
 minWorld :: E.GameWorld
@@ -3637,6 +3637,7 @@ tests =
     , ("give: string and object form compile (B7)", testGiveToSugar)
     , ("give: unknown to-npc is a hard error (B7)", testGiveToUnknownNpcFails)
     , ("give: equip: true is a variant of the give-sugar (B9)", testGiveEquipSugar)
+    , ("initial_flags satisfy the flag validation (4.6)", testInitialFlagsSatisfyValidation)
     , ("drops_on_death: known key, compiles, json omission (B9)", testDropsOnDeathFlag)
     , ("known keys: carried_by and capacity warn nowhere (B7)", testNpcPossessionKnownKeysClean)
     -- B9: item-on-NPC interactions
@@ -6168,6 +6169,52 @@ testNpcInteractionKnownKeysClean = do
                 r1 <- expectTrue ("expected 0 unknown key warnings, got " ++ show (length keyWarns)) (null keyWarns)
                 r2 <- expectTrue "npc interaction survived the yaml round trip"
                         (Map.member ("verband", "waechter") (E.npcInteractions (crWorld cr)))
+                pure (r1 && r2)
+
+-- | 4.6: `initial_flags:` belongs to the start save, so the world validator
+--   has to be told about it. Before the fix, this adventure was rejected with
+--   `MissingSetFlag "started"` and `UnknownQuestPrereq "zugang" "started"` and
+--   `compile` wrote nothing without `--force`.
+testInitialFlagsSatisfyValidation :: IO Bool
+testInitialFlagsSatisfyValidation = do
+    let yaml = unlines
+            [ "start_room: loc_0"
+            , "initial_flags:"
+            , "  started: \"true\""
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Halle"
+            , "    desc: Eine Halle."
+            , "quests:"
+            , "  - id: zugang"
+            , "    name: Zugang"
+            , "    prereqs: [started]"
+            , "    stages:"
+            , "      - id: s1"
+            , "        desc: \"Ein Schritt.\""
+            , "rules:"
+            , "  - id: nur_wenn_started"
+            , "    on: \"turn\""
+            , "    when:"
+            , "      has_flag: started"
+            , "    effects:"
+            , "      - msg: \"Passt.\""
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                -- exactly the combination the CLI uses
+                let errs = validateWorldWithFlags (crWorld cr) (Map.keysSet (E.flags (crSave cr)))
+                          ++ validateGameState (crWorld cr) (crSave cr)
+                r1 <- expectTrue ("expected no validation errors, got " ++ show errs) (null errs)
+                r2 <- expectTrue "the flag really is in the start save"
+                        (Map.member "started" (E.flags (crSave cr)))
                 pure (r1 && r2)
 
 -- ===========================================================================

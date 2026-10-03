@@ -1,7 +1,7 @@
 -- | World validation before starting the game.
 --   Checks consistency of IDs, exits, references and reachability.
-module Validate (ValidationError(..), validateWorld, validateGameState, setFlagsInWorld,
-    idsFromOutcomeRoom) where
+module Validate (ValidationError(..), validateWorld, validateWorldWithFlags,
+    validateGameState, setFlagsInWorld, idsFromOutcomeRoom) where
 
 import Types
 import Data.List (nub, stripPrefix, foldl')
@@ -41,8 +41,23 @@ data ValidationError
 -- ---------------------------------------------------------------------------
 
 -- | Validate a complete GameWorld, returning a list of errors (empty = valid).
+--
+--   Note: this is the save-blind entry point. Flags declared in
+--   @initial_flags:@ live in the 'SaveState' and are invisible here, so a flag
+--   that is only set there used to be reported as never set. Callers that have
+--   a save must use 'validateWorldWithFlags'.
 validateWorld :: GameWorld -> [ValidationError]
-validateWorld gw =
+validateWorld gw = validateWorldWithFlags gw Set.empty
+
+-- | 4.6: 'validateWorld' plus the flag ids the game starts with
+--   (@initial_flags:@). Both flag checks — @MissingSetFlag@ for predicates and
+--   @UnknownQuestPrereq@ for quest prerequisites — ask "is this flag ever set?",
+--   and a flag set at game start is set. Without them the answer was a false
+--   positive that refused to compile legitimate content (measured: a world with
+--   @initial_flags: { started: "true" }@ and a rule conditioned on
+--   @has_flag: started@ exited 1 with @MissingSetFlag "started"@).
+validateWorldWithFlags :: GameWorld -> Set.Set FlagID -> [ValidationError]
+validateWorldWithFlags gw initialFlags =
     concat
         [ checkDanglingExits gw
         , checkMissingRoomRefs gw
@@ -53,7 +68,7 @@ validateWorld gw =
         , checkMissingEntitiesInDefs gw
         , checkMissingQuestsInDefs gw
         , checkMissingVehiclesInDefs gw
-        , checkFlags gw
+        , checkFlags gw initialFlags
         ]
 
 -- ---------------------------------------------------------------------------
@@ -305,9 +320,11 @@ checkMissingVehiclesInDefs gw =
 
 -- | Find flags that are checked in a predicate (HasFlag / Compare on VRFlag)
 --   but never set (SetFlag outcome) anywhere in the world definitions.
-checkFlags :: GameWorld -> [ValidationError]
-checkFlags gw =
-    let setFlags = foldl' scanSetFlags Set.empty (allOutcomes gw)
+--   'initialFlags' carries the @initial_flags:@ of the start save (see
+--   'validateWorldWithFlags').
+checkFlags :: GameWorld -> Set.Set FlagID -> [ValidationError]
+checkFlags gw initialFlags =
+    let setFlags = Set.union initialFlags (foldl' scanSetFlags Set.empty (allOutcomes gw))
         checked  = Set.fromList (concatMap flagsInPredicate (allPredicates gw))
         missing  = Set.toList (Set.difference checked setFlags)
     in [MissingSetFlag flg "checked but never set in any outcome" | flg <- missing]
@@ -560,7 +577,10 @@ validateGameState gw st = concat
         , null (questStages q) ]
 
     checkQuestPrereqFlags =
-        let knownSetFlags = setFlagsInWorld gw
+        -- `initial_flags:` is part of the start save, so its keys count as set
+        -- (4.6: they used to be invisible here, which turned a satisfied
+        -- prerequisite into a hard `UnknownQuestPrereq`).
+        let knownSetFlags = Set.union (Map.keysSet (flags st)) (setFlagsInWorld gw)
         in [ UnknownQuestPrereq qId flag
            | (qId, q) <- Map.toList (questDefs gw)
            , (flag, _) <- Map.toList (questPrereqs q)

@@ -43,7 +43,7 @@ import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, par
                pattern TargetItem, pattern TargetVehicle, pattern TargetAmbiguous, pattern TargetNotFound, pattern TargetBare)
 import Verbs (verbAliasMap)
 import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombat, shipAbsorb)
-import Validate (ValidationError (..), validateWorld, validateGameState, idsFromOutcomeRoom)
+import Validate (ValidationError (..), validateWorld, validateWorldWithFlags, validateGameState, idsFromOutcomeRoom)
 import Sample (initSampleGame)
 import SaveLoad (computeWorldChecksum, formatSaveEntry, currentSaveVersion)
 import qualified SaveLoad as SaveLoad
@@ -2909,6 +2909,41 @@ testUndoRestoresAfterDeath = do
 
 -- | Quest-Rewards unterstützen jetzt beliebige Outcomes (z.B. GiveItem),
 --   nicht nur SendMessage – der vollständige Interpreter wird verwendet.
+-- | 4.6: `initial_flags:` lives in the save, not the world — but a flag set
+--   there *is* set when the game starts. Both flag checks ask "is this flag
+--   ever set?", so both used to report a false positive and refuse to compile
+--   legitimate content (measured: exit 1 + `MissingSetFlag "started"`).
+testInitialFlagsCountAsSet :: IO Bool
+testInitialFlagsCountAsSet = do
+    let gw = (world initSampleGame)
+                { triggerDefs =
+                    [ TriggerDef "t_check" OnTurn (Just (HasFlag "started"))
+                        [ SendMessage "nur wenn started" ] False 0 ]
+                -- a different flag than the predicate checks: `setFlagsInWorld`
+                -- counts predicate-referenced flags as set (a deliberately
+                -- generous heuristic), so reusing one name would mask the case
+                , questDefs = Map.singleton "q" (Quest "q" "Q" "d"
+                                    (Map.singleton "tor_offen" "true")
+                                    [QuestStage "s1" "s" Nothing] Nothing) }
+        stWith = (save initSampleGame) { flags = Map.singleton "tor_offen" "true" }
+        stWithout = save initSampleGame
+        isMissingSetFlag e = case e of
+            MissingSetFlag f _ -> f == "started"
+            _ -> False
+    r1 <- expectTrue "the save-blind entry point still reports the flag (unchanged contract)"
+            (any isMissingSetFlag (validateWorld gw))
+    r2 <- expectTrue "validateWorldWithFlags sees the start flags"
+            (not (any isMissingSetFlag (validateWorldWithFlags gw (Set.singleton "started"))))
+    r3 <- expectTrue "a quest prereq satisfied by initial_flags is not an error"
+            (not (any isUnknownPrereq (validateGameState gw stWith)))
+    r4 <- expectTrue "a prereq that is nowhere set is still an error"
+            (any isUnknownPrereq (validateGameState gw stWithout))
+    pure (r1 && r2 && r3 && r4)
+  where
+    isUnknownPrereq e = case e of
+        UnknownQuestPrereq qid f -> qid == "q" && f == "tor_offen"
+        _ -> False
+
 testQuestRewardGiveItemWorks :: IO Bool
 testQuestRewardGiveItemWorks = do
     let quest = Quest "test_quest" "Test Quest" "desc"
@@ -9527,6 +9562,9 @@ main = do
         , runTest "undo restores after death" testUndoRestoresAfterDeath
         -- Phase 1: Outcome-Interpreter (1a)
         , runTest "quest reward can GiveItem via full interpreter" testQuestRewardGiveItemWorks
+        -- 4.6: quest chain + on_complete byte contract
+        -- 4.6: initial_flags as validation input
+        , runTest "initial_flags count as set for flag validation (4.6)" testInitialFlagsCountAsSet
         , runTest "condition tick can GiveItem via full interpreter" testConditionTickGiveItemWorks
         -- Phase 1: Equipment-Invarianten (1b)
         , runTest "drop equipped item removes bonus" testDropEquippedItemRemovesBonus

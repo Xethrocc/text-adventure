@@ -18,7 +18,7 @@ import qualified Data.ByteString.Lazy as BL
 import Data.Word (Word64)
 
 -- Engine
-import Validate (validateWorld, validateGameState)
+import Validate (validateWorldWithFlags, validateGameState)
 import qualified Types as E
 
 -- System
@@ -232,7 +232,7 @@ validate path = do
                         putStrLn "Compiler warnings:"
                         printCompileIssues path (crWarnings cr)
                         putStrLn ""
-                    let worldErrs = validateWorld (crWorld cr)
+                    let worldErrs = validateWorldWithFlags (crWorld cr) (Map.keysSet (E.flags (crSave cr)))
                         stateErrs = validateGameState (crWorld cr) (crSave cr)
                         allErrs = worldErrs ++ stateErrs
                     if null allErrs
@@ -276,7 +276,7 @@ compile path rest = do
                     putStrLn "Compiler warnings:"
                     printCompileIssues path (crWarnings cr)
                     putStrLn ""
-                let errors = validateWorld (crWorld cr) ++ validateGameState (crWorld cr) (crSave cr)
+                let errors = validateWorldWithFlags (crWorld cr) (Map.keysSet (E.flags (crSave cr))) ++ validateGameState (crWorld cr) (crSave cr)
                 if not (null errors) && not force
                 then do
                     putStrLn "Validation found issues (use --force to write anyway):"
@@ -328,7 +328,7 @@ exportCmd path rest = do
                     putStrLn "Compiler warnings:"
                     printCompileIssues path (crWarnings cr)
                     putStrLn ""
-                let errors = validateWorld (crWorld cr) ++ validateGameState (crWorld cr) (crSave cr)
+                let errors = validateWorldWithFlags (crWorld cr) (Map.keysSet (E.flags (crSave cr))) ++ validateGameState (crWorld cr) (crSave cr)
                 if not (null errors) && not force
                 then do
                     putStrLn "Validation found issues (use --force to write anyway):"
@@ -381,7 +381,7 @@ checkStats path = do
                 putStrLn $ "Dialogue nodes: " ++ show totalDlg
                 putStrLn $ "Entity ints:    " ++ show (length (E.entityInteractions gw))
                 putStrLn $ "Item ints:      " ++ show (length (E.itemInteractions gw))
-                let validationErrors = validateWorld gw ++ validateGameState gw (crSave cr)
+                let validationErrors = validateWorldWithFlags gw (Map.keysSet (E.flags (crSave cr))) ++ validateGameState gw (crSave cr)
                 if null validationErrors
                 then putStrLn "Validation:     CLEAN"
                 else putStrLn $ "Validation:     " ++ show (length validationErrors) ++ " issue(s)"
@@ -470,7 +470,7 @@ generateCmd path rest = do
                             putStrLn "Compiler warnings:"
                             printCompileIssues path (crWarnings cr)
                             putStrLn ""
-                        let errors = validateWorld (crWorld cr)
+                        let errors = validateWorldWithFlags (crWorld cr) (Map.keysSet (E.flags (crSave cr)))
                                      ++ validateGameState (crWorld cr) (crSave cr)
                         if not (null errors) && not force
                             then do

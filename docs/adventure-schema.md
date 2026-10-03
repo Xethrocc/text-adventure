@@ -654,9 +654,23 @@ Ein Effekt, der bei jedem `ask`/`tell` über diesen NPC zusätzlich zum Topic-Ef
 | `prereqs` | [String] | `[]` | Flag-Namen, die gesetzt sein müssen |
 | `stages` | [Object] | **required** | `[{ id, text, hint? }]` |
 | `reward` | [Effect] | — | Effekte beim Abschluss |
-| `on_complete` | String | — | QuestID, die dann startet |
+| `on_complete` | String | — | QuestID, die beim Abschluss startet (4.6) |
 
----
+```yaml
+quests:
+  - id: erste
+    name: Laterne sichern
+    stages:
+      - { id: holen, desc: "Nimm die Laterne." }
+    reward:
+      - msg: "Du sicherst die Laterne."
+    on_complete: zweite      # startet `zweite`, sobald `erste` abgeschlossen ist
+  - id: zweite
+    name: Schluessel holen
+    prereqs: [tor_offen]     # Flags, die gesetzt sein müssen
+    stages:
+      - { id: laufe, desc: "Geh in den Gang." }
+```
 
 ## Vehicle
 
@@ -925,6 +939,12 @@ initial_flags:
 active_quests:
   - find_treasure
 ```
+
+**`initial_flags` zählen als „gesetzt“ (4.6):** die Start-Flags liegen im
+Save, nicht in der Welt. Die Welt-Validierung sieht sie mit, seit ein Flag aus
+`initial_flags` weder als `MissingSetFlag` („geprüft, aber nie gesetzt") noch
+als `UnknownQuestPrereq` gemeldet wird — solche Fehlalarme haben Abenteuer mit
+`compile` (ohne `--force`) gar nicht erst schreiben lassen.
 
 ## Player
 

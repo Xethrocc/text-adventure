@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Fehlalarm der Validierung bei `initial_flags:` (4.6, S0)
+
+- **Befund (gemessen):** ein Abenteuer mit `initial_flags: { started: "true" }`
+  und einer Regel mit `when: { has_flag: started }` wurde mit
+  `MissingSetFlag "started" "checked but never set in any outcome"` **und Exit 1**
+  abgelehnt; `compile` schrieb ohne `--force` nichts. Dieselbe Fehlmeldung traf
+  Quest-Voraussetzungen (`UnknownQuestPrereq`), die `initial_flags` erfuellt.
+- **Ursache:** beide Checks fragen „wird dieses Flag je gesetzt?", und zaehlen
+  dabei nur Effekte, Bedingungstexte und Licht-Flags der **Welt**. Die
+  Start-Flags liegen aber im **Save**, nicht in der Welt — sie waren unsichtbar.
+- **Fix:** `validateWorldWithFlags` nimmt die Start-Flags entgegen
+  (`validateWorld` bleibt als save-blinde Variante erhalten, mit leerer Menge),
+  die CLI reicht die Flags aus dem kompilierten Save durch, und
+  `checkQuestPrereqFlags` zaehlt die Save-Flags mit. Damit ist die Sorglos-
+  Frage wieder ehrlich: wirklich nie gesetzte Flags melden weiter (der
+  Engine-Test `testRuleFlagCheckedButNeverSet` pinnt das).
+
 ### Fallenlassen beim NPC-Tod (B9, Teil 3) — **B9 abgeschlossen**
 
 - **Neues NPC-Feld `drops_on_death: true`:** die Leiche laesst ihre **getragenen
