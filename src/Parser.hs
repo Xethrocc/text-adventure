@@ -99,6 +99,7 @@ data Command
     | LockCmd String             -- ^ 4.4: lock a container
     | UnlockCmd String           -- ^ 4.4: unlock a container
     | TakeFromCmd String String  -- ^ 4.4: take X from Y
+    | TakeAllFromCmd String      -- ^ B9: take all from <npc>
     | PutInCmd String String     -- ^ 4.4: put X in Y
     | GiveCmd String String      -- ^ B7: give X to <npc>
     | DriveToCmd String          -- ^ drive the current vehicle to a station
@@ -213,6 +214,14 @@ splitPrep :: [String] -> [String] -> Maybe ([String], [String])
 splitPrep preps ws =
     case break (`elem` preps) ws of
         (x, _ : y) | not (null x) && not (null y) -> Just (x, y)
+        _ -> Nothing
+
+-- | Like `splitPrep`, but nothing has to precede the preposition — B9's
+--   `take all from Y`, where the mass word sits in front of it.
+afterPrep :: [String] -> [String] -> Maybe String
+afterPrep preps ws =
+    case break (`elem` preps) ws of
+        (_x, _ : y) | not (null y) -> Just (unwords (safeStripStopWords y))
         _ -> Nothing
 
 -- ---------------------------------------------------------------------------
@@ -402,6 +411,11 @@ parseSimpleCommandWith env defs tokens input = case tokens of
     "close"      : targetParts | not (null targetParts) -> CloseCmd (unwords (safeStripStopWords targetParts))
     "lock"       : targetParts | not (null targetParts) -> LockCmd (unwords (safeStripStopWords targetParts))
     "unlock"     : targetParts | not (null targetParts) -> UnlockCmd (unwords (safeStripStopWords targetParts))
+    -- B9: `take all from <npc>` — the NPC variant of the `TakeAll` mass
+    -- operation. Kept in front of the `take X from Y` branches, which would
+    -- otherwise read "all" as an item name.
+    "take" : "all" : rest | Just y <- afterPrep (prepsOf env "from") rest ->
+        TakeAllFromCmd y
     "take" : rest | Just (x, y) <- splitPrep (prepsOf env "from") rest ->
         TakeFromCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
     "get"  : rest | Just (x, y) <- splitPrep (prepsOf env "from") rest ->
@@ -620,6 +634,7 @@ extractCommandArgs cmd = case cmd of
     LockCmd t             -> ("lock", t, words t)
     UnlockCmd t           -> ("unlock", t, words t)
     TakeFromCmd x y       -> ("take", x ++ " " ++ y, words (x ++ " " ++ y))
+    TakeAllFromCmd y    -> ("take", "all " ++ y, words ("all " ++ y))
     PutInCmd x y          -> ("put", x ++ " " ++ y, words (x ++ " " ++ y))
     GiveCmd x y           -> ("give", x ++ " " ++ y, words (x ++ " " ++ y))
     EquipCmd t            -> ("equip", t, words t)
@@ -759,6 +774,18 @@ inventoryFull state =
 
 
 
+
+-- | B7: move one item out of an NPC's hands into the player's, honouring the
+--   inventory limit. Single source of the `npc.took_from` line, shared by
+--   `take X from <npc>` and the B9 mass operation `take all from <npc>`.
+takeItemFromNpc :: ItemDef -> NPCDef -> GameState -> (GameState, [OutputEvent])
+takeItemFromNpc it npc state
+    | inventoryFull state = (state, evMsg "inventory.full" [])
+    | otherwise = ( relocateItem (itemId it) (CarriedBy ActorPlayer) state
+                  , evMsg "npc.took_from"
+                        ([ ("item", itemName it), ("npc", npcName npc) ]
+                            ++ grammarArgs True "item" (itemGrammar it)
+                            ++ grammarArgs False "npc" (npcGrammar npc)) )
 
 dispatchCommandEv :: Command -> GameState -> CommandResultEv
 
@@ -1150,12 +1177,7 @@ dispatchCommandEv (TakeFromCmd x y) state =
                 case [ i | i <- getItemsInLocation (CarriedBy (ActorNPC (npcId npc))) state
                          , matchesItemTarget x i ] of
                     []      -> (state, evMsg "npc.no_item" ([("item", x), ("npc", npcName npc)] ++ grammarArgs False "npc" (npcGrammar npc)))
-                    (it : _)
-                        | inventoryFull state -> (state, evMsg "inventory.full" [])
-                        | otherwise ->
-                            ( relocateItem (itemId it) (CarriedBy ActorPlayer) state
-                            , evMsg "npc.took_from"
-                                ([ ("item", itemName it), ("npc", npcName npc) ] ++ grammarArgs True "item" (itemGrammar it) ++ grammarArgs False "npc" (npcGrammar npc)) )
+                    (it : _) -> takeItemFromNpc it npc state
         Just cid
             | not (containerChainOpen cid state) ->
                 (state, evMsg "container.is_locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
@@ -1170,6 +1192,24 @@ dispatchCommandEv (TakeFromCmd x y) state =
                             ( relocateItem iId (CarriedBy ActorPlayer) state
                             , evMsg "container.took_from"
                                 ([ ("item", x), ("name", containerName cid state) ] ++ grammarArgs False "item" (grammarOfItem iId state) ++ grammarArgs True "name" (grammarOfItem cid state)) )
+
+-- | B9: `take all from <npc>` — every item the NPC carries, as far as the
+--   inventory limit allows. Same mass-operation idiom as `TakeAll`: a fixed
+--   per-item effect loop (never an author-supplied effect list), one
+--   `npc.took_from` line per item, so no new message key. Items the NPC has
+--   equipped stay on it — they are deliberately not part of what is in its hands.
+dispatchCommandEv (TakeAllFromCmd y) state =
+    case findNpcTarget y state of
+        Nothing -> (state, evMsg "container.not_a_container" [("target", y)])
+        Just npc ->
+            let carried = getItemsInLocation (CarriedBy (ActorNPC (npcId npc))) state
+            in if null carried
+               then (state, evMsg "npc.no_item" ([("item", "all"), ("npc", npcName npc)]
+                                                   ++ grammarArgs False "npc" (npcGrammar npc)))
+               else let (finalState, msgs) = foldl' (\(s, ms) it ->
+                                let (s', m) = takeItemFromNpc it npc s
+                                in (s', ms ++ [m])) (state, []) carried
+                    in (finalState, evIntercalate msgs)
 
 -- | B7: `give X to Y` — hand a carried item to an NPC (who then carries it;
 --   `take X from <npc>` retrieves it).

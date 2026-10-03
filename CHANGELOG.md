@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### `take all from <npc>` (B9, Teil 1)
+
+- **Neue Massen-Operation an Figuren:** `take all from <npc>` nimmt alles, was der
+  NPC getragen hat — eine `npc.took_from`-Zeile pro Item, dieselbe Idiom wie
+  `take all` im Raum. **Kein neuer Meldungsschluessel** (Katalog bleibt 232),
+  **kein** neuer `Command`-Effekt fuer Autoren, **kein** neues `SaveState`-Feld.
+- Feste Wirkung, keine Autoren-Effektliste als Schleifenkörper (B3-Linie): das
+  Inventarlimit gilt pro Item (`inventory.full`, der Rest bleibt beim NPC),
+  ausgeruestete Items des NPCs bleiben auf ihm (sie sind nicht „in seinen
+  Haenden“), ein toter NPC bleibt ein gueltiger Traeger.
+- Der gemeinsame Einzelpfad wurde in `takeItemFromNpc` gezogen — `take X from
+  <npc>` (B7) liefert byte-identische Ausgabe (gleiche Guards, gleiche Args).
+- Neuer Kommando-Konstruktor `TakeAllFromCmd` mit L13-Urteil (kostet einen Zug,
+  wie `take all`); `extractCommandArgs` schreibt `cmd.verb = take`,
+  `cmd.target = all <npc>`. Ein unbekanntes Ziel meldet wie beim Einzelgriff
+  `container.not_a_container` (gleicher Aufrufzweig).
+- L13-/Parser-Fallstrick: `splitPrep` verlangt Text **vor** der Praeposition —
+  dafuer `afterPrep` (B9).
+- Beispiel `examples/fixtures/npc-massen.yaml` (2 Items im Besitz, 1 im Raum,
+  2 `tests:`-Marker) + `ci/e2e/npc-massen.{in,expect}` (CI-Stufen 4/4b).
+
 ### Item-auf-NPC-Interaktionen (B9)
 
 - **Neue Zielart `interactions: npc:`:** `use <item> on <npc>` laesst die
@@ -23,7 +44,7 @@
   `docs/adventure-schema.md`.
 - Offen im B9-Rest (bewusst nicht hier): NPC-Ausruestung
   (`EquippedBy ActorNPC`, Autorenform `give: {item, to, equip: true}` laut
-  Nutzer-Entscheidung), `take all from <npc>`, Fallenlassen beim NPC-Tod.
+  Nutzer-Entscheidung) und Fallenlassen beim NPC-Tod.
 
 ### Sprachpakete: Beispiel-Abenteuer & Genre-Demo (4.3, Teil 6)
 

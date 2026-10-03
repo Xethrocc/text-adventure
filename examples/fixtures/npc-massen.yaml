@@ -1,0 +1,62 @@
+# B9: `take all from <npc>` — die Massen-Operation an einer Figur.
+# Analog zu `take all` im Raum: feste Wirkung, keine Autoren-Effektliste,
+# eine `npc.took_from`-Zeile pro Item (kein neuer Meldungsschluessel).
+name: NPC-Massen Fixture
+start_room: halle
+
+rooms:
+  - id: halle
+    name: Wachhalle
+    desc: Die Halle der Stadtwache, muede ausgeleuchtet von Fackeln.
+
+npcs:
+  - id: waechter
+    name: Waechter
+    desc: Ein muederer Waechter mit einer Sammlung gestohlener Kleinigkeiten.
+    location: halle
+
+items:
+  # Beide starten im Besitz des Waechters (carried_by:, B7).
+  - id: schluessel
+    name: Schluessel
+    desc: Ein schwerer Schluessel aus Eisen.
+    location: halle
+    keys: [schluessel]
+    carried_by: waechter
+
+  - id: beutel
+    name: Beutel
+    desc: Ein kleiner Lederbeutel, vorn ueberall ausgebeult.
+    location: halle
+    keys: [beutel]
+    carried_by: waechter
+
+  # Liegt im Raum: `take all from <npc>` fasst die Haende des Waechters an,
+  # nicht das, was der Spieler gerade nicht traegt.
+  - id: fackel
+    name: Fackel
+    desc: Eine brennende Fackel in einer Wandhalterung.
+    location: halle
+    keys: [fackel]
+
+tests:
+  - name: "take all from waechter leert seine Haende in einer Zeile pro Item"
+    input:
+      - take all from waechter
+      - look at waechter
+      - take all from waechter
+      - quit
+    expect:
+      - "You take the Beutel from Waechter."
+      - "You take the Schluessel from Waechter."
+      - "You find no all on Waechter."
+
+  - name: "ein leeres Ziel und ein unbekanntes Ziel melden sich wie beim Einzelgriff"
+    input:
+      - take all from waechter
+      - take all from waechter
+      - take all from niemand
+      - quit
+    expect:
+      - "You find no all on Waechter."
+      - "niemand is not a container."

@@ -5242,7 +5242,66 @@ testNpcInteractionsOmittedWhenEmpty = do
                     Nothing -> False)
     pure (r1 && r2 && r3)
 
--- | The effect table: `MoveEntity x (CarriedBy <actor>)` honours the actor —
+-- | B9: `take all from <npc>` — the NPC variant of the `take all` mass
+--   operation. Everything the NPC carries moves to the player as far as the
+--   inventory limit allows, one `npc.took_from` line per item (no new key).
+--   Equipped items stay on the NPC: they are not "in its hands".
+testNpcTakeAll :: IO Bool
+testNpcTakeAll = do
+    let schluessel = mkTestItem "schluessel" "Schluessel"
+        stein = mkTestItem "stein" "Stein"
+        laterne = mkTestItem "laterne" "Laterne"
+        run cmd st = applyLoopCommandEv (parseCommand cmd) (initLoopState st)
+        stOf = lsCurrent . fst
+        out = renderEvents . snd
+        itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+        inHand i st = itemLoc i st == Just (CarriedBy ActorPlayer)
+        onNpc i st = itemLoc i st == Just (CarriedBy (ActorNPC "waechter"))
+        countOf w s = length (filter (== w) (words s))
+        bothSt = b7State [ (schluessel, CarriedBy (ActorNPC "waechter"))
+                         , (stein, CarriedBy (ActorNPC "waechter")) ]
+        limitSt n st = st { save = (save st)
+              { variables = Map.insert "inventory.limit" (VVInt n) (variables (save st)) } }
+        -- the NPC lies dead but its pockets are still reachable
+        deadSt = let s = bothSt
+                 in s { save = (save s) { npcStates = Map.adjust (\ns -> ns { npcStatus = "dead" })
+                                       "waechter" (npcStates (save s)) } }
+    r0 <- expectEqual (TakeAllFromCmd "waechter") (parseCommand "take all from waechter")
+    r1 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "schluessel" (stOf (run "take all from waechter" bothSt)))
+    r2 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "stein" (stOf (run "take all from waechter" bothSt)))
+    r3 <- expectTrue "both items are named"
+            (let o = out (run "take all from waechter" bothSt) in "Schluessel" `isInfixOf` o && "Stein" `isInfixOf` o)
+    r4 <- expectTrue "one took_from line per item"
+            (countOf "You" (out (run "take all from waechter" bothSt)) == 2)
+    -- empty hands / unknown target
+    r5 <- expectTrue "empty-handed npc"
+            ("no all on Waechter" `isInfixOf` out (run "take all from waechter" (b7State [])))
+    r6 <- expectTrue "no such target"
+            ("is not a container" `isInfixOf` out (run "take all from niemand" bothSt))
+    -- the inventory limit only stops what does not fit (same idiom as `take all`)
+    let stL = stOf (run "take all from waechter" (limitSt 1 bothSt))
+    r7 <- expectEqual 1 (length [ () | i <- [ "schluessel", "stein" ], inHand i stL ])
+    r8 <- expectEqual 1 (length [ () | i <- [ "schluessel", "stein" ], onNpc i stL ])
+    -- a corpse's pockets still work
+    r9 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "stein" (stOf (run "take all from waechter" deadSt)))
+    -- the player's own things are never in scope for this command
+    r10 <- expectEqual (Just (CarriedBy ActorPlayer))
+                (itemLoc "laterne" (stOf (run "take all from waechter"
+                    (b7State [ (laterne, CarriedBy ActorPlayer) ]))))
+    -- a single take still behaves exactly as before (shared helper)
+    r11 <- expectTrue "single take_from unchanged"
+            ("You take the Schluessel from Waechter." `isInfixOf` out (run "take schluessel from waechter" bothSt))
+    -- the limit counts what the player really carries (filled by a real take)
+    let fullSt = stOf (run "take laterne"
+                (limitSt 1 (b7State [ (laterne, InRoom "halle")
+                                    , (schluessel, CarriedBy (ActorNPC "waechter")) ])))
+    r12 <- expectTrue "single take respects the limit"
+            ("carrying too much" `isInfixOf` out (run "take schluessel from waechter" fullSt))
+    -- L13: the mass operation costs a turn, like `take all`
+    r13 <- expectTrue "take all from npc consumes a turn" (expectedConsumesTurn (TakeAllFromCmd "waechter"))
+    pure (r0 && r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13)
+
+-- | B9: the effect table: `MoveEntity x (CarriedBy <actor>)` honours the actor —
 --   the `give:` object form can hand items to NPCs, not just the player.
 testMoveEntityCarriedByActor :: IO Bool
 testMoveEntityCarriedByActor = do
@@ -5290,6 +5349,7 @@ expectedConsumesTurn cmd = case cmd of
     LockCmd _          -> True
     UnlockCmd _        -> True
     TakeFromCmd _ _    -> True
+    TakeAllFromCmd _   -> True   -- B9: mass operation, costs a turn like `take all`
     PutInCmd _ _       -> True
     GiveCmd _ _        -> True   -- B7: handing an item to an NPC is an action
     DriveToCmd _       -> True
@@ -9414,6 +9474,7 @@ main = do
         , runTest "npc possession: examine + snapshot visibility (B7)" testNpcCarriedVisibility
         , runTest "item-on-npc interaction: effects + attack fallback (B9)" testNpcItemInteraction
         , runTest "npc interactions omitted from json when empty (B9)" testNpcInteractionsOmittedWhenEmpty
+        , runTest "take all from <npc> (B9)" testNpcTakeAll
         , runTest "npc possession: MoveEntity honours the carrier (B7)" testMoveEntityCarriedByActor
         , runTest "ActorHas predicate for player, NPC and device entity (W4)" testActorHasPredicate
         , runTest "Mount and Unmount effects move item location (W4)" testMountAndUnmountEffects

@@ -536,6 +536,7 @@ commandVerbName cmd = case cmd of
     WatchCmd _    -> "watch"
     MapCmd        -> "map"
     TakeAll       -> "take"
+    TakeAllFromCmd _ -> "take"
     DropAll       -> "drop"
     EquipCmd _    -> "equip"
     UnequipCmd _  -> "unequip"

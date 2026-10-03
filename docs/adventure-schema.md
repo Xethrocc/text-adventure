@@ -2328,6 +2328,15 @@ Spielerinventar). Unbekannte NPC-IDs sind ein harter Fehler (`UnknownNpc`).
 
 - `take X from <npc>` — nimmt ein getragenes Item an sich (Bestehlen, Leichen plündern;
   `inventory.full` wird geprüft). Hat der NPC kein passendes Item: `npc.no_item`.
+- `take all from <npc>` / `nimm all von <npc>` — B9-Massen-Operation: nimmt **alles**,
+  was der NPC getragen hat, eine `npc.took_from`-Zeile pro Item (kein neuer
+  Meldungsschlüssel, dieselbe Idiom wie `take all` im Raum). Das Inventarlimit gilt pro
+  Item: passt etwas nicht mehr, kommt `inventory.full` und der Rest bleibt beim NPC.
+  Ausgerüstete Items des NPCs sind **nicht** Teil von „seinen Händen“ (die bleiben auf ihm);
+  sie holt man einzeln mit `take X from <npc>`. Feste Wirkung — keine Autoren-Effektliste
+  als Schleifenkörper (B3-Linie). Hat der NPC nichts: `npc.no_item` („You find no all
+  on …“). Ein unbekanntes Ziel meldet `container.not_a_container` (dieselbe Meldung wie
+  beim Einzelgriff, weil `take all from` im selben Zweig wie `take X from` hängt).
 - `give X to <npc>` / `gib X an <npc>` — übergibt ein eigenes Item; der NPC trägt es danach.
   Beide kosten einen Zug (L13-Urteil `GiveCmd` = `True`).
 
@@ -2350,7 +2359,7 @@ Phase 2.2) — die Before-Phase läuft für alle Kommandos, `cmd.verb` ist `take
 
 **Grenzen (bewusst):** keine NPC-**Ausrüstung** (`EquippedBy ActorNPC` ist im
 Zustandsmodell vorgesehen, aber noch nicht autorenseitig), kein automatisches Fallenlassen
-beim Tod, kein `take all from <npc>`.
+beim Tod.
 
 ## Geschlossene Mengen-Operationen (B3)
 
