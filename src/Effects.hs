@@ -283,8 +283,8 @@ applyOutcomeWith depth salt outcome targetId state
     MoveEntity eid Removed ->
         let state' = consumeItem eid state
         in (state', [], salt)
-    MoveEntity eid (EquippedBy _) ->
-        case equipItem eid state of
+    MoveEntity eid (EquippedBy actor) ->
+        case equipItemFor actor eid state of
             Left err    -> (state, evRaw err, salt)
             Right st'   -> (st', [], salt)
     MoveEntity _ (InContainer _) ->

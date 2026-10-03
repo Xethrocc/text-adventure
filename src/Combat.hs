@@ -27,6 +27,7 @@ import Messages (evMsg)
 import Vehicles (getVehicleState)
 import Game (effectiveAttack, effectiveDefense, getVariable,
             resolveAsciiArt,
+            npcAttackWith, npcDefenseWith,
             combatRound, combatRoundKey, combatEngagedKey, combatActionKey,
             combatInitiativePlayerKey, combatInitiativeKey, combatAbilityKey,
             hasCondition)
@@ -101,7 +102,8 @@ resolveNarrative nc _ (TargetNPC nid disp) st =
     case Map.lookup nid (npcDefs (world st)) of
         Nothing -> ([], [evMsg "attack.cant_target" [("target", disp)]])
         Just npc ->
-            let win = effectiveAttack st >= npcDefenseBase npc + ncDifficulty nc
+            -- B9: worn gear raises the NPC's defense here, in every profile
+            let win = effectiveAttack st >= npcDefenseWith nid npc st + ncDifficulty nc
             in if win
                then ([ncOnWin nc], [evMsg "combat.win" [("target", disp)]])
                else ([ncOnLose nc], [evMsg "combat.lose" [("target", disp)]])
@@ -249,7 +251,7 @@ resolveTactical tc _actors (TargetNPC nid disp) CAAttack st =
                     Nothing -> ([], [evMsg "attack.cant_target" [("target", disp)]])
                     Just hp ->
                         let round'    = combatRound st + 1
-                            playerDmg = max 1 (effectiveAttack st - npcDefenseBase npc)
+                            playerDmg = max 1 (effectiveAttack st - npcDefenseWith nid npc st)
                             stateEffects =
                                 [ SetValue (VRVariable combatRoundKey)   (EVInt round')
                                 , SetValue (VRVariable combatEngagedKey) (EVInt 1)
@@ -341,14 +343,14 @@ resolveClassic actors (TargetNPC nid disp) st =
                 Just npc -> case npcHealth ns of
                     Nothing -> ([], cannotAttack)
                     Just hp ->
-                        let playerDmg = max 1 (effectiveAttack st - npcDefenseBase npc)
+                        let playerDmg = max 1 (effectiveAttack st - npcDefenseWith nid npc st)
                             playerEffects = [ ModifyValue (VRActorProp (ActorNPC nid) PHealth) (-playerDmg) ]
                             mShip = firstShip actors st
                         in if hp - playerDmg <= 0
                            then ( playerEffects
                                 , [evMsg "combat.classic_kill" [("target", disp)]])
                            else
-                               let allies = companionHits nid (npcLocation ns) (npcDefenseBase npc) actors st
+                               let allies = companionHits nid (npcLocation ns) (npcDefenseWith nid npc st) actors st
                                    allyEffects = [ ModifyValue (VRActorProp (ActorNPC nid) PHealth) (-d)
                                                  | (_, _, d) <- allies ]
                                    allyMsgs = [ evMsg "combat.ally_strike" [("ally", npcName allyNpc), ("dmg", show d)]
@@ -364,7 +366,7 @@ resolveClassic actors (TargetNPC nid disp) st =
                                   then ( effects
                                        , evMsg "combat.classic_kill" [("target", disp)] : msgsBeforeHit )
                                   else
-                                      let npcDmg = max 0 (npcAttackBase npc - effectiveDefense st)
+                                      let npcDmg = max 0 (npcAttackWith nid npc st - effectiveDefense st)
                                           (retalEffects, taken, retalMsgs) = case mShip of
                                               Nothing   -> ([], npcDmg, [])
                                               Just ship -> shipAbsorbEv ship npcDmg
@@ -615,7 +617,7 @@ shipAbsorb ship dmg =
 --   target stands, and not the target itself. Returns (npc id, def, damage).
 companionHits :: NPCID -> Location -> Int -> [CombatActor] -> GameState -> [(NPCID, NPCDef, Int)]
 companionHits targetId targetLoc targetDefense actors st =
-    [ (cid, cnpc, max 1 (npcAttackBase cnpc - targetDefense))
+    [ (cid, cnpc, max 1 (npcAttackWith cid cnpc st - targetDefense))
     | CompanionActor cid <- actors
     , cid /= targetId
     , Just cns <- [Map.lookup cid (npcStates (save st))]
@@ -627,7 +629,7 @@ companionHits targetId targetLoc targetDefense actors st =
 -- | Companions that strike alongside the player against a ship: alive and aboard/present.
 companionHitsShip :: RoomID -> [CombatActor] -> GameState -> [(NPCID, NPCDef, Int)]
 companionHitsShip _ actors st =
-    [ (cid, cnpc, max 1 (npcAttackBase cnpc))
+    [ (cid, cnpc, max 1 (npcAttackWith cid cnpc st))
     | CompanionActor cid <- actors
     , Just cns <- [Map.lookup cid (npcStates (save st))]
     , npcStatus cns /= "dead"

@@ -1,4 +1,4 @@
--- | Generated from lang/de.json (sha256: bd16a40217a61e0b65a491f7ca32a51fc418d1f18c62e32f252329862440567b) by scripts/gen-lang-pack.py.
+-- | Generated from lang/de.json (sha256: f9024b4089b770b63b2541e0e04be5024f23c8a6f768991a54da156524e72d93) by scripts/gen-lang-pack.py.
 --   DO NOT EDIT by hand - rerun the generator after changing the JSON.
 --
 --   Language-pack data (Phase 4.3): message templates keyed like the
@@ -85,6 +85,7 @@ langDe =
       , ("npc.dead_silent", "{npc} ist tot und sagt nichts.")
       , ("npc.cant_do", "Das kannst du mit {npc} nicht tun.")
       , ("npc.carries", "\nDabei: {items}.")
+      , ("npc.wears", "\nGetragen: {items}.")
       , ("npc.gave_to", "Du gibst {item_article_acc} {item} an {npc_article_acc} {npc}.")
       , ("npc.no_item", "Du findest {item} bei {npc_article_dat} {npc} nicht.")
       , ("npc.took_from", "Du nimmst {item_article_acc} {item} von {npc_article_dat} {npc}.")

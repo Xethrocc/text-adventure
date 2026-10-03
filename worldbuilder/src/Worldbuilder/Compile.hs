@@ -3076,6 +3076,10 @@ compileAActionOutcome ao = case ao of
     AODamagePlayer n -> E.ModifyValue E.VRPlayerHealth (-n)
     AOGiveItem i -> E.MoveEntity i (E.CarriedBy E.ActorPlayer)
     AOGiveTo i tgt -> E.MoveEntity i (E.CarriedBy (compileActorRef tgt))
+    -- B9: NPC equipment. The engine keeps the slot in the item's own
+    -- definition (`equip_slot`), so no new SaveState field is needed; the
+    -- actor comes from the same `to` field as the B7 give-sugar.
+    AOGiveEquipTo i tgt -> E.MoveEntity i (E.EquippedBy (compileActorRef tgt))
     AOConsumeItem i -> E.MoveEntity i E.Removed
     AOSetFlag f v -> E.SetValue (E.VRFlag f) (E.EVString v)
     AOStartQuest q -> E.QuestOp E.StartQuest q
@@ -3616,6 +3620,10 @@ checkNpcPossessionRefs adv =
             ("item '" ++ aiId i ++ "' starts on unknown npc '" ++ a ++ "'")
         | Just a <- [aiCarriedBy i], bad a ]
     outcomeGo (AOGiveTo _ tgt) =
+        [ ciError "outcomes.give.to" "UnknownNpc"
+            ("give target '" ++ tgt ++ "' is not 'player' or an existing npc id")
+        | bad tgt ]
+    outcomeGo (AOGiveEquipTo _ tgt) =
         [ ciError "outcomes.give.to" "UnknownNpc"
             ("give target '" ++ tgt ++ "' is not 'player' or an existing npc id")
         | bad tgt ]

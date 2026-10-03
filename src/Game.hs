@@ -25,6 +25,7 @@ module Game
     , pursuitStep
     , countItemMembers
     , countNpcMembers
+    , itemsAtLoc
     , isContainer
     , containerCapacityOf
     , containerStateOf
@@ -68,6 +69,11 @@ module Game
     , deviceCantFlipMsg
     , consumeItem
     , equipItem
+    , equipItemFor
+    , wornInSlot
+    , sumWornEquipBonus
+    , npcAttackWith
+    , npcDefenseWith
     , unequipItem
     , isEquipped
     , equipmentSummary
@@ -153,7 +159,7 @@ module Game
 import Types
 import Pursuit (bfsDistances, stepToward, stepAway)
 import Messages (formatStringWith, renderMsg, renderMsgFor)
-import Data.List (foldl', isPrefixOf, nub, stripPrefix)
+import Data.List (find, foldl', isPrefixOf, nub, stripPrefix)
 import Data.Bits (shiftR)
 import Data.Char (toLower, isDigit, isSpace)
 import Data.Maybe (listToMaybe, fromMaybe, isJust)
@@ -590,13 +596,8 @@ countItemMembers cs st = case csWhat cs of
     _          -> []
   where
     itemsAt = case csWhere cs of
-        CountInRoom r      -> itemsAtLoc (InRoom r)
-        CountCarriedBy a   -> itemsAtLoc (CarriedBy a) ++ itemsAtLoc (EquippedBy a)
-    itemsAtLoc loc =
-        [ def
-        | (iId, is) <- Map.toList (itemStates (save st))
-        , itemLocation is == loc
-        , Just def <- [Map.lookup iId (itemDefs (world st))] ]
+        CountInRoom r      -> itemsAtLoc (InRoom r) st
+        CountCarriedBy a   -> itemsAtLoc (CarriedBy a) st ++ itemsAtLoc (EquippedBy a) st
     tagged i = case csTag cs of
         Nothing -> True
         Just t  -> Set.member t (itemTags i)
@@ -799,6 +800,16 @@ discoverItem iId state = state
 lookupItem :: ItemID -> GameState -> Maybe ItemDef
 lookupItem iId state = Map.lookup iId (itemDefs (world state))
 
+-- | Items (definitions) at a typed location, **including hidden ones** — the
+--   raw location view for state queries (B9: worn-equipment bonuses, `count:`).
+--   `getItemsInLocation` is the *visible* view (hidden items need discovery).
+itemsAtLoc :: Location -> GameState -> [ItemDef]
+itemsAtLoc loc state =
+    [ def
+    | (iId, is) <- Map.toList (itemStates (save state))
+    , itemLocation is == loc
+    , Just def <- [Map.lookup iId (itemDefs (world state))] ]
+
 -- | Equip an item the player is carrying.
 --   Fails if the item is not carried, not equippable, or the slot is occupied.
 equipItem :: ItemID -> GameState -> Either String GameState
@@ -811,9 +822,64 @@ equipItem iId state =
                 if not (hasItem iId state)
                 then Left (renderMsgFor (world state) "equip.need_carried" [("item", itemName def)])
                 else case equippedInSlot slot state of
+                    -- byte-frozen: this line reports the item *id* (pre-existing
+                    -- contract, kept on purpose — the NPC path below does the same)
                     Just other | other /= iId ->
                         Left (renderMsgFor (world state) "equip.slot_occupied" [("item", other)])
                     _ -> Right $ state { save = (save state) { equipment = Map.insert slot iId (equipment (save state)) } }
+
+-- | The item an actor has *worn* in a slot, `Nothing` when the slot is free.
+--   The single definition of "that slot is taken": the player wears through the
+--   `equipment` map, an NPC through the item locations (`EquippedBy`).
+wornInSlot :: ActorRef -> EquipSlot -> Maybe ItemID -> GameState -> Maybe ItemID
+wornInSlot ActorPlayer slot _ state = equippedInSlot slot state
+wornInSlot actor slot self state =
+    itemId <$> find (\i -> itemEquipSlot i == Just slot && maybe True ((/= itemId i)) self)
+                       (itemsAtLoc (EquippedBy actor) state)
+
+-- | B9: equip an item **for any actor** (`give: {item, to, equip: true}`). The
+--   player keeps the historical `equipment` slot map; an NPC *wears* the item —
+--   its location becomes `EquippedBy (ActorNPC …)`. The slot itself comes from
+--   the item's own definition (`equip_slot`), so no new `SaveState` field is
+--   needed and the conflict check walks the actor's worn items.
+equipItemFor :: ActorRef -> ItemID -> GameState -> Either String GameState
+equipItemFor actor iId state
+    | actor == ActorPlayer = equipItem iId state
+    | otherwise = case lookupItem iId state of
+        Nothing -> Left (renderMsgFor (world state) "item.no_id" [("id", iId)])
+        Just def -> case itemEquipSlot def of
+            Nothing -> Left (renderMsgFor (world state) "equip.not_equippable" [("item", itemName def)])
+            Just slot -> case wornInSlot actor slot (Just iId) state of
+                Just other -> Left (renderMsgFor (world state) "equip.slot_occupied" [("item", other)])
+                Nothing -> Right (relocateItem iId (EquippedBy actor) state)
+
+-- | B9: sum a numeric projection over the items an actor has **worn**. Zero
+--   without worn equipment, so every existing combat run stays byte-identical.
+--   The player's own path stays `sumEquipBonus` (equipment map).
+sumWornEquipBonus :: ActorRef -> (EquipEffect -> Maybe Int) -> GameState -> Int
+sumWornEquipBonus actor f state =
+    sum [ v | i <- itemsAtLoc (EquippedBy actor) state
+            , eff <- itemEquipEffects i
+            , Just v <- [f eff] ]
+
+-- | Effect projection helpers shared by the equipment bonus sums.
+attackOfEquip :: EquipEffect -> Maybe Int
+attackOfEquip (AttackBonus n) = Just n
+attackOfEquip _               = Nothing
+
+defenseOfEquip :: EquipEffect -> Maybe Int
+defenseOfEquip (DefenseBonus n) = Just n
+defenseOfEquip _                = Nothing
+
+-- | B9: an NPC's attack including the bonuses of everything it wears. Used at
+--   every place that previously read `npcAttackBase` directly, so worn gear
+--   counts in exactly one place.
+npcAttackWith :: NPCID -> NPCDef -> GameState -> Int
+npcAttackWith nid def st = npcAttackBase def + sumWornEquipBonus (ActorNPC nid) attackOfEquip st
+
+-- | B9: an NPC's defense including the bonuses of everything it wears.
+npcDefenseWith :: NPCID -> NPCDef -> GameState -> Int
+npcDefenseWith nid def st = npcDefenseBase def + sumWornEquipBonus (ActorNPC nid) defenseOfEquip st
 
 -- | Unequip an item by id
 unequipItem :: ItemID -> GameState -> GameState

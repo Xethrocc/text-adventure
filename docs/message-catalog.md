@@ -1,6 +1,6 @@
 # Engine-Message-Katalog (Phase 1.1)
 
-**Stand:** 2026-09-28 · **Kataloggröße: 232 Keys** (`src/Messages.hs`, `catalogEntries`)
+**Stand:** 2026-09-28 · **Kataloggröße: 233 Keys** (`src/Messages.hs`, `catalogEntries`)
 
 ## Was diese Stufe leistet
 
@@ -233,97 +233,99 @@ Dabei: {items}.` |
 | 141 | `npc.gave_to` | `You give the {item} to {npc}.` | `Du gibst {item_article_acc} {item} an {npc_article_acc} {npc}.` |
 | 142 | `npc.no_item` | `You find no {item} on {npc}.` | `Du findest {item} bei {npc_article_dat} {npc} nicht.` |
 | 143 | `npc.took_from` | `You take the {item} from {npc}.` | `Du nimmst {item_article_acc} {item} von {npc_article_dat} {npc}.` |
-| 144 | `parse.unknown` | `I don't understand '{input}'. Type 'help' for available commands.` | `Ich verstehe '{input}' nicht. Tippe 'help' für eine Befehlsliste.` |
-| 145 | `proc.arity` | `That procedure cannot be called this way.` | `Diese Prozedur kann so nicht aufgerufen werden.` |
-| 146 | `proc.unknown` | `That procedure does not exist.` | `Diese Prozedur existiert nicht.` |
-| 147 | `pursuit.flee` | `{name} flees to {room}.` | `{name} flieht nach {room}.` |
-| 148 | `pursuit.no_path` | `{name} can find no way.` | `{name} findet keinen Weg.` |
-| 149 | `pursuit.step` | `{name} moves to {room}.` | `{name} bewegt sich nach {room}.` |
-| 150 | `quest.cannot_start` | `You cannot start that quest right now.` | `Diese Quest kannst du gerade nicht beginnen.` |
-| 151 | `quest.not_active` | `That quest is not active.` | `Diese Quest ist nicht aktiv.` |
-| 152 | `quests.active_header` | `Active:` | `Aktiv:` |
-| 153 | `quests.completed_header` | `Completed:` | `Abgeschlossen:` |
-| 154 | `quests.journal_empty` | `Your journal is empty.` | `Dein Journal ist leer.` |
-| 155 | `quests.journal_header` | `=== Journal ===\n` | `=== Journal ===
+| 144 | `npc.wears` | `\nWearing: {items}.` | `
+Getragen: {items}.` |
+| 145 | `parse.unknown` | `I don't understand '{input}'. Type 'help' for available commands.` | `Ich verstehe '{input}' nicht. Tippe 'help' für eine Befehlsliste.` |
+| 146 | `proc.arity` | `That procedure cannot be called this way.` | `Diese Prozedur kann so nicht aufgerufen werden.` |
+| 147 | `proc.unknown` | `That procedure does not exist.` | `Diese Prozedur existiert nicht.` |
+| 148 | `pursuit.flee` | `{name} flees to {room}.` | `{name} flieht nach {room}.` |
+| 149 | `pursuit.no_path` | `{name} can find no way.` | `{name} findet keinen Weg.` |
+| 150 | `pursuit.step` | `{name} moves to {room}.` | `{name} bewegt sich nach {room}.` |
+| 151 | `quest.cannot_start` | `You cannot start that quest right now.` | `Diese Quest kannst du gerade nicht beginnen.` |
+| 152 | `quest.not_active` | `That quest is not active.` | `Diese Quest ist nicht aktiv.` |
+| 153 | `quests.active_header` | `Active:` | `Aktiv:` |
+| 154 | `quests.completed_header` | `Completed:` | `Abgeschlossen:` |
+| 155 | `quests.journal_empty` | `Your journal is empty.` | `Dein Journal ist leer.` |
+| 156 | `quests.journal_header` | `=== Journal ===\n` | `=== Journal ===
 ` |
-| 156 | `quit.bye` | `Goodbye!` | `Auf Wiedersehen!` |
-| 157 | `quit.thanks` | `Thanks for playing!` | `Danke fürs Spielen!` |
-| 158 | `refuel.no_vehicle` | `There is no vehicle to refuel.` | `Hier gibt es kein Fahrzeug zum Betanken.` |
-| 159 | `refuel.not_needed` | `The {vehicle} doesn't need fuel.` | `{vehicle} braucht keinen Treibstoff.` |
-| 160 | `repair.nothing_broken` | `There is nothing broken about the {vehicle} that matches '{target}'.` | `An {vehicle} ist nichts kaputt, das zu '{target}' passt.` |
-| 161 | `repair.ok` | `You repair the {vehicle} ({problem}).` | `Du reparierst {vehicle} ({problem}).` |
-| 162 | `repair.problems` | ` Problems: {list}.` | ` Probleme: {list}.` |
-| 163 | `save.compatible` | `compatible` | `kompatibel` |
-| 164 | `save.corrupted` | `Error: Save file is corrupted or incompatible.` | `Fehler: Speicherstand ist beschädigt oder inkompatibel.` |
-| 165 | `save.entry` | `  {name} — {timestamp} ({compat})` | `  {name} — {timestamp} ({compat})` |
-| 166 | `save.list_header` | `=== Saved Games ===` | `=== Spielstände ===` |
-| 167 | `save.loaded` | `Game loaded from {path} (saved: {timestamp}).` | `Spielstand geladen von {path} (gespeichert: {timestamp}).` |
-| 168 | `save.loaded_legacy` | `Game loaded (legacy format).` | `Spielstand geladen (altes Format).` |
-| 169 | `save.loaded_legacy2` | `Game loaded from legacy format.` | `Spielstand geladen aus altem Format.` |
-| 170 | `save.none_found` | `No saved games found.` | `Keine Spielstände gefunden.` |
-| 171 | `save.not_found` | `Error: Save file '{path}' not found.` | `Fehler: Speicherstand '{path}' nicht gefunden.` |
-| 172 | `save.saved` | `Game saved to {path} ({timestamp}).` | `Spielstand gespeichert unter {path} ({timestamp}).` |
-| 173 | `save.savezone_only` | `You can only rest at a savezone.` | `Speichern ist nur in einer Sicherheitszone möglich.` |
-| 174 | `save.slot_delete_failed` | `Warning: could not delete save slot {path}.` | `Warnung: Speicherstand {path} konnte nicht gelöscht werden.` |
-| 175 | `save.slot_deleted` | `Save slot deleted: {path}` | `Speicherstand gelöscht: {path}` |
-| 176 | `save.unreadable` | `Error: Could not read file '{path}'.` | `Fehler: Datei '{path}' konnte nicht gelesen werden.` |
-| 177 | `save.version_warning` | `Warning: This save was made with a different world version. Results may be unpredictable.` | `Warnung: Dieser Spielstand wurde mit einer anderen Weltversion erstellt. Die Ergebnisse können unvorhersehbar sein.` |
-| 178 | `save.world_mismatch` | `world mismatch!` | `Welt abweichend!` |
-| 179 | `search.nothing` | `You find nothing of interest.` | `Du findest nichts Interessantes.` |
-| 180 | `search.nothing_item` | `You find nothing special about the {item}.` | `An {article_dat} {item} findest du nichts Besonderes.` |
-| 181 | `search.nothing_npc` | `You find nothing on {npc}.` | `An {npc_article_dat} {npc} findest du nichts.` |
-| 182 | `search.reveal` | `You find the {item}.` | `Du findest {article_acc} {item}.` |
-| 183 | `search.void` | `You're in a void. There's nothing to search.` | `Du befindest dich im Nichts. Hier gibt es nichts zu durchsuchen.` |
-| 184 | `stats.attack` | `Attack:  {atk} (base {base})` | `Angriff:  {atk} (Basis {base})` |
-| 185 | `stats.conditions` | `Conditions: {conds}\n` | `Zustände: {conds}
+| 157 | `quit.bye` | `Goodbye!` | `Auf Wiedersehen!` |
+| 158 | `quit.thanks` | `Thanks for playing!` | `Danke fürs Spielen!` |
+| 159 | `refuel.no_vehicle` | `There is no vehicle to refuel.` | `Hier gibt es kein Fahrzeug zum Betanken.` |
+| 160 | `refuel.not_needed` | `The {vehicle} doesn't need fuel.` | `{vehicle} braucht keinen Treibstoff.` |
+| 161 | `repair.nothing_broken` | `There is nothing broken about the {vehicle} that matches '{target}'.` | `An {vehicle} ist nichts kaputt, das zu '{target}' passt.` |
+| 162 | `repair.ok` | `You repair the {vehicle} ({problem}).` | `Du reparierst {vehicle} ({problem}).` |
+| 163 | `repair.problems` | ` Problems: {list}.` | ` Probleme: {list}.` |
+| 164 | `save.compatible` | `compatible` | `kompatibel` |
+| 165 | `save.corrupted` | `Error: Save file is corrupted or incompatible.` | `Fehler: Speicherstand ist beschädigt oder inkompatibel.` |
+| 166 | `save.entry` | `  {name} — {timestamp} ({compat})` | `  {name} — {timestamp} ({compat})` |
+| 167 | `save.list_header` | `=== Saved Games ===` | `=== Spielstände ===` |
+| 168 | `save.loaded` | `Game loaded from {path} (saved: {timestamp}).` | `Spielstand geladen von {path} (gespeichert: {timestamp}).` |
+| 169 | `save.loaded_legacy` | `Game loaded (legacy format).` | `Spielstand geladen (altes Format).` |
+| 170 | `save.loaded_legacy2` | `Game loaded from legacy format.` | `Spielstand geladen aus altem Format.` |
+| 171 | `save.none_found` | `No saved games found.` | `Keine Spielstände gefunden.` |
+| 172 | `save.not_found` | `Error: Save file '{path}' not found.` | `Fehler: Speicherstand '{path}' nicht gefunden.` |
+| 173 | `save.saved` | `Game saved to {path} ({timestamp}).` | `Spielstand gespeichert unter {path} ({timestamp}).` |
+| 174 | `save.savezone_only` | `You can only rest at a savezone.` | `Speichern ist nur in einer Sicherheitszone möglich.` |
+| 175 | `save.slot_delete_failed` | `Warning: could not delete save slot {path}.` | `Warnung: Speicherstand {path} konnte nicht gelöscht werden.` |
+| 176 | `save.slot_deleted` | `Save slot deleted: {path}` | `Speicherstand gelöscht: {path}` |
+| 177 | `save.unreadable` | `Error: Could not read file '{path}'.` | `Fehler: Datei '{path}' konnte nicht gelesen werden.` |
+| 178 | `save.version_warning` | `Warning: This save was made with a different world version. Results may be unpredictable.` | `Warnung: Dieser Spielstand wurde mit einer anderen Weltversion erstellt. Die Ergebnisse können unvorhersehbar sein.` |
+| 179 | `save.world_mismatch` | `world mismatch!` | `Welt abweichend!` |
+| 180 | `search.nothing` | `You find nothing of interest.` | `Du findest nichts Interessantes.` |
+| 181 | `search.nothing_item` | `You find nothing special about the {item}.` | `An {article_dat} {item} findest du nichts Besonderes.` |
+| 182 | `search.nothing_npc` | `You find nothing on {npc}.` | `An {npc_article_dat} {npc} findest du nichts.` |
+| 183 | `search.reveal` | `You find the {item}.` | `Du findest {article_acc} {item}.` |
+| 184 | `search.void` | `You're in a void. There's nothing to search.` | `Du befindest dich im Nichts. Hier gibt es nichts zu durchsuchen.` |
+| 185 | `stats.attack` | `Attack:  {atk} (base {base})` | `Angriff:  {atk} (Basis {base})` |
+| 186 | `stats.conditions` | `Conditions: {conds}\n` | `Zustände: {conds}
 ` |
-| 186 | `stats.defense` | `Defense: {def} (base {base})` | `Verteidigung: {def} (Basis {base})` |
-| 187 | `stats.health` | `Health:  {hp} / {max}` | `Gesundheit:  {hp} / {max}` |
-| 188 | `stats.progression` | `Level {level} — {name} ({xp}/{next} XP)` | `Stufe {level} — {name} ({xp}/{next} XP)` |
-| 189 | `stats.progression_max` | `Level {level} — {name} ({xp} XP)` | `Stufe {level} — {name} ({xp} XP)` |
-| 190 | `stats.skills` | `Skills: {skills}\n` | `Fähigkeiten: {skills}
+| 187 | `stats.defense` | `Defense: {def} (base {base})` | `Verteidigung: {def} (Basis {base})` |
+| 188 | `stats.health` | `Health:  {hp} / {max}` | `Gesundheit:  {hp} / {max}` |
+| 189 | `stats.progression` | `Level {level} — {name} ({xp}/{next} XP)` | `Stufe {level} — {name} ({xp}/{next} XP)` |
+| 190 | `stats.progression_max` | `Level {level} — {name} ({xp} XP)` | `Stufe {level} — {name} ({xp} XP)` |
+| 191 | `stats.skills` | `Skills: {skills}\n` | `Fähigkeiten: {skills}
 ` |
-| 191 | `take.already` | `You already have the {item}.` | `Du hast {article_acc} {item} bereits.` |
-| 192 | `take.none_here` | `There's nothing here to take.` | `Hier gibt es nichts zu nehmen.` |
-| 193 | `take.not_portable` | `You can't take the {item}.` | `Du kannst {article_acc} {item} nicht mitnehmen.` |
-| 194 | `take.ok` | `You take the {item}.` | `Du nimmst {article_acc} {item}.` |
-| 195 | `target.not_carried` | `You don't have '{target}'.` | `Du hast '{target}' nicht.` |
-| 196 | `target.not_seen` | `You don't see '{target}' here.` | `Du siehst '{target}' hier nicht.` |
-| 197 | `ui.press_enter` | `  [Press Enter to continue]` | `  [Enter drücken, um fortzufahren]` |
-| 198 | `undo.disabled` | `Undo is disabled in this adventure.` | `Rückgängig ist in diesem Abenteuer deaktiviert.` |
-| 199 | `undo.done` | `Undone.` | `Rückgängig gemacht.` |
-| 200 | `undo.ironman` | `No undo in ironman mode.` | `Kein Rückgängig im Ironman-Modus.` |
-| 201 | `undo.nothing` | `Nothing to undo.` | `Nichts rückgängig zu machen.` |
-| 202 | `undo.permadeath` | `No undo after death (permadeath).` | `Nach dem Tod kein Rückgängig (Permadeath).` |
-| 203 | `unequip.all` | `You remove all equipment.` | `Du legst die gesamte Ausrüstung ab.` |
-| 204 | `unequip.not_equipped` | `The {item} is not equipped.` | `Du hast {article_acc} {item} nicht ausgerüstet.` |
-| 205 | `unequip.ok` | `You unequip the {item}.` | `Du legst {article_acc} {item} ab.` |
-| 206 | `use.not_carried` | `You need to be carrying '{item}' to use it.` | `Dazu musst du '{item}' bei dir haben.` |
-| 207 | `use.nothing` | `Nothing happens.` | `Es passiert nichts.` |
-| 208 | `use.ok` | `You use the {item}. {msg}` | `Du benutzt {article_acc} {item}. {msg}` |
-| 209 | `use.unreachable` | `You can't reach '{entity}' from here.` | `Du kommst von hier nicht an '{entity}' heran.` |
-| 210 | `vehicle.board` | `You board the {vehicle}.` | `Du steigst in {vehicle}.` |
-| 211 | `vehicle.cant_drive` | `You can't drive there from here. Stations: {stations}` | `Von hier aus kannst du nicht dorthin fahren. Stationen: {stations}` |
-| 212 | `vehicle.cant_steer` | `You can't steer the {vehicle}; it follows its own route.` | `Du kannst {vehicle} nicht steuern; es folgt seiner eigenen Route.` |
-| 213 | `vehicle.disembark` | `You disembark from the {vehicle}.` | `Du steigst aus {vehicle} aus.` |
-| 214 | `vehicle.drive_to` | `You drive to {stop}.` | `Du fährst nach {stop}.` |
-| 215 | `vehicle.fuelled` | `The {vehicle} is fuelled ({f}/{max}).` | `{vehicle} ist betankt ({f}/{max}).` |
-| 216 | `vehicle.manual_only` | `This vehicle only moves when you drive it.` | `Dieses Fahrzeug bewegt sich nur, wenn du fährst.` |
-| 217 | `vehicle.need_controls` | `You need to be at the controls to drive.` | `Du musst an den Kontrollen sein, um zu fahren.` |
-| 218 | `vehicle.no_here_enter` | `There is no '{id}' here to enter.` | `Hier gibt es kein '{id}', in das du einsteigen könntest.` |
-| 219 | `vehicle.no_id` | `There is no '{id}'.` | `Es gibt kein '{id}'.` |
-| 220 | `vehicle.not_here` | `The {vehicle} is not here.` | `{vehicle} ist nicht hier.` |
-| 221 | `vehicle.not_in` | `You are not in a vehicle.` | `Du befindest dich in keinem Fahrzeug.` |
-| 222 | `vehicle.not_on` | `You are not on a vehicle.` | `Du befindest dich in keinem Fahrzeug.` |
-| 223 | `vehicle.route_end` | `The route has no further stops.` | `Die Route hat keine weiteren Haltepunkte.` |
-| 224 | `vehicle.travel_on` | `You travel on to {stop}.` | `Du fährst weiter nach {stop}.` |
-| 225 | `vehicle.warning` | `Warning: {list}!` | `Warnung: {list}!` |
-| 226 | `victory.title` | `  VICTORY!` | `  SIEG!` |
-| 227 | `watch.nothing` | `There is nothing to watch about {label}.` | `Über {label} gibt es nichts zu beobachten.` |
-| 228 | `watch.start` | `Watching {label}...` | `Du beobachtest {label}...` |
-| 229 | `watch.void` | `You're in a void. There's nothing to watch.` | `Du befindest dich im Nichts. Hier gibt es nichts zu beobachten.` |
-| 230 | `world.file_unreadable` | `Could not read world file '{path}': {err}` | `Weltdatei '{path}' konnte nicht gelesen werden: {err}` |
-| 231 | `world.save_unreadable` | `Could not read save file '{path}': {err}` | `Speicherdatei '{path}' konnte nicht gelesen werden: {err}` |
-| 232 | `xp.clamped` | `XP cannot drop below 0.` | `XP können nicht unter 0 fallen.` |
+| 192 | `take.already` | `You already have the {item}.` | `Du hast {article_acc} {item} bereits.` |
+| 193 | `take.none_here` | `There's nothing here to take.` | `Hier gibt es nichts zu nehmen.` |
+| 194 | `take.not_portable` | `You can't take the {item}.` | `Du kannst {article_acc} {item} nicht mitnehmen.` |
+| 195 | `take.ok` | `You take the {item}.` | `Du nimmst {article_acc} {item}.` |
+| 196 | `target.not_carried` | `You don't have '{target}'.` | `Du hast '{target}' nicht.` |
+| 197 | `target.not_seen` | `You don't see '{target}' here.` | `Du siehst '{target}' hier nicht.` |
+| 198 | `ui.press_enter` | `  [Press Enter to continue]` | `  [Enter drücken, um fortzufahren]` |
+| 199 | `undo.disabled` | `Undo is disabled in this adventure.` | `Rückgängig ist in diesem Abenteuer deaktiviert.` |
+| 200 | `undo.done` | `Undone.` | `Rückgängig gemacht.` |
+| 201 | `undo.ironman` | `No undo in ironman mode.` | `Kein Rückgängig im Ironman-Modus.` |
+| 202 | `undo.nothing` | `Nothing to undo.` | `Nichts rückgängig zu machen.` |
+| 203 | `undo.permadeath` | `No undo after death (permadeath).` | `Nach dem Tod kein Rückgängig (Permadeath).` |
+| 204 | `unequip.all` | `You remove all equipment.` | `Du legst die gesamte Ausrüstung ab.` |
+| 205 | `unequip.not_equipped` | `The {item} is not equipped.` | `Du hast {article_acc} {item} nicht ausgerüstet.` |
+| 206 | `unequip.ok` | `You unequip the {item}.` | `Du legst {article_acc} {item} ab.` |
+| 207 | `use.not_carried` | `You need to be carrying '{item}' to use it.` | `Dazu musst du '{item}' bei dir haben.` |
+| 208 | `use.nothing` | `Nothing happens.` | `Es passiert nichts.` |
+| 209 | `use.ok` | `You use the {item}. {msg}` | `Du benutzt {article_acc} {item}. {msg}` |
+| 210 | `use.unreachable` | `You can't reach '{entity}' from here.` | `Du kommst von hier nicht an '{entity}' heran.` |
+| 211 | `vehicle.board` | `You board the {vehicle}.` | `Du steigst in {vehicle}.` |
+| 212 | `vehicle.cant_drive` | `You can't drive there from here. Stations: {stations}` | `Von hier aus kannst du nicht dorthin fahren. Stationen: {stations}` |
+| 213 | `vehicle.cant_steer` | `You can't steer the {vehicle}; it follows its own route.` | `Du kannst {vehicle} nicht steuern; es folgt seiner eigenen Route.` |
+| 214 | `vehicle.disembark` | `You disembark from the {vehicle}.` | `Du steigst aus {vehicle} aus.` |
+| 215 | `vehicle.drive_to` | `You drive to {stop}.` | `Du fährst nach {stop}.` |
+| 216 | `vehicle.fuelled` | `The {vehicle} is fuelled ({f}/{max}).` | `{vehicle} ist betankt ({f}/{max}).` |
+| 217 | `vehicle.manual_only` | `This vehicle only moves when you drive it.` | `Dieses Fahrzeug bewegt sich nur, wenn du fährst.` |
+| 218 | `vehicle.need_controls` | `You need to be at the controls to drive.` | `Du musst an den Kontrollen sein, um zu fahren.` |
+| 219 | `vehicle.no_here_enter` | `There is no '{id}' here to enter.` | `Hier gibt es kein '{id}', in das du einsteigen könntest.` |
+| 220 | `vehicle.no_id` | `There is no '{id}'.` | `Es gibt kein '{id}'.` |
+| 221 | `vehicle.not_here` | `The {vehicle} is not here.` | `{vehicle} ist nicht hier.` |
+| 222 | `vehicle.not_in` | `You are not in a vehicle.` | `Du befindest dich in keinem Fahrzeug.` |
+| 223 | `vehicle.not_on` | `You are not on a vehicle.` | `Du befindest dich in keinem Fahrzeug.` |
+| 224 | `vehicle.route_end` | `The route has no further stops.` | `Die Route hat keine weiteren Haltepunkte.` |
+| 225 | `vehicle.travel_on` | `You travel on to {stop}.` | `Du fährst weiter nach {stop}.` |
+| 226 | `vehicle.warning` | `Warning: {list}!` | `Warnung: {list}!` |
+| 227 | `victory.title` | `  VICTORY!` | `  SIEG!` |
+| 228 | `watch.nothing` | `There is nothing to watch about {label}.` | `Über {label} gibt es nichts zu beobachten.` |
+| 229 | `watch.start` | `Watching {label}...` | `Du beobachtest {label}...` |
+| 230 | `watch.void` | `You're in a void. There's nothing to watch.` | `Du befindest dich im Nichts. Hier gibt es nichts zu beobachten.` |
+| 231 | `world.file_unreadable` | `Could not read world file '{path}': {err}` | `Weltdatei '{path}' konnte nicht gelesen werden: {err}` |
+| 232 | `world.save_unreadable` | `Could not read save file '{path}': {err}` | `Speicherdatei '{path}' konnte nicht gelesen werden: {err}` |
+| 233 | `xp.clamped` | `XP cannot drop below 0.` | `XP können nicht unter 0 fallen.` |
 
 <!-- END GENERATED -->

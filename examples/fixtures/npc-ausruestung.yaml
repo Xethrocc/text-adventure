@@ -1,0 +1,119 @@
+# B9: NPC-Ausruestung — `give: {item, to, equip: true}`
+# Die Ausruestung ist eine Auspraegung des B7-`give`-Zuckers: der Autor
+# uebergibt dem NPC ein Item zum Tragen. Die Engine kennt weiter nur `give`,
+# es gibt kein neues Verbo. Der Slot kommt aus dem Item (`equip_slot`), der
+# Zustand aus der Item-Location (`EquippedBy`) — kein neues SaveState-Feld.
+name: NPC-Ausruestung Fixture
+start_room: halle
+
+combat:
+  profile: classic
+
+rooms:
+  - id: halle
+    name: Waffenkammer
+    desc: Ein enger Raum voller Waffen an den Waenden.
+
+npcs:
+  - id: waechter
+    name: Waechter
+    desc: Ein Waechter in verwahrlosten Ruestungen.
+    keys: [waechter, wache]
+    location: halle
+    state: alive
+    max_hp: 30
+    attack: 3
+    defense: 1
+
+items:
+  - id: schwert
+    name: Schwert
+    desc: Ein schmales Reiterschwert mit abgegriffener Spitze.
+    location: halle
+    keys: [schwert, reiterschwert]
+    slot: weapon
+    effects: [attack+3]
+
+  # Zweite Waffe: derselbe Slot wie das Schwert — der zweite Versuch muss
+  # scheitern (equip.slot_occupied), der Slot bleibt beim Schwert.
+  - id: dolch
+    name: Dolch
+    desc: Ein kurzer Dolch mit schmaler Klinge.
+    location: halle
+    keys: [dolch]
+    slot: weapon
+    effects: [attack+1]
+
+  - id: ruestung
+    name: Ruestung
+    desc: Ein geschnittenes Brustpanzer aus gehaertetem Leder.
+    location: halle
+    keys: [ruestung, panzer]
+    slot: body
+    effects: [defense+2]
+
+interactions:
+  npc:
+    # Der Autor laesst den Waechter das Schwert anlegen: dieselbe Effektliste
+    # wie in Paket A, nur mit `equip: true` statt `give:`.
+    - item: schwert
+      target: waechter
+      effects:
+        - msg: "Du reichst dem Waechter das Schwert."
+        - give: {item: schwert, to: waechter, equip: true}
+
+    # Zweite Waffe: der Slot-Konflikt wird am Effekt sichtbar (zur Laufzeit),
+    # nicht beim Kompilieren — der Compiler kennt die Reihenfolge der Laeufe nicht.
+    - item: dolch
+      target: waechter
+      effects:
+        - msg: "Du steckst dem Waechter den Dolch an den Guertel."
+        - give: {item: dolch, to: waechter, equip: true}
+
+    - item: ruestung
+      target: waechter
+      effects:
+        - msg: "Du hilfst dem Waechter in die Ruestung."
+        - give: {item: ruestung, to: waechter, equip: true}
+
+tests:
+  - name: "ausgeruestete Items erscheinen als eigene Zeile, getragene als Carrying"
+    input:
+      - take schwert
+      - use schwert on waechter
+      - look at waechter
+      - quit
+    expect:
+      - "Du reichst dem Waechter das Schwert."
+      - "Wearing: Schwert."
+
+  - name: "ein zweites Item in denselben Slot wird abgelehnt, der Slot bleibt beim ersten"
+    input:
+      - take schwert
+      - take dolch
+      - use schwert on waechter
+      - use dolch on waechter
+      - look at waechter
+      - quit
+    expect:
+      - "You already have the schwert equipped there."
+      - "Wearing: Schwert."
+
+  - name: "verschiedene Slots sind kein Konflikt"
+    input:
+      - take schwert
+      - take ruestung
+      - use schwert on waechter
+      - use ruestung on waechter
+      - look at waechter
+      - quit
+    expect:
+      - "Du hilfst dem Waechter in die Ruestung."
+      - "Wearing: Ruestung, Schwert."
+
+  - name: "ohne ausgeruestetes Item gibt es keine Wearing-Zeile"
+    input:
+      - look at waechter
+      - quit
+    expect:
+      - "Ein Waechter in verwahrlosten Ruestungen."

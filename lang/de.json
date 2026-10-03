@@ -70,6 +70,7 @@
     "npc.dead_silent": "{npc} ist tot und sagt nichts.",
     "npc.cant_do": "Das kannst du mit {npc} nicht tun.",
     "npc.carries": "\nDabei: {items}.",
+    "npc.wears": "\nGetragen: {items}.",
     "npc.gave_to": "Du gibst {item_article_acc} {item} an {npc_article_acc} {npc}.",
     "npc.no_item": "Du findest {item} bei {npc_article_dat} {npc} nicht.",
     "npc.took_from": "Du nimmst {item_article_acc} {item} von {npc_article_dat} {npc}.",

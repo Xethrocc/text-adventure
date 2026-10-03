@@ -5301,6 +5301,106 @@ testNpcTakeAll = do
     r13 <- expectTrue "take all from npc consumes a turn" (expectedConsumesTurn (TakeAllFromCmd "waechter"))
     pure (r0 && r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12 && r13)
 
+-- | B9: NPC equipment. `give: {item, to, equip: true}` compiles to `MoveEntity x
+--   (EquippedBy (ActorNPC …))`: the item's **location** carries the state (no
+--   new SaveState field), the slot comes from the item's own `equip_slot`, the
+--   worn bonuses count in the combat numbers and `look at <npc>` shows the line.
+testNpcEquipment :: IO Bool
+testNpcEquipment = do
+    let schwert = (mkTestEquip "schwert" "Schwert" Weapon) { itemEquipEffects = [AttackBonus 4] }
+        ruestung = (mkTestEquip "ruestung" "Ruestung" Body)   { itemEquipEffects = [DefenseBonus 3] }
+        zweitSchwert = (mkTestEquip "zweit" "Zweitschwert" Weapon) { itemEquipEffects = [] }
+        stein = mkTestItem "stein" "Stein"   -- no equip slot at all
+        waechter2 = NPCDef "waechter2" "Waechter2" (plainText "Ein zweiter Waechter.")
+                    Map.empty ["waechter2"] (Just 20) 5 5 Map.empty
+                    emptyAscii Map.empty emptyGrammar
+        st0 = b7State [ (schwert, InRoom "halle"), (ruestung, InRoom "halle")
+                      , (zweitSchwert, InRoom "halle"), (stein, InRoom "halle") ]
+        -- a second NPC in the same room: the slot check is per actor
+        stOther = let s = b7State [ (schwert, InRoom "halle"), (zweitSchwert, InRoom "halle") ]
+                      s1 = s { world = (world s) { npcDefs = Map.insert "waechter2" waechter2 (npcDefs (world s)) } }
+                  in s1 { save = (save s1)
+                          { npcStates = Map.insert "waechter2"
+                              (NPCState (InRoom "halle") "alive" (Just 20) Map.empty Nothing)
+                              (npcStates (save s1)) } }
+        equipOk it actor st = either (const st) id (equipItemFor actor it st)
+        equipErr it actor st = either id (const "") (equipItemFor actor it st)
+        itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+        run cmd st = applyLoopCommandEv (parseCommand cmd) (initLoopState st)
+        out = renderEvents . snd
+        npcDefOf n st = Map.lookup n (npcDefs (world st))
+        stEquipped = equipOk "schwert" (ActorNPC "waechter") st0
+    r1 <- expectEqual (Just (EquippedBy (ActorNPC "waechter")))
+            (itemLoc "schwert" (equipOk "schwert" (ActorNPC "waechter") st0))
+    r3 <- expectTrue "slot conflict is refused"
+            ("already have" `isInfixOf` equipErr "zweit" (ActorNPC "waechter") stEquipped)
+    r4 <- expectTrue "a non-equippable item is refused"
+            ("equip" `isInfixOf` equipErr "stein" (ActorNPC "waechter") stEquipped)
+    r5 <- expectTrue "an unknown item is refused"
+            (not (null (equipErr "quatsch" (ActorNPC "waechter") st0)))
+    r6 <- expectEqual (Just (EquippedBy (ActorNPC "waechter2")))
+            (itemLoc "zweit" (equipOk "zweit" (ActorNPC "waechter2") stOther))
+    -- the player keeps the historical equipment map (byte-frozen contract)
+    r7 <- expectTrue "player equip is unchanged"
+            (let stHeld = b7State [ (schwert, CarriedBy ActorPlayer) ]
+                 s = equipOk "schwert" ActorPlayer stHeld
+             in Map.lookup Weapon (equipment (save s)) == Just "schwert"
+                && itemLoc "schwert" s == Just (CarriedBy ActorPlayer))
+    r7c <- expectTrue "player equip still needs the item in hand"
+            ("need to be carrying" `isInfixOf` equipErr "schwert" ActorPlayer st0)
+    -- the effect-table path is the same function (no second implementation)
+    r7b <- expectTrue "MoveEntity EquippedBy goes through the same check"
+            (let (s, _) = applyOutcomeEv (MoveEntity "zweit" (EquippedBy (ActorNPC "waechter"))) "" stEquipped
+             in itemLoc "zweit" s == Just (InRoom "halle"))
+    -- worn bonuses count in the combat numbers
+    r8 <- expectEqual 9 (maybe 0 id (fmap (\d -> npcAttackWith "waechter" d stEquipped) (npcDefOf "waechter" stEquipped)))
+    r9 <- expectEqual 5 (maybe 0 id (fmap (\d -> npcAttackWith "waechter" d st0) (npcDefOf "waechter" st0)))
+    r10 <- expectEqual 5 (maybe 0 id (fmap (\d -> npcDefenseWith "waechter" d st0) (npcDefOf "waechter" st0)))
+    r11 <- expectEqual 8 (maybe 0 id (fmap (\d -> npcDefenseWith "waechter" d (equipOk "ruestung" (ActorNPC "waechter") st0)) (npcDefOf "waechter" st0)))
+    -- visible in `look at <npc>` and in the protocol snapshot
+    let stBoth = equipOk "ruestung" (ActorNPC "waechter") stEquipped
+    r12 <- expectTrue "look at npc shows the worn line"
+            (let o = out (run "look at waechter" stBoth)
+             in "Wearing: " `isInfixOf` o && "Schwert" `isInfixOf` o && "Ruestung" `isInfixOf` o)
+    r13 <- expectTrue "carried and worn are separate lines"
+            ("Carrying" `notElem` words (out (run "look at waechter" stBoth)))
+    r14 <- expectTrue "no worn line without worn items"
+            (not ("Wearing" `isInfixOf` out (run "look at waechter" st0)))
+    r15 <- expectEqual ["Ruestung", "Schwert"]   -- Map order (item id), not definition order
+            [ isName i | n <- rsNpcs (snapRoom (makeSnapshot stBoth))
+                       , nsId n == "waechter", i <- nsEquipped n ]
+    r16 <- expectTrue "empty equipped list is omitted from json"
+            (not ("equipped" `isInfixOf`
+                BLC.unpack (Aeson.encode (head (rsNpcs (snapRoom (makeSnapshot st0)))))))
+    pure (r1 && r3 && r4 && r5 && r6 && r7 && r7b && r7c && r8 && r9 && r10 && r11 && r12 && r13 && r14 && r15 && r16)
+
+-- | B9: worn equipment really changes the classic combat round — the number
+--   the player sees ("You hit for N") drops by exactly the armor bonus.
+testNpcEquipmentAffectsCombat :: IO Bool
+testNpcEquipmentAffectsCombat = do
+    let hpOf s = maybe 0 (fromMaybe 0 . npcHealth) (Map.lookup "waechter" (npcStates (save s)))
+        hit st = let (st', msg) = executeCommand (Interact VAttack "waechter") st
+                 in (hpOf st - hpOf st', msg)
+        -- one record update per line: a multi-line record update switches the
+        -- layout context and breaks the following bindings
+        fight its =
+            let s0 = b7State its
+                -- max_hp must follow npc_health: the health clamp would
+                -- otherwise hide the damage difference
+                s1 = s0 { world = (world s0) { npcDefs = Map.adjust (\d -> d { npcMaxHealth = Just 100 }) "waechter" (npcDefs (world s0)) } }
+                s2 = s1 { save = (save s1) { npcStates = Map.adjust (\ns -> ns { npcHealth = Just 100 }) "waechter" (npcStates (save s1)) } }
+                s3 = s2 { save = (save s2) { player = (player (save s2)) { playerHealth = 500, playerMaxHealth = 500, playerAttack = 10, playerDefense = 1 } } }
+                s4 = s3 { save = (save s3) { equipment = Map.empty } }
+                s5 = s4 { world = (world s4) { combatProfile = CombatClassic Nothing } }
+            in hit s5
+        ruestung = (mkTestEquip "ruestung" "Ruestung" Body) { itemEquipEffects = [DefenseBonus 3] }
+        (dmgBare, _) = fight [ (ruestung, InRoom "halle") ]
+        (dmgArmored, msgArmored) = fight [ (ruestung, EquippedBy (ActorNPC "waechter")) ]
+    r1 <- expectTrue "armor absorbs exactly its bonus" (dmgArmored == dmgBare - 3)
+    r2 <- expectTrue "the reported hit drops too"
+            (("You hit for " ++ show dmgArmored) `isInfixOf` msgArmored)
+    pure (r1 && r2)
+
 -- | B9: the effect table: `MoveEntity x (CarriedBy <actor>)` honours the actor —
 --   the `give:` object form can hand items to NPCs, not just the player.
 testMoveEntityCarriedByActor :: IO Bool
@@ -9474,6 +9574,8 @@ main = do
         , runTest "npc possession: examine + snapshot visibility (B7)" testNpcCarriedVisibility
         , runTest "item-on-npc interaction: effects + attack fallback (B9)" testNpcItemInteraction
         , runTest "npc interactions omitted from json when empty (B9)" testNpcInteractionsOmittedWhenEmpty
+        , runTest "npc equipment: location, slots, combat bonus, visibility (B9)" testNpcEquipment
+        , runTest "npc equipment changes the classic combat round (B9)" testNpcEquipmentAffectsCombat
         , runTest "take all from <npc> (B9)" testNpcTakeAll
         , runTest "npc possession: MoveEntity honours the carrier (B7)" testMoveEntityCarriedByActor
         , runTest "ActorHas predicate for player, NPC and device entity (W4)" testActorHasPredicate

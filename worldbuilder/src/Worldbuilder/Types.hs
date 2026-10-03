@@ -1362,6 +1362,7 @@ data AActionOutcome
     | AODamagePlayer Int
     | AOGiveItem String
     | AOGiveTo String String         -- ^ B7: give: { item: <item>, to: <actor> }
+    | AOGiveEquipTo String String    -- ^ B9: give: { item: <item>, to: <actor>, equip: true }
     | AOConsumeItem String
     | AOSetFlag String String
     | AOStartQuest String
@@ -1589,9 +1590,20 @@ instance FromJSON AActionOutcome where
         <|> (AODamagePlayer <$> o .: "damage")
         <|> (do gv <- o .: "give"
                 case gv of
-                    String s    -> pure (AOGiveItem (T.unpack s))
-                    Object gObj -> AOGiveTo <$> gObj .: "item" <*> (gObj .:? "to" .!= "player")
-                    _           -> fail "give must be an item id or { item: <item>, to: <actor> }")
+                    String s -> pure (AOGiveItem (T.unpack s))
+                    -- B9: `equip: true` is a variant of the B7 give-sugar, not a
+                    -- new player command — the item ends up in the actor's hands
+                    -- as worn equipment (`EquippedBy`).
+                    Object gObj -> do i <- gObj .: "item"
+                                      to <- gObj .:? "to" .!= "player"
+                                      -- the bool must be *used*, not discarded
+                                      -- (a `AOFoo <$ (o .: "key")` would accept
+                                      -- `false` silently): read it, then branch.
+                                      eq <- gObj .:? "equip" .!= False
+                                      pure (if eq
+                                              then AOGiveEquipTo (T.unpack i) (T.unpack to)
+                                              else AOGiveTo (T.unpack i) (T.unpack to))
+                    _           -> fail "give must be an item id or { item: <item>, to: <actor>[, equip: true] }")
         <|> (AOConsumeItem <$> o .: "consume")
         <|> (AOSetFlag <$> o .: "set_flag" <*> o .:? "val" .!= "true")
         <|> (AOStartQuest <$> o .: "start_quest")

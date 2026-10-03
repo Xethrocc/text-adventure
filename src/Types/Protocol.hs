@@ -309,6 +309,7 @@ data NpcSummary = NpcSummary
     , nsName    :: String
     , nsAlive   :: Bool
     , nsCarried :: [ItemSummary]  -- ^ B7: carried items (omitted in JSON when empty)
+    , nsEquipped :: [ItemSummary] -- ^ B9: worn equipment (omitted in JSON when empty)
     } deriving (Show, Eq, Generic)
 
 instance ToJSON NpcSummary where
@@ -316,7 +317,8 @@ instance ToJSON NpcSummary where
         [ "id"    .= nsId ns
         , "name"  .= nsName ns
         , "alive" .= nsAlive ns
-        ] ++ [ "carried" .= nsCarried ns | not (null (nsCarried ns)) ]
+        ] ++ [ "carried"  .= nsCarried ns  | not (null (nsCarried ns))  ]
+          ++ [ "equipped" .= nsEquipped ns | not (null (nsEquipped ns)) ]
 
 instance FromJSON NpcSummary where
     parseJSON = withObject "NpcSummary" $ \o -> NpcSummary
@@ -324,6 +326,7 @@ instance FromJSON NpcSummary where
         <*> o .: "name"
         <*> o .:? "alive" .!= True
         <*> o .:? "carried" .!= []
+        <*> o .:? "equipped" .!= []
 
 -- | Condition (status effect) summary.
 data ConditionSnapshot = ConditionSnapshot
@@ -795,7 +798,7 @@ makeSnapshot state = Snapshot
                           , itemLocation st == InRoom curRoomId
                           , Just def <- [Map.lookup iId (itemDefs gw)]
                           , not (itemHidden def) || itemDiscovered st ]
-        , rsNpcs        = [ NpcSummary (npcId def) (npcName def) (npcAlive st) (carriedOf nId)
+        , rsNpcs        = [ NpcSummary (npcId def) (npcName def) (npcAlive st) (carriedOf nId) (equippedOf nId)
                           | (nId, st) <- Map.toList (npcStates ss)
                           , npcLocation st == InRoom curRoomId
                           , Just def <- [Map.lookup nId (npcDefs gw)] ]
@@ -803,10 +806,13 @@ makeSnapshot state = Snapshot
         }
     npcAlive st = maybe "alive" npcStatus (Just st) /= "dead"
     -- B7: items an NPC carries (hidden ones need discovery, like everywhere)
-    carriedOf nId =
+    carriedOf nId = itemSummaryAt (CarriedBy (ActorNPC nId))
+    -- B9: items an NPC wears (same visibility rule as the carried list)
+    equippedOf nId = itemSummaryAt (EquippedBy (ActorNPC nId))
+    itemSummaryAt loc =
         [ ItemSummary (itemId d) (itemName d) (ctDefault (itemDescription d))
         | (iId, ist) <- Map.toList (itemStates ss)
-        , itemLocation ist == CarriedBy (ActorNPC nId)
+        , itemLocation ist == loc
         , Just d <- [Map.lookup iId (itemDefs gw)]
         , not (itemHidden d) || itemDiscovered ist ]
 

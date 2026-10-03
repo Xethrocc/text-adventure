@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### NPC-Ausruestung (B9, Teil 2)
+
+- **Neue Autorenform `give: {item: X, to: <npc-id>, equip: true}`** — eine
+  Auspraegung des B7-`give`-Zuckers, **kein** neues Spieler-Kommando: der NPC
+  traegt das Item danach (`EquippedBy (ActorNPC …)`). Ohne `to` zielt die Form
+  wie `give:` auf den Spieler; `equip: false` bleibt `CarriedBy` (der Bool wird
+  benutzt, nicht verworfen — ein `AOFoo <$ (o .: "key")` wuerde `false`
+  stillschweigend akzeptieren). Unbekanntes Ziel bleibt `UnknownNpc`.
+- **Zustand bleibt in der Item-Location** (kein neues `SaveState`-Feld), der
+  **Slot** kommt aus dem Item (`slot:`). `MoveEntity (EquippedBy actor)`
+  respektiert jetzt den Actor (`equipItemFor`): der Spielerpfad mit der
+  `equipment`-Map ist byte-veraendert **nichts**, ein NPC traegt das Item als
+  Location. Der Slot-Konflikt gilt **pro Actor** (`wornInSlot` als einzige
+  Definition von „Slot belegt"; der zweite Waechter im gleichen Slot ist kein
+  Konflikt).
+- **Der Boni wirkt im Kampf:** `npcAttackWith`/`npcDefenseWith` ersetzen an
+  jeder bisherigen Direktstelle das Lesen von `npcAttackBase`/`npcDefenseBase`
+  (narrative, tactical, classic, Begleiter, Schiff) — mit Ausruestung addieren
+  `effects: [attack+N]`, ohne Ausruestung bleibt der Bonus 0, bestehende
+  Laeufe byte-identisch.
+- **Sichtbarkeit:** neue Katalog-Zeile `npc.wears` („Wearing: …“) in
+  `look at <npc>` neben der B7-`Carrying:`-Zeile und im Protokoll als
+  `NpcSummary.equipped` (leer = Feld weggelassen). Katalog 232 → **233** Keys,
+  de-Paket synchron (CI 2c `--require-complete`).
+- **Doku-Fund (mitgefixt):** die Item-Tabelle nannte die Felder
+  `equip_slot:`/`equip_effects:`; geparst werden `slot:`/`effects:`.
+- Tests: `testNpcEquipment` (Location, Slot-Konflikt, nicht ausruestbar,
+  pro-Actor-Slot, Spielerpfad byte-gleich, Kampfzahlen, `look at`, Snapshot,
+  JSON-Auslassung) + `testNpcEquipmentAffectsCombat` (der gemeldete Schaden
+  sinkt um genau den Ruestungsbonus) + `testGiveEquipSugar` (5 YAML-Formen,
+  Bool-Sugar, Ref-Fehler).
+- Content: `examples/fixtures/npc-ausruestung.yaml` (4 `tests:`-Abschnitte:
+  Wearing-Zeile, Slot-Konflikt, verschiedene Slots, kein Wearing) +
+  `ci/e2e/npc-ausruestung.{in,expect}` (CI-Stufen 4/4b).
+
 ### `take all from <npc>` (B9, Teil 1)
 
 - **Neue Massen-Operation an Figuren:** `take all from <npc>` nimmt alles, was der
@@ -42,9 +77,7 @@
   verbrauchtes Item, Angriffs-Fallback beim nicht deklarierten Paar, `tests:`-
   Sektion) + `ci/e2e/npc-interaktion.{in,expect}` (CI-Stufen 4/4b); Doku in
   `docs/adventure-schema.md`.
-- Offen im B9-Rest (bewusst nicht hier): NPC-Ausruestung
-  (`EquippedBy ActorNPC`, Autorenform `give: {item, to, equip: true}` laut
-  Nutzer-Entscheidung) und Fallenlassen beim NPC-Tod.
+- Offen im B9-Rest (bewusst nicht hier): Fallenlassen beim NPC-Tod.
 
 ### Sprachpakete: Beispiel-Abenteuer & Genre-Demo (4.3, Teil 6)
 

@@ -1727,7 +1727,7 @@ interactNpc verb npc maybeNpcState targetStr state =
             else if verb == VLookAt
             then ( st
                  , joinEv (lookWithArtEv (npcAscii npc) st (resolveCondText (npcDescription npc) st))
-                          (npcCarriedEv nId st) )
+                          (joinEv (npcCarriedEv nId st) (npcWornEv nId st)) )
             else if hasOnCommandTrigger verb st then (st, [])
             else (st, evMsg "npc.cant_do" [("npc", npcName npc)])
     in runVerbMapEntry (npcVerbMap npc) verb currentStatus nId standard state
@@ -1739,6 +1739,15 @@ npcCarriedEv nId state =
     case getItemsInLocation (CarriedBy (ActorNPC nId)) state of
         []     -> []
         items  -> evMsg "npc.carries" [("items", intercalate ", " (map itemName items))]
+
+-- | B9: the worn-equipment line when looking at an NPC. Worn items are a
+--   location (`EquippedBy`), not the NPC's hands, so they get their own line —
+--   the "Mounted:"/"Carrying:" idiom of a `devices:`/`carried_by:` line.
+npcWornEv :: NPCID -> GameState -> [OutputEvent]
+npcWornEv nId state =
+    case getItemsInLocation (EquippedBy (ActorNPC nId)) state of
+        []     -> []
+        items  -> evMsg "npc.wears" [("items", intercalate ", " (map itemName items))]
 
 -- | Execute interaction on a vehicle.
 interactVehicle :: Verb -> VehicleDef -> String -> GameState -> (GameState, [OutputEvent])

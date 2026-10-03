@@ -3630,6 +3630,7 @@ tests =
     , ("carried_by: with in_container is a conflict error (B7)", testCarriedByConflictFails)
     , ("give: string and object form compile (B7)", testGiveToSugar)
     , ("give: unknown to-npc is a hard error (B7)", testGiveToUnknownNpcFails)
+    , ("give: equip: true is a variant of the give-sugar (B9)", testGiveEquipSugar)
     , ("known keys: carried_by and capacity warn nowhere (B7)", testNpcPossessionKnownKeysClean)
     -- B9: item-on-NPC interactions
     , ("interactions npc: compiles to an outcome map (B9)", testNpcInteractionCompiles)
@@ -5957,6 +5958,31 @@ testGiveToSugar = do
     r4 <- expectEqual (Just (AOGiveTo "schluessel" "waechter"))
                       (Aeson.decode (BLC.pack "{\"give\": {\"item\": \"schluessel\", \"to\": \"waechter\"}}"))
     pure (r1 && r2 && r3 && r4)
+
+-- | B9: `give: {item, to, equip: true}` compiles to `EquippedBy` (the B7
+--   sugar, not a new player command), `equip: false` stays `CarriedBy`, and an
+--   unknown target is a hard error on the new form too. The bool has to be
+--   *used* — a discarded `equip` would accept `false` silently.
+testGiveEquipSugar :: IO Bool
+testGiveEquipSugar = do
+    r1 <- expectEqual (E.MoveEntity "schwert" (E.EquippedBy (E.ActorNPC "waechter")))
+                      (compileAActionOutcome (AOGiveEquipTo "schwert" "waechter"))
+    r2 <- expectEqual (E.MoveEntity "schwert" (E.EquippedBy E.ActorPlayer))
+                      (compileAActionOutcome (AOGiveEquipTo "schwert" "player"))
+    r3 <- expectEqual (Just (AOGiveEquipTo "schwert" "waechter"))
+                      (Aeson.decode (BLC.pack "{\"give\": {\"item\": \"schwert\", \"to\": \"waechter\", \"equip\": true}}"))
+    r4 <- expectEqual (Just (AOGiveTo "schwert" "waechter"))
+                      (Aeson.decode (BLC.pack "{\"give\": {\"item\": \"schwert\", \"to\": \"waechter\", \"equip\": false}}"))
+    r5 <- expectEqual (Just (AOGiveTo "schwert" "waechter"))
+                      (Aeson.decode (BLC.pack "{\"give\": {\"item\": \"schwert\", \"to\": \"waechter\"}}"))
+    r6 <- expectEqual (Just (AOGiveEquipTo "schwert" "player"))
+                      (Aeson.decode (BLC.pack "{\"give\": {\"item\": \"schwert\", \"equip\": true}}"))
+    let bad = (minItem "schwert") { aiOnTake = Just [AOGiveEquipTo "schwert" "niemand"] }
+    r7 <- expectTrue "unknown npc on the equip form"
+            (case compileAdventure (advWithItem bad) of
+                Left errs -> any (\i -> ciCode i == "UnknownNpc") errs
+                Right _   -> False)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
 
 -- | `give: {item, to}` naming an unknown npc is a hard error (UnknownNpc).
 testGiveToUnknownNpcFails :: IO Bool

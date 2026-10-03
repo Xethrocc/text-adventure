@@ -319,6 +319,18 @@ The `Snapshot` record is constructed purely from `GameState` via `makeSnapshot :
 }
 ```
 
+**NPC-Besitz und -Ausrüstung:** ein `NpcSummary` führt zwei optionale Listen, die
+**weggelassen** werden, wenn sie leer sind (byte-kompatibel):
+
+| Feld | Bedeutung | Quelle |
+|---|---|---|
+| `carried` | Items in den Händen der Figur | `carried_by:` / `give: {item, to}` (B7) |
+| `equipped` | Items, die die Figur **trägt** (angelegt, angelegt an einem Slot) | `give: {item, to, equip: true}` (B9) |
+
+Beide Listen enthalten dieselben `ItemSummary`-Einträge (`id`, `name`,
+`description`) und folgen derselben Sichtbarkeitsregel: versteckte Items
+(`hidden: true`) erscheinen erst nach `discover`.
+
 When dialogue is active, `"dialogue"` carries:
 ```json
 {

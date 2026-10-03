@@ -374,8 +374,8 @@ description:
 | `tags` | [String] | `[]` | `lightsource`, `feelable`, `weapon`, `vehicle`, … |
 | `location` | String | `"start"` | Start-Raum-ID |
 | `state` | String | `"intact"` | Start-Status |
-| `equip_slot` | String | — | `weapon`, `body`, `accessory` |
-| `equip_effects` | [String] | `[]` | `attack+5`, `defense+3`, `maxhp+20` |
+| `slot` | String | — | Ausruestungs-Slot: `weapon`, `body`, `accessory` (ohne `slot:` ist das Item nicht ausruestbar) |
+| `effects` | [String] | `[]` | Ausruestungs-Boni: `attack+5`, `defense+3`, `maxhp+20` |
 | `hidden` | Bool | `false` | Nur via `search` findbar |
 | `discover` | String | — | Text bei Entdeckung |
 | `props` | Object | `{}` | `{ uses: 3 }` — Integer-Eigenschaften |
@@ -2353,6 +2353,39 @@ Beute“).
 Objekt-Form `give: {item: X, to: <npc-id>}` überreicht an NPCs (Validierung wie
 `carried_by:`). `mount:`/`unmount:` bleiben die Geräte-Vokabel (W4). `move_npc:` bewegt
 NPCs samt Besitz (Items hängen am Actor, nicht am Raum).
+
+### Ausgeruestete NPCs (B9)
+
+`give: {item: X, to: <npc-id>, equip: true}` ist **eine Auspraegung des `give`-Zuckers**,
+kein neues Spieler-Kommando: der NPC **traegt** das Item danach (`EquippedBy`).
+
+```yaml
+interactions:
+  npc:
+    - item: schwert
+      target: waechter
+      effects:
+        - msg: "Du reichst dem Waechter das Schwert."
+        - give: {item: schwert, to: waechter, equip: true}
+```
+
+- **Zustand:** die Item-Location (`EquippedBy (ActorNPC …)`) — **kein** neues
+  `SaveState`-Feld. Der **Slot** kommt aus dem Item selbst (`slot:`, mit
+  `effects: [attack+3, …]` als Boni); getragen und angelegt sind zwei verschiedene
+  Locations, `take all from <npc>` nimmt nur die getragenen.
+- **Slot pro Actor:** ein zweites Item im selben Slot wird zur Laufzeit abgelehnt
+  (`equip.slot_occupied`); ein anderer NPC im selben Slot ist kein Konflikt. Der
+  Spielerpfad bleibt unberuehrt (`equipment`-Map, byte-gefroren).
+- **Wirkung:** die Ausruestungs-Boni (`effects:`) zaehlen im Kampf fuer den NPC —
+  in **allen** Profilen (`narrative`, `tactical`, `classic`) an der einen Stelle
+  (`npcAttackWith`/`npcDefenseWith`), inkl. der Begleiter-Schlaege. Ohne
+  Ausruestung ist der Bonus 0, bestehende Laeufe bleiben byte-identisch.
+- **Sichtbarkeit:** `look at <npc>` zeigt eine eigene Zeile (`npc.wears`,
+  „Wearing: …“) neben der `Carrying:`-Zeile; das Snapshot-Feld `NpcSummary.equipped`
+  traegt dieselbe Liste (leer = Feld weggelassen).
+- **Zur Laufzeit, nicht beim Kompilieren:** ein Item ohne `slot:` wird abgelehnt
+  (`equip.not_equippable`) — der Autor erfährt es im Lauf, weil die Kompilierung
+  die Reihenfolge der Laeufe nicht kennt.
 
 **Diebstahl-Sperren** setzt der Autor per Veto-Regeln (`on: before` + `block:`, siehe
 Phase 2.2) — die Before-Phase läuft für alle Kommandos, `cmd.verb` ist `take` bzw. `give`.
