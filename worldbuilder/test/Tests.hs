@@ -3892,6 +3892,9 @@ tests =
     , ("fuzz: clean world fuzzes without findings (B5)", testFuzzSmoke)
     -- B8: named RNG streams
     , ("rng: authored writes on rng.* are hard errors (B8)", testRngVarWriteGuard)
+    -- K1: dice pool
+    , ("dice pool: roll_dice compile validation rejects die: 1 and invalid pool/keep (K1.1)", testRollDiceValidation)
+    , ("dice pool: {var: dice.*} placeholders emit no warnings without declaration (K1.1)", testDicePlaceholderNoWarning)
     , ("verb_map: before:/instead: key phases (4.2)", testVerbMapPhaseKeys)
     , ("verb_map: one phase per (verb, state) pair (4.2)", testVerbMapPhaseClash)
     -- Phase 4.3: language packs (D4)
@@ -7295,6 +7298,79 @@ testRngVarWriteGuard = do
     r11 <- expectTrue "random object form has no UnknownYamlKey"
             (null [ () | e <- checkUnknownYamlKeys rawRandomVal, ciCode e == "UnknownYamlKey" ])
     pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11])
+
+-- ---------------------------------------------------------------------------
+-- K1: dice pool (roll_dice)
+-- ---------------------------------------------------------------------------
+
+-- | K1.1: roll_dice compile validation rejects invalid die, pool and keep values.
+testRollDiceValidation :: IO Bool
+testRollDiceValidation = do
+    let rollRule effs = ATrigger
+            { atId = "t", atOn = "turn", atWhen = Nothing
+            , atEffects = effs, atOnce = False, atCooldown = 0 }
+        advWithEffects effs = (minAdventure (minRoom "a")) { advTriggers = [rollRule effs] }
+    -- die < 2 is rejected
+    let badDieAdv = advWithEffects [AORollDice 1 1 "" 1]
+    r1 <- expectTrue "die < 2 is a hard error"
+            (case compileAdventure badDieAdv of
+                Left errs -> any (\i -> ciCode i == "InvalidDiceSides") errs
+                Right _   -> False)
+    -- pool < 1 is rejected
+    let badPoolAdv = advWithEffects [AORollDice 0 6 "" 0]
+    r2 <- expectTrue "pool < 1 is a hard error"
+            (case compileAdventure badPoolAdv of
+                Left errs -> any (\i -> ciCode i == "InvalidDicePool") errs
+                Right _   -> False)
+    -- keep < 0 is rejected
+    let badKeepNeg = advWithEffects [AORollDice 2 6 "" (-1)]
+    r3 <- expectTrue "keep < 0 is a hard error"
+            (case compileAdventure badKeepNeg of
+                Left errs -> any (\i -> ciCode i == "InvalidDiceKeep") errs
+                Right _   -> False)
+    -- keep > pool is rejected
+    let badKeepExceed = advWithEffects [AORollDice 2 6 "" 3]
+    r4 <- expectTrue "keep > pool is a hard error"
+            (case compileAdventure badKeepExceed of
+                Left errs -> any (\i -> ciCode i == "InvalidDiceKeep") errs
+                Right _   -> False)
+    -- valid roll_dice compiles cleanly
+    let validAdv = advWithEffects [AORollDice 3 6 "beute" 2]
+    r5 <- expectRight (compileAdventure validAdv)
+    -- writes to dice.* are rejected by RngVarWrite guard
+    r6 <- expectTrue "authored write to dice.* is rejected"
+            (case compileAdventure (advWithEffects [AOSetVar "dice.last_roll" 1]) of
+                Left errs -> any (\i -> ciCode i == "RngVarWrite") errs
+                Right _   -> False)
+    -- YAML decoding of roll_dice object
+    let rawYaml = "{\"rules\": [{\"id\": \"t\", \"on\": \"turn\", \"effects\": ["
+                  ++ "{\"roll_dice\": {\"pool\": 2, \"die\": 6, \"stream\": \"beute\", \"keep\": 1}}]}]}"
+    r7 <- expectTrue "roll_dice object parses from JSON"
+            (case Aeson.decode (BLC.pack rawYaml) of
+                Just (adv :: Adventure) ->
+                    case advTriggers adv of
+                        [tr] -> case atEffects tr of
+                            [AORollDice 2 6 "beute" 1] -> True
+                            _ -> False
+                        _ -> False
+                Nothing -> False)
+    pure (and [r1, r2, r3, r4, r5, r6, r7])
+
+-- | K1.1 (Variante A): {var: dice.last_roll}, {var: dice.count}, {var: dice.highest},
+--   {var: dice.sum} in authored texts produce NO UnknownPlaceholder warnings,
+--   even when not declared in variables: or initial_variables:.
+testDicePlaceholderNoWarning :: IO Bool
+testDicePlaceholderNoWarning = do
+    let r0 = (minRoom "loc_0")
+            { arTexts = ACondText "Du hast {var: dice.last_roll} gewuerfelt (Count: {var: dice.count}, Best: {var: dice.highest}, Sum: {var: dice.sum})." [] }
+        adv = minAdventure r0
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "UnknownPlaceholder") (crWarnings cr)
+            expectTrue "dice.* placeholders produce zero UnknownPlaceholder warnings" (null warns)
 
 -- ---------------------------------------------------------------------------
 -- Phase 4.2: verb_map phases (authoring side)

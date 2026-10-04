@@ -9000,6 +9000,46 @@ testNamedRngStreamSaveRoundtrip = do
     pure (r1 && r2)
 
 -- ---------------------------------------------------------------------------
+-- K1: dice pool (roll_dice)
+-- ---------------------------------------------------------------------------
+
+-- | K1: roll_dice draws 'pool' dice with 'die' sides, keeps highest 'keep',
+--   writes the four variables to VarMap, and produces no output events.
+--   Named streams advance independently and leave default stream untouched.
+testRollDicePool :: IO Bool
+testRollDicePool = do
+    -- 1. Full pool (3d6 keep 3) with fixed initial state
+    let (st1, evs1, _) = applyOutcomeWith 0 0 (RollDice 3 6 "" 3) "" initSampleGame
+    r1 <- expectEqual [] evs1
+    r2 <- expectEqual (Just (VVText "6,2,1")) (getVariable "dice.last_roll" st1)
+    r3 <- expectEqual (Just (VVInt 3)) (getVariable "dice.count" st1)
+    r4 <- expectEqual (Just (VVInt 6)) (getVariable "dice.highest" st1)
+    r5 <- expectEqual (Just (VVInt 9)) (getVariable "dice.sum" st1)
+
+    -- 2. Keep subset (3d6 keep 2): highest two values 6 and 2
+    let (st2, evs2, _) = applyOutcomeWith 0 0 (RollDice 3 6 "" 2) "" initSampleGame
+    r6 <- expectEqual [] evs2
+    r7 <- expectEqual (Just (VVText "6,2")) (getVariable "dice.last_roll" st2)
+    r8 <- expectEqual (Just (VVInt 2)) (getVariable "dice.count" st2)
+    r9 <- expectEqual (Just (VVInt 6)) (getVariable "dice.highest" st2)
+    r10 <- expectEqual (Just (VVInt 8)) (getVariable "dice.sum" st2)
+
+    -- 3. Empty pool: 0 dice
+    let (st0, evs0, _) = applyOutcomeWith 0 0 (RollDice 0 6 "" 0) "" initSampleGame
+    r11 <- expectEqual [] evs0
+    r12 <- expectEqual (Just (VVText "")) (getVariable "dice.last_roll" st0)
+    r13 <- expectEqual (Just (VVInt 0)) (getVariable "dice.count" st0)
+    r14 <- expectEqual (Just (VVInt 0)) (getVariable "dice.highest" st0)
+    r15 <- expectEqual (Just (VVInt 0)) (getVariable "dice.sum" st0)
+
+    -- 4. Named stream does not touch default stream
+    let (stNamed, _, _) = applyOutcomeWith 0 0 (RollDice 2 6 "beute" 2) "" initSampleGame
+    r16 <- expectEqual (rngState (save initSampleGame)) (rngState (save stNamed))
+    r17 <- expectTrue "named stream variable written" (isJust (getVariable "rng.beute" stNamed))
+
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17])
+
+-- ---------------------------------------------------------------------------
 -- Phase 4.2: verb_map phases (before:/instead:)
 -- ---------------------------------------------------------------------------
 
@@ -9947,6 +9987,8 @@ main = do
         , runTest "rng streams: named draws are decoupled (B8)" testNamedRngStreamDecoupled
         , runTest "rng streams: default stream draw unchanged (B8)" testDefaultRngStreamUnchanged
         , runTest "rng streams: stream state survives save/load (B8)" testNamedRngStreamSaveRoundtrip
+        -- K1: dice pool
+        , runTest "dice pool: roll_dice writes VarMap and keeps default RNG (K1.1)" testRollDicePool
         -- Phase 4.2: verb_map phases
         , runTest "verb_map: instead: replaces the take (4.2)" testVerbMapInsteadReplacesTake
         , runTest "verb_map: before: runs and the take continues (4.2)" testVerbMapBeforeRunsThenTake

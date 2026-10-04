@@ -2,6 +2,46 @@
 
 ## Unreleased
 
+### Würfelpool `roll_dice:` (K1)
+
+- **Neues Autoren-Outcome `roll_dice: {pool, die, stream?, keep?}`** — zieht `pool`
+  Würfel mit `die` Seiten und schreibt die Ergebnisse in die VarMap:
+  `dice.last_roll` (Text, die **behaltenen** Werte kommagetrennt), `dice.count`
+  (Int), `dice.highest` (Int), `dice.sum` (Int). `keep` behält nur die höchsten
+  `keep` Würfel und reduziert **alle** Aggregate; `stream` zieht aus einem
+  benannten Strom (B8), leer = Default-Strom mit unveränderter Ziehungsfolge.
+  Der Wurf ist **still** (keine Ausgabe), wie `compute_var` — die Anzeige macht
+  der Autor mit `{var: dice.highest}`.
+- **Kein neuer Wert-Typ, keine neue Algebra:** `dice.highest` & Co. sind ganz
+  normale Variablen; der Autor vergleicht mit `compare_var` wie bei `sanity`
+  oder `energy`. Ausgewertet werden kann der Wurf auch ganz ohne die Aggregate,
+  über `{var: dice.last_roll}` plus `compute_var` auf `dice.sum`.
+- **Kein neues `SaveState`-Feld** (Regel 6): alles über die VarMap, wie B8.
+- **Harte Compile-Fehler:** `InvalidDicePool` (`pool < 1`), `InvalidDiceSides`
+  (`die < 2`), `InvalidDiceKeep` (`keep < 0` oder `keep > pool`) — je mit Pfad
+  und Fundstelle.
+- **Reservierte Präfixe generalisiert** (B8 war auf das Literal `rng.` verdrahtet):
+  jetzt `reservedPrefixes = ["rng.", "dice."]`. Die bestehende
+  `RngVarWrite`-Meldung für `rng.*` bleibt wörtlich erhalten; `dice.*` bekommt
+  eine generische Variante. Autoren-Schreibzugriff auf beide Namespaces ist
+  unverändert ein harter Fehler.
+- **`dice.*` gilt dem Validator als bekannt** (Nutzer-Entscheid 2026-10-03,
+  Variante A): `{var: dice.last_roll}` im Raumtext erzeugt **keine**
+  Platzhalter-Warnung, ohne dass der Autor eine `variables:`-Deklaration
+  braucht. Ein Warningsystem soll nicht auf einen Wert warnen, den die Engine
+  garantiert schreibt. Pinned durch `testDicePlaceholderNoWarning`.
+- Tests: `testRollDicePool` (fester Startzustand, `keep`-Teilmenge, Leerfall,
+  Event-Freiheit, benannter Strom lässt den Default-Strom unberührt),
+  `testRollDiceValidation` (die drei harten Fehler + Autoren-Schreibschutz +
+  Parse), `testDicePlaceholderNoWarning`. **255 Worldbuilder-Tests, 0 failed.**
+- **Byte-Vertrag:** alle **62** gelieferten Abenteure byte-identisch — 27
+  Stichproben (demo, thefog, 10 Genres, 15 `modules/`-Dateien) zu je `world.json` +
+  `save.json` gegen einen Worktree auf `ecf89b0` verglichen, `diff -ru` ohne
+  Befund. Die volle Zahl 62 (inkl. der 36 Fixtures) steht im
+  K1-Plan-Abschnitt „Byte-Nachweis"; die CI-Stufen kompilieren alle. CI grün,
+  0 Compiler-Warnungen.
+- **Noch offen (K1.2/K1.3):** Fixture `wuerfel.yaml` + E2E, Schema-Doku.
+
 ### Projekt-View und Quest-Diagnostik (4.6, S3)
 
 - **`worldbuilder map <adventure.yaml> [-o map.json] [-] [--width N]`** — die

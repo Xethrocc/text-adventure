@@ -1399,6 +1399,8 @@ data AActionOutcome
     | AORandomChoice String [(Int, [AActionOutcome])]
         -- ^ `random: [[weight, [outcomes]], ...]` (default stream, Stream-Name "")
         --   oder B8-Objektform `random: {stream: <name>, choices: [[weight, [outcomes]], ...]}`
+    | AORollDice Int Int String Int
+        -- ^ K1: `roll_dice: {pool: <int>, die: <int>, stream: <name>, keep: <int>}`
     | AORaiseEvent String              -- ^ raise: <name> — fires `on: custom <name>` (P1-20)
     | AOPlayClip String                -- ^ play_clip: <clip-id> — queues a cutscene (Phase H/H4)
     | AOPlaySfx String                 -- ^ sfx: <file> — queues a sound effect (Audio Phase 1)
@@ -1528,6 +1530,13 @@ instance FromJSON AActionOutcome where
         <|> (do sk <- o .: "skill"
                 AOModifySkill <$> sk .: "name" <*> sk .: "delta")
         <|> (o .: "random" >>= parseRandomChoiceValue)
+        <|> (do rd <- o .: "roll_dice"
+                flip (withObject "roll_dice") rd $ \ro -> do
+                    p <- ro .: "pool"
+                    d <- ro .: "die"
+                    s <- ro .:? "stream" .!= ""
+                    k <- ro .:? "keep" .!= p
+                    pure (AORollDice p d s k))
         <|> (AORaiseEvent <$> o .: "raise")
         <|> (AOPlayClip <$> o .: "play_clip")
         <|> (AOPlaySfx <$> o .: "sfx")
@@ -1736,6 +1745,7 @@ data EntityType
     | EntInteractions
     | EntProgression
     | EntLevel
+    | EntRollDice
     deriving (Show, Eq, Ord, Enum, Bounded)
 
 -- | Single source of truth for allowed YAML mapping keys per entity type,
@@ -1823,3 +1833,5 @@ knownKeys EntProgression = Set.fromList
     [ "levels" ]
 knownKeys EntLevel = Set.fromList
     [ "level", "xp", "name", "level_msg", "msg", "effects" ]
+knownKeys EntRollDice = Set.fromList
+    [ "pool", "die", "stream", "keep" ]

@@ -29,6 +29,7 @@ module Worldbuilder.Compile
     , checkKeywordCollisions
     , checkUnknownPlaceholders
     , checkRngVarWrites
+    , checkRollDice
     , checkDarkRoomDeadEnds
     , checkDeviceRefs
     ) where
@@ -766,6 +767,7 @@ compileAdventure adv =
         questRefErrs = checkQuestRefs adv
         mapOverlapErrs = checkMapPositions adv
         rngVarErrs = checkRngVarWrites adv
+        diceErrs = checkRollDice adv
         (langErrs, langWarns) = checkLanguageFields adv
         (gramErrs, gramWarns) = checkGrammarFields adv
 
@@ -811,6 +813,7 @@ compileAdventure adv =
                     ++ questRefErrs
                     ++ mapOverlapErrs
                     ++ rngVarErrs
+                    ++ diceErrs
                     ++ langErrs
                     ++ gramErrs
     in case allErrors of
@@ -3175,6 +3178,8 @@ compileAActionOutcome ao = case ao of
     AORandomChoice streamName weighted ->
         (if null streamName then E.RandomChoice else E.RandomChoiceOn streamName)
             [ (w, compileOutcomes os) | (w, os) <- weighted ]
+    AORollDice pool die stream keep ->
+        E.RollDice pool die stream keep
     AORaiseEvent name -> E.RaiseEvent name
     AOPlayClip clipId -> E.PlayClip clipId
     AOPlaySfx path -> E.PlaySfx path
@@ -3773,28 +3778,54 @@ checkKeywordCollisions adv =
         trimSpaces = dropWhile isSpace . reverse . dropWhile isSpace . reverse
     in concatMap issuesForRoom (Map.toList byRoom)
 
+-- | K1: Validate roll_dice outcomes.
+--   Hard errors: pool < 1, die < 2, keep < 0 or keep > pool.
+checkRollDice :: Adventure -> [CompileIssue]
+checkRollDice adv =
+    concatMap surfaceIssues (outcomeSurfaces adv)
+  where
+    surfaceIssues (path, os) = concatMap (diceIssues path) (deepOutcomes os)
+    diceIssues path (AORollDice pool die _stream keep) =
+        [ ciError (path ++ ".roll_dice.pool") "InvalidDicePool"
+            ("dice pool must be at least 1 (got " ++ show pool ++ ")")
+        | pool < 1 ]
+        ++
+        [ ciError (path ++ ".roll_dice.die") "InvalidDiceSides"
+            ("die sides must be at least 2 (got " ++ show die ++ ")")
+        | die < 2 ]
+        ++
+        [ ciError (path ++ ".roll_dice.keep") "InvalidDiceKeep"
+            ("keep count must be between 0 and pool (" ++ show pool ++ "), got " ++ show keep)
+        | keep < 0 || keep > pool ]
+    diceIssues _ _ = []
+
 -- | B8: @rng.*@ is the engine namespace of named RNG streams. Authored
 --   writes (@set_var@/@set_text_var@/@add_var@/@compute_var@), @variables:@
 --   declarations and @initial_variables:@ entries on that namespace would
 --   break the reproducibility contract — every one is a hard compile error.
+--   K1 generalises this write-protection to reserved namespaces including @dice.*@.
 --   Walks 'outcomeSurfaces' + 'deepOutcomes', the one surface contract.
 checkRngVarWrites :: Adventure -> [CompileIssue]
 checkRngVarWrites adv =
     concatMap surfaceIssues (outcomeSurfaces adv)
     ++ [ ciError ("variables." ++ n) "RngVarWrite" (reservedMsg n)
-       | n <- map avbVarName (advVariables adv), isRngName n ]
+       | n <- map avbVarName (advVariables adv), isReservedName n ]
     ++ [ ciError ("initial_variables." ++ n) "RngVarWrite" (reservedMsg n)
-       | n <- Map.keys (advInitialVariables adv), isRngName n ]
+       | n <- Map.keys (advInitialVariables adv), isReservedName n ]
     ++ [ ciError ("procedures." ++ apId pr ++ ".params." ++ n) "RngVarWrite" (reservedMsg n)
-       | pr <- advProcedures adv, n <- apParams pr, isRngName n ]
+       | pr <- advProcedures adv, n <- apParams pr, isReservedName n ]
   where
-    isRngName n = "rng." `isPrefixOf` n
-    reservedMsg n = "variable '" ++ n
-        ++ "' is reserved for named RNG streams (B8) and cannot be written by content"
+    reservedPrefixes = ["rng.", "dice."]
+    isReservedName n = any (`isPrefixOf` n) reservedPrefixes
+    reservedMsg n
+        | "rng." `isPrefixOf` n = "variable '" ++ n
+            ++ "' is reserved for named RNG streams (B8) and cannot be written by content"
+        | otherwise = "variable '" ++ n
+            ++ "' is reserved and cannot be written by content"
     surfaceIssues (path, os) = concatMap (writeIssues path) (deepOutcomes os)
     writeIssues path ao =
         [ ciError (path ++ "." ++ key) "RngVarWrite" (reservedMsg n)
-        | (key, n) <- writes ao, isRngName n ]
+        | (key, n) <- writes ao, isReservedName n ]
     writes ao = case ao of
         AOSetVar name _     -> [("set_var", name)]
         AOSetTextVar name _ -> [("set_text_var", name)]
@@ -3825,6 +3856,7 @@ checkUnknownPlaceholders adv varDefs =
         | name `Set.member` declared = True
         | name `Set.member` systemVars = True
         | name `Set.member` commandVars = True
+        | name `Set.member` engineVars = True
         | "cmd.arg" `isPrefixOf` name = True
         | "combat." `isPrefixOf` name = True
         | "item." `isPrefixOf` name = True
@@ -3834,6 +3866,15 @@ checkUnknownPlaceholders adv varDefs =
         | "condition_turns." `isPrefixOf` name = True
         | name `elem` ["x", "y", "z"] = True
         | otherwise = False
+
+    -- K1 (Variante A): engine-provided variables written by effects,
+    -- known to the validator without author declaration in variables:.
+    engineVars = Set.fromList
+        [ "dice.last_roll"
+        , "dice.count"
+        , "dice.highest"
+        , "dice.sum"
+        ]
 
     systemVars = Set.fromList
         [ "player.hp", "player.health", "player.max_hp", "player.max_health"

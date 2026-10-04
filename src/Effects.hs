@@ -35,7 +35,7 @@ import Game
 import Messages (evMsg)
 import Quests (canStartQuest, startQuest, advanceQuest, completeQuestWith)
 import Vehicles (vehicleConditionTickWith)
-import Data.List (intercalate, foldl', find)
+import Data.List (intercalate, foldl', find, sort)
 import Data.Bits (shiftR, xor)
 import Data.Char (ord)
 import Data.Word (Word64)
@@ -150,6 +150,44 @@ applyRandomChoice streamName weighted depth salt targetId state =
             | otherwise = go (acc + w) rest
         go _ [] = Noop
     in applyOutcomeWith (depth + 1) (salt + 1) (go 0 weighted) targetId st'
+
+-- | K1: Roll a pool of @pool@ dice each with @die@ sides.
+--   Draws from the given stream (or default if "") with ascending salt.
+--   Keeps the highest @keep@ dice (all if keep >= pool).
+--   Writes dice.last_roll, dice.count, dice.highest, dice.sum to the VarMap.
+--   Produces no output events (silent effect, like compute_var).
+applyRollDice :: Int -> Int -> String -> Int -> Int -> GameState
+              -> (GameState, [OutputEvent], Int)
+applyRollDice pool die streamName keep salt state
+    | pool <= 0 =
+        let st' = writeDiceVars [] state
+        in (st', [], salt)
+    | otherwise =
+        let (rawRolls, finalSt, finalSalt) = drawDice pool salt state
+            kept = if keep < pool
+                   then take (max 0 keep) (reverse (sort rawRolls))
+                   else rawRolls
+            st' = writeDiceVars kept finalSt
+        in (st', [], finalSalt)
+  where
+    drawDice 0 s st = ([], st, s)
+    drawDice n s st =
+        let (rng, stNext) = drawStreamRng streamName s st
+            dieSides = max 1 die
+            roll = 1 + fromIntegral ((rng `shiftR` 33) `mod` fromIntegral dieSides)
+            (rest, stFinal, sFinal) = drawDice (n - 1) (s + 1) stNext
+        in (roll : rest, stFinal, sFinal)
+
+    writeDiceVars kept st =
+        let lastRollStr = intercalate "," (map show kept)
+            cnt = length kept
+            highest = if null kept then 0 else maximum kept
+            totalSum = sum kept
+            st1 = setVariableChecked "dice.last_roll" (VVText lastRollStr) st
+            st2 = setVariableChecked "dice.count" (VVInt cnt) st1
+            st3 = setVariableChecked "dice.highest" (VVInt highest) st2
+            st4 = setVariableChecked "dice.sum" (VVInt totalSum) st3
+        in st4
 
 -- | Draw one value from an RNG stream and persist its advanced state.
 drawStreamRng :: String -> Int -> GameState -> (Word64, GameState)
@@ -314,6 +352,8 @@ applyOutcomeWith depth salt outcome targetId state
     RandomChoiceOn _ [] -> (state, [], salt)
     RandomChoiceOn streamName weighted ->
         applyRandomChoice streamName weighted depth salt targetId state
+    RollDice pool die streamName keep ->
+        applyRollDice pool die streamName keep salt state
 
     GameEnd reason msg -> (endGame reason state, evRaw (formatWithVars msg state), salt)
 

@@ -973,6 +973,7 @@ data Effect
     | Conditional Predicate Effect Effect         -- ^ Branch: if (pred) then this else that
     | RandomChoice [(Int, Effect)]               -- ^ Weighted random pick from candidates
     | RandomChoiceOn String [(Int, Effect)]      -- ^ B8: weighted pick on a named RNG stream (`rng.<name>` in the VarMap)
+    | RollDice Int Int String Int                -- ^ K1: roll dice pool (pool, die, stream, keep)
     | SetValue ValueRef EffectValue                     -- ^ Set any value (flag, variable, property)
     | ModifyValue ValueRef Int                    -- ^ Modify a numeric value (hp, skill, prop, etc.)
     | MoveEntity EntityID Location                -- ^ Move an entity to a location
@@ -1282,10 +1283,38 @@ asciiPair k art
     | isEmptyAscii art = []
     | otherwise        = [k .= art]
 
-instance ToJSON Effect
+instance ToJSON Effect where
+    toJSON (RollDice pool die stream keep) = object
+        [ "roll_dice" .= object
+            [ "pool"   .= pool
+            , "die"    .= die
+            , "stream" .= stream
+            , "keep"   .= keep
+            ]
+        ]
+    toJSON other = genericToJSON defaultOptions other
+
+    toEncoding (RollDice pool die stream keep) = pairs
+        ( "roll_dice" .= object
+            [ "pool"   .= pool
+            , "die"    .= die
+            , "stream" .= stream
+            , "keep"   .= keep
+            ]
+        )
+    toEncoding other = genericToEncoding defaultOptions other
+
 instance FromJSON Effect where
-    parseJSON v = genericParseJSON defaultOptions v <|> parseLegacyEffect v
+    parseJSON v = parseRollDice v <|> genericParseJSON defaultOptions v <|> parseLegacyEffect v
       where
+        parseRollDice = withObject "Effect" $ \o -> do
+            rd <- o .: "roll_dice"
+            flip (withObject "roll_dice") rd $ \ro -> do
+                p <- ro .: "pool"
+                d <- ro .: "die"
+                s <- ro .:? "stream" .!= ""
+                k <- ro .:? "keep" .!= p
+                pure (RollDice p d s k)
         parseLegacyEffect = withObject "Effect" $ \o -> do
             tag <- o .: "tag" :: Parser T.Text
             case tag of
