@@ -1,0 +1,71 @@
+# K1: Wuerfelpool roll_dice mit VarMap-Aggregaten.
+# - Ein Skill-Check wertet dice.highest mit compare_var aus (ohne neue Vokabel).
+# - Ein Wurf nutzt den Default-Strom (ohne stream:), einer den benannten Strom (stream: orakel, B8).
+# - Die Raumbeschreibung enthaelt {var: dice.last_roll} ohne vorherige variables:-Deklaration (Variante A).
+# - tests: prueft deterministische Ziehungen und Aggregate.
+name: Wuerfelpool Fixture
+start_room: stube
+
+rooms:
+  - id: stube
+    name: Wuerfelstube
+    desc: "Eine gemuetliche Stube. Auf der Tafel steht der letzte Wurf: {var: dice.last_roll}."
+    exits:
+      east:
+        to: kammer
+        when: {has_flag: skill_erfolg}
+        msg: "Die Tuer zur Kammer ist verschlossen. Du musst zuerst die Wuerfelprobe bestehen!"
+
+  - id: kammer
+    name: Kammer
+    desc: Eine leere Kammer hinter der Stube.
+    exits:
+      west: stube
+
+items:
+  - id: wuerfelbecher
+    name: Wuerfelbecher
+    desc: Ein lederner Becher mit zwei sechsseitigen Wuerfeln (Default-Strom).
+    keys: [wuerfelbecher, becher]
+    location: stube
+    verb_map:
+      use,intact:
+        - roll_dice: {pool: 2, die: 6}
+        - if: {compare_var: {name: dice.highest, op: gte, value: 4}}
+          then:
+            - {set_flag: skill_erfolg, val: "true"}
+            - {msg: "Probe bestanden! Hoechster Wuerfel: {var: dice.highest} (Wurf: {var: dice.last_roll})."}
+          else:
+            - {msg: "Probe misslungen. Hoechster Wuerfel: {var: dice.highest}."}
+
+  - id: orakelstein
+    name: Orakelstein
+    desc: "Ein magischer Stein mit drei Wuerfeln auf einem eigenen Strom (stream: orakel, keep: 2)."
+    keys: [orakelstein, orakel, stein]
+    location: stube
+    verb_map:
+      use,intact:
+        - roll_dice: {pool: 3, die: 6, stream: orakel, keep: 2}
+        - {msg: "Das Orakel zeigt: {var: dice.last_roll} (Summe: {var: dice.sum}, Hoechster: {var: dice.highest})."}
+
+tests:
+  - name: "wuerfelpool zieht deterministisch, prueft bedingung und zeigt aggregate"
+    input:
+      - east
+      - use becher
+      - look
+      - use orakelstein
+      - look
+      - use orakelstein
+      - use becher
+      - east
+      - look
+    expect:
+      - "Die Tuer zur Kammer ist verschlossen. Du musst zuerst die Wuerfelprobe bestehen!"
+      - "Probe bestanden! Hoechster Wuerfel: 6 (Wurf: 6,2)."
+      - "Auf der Tafel steht der letzte Wurf: 6,2."
+      - "Das Orakel zeigt: 6,6 (Summe: 12, Hoechster: 6)."
+      - "Auf der Tafel steht der letzte Wurf: 6,6."
+      - "Das Orakel zeigt: 6,5 (Summe: 11, Hoechster: 6)."
+      - "Probe misslungen. Hoechster Wuerfel: 2."
+      - "Eine leere Kammer hinter der Stube."

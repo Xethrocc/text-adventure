@@ -454,6 +454,7 @@ description:
 | `{ skill: { name: id, delta: N } }` | ModifySkill — Skill um `N` verändern (auch negativ) |
 | `{ random: [[gewicht, [effekte]], ...] }` | RandomChoice — gewichtete Zufallsauswahl (Gewicht ≥ 1) |
 | `{ random: {stream: name, choices: [[gewicht, [effekte]], ...]} }` | RandomChoiceOn (B8) — gewichtete Zufallsauswahl auf dem benannten Zufallsstrom `rng.name` (s.u.) |
+| `{ roll_dice: {pool: N, die: M, stream?: name, keep?: K} }` | RollDice (K1) — Würfelpool werfen und Aggregate in die VarMap schreiben (`dice.*`, s.u.) |
 | `{ raise: name }` | RaiseEvent — feuert alle Regeln `on: custom <name>` (P1-20) |
 | `{ sfx: "pfad/datei.wav" }` | PlaySfx — Sound-Effekt einmalig asynchron abspielen (Audio Phase 1) |
 | `{ music: "pfad/datei.xm" }` | PlayMusic — Hintergrundmusik-Loop starten/wechseln (Audio Phase 2; `.xm`, `.mid`, `.wav/.ogg/.mp3`) |
@@ -479,6 +480,37 @@ Folgen). `rng.*` ist ein Engine-Reservierter Namensraum: `set_var`,
 `initial_variables:`-Einträge und Prozedur-Parameter sind Compile-Fehler
 (`RngVarWrite`) — sonst wäre die Reproduzierbarkeit deterministischer Läufe
 (Fuzzer-Funde, `tests:`-Marker) nicht garantiert.
+
+**Würfelpool `roll_dice:` (K1):** Mit `roll_dice:` wird ein Pool von `pool` Würfeln mit je `die` Seiten geworfen. Der Effekt ist **still** (keine Textausgabe), wie `compute_var` — die Anzeige steuert der Autor über `{var: dice.last_roll}` oder `{var: dice.highest}`.
+
+```yaml
+- roll_dice: { pool: 3, die: 6, stream: beute, keep: 2 }
+- if: { compare_var: { name: dice.highest, op: gte, value: 4 } }
+  then:
+    - { msg: "Probe bestanden! Wurf: {var: dice.last_roll} (Summe: {var: dice.sum})." }
+  else:
+    - { msg: "Probe misslungen." }
+```
+
+| Feld | Typ | Pflicht / Default | Bedeutung |
+|---|---|---|---|
+| `pool` | Int | Pflicht (≥ 1) | Anzahl der zu werfenden Würfel. Ein Wert < 1 ist ein harter Compile-Fehler (`InvalidDicePool`). |
+| `die` | Int | Pflicht (≥ 2) | Seitenanzahl pro Würfel. Ein Wert < 2 ist ein harter Compile-Fehler (`InvalidDiceSides`). |
+| `stream` | String | optional, Default `""` | Benannter RNG-Strom (B8). Bei leerem String wird aus dem Default-Strom gezogen, ohne benannte Ströme zu beeinflussen. |
+| `keep` | Int | optional, Default `pool` | Behält nur die höchsten `keep` Würfel (0 ≤ `keep` ≤ `pool`). Ein ungültiger Wert ist ein harter Compile-Fehler (`InvalidDiceKeep`). `keep` reduziert alle Aggregate. |
+
+Der Effekt schreibt vier Variablen in die `VarMap`:
+
+| Variable | Typ | Inhalt |
+|---|---|---|
+| `dice.last_roll` | Text | Die **behaltenen** Würfelergebnisse als kommagetrennte Liste (z. B. `"6,2"`). |
+| `dice.count` | Int | Anzahl der **behaltenen** Würfel (bei `keep: 2` steht dort `2`). |
+| `dice.highest` | Int | Der höchste behaltene Würfelwert (0 bei leerem Pool). |
+| `dice.sum` | Int | Die Summe aller **behaltenen** Würfelwerte. |
+
+- **Normale Variablen:** `dice.highest`, `dice.sum`, `dice.count` und `dice.last_roll` sind reguläre Variablen in der `VarMap`. Sie werden wie alle anderen Variablen mit `compare_var` ausgewertet (z. B. `compare_var: {name: dice.highest, op: gte, value: 4}`) oder über `{var: dice.last_roll}` in Texten ausgegeben.
+- **Keine Deklaration erforderlich (Variante A):** Die vier `dice.*`-Variablen gelten dem Validator als bekannt (engine-geliefert). Der Autor muss sie **nicht** unter `variables:` oder `initial_variables:` deklarieren; Platzhalter wie `{var: dice.last_roll}` im Raumtext erzeugen keine `UnknownPlaceholder`-Warnung.
+- **Schreibschutz:** `dice.*` ist wie `rng.*` ein engine-reservierter Namensraum. Autoren dürfen `dice.*` weder über `set_var`, `set_text_var`, `add_var` oder `compute_var` beschreiben noch in `variables:` oder `initial_variables:` deklarieren; Verstöße werden als harter Compile-Fehler (`RngVarWrite`) abgewiesen.
 
 **Text-Variablen** (`variables:` mit `type: text`) werden mit
 `{ var: <name>, is: <text> }` abgefragt; ihren Startwert setzt die Deklaration

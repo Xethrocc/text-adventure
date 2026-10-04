@@ -40,7 +40,18 @@
   Befund. Die volle Zahl 62 (inkl. der 36 Fixtures) steht im
   K1-Plan-Abschnitt „Byte-Nachweis"; die CI-Stufen kompilieren alle. CI grün,
   0 Compiler-Warnungen.
-- **Noch offen (K1.2/K1.3):** Fixture `wuerfel.yaml` + E2E, Schema-Doku.
+- **Fixture `examples/fixtures/wuerfel.yaml` + E2E (`ci/e2e/wuerfel.{in,expect}`) (K1.2):**
+  Skill-Check über `roll_dice: {pool: 2, die: 6}` und `compare_var` auf `dice.highest >= 4`
+  (schaltet bei Erfolg die Kammertür frei, ohne neue Vokabel), zweites Outcome mit
+  benanntem RNG-Strom (`stream: orakel`, `keep: 2`), Raumbeschreibung mit
+  `{var: dice.last_roll}` ohne `variables:`-Deklaration (Beweis für Variante A),
+  `tests:`-Sektion mit 8 geordneten Markern (B1-Muster). In CI-Stufen 4 und 4b registriert.
+- **Engine-String-Interpolation:** `formatStringWith` toleriert nun Whitespace nach
+  `var:`, damit `{var: dice.last_roll}` zur Laufzeit identisch auflöst wie im
+  Worldbuilder-Validator.
+- **Doku:** `docs/adventure-schema.md` um `roll_dice`-Zeile in der Effekt-Tabelle und
+  ausführlichen Abschnitt mit Parametern, Aggregaten, Schreibschutz und Variante A ergänzt.
+- **Noch offen (K1.3):** K4-Kleinkram (Doku der `VTInt`-Klammer für `dice.count` über `variables:`), Abschluss K1.
 
 ### Projekt-View und Quest-Diagnostik (4.6, S3)
 
