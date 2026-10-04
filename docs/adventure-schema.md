@@ -481,6 +481,11 @@ Folgen). `rng.*` ist ein Engine-Reservierter Namensraum: `set_var`,
 (`RngVarWrite`) — sonst wäre die Reproduzierbarkeit deterministischer Läufe
 (Fuzzer-Funde, `tests:`-Marker) nicht garantiert.
 
+**Vorab-Filterung unbedienter Gates bei gewichteter Ziehung (K3.2):** Bei gewichteten Zufallsauswahlen (`random:` sowie `encounter_tables:`) werden Kandidaten vor dem Aufsummieren der Gewichte über `drawEligible` gefiltert. Ein bedingter Kandidat (`Conditional p then Noop`, etwa durch `when:` in Encounter-Tabellen oder ein `if:` ohne `else:` bei `random:`), dessen Bedingung im aktuellen Spielzustand nicht erfüllt ist, verbraucht keinen Ziehungsslot mehr (kein Leerverlauf / Niete).
+- **Kein Draw bei vollständiger Unerfüllbarkeit:** Sind im aktuellen Zustand alle Kandidaten einer Auswahl durch unerfüllte Gates gesperrt, findet **kein Draw** statt — weder der globale `rngState` noch benannte Ströme (`rng.<name>`) werden weitergeschaltet, der Salt bleibt unverändert. Eine ergebnislose Ziehung verschiebt somit keine späteren Zufallsereignisse.
+- **Echter `else:`-Zweig behält seinen Slot:** Ein Kandidat mit `Conditional p t e` (ein `if:` mit echtem `else:`) behält seinen Slot im Pool, damit der vom Autor vorgesehene Alternativzweig erreichbar bleibt. Auch explizit authorisierte leere Slots (reines `Noop` als gewollter Leerlauf/Atmosphäre) behalten ihren Ziehungsplatz.
+- **Verschachtelte Bedingungen:** Bei verschachtelten Conditionals entscheidet allein die äußerste Klammer über die Slot-Berechtigung.
+
 **Würfelpool `roll_dice:` (K1):** Mit `roll_dice:` wird ein Pool von `pool` Würfeln mit je `die` Seiten geworfen. Der Effekt ist **still** (keine Textausgabe), wie `compute_var` — die Anzeige steuert der Autor über `{var: dice.last_roll}` oder `{var: dice.highest}`.
 
 ```yaml
@@ -1086,6 +1091,18 @@ rules:
 ```
 
 Events: `enter room`, `leave room`, `look room`, `search room`, `take item`, `drop item`, `use item`, `state entity`, `command verb`, `before verb`, `custom name`, `turn`.
+
+| Feld | Typ | Pflicht / Default | Bedeutung |
+|---|---|---|---|
+| `id` | String | Pflicht | Eindeutige Kennung der Regel. |
+| `on` | String | Pflicht | Auslösendes Ereignis (z. B. `enter <room>`, `turn`, `custom <name>`). |
+| `when` | Prädikat | optional | Zusätzliche Bedingung, die vor der Regelausführung erfüllt sein muss. |
+| `effects` | Liste | optional, Default `[]` | Liste von Aktionen/Outcomes, die beim Feuern ausgeführt werden. |
+| `once` | Bool | optional, Default `false` | Feuert die Regel nur genau einmal (`tsFired`). |
+| `cooldown` | Int | optional, Default `0` | Wartezeit in Zügen zwischen zwei Auslösungen. |
+| `weight` | Int | optional, Default `1` | Gewicht bei gewichteter Ziehung (Weg B). **Hinweis:** Wirkt nur bei gewichteter Ziehung; bei gezielter Auslösung per `raise:` (Weg A) dient das Feld als Dokumentation/Reserve. |
+| `requires` | String oder Liste | optional, Default `[]` | Vorbedingung: alle angegebenen Flags müssen gesetzt sein (`"true"`), sonst feuert die Regel nicht (`tsFired` bleibt `false`). Ein unbekanntes Flag erzeugt eine weiche Warnung (`UnsatisfiableCondition`). |
+| `chains_to` | String oder Liste | optional, Default `[]` | Folge-Ereignisse: nach dem erfolgreichen Ausführen der Effekte werden diese Custom-Events zusätzlich ausgelöst. Reiner Compiler-Sugar für angehängte `raise:`-Aufrufe; unterliegt automatisch der Tiefenbegrenzung (`maxOutcomeDepth = 20`). Ein unbekanntes Ziel-Event erzeugt einen harten Compile-Fehler (`UnknownChainTarget`). |
 
 ### Command Veto and `before <verb>` Rules (Phase 2.2)
 

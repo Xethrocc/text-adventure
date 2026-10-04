@@ -170,7 +170,7 @@ no own state file. Their state lives in the existing `VarMap`
 ```bash
 cabal build all
 cabal test all --test-show-details=direct    # 475 engine tests, 257 worldbuilder tests, 20 TUI tests, plus the img2ascii/text2ascii tool suites
-bash scripts/ci.sh                           # build + tests + validation + 54 E2E playthroughs
+bash scripts/ci.sh                           # build + tests + validation + 55 E2E playthroughs
 cabal run worldbuilder -- check examples/thefog.yaml   # content statistics
 cabal run worldbuilder -- map examples/thefog.yaml     # project view: rooms, edges, quests, issues
 cabal run worldbuilder -- map-set examples/thefog.yaml tor 3 1   # pin a room's map position

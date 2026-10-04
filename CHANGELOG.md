@@ -2,41 +2,29 @@
 
 ## Unreleased
 
-### Vorab-Filterung unbedienter Gates bei gewichteter Ziehung (K3.2)
+### Event-Ketten und gewichtete Ziehungsfilter (K3)
 
-- **Bewusste Änderung der Ziehungsregel (kein Bugfix):** Bei gewichteten
-  Zufallsauswahlen (`random:` / `RandomChoice` und `RandomChoiceOn`) werden
-  Kandidaten jetzt vor dem Aufsummieren der Gewichte über `drawEligible`
-  gefiltert. Ein bedingter Kandidat (`Conditional p then Noop`, etwa durch
-  `when:` in Encounter-Tabellen oder ein `if:` ohne `else:`), dessen Bedingung
-  im aktuellen Spielzustand nicht erfüllt ist, verbraucht keinen Ziehungsslot
-  mehr.
-- **Konkretes Praxisbeispiel (`examples/modules/encounters.yaml`):** Der Eintrag
-  mit `when: { has_item: torch }` und Gewicht 1 lief vor K3.2 ohne Fackel als
-  Niete ins Leere (`Noop`); jetzt wird der Slot ohne Fackel gar nicht erst
-  vergeben, wodurch der Wolf in einem 8-Zug-Lauf nun 3x statt 1x erscheint.
-- **Kein Draw bei vollständiger Unerfüllbarkeit:** Sind alle Kandidaten einer
-  Auswahl gefiltert, findet **kein Draw** statt — weder `rngState` noch ein
-  benannter RNG-Strom (`rng.<name>`) werden weitergeschaltet, der Salt bleibt
-  unverändert. Eine ergebnislose Ziehung verschiebt somit keine nachfolgenden
-  Zufallsereignisse im Spielverlauf.
-- **Echte Verzweigungen bleiben erhalten:** Ein Kandidat mit `Conditional p t e`
-  (echter `else:`-Zweig) behält seinen Slot im Pool, damit der vom Autor
-  vorgesehene Alternativzweig erreichbar bleibt. Auch explizite `Noop`-Einträge
-  (atmosphärische Leer-Slots) bleiben unangetastet.
-- **Verschachtelte Bedingungen:** Bei verschachtelten Conditionals (`Conditional p
-  (Conditional q t Noop) Noop`) wird nur die äußere Klammer für die
-  Slot-Berechtigung ausgewertet.
-- **Kein neues `SaveState`-Feld:** Kein Scheduler, kein gesonderter Zustandsspeicher
-  für gefilterte Kandidaten.
-- **Tests:** `testRandomChoiceUnmetGateOverSalts` (erfüllbarer Kandidat gewinnt immer,
-  geprüft über 101 Salt-Werte und 64 Seeds), `testRandomChoiceAllGatedNoDraw`
-  (kein Draw und bitgleicher `rngState` bei durchgehend geschlossenen Gates),
-  `testRandomChoiceOnAllGatedStreamUntouched` (benannter Strom bleibt bei geschlossenen
-  Gates unangetastet), `testRandomChoiceBranchKeepsSlot` (Kandidat mit Else-Zweig
-  behält Slot und Else-Zweig ist im Wettbewerb erreichbar),
-  `testRandomChoiceNestedConditionalOuterOnly` (nur äußere Bedingung entscheidet über
-  Slotvergabe), `testRandomChoiceOnSkipsUnmetGate`. 477 Engine-Tests, 0 failed.
+- **Drei neue Felder auf der Regel-Entität / `TriggerDef` (K3.1):**
+  - `weight` (Int, Default `1`): Gewicht bei gewichteter Ziehung (Weg B). Wirkt nur bei gewichteter Ziehung; bei gezielter Auslösung per `raise:` (Weg A) dient das Feld als Dokumentation/Reserve.
+  - `requires` (`[FlagID]`, Default `[]`): Alle angegebenen Flags müssen gesetzt sein (`hasFlag`), sonst überspringt die Regel die Ausführung vorab. `tsFired` bleibt dabei `False` (die Regel gilt nicht als gefeuert und feuert beim nächsten Eintreten des Events erneut). Unbekannte Flags erzeugen eine weiche Warnung (`UnsatisfiableCondition`).
+  - `chains_to` (`[String]`, Default `[]`): Liste von Custom-Event-Namen, die nach den Effekten über `fireTriggersWithDepth (depth + 1)` ausgelöst werden. Reiner Compiler-Sugar für `raise:`; unterliegt automatisch der Tiefenbegrenzung (`maxOutcomeDepth = 20`, Diagnose: `trigger nesting exceeded`). Unbekannte Chains-Ziele erzeugen einen harten Compile-Fehler (`UnknownChainTarget`). Ein Veto in einer Kette stoppt nachfolgende Events.
+  - Handgeschriebene `ToJSON`/`FromJSON`-Instanzen: Bei Standardwerten (`weight == 1`, leere Listen) werden die Felder im kompilierte JSON weggelassen (Byte-Vertrag).
+- **Vorab-Filterung unbedienter Gates bei gewichteter Ziehung (K3.2):**
+  - Bewusste Änderung der Ziehungsregel (Nutzerentscheid 2026-10-03, Weg 1, kein Bugfix): Bei gewichteten Zufallsauswahlen (`random:` / `RandomChoice` und `RandomChoiceOn`) werden Kandidaten vor dem Aufsummieren der Gewichte über `drawEligible` gefiltert. Ein bedingter Kandidat (`Conditional p then Noop`, etwa durch `when:` in Encounter-Tabellen oder ein `if:` ohne `else:`), dessen Bedingung im aktuellen Spielzustand nicht erfüllt ist, verbraucht keinen Ziehungsslot mehr.
+  - Konkretes Praxisbeispiel (`examples/modules/encounters.yaml`): Der Eintrag mit `when: { has_item: torch }` und Gewicht 1 lief vor K3.2 ohne Fackel als Niete ins Leere (`Noop`); jetzt wird der Slot ohne Fackel gar nicht erst vergeben, wodurch der Wolf in einem 8-Zug-Lauf nun 3x statt 1x erscheint.
+  - Kein Draw bei vollständiger Unerfüllbarkeit: Sind alle Kandidaten einer Auswahl gefiltert, findet **kein Draw** statt — weder `rngState` noch ein benannter RNG-Strom (`rng.<name>`) werden weitergeschaltet, der Salt bleibt unverändert. Eine ergebnislose Ziehung verschiebt somit keine nachfolgenden Zufallsereignisse im Spielverlauf.
+  - Echte Verzweigungen bleiben erhalten: Ein Kandidat mit `Conditional p t e` (echter `else:`-Zweig) behält seinen Slot im Pool, damit der vom Autor vorgesehene Alternativzweig erreichbar bleibt. Auch explizite `Noop`-Einträge (atmosphärische Leer-Slots) bleiben unangetastet.
+  - Verschachtelte Bedingungen: Bei verschachtelten Conditionals (`Conditional p (Conditional q t Noop) Noop`) wird nur die äußere Klammer für die Slot-Berechtigung ausgewertet.
+- **Fixture `examples/fixtures/ketten.yaml` + E2E (`ci/e2e/ketten.{in,expect}`) (K3.3):**
+  - Dreistufige Kette (`start` -> `A` -> `B`): Regel 1 löst per `raise:` Custom-Event `kette_stufe_a` aus und setzt `siegel_aktiv`; Regel 2 hört darauf, verlangt per `requires: [siegel_aktiv]` das gesetzte Flag und löst per `chains_to: [kette_stufe_b]` Stufe 3 aus, welche die Pforte entriegelt.
+  - Sichtbare `requires:`-Reihenfolge im Spiel: Vorzeitiges Auslösen von `kette_stufe_a` über ein Objekt verpufft wirkungslos (Regel 2 feuert nicht, `tsFired` bleibt False); erst nach Hebelbetätigung feuert die Kette vollständig durch.
+  - K3.2-Verteilungsnachweis: Ein Kelch zieht aus `stream: kelchstrom` mit einem bedingten Kandidaten (Gewicht 9, `if: {has_flag: segen_aktiv}`) und einem unbedingten Kandidaten (Gewicht 1). Solange das Segens-Gate geschlossen ist, gewinnt der unbedingte Kandidat 100% der Ziehungen (Zähler steigt verlässlich); nach Aktivierung des Opfersteins tritt der bedingte Kandidat mit 90% Wahrscheinlichkeit in den Wettbewerb.
+  - Zyklus-Tiefenbegrenzung: Selbsttriggernde Regel (`on: custom zyklus_puls`, `chains_to: [zyklus_puls]`) wird bei `maxOutcomeDepth = 20` sauber abgefangen (20 Echos, kein Absturz, kein Hang). Die Diagnose `trigger nesting exceeded` wird auf stderr ausgegeben und in `ci/e2e/ketten.expect` verifiziert.
+  - In CI-Stufen 4 und 4b registriert (`run_e2e` und `worldbuilder test`). Fuzzer läuft mit 0 Befunden durch.
+  - **Unabhängig nachgewiesen, dass der Fixture-Test die K3.2-Semantik wirklich pinnt** (nicht nur grün ist): dieselbe Fixture gegen den Vor-K3.2-Stand `d76c7f7` laufen lassen → `FAIL ... (marker not reached: "Der Kelch tropft silberhell: Sicherer Treffer. (Sicher: 1)")`. Über 40 Kelch-Züge: **ohne K3.2 nur 2 sichere Treffer** (die erwartete 1/10-Verteilung, 38 Ziehungen gingen als `Noop` ins Leere), **mit K3.2 40 von 40**.
+- **Doku:** `docs/adventure-schema.md` um Attribut-Tabelle für die Regel-Entität (`weight`, `requires`, `chains_to`) und K3.2-Ziehungssemantik ergänzt.
+- **Disziplin:** Kein neues `SaveState`-Feld (Regel 6), kein Scheduler, kein eigener Zustandsspeicher. Alle bestehenden 63 Abenteuer und Fixtures kompilieren byte-identisch.
+- **Tests:** `testTriggerRequiresGates`, `testTriggerChainsToFiresFollower`, `testRuleRequiresUnknownFlagWarning`, `testRuleChainsToTargetValidation`, `testRandomChoiceUnmetGateOverSalts`, `testRandomChoiceAllGatedNoDraw`, `testRandomChoiceOnAllGatedStreamUntouched`, `testRandomChoiceBranchKeepsSlot`, `testRandomChoiceNestedConditionalOuterOnly`, `testRandomChoiceOnSkipsUnmetGate`. 475 Engine-Tests, 257 Worldbuilder-Tests, 0 failed; CI grün, 0 Warnungen.
 
 ### Würfelpool `roll_dice:` (K1)
 

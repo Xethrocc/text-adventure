@@ -1,0 +1,166 @@
+# K3: Event-Ketten, Vorab-Filterung (K3.2) und Tiefenbegrenzung (K3.1/K3.3).
+#
+# Mechaniken in dieser Fixture:
+# 1. Mystery-Anlauf & Kette:
+#    - Regel 1 ('kette_start') loest per raise: das Custom-Event 'kette_stufe_a' aus
+#      und setzt das Flag 'siegel_aktiv'.
+#    - Regel 2 ('kette_stufe_a') hoert auf 'kette_stufe_a', verlangt per requires:
+#      das Flag 'siegel_aktiv' und loest per chains_to: 'kette_stufe_b' aus.
+#    - Regel 3 ('kette_stufe_b') hoert auf 'kette_stufe_b' und setzt 'pforte_offen'.
+# 2. requires:-Reihenfolge & tsFired:
+#    - Wird 'kette_stufe_a' vorzeitig ausgeloest (ueber den Funken), feuert Regel 2
+#      nicht, weil 'siegel_aktiv' fehlt. tsFired bleibt False.
+#    - Sobald der Hebel Regel 1 zuendet, feuert Regel 2 wie vorgesehen und die Kette
+#      laeuft bis Stufe 3 durch.
+# 3. K3.2-Filterung bei gewichteter Ziehung:
+#    - Der Kelch zieht aus dem benannten Strom 'kelchstrom'.
+#    - Kandidat 1 hat Gewicht 9, traegt aber ein unerfuelltes Gate (has_flag segen_aktiv).
+#    - Vor K3.2 haette Kandidat 1 9/10 der Ziehungsslots verbraucht und waere als
+#      Noop ins Leere gelaufen (leere Zuege ohne Zaehler-Erhoehung).
+#    - Mit K3.2 wird der unerfuellte Kandidat vor der Gewichtssumme herausgefiltert:
+#      Kandidat 2 (Gewicht 1) gewinnt 100% der Ziehungen. treffer_sicher steigt verlaesslich.
+#    - Nach Aktivierung des Opfersteins (segen_aktiv) konkurriert Kandidat 1 wieder.
+# 4. Tiefenbegrenzung (Zyklus-Schutz):
+#    - Ein Blick in den Spiegel ruft 'zyklus_puls' auf. Die Regel 'zyklus_schleife'
+#      chained auf sich selbst (chains_to: [zyklus_puls]).
+#    - Befund zur Tiefenbegrenzung:
+#      Die Engine faengt die Endlosschleife bei maxOutcomeDepth = 20 sauber ab.
+#      Es erfolgt kein Absturz und kein Hangenbleiben (der Fuzzer laeuft mit 0 Befunden durch).
+#      Die Diagnose '[engine] trigger nesting exceeded 20...' wird auf dem Frontend-Kanal
+#      (stderr) protokolliert und erreicht in ci/e2e/ketten.expect (2>&1) den Test,
+#      waehrend die 20 Echo-Zeilen die Spieler-Ausgabe bilden.
+name: Ketten Fixture
+start_room: vorhalle
+
+variables:
+  - name: treffer_sicher
+    type: int
+    initial: 0
+  - name: treffer_bedingt
+    type: int
+    initial: 0
+
+rooms:
+  - id: vorhalle
+    name: Vorhalle
+    desc: "Eine gewoelbte Vorhalle mit uralten Inschriften. Im Norden ragt eine schwere Pforte auf."
+    exits:
+      north:
+        to: sanktum
+        when: { has_flag: pforte_offen }
+        msg: "Die schwere Pforte ist fest verschlossen. Die Runenkette muss zuerst zuenden!"
+
+  - id: sanktum
+    name: Sanktum
+    desc: "Das stille Sanktum hinter der Pforte. Alle drei Stufen der Kette haben gezuendet."
+    exits:
+      south: vorhalle
+
+items:
+  - id: funke
+    name: Funke
+    desc: Ein magischer Funke auf einer Saeule.
+    keys: [funke]
+    location: vorhalle
+    verb_map:
+      use,intact:
+        - { raise: kette_stufe_a }
+        - { msg: "Ein Funke springt ueber, erlischt jedoch mangels Siegel wirkungslos." }
+
+  - id: hebel
+    name: Hebel
+    desc: Ein eiserner Hebel fuer die Runenkette.
+    keys: [hebel]
+    location: vorhalle
+    verb_map:
+      use,intact:
+        - { raise: start_impuls }
+
+  - id: kelch
+    name: Kelch
+    desc: Ein bronzener Opferkelch fuer Schicksalsziehungen.
+    keys: [kelch]
+    location: vorhalle
+    verb_map:
+      use,intact:
+        - random:
+            stream: kelchstrom
+            choices:
+              - [9, [{if: {has_flag: segen_aktiv}, then: [{compute_var: {var: treffer_bedingt, expr: "treffer_bedingt + 1"}}, {msg: "Der Kelch glueht golden: Segenstreffer! (Bedingt: {var: treffer_bedingt})"}]}]]
+              - [1, [{compute_var: {var: treffer_sicher, expr: "treffer_sicher + 1"}}, {msg: "Der Kelch tropft silberhell: Sicherer Treffer. (Sicher: {var: treffer_sicher})" }]]
+
+  - id: opferstein
+    name: Opferstein
+    desc: Ein Altarstein, der den Segen entfesselt.
+    keys: [opferstein, stein, altar]
+    location: vorhalle
+    verb_map:
+      use,intact:
+        - { set_flag: segen_aktiv, val: "true" }
+        - { msg: "Der Opferstein leuchtet auf: Das Segens-Gate ist nun erfuellt!" }
+
+  - id: spiegel
+    name: Spiegel
+    desc: Ein dunkler Spiegel an der Wand, der Echos reflektiert.
+    keys: [spiegel]
+    location: vorhalle
+    verb_map:
+      use,intact:
+        - { raise: zyklus_puls }
+
+rules:
+  - id: kette_start
+    on: custom start_impuls
+    once: true
+    effects:
+      - { set_flag: siegel_aktiv, val: "true" }
+      - { msg: "Stufe 1 zuendet: Das Basissiegel leuchtet flammend auf!" }
+      - { raise: kette_stufe_a }
+
+  - id: kette_stufe_a
+    on: custom kette_stufe_a
+    requires: [siegel_aktiv]
+    once: true
+    chains_to: [kette_stufe_b]
+    effects:
+      - { msg: "Stufe 2 bestaetigt: Siegel aktiv, Resonanzwelle springt ueber!" }
+
+  - id: kette_stufe_b
+    on: custom kette_stufe_b
+    once: true
+    effects:
+      - { set_flag: pforte_offen, val: "true" }
+      - { msg: "Stufe 3 vollendet: Die Pforte zum Sanktum schwingt auf!" }
+
+  - id: zyklus_schleife
+    on: custom zyklus_puls
+    chains_to: [zyklus_puls]
+    effects:
+      - { msg: "Das Echo hallt aus dem Spiegel wider." }
+
+tests:
+  - name: "kette, filterung und zyklusnachweis"
+    input:
+      - use funke
+      - north
+      - use kelch
+      - use kelch
+      - use hebel
+      - north
+      - look
+      - south
+      - use opferstein
+      - use kelch
+      - use spiegel
+    expect:
+      - "Ein Funke springt ueber, erlischt jedoch mangels Siegel wirkungslos."
+      - "Die schwere Pforte ist fest verschlossen."
+      - "Der Kelch tropft silberhell: Sicherer Treffer. (Sicher: 1)"
+      - "Der Kelch tropft silberhell: Sicherer Treffer. (Sicher: 2)"
+      - "Stufe 1 zuendet: Das Basissiegel leuchtet flammend auf!"
+      - "Stufe 2 bestaetigt: Siegel aktiv, Resonanzwelle springt ueber!"
+      - "Stufe 3 vollendet: Die Pforte zum Sanktum schwingt auf!"
+      - "Das stille Sanktum hinter der Pforte."
+      - "Der Opferstein leuchtet auf: Das Segens-Gate ist nun erfuellt!"
+      - "Der Kelch glueht golden: Segenstreffer! (Bedingt: 1)"
+      - "Das Echo hallt aus dem Spiegel wider."
