@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### Vorab-Filterung unbedienter Gates bei gewichteter Ziehung (K3.2)
+
+- **Bewusste Änderung der Ziehungsregel (kein Bugfix):** Bei gewichteten
+  Zufallsauswahlen (`random:` / `RandomChoice` und `RandomChoiceOn`) werden
+  Kandidaten jetzt vor dem Aufsummieren der Gewichte über `drawEligible`
+  gefiltert. Ein bedingter Kandidat (`Conditional p then Noop`, etwa durch
+  `when:` in Encounter-Tabellen oder ein `if:` ohne `else:`), dessen Bedingung
+  im aktuellen Spielzustand nicht erfüllt ist, verbraucht keinen Ziehungsslot
+  mehr.
+- **Konkretes Praxisbeispiel (`examples/modules/encounters.yaml`):** Der Eintrag
+  mit `when: { has_item: torch }` und Gewicht 1 lief vor K3.2 ohne Fackel als
+  Niete ins Leere (`Noop`); jetzt wird der Slot ohne Fackel gar nicht erst
+  vergeben, wodurch der Wolf in einem 8-Zug-Lauf nun 3x statt 1x erscheint.
+- **Kein Draw bei vollständiger Unerfüllbarkeit:** Sind alle Kandidaten einer
+  Auswahl gefiltert, findet **kein Draw** statt — weder `rngState` noch ein
+  benannter RNG-Strom (`rng.<name>`) werden weitergeschaltet, der Salt bleibt
+  unverändert. Eine ergebnislose Ziehung verschiebt somit keine nachfolgenden
+  Zufallsereignisse im Spielverlauf.
+- **Echte Verzweigungen bleiben erhalten:** Ein Kandidat mit `Conditional p t e`
+  (echter `else:`-Zweig) behält seinen Slot im Pool, damit der vom Autor
+  vorgesehene Alternativzweig erreichbar bleibt. Auch explizite `Noop`-Einträge
+  (atmosphärische Leer-Slots) bleiben unangetastet.
+- **Verschachtelte Bedingungen:** Bei verschachtelten Conditionals (`Conditional p
+  (Conditional q t Noop) Noop`) wird nur die äußere Klammer für die
+  Slot-Berechtigung ausgewertet.
+- **Kein neues `SaveState`-Feld:** Kein Scheduler, kein gesonderter Zustandsspeicher
+  für gefilterte Kandidaten.
+- **Tests:** `testRandomChoiceUnmetGateOverSalts` (erfüllbarer Kandidat gewinnt immer,
+  geprüft über 101 Salt-Werte und 64 Seeds), `testRandomChoiceAllGatedNoDraw`
+  (kein Draw und bitgleicher `rngState` bei durchgehend geschlossenen Gates),
+  `testRandomChoiceOnAllGatedStreamUntouched` (benannter Strom bleibt bei geschlossenen
+  Gates unangetastet), `testRandomChoiceBranchKeepsSlot` (Kandidat mit Else-Zweig
+  behält Slot und Else-Zweig ist im Wettbewerb erreichbar),
+  `testRandomChoiceNestedConditionalOuterOnly` (nur äußere Bedingung entscheidet über
+  Slotvergabe), `testRandomChoiceOnSkipsUnmetGate`. 477 Engine-Tests, 0 failed.
+
 ### Würfelpool `roll_dice:` (K1)
 
 - **Neues Autoren-Outcome `roll_dice: {pool, die, stream?, keep?}`** — zieht `pool`

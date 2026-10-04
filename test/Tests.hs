@@ -12,6 +12,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Maybe (isJust, isNothing, fromMaybe)
 import Data.Either (isLeft)
+import Data.Word (Word64)
 import System.Timeout (timeout)
 import Control.Exception (bracket, evaluate, try, SomeException)
 import Game
@@ -9090,6 +9091,172 @@ testTriggerChainsToFiresFollower = do
     pure (r1 && r2)
 
 -- ---------------------------------------------------------------------------
+-- K3.2: gated candidates are filtered before the weighted draw
+-- ---------------------------------------------------------------------------
+
+-- | K3.2 helper: the sample game with an explicit default-stream seed.
+withRngSeed :: Word64 -> GameState -> GameState
+withRngSeed s st = st { save = (save st) { rngState = s } }
+
+-- | K3.2 helper: run one random effect, rendered text only.
+drawText :: Effect -> GameState -> String
+drawText eff st = case applyOutcomeWith 0 0 eff "" st of
+    (_, evs, _) -> renderEvents evs
+
+-- | K3.2 helper: 64 different seeds (spread over the whole Word64 range).
+k32Seeds :: [Word64]
+k32Seeds = take 64 (iterate nextRng 4711)
+
+-- | K3.2 (a): Zwei Kandidaten, einer bedingt unerfuellbar (Conditional HasFlag,
+--   Flag nicht gesetzt): der erfuellbare wird IMMER gewaehlt.
+--   Beleg ueber viele salt-Werte (0..100) sowie viele Seeds.
+--   Sobald das Flag gesetzt ist, konkurriert der bedingte Kandidat wieder.
+testRandomChoiceUnmetGateOverSalts :: IO Bool
+testRandomChoiceUnmetGateOverSalts = do
+    let gated = Conditional (HasFlag "k32_gate") (SendMessage "Schatten") Noop
+        eff   = RandomChoice [(10, gated), (1, SendMessage "Treffer")]
+        -- Viele salt-Werte (0..100) bei ungesetztem Flag: "Treffer" muss 100% gewinnen
+        unmetSalts = [ case applyOutcomeWith 0 slt eff "" initSampleGame of
+                           (_, evs, _) -> renderEvents evs
+                     | slt <- [0..100] ]
+        -- Viele Seed-Werte bei ungesetztem Flag
+        unmetSeeds = [ drawText eff (withRngSeed s initSampleGame) | s <- k32Seeds ]
+        -- Bei gesetztem Flag: "Schatten" (Gewicht 10) und "Treffer" (Gewicht 1) konkurrieren wieder
+        metSalts   = [ case applyOutcomeWith 0 slt eff "" (setFlag "k32_gate" "true" initSampleGame) of
+                           (_, evs, _) -> renderEvents evs
+                     | slt <- [0..100] ]
+    r1 <- expectTrue "unmet gate: eligible candidate wins every draw across 101 salts"
+            (all (== "Treffer") unmetSalts)
+    r2 <- expectTrue "unmet gate: eligible candidate wins every draw across 64 seeds"
+            (all (== "Treffer") unmetSeeds)
+    r3 <- expectTrue "met gate: gated candidate competes again across salts"
+            ("Schatten" `elem` metSalts && "Treffer" `elem` metSalts)
+    -- Leere Bedingung (all: []) gilt immer: Kandidat bleibt eligibel
+    let emptyGate = RandomChoice [(1, Conditional (PAll []) (SendMessage "Leer") Noop)]
+    r4 <- expectEqual "Leer" (drawText emptyGate initSampleGame)
+    pure (and [r1, r2, r3, r4])
+
+-- | K3.2 (b): ALLE Kandidaten unerfuellbar: KEIN Draw — rngState ist danach
+--   bitgleich unveraendert (wichtigster Test der Stufe). Auch der Salt bleibt unberuehrt.
+testRandomChoiceAllGatedNoDraw :: IO Bool
+testRandomChoiceAllGatedNoDraw = do
+    let gate m = Conditional (HasFlag "k32_gate") (SendMessage m) Noop
+        cands  = [(3, gate "a"), (1, gate "b")]
+        eff    = RandomChoice cands
+        -- Ueber viele verschiedene Seeds und Salts geprueft
+        results = [ let (st', evs, s') = applyOutcomeWith 0 slt eff "" st
+                    in rngState (save st') == rngState (save st)
+                       && save st' == save st
+                       && s' == slt
+                       && null evs
+                  | s <- take 16 k32Seeds
+                  , slt <- [0, 1, 7, 42, 99]
+                  , let st = withRngSeed s initSampleGame ]
+    r1 <- expectTrue "all gated: rngState bit-identical unchanged across seeds/salts"
+            (and results)
+    pure r1
+
+-- | K3.2 (c): RandomChoiceOn (benannter Strom) verhaelt sich gemaess: bei allen
+--   unerfuellbaren Kandidaten bleibt die rng.<name>-Variable unveraendert (sowohl
+--   wenn noch uninitialisiert als auch wenn bereits vorinitialisiert).
+testRandomChoiceOnAllGatedStreamUntouched :: IO Bool
+testRandomChoiceOnAllGatedStreamUntouched = do
+    let gate m = Conditional (HasFlag "k32_gate") (SendMessage m) Noop
+        cands  = [(3, gate "a"), (1, gate "b")]
+        eff    = RandomChoiceOn "k32" cands
+        -- Fall 1: Stream noch nicht initialisiert -> bleibt Nothing, save identisch
+        (st1, evs1, salt1) = applyOutcomeWith 0 7 eff "" initSampleGame
+        -- Fall 2: Stream bereits initialisiert -> Hex-String bleibt bitgleich, save identisch
+        stPre = setVariable "rng.k32" (VVText "deadbeef01234567") initSampleGame
+        (st2, evs2, salt2) = applyOutcomeWith 0 7 eff "" stPre
+    r1 <- expectEqual Nothing (getVariable "rng.k32" st1)
+    r2 <- expectEqual (rngState (save initSampleGame)) (rngState (save st1))
+    r3 <- expectEqual [] evs1
+    r4 <- expectEqual 7 salt1
+    r5 <- expectEqual (Just (VVText "deadbeef01234567")) (getVariable "rng.k32" st2)
+    r6 <- expectEqual (rngState (save stPre)) (rngState (save st2))
+    r7 <- expectEqual [] evs2
+    r8 <- expectEqual 7 salt2
+    r9 <- expectTrue "saves untouched" (save st1 == save initSampleGame && save st2 == save stPre)
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9])
+
+-- | K3.2 (d): Ein Kandidat mit Conditional p t e (echter else-Zweig) behaelt
+--   seinen Slot — der else-Zweig muss erreichbar bleiben und im Wettbewerb gewaehlt werden.
+testRandomChoiceBranchKeepsSlot :: IO Bool
+testRandomChoiceBranchKeepsSlot = do
+    let branch = Conditional (HasFlag "k32_gate") (SendMessage "Dann") (SendMessage "Sonst")
+        eff    = RandomChoice [(10, branch), (1, SendMessage "Treffer")]
+        -- Flag ist nicht gesetzt: branch wird NICHT herausgefiltert (hat echten Else-Zweig).
+        -- Im Wettbewerb mit "Treffer" muss der Sonst-Zweig haeufig gezogen werden (~10/11)
+        -- und "Treffer" ebenfalls erreichbar bleiben (~1/11). "Dann" darf nie fallen.
+        unmet = [ case applyOutcomeWith 0 slt eff "" (withRngSeed s initSampleGame) of
+                      (_, evs, _) -> renderEvents evs
+                | s <- k32Seeds, slt <- [0, 1] ]
+        -- Flag ist gesetzt: "Dann" und "Treffer" konkurrieren; "Sonst" darf nie fallen.
+        met   = [ case applyOutcomeWith 0 slt eff "" (setFlag "k32_gate" "true" (withRngSeed s initSampleGame)) of
+                      (_, evs, _) -> renderEvents evs
+                | s <- k32Seeds, slt <- [0, 1] ]
+    r1 <- expectTrue "unmet: else branch 'Sonst' is reached and wins draws"
+            ("Sonst" `elem` unmet)
+    r2 <- expectTrue "unmet: competing candidate 'Treffer' is also reached"
+            ("Treffer" `elem` unmet)
+    r3 <- expectTrue "unmet: 'Dann' is never reached without flag"
+            ("Dann" `notElem` unmet)
+    r4 <- expectTrue "met: then branch 'Dann' is reached when flag is set"
+            ("Dann" `elem` met)
+    r5 <- expectTrue "met: 'Sonst' is never reached when flag is set"
+            ("Sonst" `notElem` met)
+    pure (and [r1, r2, r3, r4, r5])
+
+-- | K3.2 (e): Verschachteltes Conditional (Conditional p (Conditional q t Noop) Noop)
+--   wird nur an der aeusseren Klammer geprueft.
+testRandomChoiceNestedConditionalOuterOnly :: IO Bool
+testRandomChoiceNestedConditionalOuterOnly = do
+    -- Fall 1: Aeussere Bedingung unerfuellbar -> Kandidat wird gefiltert.
+    -- Alleinige Auswahl: kein Draw (rngState bitgleich).
+    let outerFalseAlone = RandomChoice [(1, Conditional (HasFlag "outer_gate") (Conditional (HasFlag "inner_gate") (SendMessage "Innen") Noop) Noop)]
+        (st1, evs1, _) = applyOutcomeWith 0 0 outerFalseAlone "" initSampleGame
+    r1 <- expectEqual [] evs1
+    r2 <- expectEqual (rngState (save initSampleGame)) (rngState (save st1))
+
+    -- Im Wettbewerb mit "Treffer": da aeussere Bedingung false ist, gewinnt "Treffer" 100%.
+    let outerFalseComp = RandomChoice [(10, Conditional (HasFlag "outer_gate") (Conditional PTrue (SendMessage "Innen") Noop) Noop), (1, SendMessage "Treffer")]
+        compResults = [ case applyOutcomeWith 0 slt outerFalseComp "" (withRngSeed s initSampleGame) of
+                            (_, evs, _) -> renderEvents evs
+                      | s <- take 16 k32Seeds, slt <- [0, 1] ]
+    r3 <- expectTrue "outer false: candidate is filtered out, Treffer wins always"
+            (all (== "Treffer") compResults)
+
+    -- Fall 2: Aeussere Bedingung erfuellbar, innere unerfuellbar:
+    -- Die aeussere Klammer haelt stand -> Kandidat behaelt Slot!
+    -- Der Draw findet statt (rngState schreitet voran), aber das innere Noop fuehrt zu keinen Events.
+    let outerTrueInnerFalse = RandomChoice [(1, Conditional PTrue (Conditional (HasFlag "inner_gate") (SendMessage "Innen") Noop) Noop)]
+        (st2, evs2, _) = applyOutcomeWith 0 0 outerTrueInnerFalse "" initSampleGame
+    r4 <- expectEqual [] evs2
+    r5 <- expectTrue "outer true: draw takes place and advances rngState"
+            (rngState (save st2) /= rngState (save initSampleGame))
+    pure (and [r1, r2, r3, r4, r5])
+
+-- | K3.2: a named stream (`random: {stream: …}`) filters exactly like the
+--   default stream — the same single filter sits in 'applyRandomChoice'.
+testRandomChoiceOnSkipsUnmetGate :: IO Bool
+testRandomChoiceOnSkipsUnmetGate = do
+    let gated = Conditional (HasFlag "k32_gate") (SendMessage "Schatten") Noop
+        eff   = RandomChoiceOn "k32" [(10, gated), (1, SendMessage "Treffer")]
+        unmet = [ drawText eff (withRngSeed s initSampleGame) | s <- k32Seeds ]
+        met   = [ drawText eff (setFlag "k32_gate" "true" (withRngSeed s initSampleGame))
+                | s <- k32Seeds ]
+        (stD, _, _) = applyOutcomeWith 0 0 eff "" initSampleGame
+    r1 <- expectTrue "unmet gate: the eligible candidate wins every named draw"
+            (all (== "Treffer") unmet)
+    r2 <- expectTrue "met gate: the gated candidate competes again"
+            ("Schatten" `elem` met && "Treffer" `elem` met)
+    r3 <- expectTrue "a real draw still advances the named stream only"
+            (isJust (getVariable "rng.k32" stD)
+             && rngState (save stD) == rngState (save initSampleGame))
+    pure (and [r1, r2, r3])
+
+-- ---------------------------------------------------------------------------
 -- Phase 4.2: verb_map phases (before:/instead:)
 -- ---------------------------------------------------------------------------
 
@@ -10065,8 +10232,14 @@ main = do
         , runTest "grammar: JSON omission and round-trip (4.3.5)" testGrammarJson
         , runTest "grammar: de templates use the article placeholders (4.3.5)" testGermanTemplatesUseArticles
         , runTest "grammar: take renders the authored article (4.3.5)" testGrammarEndToEndTake
-        -- K3: event chains
+        -- K3: event chains & weighted draw
         , runTest "event chains: requires gates firing and tsFired (K3.1)" testTriggerRequiresGates
         , runTest "event chains: chains_to fires follow-up custom event (K3.1)" testTriggerChainsToFiresFollower
+        , runTest "weighted draw: unmet gate takes no slot over salts (K3.2 a)" testRandomChoiceUnmetGateOverSalts
+        , runTest "weighted draw: all candidates gated means no draw (K3.2 b)" testRandomChoiceAllGatedNoDraw
+        , runTest "weighted draw: named stream untouched when all candidates gated (K3.2 c)" testRandomChoiceOnAllGatedStreamUntouched
+        , runTest "weighted draw: branch with else keeps slot and else is reachable (K3.2 d)" testRandomChoiceBranchKeepsSlot
+        , runTest "weighted draw: nested conditional checked at outer gate only (K3.2 e)" testRandomChoiceNestedConditionalOuterOnly
+        , runTest "weighted draw: named stream filters the same way (K3.2)" testRandomChoiceOnSkipsUnmetGate
         ]
     when (not (and results)) exitFailure

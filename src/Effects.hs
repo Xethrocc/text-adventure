@@ -137,19 +137,54 @@ data LearnMsg = NoMsg | DefaultMsg | AuthorMsg (Maybe String)
 --   @rng.<name>@ as a hex text, is initialised from name-hash + the *current*
 --   default state on first use (the default state is only read, never
 --   advanced) and is fully decoupled from the default stream afterwards.
+--
+--   K3.2 (user decision 2026-10-03, "Weg 1"): candidates are filtered by
+--   'drawEligible' *before* the weights are summed — a gated candidate whose
+--   gate does not hold in the current state takes no draw slot. This is the
+--   single place for 'RandomChoice' and 'RandomChoiceOn' alike. If every
+--   candidate is filtered out, there is *no* draw at all: neither @rngState@
+--   nor the named stream is advanced and the salt is returned untouched
+--   (exactly like @RandomChoice []@), so a pick that could only ever yield
+--   nothing does not shift any later draw. When no candidate is filtered the
+--   list is unchanged, so maths and draw order are byte-identical to before.
 applyRandomChoice :: String -> [(Int, Effect)] -> Int -> Int -> ItemID
                   -> GameState -> (GameState, [OutputEvent], Int)
-applyRandomChoice streamName weighted depth salt targetId state =
-    let totalWeight = max 1 (sum (map fst weighted))
-        (rng, st') = drawStreamRng streamName salt state
-        pick = fromIntegral ((rng `shiftR` 33) `mod` fromIntegral totalWeight)
-        go :: Int -> [(Int, Effect)] -> Effect
-        go _ [(_, e)] = e
-        go acc ((w, e):rest)
-            | pick < acc + w = e
-            | otherwise = go (acc + w) rest
-        go _ [] = Noop
-    in applyOutcomeWith (depth + 1) (salt + 1) (go 0 weighted) targetId st'
+applyRandomChoice streamName candidates depth salt targetId state
+    | null weighted = (state, [], salt)
+    | otherwise =
+        let totalWeight = max 1 (sum (map fst weighted))
+            (rng, st') = drawStreamRng streamName salt state
+            pick = fromIntegral ((rng `shiftR` 33) `mod` fromIntegral totalWeight)
+            go :: Int -> [(Int, Effect)] -> Effect
+            go _ [(_, e)] = e
+            go acc ((w, e):rest)
+                | pick < acc + w = e
+                | otherwise = go (acc + w) rest
+            go _ [] = Noop
+        in applyOutcomeWith (depth + 1) (salt + 1) (go 0 weighted) targetId st'
+  where
+    weighted = filter (drawEligible state . snd) candidates
+
+-- | K3.2: may this candidate take a draw slot in the current state?
+--
+--   * A /gate/ — @Conditional p then Noop@, the shape of an encounter entry's
+--     @when:@ ('compileEncounterTables') and of an @if:@ without @else:@ — is
+--     eligible only if @p@ holds now. The predicate is judged by
+--     'evalPredicate', the same evaluator 'applyOutcomeWith' uses for the
+--     'Conditional' itself, so a condition is never interpreted twice. An
+--     empty condition (@PTrue@, @all: []@) holds by 'evalPredicate' and
+--     therefore always passes — no special case needed.
+--   * Only the outer gate is judged. A nested gate (@Conditional p
+--     (Conditional q t Noop) Noop@) passes as soon as @p@ holds; if @q@ fails,
+--     the drawn candidate yields 'Noop' exactly as before.
+--   * A two-way branch (@Conditional p t e@ with a real @else@) always does
+--     something, so it keeps its slot: filtering it would silently make the
+--     author's @else:@ unreachable.
+--   * Every other effect — including a bare 'Noop' (an authored empty slot,
+--     the "nothing happens" atmosphere pattern) — keeps its slot unchanged.
+drawEligible :: GameState -> Effect -> Bool
+drawEligible st (Conditional p _ Noop) = evalPredicate p st
+drawEligible _  _                      = True
 
 -- | K1: Roll a pool of @pool@ dice each with @die@ sides.
 --   Draws from the given stream (or default if "") with ascending salt.
