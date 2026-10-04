@@ -1025,6 +1025,33 @@ ASCII-Art können dynamisch Variablen und Spielwerte einbetten:
   `room.*`, `cmd.*`, `item.*`, `npc.*`, `{x}`, `{y}`, `{z}`) deklariert sind und nicht via `\{foo\}` oder `{{foo}}` maskiert
   wurden, erzeugt der Worldbuilder eine nicht-fatale Warnung (`UnknownPlaceholder`).
 
+### Dynamische Variablennamen (K12)
+
+Variablennamen in Schreib-Effekten (`compute_var:`, `add_var:`, `set_var:`) sowie in Text-Platzhaltern (`{var: ...}`) können Platzhalter zur dynamischen Auflösung zur Laufzeit enthalten — insbesondere parametrisierte Befehlsargumente wie `{cmd.arg1}`:
+
+```yaml
+# Schreib-Effekt mit dynamischem Variablennamen:
+- add_var: { var: "npc.zuneigung_{cmd.arg1}", delta: 10 }
+- set_var: { var: "npc.zuneigung_{cmd.arg1}", value: 50 }
+- compute_var: { var: "npc.zuneigung_{cmd.arg1}", expr: "100" }
+
+# Dynamische Text-Interpolation:
+- msg: "Zuneigung zu {cmd.arg1}: {var: npc.zuneigung_{cmd.arg1}}"
+```
+
+#### Funktionsweise zur Laufzeit
+- **Schreiben:** Beim Ausführen von `compute_var`, `add_var` oder `set_var` (sowohl `applySetValue` als auch `modifyValueProp` in `src/Effects.hs`) wird der Variablenname vor dem Schreiben über `resolveVarName` aufgelöst. Enthält `var:` Platzhalter wie `{cmd.arg1}`, werden diese durch ihren aktuellen Laufzeitwert ersetzt (z. B. wird `"npc.zuneigung_{cmd.arg1}"` bei Eingabe von `loben baer` zu `"npc.zuneigung_baer"`).
+- **Lesen in Texten:** `lookupVarForFormat` löst Platzhalter im Variablennamen auf, bevor der Variablenwert nachgeschlagen wird. Enthält der Name keine geschweiften Klammern, bleibt der Pfad absolut unverändert (Byte- und Performance-Garantie).
+- **Unauflösbare Platzhalter:** Kann ein Platzhalter nicht aufgelöst werden (z. B. ungebundenes `cmd.arg99`), bleibt der Name unverändert; bei `{var: ...}` fällt der Wert deterministisch auf den Default `"0"` zurück (kein Absturz, keine Leervariable).
+- **Worldbuilder-Validierung:** Der Compiler (`checkUnknownPlaceholders`) erkennt dynamische Namen mit `{cmd.*}`-Platzhaltern als zulässig an und erzeugt dafür **keine** `UnknownPlaceholder`-Warnung. Normale unbekannte Platzhalter werden weiterhin zuverlässig gemeldet.
+
+#### Wichtige Grenze: Keine Interpolation in `expr:`
+Der mathematische Ausdruck in `expr:` ist ein abstrakter Syntaxbaum (AST), der von `parseExpr` zerlegt wird — **kein** formatierbares Text-Template:
+- Ausdrücke wie `expr: "npc.zuneigung_{cmd.arg1} + 10"` sind **nicht erlaubt** und schlagen mit einem Syntaxfehler fehl.
+- Um dynamisch benannte Variablen rechnerisch zu verändern, nutzt der Autor stattdessen:
+  - `add_var: { var: "npc.zuneigung_{cmd.arg1}", delta: 10 }` (oder mit negativem Delta), oder
+  - separate Regeln bzw. Prozeduren je spezifischem Wert.
+
 ### Praxisbeispiele aus `economy_hamurabi.yaml`
 
 #### 1. Parametrisierter Handel mit Validierung und Formeln (`rule_kaufe`)

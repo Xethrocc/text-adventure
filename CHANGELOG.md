@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### Dynamische Variablennamen (K12)
+
+- **Laufzeit-Auflösung von Variablennamen (`Effects` & `Game`):**
+  - `resolveVarName :: String -> GameState -> String`: Löst `{cmd.*}`-Platzhalter (z. B. `{cmd.arg1}`) im Variablennamen schlank zur Laufzeit gegen `getVariable` auf. Bleibt bei unauflösbaren Platzhaltern oder Namen ohne geschweifte Klammern unverändert (Byte-Gleichheit und Performance-Garantie).
+  - In `src/Effects.hs`: Die beiden Schreibstellen für `VRVariable` (`applySetValue` und `modifyValueProp`) führen den Namen über `resolveVarName` vor dem Aufruf von `setScopedVariable`. Dadurch schreiben `compute_var`, `add_var` und `set_var` in den aufgelösten Schlüssel statt in den literalen Template-String.
+  - In `src/Game.hs`: `lookupVarForFormat` führt nur dann eine Auflösung durch, wenn der Name `{` enthält. Bleibt nach der Auflösung ein Platzhalter unaufgelöst, wird deterministisch `Nothing` zurückgegeben (verhindert fehlerhafte Präfix-Aufteilungen an Punkten in `{cmd.argN}`).
+- **Template-Klammerung (`Messages` & `Compile`):**
+  - In `src/Messages.hs` und `worldbuilder/src/Worldbuilder/Compile.hs`: `matchBrace` bereinigt; aufeinanderfolgende schließende Klammern (`}}`) dekrementieren die Klammertiefe ordnungsgemäß (notwendig für geschachtelte Platzhalter wie `{var: npc.zuneigung_{cmd.arg1}}`).
+- **Worldbuilder-Validierung (`Worldbuilder.Compile`):**
+  - `checkUnknownPlaceholders` erkennt dynamische `{cmd.*}`-Platzhalter und `cmd.`-Variablen als bekannt an, sodass `{var: npc.zuneigung_{cmd.arg1}}` keine `UnknownPlaceholder`-Warnung mehr erzeugt. Normale unbekannte Platzhalter werden weiterhin zuverlässig gemeldet.
+- **Wichtige Grenze:**
+  - `expr:` ist ein AST (`Types.Core.parseExpr`) und wird bewusst **nicht** interpoliert. Zur dynamischen Wertanpassung dient `add_var` mit aufgelöstem Namen oder separate Regeln.
+- **Fixture & E2E:**
+  - Neue Fixture `examples/fixtures/zuneigung.yaml` mit `tests:`-Sektion (9 Marker) und E2E-Test `ci/e2e/zuneigung.{in,expect}`.
+  - Beweist im Spiel: Ein Regelpaar, drei NPCs, ein Aufruf je NPC, dynamisches Nachschlagen und Schreiben sowie Auffinden einer vorher deklarierten statischen Variable über einen dynamischen Namen.
+  - Registriert in `scripts/ci.sh` Stufe 4 und 4b.
+- **Doku (`docs/adventure-schema.md`):**
+  - Neue Sektion `### Dynamische Variablennamen (K12)` mit Funktionsweise, Beispielen und Dokumentation der AST-Grenze (`expr:`).
+- **Tests & Metriken:**
+  - Engine: 479 Tests in `test/Tests.hs` (+2: `testDynamicVarNameWrite`, `testDynamicVarNameFormat`), alle grün.
+  - Worldbuilder: 265 Tests in `worldbuilder/test/Tests.hs` (+2: `testDynamicVarPlaceholderNoWarning`, `testNormalUnknownPlaceholderStillWarns`), alle grün.
+  - 57 E2E-Playthroughs in `scripts/ci.sh` (+1: `zuneigung`).
+- **Unabhängig nachgemessen:** `add_var: {var: "npc.zuneigung_{cmd.arg1}", delta: 15}`
+  auf zwei vorher deklarierte NPCs — `freundlich baer` → −20 → **−5**,
+  `freundlich fuchs` → 30 → **45**, eine Regel für beide. `status baer` und
+  `status fuchs` nutzen denselben Text und zeigen verschiedene Werte.
+- **Nebenbefund am Code (verhaltensneutral):** In `Messages.matchBrace` sind die
+  Fälle für `{{` / `}}` entfallen. Sie waren toter Code — `formatStringWith`
+  fängt Doppelklammern zwei Zeilen darüber ab (`Messages.hs:880`). Gegenprobe
+  mit `A={{literal}} B={gold} C={{gold}} D=\{esc\}`: Ausgabe alt wie neu
+  `A={literal} B=42 C={gold} D={esc}`.
+
 ### NPC-Verhaltenszustände & KI-Compiler-Zucker (K2)
 
 - **`set_state:`-Zielauflösung & `UnknownStateTarget` (`Worldbuilder.Compile` & `Effects`):**

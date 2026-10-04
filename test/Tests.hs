@@ -9279,6 +9279,59 @@ testRandomChoiceOnSkipsUnmetGate = do
     pure (and [r1, r2, r3])
 
 -- ---------------------------------------------------------------------------
+-- K12: Dynamic variable names ({cmd.arg1}, {cmd.target}, etc.)
+-- ---------------------------------------------------------------------------
+
+-- | K12.1: compute_var / add_var / set_var with {cmd.arg1} write into the
+--   resolved variable name at runtime, while unresolvable placeholders stay unchanged.
+testDynamicVarNameWrite :: IO Bool
+testDynamicVarNameWrite = do
+    let st0 = setVariableChecked "cmd.arg1" (VVText "baer")
+            $ setVariableChecked "cmd.target" (VVText "wolf") initSampleGame
+
+    -- compute_var writes to resolved name "npc.zuneigung_baer"
+    let (stCompute, _, _) = applyOutcomeWith 0 0 (ComputeValue (VRVariable "npc.zuneigung_{cmd.arg1}") (ELit 42)) "" st0
+    r1 <- expectEqual (Just (VVInt 42)) (getVariable "npc.zuneigung_baer" stCompute)
+    r2 <- expectEqual Nothing (getVariable "npc.zuneigung_{cmd.arg1}" stCompute)
+
+    -- add_var increments resolved name "npc.zuneigung_baer"
+    let (stAdd, _, _) = applyOutcomeWith 0 0 (ModifyValue (VRVariable "npc.zuneigung_{cmd.arg1}") 10) "" stCompute
+    r3 <- expectEqual (Just (VVInt 52)) (getVariable "npc.zuneigung_baer" stAdd)
+
+    -- set_var writes to resolved name "npc.zuneigung_wolf"
+    let (stSet, _, _) = applyOutcomeWith 0 0 (SetValue (VRVariable "npc.zuneigung_{cmd.target}") (EVInt 99)) "" stAdd
+    r4 <- expectEqual (Just (VVInt 99)) (getVariable "npc.zuneigung_wolf" stSet)
+
+    -- unresolvable placeholder ({cmd.arg99}) remains unchanged
+    let (stUnres, _, _) = applyOutcomeWith 0 0 (SetValue (VRVariable "test_{cmd.arg99}") (EVInt 5)) "" st0
+    r5 <- expectEqual (Just (VVInt 5)) (getVariable "test_{cmd.arg99}" stUnres)
+
+    -- literal name without placeholders writes to that literal name
+    let (stPlain, _, _) = applyOutcomeWith 0 0 (SetValue (VRVariable "gold") (EVInt 100)) "" st0
+    r6 <- expectEqual (Just (VVInt 100)) (getVariable "gold" stPlain)
+
+    pure (and [r1, r2, r3, r4, r5, r6])
+
+-- | K12.2: lookupVarForFormat resolves {var: ..._{cmd.arg1}} while static lookups
+--   like {var: gold} remain byte-identical.
+testDynamicVarNameFormat :: IO Bool
+testDynamicVarNameFormat = do
+    let st = setVariableChecked "cmd.arg1" (VVText "baer")
+           $ setVariableChecked "npc.zuneigung_baer" (VVInt 15)
+           $ setVariableChecked "gold" (VVInt 50) initSampleGame
+
+    -- lookupVarForFormat resolves dynamic placeholder
+    r1 <- expectEqual (Just "15") (lookupVarForFormat st "npc.zuneigung_{cmd.arg1}")
+    -- lookupVarForFormat on static name is unchanged
+    r2 <- expectEqual (Just "50") (lookupVarForFormat st "gold")
+    -- formatWithVars resolves both dynamic and static placeholders
+    let rendered = formatWithVars "Zuneigung: {var: npc.zuneigung_{cmd.arg1}}, Gold: {gold}" st
+    r3 <- expectEqual "Zuneigung: 15, Gold: 50" rendered
+    -- unresolvable placeholder does not crash and defaults to "0" for explicit var:
+    r4 <- expectEqual (Just "0") (Just (formatWithVars "{var: npc.zuneigung_{cmd.arg99}}" st))
+    pure (and [r1, r2, r3, r4])
+
+-- ---------------------------------------------------------------------------
 -- Phase 4.2: verb_map phases (before:/instead:)
 -- ---------------------------------------------------------------------------
 
@@ -10265,5 +10318,8 @@ main = do
         , runTest "weighted draw: branch with else keeps slot and else is reachable (K3.2 d)" testRandomChoiceBranchKeepsSlot
         , runTest "weighted draw: nested conditional checked at outer gate only (K3.2 e)" testRandomChoiceNestedConditionalOuterOnly
         , runTest "weighted draw: named stream filters the same way (K3.2)" testRandomChoiceOnSkipsUnmetGate
+        -- K12: dynamic variable names
+        , runTest "dynamic var names: compute_var / add_var / set_var write to resolved name (K12.1)" testDynamicVarNameWrite
+        , runTest "dynamic var names: lookupVarForFormat resolves dynamic placeholders in texts (K12.2)" testDynamicVarNameFormat
         ]
     when (not (and results)) exitFailure

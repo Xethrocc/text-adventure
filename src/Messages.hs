@@ -665,7 +665,7 @@ applyVarModifier str modif =
         _ -> signedStr
 
 -- | Find the matching '}' for an opening '{', taking into account nested braces
---   and escaped braces ('\{', '\}', '{{', '}}').
+--   and escaped braces ('\{', '\}').
 matchBrace :: String -> Maybe (String, String)
 matchBrace str = go (1 :: Int) [] str
   where
@@ -673,8 +673,6 @@ matchBrace str = go (1 :: Int) [] str
     go _ _   []   = Nothing
     go d acc ('\\':'{':rest) = go d ('{':'\\':acc) rest
     go d acc ('\\':'}':rest) = go d ('}':'\\':acc) rest
-    go d acc ('{':'{':rest)  = go d ('{':'{':acc) rest
-    go d acc ('}':'}':rest)  = go d ('}':'}':acc) rest
     go d acc ('{':rest)      = go (d + 1) ('{':acc) rest
     go d acc ('}':rest)
         | d == 1             = Just (reverse acc, rest)

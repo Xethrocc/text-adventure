@@ -4054,6 +4054,9 @@ tests =
     , ("grammar: YAML forms and knownKeys clean (4.3.5)", testGrammarYamlKnownKeysClean)
     , ("grammar: gender tag validation (4.3.5)", testGrammarGenderValidation)
     , ("grammar: MissingGrammar warning for unannotated entities (4.3.5)", testMissingGrammarWarning)
+    -- K12: dynamic variable names
+    , ("dynamic var names: {var: ..._{cmd.arg1}} emits zero UnknownPlaceholder warnings (K12)", testDynamicVarPlaceholderNoWarning)
+    , ("dynamic var names: normal unknown placeholder still emits warning (K12)", testNormalUnknownPlaceholderStillWarns)
     ]
 
 -- ---------------------------------------------------------------------------
@@ -7600,6 +7603,34 @@ testDicePlaceholderNoWarning = do
         Right cr -> do
             let warns = filter (\w -> ciCode w == "UnknownPlaceholder") (crWarnings cr)
             expectTrue "dice.* placeholders produce zero UnknownPlaceholder warnings" (null warns)
+
+-- | K12: {var: npc.zuneigung_{cmd.arg1}} produces NO UnknownPlaceholder warning.
+testDynamicVarPlaceholderNoWarning :: IO Bool
+testDynamicVarPlaceholderNoWarning = do
+    let r0 = (minRoom "loc_0")
+            { arTexts = ACondText "Zu {cmd.arg1}: {var: npc.zuneigung_{cmd.arg1}} (Status: {var: status_{cmd.arg1}})." [] }
+        adv = minAdventure r0
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "UnknownPlaceholder") (crWarnings cr)
+            expectTrue "dynamic {cmd.*} placeholders produce zero UnknownPlaceholder warnings" (null warns)
+
+-- | K12: Normal unknown placeholders still produce an UnknownPlaceholder warning.
+testNormalUnknownPlaceholderStillWarns :: IO Bool
+testNormalUnknownPlaceholderStillWarns = do
+    let r0 = (minRoom "loc_0")
+            { arTexts = ACondText "Wert: {unbekannte_variable} und {var: andres_unbekanntes}." [] }
+        adv = minAdventure r0
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "UnknownPlaceholder") (crWarnings cr)
+            expectEqual 2 (length warns)
 
 -- ---------------------------------------------------------------------------
 -- K3: event chains (authoring side)

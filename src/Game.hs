@@ -100,6 +100,8 @@ module Game
     , getVariable
     , setVariable
     , setVariableChecked
+    , clampToVarDef
+    , resolveVarName
     , hasCondition
     , applyCondition
     , applyConditionWithHidden
@@ -1229,6 +1231,33 @@ setVariableChecked name val state =
         VVInt n -> setVariable name (VVInt (clampToVarDef name n state)) state
         _       -> setVariable name val state
 
+-- | Convert a VariableValue to its string representation.
+varToString :: VariableValue -> String
+varToString (VVInt n)  = show n
+varToString (VVBool b) = if b then "true" else "false"
+varToString (VVText s) = s
+
+-- | Resolve dynamic placeholders like @{cmd.arg1}@ in variable names.
+--   Only resolves @cmd.*@ placeholders from current GameState variables.
+--   If a placeholder is not resolvable (e.g. unknown cmd.argN), it remains unchanged.
+--   If the name contains no '{', it is returned as-is.
+resolveVarName :: String -> GameState -> String
+resolveVarName name st
+    | '{' `notElem` name = name
+    | otherwise          = go name
+  where
+    go [] = []
+    go ('{':rest) =
+        case break (\c -> c == '}' || c == '{') rest of
+            (ph, '}':after)
+                | "cmd." `isPrefixOf` ph ->
+                    case getVariable ph st of
+                        Just val -> varToString val ++ go after
+                        Nothing  -> '{' : ph ++ '}' : go after
+                | otherwise -> '{' : ph ++ '}' : go after
+            _ -> '{' : go rest
+    go (c:cs) = c : go cs
+
 -- ---------------------------------------------------------------------------
 -- Progression (W2)
 -- ---------------------------------------------------------------------------
@@ -1531,64 +1560,65 @@ formatWithVars :: String -> GameState -> String
 formatWithVars str st = formatStringWith str (lookupVarForFormat st)
 
 lookupVarForFormat :: GameState -> String -> Maybe String
-lookupVarForFormat st name
-    | Just val <- getVariable name st =
-        Just (varToString val)
-    | Just fName <- stripPrefix "flag:" name <|> stripPrefix "flag." name =
-        case Map.lookup fName (flags (save st)) of
-            Just v  -> Just v
-            Nothing -> Just "false"
-    | Just v <- Map.lookup name (flags (save st)) =
-        Just v
-    | Just rest <- stripPrefix "item." name =
-        case break (== '.') rest of
-            (itId, '.':prop) ->
-                case Map.lookup itId (itemStates (save st)) of
-                    Nothing -> Just ("<error: unknown item '" ++ itId ++ "'>")
-                    Just is -> case Map.lookup prop (itemProps is) of
-                        Nothing -> Just ("<error: unknown prop '" ++ prop ++ "' on item '" ++ itId ++ "'>")
-                        Just val -> Just (show val)
-            _ -> Nothing
-    | Just rest <- stripPrefix "npc." name =
-        case break (== '.') rest of
-            (nId, '.':prop) ->
-                let actualId = resolveActorNpcId nId st
-                in case Map.lookup actualId (npcStates (save st)) of
-                    Nothing -> Just ("<error: unknown npc '" ++ nId ++ "'>")
-                    Just ns -> case prop of
-                        "health" -> Just (show (fromMaybe 0 (npcHealth ns)))
-                        "hp"     -> Just (show (fromMaybe 0 (npcHealth ns)))
-                        _        -> case Map.lookup prop (npcProps ns) of
-                            Nothing -> Just ("<error: unknown prop '" ++ prop ++ "' on npc '" ++ nId ++ "'>")
-                            Just val -> Just (show val)
-            _ -> Nothing
-    | Just cName <- stripPrefix "condition_turns." name =
-        Just (show (resolveValueRef (VRConditionTurns cName) st))
-    | name `elem` ["player.hp", "player.health"] =
-        Just (show (playerHealth (player (save st))))
-    | name `elem` ["player.max_hp", "player.max_health"] =
-        Just (show (playerMaxHealth (player (save st))))
-    | name `elem` ["turn.count", "turns"] =
-        Just (show (turnCount (save st)))
-    | name `elem` ["hand.count", "cards_in_hand"] =
-        Just (show (maybe 0 (length . hand) (deckState (save st))))
-    | name `elem` ["deck.count", "draw_pile.count"] =
-        Just (show (maybe 0 (length . drawPile) (deckState (save st))))
-    | name `elem` ["discard.count", "discard_pile.count"] =
-        Just (show (maybe 0 (length . discardPile) (deckState (save st))))
-    | name `elem` ["exhaust.count", "exhaust_pile.count"] =
-        Just (show (maybe 0 (length . exhaustPile) (deckState (save st))))
-    | name `elem` ["room.name", "current_room.name"] =
-        Just (fromMaybe "" (roomName <$> getCurrentRoom st))
-    | name `elem` ["room.id", "current_room.id", "room"] =
-        Just (currentRoom (save st))
-    | name `elem` Map.keys (varDefs (world st)) =
-        Just "0"
-    | otherwise = Nothing
+lookupVarForFormat st rawName =
+    let name = if '{' `elem` rawName then resolveVarName rawName st else rawName
+    in lookupResolved name
   where
-    varToString (VVInt n)  = show n
-    varToString (VVBool b) = if b then "true" else "false"
-    varToString (VVText s) = s
+    lookupResolved name
+        | Just val <- getVariable name st =
+            Just (varToString val)
+        | '{' `elem` name = Nothing
+        | Just fName <- stripPrefix "flag:" name <|> stripPrefix "flag." name =
+            case Map.lookup fName (flags (save st)) of
+                Just v  -> Just v
+                Nothing -> Just "false"
+        | Just v <- Map.lookup name (flags (save st)) =
+            Just v
+        | Just rest <- stripPrefix "item." name =
+            case break (== '.') rest of
+                (itId, '.':prop) ->
+                    case Map.lookup itId (itemStates (save st)) of
+                        Nothing -> Just ("<error: unknown item '" ++ itId ++ "'>")
+                        Just is -> case Map.lookup prop (itemProps is) of
+                            Nothing -> Just ("<error: unknown prop '" ++ prop ++ "' on item '" ++ itId ++ "'>")
+                            Just val -> Just (show val)
+                _ -> Nothing
+        | Just rest <- stripPrefix "npc." name =
+            case break (== '.') rest of
+                (nId, '.':prop) ->
+                    let actualId = resolveActorNpcId nId st
+                    in case Map.lookup actualId (npcStates (save st)) of
+                        Nothing -> Just ("<error: unknown npc '" ++ nId ++ "'>")
+                        Just ns -> case prop of
+                            "health" -> Just (show (fromMaybe 0 (npcHealth ns)))
+                            "hp"     -> Just (show (fromMaybe 0 (npcHealth ns)))
+                            _        -> case Map.lookup prop (npcProps ns) of
+                                Nothing -> Just ("<error: unknown prop '" ++ prop ++ "' on npc '" ++ nId ++ "'>")
+                                Just val -> Just (show val)
+                _ -> Nothing
+        | Just cName <- stripPrefix "condition_turns." name =
+            Just (show (resolveValueRef (VRConditionTurns cName) st))
+        | name `elem` ["player.hp", "player.health"] =
+            Just (show (playerHealth (player (save st))))
+        | name `elem` ["player.max_hp", "player.max_health"] =
+            Just (show (playerMaxHealth (player (save st))))
+        | name `elem` ["turn.count", "turns"] =
+            Just (show (turnCount (save st)))
+        | name `elem` ["hand.count", "cards_in_hand"] =
+            Just (show (maybe 0 (length . hand) (deckState (save st))))
+        | name `elem` ["deck.count", "draw_pile.count"] =
+            Just (show (maybe 0 (length . drawPile) (deckState (save st))))
+        | name `elem` ["discard.count", "discard_pile.count"] =
+            Just (show (maybe 0 (length . discardPile) (deckState (save st))))
+        | name `elem` ["exhaust.count", "exhaust_pile.count"] =
+            Just (show (maybe 0 (length . exhaustPile) (deckState (save st))))
+        | name `elem` ["room.name", "current_room.name"] =
+            Just (fromMaybe "" (roomName <$> getCurrentRoom st))
+        | name `elem` ["room.id", "current_room.id", "room"] =
+            Just (currentRoom (save st))
+        | name `elem` Map.keys (varDefs (world st)) =
+            Just "0"
+        | otherwise = Nothing
 
 -- ---------------------------------------------------------------------------
 -- Conditional text (Phase 3g)

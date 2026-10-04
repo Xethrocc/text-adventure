@@ -54,7 +54,7 @@ import qualified Messages as Msg
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Char (toLower, isDigit, isSpace)
-import Data.List (nub, stripPrefix, isPrefixOf, minimumBy, intercalate, sortOn, find)
+import Data.List (nub, stripPrefix, isPrefixOf, isInfixOf, minimumBy, intercalate, sortOn, find)
 import Data.Ord (comparing)
 import Data.Maybe (mapMaybe, fromMaybe, catMaybes, isNothing, isJust)
 import Data.Either (partitionEithers)
@@ -4295,7 +4295,7 @@ checkUnknownPlaceholders adv varDefs =
         | name `Set.member` systemVars = True
         | name `Set.member` commandVars = True
         | name `Set.member` engineVars = True
-        | "cmd.arg" `isPrefixOf` name = True
+        | "cmd." `isPrefixOf` name = True
         | "combat." `isPrefixOf` name = True
         | "item." `isPrefixOf` name = True
         | "npc." `isPrefixOf` name = True
@@ -4303,7 +4303,10 @@ checkUnknownPlaceholders adv varDefs =
         | "flag:" `isPrefixOf` name = True
         | "condition_turns." `isPrefixOf` name = True
         | name `elem` ["x", "y", "z"] = True
+        | hasDynamicCmd name = True
         | otherwise = False
+
+    hasDynamicCmd s = "{cmd." `isInfixOf` s
 
     -- K1 (Variante A): engine-provided variables written by effects,
     -- known to the validator without author declaration in variables:.
@@ -4333,8 +4336,8 @@ checkUnknownPlaceholders adv varDefs =
     extractPlaceholders ('{':'{':cs) = extractPlaceholders cs
     extractPlaceholders ('}':'}':cs) = extractPlaceholders cs
     extractPlaceholders ('{':cs) =
-        case span (/= '}') cs of
-            (inside, '}':rest) ->
+        case matchBrace cs of
+            Just (inside, rest) ->
                 let clean = if "var:" `isPrefixOf` inside
                             then drop 4 inside
                             else inside
@@ -4347,8 +4350,20 @@ checkUnknownPlaceholders adv varDefs =
                       && not ("=" `isPrefixOf` trimmed)
                    then trimmed : extractPlaceholders rest
                    else extractPlaceholders rest
-            _ -> extractPlaceholders cs
+            Nothing -> extractPlaceholders cs
     extractPlaceholders (_:cs) = extractPlaceholders cs
+
+    matchBrace str = go (1 :: Int) [] str
+      where
+        go 0 acc rest = Just (reverse acc, rest)
+        go _ _   []   = Nothing
+        go d acc ('\\':'{':rest) = go d ('{':'\\':acc) rest
+        go d acc ('\\':'}':rest) = go d ('}':'\\':acc) rest
+        go d acc ('{':rest)      = go (d + 1) ('{':acc) rest
+        go d acc ('}':rest)
+            | d == 1             = Just (reverse acc, rest)
+            | otherwise          = go (d - 1) ('}':acc) rest
+        go d acc (c:rest)        = go d (c:acc) rest
 
     outcomeWrittenVars ao = case ao of
         AOSetVar name _           -> [name]

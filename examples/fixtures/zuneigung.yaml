@@ -1,0 +1,79 @@
+# K12: Dynamische Variablennamen
+#
+# Beweis in dieser Fixture:
+# 1. Ein Regelpaar bedient beliebig viele NPCs dynamisch:
+#    - 'freundlich' erhoeht die Zuneigung um 10 (add_var).
+#    - 'status' zeigt die Zuneigung an (reiner Text mit aufgeloestem Namen).
+# 2. Drei NPCs: baer, wolf, fuchs.
+# 3. Vorher deklarierte statische Variable:
+#    - npc.zuneigung_baer startet bei -20 und wird per dynamischem Namen gefunden.
+# 4. Derselbe Text zeigt fuer verschiedene NPCs verschiedene Werte.
+
+name: Zuneigung Fixture
+start_room: waldlichtung
+
+verbs:
+  - name: "freundlich"
+  - name: "status"
+
+variables:
+  - { name: npc.zuneigung_baer, type: int, initial: -20 }
+
+rooms:
+  - id: waldlichtung
+    name: Waldlichtung
+    desc: Eine friedliche Waldlichtung. Drei Tiere beobachten dich neugierig.
+
+npcs:
+  - id: baer
+    name: Baer
+    desc: Ein grosser Baer.
+    keys: [baer]
+    location: waldlichtung
+
+  - id: wolf
+    name: Wolf
+    desc: Ein grauer Wolf.
+    keys: [wolf]
+    location: waldlichtung
+
+  - id: fuchs
+    name: Fuchs
+    desc: Ein schlauer Fuchs.
+    keys: [fuchs]
+    location: waldlichtung
+
+rules:
+  - id: r_freundlich
+    on: "command freundlich"
+    effects:
+      - add_var: { var: "npc.zuneigung_{cmd.arg1}", delta: 10 }
+      - text: "Zuneigung {cmd.arg1}: {var: npc.zuneigung_{cmd.arg1}}"
+
+  - id: r_status
+    on: "command status"
+    effects:
+      - text: "Zuneigung {cmd.arg1}: {var: npc.zuneigung_{cmd.arg1}}"
+
+tests:
+  - name: "dynamische zuneigung"
+    input:
+      - status baer
+      - freundlich baer
+      - freundlich wolf
+      - status fuchs
+      - freundlich fuchs
+      - freundlich fuchs
+      - status baer
+      - status wolf
+      - status fuchs
+    expect:
+      - "Zuneigung baer: -20"
+      - "Zuneigung baer: -10"
+      - "Zuneigung wolf: 10"
+      - "Zuneigung fuchs: 0"
+      - "Zuneigung fuchs: 10"
+      - "Zuneigung fuchs: 20"
+      - "Zuneigung baer: -10"
+      - "Zuneigung wolf: 10"
+      - "Zuneigung fuchs: 20"

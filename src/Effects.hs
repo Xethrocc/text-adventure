@@ -655,7 +655,8 @@ applySetValue :: ValueRef -> EffectValue -> GameState -> (GameState, [OutputEven
 applySetValue (VRFlag name) val state =
     (setFlag name (effectValueToString val) state, [])
 applySetValue (VRVariable name) val state =
-    (setScopedVariable name (effectValToVarVal val) state, [])
+    let realName = resolveVarName name state
+    in (setScopedVariable realName (effectValToVarVal val) state, [])
 applySetValue (VRActorProp (ActorEntity eId) PState) val state =
     setEntityStateWithEvents eId (effectValueToString val) state
 applySetValue (VRActorProp (ActorNPC nid) PState) val state =
@@ -685,11 +686,12 @@ modifyValueProp (VRFlag name) delta state =
         newVal = if cur + delta > 0 then "true" else "false"
     in (setFlag name newVal state, [])
 modifyValueProp (VRVariable name) delta state =
-    let cur = case getVariable name state of
+    let realName = resolveVarName name state
+        cur = case getVariable realName state of
             Just (VVInt n)  -> n
             Just (VVText s) -> case reads s of [(n,_)] -> n; _ -> 0
             _               -> 0
-    in (setScopedVariable name (VVInt (cur + delta)) state, [])
+    in (setScopedVariable realName (VVInt (cur + delta)) state, [])
 modifyValueProp (VRItemProp iId prop) delta state =
     (modifyItemProp iId prop delta state, [])
 modifyValueProp (VRActorProp (ActorNPC eId) PHealth) delta state
