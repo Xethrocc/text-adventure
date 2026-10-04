@@ -436,7 +436,7 @@ testFactChecks :: IO Bool
 testFactChecks = do
     let advWith extraFacts extraRules extraCombines = (minAdventure (minRoom "loc_0"))
             { advFacts = [AFactDef "brief" ["brief"] "Der Brief." Nothing Nothing Nothing Nothing] ++ extraFacts
-            , advTriggers = [ ATrigger "t" "turn" Nothing extraRules False 0 ]
+            , advTriggers = [ ATrigger "t" "turn" Nothing extraRules False 0 1 [] [] ]
             , advCombines = extraCombines }
     r1 <- case compileAdventure (advWith [] [AOLearn "nope" "player"] []) of
             Left errs -> expectTrue "learn of unknown fact is UnknownFact"
@@ -511,13 +511,13 @@ testChapterChecks :: IO Bool
 testChapterChecks = do
     let mk chs rules = (minAdventure (minRoom "loc_0"))
             { advChapters = chs, advTriggers = rules }
-        back = ATrigger "sprung" "chapter kap2" Nothing [AOGotoChapter "kap1"] False 0
-        fwd  = ATrigger "sprung" "chapter kap1" Nothing [AOGotoChapter "kap2"] False 0
+        back = ATrigger "sprung" "chapter kap2" Nothing [AOGotoChapter "kap1"] False 0 1 [] []
+        fwd  = ATrigger "sprung" "chapter kap1" Nothing [AOGotoChapter "kap2"] False 0 1 [] []
     r1 <- case compileAdventure (mk [AChapterDef "k" Nothing Nothing, AChapterDef "k" Nothing Nothing] []) of
             Left errs -> expectTrue "duplicate is DuplicateChapter"
                 (any (\i -> ciCode i == "DuplicateChapter") errs)
             Right _ -> expectTrue "duplicate must fail" False
-    r2 <- case compileAdventure (mk [AChapterDef "k" Nothing Nothing] [ATrigger "s" "turn" Nothing [AOGotoChapter "nope"] False 0]) of
+    r2 <- case compileAdventure (mk [AChapterDef "k" Nothing Nothing] [ATrigger "s" "turn" Nothing [AOGotoChapter "nope"] False 0 1 [] []]) of
             Left errs -> expectTrue "unknown target is UnknownChapter"
                 (any (\i -> ciCode i == "UnknownChapter") errs)
             Right _ -> expectTrue "unknown target must fail" False
@@ -799,7 +799,7 @@ testProgressionChecks = do
 
     -- 6. gain_xp outcome without progression section -> GainXpWithoutProgression warning
     let warnAdv = base
-            { advTriggers = [ ATrigger "t1" "turn" Nothing [AOGainXp 50] False 0 ] }
+            { advTriggers = [ ATrigger "t1" "turn" Nothing [AOGainXp 50] False 0 1 [] [] ] }
     r6 <- case compileAdventure warnAdv of
             Right cr -> expectTrue "gain_xp without progression produces GainXpWithoutProgression warning"
                 (any (\i -> ciCode i == "GainXpWithoutProgression") (crWarnings cr))
@@ -1809,7 +1809,7 @@ testP120RaiseEvent = do
         adv = (minAdventure (minRoom "loc_0"))
                 { advTriggers =
                     [ ATrigger "t_raise" "custom ritual_done"
-                        Nothing [AORaiseEvent "ritual_done"] False 0 ] }
+                        Nothing [AORaiseEvent "ritual_done"] False 0 1 [] [] ] }
     r1 <- expectEqual (Just (AORaiseEvent "ritual_done"))
               (dec (BLC.pack "{\"raise\": \"ritual_done\"}"))
     r2 <- case compileAdventure adv of
@@ -2072,7 +2072,7 @@ testStandingOutcomeCompiles = do
             , advTriggers = [ ATrigger "quest_reward" "turn" Nothing
                                 [ AOStandingAdd "corp" 10
                                 , AOStandingSet "corp" 25
-                                ] False 0 ] }
+                                ] False 0 1 [] [] ] }
     case compileAdventure adv of
         Left errs -> do
             putStrLn $ "  compile errors: " ++ show errs
@@ -2092,7 +2092,7 @@ testSetEntityStateCompiles :: IO Bool
 testSetEntityStateCompiles = do
     let adv = (minAdventure (minRoom "loc_0"))
             { advTriggers = [ ATrigger "open_gate" "turn" Nothing
-                                [ AOSetEntityState "guild_gate" "unlocked" ] False 0 ] }
+                                [ AOSetEntityState "guild_gate" "unlocked" ] False 0 1 [] [] ] }
     case compileAdventure adv of
         Left errs -> do
             putStrLn $ "  compile errors: " ++ show errs
@@ -2109,8 +2109,8 @@ testDuplicateTriggerIdFails :: IO Bool
 testDuplicateTriggerIdFails = do
     let adv = (minAdventure (minRoom "loc_0"))
             { advTriggers =
-                [ ATrigger "dup" "turn" Nothing [AOMessage "a"] False 0
-                , ATrigger "dup" "turn" Nothing [AOMessage "b"] False 0 ] }
+                [ ATrigger "dup" "turn" Nothing [AOMessage "a"] False 0 1 [] []
+                , ATrigger "dup" "turn" Nothing [AOMessage "b"] False 0 1 [] [] ] }
     case compileAdventure adv of
         Left errs -> expectContains "DuplicateTriggerId" (issuesText errs)
         Right _   -> expectTrue "expected DuplicateTriggerId" False
@@ -2121,7 +2121,7 @@ testDuplicateTriggerIdFails = do
 testReservedTriggerIdFails :: IO Bool
 testReservedTriggerIdFails = do
     let adv = (minAdventure (minRoom "loc_0"))
-            { advTriggers = [ ATrigger "stealth.decay" "turn" Nothing [AOMessage "x"] False 0 ] }
+            { advTriggers = [ ATrigger "stealth.decay" "turn" Nothing [AOMessage "x"] False 0 1 [] [] ] }
     case compileAdventure adv of
         Left errs -> expectContains "ReservedTriggerId" (issuesText errs)
         Right _   -> expectTrue "expected ReservedTriggerId" False
@@ -2147,7 +2147,7 @@ testUnknownCommandVerbFails :: IO Bool
 testUnknownCommandVerbFails = do
     let adv = (minAdventure (minRoom "loc_0"))
             { advTriggers =
-                [ ATrigger "t_bad" "command teleport" Nothing [AOMessage "x"] False 0 ] }
+                [ ATrigger "t_bad" "command teleport" Nothing [AOMessage "x"] False 0 1 [] [] ] }
     case compileAdventure adv of
         Left errs -> expectContains "UnknownCommandVerb" (issuesText errs)
         Right _   -> expectTrue "expected UnknownCommandVerb" False
@@ -2391,8 +2391,8 @@ testKnownCommandVerbCompiles = do
     let adv = (minAdventure (minRoom "loc_0"))
             { advVerbs = [AVerb "sneak" []]
             , advTriggers =
-                [ ATrigger "t_core"   "command examine" Nothing [AOMessage "a"] False 0
-                , ATrigger "t_custom" "command sneak"   Nothing [AOMessage "b"] False 0 ] }
+                [ ATrigger "t_core"   "command examine" Nothing [AOMessage "a"] False 0 1 [] []
+                , ATrigger "t_custom" "command sneak"   Nothing [AOMessage "b"] False 0 1 [] [] ] }
     case compileAdventure adv of
         Right _ -> pure True
         Left errs -> do
@@ -2406,7 +2406,7 @@ testUnknownFactionFails = do
     let adv = (minAdventure (minRoom "loc_0"))
             { advFactions = [AFaction "corp" "Arasaka" 0 []]
             , advTriggers = [ ATrigger "bad" "turn" Nothing
-                                [ AOStandingAdd "nonexistent" 10 ] False 0 ] }
+                                [ AOStandingAdd "nonexistent" 10 ] False 0 1 [] [] ] }
     case compileAdventure adv of
         Right _ -> do
             putStrLn "  expected UnknownFaction compile error, got Right"
@@ -3425,7 +3425,7 @@ testClipValidation = do
             { advClips = [ AClip "z" Nothing ["F"] 0 ] }
         playAdv      = (minAdventure (minRoom "loc_0"))
             { advClips = []
-            , advTriggers = [ ATrigger "t" "turn" Nothing [ AOPlayClip "ghost" ] False 0 ] }
+            , advTriggers = [ ATrigger "t" "turn" Nothing [ AOPlayClip "ghost" ] False 0 1 [] [] ] }
     results <- forM [(compileAdventure (minAdventure roomUnknown), "unknown intro", "UnknownClip")
                     ,(compileAdventure dupAdv, "duplicate id", "DuplicateClip")
                     ,(compileAdventure emptyAdv, "empty frames", "ClipFramesEmpty")
@@ -3895,6 +3895,9 @@ tests =
     -- K1: dice pool
     , ("dice pool: roll_dice compile validation rejects die: 1 and invalid pool/keep (K1.1)", testRollDiceValidation)
     , ("dice pool: {var: dice.*} placeholders emit no warnings without declaration (K1.1)", testDicePlaceholderNoWarning)
+    -- K3: event chains
+    , ("event chains: requires with unknown flag emits soft warning (K3.1)", testRuleRequiresUnknownFlagWarning)
+    , ("event chains: chains_to with dead target produces UnknownChainTarget (K3.1)", testRuleChainsToTargetValidation)
     , ("verb_map: before:/instead: key phases (4.2)", testVerbMapPhaseKeys)
     , ("verb_map: one phase per (verb, state) pair (4.2)", testVerbMapPhaseClash)
     -- Phase 4.3: language packs (D4)
@@ -6452,7 +6455,7 @@ testQuestRefErrors = do
         questErrs adv = case compileAdventure adv of
             Left errs -> Just errs
             Right _ -> Nothing
-        withRule o adv = adv { advTriggers = [ATrigger "r1" "enter loc_0" Nothing [o] False 0] }
+        withRule o adv = adv { advTriggers = [ATrigger "r1" "enter loc_0" Nothing [o] False 0 1 [] []] }
         codeIn c m = maybe False (any (\i -> ciCode i == c)) m
     r1 <- expectTrue "start_quest to an unknown quest is a hard error"
             (codeIn "UnknownQuestEffect" (questErrs (withRule (AOStartQuest "nope") base)))
@@ -6719,7 +6722,7 @@ testQuestDiagnostics = do
         advWith quests outcomes = base
             { advQuests = quests
             , advTriggers = [ ATrigger { atId = "r", atOn = "enter loc_0", atWhen = Nothing
-                                       , atEffects = outcomes, atOnce = False, atCooldown = 0 } ] }
+                                       , atEffects = outcomes, atOnce = False, atCooldown = 0, atWeight = 1, atRequires = [], atChainsTo = [] } ] }
     -- a: started directly, advances. b: only reachable through a's on_complete,
     -- advances. c: nothing starts it. d: started, but never advances.
     let allQuests = [ q "a" ["s1","s2"] (Just "b")
@@ -6981,7 +6984,7 @@ testAssetsKnownKey = do
 --   progression section — and the live counterparts stay silent.
 testUnreachableTriggerEvents :: IO Bool
 testUnreachableTriggerEvents = do
-    let mk tId on = ATrigger tId on Nothing [AOMessage "x"] False 0
+    let mk tId on = ATrigger tId on Nothing [AOMessage "x"] False 0 1 [] []
         deadRules = [ mk "t1" "enter nirwana", mk "t2" "take spiegel"
                     , mk "t3" "custom sturm", mk "t4" "chapter ende"
                     , mk "t5" "levelup 2" ]
@@ -7013,7 +7016,7 @@ testUnreachableTriggerEvents = do
 --   alternatives stay silent.
 testUnsatisfiableConditions :: IO Bool
 testUnsatisfiableConditions = do
-    let mk tId whenP = ATrigger tId "turn" (Just whenP) [AOMessage "x"] False 0
+    let mk tId whenP = ATrigger tId "turn" (Just whenP) [AOMessage "x"] False 0 1 [] []
         flagA = E.HasFlag "a"
         rules =
             [ mk "clash" (E.PAll [flagA, E.PNot flagA])
@@ -7225,7 +7228,10 @@ testFuzzLoopEndToEnd = do
             , atWhen = Nothing
             , atEffects = [AOBlock (Just "nope") False]
             , atOnce = False
-            , atCooldown = 0 }
+            , atCooldown = 0
+            , atWeight = 1
+            , atRequires = []
+            , atChainsTo = [] }
         adv = (minAdventure (minRoom "a")) { advItems = [lampe], advTriggers = [blockTakes] }
     case compileAdventure adv of
         Left errs -> expectTrue ("compile: " ++ issuesText errs) False
@@ -7267,7 +7273,7 @@ testRngVarWriteGuard :: IO Bool
 testRngVarWriteGuard = do
     let rngRule effs = ATrigger
             { atId = "t", atOn = "turn", atWhen = Nothing
-            , atEffects = effs, atOnce = False, atCooldown = 0 }
+            , atEffects = effs, atOnce = False, atCooldown = 0, atWeight = 1, atRequires = [], atChainsTo = [] }
         advWithEffects effs = (minAdventure (minRoom "a")) { advTriggers = [rngRule effs] }
         rngErrCount adv = case compileAdventure adv of
             Left errs -> length [ e | e <- errs, ciCode e == "RngVarWrite" ]
@@ -7308,7 +7314,7 @@ testRollDiceValidation :: IO Bool
 testRollDiceValidation = do
     let rollRule effs = ATrigger
             { atId = "t", atOn = "turn", atWhen = Nothing
-            , atEffects = effs, atOnce = False, atCooldown = 0 }
+            , atEffects = effs, atOnce = False, atCooldown = 0, atWeight = 1, atRequires = [], atChainsTo = [] }
         advWithEffects effs = (minAdventure (minRoom "a")) { advTriggers = [rollRule effs] }
     -- die < 2 is rejected
     let badDieAdv = advWithEffects [AORollDice 1 1 "" 1]
@@ -7371,6 +7377,80 @@ testDicePlaceholderNoWarning = do
         Right cr -> do
             let warns = filter (\w -> ciCode w == "UnknownPlaceholder") (crWarnings cr)
             expectTrue "dice.* placeholders produce zero UnknownPlaceholder warnings" (null warns)
+
+-- ---------------------------------------------------------------------------
+-- K3: event chains (authoring side)
+-- ---------------------------------------------------------------------------
+
+-- | K3.1: requires with an unknown/never-set flag produces a soft warning (UnsatisfiableCondition).
+testRuleRequiresUnknownFlagWarning :: IO Bool
+testRuleRequiresUnknownFlagWarning = do
+    let rule = ATrigger
+            { atId = "t_req"
+            , atOn = "turn"
+            , atWhen = Nothing
+            , atEffects = [AOMessage "hello"]
+            , atOnce = False
+            , atCooldown = 0
+            , atWeight = 1
+            , atRequires = ["never_set_flag"]
+            , atChainsTo = []
+            }
+        adv = (minAdventure (minRoom "loc_0")) { advTriggers = [rule] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "UnsatisfiableCondition" && ciPath w == "rules.t_req.requires") (crWarnings cr)
+            r1 <- expectTrue "requires with never-set flag emits UnsatisfiableCondition warning" (not (null warns))
+            r2 <- expectTrue "warning message mentions flag name" (any ("never_set_flag" `isInfixOf`) (map ciMessage warns))
+            pure (r1 && r2)
+
+-- | K3.1: chains_to with a dead target produces a hard error (UnknownChainTarget);
+--   chains_to with a valid custom event target compiles cleanly.
+testRuleChainsToTargetValidation :: IO Bool
+testRuleChainsToTargetValidation = do
+    let badRule = ATrigger
+            { atId = "t_bad"
+            , atOn = "turn"
+            , atWhen = Nothing
+            , atEffects = [AOMessage "hello"]
+            , atOnce = False
+            , atCooldown = 0
+            , atWeight = 1
+            , atRequires = []
+            , atChainsTo = ["ghost_event"]
+            }
+        badAdv = (minAdventure (minRoom "loc_0")) { advTriggers = [badRule] }
+    r1 <- expectTrue "dead chains_to target produces UnknownChainTarget hard error"
+            (case compileAdventure badAdv of
+                Left errs -> any (\e -> ciCode e == "UnknownChainTarget" && ciPath e == "rules.t_bad.chains_to") errs
+                Right _   -> False)
+
+    let okRule = badRule { atChainsTo = ["valid_event"] }
+        targetRule = ATrigger
+            { atId = "t_tgt"
+            , atOn = "custom valid_event"
+            , atWhen = Nothing
+            , atEffects = [AOMessage "chained!"]
+            , atOnce = False
+            , atCooldown = 0
+            , atWeight = 1
+            , atRequires = []
+            , atChainsTo = []
+            }
+        okAdv = (minAdventure (minRoom "loc_0")) { advTriggers = [okRule, targetRule] }
+    r2 <- expectRight (compileAdventure okAdv)
+
+    let rawYaml = "{\"rules\": [{\"id\": \"t\", \"on\": \"turn\", \"weight\": 3, \"requires\": \"flag1\", \"chains_to\": [\"ev1\"], \"effects\": [{\"msg\": \"hi\"}]}]}"
+    r3 <- expectTrue "YAML with weight, requires, chains_to parses"
+            (case Aeson.decode (BLC.pack rawYaml) of
+                Just (adv :: Adventure) -> case advTriggers adv of
+                    [tr] -> atWeight tr == 3 && atRequires tr == ["flag1"] && atChainsTo tr == ["ev1"]
+                    _ -> False
+                Nothing -> False)
+    pure (and [r1, r2, r3])
 
 -- ---------------------------------------------------------------------------
 -- Phase 4.2: verb_map phases (authoring side)

@@ -96,6 +96,7 @@ module Game
       -- * Flags, variables, conditions and predicates
     , getFlag
     , setFlag
+    , hasFlag
     , getVariable
     , setVariable
     , setVariableChecked
@@ -1109,6 +1110,10 @@ setFlag flagName flagValue state = state
 getFlag :: String -> GameState -> Maybe String
 getFlag flagName state = Map.lookup flagName (flags (save state))
 
+-- | Check whether a general-purpose flag is set to "true"
+hasFlag :: FlagID -> GameState -> Bool
+hasFlag flagName state = getFlag flagName state == Just "true"
+
 -- | End the game with a reason
 endGame :: GameOverReason -> GameState -> GameState
 endGame reason state = state
@@ -1324,7 +1329,7 @@ evalPredicate (HasTaggedItem actor tag) st =
     not (null (countItemMembers (CountSpec CountItems (CountCarriedBy actor) (Just tag)) st))
 evalPredicate (RoomHasTaggedItem r tag) st =
     not (null (countItemMembers (CountSpec CountItems (CountInRoom r) (Just tag)) st))
-evalPredicate (HasFlag f) st = getFlag f st == Just "true"
+evalPredicate (HasFlag f) st = hasFlag f st
 evalPredicate (HasCondition cn) st = hasCondition cn st
 -- A state predicate checks the entity's state in whichever layer stores it:
 -- `entityStates` (exit locks, doors, `set_state:` targets), an NPC's status

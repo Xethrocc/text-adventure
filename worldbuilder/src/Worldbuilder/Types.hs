@@ -314,16 +314,31 @@ data ATrigger = ATrigger
     , atEffects   :: [AActionOutcome]
     , atOnce      :: Bool
     , atCooldown  :: Int
+    , atWeight    :: Int                   -- ^ K3: weight for weighted random selection (default 1)
+    , atRequires  :: [String]              -- ^ K3: flags that must be set (default [])
+    , atChainsTo  :: [String]              -- ^ K3: custom event names raised after firing (default [])
     } deriving (Show, Eq, Generic)
+
+-- | Parse a field that can be either a single string or a list of strings (Phase K3).
+parseStringOrList :: Object -> Key -> Parser [String]
+parseStringOrList o k = do
+    mv <- o .:? k
+    case mv of
+        Nothing         -> pure []
+        Just (String s) -> pure [T.unpack s]
+        Just v          -> parseJSON v
 
 instance FromJSON ATrigger where
     parseJSON = withObject "ATrigger" $ \o -> ATrigger
         <$> o .:  "id"
         <*> o .:  "on"
         <*> o .:? "when"
-        <*> o .:? "effects" .!= []
-        <*> o .:? "once"    .!= False
-        <*> o .:? "cooldown" .!= 0
+        <*> o .:? "effects"   .!= []
+        <*> o .:? "once"      .!= False
+        <*> o .:? "cooldown"  .!= 0
+        <*> o .:? "weight"    .!= 1
+        <*> parseStringOrList o "requires"
+        <*> parseStringOrList o "chains_to"
 
 -- | A conditional text variant in YAML: `when:` predicate gates `text:`.
 data ATextVariant = ATextVariant
@@ -1784,7 +1799,9 @@ knownKeys EntQuest = Set.fromList
 knownKeys EntQuestStage = Set.fromList
     [ "id", "desc", "hint" ]
 knownKeys EntRule = Set.fromList
-    [ "id", "on", "when", "effects", "once", "cooldown" ]
+    [ "id", "on", "when", "effects", "once", "cooldown"
+    , "weight", "requires", "chains_to"
+    ]
 knownKeys EntCard = Set.fromList
     [ "id", "name", "cost", "type", "target", "description", "desc"
     , "exhaust", "outcomes", "effects"

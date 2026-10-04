@@ -330,6 +330,7 @@ predicateSites a =
     ++
     concat
         [ [ ("rules." ++ atId t, p) | t <- advTriggers a, Just p <- [atWhen t] ]
+        , [ ("rules." ++ atId t ++ ".requires", E.HasFlag f) | t <- advTriggers a, f <- atRequires t ]
         , [ ("npcs." ++ anId n ++ ".barks." ++ show k, p)
           | n <- advNPCs a, (k, b) <- zip [1 :: Int ..] (anBarks n), Just p <- [abWhen b] ]
         , [ ("npcs." ++ anId n ++ ".dialogue", p)
@@ -433,7 +434,7 @@ checkUnreachableTriggers a =
     rooms = Set.fromList (map arId (advRooms a) ++ [r | AOGenerateRoom r _ _ _ _ _ <- outs])
     items = Set.fromList (map aiId (advItems a))
     chapters = Set.fromList (map achId (advChapters a))
-    raised = Set.fromList [n | AORaiseEvent n <- outs]
+    raised = Set.fromList ([n | AORaiseEvent n <- outs] ++ [map toLower target | t <- advTriggers a, target <- atChainsTo t])
     roomReason r
         | Set.member r rooms = Nothing
         | otherwise          = Just ("no room '" ++ r ++ "' is declared")
@@ -754,6 +755,7 @@ compileAdventure adv =
         npcRefErrs = checkDamageNpcRefs gw
         trigIdErrs = checkTriggerIds (advTriggers adv)
         cmdVerbErrs = checkCommandVerbRefs verbRegistry (advTriggers adv)
+        chainTargetErrs = checkChainTargets (advTriggers adv)
         stopCostErrs = checkStopCostItems (advVehicles adv) gw
         combatVarErrs = checkCombatVarReserved varDefs
         cooldownCondErrs = checkCooldownConditionReserved gw
@@ -783,6 +785,7 @@ compileAdventure adv =
                     ++ initVarErrs ++ initStateErrs ++ facRefErrs ++ encRefErrs ++ npcRefErrs
                     ++ trigIdErrs
                     ++ cmdVerbErrs
+                    ++ chainTargetErrs
                     ++ stopCostErrs
                     ++ combatVarErrs
                     ++ cooldownCondErrs
@@ -1311,7 +1314,7 @@ compileWeather (Just wd) =
         transitions =
             [ E.TriggerDef ("environment.weather." ++ show i) E.OnTurn (wtWhen t)
                 (E.SetValue (E.VRVariable "env.weather") (E.EVInt (stateIndex (wtTo t)))
-                    : map compileAActionOutcome (wtEffects t)) False 0
+                    : map compileAActionOutcome (wtEffects t)) False 0 1 [] []
             | (i, t) <- zip [0 :: Int ..] (weaTransitions wd)
             , stateIndex (wtTo t) >= 0 ]
     in (badInitial ++ badTransitions, transitions, varDefs, initials)
@@ -1330,7 +1333,7 @@ compileDrains varDefs drains =
                 [ E.ModifyValue (E.VRVariable (drVar d)) (drPerTurn d)
                 , E.Conditional (E.CompareVar (drVar d) E.CLte 0)
                     (compileOutcomes (drAtZero d)) E.Noop ]
-                False 0
+                False 0 1 [] []
             | d <- drains ]
     in (unknown, triggers)
 
@@ -1375,7 +1378,7 @@ compileStealth roomIds npcIds (Just st) =
                           (E.SetValue (E.VRVariable var) (E.EVInt 0)) E.Noop
         moveTriggers =
             [ E.TriggerDef ("stealth.nmove." ++ rId) (E.OnEnter rId) Nothing
-                [ E.ModifyValue (E.VRVariable var) onMove, clampToMax ] False 0
+                [ E.ModifyValue (E.VRVariable var) onMove, clampToMax ] False 0 1 [] []
             | rId <- roomIds ]
         observerTriggers =
             [ E.TriggerDef ("stealth.observe." ++ obNPC o) E.OnTurn
@@ -1387,11 +1390,11 @@ compileStealth roomIds npcIds (Just st) =
                     -- modelled by `hears_at`, so there is deliberately no room
                     -- check here.
                     , E.PNot (E.EntityHasState (obNPC o) "dead") ]))
-                [ compileOutcomes (obOnHear o) ] False (obCooldown o)
+                [ compileOutcomes (obOnHear o) ] False (obCooldown o) 1 [] []
             | o <- stObservers st ]
         decayTrigger =
             [ E.TriggerDef "stealth.decay" E.OnTurn Nothing
-                [ E.ModifyValue (E.VRVariable var) decay, clampToZero ] False 0 ]
+                [ E.ModifyValue (E.VRVariable var) decay, clampToZero ] False 0 1 [] [] ]
         unknownNpc =
             [ ciError ("stealth.observers." ++ obNPC o) "UnknownObserverNPC"
                 ("observer npc '" ++ obNPC o ++ "' is not declared under 'npcs:'")
@@ -1456,7 +1459,7 @@ compilePatrol roomIds npcIds (Just p) =
 
         clearTrig h =
             E.TriggerDef ("patrol.clear." ++ ahNPC h) E.OnTurn Nothing
-                [ E.SetValue (E.VRVariable (movedVar h)) (E.EVInt 0) ] False 0
+                [ E.SetValue (E.VRVariable (movedVar h)) (E.EVInt 0) ] False 0 1 [] []
 
         stepTrigs h = [ stepTrig h i | i <- [0 .. length (ahPath h) - 1] ]
         stepTrig h i =
@@ -1468,7 +1471,7 @@ compilePatrol roomIds npcIds (Just p) =
                 [ E.MoveEntity (ahNPC h) (E.InRoom (ahPath h !! next))
                 , E.SetValue (E.VRVariable (indexVar h)) (E.EVInt next)
                 , E.SetValue (E.VRVariable (movedVar h)) (E.EVInt 1)
-                ] False 0
+                ] False 0 1 [] []
           where next = (i + 1) `mod` length (ahPath h)
 
         warnTrigs h
@@ -1489,7 +1492,7 @@ compilePatrol roomIds npcIds (Just p) =
                 [ E.Conditional
                     (E.PAll [ E.Location E.ActorPlayer r, E.Location (E.ActorNPC (ahNPC h)) r ])
                     payload E.Noop
-                | r <- ahPath h ] False 0
+                | r <- ahPath h ] False 0 1 [] []
 
         trigs h | ahGuardian h = warnTrigs h ++ attackTrigs h
                 | otherwise    = clearTrig h : (stepTrigs h ++ warnTrigs h ++ attackTrigs h)
@@ -1627,6 +1630,9 @@ compileShipSystems registry vehicles =
                 [ compileOutcomes (astEffects st) ]
                 False
                 0
+                1
+                []
+                []
             | v <- vehicles
             , st <- avStations v
             , Just verb <- [resolveStationVerb registry (astVerb st)] ]
@@ -1761,6 +1767,9 @@ compilePursuit entries knownNpcs = (errs, map mkTrigger (sortOn apeNpc entries))
             [ E.StepToward (E.ActorNPC (apeNpc e)) (apeTarget e) opts (apeMsg e) ]
         , E.trOnce = False
         , E.trCooldown = 0
+        , E.trWeight = 1
+        , E.trRequires = []
+        , E.trChainsTo = []
         }
       where
         opts = E.PursuitOptions
@@ -1800,7 +1809,9 @@ checkChapterRefs cs adv = (dupErrs ++ targetErrs ++ backwardErrs, unreachableWar
         [ ciError ("chapters." ++ src) "ChapterBackwardsJump"
             ("goto_chapter '" ++ tgt ++ "' from chapter '" ++ src
              ++ "' is a backward jump — retrospection is forbidden (W3)")
-        | ATrigger _tid on _ effs _ _ <- advTriggers adv
+        | t <- advTriggers adv
+        , let on = atOn t
+        , let effs = atEffects t
         , ("chapter", src) <- [breakOn on :: (String, String)]
         , tgt <- concatMap gotoTargets effs
         , Just iSrc <- [Map.lookup src indexMap], Just iTgt <- [Map.lookup tgt indexMap]
@@ -1857,7 +1868,11 @@ compileKnowledgeTriggers verb cs factsById =
               ++ [ singlePred (head (acdFacts c)) | c <- singles ] )))
         , E.trEffects = [ E.SendMessage "You cannot combine these like that." ]
         , E.trOnce = False
-        , E.trCooldown = 0 }
+        , E.trCooldown = 0
+        , E.trWeight = 1
+        , E.trRequires = []
+        , E.trChainsTo = []
+        }
     pairs = [ c | c <- cs, length (acdFacts c) == 2 ]
     singles = [ c | c <- cs, length (acdFacts c) == 1 ]
     aliases = if verb == "kombiniere" then ["combine"] else []
@@ -1883,6 +1898,9 @@ compileKnowledgeTriggers verb cs factsById =
         , E.trEffects = effects c
         , E.trOnce = False
         , E.trCooldown = 0
+        , E.trWeight = 1
+        , E.trRequires = []
+        , E.trChainsTo = []
         }
     pairTriggers = [ triggerOf c | c <- pairs ]
     singleTriggers =
@@ -1892,7 +1910,11 @@ compileKnowledgeTriggers verb cs factsById =
             , E.trCondition = Just (singlePred (head (acdFacts c)))
             , E.trEffects = effects c
             , E.trOnce = False
-            , E.trCooldown = 0 }
+            , E.trCooldown = 0
+            , E.trWeight = 1
+            , E.trRequires = []
+            , E.trChainsTo = []
+            }
        | c <- singles ]
     successTriggers = pairTriggers ++ singleTriggers
 
@@ -1906,7 +1928,11 @@ compileNotesTrigger verb =
         , E.trCondition = Nothing
         , E.trEffects = [E.ShowNotes]
         , E.trOnce = False
-        , E.trCooldown = 0 } ]
+        , E.trCooldown = 0
+        , E.trWeight = 1
+        , E.trRequires = []
+        , E.trChainsTo = []
+        } ]
 
 -- W1: knowledge model (facts: / combine:)
 -- ---------------------------------------------------------------------------
@@ -2121,6 +2147,9 @@ compileDeviceTriggers devs items
                     , E.trEffects = [ E.Block (Just "You cannot insert that.") False ]
                     , E.trOnce = False
                     , E.trCooldown = 0
+                    , E.trWeight = 1
+                    , E.trRequires = []
+                    , E.trChainsTo = []
                     }
 
             removeFallback =
@@ -2132,6 +2161,9 @@ compileDeviceTriggers devs items
                     , E.trEffects = [ E.Block (Just "You cannot remove that.") False ]
                     , E.trOnce = False
                     , E.trCooldown = 0
+                    , E.trWeight = 1
+                    , E.trRequires = []
+                    , E.trChainsTo = []
                     }
         in (allInsertTrigs ++ allRemoveTrigs ++ allFlipTrigs, verbsToInject)
   where
@@ -2156,6 +2188,9 @@ compileDeviceTriggers devs items
                 , E.trEffects = [ E.Block (Just ("There is already something in the " ++ dName ++ ".")) False ]
                 , E.trOnce = False
                 , E.trCooldown = 0
+                , E.trWeight = 1
+                , E.trRequires = []
+                , E.trChainsTo = []
                 }
 
             rejectTrig it =
@@ -2174,6 +2209,9 @@ compileDeviceTriggers devs items
                     , E.trEffects = [ E.Block (Just ("The " ++ itName ++ " does not fit into the " ++ dName ++ ".")) False ]
                     , E.trOnce = False
                     , E.trCooldown = 0
+                    , E.trWeight = 1
+                    , E.trRequires = []
+                    , E.trChainsTo = []
                     }
 
             notCarriedTrig it =
@@ -2193,6 +2231,9 @@ compileDeviceTriggers devs items
                     , E.trEffects = [ E.Block (Just ("You are not carrying " ++ itName ++ ".")) False ]
                     , E.trOnce = False
                     , E.trCooldown = 0
+                    , E.trWeight = 1
+                    , E.trRequires = []
+                    , E.trChainsTo = []
                     }
 
             insertTrig it =
@@ -2214,6 +2255,9 @@ compileDeviceTriggers devs items
                                     ++ map compileAActionOutcome (adOnInsert d)
                     , E.trOnce = False
                     , E.trCooldown = 0
+                    , E.trWeight = 1
+                    , E.trRequires = []
+                    , E.trChainsTo = []
                     }
         in [occupiedTrig]
            ++ map rejectTrig nonFitting
@@ -2254,6 +2298,9 @@ compileDeviceTriggers devs items
                                     ++ map compileAActionOutcome (adOnRemove d)
                     , E.trOnce = False
                     , E.trCooldown = 0
+                    , E.trWeight = 1
+                    , E.trRequires = []
+                    , E.trChainsTo = []
                     }
 
             notInDevTrig it =
@@ -2272,6 +2319,9 @@ compileDeviceTriggers devs items
                     , E.trEffects = [ E.Block (Just ("There is no " ++ itName ++ " in the " ++ dName ++ ".")) False ]
                     , E.trOnce = False
                     , E.trCooldown = 0
+                    , E.trWeight = 1
+                    , E.trRequires = []
+                    , E.trChainsTo = []
                     }
 
             emptyTrig = E.TriggerDef
@@ -2286,6 +2336,9 @@ compileDeviceTriggers devs items
                 , E.trEffects = [ E.Block (Just ("There is nothing in the " ++ dName ++ ".")) False ]
                 , E.trOnce = False
                 , E.trCooldown = 0
+                , E.trWeight = 1
+                , E.trRequires = []
+                , E.trChainsTo = []
                 }
         in map removeTrig fitting
            ++ map notInDevTrig fitting
@@ -2328,6 +2381,9 @@ compileDeviceTriggers devs items
                         , E.trEffects = [ E.Conditional (E.EntityHasState dId s2) toS1Effs toS2Effs ]
                         , E.trOnce = False
                         , E.trCooldown = 0
+                        , E.trWeight = 1
+                        , E.trRequires = []
+                        , E.trChainsTo = []
                         }
                 in [toggleTrig]
             devTrigs = concatMap trigsForDev targetDevs
@@ -2339,6 +2395,9 @@ compileDeviceTriggers devs items
                 , E.trEffects = [ E.Block (Just "You cannot flip that.") False ]
                 , E.trOnce = False
                 , E.trCooldown = 0
+                , E.trWeight = 1
+                , E.trRequires = []
+                , E.trChainsTo = []
                 }
         in devTrigs ++ [fallbackTrig]
 
@@ -3306,6 +3365,9 @@ compileTriggers triggers npcs =
             , E.trEffects = [E.SendMessage (abText b)]
             , E.trOnce = False
             , E.trCooldown = fromMaybe 20 (abCooldown b)
+            , E.trWeight = 1
+            , E.trRequires = []
+            , E.trChainsTo = []
             }
           | (k, b) <- zip [(1 :: Int) ..] (anBarks n) ]
         | n <- npcs ]
@@ -3318,6 +3380,9 @@ compileTriggers triggers npcs =
             , E.trEffects = [compileAActionOutcome eff]
             , E.trOnce = False
             , E.trCooldown = 0
+            , E.trWeight = 1
+            , E.trRequires = []
+            , E.trChainsTo = []
             }
         | n <- npcs, Just eff <- [anOnTalk n] ]
     compileOne t = case compileAtOn (atOn t) of
@@ -3329,6 +3394,9 @@ compileTriggers triggers npcs =
             , E.trEffects = map compileAActionOutcome (atEffects t)
             , E.trOnce = atOnce t
             , E.trCooldown = atCooldown t
+            , E.trWeight = atWeight t
+            , E.trRequires = atRequires t
+            , E.trChainsTo = atChainsTo t
             }
 
 -- | Compiler-owned trigger-id prefixes. The compiler generates triggers with
@@ -3367,6 +3435,24 @@ checkCommandVerbRefs registry triggers =
         ["command", v] -> Just ("command", v)
         ["before", v]  -> Just ("before", v)
         _              -> Nothing
+
+-- | Every `chains_to:` target must name a custom event that some rule listens
+--   on via `on: custom <name>`. Dead targets indicate author typos and fail compilation.
+checkChainTargets :: [ATrigger] -> [CompileIssue]
+checkChainTargets triggers =
+    [ ciError ("rules." ++ atId t ++ ".chains_to") "UnknownChainTarget"
+        ("rule '" ++ atId t ++ "' chains to unknown event '" ++ target
+         ++ "' (no rule listens on 'on: custom " ++ target ++ "')")
+    | t <- triggers
+    , target <- atChainsTo t
+    , map toLower target `Set.notMember` knownCustomEvents
+    ]
+  where
+    knownCustomEvents = Set.fromList
+        [ n
+        | t <- triggers
+        , Right (E.OnCustomEvent n) <- [compileAtOn (atOn t)]
+        ]
 
 -- | A stop `cost.item` must be a declared item id (P1-19) — otherwise the fare
 --   can never be paid and the vehicle silently behaves like `auto`.
@@ -3430,6 +3516,9 @@ compileEncounterTables tables =
             , E.trEffects = [E.RandomChoice [(eneWeight e, compileEntry e) | e <- ertEntries t]]
             , E.trOnce = False
             , E.trCooldown = ertCooldown t
+            , E.trWeight = 1
+            , E.trRequires = []
+            , E.trChainsTo = []
             }
     compileEntry e = case eneWhen e of
         Nothing -> compileOutcomes (eneEffects e)

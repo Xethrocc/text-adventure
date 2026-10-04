@@ -989,6 +989,8 @@ fireTriggerList depth triggers state =
                    then (st, acc)
                    else if cooldownRemaining > 0
                    then (decrementCooldown tId st, acc)
+                   else if not (null (trRequires tr)) && not (all (`hasFlag` st) (trRequires tr))
+                   then (st, acc)
                    else case trCondition tr of
                         Just p  -> if evalPredicate p st
                                    then applyTrigEffects tId tr st acc
@@ -1011,9 +1013,16 @@ fireTriggerList depth triggers state =
                                 Block Nothing _ -> []
                                 _               -> nl
                         in (s', a ++ m ++ effNl)
+            chainStep (s, a) target =
+                case lastVeto s of
+                    Just _  -> (s, a)
+                    Nothing ->
+                        let (s', m) = fireTriggersWithDepth (depth + 1) (OnCustomEvent target) s
+                        in (s', a ++ m)
             (st', msgs) = foldl' step (st { save = (save st) { triggerStates = updatedTs } }, acc) (trEffects tr)
+            (stFinal, msgsFinal) = foldl' chainStep (st', msgs) (trChainsTo tr)
             updatedTs = Map.insert tId (TriggerState True (trCooldown tr)) (triggerStates (save st))
-        in (st', msgs)
+        in (stFinal, msgsFinal)
 
 -- ---------------------------------------------------------------------------
 -- Conditions tick

@@ -607,7 +607,7 @@ testNPCDeathEventMessageShown = do
         w = (world sample)
             { triggerDefs = [ TriggerDef "death_note" (OnStateChange "goblin") Nothing
                                 [ SendMessage "Der Goblin fällt und lässt die Keule fallen."
-                                , SetValue (VRFlag "goblin_down") (EVString "true") ] False 0 ] }
+                                , SetValue (VRFlag "goblin_down") (EVString "true") ] False 0 1 [] [] ] }
         st = sample { world = w }
         (st', msg) = applyOutcome (ModifyValue (VRActorProp (ActorNPC "goblin") PHealth) (-100)) "" st
     r1 <- expectTrue "death event message threaded" (isInfixOf "Der Goblin fällt" msg)
@@ -798,7 +798,7 @@ testValidateMissingShipInActorProp = do
     let gw = (world initSampleGame)
                 { triggerDefs =
                     [ TriggerDef "t_ship" OnTurn Nothing
-                        [ ModifyValue (VRActorProp (ActorShip "ghost_ship") PHealth) (-10) ] False 0
+                        [ ModifyValue (VRActorProp (ActorShip "ghost_ship") PHealth) (-10) ] False 0 1 [] []
                     ] }
         errors = validateWorld gw
     r1 <- expectTrue "undeclared ActorShip in rule is detected"
@@ -937,13 +937,13 @@ testOnBeforeVetoOrderAndStop = do
                     [ Block (Just "The torch is magnetized to the table!") False
                     , SetValue (VRFlag "trig1_extra") (EVString "ran")
                     ]
-                    False 0
+                    False 0 1 [] []
         trig2 = TriggerDef "trig2" (OnBefore "take")
                     (Just (VarIs "cmd.target" "torch"))
                     [ SendMessage "Second trigger should never run"
                     , SetValue (VRFlag "trig2_flag") (EVString "ran")
                     ]
-                    False 0
+                    False 0 1 [] []
         st0 = initSampleGame
         stTrigs = st0 { world = (world st0) { triggerDefs = [trig1, trig2] } }
 
@@ -1033,11 +1033,11 @@ testVetoTurnCost = do
     let trigFree = TriggerDef "trigFree" (OnBefore "take")
                     (Just (VarIs "cmd.target" "heavy_rock"))
                     [ Block (Just "Too heavy, you do not even budge it.") False ]
-                    False 0
+                    False 0 1 [] []
         trigCost = TriggerDef "trigCost" (OnBefore "take")
                     (Just (VarIs "cmd.target" "trap_chest"))
                     [ Block (Just "The chest shocks you, wasting your turn!") True ]
-                    False 0
+                    False 0 1 [] []
         st0 = applyCondition "poison" 5 Nothing Nothing initSampleGame
         stWithTrigs = st0 { world = (world st0) { triggerDefs = [trigFree, trigCost] } }
         ls0 = initLoopState stWithTrigs
@@ -1115,7 +1115,7 @@ disambiguationGame = initSampleGame
 disambiguationTickGame :: GameState
 disambiguationTickGame = disambiguationGame
     { world = (world disambiguationGame)
-        { triggerDefs = [ TriggerDef "tick" OnTurn Nothing [SendMessage "TICK"] False 0 ] } }
+        { triggerDefs = [ TriggerDef "tick" OnTurn Nothing [SendMessage "TICK"] False 0 1 [] [] ] } }
 
 -- | Phase 2.3: the ambiguous attempt becomes an event plus a numbered
 --   question and records the pending question on the loop state.
@@ -1847,9 +1847,9 @@ testValidateTypoInPredicateLocation = do
     case (decodedTypo, decodedOk) of
         (Just typoPred, Just okPred) -> do
             let gwTypo = (world initSampleGame)
-                    { triggerDefs = [ TriggerDef "t" OnTurn (Just typoPred) [SendMessage "ok"] False 0 ] }
+                    { triggerDefs = [ TriggerDef "t" OnTurn (Just typoPred) [SendMessage "ok"] False 0 1 [] [] ] }
                 gwOk = (world initSampleGame)
-                    { triggerDefs = [ TriggerDef "t" OnTurn (Just okPred) [SendMessage "ok"] False 0 ] }
+                    { triggerDefs = [ TriggerDef "t" OnTurn (Just okPred) [SendMessage "ok"] False 0 1 [] [] ] }
             r1 <- expectTrue "'at: palyer' fixture produces MissingEntity validation error"
                       (MissingEntity "palyer" "property" `elem` validateWorld gwTypo)
             r2 <- expectTrue "'at: player' does not produce validation error"
@@ -1900,8 +1900,8 @@ testMultiLevelUpInOneTurn = do
             , LevelDef 2 100 "Soeldner" Nothing [ModifyValue (VRVariable "bonus.attack") 2]
             , LevelDef 3 250 "Veteran" Nothing [ModifyValue (VRVariable "bonus.defense") 3]
             ]
-        trigLvl2 = TriggerDef "trig2" (OnLevelUp 2) Nothing [SendMessage "Trigger: Lvl2!"] False 0
-        trigLvl3 = TriggerDef "trig3" (OnLevelUp 3) Nothing [SendMessage "Trigger: Lvl3!"] False 0
+        trigLvl2 = TriggerDef "trig2" (OnLevelUp 2) Nothing [SendMessage "Trigger: Lvl2!"] False 0 1 [] []
+        trigLvl3 = TriggerDef "trig3" (OnLevelUp 3) Nothing [SendMessage "Trigger: Lvl3!"] False 0 1 [] []
         gw = emptyGameWorld
             { progressionDef = Just pdef
             , triggerDefs = [trigLvl2, trigLvl3]
@@ -2066,7 +2066,7 @@ testDefaultSaveStateFieldsInitialised = do
                 [ ("quest_stage", VarDef "quest_stage" (VTInt Nothing Nothing) (VVInt 3)) ]
             , triggerDefs =
                 [ TriggerDef "welcome" (OnEnter "start") Nothing
-                    [ SendMessage "Willkommen zurück." ] False 0 ]
+                    [ SendMessage "Willkommen zurück." ] False 0 1 [] [] ]
             }
         
     tmpDir <- getTemporaryDirectory
@@ -2106,7 +2106,7 @@ twoCompanionGame :: Int -> GameState
 twoCompanionGame goblinHp =
     let st0 = partyGameInHallway True
         deathRule = TriggerDef "goblin_dies" (OnStateChange "goblin") Nothing
-            [ SendMessage "Der Goblin fällt und lässt die Keule fallen." ] False 0
+            [ SendMessage "Der Goblin fällt und lässt die Keule fallen." ] False 0 1 [] []
     in st0
         { world = (world st0)
             { npcDefs = Map.insert "guard" guardDef (npcDefs (world st0))
@@ -2151,7 +2151,7 @@ shipCompanionGame =
     let st0 = shipGame 2 3 4 10
         w0 = world st0
         deathRule = TriggerDef "goblin_dies" (OnStateChange "goblin") Nothing
-            [ SendMessage "Der Goblin fällt und lässt die Keule fallen." ] False 0
+            [ SendMessage "Der Goblin fällt und lässt die Keule fallen." ] False 0 1 [] []
     in st0
         { world = w0
             { npcDefs = Map.insert "squire" squireDef (npcDefs w0)
@@ -2959,7 +2959,7 @@ testInitialFlagsCountAsSet = do
     let gw = (world initSampleGame)
                 { triggerDefs =
                     [ TriggerDef "t_check" OnTurn (Just (HasFlag "started"))
-                        [ SendMessage "nur wenn started" ] False 0 ]
+                        [ SendMessage "nur wenn started" ] False 0 1 [] [] ]
                 -- a different flag than the predicate checks: `setFlagsInWorld`
                 -- counts predicate-referenced flags as set (a deliberately
                 -- generous heuristic), so reusing one name would mask the case
@@ -3306,7 +3306,7 @@ testConditionalOutcome = do
 testTriggerFiresOnEnter :: IO Bool
 testTriggerFiresOnEnter = do
     let trigger = TriggerDef "ent_test" (OnEnter "treasure") Nothing
-            [SendMessage "You found the treasure room!"] False 0
+            [SendMessage "You found the treasure room!"] False 0 1 [] []
         stateWithTrigger = initSampleGame
             { world = (world initSampleGame) { triggerDefs = [trigger] } }
         (_, msg) = fireTriggers (OnEnter "treasure") stateWithTrigger
@@ -3319,7 +3319,7 @@ testTriggerFiresOnEnter = do
 testTriggerCooldownGatesTurns :: IO Bool
 testTriggerCooldownGatesTurns = do
     let trigger = TriggerDef "cd_test" OnTurn Nothing
-            [ModifyValue (VRVariable "hits") 1] False 2
+            [ModifyValue (VRVariable "hits") 1] False 2 1 [] []
         st0 = initSampleGame
             { world = (world initSampleGame) { triggerDefs = [trigger] }
             , save = (save initSampleGame) { variables = Map.singleton "hits" (VVInt 0) } }
@@ -3350,7 +3350,7 @@ testDrainStopsWhenFlagged = do
             [ ModifyValue (VRVariable "hunger") (-1)
             , Conditional (CompareVar "hunger" CLte 0)
                 (GameEnd Death "Du verhungerst.") Noop ]
-            False 0
+            False 0 1 [] []
         base = initSampleGame
             { world = (world initSampleGame) { triggerDefs = [drainTrig] }
             , save = (save initSampleGame) { variables = Map.fromList [("hunger", VVInt 3)] } }
@@ -3387,15 +3387,15 @@ testNoiseObserverAndDecay = do
     let noiseTrig = TriggerDef "stealth.nmove.start" (OnEnter "start") Nothing
             [ ModifyValue (VRVariable "noise") 6
             , Conditional (CompareVar "noise" CGte 10) (SetValue (VRVariable "noise") (EVInt 10)) Noop ]
-            False 0
+            False 0 1 [] []
         observeTrig = TriggerDef "stealth.observe.guard" OnTurn
             (Just (CompareVar "noise" CGte 3))
             [ ModifyValue (VRVariable "hearings") 1 ]
-            False 2
+            False 2 1 [] []
         decayTrig = TriggerDef "stealth.decay" OnTurn Nothing
             [ ModifyValue (VRVariable "noise") (-1)
             , Conditional (CompareVar "noise" CLte 0) (SetValue (VRVariable "noise") (EVInt 0)) Noop ]
-            False 0
+            False 0 1 [] []
         st0 = initSampleGame
             { world = (world initSampleGame)
                 { triggerDefs = [noiseTrig, observeTrig, decayTrig] }
@@ -3422,7 +3422,7 @@ testNoiseObserverAndDecay = do
 testTriggerOnceFiresOnce :: IO Bool
 testTriggerOnceFiresOnce = do
     let trigger = TriggerDef "once_test" (OnEnter "treasure") Nothing
-            [SendMessage "One-time!"] True 0
+            [SendMessage "One-time!"] True 0 1 [] []
         stateWithTrigger = initSampleGame
             { world = (world initSampleGame) { triggerDefs = [trigger] } }
         (st1, _) = fireTriggers (OnEnter "treasure") stateWithTrigger
@@ -3442,9 +3442,9 @@ testTriggerOnceNoDoubleFireAcrossNestedRound :: IO Bool
 testTriggerOnceNoDoubleFireAcrossNestedRound = do
     let sample = initSampleGame
         killWolf = TriggerDef "a_kill" (OnStateChange "wolf") Nothing
-                        [ ModifyValue (VRActorProp (ActorNPC "wolf") PHealth) (-100) ] True 0
+                        [ ModifyValue (VRActorProp (ActorNPC "wolf") PHealth) (-100) ] True 0 1 [] []
         counter  = TriggerDef "b_count" (OnStateChange "wolf") Nothing
-                        [ ModifyValue (VRVariable "fired") 1 ] True 0
+                        [ ModifyValue (VRVariable "fired") 1 ] True 0 1 [] []
         st = sample
                 { world = (world sample) { triggerDefs = [killWolf, counter] }
                 , save = (save sample)
@@ -3462,7 +3462,7 @@ testTriggerOnceNoDoubleFireAcrossNestedRound = do
 testSetStateFiresStateChange :: IO Bool
 testSetStateFiresStateChange = do
     let rule = TriggerDef "gate_opens" (OnStateChange "gate") Nothing
-                    [ SendMessage "The gate rumbles open." ] False 0
+                    [ SendMessage "The gate rumbles open." ] False 0 1 [] []
         st = initSampleGame { world = (world initSampleGame) { triggerDefs = [rule] } }
         (st', msg) = applyOutcome (SetValue (VRActorProp (ActorEntity "gate") PState) (EVString "unlocked")) "" st
     r1 <- expectTrue "OnStateChange fired on set_state" (isInfixOf "rumbles" msg)
@@ -3474,7 +3474,7 @@ testSetStateFiresStateChange = do
 testSetStateIdempotentNoRecursion :: IO Bool
 testSetStateIdempotentNoRecursion = do
     let rule = TriggerDef "gate_loop" (OnStateChange "gate") Nothing
-                    [ SetValue (VRActorProp (ActorEntity "gate") PState) (EVString "unlocked") ] False 0
+                    [ SetValue (VRActorProp (ActorEntity "gate") PState) (EVString "unlocked") ] False 0 1 [] []
         st = initSampleGame { world = (world initSampleGame) { triggerDefs = [rule] } }
         run = fst (applyOutcome (SetValue (VRActorProp (ActorEntity "gate") PState) (EVString "unlocked")) "" st)
     result <- timeout 3000000 (evaluate (length (show run)))
@@ -3486,7 +3486,7 @@ testTriggerConditionGates :: IO Bool
 testTriggerConditionGates = do
     let flagSet = setFlag "allowed" "true" initSampleGame
         trigger = TriggerDef "cond_test" (OnEnter "treasure")
-            (Just (HasFlag "allowed")) [SendMessage "Flag is set!"] False 0
+            (Just (HasFlag "allowed")) [SendMessage "Flag is set!"] False 0 1 [] []
         stateWithTrigger = flagSet
             { world = (world flagSet) { triggerDefs = [trigger] } }
         (_, msg1) = fireTriggers (OnEnter "treasure") initSampleGame
@@ -3500,7 +3500,7 @@ testTriggerCommandEvent = do
     let stateWithTrigger = initSampleGame
             { world = (world initSampleGame)
                 { triggerDefs = [TriggerDef "use_test" (OnCommand "use") Nothing
-                        [SendMessage "Custom use!"] False 0] } }
+                        [SendMessage "Custom use!"] False 0 1 [] []] } }
         (_, msg) = fireTriggers (OnCommand "use") stateWithTrigger
     expectTrue "OnCommand trigger fires" (not (null msg))
 
@@ -3508,7 +3508,7 @@ testTriggerThroughGameLoop :: IO Bool
 testTriggerThroughGameLoop = do
     -- Setup: set a trigger on entering "hallway" from the sample game
     let trigger = TriggerDef "enter_hallway" (OnEnter "hallway") Nothing
-            [SendMessage "A cold draft hits you."] True 0
+            [SendMessage "A cold draft hits you."] True 0 1 [] []
         stateWithTrigger = initSampleGame
             { world = (world initSampleGame) { triggerDefs = [trigger] } }
         loop = initLoopState stateWithTrigger
@@ -3529,12 +3529,12 @@ testOnCommandExamineFires = do
         loopFor t = initLoopState (withTrigger t)
     r1 <- do
         let t = TriggerDef "examine_test" (OnCommand "examine") Nothing
-                    [SendMessage "You examine it closely."] False 0
+                    [SendMessage "You examine it closely."] False 0 1 [] []
             (_, msg) = applyLoopCommand (Interact VLookAt "torch") (loopFor t)
         expectTrue "on: command examine fires for look at X" (isInfixOf "examine it closely" msg)
     r2 <- do
         let t = TriggerDef "useon_test" (OnCommand "use") Nothing
-                    [SendMessage "You apply it to the door."] False 0
+                    [SendMessage "You apply it to the door."] False 0 1 [] []
             (_, msg) = applyLoopCommand (InteractWith VUseOn "oil_can" "door") (loopFor t)
         expectTrue "on: command use fires for use X on Y" (isInfixOf "apply it to the door" msg)
     pure (r1 && r2)
@@ -3559,7 +3559,7 @@ testTakeEventOnlyOnSuccess = do
                                                  "torch" (itemStates (save st0)) } }
         fires st ev cmd =
             let st' = st { world = (world st)
-                             { triggerDefs = [TriggerDef "t" ev Nothing [SendMessage "FIRED"] False 0] } }
+                             { triggerDefs = [TriggerDef "t" ev Nothing [SendMessage "FIRED"] False 0 1 [] []] } }
                 (_, msg) = applyLoopCommand cmd (initLoopState st')
             in isInfixOf "FIRED" msg
     r1 <- expectTrue "refused take (non-portable) does not fire OnTake"
@@ -3580,13 +3580,13 @@ testTakeEventOnlyOnSuccess = do
 testRaiseEventFires :: IO Bool
 testRaiseEventFires = do
     let rule = TriggerDef "ritual" (OnCustomEvent "ritual_done") Nothing
-                   [SendMessage "The ritual is complete."] False 0
+                   [SendMessage "The ritual is complete."] False 0 1 [] []
         st0 = initSampleGame { world = (world initSampleGame) { triggerDefs = [rule] } }
         (_, msg) = applyOutcome (RaiseEvent "ritual_done") "" st0
     r1 <- expectTrue "raise fires the on: custom rule" (isInfixOf "ritual is complete" msg)
     r2 <- expectEqual "" (snd (applyOutcome (RaiseEvent "nobody_listens") "" initSampleGame))
     let looper = TriggerDef "loop" (OnCustomEvent "loop") Nothing
-                     [Sequence [SendMessage "tick", RaiseEvent "loop"]] False 0
+                     [Sequence [SendMessage "tick", RaiseEvent "loop"]] False 0 1 [] []
         st1 = initSampleGame { world = (world initSampleGame) { triggerDefs = [looper] } }
     r3 <- timeout 3000000 (evaluate (length (snd (applyOutcome (RaiseEvent "loop") "" st1))))
     r4 <- case r3 of
@@ -3666,9 +3666,9 @@ testRuleEffectsAreValidated = do
     let gw = (world initSampleGame)
                 { triggerDefs =
                     [ TriggerDef "t_missing_item" OnTurn Nothing
-                        [ MoveEntity "ghost_item" (InRoom "isolated_void") ] False 0
+                        [ MoveEntity "ghost_item" (InRoom "isolated_void") ] False 0 1 [] []
                     , TriggerDef "t_missing_quest" OnTurn Nothing
-                        [ QuestOp StartQuest "ghost_quest" ] False 0
+                        [ QuestOp StartQuest "ghost_quest" ] False 0 1 [] []
                     ] }
         errors = validateWorld gw
     r1 <- expectTrue "item referenced in a rule is detected"
@@ -3684,9 +3684,9 @@ testRuleFlagCheckedButNeverSet = do
     let gw = (world initSampleGame)
                 { triggerDefs =
                     [ TriggerDef "t_set" OnTurn (Just (HasFlag "rule_flag"))
-                        [ SetValue (VRFlag "rule_flag") (EVBool True) ] False 0
+                        [ SetValue (VRFlag "rule_flag") (EVBool True) ] False 0 1 [] []
                     , TriggerDef "t_check" OnTurn (Just (HasFlag "never_set_flag"))
-                        [ SendMessage "checked only" ] False 0
+                        [ SendMessage "checked only" ] False 0 1 [] []
                     ] }
         errors = validateWorld gw
     r1 <- expectTrue "flag set by a rule is not reported as MissingSetFlag"
@@ -3702,7 +3702,7 @@ testMissingVehicleInRuleDetected = do
                 { triggerDefs =
                     [ TriggerDef "t_ship" OnTurn
                         (Just (CompareVar "ship.ghost.hull" CLte 0))
-                        [ ModifyValue (VRVariable "ship.ghost.power") (-1) ] False 0
+                        [ ModifyValue (VRVariable "ship.ghost.power") (-1) ] False 0 1 [] []
                     ] }
         errors = validateWorld gw
     r1 <- expectTrue "undeclared ship.<id> in a rule/predicate is detected"
@@ -3772,7 +3772,7 @@ testOnUseTriggerMultiWordAlias = do
                 (itemDefs (world sample))
             , triggerDefs =
                 [ TriggerDef "light_lantern" (OnUse "oil_can") Nothing
-                    [SetValue (VRFlag "lantern_lit") (EVString "true")] False 0 ]
+                    [SetValue (VRFlag "lantern_lit") (EVString "true")] False 0 1 [] [] ]
             }
         st = sample
             { world = w
@@ -3914,7 +3914,7 @@ testTriggerRecursionBounded = do
     let sample = initSampleGame
         loopEff = ModifyValue (VRActorProp (ActorNPC "wolf") PHealth) (-100)
         w = (world sample)
-            { triggerDefs = [ TriggerDef "cascade" (OnStateChange "wolf") Nothing [loopEff] False 0 ] }
+            { triggerDefs = [ TriggerDef "cascade" (OnStateChange "wolf") Nothing [loopEff] False 0 1 [] [] ] }
         st = sample { world = w
                     , save = (save sample)
                         { npcStates = Map.insert "wolf"
@@ -4736,7 +4736,7 @@ testDepthGuardStaysOutOfTriggerText = do
         st0 = initSampleGame
                 { world = (world initSampleGame)
                     { triggerDefs = [ TriggerDef "deep" (OnCustomEvent "go")
-                                        Nothing [deep] False 0 ] } }
+                                        Nothing [deep] False 0 1 [] [] ] } }
         (st', msg) = fireTriggers (OnCustomEvent "go") st0
     r1 <- expectTrue "trigger output contains no engine error text"
               (not ("[ERROR]" `isInfixOf` renderEvents msg) && not ("[engine]" `isInfixOf` renderEvents msg))
@@ -4752,7 +4752,7 @@ testTriggerNestingGuardReports = do
     let st0 = initSampleGame
                 { world = (world initSampleGame)
                     { triggerDefs = [ TriggerDef "loop" (OnCustomEvent "loop")
-                                        Nothing [SendMessage "never"] False 0 ] } }
+                                        Nothing [SendMessage "never"] False 0 1 [] [] ] } }
         (st', msg) = fireTriggersWithDepth (maxOutcomeDepth + 1) (OnCustomEvent "loop") st0
     r1 <- expectTrue "guard emits no game text" (null msg)
     r2 <- expectTrue "guard records a diagnostic"
@@ -5034,9 +5034,9 @@ testEnterFiresBeforeTurnThroughLoop = do
     let st0 = initSampleGame
                 { world = (world initSampleGame)
                     { triggerDefs =
-                        [ TriggerDef "on_turn"  OnTurn Nothing [SendMessage "TURN"]  False 0
+                        [ TriggerDef "on_turn"  OnTurn Nothing [SendMessage "TURN"]  False 0 1 [] []
                         , TriggerDef "on_enter" (OnEnter "hallway") Nothing
-                            [SendMessage "ENTER"] False 0 ] } }
+                            [SendMessage "ENTER"] False 0 1 [] [] ] } }
         (_, msg) = applyLoopCommand (Go North) (initLoopState st0)
         ls = lines msg
         idxOf needle = length (takeWhile (not . (needle `isInfixOf`)) ls)
@@ -5172,7 +5172,7 @@ testTopics = do
 -- | 4.5: `on_talk` triggers fire when ask/tell targets the matching NPC.
 testOnTalkTriggerFires :: IO Bool
 testOnTalkTriggerFires = do
-    let trig = TriggerDef "test_talk" (OnTalk "gelehrter" "") Nothing [SendMessage "Der Gelehrte runzelt die Stirn."] False 0
+    let trig = TriggerDef "test_talk" (OnTalk "gelehrter" "") Nothing [SendMessage "Der Gelehrte runzelt die Stirn."] False 0 1 [] []
         npc = NPCDef "gelehrter" "Gelehrter" (plainText "Ein Gelehrter.") Map.empty [] (Just 20) 5 5
                 Map.empty False emptyAscii
                 (Map.fromList [("altes schloss", SendMessage "Altes Schloss?")]) emptyGrammar
@@ -6445,7 +6445,7 @@ testFatalTickStopsCommand = do
 testValidateMissingRoomInRule :: IO Bool
 testValidateMissingRoomInRule = do
     let gw0 = world initSampleGame
-        withRule eff = gw0 { triggerDefs = [TriggerDef "t" OnTurn Nothing [eff] False 0] }
+        withRule eff = gw0 { triggerDefs = [TriggerDef "t" OnTurn Nothing [eff] False 0 1 [] []] }
         moveNpc    = withRule (MoveEntity "goblin" (InRoom "ghost_room"))
         movePlayer = withRule (SetValue (VRActorProp ActorPlayer PRoom) (EVString "ghost_room"))
         legit      = withRule (MoveEntity "goblin" (InRoom "hallway"))
@@ -6467,7 +6467,7 @@ testValidateMissingNpcInRule :: IO Bool
 testValidateMissingNpcInRule = do
     let withTarget t = (world initSampleGame)
                 { triggerDefs = [ TriggerDef "t" OnTurn Nothing
-                                     [MoveEntity t (InRoom "hallway")] False 0 ] }
+                                     [MoveEntity t (InRoom "hallway")] False 0 1 [] [] ] }
     r1 <- expectTrue "an unknown MoveEntity target is reported as MissingNPC"
               (MissingNPC "ghost_npc" `elem` validateWorld (withTarget "ghost_npc"))
     r2 <- expectTrue "a declared NPC is not reported"
@@ -6480,7 +6480,7 @@ testValidateMissingEntityInRule :: IO Bool
 testValidateMissingEntityInRule = do
     let withTarget t = (world initSampleGame)
                 { triggerDefs = [ TriggerDef "t" OnTurn Nothing
-                                    [SetValue (VRActorProp (ActorEntity t) PState) (EVString "open")] False 0 ] }
+                                    [SetValue (VRActorProp (ActorEntity t) PState) (EVString "open")] False 0 1 [] [] ] }
     r1 <- expectTrue "an unknown VRActorProp target is reported"
               (MissingEntity "ghost_entity" "property" `elem` validateWorld (withTarget "ghost_entity"))
     -- an exit lock key lives in `entityStates` and is therefore a valid entity
@@ -7077,6 +7077,9 @@ testOnCommandTriggerWithArgsAndFormulas = do
                 ]
             , trOnce = False
             , trCooldown = 0
+            , trWeight = 1
+            , trRequires = []
+            , trChainsTo = []
             }
         worldWithTrigger = (world st0)
             { verbDefs = reg
@@ -8033,8 +8036,8 @@ testResolveTargetFixesB1OnTake = do
         brassKey = mkTestKey "brass_key" "brass key"
         ironKey = mkTestKey "iron_key" "iron key"
         triggers =
-            [ TriggerDef "trig_iron" (OnTake "iron_key") Nothing [SendMessage "TRIGGER_IRON_KEY"] False 0
-            , TriggerDef "trig_brass" (OnTake "brass_key") Nothing [SendMessage "TRIGGER_BRASS_KEY"] False 0
+            [ TriggerDef "trig_iron" (OnTake "iron_key") Nothing [SendMessage "TRIGGER_IRON_KEY"] False 0 1 [] []
+            , TriggerDef "trig_brass" (OnTake "brass_key") Nothing [SendMessage "TRIGGER_BRASS_KEY"] False 0 1 [] []
             ]
         cleanDefs = Map.delete "key" (itemDefs (world st0))
         cleanStates = Map.delete "key" (itemStates (save st0))
@@ -8106,10 +8109,10 @@ testResolveTargetDropAndUseFixB1 = do
         brassKey = mkTestKey "brass_key" "brass key"
         ironKey = mkTestKey "iron_key" "iron key"
         triggers =
-            [ TriggerDef "trig_drop_iron" (OnDrop "iron_key") Nothing [SendMessage "TRIGGER_DROP_IRON"] False 0
-            , TriggerDef "trig_drop_brass" (OnDrop "brass_key") Nothing [SendMessage "TRIGGER_DROP_BRASS"] False 0
-            , TriggerDef "trig_use_iron" (OnUse "iron_key") Nothing [SendMessage "TRIGGER_USE_IRON"] False 0
-            , TriggerDef "trig_use_brass" (OnUse "brass_key") Nothing [SendMessage "TRIGGER_USE_BRASS"] False 0
+            [ TriggerDef "trig_drop_iron" (OnDrop "iron_key") Nothing [SendMessage "TRIGGER_DROP_IRON"] False 0 1 [] []
+            , TriggerDef "trig_drop_brass" (OnDrop "brass_key") Nothing [SendMessage "TRIGGER_DROP_BRASS"] False 0 1 [] []
+            , TriggerDef "trig_use_iron" (OnUse "iron_key") Nothing [SendMessage "TRIGGER_USE_IRON"] False 0 1 [] []
+            , TriggerDef "trig_use_brass" (OnUse "brass_key") Nothing [SendMessage "TRIGGER_USE_BRASS"] False 0 1 [] []
             ]
         cleanDefs = Map.delete "key" (itemDefs (world st0))
         cleanStates = Map.delete "key" (itemStates (save st0))
@@ -8260,8 +8263,8 @@ testDropKeyWithRoomNamensvetterFixB2 = do
         brassKey = mkTestKey "brass_key" "brass key"
         ironKey = mkTestKey "iron_key" "iron key"
         triggers =
-            [ TriggerDef "trig_drop_brass" (OnDrop "brass_key") Nothing [SendMessage "TRIGGER_DROP_BRASS"] False 0
-            , TriggerDef "trig_drop_iron" (OnDrop "iron_key") Nothing [SendMessage "TRIGGER_DROP_IRON"] False 0
+            [ TriggerDef "trig_drop_brass" (OnDrop "brass_key") Nothing [SendMessage "TRIGGER_DROP_BRASS"] False 0 1 [] []
+            , TriggerDef "trig_drop_iron" (OnDrop "iron_key") Nothing [SendMessage "TRIGGER_DROP_IRON"] False 0 1 [] []
             ]
         cleanDefs = Map.delete "key" (itemDefs (world st0))
         cleanStates = Map.delete "key" (itemStates (save st0))
@@ -8294,8 +8297,8 @@ testTakeKeyWithInventoryNamensvetterFixB2 = do
         brassKey = mkTestKey "brass_key" "brass key"
         ironKey = mkTestKey "iron_key" "iron key"
         triggers =
-            [ TriggerDef "trig_take_iron" (OnTake "iron_key") Nothing [SendMessage "TRIGGER_TAKE_IRON"] False 0
-            , TriggerDef "trig_take_brass" (OnTake "brass_key") Nothing [SendMessage "TRIGGER_TAKE_BRASS"] False 0
+            [ TriggerDef "trig_take_iron" (OnTake "iron_key") Nothing [SendMessage "TRIGGER_TAKE_IRON"] False 0 1 [] []
+            , TriggerDef "trig_take_brass" (OnTake "brass_key") Nothing [SendMessage "TRIGGER_TAKE_BRASS"] False 0 1 [] []
             ]
         cleanDefs = Map.delete "key" (itemDefs (world st0))
         cleanStates = Map.delete "key" (itemStates (save st0))
@@ -8328,8 +8331,8 @@ testUseKeyWithRoomNamensvetterFixB2 = do
         brassKey = mkTestKey "brass_key" "brass key"
         ironKey = mkTestKey "iron_key" "iron key"
         triggers =
-            [ TriggerDef "trig_use_brass" (OnUse "brass_key") Nothing [SendMessage "TRIGGER_USE_BRASS"] False 0
-            , TriggerDef "trig_use_iron" (OnUse "iron_key") Nothing [SendMessage "TRIGGER_USE_IRON"] False 0
+            [ TriggerDef "trig_use_brass" (OnUse "brass_key") Nothing [SendMessage "TRIGGER_USE_BRASS"] False 0 1 [] []
+            , TriggerDef "trig_use_iron" (OnUse "iron_key") Nothing [SendMessage "TRIGGER_USE_IRON"] False 0 1 [] []
             ]
         cleanDefs = Map.delete "key" (itemDefs (world st0))
         cleanStates = Map.delete "key" (itemStates (save st0))
@@ -9039,6 +9042,52 @@ testRollDicePool = do
     r17 <- expectTrue "named stream variable written" (isJust (getVariable "rng.beute" stNamed))
 
     pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17])
+
+-- ---------------------------------------------------------------------------
+-- K3: event chains (requires, chains_to)
+-- ---------------------------------------------------------------------------
+
+-- | K3.1: Trigger requires gates execution; when flag is missing, rule is skipped
+--   and tsFired stays False. After flag is set, the trigger fires and tsFired becomes True.
+testTriggerRequiresGates :: IO Bool
+testTriggerRequiresGates = do
+    let trigger = TriggerDef "req_test" (OnEnter "treasure") Nothing
+                    [SendMessage "Unlocked!"] True 0 1 ["key_flag"] []
+        st0 = initSampleGame
+            { world = (world initSampleGame) { triggerDefs = [trigger] }
+            , save = (save initSampleGame)
+                { triggerStates = Map.singleton "req_test" (TriggerState False 0) } }
+    -- Flag not set: trigger does not fire, tsFired stays False
+    let (st1, msg1) = fireTriggers (OnEnter "treasure") st0
+    r1 <- expectTrue "does not fire without flag" (null msg1)
+    r2 <- expectTrue "tsFired stays False when requires not met"
+        (case Map.lookup "req_test" (triggerStates (save st1)) of
+            Just ts -> not (tsFired ts)
+            Nothing -> False)
+    -- Flag set: trigger fires, tsFired becomes True
+    let stFlagged = setFlag "key_flag" "true" st1
+        (st2, msg2) = fireTriggers (OnEnter "treasure") stFlagged
+    r3 <- expectTrue "fires when flag is set" (isInfixOf "Unlocked!" (renderEvents msg2))
+    r4 <- expectTrue "tsFired becomes True after firing"
+        (case Map.lookup "req_test" (triggerStates (save st2)) of
+            Just ts -> tsFired ts
+            Nothing -> False)
+    pure (r1 && r2 && r3 && r4)
+
+-- | K3.1: chains_to raises follow-up custom events.
+testTriggerChainsToFiresFollower :: IO Bool
+testTriggerChainsToFiresFollower = do
+    let primary = TriggerDef "t_primary" (OnEnter "treasure") Nothing
+                    [SendMessage "First!"] False 0 1 [] ["follower_event"]
+        follower = TriggerDef "t_follower" (OnCustomEvent "follower_event") Nothing
+                    [SendMessage "Second!"] False 0 1 [] []
+        st0 = initSampleGame
+            { world = (world initSampleGame) { triggerDefs = [primary, follower] } }
+        (_, msg) = fireTriggers (OnEnter "treasure") st0
+        out = renderEvents msg
+    r1 <- expectTrue "primary event message produced" (isInfixOf "First!" out)
+    r2 <- expectTrue "chains_to follower event triggered" (isInfixOf "Second!" out)
+    pure (r1 && r2)
 
 -- ---------------------------------------------------------------------------
 -- Phase 4.2: verb_map phases (before:/instead:)
@@ -10016,5 +10065,8 @@ main = do
         , runTest "grammar: JSON omission and round-trip (4.3.5)" testGrammarJson
         , runTest "grammar: de templates use the article placeholders (4.3.5)" testGermanTemplatesUseArticles
         , runTest "grammar: take renders the authored article (4.3.5)" testGrammarEndToEndTake
+        -- K3: event chains
+        , runTest "event chains: requires gates firing and tsFired (K3.1)" testTriggerRequiresGates
+        , runTest "event chains: chains_to fires follow-up custom event (K3.1)" testTriggerChainsToFiresFollower
         ]
     when (not (and results)) exitFailure

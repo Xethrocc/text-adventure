@@ -1931,10 +1931,47 @@ data TriggerDef = TriggerDef
     , trEffects    :: [Effect]
     , trOnce       :: Bool
     , trCooldown   :: Int              -- ^ turns between re-firing (0 = no cooldown)
+    , trWeight     :: Int              -- ^ weight for weighted random selection (default 1)
+    , trRequires   :: [FlagID]         -- ^ all flags must be set to fire (default [])
+    , trChainsTo   :: [String]         -- ^ custom event names to raise after firing (default [])
     } deriving (Show, Eq, Generic)
 
-instance ToJSON TriggerDef
-instance FromJSON TriggerDef
+-- | Hand-written, not derived: 'trWeight' (when 1), 'trRequires' (when empty)
+--   and 'trChainsTo' (when empty) are omitted to preserve the byte contract
+--   for existing adventures (same pattern as 'roomIntro'/'roomFloor').
+instance ToJSON TriggerDef where
+    toJSON t = object $
+        [ "trId"        .= trId t
+        , "trEvent"     .= trEvent t
+        , "trCondition" .= trCondition t
+        , "trEffects"   .= trEffects t
+        , "trOnce"      .= trOnce t
+        , "trCooldown"  .= trCooldown t
+        ]
+        ++ [ "trWeight"   .= trWeight t   | trWeight t /= 1 ]
+        ++ [ "trRequires" .= trRequires t | not (null (trRequires t)) ]
+        ++ [ "trChainsTo" .= trChainsTo t | not (null (trChainsTo t)) ]
+
+instance FromJSON TriggerDef where
+    parseJSON = withObject "TriggerDef" $ \o -> TriggerDef
+        <$> o .:  "trId"
+        <*> o .:  "trEvent"
+        <*> o .:? "trCondition"
+        <*> o .:? "trEffects"  .!= []
+        <*> o .:? "trOnce"     .!= False
+        <*> o .:? "trCooldown" .!= 0
+        <*> (do mw <- o .:? "trWeight"
+                case mw of
+                    Just w  -> pure w
+                    Nothing -> o .:? "weight" .!= 1)
+        <*> (do mr <- o .:? "trRequires"
+                case mr of
+                    Just r  -> pure r
+                    Nothing -> o .:? "requires" .!= [])
+        <*> (do mc <- o .:? "trChainsTo"
+                case mc of
+                    Just c  -> pure c
+                    Nothing -> o .:? "chains_to" .!= [])
 
 -- | Runtime state of a trigger rule.
 data TriggerState = TriggerState
