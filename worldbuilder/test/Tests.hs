@@ -2091,7 +2091,8 @@ testStandingOutcomeCompiles = do
 testSetEntityStateCompiles :: IO Bool
 testSetEntityStateCompiles = do
     let adv = (minAdventure (minRoom "loc_0"))
-            { advTriggers = [ ATrigger "open_gate" "turn" Nothing
+            { advItems = [minItem "guild_gate"]
+            , advTriggers = [ ATrigger "open_gate" "turn" Nothing
                                 [ AOSetEntityState "guild_gate" "unlocked" ] False 0 1 [] [] ] }
     case compileAdventure adv of
         Left errs -> do
@@ -2102,6 +2103,144 @@ testSetEntityStateCompiles = do
             expectTrue "set_state compiles to SetValue (VRActorProp (ActorEntity e) PState)"
                 (E.SetValue (E.VRActorProp (E.ActorEntity "guild_gate") E.PState) (E.EVString "unlocked")
                     `elem` E.trEffects tr)
+
+-- | K2: `set_state` targeting an unknown entity fails with UnknownStateTarget.
+testSetStateUnknownTargetFails :: IO Bool
+testSetStateUnknownTargetFails = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advTriggers = [ ATrigger "open_void" "turn" Nothing
+                                [ AOSetEntityState "nonexistent_target" "open" ] False 0 1 [] [] ] }
+    case compileAdventure adv of
+        Left errs -> expectContains "UnknownStateTarget" (issuesText errs)
+        Right _   -> expectTrue "expected UnknownStateTarget error" False
+
+-- | K2: `set_state` targeting an item compiles to ActorEntity.
+testSetStateItemCompiles :: IO Bool
+testSetStateItemCompiles = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advItems = [minItem "torch"]
+            , advTriggers = [ ATrigger "light_torch" "turn" Nothing
+                                [ AOSetEntityState "torch" "lit" ] False 0 1 [] [] ] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let tr = head (E.triggerDefs (crWorld cr))
+            expectTrue "item set_state compiles to ActorEntity"
+                (E.SetValue (E.VRActorProp (E.ActorEntity "torch") E.PState) (E.EVString "lit")
+                    `elem` E.trEffects tr)
+
+-- | K2: `set_state` targeting an NPC compiles to ActorNPC.
+testSetStateNpcCompiles :: IO Bool
+testSetStateNpcCompiles = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advNPCs = [minNpcKey "guard"]
+            , advTriggers = [ ATrigger "alert_guard" "turn" Nothing
+                                [ AOSetEntityState "guard" "alert" ] False 0 1 [] [] ] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let tr = head (E.triggerDefs (crWorld cr))
+            expectTrue "npc set_state compiles to ActorNPC"
+                (E.SetValue (E.VRActorProp (E.ActorNPC "guard") E.PState) (E.EVString "alert")
+                    `elem` E.trEffects tr)
+
+-- | K2: `state.<npc>` is an author-writable prefix and produces no write-protection errors.
+testStateNpcWritableNoProtectionError :: IO Bool
+testStateNpcWritableNoProtectionError = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advNPCs = [minNpcKey "wache"]
+            , advTriggers = [ ATrigger "set_wache_state" "turn" Nothing
+                                [ AOSetTextVar "state.wache" "feindlich" ] False 0 1 [] [] ] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right _ -> pure True
+
+-- | K2: NPC `ai:` states compile to TriggerDefs (event, condition, requires, chains_to, go_to).
+testAiCompilesToTriggerDefs :: IO Bool
+testAiCompilesToTriggerDefs = do
+    let stPatrol = ANpcStateDef
+            { asdOn = "turn"
+            , asdWhen = Nothing
+            , asdEffects = [AOMessage "Die Wache patrouilliert."]
+            , asdOnce = False
+            , asdCooldown = 2
+            , asdWeight = 1
+            , asdRequires = ["schicht_aktiv"]
+            , asdChainsTo = []
+            , asdGoTo = Just "alarm"
+            }
+        stAlarm = ANpcStateDef
+            { asdOn = ""
+            , asdWhen = Nothing
+            , asdEffects = [AOMessage "Alarm!"]
+            , asdOnce = True
+            , asdCooldown = 0
+            , asdWeight = 1
+            , asdRequires = []
+            , asdChainsTo = ["verstaerkung"]
+            , asdGoTo = Nothing
+            }
+        stVerstaerkung = ANpcStateDef
+            { asdOn = ""
+            , asdWhen = Nothing
+            , asdEffects = [AOMessage "Verstaerkung trifft ein!"]
+            , asdOnce = False
+            , asdCooldown = 0
+            , asdWeight = 1
+            , asdRequires = []
+            , asdChainsTo = []
+            , asdGoTo = Nothing
+            }
+        aiDef = ANpcAI
+            [ ("patrouille", stPatrol)
+            , ("alarm", stAlarm)
+            , ("verstaerkung", stVerstaerkung)
+            ]
+        wache = (minNpcKey "wache") { anAI = Just aiDef }
+        adv = (minAdventure (minRoom "loc_0"))
+            { advNPCs = [wache]
+            , advTriggers = []
+            }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let trs = E.triggerDefs (crWorld cr)
+                findTr tid = find (\t -> E.trId t == tid) trs
+            rCount <- expectEqual 3 (length [t | t <- trs, "ai.wache." `isPrefixOf` E.trId t])
+            rPatrol <- case findTr "ai.wache.patrouille" of
+                Nothing -> expectTrue "patrouille trigger found" False
+                Just t -> do
+                    tEv <- expectEqual E.OnTurn (E.trEvent t)
+                    tCd <- expectEqual 2 (E.trCooldown t)
+                    tReq <- expectEqual ["schicht_aktiv"] (E.trRequires t)
+                    tCond <- expectEqual (Just (E.VarIs "state.wache" "patrouille")) (E.trCondition t)
+                    let effs = E.trEffects t
+                    tEffGoTo <- expectTrue "go_to sets state and raises event"
+                        (E.SetValue (E.VRVariable "state.wache") (E.EVString "alarm") `elem` effs
+                         && E.RaiseEvent "npc_ai_wache_alarm" `elem` effs)
+                    pure (tEv && tCd && tReq && tCond && tEffGoTo)
+            rAlarm <- case findTr "ai.wache.alarm" of
+                Nothing -> expectTrue "alarm trigger found" False
+                Just t -> do
+                    tEv <- expectEqual (E.OnCustomEvent "npc_ai_wache_alarm") (E.trEvent t)
+                    tOnce <- expectEqual True (E.trOnce t)
+                    tChain <- expectEqual ["npc_ai_wache_verstaerkung"] (E.trChainsTo t)
+                    let effs = E.trEffects t
+                    tEffEnter <- expectTrue "sets state.wache on enter"
+                        (E.SetValue (E.VRVariable "state.wache") (E.EVString "alarm") `elem` effs)
+                    pure (tEv && tOnce && tChain && tEffEnter)
+            rInitialVar <- case Map.lookup "state.wache" (E.variables (crSave cr)) of
+                Just (E.VVText s) -> expectEqual "patrouille" s
+                _ -> expectTrue "state.wache initialized to first state" False
+            pure (rCount && rPatrol && rAlarm && rInitialVar)
 
 -- | P1-6: two `rules:` with the same `id` would share one runtime
 --   `TriggerState` (fired/cooldown), so a duplicate id is a compile error.
@@ -2649,7 +2788,7 @@ testStealthCompiles = do
                     [ AOSetFlag "alarmed" "true", AOMessage "The guard heard you!" ]
         adv = (minAdventure (minRoom "loc_0"))
             { advStealth = Just (AStealth noise [guard])
-            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing Map.empty [] Nothing False E.emptyGrammar ] }
+            , advNPCs = [ ANPC "guard" "Guard" (ACondText "Guard" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive" Nothing 5 2 Map.empty Map.empty Nothing Map.empty [] Nothing False E.emptyGrammar Nothing ] }
     case compileAdventure adv of
         Left errs -> do
             putStrLn $ "  compile errors: " ++ show errs
@@ -2871,7 +3010,7 @@ testPatrolFixtureCompiles = do
 -- | The patrolling wolf the patrol tests declare.
 wolfNPC :: String -> ANPC
 wolfNPC loc = ANPC "wolf" "Wolf" (ACondText "Wolf" []) (AAscii (ACondText "" []) [] 0 [] Nothing)
-                    [] loc "alive" Nothing 8 3 Map.empty Map.empty Nothing Map.empty [] Nothing False E.emptyGrammar
+                    [] loc "alive" Nothing 8 3 Map.empty Map.empty Nothing Map.empty [] Nothing False E.emptyGrammar Nothing
 
 -- | The 7f combat segment: default without a block is CombatClassic; off /
 --   narrative compile to their profiles; tactical and unknown profiles are
@@ -2999,7 +3138,7 @@ testCombatFixturesCompile = do
 partySquire :: Maybe AParty -> ANPC
 partySquire party
     = ANPC "squire" "Knappe" (ACondText "Knappe" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive"
-        (Just 20) 3 1 Map.empty Map.empty party Map.empty [] Nothing False E.emptyGrammar
+        (Just 20) 3 1 Map.empty Map.empty party Map.empty [] Nothing False E.emptyGrammar Nothing
 
 followVerb :: AVerb
 followVerb = AVerb "follow" ["escort"]
@@ -3672,6 +3811,11 @@ tests =
     , ("factions segment seeds faction.* variables", testFactionsSeedVariables)
     , ("standing add/set outcome compiles to faction var", testStandingOutcomeCompiles)
     , ("set_state outcome compiles to entity state effect", testSetEntityStateCompiles)
+    , ("set_state with unknown target fails UnknownStateTarget (K2)", testSetStateUnknownTargetFails)
+    , ("set_state with item compiles to ActorEntity (K2)", testSetStateItemCompiles)
+    , ("set_state with NPC compiles to ActorNPC (K2)", testSetStateNpcCompiles)
+    , ("state.<npc> is author-writable with no protection error (K2)", testStateNpcWritableNoProtectionError)
+    , ("ai: states compile to trigger definitions and seed variables (K2)", testAiCompilesToTriggerDefs)
     , ("duplicate rule id is a compile error (P1-6)", testDuplicateTriggerIdFails)
     , ("reserved rule id prefix is a compile error (P1-6)", testReservedTriggerIdFails)
     , ("genre verb (swim/game) is declarable (P1-13)", testGenreVerbDeclarable)
@@ -6176,7 +6320,8 @@ minNpcKey nid = ANPC
     , anVerbMap = Map.empty
     , anParty = Nothing, anTopics = Map.empty, anBarks = [], anOnTalk = Nothing
     , anDropsOnDeath = False
-    , anGrammar = E.emptyGrammar }
+    , anGrammar = E.emptyGrammar
+    , anAI = Nothing }
 
 testSayNodeDialogEndSugar :: IO Bool
 testSayNodeDialogEndSugar = do

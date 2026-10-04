@@ -10,6 +10,13 @@ module Worldbuilder.Compile
     , ciError
     , ciWarning
     , compileAActionOutcome
+    , compileAActionOutcomeWith
+    , compileOutcomesWith
+    , compileNpcAI
+    , npcAiStateEvent
+    , checkStateTargetRefs
+    , authorOwnedVarPrefixes
+    , resolveWorldEffects
     , allWorldEffects
     , allAOutcomes
     , deepOutcomes
@@ -283,6 +290,7 @@ outcomeSurfaces a =
         ++ Map.elems (anTopics n)
         ++ maybe [] pure (anOnTalk n)
         ++ concatMap dialogOutcomes (Map.elems (anDialogue n))
+        ++ maybe [] (concatMap (asdEffects . snd) . aiStates) (anAI n)
     vehicleOutcomes v =
         concat (Map.elems (avConditions v))
         ++ concatMap astEffects (avStations v)
@@ -750,18 +758,21 @@ compileAdventure adv =
                 , E.worldLanguage = advLanguage adv
                 , E.worldMessages = advMessages adv
                 }
-        facRefErrs = checkStandingRefs (advFactions adv) gw
-        encRefErrs = checkEncounterRefs (advEncounterTables adv) gw
-        npcRefErrs = checkDamageNpcRefs gw
+        npcIds = Set.fromList (map anId (advNPCs adv))
+        gwResolved = resolveWorldEffects npcIds gw
+        facRefErrs = checkStandingRefs (advFactions adv) gwResolved
+        encRefErrs = checkEncounterRefs (advEncounterTables adv) gwResolved
+        npcRefErrs = checkDamageNpcRefs gwResolved
         trigIdErrs = checkTriggerIds (advTriggers adv)
         cmdVerbErrs = checkCommandVerbRefs verbRegistry (advTriggers adv)
-        chainTargetErrs = checkChainTargets (advTriggers adv)
-        stopCostErrs = checkStopCostItems (advVehicles adv) gw
-        cooldownCondErrs = checkCooldownConditionReserved gw
-        hotspotErrs = checkHotspotRefs gw
+        chainTargetErrs = checkChainTargets (advTriggers adv) (advNPCs adv)
+        stateTargetErrs = checkStateTargetRefs adv allRooms
+        stopCostErrs = checkStopCostItems (advVehicles adv) gwResolved
+        cooldownCondErrs = checkCooldownConditionReserved gwResolved
+        hotspotErrs = checkHotspotRefs gwResolved
         setExitErrs = checkSetExitRefs roomKeys adv
-        ambientErrs = checkAmbientRates gw
-        clipErrs = checkClips (advClips adv) gw
+        ambientErrs = checkAmbientRates gwResolved
+        clipErrs = checkClips (advClips adv) gwResolved
         procCallErrs = checkProcRefs (advProcedures adv) adv
         possessionErrs = checkNpcPossessionRefs adv
         npcIxErrs = checkNpcInteractionRefs adv
@@ -785,6 +796,7 @@ compileAdventure adv =
                     ++ trigIdErrs
                     ++ cmdVerbErrs
                     ++ chainTargetErrs
+                    ++ stateTargetErrs
                     ++ stopCostErrs
                     ++ cooldownCondErrs
                     ++ hotspotErrs
@@ -820,6 +832,11 @@ compileAdventure adv =
         (_:_) -> Left allErrors
         [] ->
             let startRoomId = advStartRoom adv
+                aiInitialVars = Map.fromList
+                    [ ("state." ++ anId n, E.VVText (fst (head states)))
+                    | n <- advNPCs adv
+                    , Just (ANpcAI states@(_:_)) <- [anAI n]
+                    ]
                 startSave = E.SaveState
                         { E.player = compilePlayer (advPlayer adv)
                         , E.currentRoom = startRoomId
@@ -840,7 +857,7 @@ compileAdventure adv =
                         , E.currentVehicle = Nothing
                         , E.activeDialogue = Nothing
                         , E.rngState = E.initialRngState
-                        , E.variables = Map.union initialVars inventoryLimitVars
+                        , E.variables = Map.unions [initialVars, inventoryLimitVars, aiInitialVars]
                         , E.triggerStates = Map.empty
                         , E.exitOverrides = Map.empty
                         , E.deckState = case mStartingDeck of
@@ -867,7 +884,7 @@ compileAdventure adv =
                           ++ deadContentWarns
                           ++ langWarns
                           ++ gramWarns
-            in Right (CompileResult gw startSave allWarns)
+            in Right (CompileResult gwResolved startSave allWarns)
   where
     -- Every locked exit starts locked in entityStates
     initialEntityStates rooms containerInits =
@@ -909,7 +926,7 @@ checkUnknownYamlKeys (Aeson.Object topObj) =
         sectionWarns =
             checkListOrMap "rooms" EntRoom (KM.lookup "rooms" topObj) checkRoomNested
             ++ checkListOrMap "items" EntItem (KM.lookup "items" topObj) noNested
-            ++ checkListOrMap "npcs" EntNPC (KM.lookup "npcs" topObj) noNested
+            ++ checkListOrMap "npcs" EntNPC (KM.lookup "npcs" topObj) checkNpcNested
             ++ checkListOrMap "quests" EntQuest (KM.lookup "quests" topObj) checkQuestNested
             ++ checkListOrMap "rules" EntRule (KM.lookup "rules" topObj) noNested
             ++ checkListOrMap "cards" EntCard (KM.lookup "cards" topObj) noNested
@@ -1033,6 +1050,22 @@ checkZoneNested zonePath o =
                         in checkKeys bPath EntBiomeTemplate (KM.keys bObj)
                     _ -> []
                 ) (KM.toList obj)
+        _ -> []
+
+checkNpcNested :: String -> Aeson.Object -> [CompileIssue]
+checkNpcNested npcPath o =
+    case KM.lookup "ai" o of
+        Just (Aeson.Object aiObj) ->
+            checkKeys (npcPath ++ ".ai") EntNPC (KM.keys aiObj)
+            ++ case KM.lookup "states" aiObj of
+                Just (Aeson.Object statesObj) ->
+                    concatMap (\(stKey, stVal) ->
+                        case stVal of
+                            Aeson.Object stObj ->
+                                checkKeys (npcPath ++ ".ai.states." ++ K.toString stKey) EntNPC (KM.keys stObj)
+                            _ -> []
+                        ) (KM.toList statesObj)
+                _ -> []
         _ -> []
 
 checkSingleton :: String -> EntityType -> Maybe Aeson.Value -> [CompileIssue]
@@ -3147,6 +3180,92 @@ compileOutcomes [] = E.Noop
 compileOutcomes [o] = compileAActionOutcome o
 compileOutcomes os = E.Sequence (map compileAActionOutcome os)
 
+-- | K2: Compile outcomes while resolving NPC state targets to ActorNPC.
+compileOutcomesWith :: Set.Set String -> [AActionOutcome] -> E.Effect
+compileOutcomesWith _ [] = E.Noop
+compileOutcomesWith npcIds [o] = compileAActionOutcomeWith npcIds o
+compileOutcomesWith npcIds os = E.Sequence (map (compileAActionOutcomeWith npcIds) os)
+
+-- | K2: Resolve VRActorProp (ActorEntity e) PState to ActorNPC if e is in npcIds.
+resolveNpcStateEffect :: Set.Set String -> E.Effect -> E.Effect
+resolveNpcStateEffect npcIds eff = case eff of
+    E.SetValue (E.VRActorProp (E.ActorEntity e) E.PState) v
+        | e `Set.member` npcIds -> E.SetValue (E.VRActorProp (E.ActorNPC e) E.PState) v
+    E.Sequence es -> E.Sequence (map (resolveNpcStateEffect npcIds) es)
+    E.Conditional p t el -> E.Conditional p (resolveNpcStateEffect npcIds t) (resolveNpcStateEffect npcIds el)
+    E.RandomChoice cs -> E.RandomChoice [ (w, resolveNpcStateEffect npcIds e) | (w, e) <- cs ]
+    E.RandomChoiceOn s cs -> E.RandomChoiceOn s [ (w, resolveNpcStateEffect npcIds e) | (w, e) <- cs ]
+    E.Narrative ls f -> E.Narrative ls (resolveNpcStateEffect npcIds f)
+    E.ApplyCondition n t tick end h ->
+        E.ApplyCondition n t (fmap (resolveNpcStateEffect npcIds) tick)
+                             (fmap (resolveNpcStateEffect npcIds) end) h
+    other -> other
+
+-- | K2: Compile an action outcome with known NPC IDs (resolves NPC state targets).
+compileAActionOutcomeWith :: Set.Set String -> AActionOutcome -> E.Effect
+compileAActionOutcomeWith npcIds ao = case ao of
+    AOSetEntityState e s ->
+        let actor = if e `Set.member` npcIds
+                    then E.ActorNPC e
+                    else E.ActorEntity e
+        in E.SetValue (E.VRActorProp actor E.PState) (E.EVString s)
+    other -> resolveNpcStateEffect npcIds (compileAActionOutcome other)
+
+-- | K2: Resolve VRActorProp (ActorEntity e) PState to ActorNPC for any NPC in gw.
+resolveWorldEffects :: Set.Set String -> E.GameWorld -> E.GameWorld
+resolveWorldEffects npcIds gw
+    | Set.null npcIds = gw
+    | otherwise = gw
+        { E.rooms = Map.map mapRoom (E.rooms gw)
+        , E.itemDefs = Map.map mapItem (E.itemDefs gw)
+        , E.npcDefs = Map.map mapNpc (E.npcDefs gw)
+        , E.itemInteractions = Map.map mapEff (E.itemInteractions gw)
+        , E.npcInteractions = Map.map mapEff (E.npcInteractions gw)
+        , E.questDefs = Map.map mapQuest (E.questDefs gw)
+        , E.vehicleDefs = Map.map mapVehicle (E.vehicleDefs gw)
+        , E.triggerDefs = map mapTrig (E.triggerDefs gw)
+        , E.abilities = Map.map mapAbility (E.abilities gw)
+        , E.cardDefs = Map.map mapCard (E.cardDefs gw)
+        , E.procDefs = Map.map mapProc (E.procDefs gw)
+        , E.deviceDefs = Map.map mapDevice (E.deviceDefs gw)
+        , E.progressionDef = fmap mapProg (E.progressionDef gw)
+        }
+  where
+    mapEff = resolveNpcStateEffect npcIds
+    mapRoom r = r
+        { E.roomOnEnter = fmap mapEff (E.roomOnEnter r)
+        , E.roomOnLook = fmap mapEff (E.roomOnLook r)
+        , E.roomOnExit = fmap mapEff (E.roomOnExit r)
+        , E.roomSearchOutcome = fmap mapEff (E.roomSearchOutcome r)
+        }
+    mapItem i = i
+        { E.itemVerbMap = Map.map mapEff (E.itemVerbMap i)
+        }
+    mapNpc n = n
+        { E.npcTopics = Map.map mapEff (E.npcTopics n)
+        , E.npcDialogueTrees = Map.map mapTree (E.npcDialogueTrees n)
+        , E.npcVerbMap = Map.map mapEff (E.npcVerbMap n)
+        }
+    mapTree dt = dt { E.dtNodes = Map.map mapNode (E.dtNodes dt) }
+    mapNode dn = dn { E.dnChoices = map mapChoice (E.dnChoices dn) }
+    mapChoice dc = dc { E.dcOutcome = mapEff (E.dcOutcome dc) }
+    mapQuest q = q { E.questReward = fmap mapEff (E.questReward q) }
+    mapVehicle v = v
+        { E.vehicleConditionEffects = Map.map mapEff (E.vehicleConditionEffects v)
+        }
+    mapTrig td = td { E.trEffects = map mapEff (E.trEffects td) }
+    mapAbility ab = ab { E.paEffects = map mapEff (E.paEffects ab) }
+    mapCard cd = cd { E.cardEffects = map mapEff (E.cardEffects cd) }
+    mapProc pd = pd { E.procEffects = map mapEff (E.procEffects pd) }
+    mapDevice dv = dv
+        { E.devOnInsert = map mapEff (E.devOnInsert dv)
+        , E.devOnRemove = map mapEff (E.devOnRemove dv)
+        , E.devOnFlip = Map.map (map mapEff) (E.devOnFlip dv)
+        }
+    mapProg pr = pr
+        { E.progLevels = map mapLvl (E.progLevels pr) }
+    mapLvl lvl = lvl { E.lvlEffects = map mapEff (E.lvlEffects lvl) }
+
 compileMaybeOutcomes :: Maybe [AActionOutcome] -> Maybe E.Effect
 compileMaybeOutcomes Nothing = Nothing
 compileMaybeOutcomes (Just os) = Just (compileOutcomes os)
@@ -3335,7 +3454,8 @@ compileTriggers triggers npcs =
     let results = map compileOne triggers
         errors = concat [e | Left e <- results]
         defs = [d | Right d <- results]
-    in (errors, defs ++ barkDefs ++ talkDefs)
+        (aiErrors, aiDefs) = compileNpcAI npcs
+    in (errors ++ aiErrors, defs ++ barkDefs ++ talkDefs ++ aiDefs)
   where
     -- 4.5 sugar: `barks:` on an NPC becomes `on: turn` triggers with a
     -- cooldown (one mechanism, the compiler owns the ids).
@@ -3381,11 +3501,121 @@ compileTriggers triggers npcs =
             , E.trChainsTo = atChainsTo t
             }
 
+-- | K2: Canonical custom event name for an NPC AI state.
+-- Schema: "npc_ai_<npcId>_<stateName>"
+-- This prefixed namespace guarantees that AI state transition events
+-- never collide with author-defined custom events (e.g. "alarm", "hebel_umgelegt").
+npcAiStateEvent :: String -> String -> String
+npcAiStateEvent nId stName = "npc_ai_" ++ nId ++ "_" ++ stName
+
+-- | K2: Compile NPC AI behavior states into engine TriggerDefs.
+-- Each state in `npcs.<id>.ai.states.<state>` compiles to exactly one TriggerDef:
+--
+-- 1. Identifier: "ai.<npcId>.<stateName>" (guarded by reservedTriggerPrefixes).
+-- 2. Event:
+--    - If `on:` is omitted: OnCustomEvent "npc_ai_<npcId>_<stateName>"
+--    - If `on: {custom: xyz}` or `on: custom xyz`: OnCustomEvent xyz
+--    - If `on: turn`: OnTurn
+--    - Otherwise: parsed via `compileAtOn`
+-- 3. Condition:
+--    - If event is OnTurn or another non-custom event: gates on `state.<npcId> == <stateName>`
+--      (combined with `when:` if specified).
+--    - If event is OnCustomEvent: uses `when:` if specified.
+-- 4. Effects:
+--    - If event is OnCustomEvent: starts with setting `state.<npcId>` to `<stateName>`
+--      so transitions via `chains_to` update the behavior state.
+--    - Compiled authored effects (`asdEffects`).
+--    - If `go_to: <target>` is specified:
+--      appends effects that set `state.<npcId>` to `<target>` and raise
+--      `npc_ai_<npcId>_<target>` to trigger the target state.
+-- 5. Requires: `asdRequires` (K3 flag gate).
+-- 6. ChainsTo: `asdChainsTo`, where target state names of the same NPC
+--    resolve to `npc_ai_<npcId>_<target>` (K3 event chaining).
+-- 7. Once, Cooldown, Weight: from `ANpcStateDef`.
+compileNpcAI :: [ANPC] -> ([CompileIssue], [E.TriggerDef])
+compileNpcAI npcs =
+    let results = concatMap compileOneNpc npcs
+        errs = concat [e | Left e <- results]
+        trigs = [d | Right d <- results]
+    in (errs, trigs)
+  where
+    compileOneNpc n = case anAI n of
+        Nothing -> []
+        Just ai ->
+            let states = aiStates ai
+                stateNames = map fst states
+                nid = anId n
+            in map (compileState nid stateNames) states
+
+    compileState nid stateNames (stName, stDef) =
+        case resolveEvent of
+            Left err -> Left [ciError ("npcs." ++ nid ++ ".ai.states." ++ stName) "BadTriggerEvent" err]
+            Right (ev, isCustom) ->
+                case validateGoTo of
+                    Just err -> Left [err]
+                    Nothing -> Right E.TriggerDef
+                        { E.trId = "ai." ++ nid ++ "." ++ stName
+                        , E.trEvent = ev
+                        , E.trCondition = cond isCustom
+                        , E.trEffects = effs isCustom
+                        , E.trOnce = asdOnce stDef
+                        , E.trCooldown = asdCooldown stDef
+                        , E.trWeight = asdWeight stDef
+                        , E.trRequires = asdRequires stDef
+                        , E.trChainsTo = chains
+                        }
+      where
+        customEvName = npcAiStateEvent nid stName
+
+        resolveEvent
+            | null (asdOn stDef) = Right (E.OnCustomEvent customEvName, True)
+            | asdOn stDef == "turn" = Right (E.OnTurn, False)
+            | "custom " `isPrefixOf` asdOn stDef =
+                Right (E.OnCustomEvent (drop 7 (asdOn stDef)), True)
+            | otherwise = case compileAtOn (asdOn stDef) of
+                Left err -> Left err
+                Right (E.OnCustomEvent c) -> Right (E.OnCustomEvent c, True)
+                Right other -> Right (other, False)
+
+        cond isCustom =
+            let stateCheck = E.VarIs ("state." ++ nid) stName
+            in if isCustom
+               then asdWhen stDef
+               else case asdWhen stDef of
+                   Nothing -> Just stateCheck
+                   Just p  -> Just (E.PAll [stateCheck, p])
+
+        validateGoTo = case asdGoTo stDef of
+            Nothing -> Nothing
+            Just tgt
+                | tgt `elem` stateNames -> Nothing
+                | otherwise -> Just (ciError ("npcs." ++ nid ++ ".ai.states." ++ stName ++ ".go_to")
+                                     "UnknownState"
+                                     ("go_to targets unknown state '" ++ tgt ++ "'"))
+
+        effs isCustom =
+            let enterEff = if isCustom
+                           then [E.SetValue (E.VRVariable ("state." ++ nid)) (E.EVString stName)]
+                           else []
+                authoredEffs = map (compileAActionOutcomeWith (Set.singleton nid)) (asdEffects stDef)
+                transitionEffs = case asdGoTo stDef of
+                    Nothing -> []
+                    Just tgt ->
+                        [ E.SetValue (E.VRVariable ("state." ++ nid)) (E.EVString tgt)
+                        , E.RaiseEvent (npcAiStateEvent nid tgt)
+                        ]
+            in enterEff ++ authoredEffs ++ transitionEffs
+
+        chains = map (\target ->
+            if target `elem` stateNames
+            then npcAiStateEvent nid target
+            else target) (asdChainsTo stDef)
+
 -- | Compiler-owned trigger-id prefixes. The compiler generates triggers with
 --   these ids (encounter.<id>, environment.*, stealth.*, ship.*, party.*) and
 --   they share the runtime `triggerStates` namespace with author `rules:` ids.
 reservedTriggerPrefixes :: [String]
-reservedTriggerPrefixes = ["encounter.", "environment.", "stealth.", "ship.", "party.", "bark.", "talk."]
+reservedTriggerPrefixes = ["encounter.", "environment.", "stealth.", "ship.", "party.", "bark.", "talk.", "ai."]
 
 -- | Validate authored trigger rules: ids must be unique and must not use a
 --   compiler-owned prefix (which would silently hijack a module trigger).
@@ -3420,20 +3650,87 @@ checkCommandVerbRefs registry triggers =
 
 -- | Every `chains_to:` target must name a custom event that some rule listens
 --   on via `on: custom <name>`. Dead targets indicate author typos and fail compilation.
-checkChainTargets :: [ATrigger] -> [CompileIssue]
-checkChainTargets triggers =
-    [ ciError ("rules." ++ atId t ++ ".chains_to") "UnknownChainTarget"
-        ("rule '" ++ atId t ++ "' chains to unknown event '" ++ target
-         ++ "' (no rule listens on 'on: custom " ++ target ++ "')")
-    | t <- triggers
-    , target <- atChainsTo t
-    , map toLower target `Set.notMember` knownCustomEvents
-    ]
+checkChainTargets :: [ATrigger] -> [ANPC] -> [CompileIssue]
+checkChainTargets triggers npcs =
+    triggerIssues ++ aiIssues
   where
     knownCustomEvents = Set.fromList
-        [ n
+        ( [ map toLower n
+          | t <- triggers
+          , Right (E.OnCustomEvent n) <- [compileAtOn (atOn t)]
+          ]
+          ++
+          [ map toLower (npcAiStateEvent (anId n) stName)
+          | n <- npcs
+          , Just ai <- [anAI n]
+          , (stName, stDef) <- aiStates ai
+          , null (asdOn stDef)
+          ]
+          ++
+          [ map toLower c
+          | n <- npcs
+          , Just ai <- [anAI n]
+          , (_, stDef) <- aiStates ai
+          , not (null (asdOn stDef))
+          , Right (E.OnCustomEvent c) <- [compileAiEvent (asdOn stDef)]
+          ]
+        )
+
+    compileAiEvent onStr
+        | onStr == "turn" = Right E.OnTurn
+        | "custom " `isPrefixOf` onStr = Right (E.OnCustomEvent (drop 7 onStr))
+        | otherwise = compileAtOn onStr
+
+    triggerIssues =
+        [ ciError ("rules." ++ atId t ++ ".chains_to") "UnknownChainTarget"
+            ("rule '" ++ atId t ++ "' chains to unknown event '" ++ target
+             ++ "' (no rule listens on 'on: custom " ++ target ++ "')")
         | t <- triggers
-        , Right (E.OnCustomEvent n) <- [compileAtOn (atOn t)]
+        , target <- atChainsTo t
+        , map toLower target `Set.notMember` knownCustomEvents
+        ]
+
+    aiIssues =
+        [ ciError ("npcs." ++ anId n ++ ".ai.states." ++ stName ++ ".chains_to") "UnknownChainTarget"
+            ("state '" ++ stName ++ "' chains to unknown event '" ++ target
+             ++ "' (no rule listens on 'on: custom " ++ target ++ "')")
+        | n <- npcs
+        , Just ai <- [anAI n]
+        , let stateNames = map fst (aiStates ai)
+        , (stName, stDef) <- aiStates ai
+        , target <- asdChainsTo stDef
+        , target `notElem` stateNames
+        , map toLower target `Set.notMember` knownCustomEvents
+        ]
+
+-- | K2: Every `set_state` target must resolve to a known NPC, item, device,
+--   container, vehicle, or exit lock (static or dynamic).
+checkStateTargetRefs :: Adventure -> Map.Map String E.Room -> [CompileIssue]
+checkStateTargetRefs adv rooms =
+    [ ciError (path ++ ".set_state") "UnknownStateTarget"
+        ("set_state targets unknown entity or NPC '" ++ target ++ "'")
+    | (path, outs) <- outcomeSurfaces adv
+    , AOSetEntityState target _ <- deepOutcomes outs
+    , target `Set.notMember` validTargets
+    ]
+  where
+    validTargets = Set.unions
+        [ Set.fromList (map anId (advNPCs adv))
+        , Set.fromList (map aiId (advItems adv))
+        , Set.fromList (map adId (advDevices adv))
+        , Set.fromList (map acnId (advContainers adv))
+        , Set.fromList (map avId (advVehicles adv))
+        , staticExitLocks
+        , dynamicExitLocks
+        ]
+    staticExitLocks = Set.fromList
+        [ lockKey
+        | room <- Map.elems rooms
+        , E.Locked _ lockKey <- Map.elems (E.roomConnections room)
+        ]
+    dynamicExitLocks = Set.fromList
+        [ lockKey
+        | AOSetExit _ _ _ (Just lockKey) <- allAOutcomes adv
         ]
 
 -- | A stop `cost.item` must be a declared item id (P1-19) — otherwise the fare
@@ -3920,6 +4217,11 @@ reservedVarWriteRules =
         }
     ]
 
+-- | Author-owned variable prefixes that content is expected and encouraged to write.
+--   These must NEVER appear in 'reservedVarWriteRules'.
+authorOwnedVarPrefixes :: [String]
+authorOwnedVarPrefixes = ["state."]
+
 -- | Unified write protection for engine-reserved variable namespaces:
 --   - @rng.*@ (B8) and @dice.*@ (K1): outcomes (@set_var@/@set_text_var@/@add_var@/@compute_var@),
 --     @variables:@, @initial_variables:@, and @procedures:@ parameters. Code: 'RngVarWrite'.
@@ -3967,11 +4269,17 @@ checkRngVarWrites = checkReservedVarWrites
 checkUnknownPlaceholders :: Adventure -> Map.Map String E.VarDef -> [CompileIssue]
 checkUnknownPlaceholders adv varDefs =
     let writtenVars = concatMap outcomeWrittenVars (allAOutcomes adv)
+        aiKnown = Set.fromList
+            [ "state." ++ anId n
+            | n <- advNPCs adv
+            , isJust (anAI n)
+            ]
         allKnown = Set.unions
             [ Map.keysSet varDefs
             , Set.fromList writtenVars
             , Set.fromList (map avbVarName (advVariables adv))
             , Map.keysSet (advInitialVariables adv)
+            , aiKnown
             ]
         texts = allAdventureTexts adv
         checkText (path, str) =

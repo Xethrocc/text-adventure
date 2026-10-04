@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+### NPC-Verhaltenszustände & KI-Compiler-Zucker (K2)
+
+- **`set_state:`-Zielauflösung & `UnknownStateTarget` (`Worldbuilder.Compile` & `Effects`):**
+  - `AOSetEntityState` löst das Ziel nun nach `ActorNPC` auf, wenn das Ziel ein bekannter NPC ist, ansonsten `ActorEntity` (für Items, Container, Devices, Vehicles, ExitLocks).
+  - In `src/Effects.hs`: `applySetValue` behandelt nun `VRActorProp (ActorNPC nid) PState` über die exportierte Funktion `setNpcStatusWithEvents`. Das setzt `npcStatus` des NPCs, feuert `OnStateChange` und erzeugt bei unbekanntem NPC eine Diagnose (`addDiagnostic`).
+  - Neue harte Compiler-Diagnose `UnknownStateTarget`: Wenn ein `set_state:`-Ziel weder ein NPC noch eine bekannte Entität (Item, Device, Container, Vehicle oder Exit-Lock) ist, wird die Übersetzung mit `UnknownStateTarget` als harter Fehler abgewiesen (Tippfehler-Schutz).
+  - Bestehende Verwendungen auf Items (`krypta.yaml`, `ascii-state.yaml` etc.) bleiben uneingeschränkt gültig und kompilieren ohne Befund.
+- **Autoren-schreibbares Präfix `state.<npc>`:**
+  - `state.` gehört zu den autoreneigenen Präfixen (`authorOwnedVarPrefixes = ["state."]`) und ist bewusst **nicht** in `reservedVarWriteRules` enthalten — Autoren dürfen `state.<npc>` per `set_var` (als Text) frei lesen und schreiben.
+  - `engineVars` wird **nicht** pauschal mit `state.*` geflutet, um Platzhalter-Prüfungen auf ungültige Zustände nicht zu unterdrücken. Stattdessen erkennt der Validator `state.<npc>` für NPCs mit `ai:`-Block automatisch als bekannt an.
+  - Bei NPCs mit `ai:` wird `state.<npc>` mit dem Namen des ersten definierten Zustands initialisiert (sofern nicht explizit über `initial_variables:` vorgegeben).
+  - Saubere Rollentrennung: `npcStatus` (aus `set_state`) repräsentiert den Lebens-/Physiszustand (z. B. `alive`, `dead`, `asleep`; vom Kampf-/Engine-System genutzt); `state.<npc>` repräsentiert den Verhaltenszustand (z. B. `patrouilliert`, `flieht`). Ein `ai:`-Zustand überschreibt `npcStatus` nicht.
+- **`ai:`-Compiler-Zucker für NPCs (`Worldbuilder.Compile`):**
+  - Vollständige Übersetzung von `ai: { states: { <state_name>: { on:, when:, effects:, requires:, chains_to:, go_to:, once:, cooldown:, weight: } } }` in Standard-`TriggerDef`s:
+    - Jeder Zustand wird zu einem Trigger `ai.<npc>.<state>` (geschützt über `reservedTriggerPrefixes`).
+    - Standard-Events (z. B. `on: turn` oder implizit) erhalten als Bedingung `var: state.<npc>, is: <state_name>`.
+    - Custom-Events (`on: { custom: <evt> }` oder `on: custom`) werden zu `OnCustomEvent`.
+    - Kanonisches Adressierungsschema für Zustandsübergänge: `npc_ai_<npc>_<state>`.
+    - `go_to: <ziel>` übersetzt in Effekte, die `state.<npc>` auf `<ziel>` setzen UND das Ziel-Event `npc_ai_<npc>_<ziel>` per `raise:` auslösen.
+    - `requires:`, `chains_to:`, `once:`, `cooldown:`, `weight:` werden 1:1 auf die entsprechenden `TriggerDef`-Felder abgebildet.
+    - `knownKeys EntNPC` akzeptiert nun `ai` sowie alle Zustandsfelder.
+    - Kein Zustandsautomaten-Interpreter, kein Scheduler, kein Timer — 100% reguläre Trigger-Semantik.
+- **Fixture `examples/fixtures/npc-zustaende.yaml` + E2E (`ci/e2e/npc-zustaende.{in,expect}`):**
+  - Demonstriert vollständigen Spielablauf: Wache patrouilliert im Startzustand (`patrouilliert`), schlägt bei Sturmglocke über `requires: [sturmglocke_gelaeutet]` in `alarmiert` um, ketten-leitet per `chains_to: [npc_ai_wache_flieht]` in den Zustand `flieht` weiter, wechselt den Raum und schließt mit `set_state: { entity: wache, to: geflohen }` ab.
+  - Verifiziert: State-Wechsel, Require-Gate (Hebel ohne Glocke zündet nicht), Weiterleitung über `chains_to`, `set_state` auf NPC.
+  - Registriert in `scripts/ci.sh` Stufe 4 (E2E) und Stufe 4b (`worldbuilder test`).
+- **Doku (`docs/adventure-schema.md`):**
+  - `set_state:`-Tabelle um NPC-Ziele, `OnStateChange` und `UnknownStateTarget` erweitert.
+  - `state.<npc>` als autorenschreibbares Präfix dokumentiert.
+  - Neue Sektion `### KI-Zustände (ai:, K2)` mit Feldern, Übersetzung und Trigger-Semantik.
+- **Tests & Metriken:**
+  - Engine: 477 Tests in `test/Tests.hs` (+2: `testSetNpcStateFiresStateChange`, `testSetNpcStateUnknownNpcDiagnostic`), alle grün.
+  - Worldbuilder: 263 Tests in `worldbuilder/test/Tests.hs` (+5: `testSetStateUnknownTargetFails`, `testSetStateItemCompiles`, `testSetStateNpcCompiles`, `testStateNpcWritableNoProtectionError`, `testAiCompilesToTriggerDefs`), alle grün.
+  - Alle 64 bestehenden Abenteuer und 37 bestehenden Fixtures bleiben byte-identisch.
+
 ### Variablen-Schreibschutz-Vereinheitlichung & Doku (K6-Rest)
 
 - **Schreibschutz vereinheitlicht (`Worldbuilder.Compile`):**

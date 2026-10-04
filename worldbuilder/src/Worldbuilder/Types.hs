@@ -605,6 +605,7 @@ data ANPC = ANPC
     , anOnTalk      :: Maybe AActionOutcome            -- ^ 4.5: on_talk hook (trigger sugar)
     , anDropsOnDeath :: Bool                          -- ^ B9: the corpse lets go of carried + worn items (default = keeps everything)
     , anGrammar     :: E.Grammar                       -- ^ 4.3.5: article:/gender: grammar metadata (empty = none)
+    , anAI          :: Maybe ANpcAI                    -- ^ K2: AI behavior states (compiler sugar to TriggerDef)
     } deriving (Show, Eq, Generic)
 
 -- | The `party:` block on an NPC (Phase 7g): the NPC can be recruited,
@@ -650,6 +651,81 @@ instance FromJSON ANPC where
         <*> o .:? "on_talk"
         <*> o .:? "drops_on_death" .!= False
         <*> E.grammarFromJSONFields o
+        <*> o .:? "ai"
+
+-- | K2: Authored NPC AI block with behavior states.
+data ANpcAI = ANpcAI
+    { aiStates :: [(String, ANpcStateDef)]
+    } deriving (Show, Eq, Generic)
+
+-- | K2: One behavior state inside npcs.<id>.ai.states.<state>.
+data ANpcStateDef = ANpcStateDef
+    { asdOn       :: String                     -- ^ e.g. "turn", "custom alert"
+    , asdWhen     :: Maybe E.Predicate          -- ^ optional when: condition
+    , asdEffects  :: [AActionOutcome]           -- ^ outcomes to run
+    , asdOnce     :: Bool                       -- ^ once: true/false
+    , asdCooldown :: Int                        -- ^ cooldown: N
+    , asdWeight   :: Int                        -- ^ weight: N
+    , asdRequires :: [String]                   -- ^ K3 requires: flags
+    , asdChainsTo :: [String]                   -- ^ K3 chains_to: custom events / next state
+    , asdGoTo     :: Maybe String               -- ^ K2 transition target: state name
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ANpcAI where
+    parseJSON = withObject "ANpcAI" $ \o -> do
+        statesVal <- o .: "states"
+        case statesVal of
+            Object stObj -> do
+                -- no TupleSections in this package, so the key/value pair is
+                -- built explicitly instead of \(k, v) -> (K.toString k,) <$> …
+                stList <- mapM (\e -> case KM.lookup e stObj of
+                             Nothing -> fail "unreachable: aeson key map lookup"
+                             Just v  -> (,) (K.toString e) <$> parseJSON v)
+                         (KM.keys stObj)
+                pure (ANpcAI stList)
+            _ -> fail "ai.states must be an object mapping state names to state definitions"
+
+instance FromJSON ANpcStateDef where
+    parseJSON = withObject "ANpcStateDef" $ \o -> do
+        (onStr, onEffs) <- parseOnField o
+        effsFromField <- o .:? "effects" .!= []
+        let allEffs = onEffs ++ effsFromField
+        whenCond <- o .:? "when"
+        onceVal <- o .:? "once" .!= False
+        cdVal <- o .:? "cooldown" .!= 0
+        wtVal <- o .:? "weight" .!= 1
+        reqs <- parseStringOrList o "requires"
+        chains <- parseStringOrList o "chains_to"
+        goToVal <- o .:? "go_to"
+        pure ANpcStateDef
+            { asdOn = onStr
+            , asdWhen = whenCond
+            , asdEffects = allEffs
+            , asdOnce = onceVal
+            , asdCooldown = cdVal
+            , asdWeight = wtVal
+            , asdRequires = reqs
+            , asdChainsTo = chains
+            , asdGoTo = goToVal
+            }
+      where
+        parseOnField obj = do
+            mOn <- obj .:? "on"
+            case mOn of
+                Nothing -> pure ("", [])
+                Just (String s) -> pure (T.unpack s, [])
+                Just (Object onObj) ->
+                    case KM.toList onObj of
+                        [(k, Array arr)] -> do
+                            effs <- parseJSON (Array arr)
+                            pure (K.toString k, effs)
+                        [(k, String s)] ->
+                            pure (K.toString k ++ " " ++ T.unpack s, [])
+                        [(k, v)] -> do
+                            effs <- parseJSON v
+                            pure (K.toString k, effs)
+                        _ -> fail "on: object must contain exactly one event key (e.g. on: { turn: [...] } or on: { custom: alert })"
+                Just _ -> fail "on: must be a string or an event object (e.g. on: { turn: [...] })"
 
 -- | 4.5: one ambient bark: a line and an optional context condition.
 data ABark = ABark
@@ -1517,16 +1593,34 @@ instance FromJSON AActionOutcome where
                     _         -> fail "forget must be a fact id or {fact, actor}")
         <|> (AONextChapter <$ (o .: "next_chapter" :: Parser Bool))
         <|> (AOGotoChapter <$> o .: "goto_chapter")
-        <|> (do t <- o .: "step_toward" :: Parser [Value]
-                case t of
-                    [a, b]    -> AOStepToward <$> parseJSON a <*> parseJSON b <*> pure Nothing
-                    [a, b, m] -> AOStepToward <$> parseJSON a <*> parseJSON b <*> (Just <$> parseJSON m)
-                    _         -> fail "step_toward: expected [seeker, target, msg?]")
-        <|> (do t <- o .: "step_away_from" :: Parser [Value]
-                case t of
-                    [a, b]    -> AOStepAwayFrom <$> parseJSON a <*> parseJSON b <*> pure Nothing
-                    [a, b, m] -> AOStepAwayFrom <$> parseJSON a <*> parseJSON b <*> (Just <$> parseJSON m)
-                    _         -> fail "step_away_from: expected [seeker, target, msg?]")
+        <|> (do stv <- o .: "step_toward"
+                case stv of
+                    Array _ -> do
+                        t <- parseJSON stv :: Parser [Value]
+                        case t of
+                            [a, b]    -> AOStepToward <$> parseJSON a <*> parseJSON b <*> pure Nothing
+                            [a, b, m] -> AOStepToward <$> parseJSON a <*> parseJSON b <*> (Just <$> parseJSON m)
+                            _         -> fail "step_toward: expected [seeker, target, msg?]"
+                    Object so -> do
+                        seeker <- so .:? "seeker" .!= ""
+                        target <- so .: "target"
+                        mMsg   <- so .:? "msg" <|> so .:? "message"
+                        pure (AOStepToward seeker target mMsg)
+                    _ -> fail "step_toward: expected list or object")
+        <|> (do sav <- o .: "step_away_from"
+                case sav of
+                    Array _ -> do
+                        t <- parseJSON sav :: Parser [Value]
+                        case t of
+                            [a, b]    -> AOStepAwayFrom <$> parseJSON a <*> parseJSON b <*> pure Nothing
+                            [a, b, m] -> AOStepAwayFrom <$> parseJSON a <*> parseJSON b <*> (Just <$> parseJSON m)
+                            _         -> fail "step_away_from: expected [seeker, target, msg?]"
+                    Object so -> do
+                        seeker <- so .:? "seeker" .!= ""
+                        target <- so .: "target"
+                        mMsg   <- so .:? "msg" <|> so .:? "message"
+                        pure (AOStepAwayFrom seeker target mMsg)
+                    _ -> fail "step_away_from: expected list or object")
         -- B3: closed mass operations (the count-set language of B2 plus an
         -- operation-specific parameter; never a user effect list).
         <|> (do o' <- o .: "damage_all" :: Parser Object
@@ -1666,7 +1760,15 @@ instance FromJSON AActionOutcome where
                 fid <- st .: "faction"
                 (   (AOStandingAdd fid <$> st .: "add")
                  <|> (AOStandingSet fid <$> st .: "set") ))
-        <|> (AOSetEntityState <$> o .: "set_state" <*> o .: "to")
+        <|> (do ssVal <- o .: "set_state"
+                case ssVal of
+                    Object sso -> do
+                        target <- sso .: "target" <|> sso .: "entity" <|> sso .: "npc" <|> sso .: "item"
+                        toSt   <- sso .: "to" <|> sso .: "state"
+                        pure (AOSetEntityState target toSt)
+                    String s ->
+                        AOSetEntityState (T.unpack s) <$> o .: "to"
+                    _ -> fail "set_state must be entity name or object")
         -- Rogue Phase 3: set_exit / remove_exit must be tried before the broad
         -- `msg` fallback (objects may carry sibling keys).
         <|> (do se <- o .: "set_exit"
@@ -1793,6 +1895,8 @@ knownKeys EntNPC = Set.fromList
     [ "id", "name", "desc", "description", "ascii", "keys", "location"
     , "state", "max_hp", "attack", "defense", "dialogue", "verb_map", "party"
     , "topics", "barks", "on_talk", "drops_on_death", "article", "gender"
+    , "ai", "states"
+    , "on", "when", "effects", "once", "cooldown", "requires", "chains_to", "weight", "go_to"
     ]
 knownKeys EntQuest = Set.fromList
     [ "id", "name", "desc", "prereqs", "stages", "reward", "on_complete" ]

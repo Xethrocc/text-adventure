@@ -18,6 +18,7 @@ module Effects
     , killNPC
     , killNPCWithMsg
     , setEntityStateWithEvents
+    , setNpcStatusWithEvents
     , fireTriggers
     , fireTriggersWithDepth
     , fireTriggerList
@@ -657,6 +658,8 @@ applySetValue (VRVariable name) val state =
     (setScopedVariable name (effectValToVarVal val) state, [])
 applySetValue (VRActorProp (ActorEntity eId) PState) val state =
     setEntityStateWithEvents eId (effectValueToString val) state
+applySetValue (VRActorProp (ActorNPC nid) PState) val state =
+    setNpcStatusWithEvents nid (effectValueToString val) state
 applySetValue (VRActorProp ActorPlayer PRoom) val state =
     (fst (transitionToRoom (effectValueToString val) (clearActiveDialogue state)), [])
 applySetValue (VRActorProp (ActorRoom rId) PVisited) val state =
@@ -901,6 +904,26 @@ setEntityStateWithEvents :: String -> String -> GameState -> (GameState, [Output
 setEntityStateWithEvents eId val state
     | getEntityState eId state == Just val = (state, [])
     | otherwise = fireTriggers (OnStateChange eId) (setEntityState eId val state)
+
+-- | Set an NPC's status and fire its `OnStateChange` event (K2).
+--
+-- Begründung zur Fehlerbehandlung bei unbekanntem NPC:
+-- Der Compiler fängt statische Tippfehler bereits hart via UnknownStateTarget (ciError).
+-- Zur Laufzeit erzeugen wir dennoch eine defensive Engine-Diagnose (addDiagnostic),
+-- falls ein NPC weder statisch noch dynamisch (z.B. aufgelöst via resolveActorNpcId)
+-- in 'npcStates' existiert, statt still ins Leere zu schreiben oder abzustürzen.
+setNpcStatusWithEvents :: NPCID -> String -> GameState -> (GameState, [OutputEvent])
+setNpcStatusWithEvents nIdRaw val state =
+    let nId = resolveActorNpcId nIdRaw state
+    in case Map.lookup nId (npcStates (save state)) of
+        Nothing ->
+            ( addDiagnostic ("[engine] set_state: unknown NPC '" ++ nId ++ "'") state
+            , [] )
+        Just ns
+            | npcStatus ns == val -> (state, [])
+            | otherwise ->
+                let state' = setNpcStatus nId val state
+                in fireTriggers (OnStateChange nId) state'
 
 -- | Pursuit (Tür IV): move the seeker exactly one edge toward (or away
 --   from) the target. Only NPCs and ships are seekers (decision 2026-09-30);

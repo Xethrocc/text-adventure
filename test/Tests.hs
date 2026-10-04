@@ -3483,6 +3483,28 @@ testSetStateIdempotentNoRecursion = do
         Nothing -> do putStrLn "  set_state recursion did not terminate"; pure False
         Just _ -> expectEqual (Just "unlocked") (getEntityState "gate" run)
 
+-- | K2: `set_state` on an NPC changes `npcStatus` and fires `OnStateChange <npc>`.
+testSetNpcStateFiresStateChange :: IO Bool
+testSetNpcStateFiresStateChange = do
+    let rule = TriggerDef "goblin_enrages" (OnStateChange "goblin") Nothing
+                    [ SendMessage "Der Goblin wird rasend!" ] False 0 1 [] []
+        sample = initSampleGame
+        st = sample { world = (world sample) { triggerDefs = [rule] } }
+        (st', msg) = applyOutcome (SetValue (VRActorProp (ActorNPC "goblin") PState) (EVString "rasend")) "" st
+    r1 <- expectTrue "OnStateChange fired on npc set_state" (isInfixOf "rasend" msg)
+    r2 <- case Map.lookup "goblin" (npcStates (save st')) of
+        Just nst -> expectEqual "rasend" (npcStatus nst)
+        Nothing  -> expectTrue "goblin in npcStates" False
+    pure (r1 && r2)
+
+-- | K2: `set_state` on an unknown NPC emits a diagnostic.
+testSetNpcStateUnknownNpcDiagnostic :: IO Bool
+testSetNpcStateUnknownNpcDiagnostic = do
+    let sample = initSampleGame
+        (st', _) = applyOutcome (SetValue (VRActorProp (ActorNPC "phantom") PState) (EVString "flieht")) "" sample
+    expectTrue "diagnostic emitted for unknown NPC"
+        (any ("unknown NPC 'phantom'" `isInfixOf`) (diagnostics st'))
+
 testTriggerConditionGates :: IO Bool
 testTriggerConditionGates = do
     let flagSet = setFlag "allowed" "true" initSampleGame
@@ -9912,6 +9934,8 @@ main = do
         , runTest "once trigger not double-fired by nested round (P1-5)" testTriggerOnceNoDoubleFireAcrossNestedRound
         , runTest "set_state fires OnStateChange (P1-12)" testSetStateFiresStateChange
         , runTest "set_state handler is idempotent, no recursion (P1-12)" testSetStateIdempotentNoRecursion
+        , runTest "set_state on NPC updates npcStatus and fires OnStateChange (K2)" testSetNpcStateFiresStateChange
+        , runTest "set_state on unknown NPC emits diagnostic (K2)" testSetNpcStateUnknownNpcDiagnostic
         , runTest "trigger condition gates firing" testTriggerConditionGates
         , runTest "OnCommand trigger fires" testTriggerCommandEvent
         , runTest "trigger fires through game loop" testTriggerThroughGameLoop

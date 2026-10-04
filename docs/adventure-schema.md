@@ -448,7 +448,7 @@ description:
 | `{ msg: "Text", then: [...], else: [...] }` | Sequence [SendMessage, Conditional...] |
 | `{ standing: { faction: id, add: N } }` | ModifyValue (VRVariable "faction.id") +N — Module 7a |
 | `{ standing: { faction: id, set: N } }` | SetValue (VRVariable "faction.id") N — Module 7a |
-| `{ set_state: entity, to: state }` | SetValue (VRProperty entity "state") — z. B. `locked_by`-Tore öffnen |
+| `{ set_state: entity, to: state }` | SetValue (VRProperty entity "state") — setzt den Status von Items/Toren (`ActorEntity`, z. B. `locked_by`-Tore öffnen) oder NPCs (`ActorNPC`, setzt `npcStatus` und feuert `OnStateChange`). Unbekannte Ziele erzeugen den Compile-Fehler `UnknownStateTarget`. |
 | `{ damage_npc: { npc: id, amount: N } }` | ModifyValue (VRProperty id "hp") −N — Module 7g |
 | `{ narrative: ["Zeile 1", "Zeile 2"], then: [...] }` | Narrative — interaktive, seitenweise Ausgabe (`[Press Enter to continue]`); `then` sind Folge-Effekte nach der letzten Zeile |
 | `{ condition: { name: id, turns: N, tick: [...], end: [...], hidden: bool } }` | ApplyCondition — timed condition/status effect (`tick` each turn, `end` upon expiration, optional `hidden: true` suppresses status/HUD display) |
@@ -544,6 +544,13 @@ wie bei jedem Prädikat. Die Engine selbst nutzt genau diese Form für
 - `rng.*` (B8) und `dice.*` (K1) sind gegen alle Autoren-Schreibvorgänge (`set_var`, `add_var`, `compute_var`), Deklarationen unter `variables:` / `initial_variables:` sowie Prozedur-Parameter geschützt (`RngVarWrite`).
 - `chapter.*` (W3) und `combat.*` (7f-3) sind reserviert und dürfen nicht unter `variables:` deklariert werden (`ChapterVariableClash` bzw. `CombatVariableClash`).
 
+**Autorenschreibbares Präfix `state.<npc>` (K2):**
+Im Unterschied zu den geschützten Präfixen `rng.*` und `dice.*` ist `state.<npc>` ein **autoreneigenes** Präfix (`authorOwnedVarPrefixes`).
+- Autoren dürfen `state.<npc>` per `set_var` (mit String-Wert) frei setzen und überschreiben, per `{ var: state.<npc>, is: "..." }` abfragen oder in Texten via `{state.<npc>}` einbetten.
+- `state.<npc>` gehört **nicht** zu den reservierten Schreibschutz-Regeln (`reservedVarWriteRules`) — ein Schreibzugriff erzeugt keinen Fehler.
+- `engineVars` wird nicht pauschal mit `state.*` gefüllt, damit Tippfehler in Platzhaltern weiterhin als `UnknownPlaceholder` gemeldet werden. Für NPCs mit deklariertem `ai:`-Block erkennt der Validator `state.<npc>` jedoch automatisch als bekannt an.
+- **Rollentrennung:** `npcStatus` (gesteuert über `set_state`) repräsentiert den Physis-/Lebenszustand des NPCs (`alive`, `dead`, `asleep` etc.), der von Kampf- und Bewegungssystemen ausgewertet wird. `state.<npc>` repräsentiert den Verhaltenszustand (`patrouilliert`, `flieht`, `sucht` etc.) auf Content-Ebene. Ein `ai:`-Zustandswechsel verändert `npcStatus` nicht.
+
 Das frühere `check_flag`-Kürzel wurde entfernt
 (P1-18), weil es nie dekodierbar war und den Erwartungswert still verwarf.
 
@@ -627,6 +634,7 @@ Item-Felder für Container und NPC-Besitz:
 | `topics` | Object | `{}` | Topic-Tabelle für `ask`/`tell` (Key=Topic, Value=Effekt) |
 | `barks` | [Object] | `[]` | Ambient-One-Liner (Compiler-Sugar für `on: turn` mit Cooldown) |
 | `on_talk` | Effekt | — | Zusätzlicher Effekt bei jedem `ask`/`tell` auf diesen NPC (Compiler-Sugar für `on: talk`) |
+| `ai` | Object | — | KI-Verhaltenszustände (K2, Compiler-Zucker für Trigger, siehe unten) |
 
 ### Dialogue Tree
 
@@ -713,6 +721,53 @@ Ein Effekt, der bei jedem `ask`/`tell` über diesen NPC zusätzlich zum Topic-Ef
 - Kompiliert zu einem Trigger `talk.<npc>` mit `on: talk`.
 - Feuert für jedes `ask`/`tell`-Kommando, das auf diesen NPC zielt — unabhängig davon, ob das Topic bekannt ist.
 - Globale `on: talk`-Regeln (`rules:`) feuern ebenfalls; `talk.<npc>` filtert auf den NPC.
+
+### KI-Zustände (`ai:`, K2)
+
+Das `ai:`-Feld an einem NPC erlaubt die Deklaration von Verhaltenszuständen und automatischen Reaktionen als reine Übersetzung in `TriggerDef`s (Compiler-Zucker — kein eigener Zustandsautomaten-Interpreter, kein Scheduler, kein Timer).
+
+```yaml
+npcs:
+  - id: wache
+    name: Wache
+    location: innenhof
+    ai:
+      states:
+        patrouilliert:
+          on: turn
+          effects:
+            - msg: "Die Wache zieht aufmerksam ihre Runden im Innenhof."
+        alarmiert:
+          on: { custom: npc_ai_wache_alarmiert }
+          requires: [sturmglocke_gelaeutet]
+          effects:
+            - msg: "Die Wache schreckt auf: 'Alarm! Ein Eindringling!'"
+          chains_to: [npc_ai_wache_flieht]
+        flieht:
+          on: { custom: npc_ai_wache_flieht }
+          effects:
+            - msg: "Panik erfasst die Wache: Sie flieht auf den Wachturm!"
+            - move_npc: wache
+              to: wachturm
+            - set_state:
+                entity: wache
+                to: geflohen
+```
+
+#### Funktionsweise und Übersetzung in `TriggerDef`s
+
+- **Zustandsvariable `state.<npc>`:** Der aktuelle Zustand eines NPCs wird in der Variablen `state.<npc>` (Textvariable in der `VarMap`) geführt.
+- **Startzustand:** Wenn nicht explizit unter `initial_variables:` vorgegeben, initialisiert der Compiler `state.<npc>` mit dem Namen des ersten unter `states:` definierten Zustands.
+- **Trigger pro Zustand (`ai.<npc>.<state>`):** Jeder Zustand wird zu einer eigenständigen `TriggerDef` mit der ID `ai.<npc>.<state>` kompiliert (das Präfix `ai.` gehört zu `reservedTriggerPrefixes` und ist für Autoren geschützt).
+- **Ereignis & Bedingung (`on:`):**
+  - Für Standard-Events (z. B. `on: turn` oder implizit) erhält der Trigger die Bedingung `{ var: state.<npc>, is: <state> }`. Der Trigger feuert somit nur, solange der NPC in diesem Zustand ist.
+  - Für Custom-Events (`on: { custom: <evt> }` oder `on: custom`) wird der Trigger als `OnCustomEvent <evt>` angelegt.
+- **Kanonischer Custom-Event-Name:** Per Konvention lautet das Custom-Event für einen Zustand `npc_ai_<npc>_<state>`. Dieses Event kann von anderen Aktionen per `raise:`, über `chains_to:` oder durch `go_to:` ausgelöst werden.
+- **Folgezustand (`go_to: <zielzustand>`):** Ein optionales `go_to: <ziel>` erzeugt Effekte, die `state.<npc>` auf `<ziel>` setzen und das Ziel-Event `npc_ai_<npc>_<ziel>` per `raise:` feuern.
+- **Gates (`requires:`):** Prüft vorab das Vorhandensein der gelisteten Flags (K3-Feld auf `TriggerDef`). Fehlt ein Flag, feuert der Trigger nicht und `tsFired` bleibt `false`.
+- **Weiterleitung (`chains_to:`):** Liste von Folge-Events (K3-Feld auf `TriggerDef`), die nach den Effekten ausgelöst werden.
+- **Weitere Trigger-Attribute:** `once:`, `cooldown:` und `weight:` werden direkt in die entsprechenden Felder der `TriggerDef` übertragen.
+- **Erlaubte Schlüssel (`knownKeys`):** Innerhalb von `ai:` und seinen `states:` sind die Schlüssel `states`, `on`, `when`, `effects`, `requires`, `chains_to`, `go_to`, `once`, `cooldown` und `weight` bekannt.
 
 ---
 

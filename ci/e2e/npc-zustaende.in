@@ -1,0 +1,8 @@
+wait
+use hebel
+use glocke
+north
+use torhebel
+north
+look
+quit
