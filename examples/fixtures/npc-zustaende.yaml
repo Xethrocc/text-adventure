@@ -1,0 +1,119 @@
+# K2: NPC-Zustaende, KI-Zustandsuebergaenge und set_state auf NPCs
+#
+# Mechaniken in dieser Fixture:
+# 1. Startzustand:
+#    - Die Wache startet im AI-Zustand 'patrouilliert'.
+#    - Der Compiler initialisiert state.wache auf 'patrouilliert'.
+#    - Die Wache reagiert auf jeden Zug (on: turn) solange sie patrouilliert.
+# 2. require-Gate haelt zurueck:
+#    - Der Hebel loest das State-Event 'npc_ai_wache_alarmiert' aus.
+#    - Der Zustand 'alarmiert' erfordert per requires: [sturmglocke_gelaeutet] die Glocke.
+#    - Ohne Sturmglocke feuert der Zustand nicht; die Wache patrouilliert weiter.
+# 3. chains_to leitet weiter:
+#    - Das Laeuten der Sturmglocke setzt das Flag und loest 'npc_ai_wache_alarmiert' aus.
+#    - Das require-Gate ist erfuellt: Die Wache wechselt auf 'alarmiert'.
+#    - 'alarmiert' leitet per chains_to: [flieht] sofort auf den Zustand 'flieht' weiter.
+# 4. set_state auf NPC:
+#    - Im Zustand 'flieht' wird per set_state die Wache auf 'geflohen' gesetzt
+#      und sie flieht auf den Wachturm.
+#    - Ein Exit-Lock ('fallgitter') beweist zudem, dass set_state auf Entitaeten/Exits
+#      weiterhin parallel funktioniert.
+
+name: NPC-Zustaende Fixture
+start_room: innenhof
+
+initial_variables:
+  state.wache: patrouilliert
+
+rooms:
+  - id: innenhof
+    name: Innenhof
+    desc: Ein befestigter Innenhof einer alten Burg. Im Norden fuehrt ein Durchgang zum Wachturm.
+    exits:
+      north:
+        to: wachturm
+        locked_by: fallgitter
+        msg: "Das schwere Fallgitter versperrt den Weg zum Turm."
+
+  - id: wachturm
+    name: Wachturm
+    desc: Die zugige Zinne des Wachturms mit Blick ueber das gesamte Umland.
+    exits:
+      south: innenhof
+
+items:
+  - id: hebel
+    name: Alarmhebel
+    desc: Ein verrosteter Hebel an der Hofmauer.
+    keys: [hebel, alarmhebel]
+    location: innenhof
+    verb_map:
+      use,intact:
+        - { raise: npc_ai_wache_alarmiert }
+        - { msg: "Du legst den Hebel um. Ohne Sturmglocke ignoriert die Wache das Geraeusch." }
+
+  - id: glocke
+    name: Sturmglocke
+    desc: Eine bronzene Sturmglocke fuer den Ernstfall.
+    keys: [glocke, sturmglocke]
+    location: innenhof
+    verb_map:
+      use,intact:
+        - { set_flag: sturmglocke_gelaeutet, val: "true" }
+        - { msg: "Die Sturmglocke ertoent mit durchdringendem Klang!" }
+        - { raise: npc_ai_wache_alarmiert }
+
+  - id: torhebel
+    name: Torhebel
+    desc: Ein Schalter fuer das Fallgitter.
+    keys: [torhebel]
+    location: innenhof
+    verb_map:
+      use,intact:
+        - { set_state: fallgitter, to: unlocked }
+        - { msg: "Das Fallgitter rasselt nach oben und gibt den Weg frei." }
+
+npcs:
+  - id: wache
+    name: Wache
+    desc: Eine schwer geruestete Burgwache.
+    keys: [wache, burgwache]
+    location: innenhof
+    ai:
+      states:
+        patrouilliert:
+          on: turn
+          effects:
+            - { msg: "Die Wache zieht aufmerksam ihre Runden im Innenhof." }
+        alarmiert:
+          requires: [sturmglocke_gelaeutet]
+          chains_to: [flieht]
+          effects:
+            - { msg: "Die Wache schreckt auf: 'Alarm! Ein Eindringling!' Sie greift nach ihren Waffen." }
+        flieht:
+          effects:
+            - { msg: "Panik erfasst die Wache: Sie flieht auf den Wachturm!" }
+            - { move_npc: wache, to: wachturm }
+            - { set_state: wache, to: geflohen }
+
+tests:
+  - name: "npc zustaende gate und chaining"
+    input:
+      - wait
+      - use hebel
+      - use glocke
+      - north
+      - use torhebel
+      - north
+      - look
+    expect:
+      - "Die Wache zieht aufmerksam ihre Runden im Innenhof."
+      - "Du legst den Hebel um. Ohne Sturmglocke ignoriert die Wache das Geraeusch."
+      - "Die Wache zieht aufmerksam ihre Runden im Innenhof."
+      - "Die Sturmglocke ertoent mit durchdringendem Klang!"
+      - "Die Wache schreckt auf: 'Alarm! Ein Eindringling!' Sie greift nach ihren Waffen."
+      - "Panik erfasst die Wache: Sie flieht auf den Wachturm!"
+      - "The door is locked."
+      - "Das Fallgitter rasselt nach oben und gibt den Weg frei."
+      - "Die zugige Zinne des Wachturms mit Blick ueber das gesamte Umland."
+      - "Wache"
