@@ -836,6 +836,29 @@ variables:
     max: 100
 ```
 
+### Wertebereiche (`min` / `max`)
+
+`min` und `max` sind **keine Dekoration**: jeder Schreibvorgang auf eine
+`int`-Variable wird auf dieses Intervall geklemmt (`clampToVarDef` /
+`setVariableChecked` in `src/Game.hs`). Ein `add_var`, `compute_var` oder
+`set_var` kann `mana` also weder über `max` hinaus erhöhen noch unter `min`
+absenken — die Klammer greift an der **einzigen** Stelle, unabhängig davon,
+welcher Effekt schreibt.
+
+- **Anwendbar auch auf engine-geschriebene Variablen.** Die Klammer hängt am
+  Zielnamen, nicht am Schreibweg. Für `dice.count` aus `roll_dice:` heißt das:
+  ein deklariertes `dice.count: {type: int, min: 0, max: 6}` deckelt den Wert,
+  obwohl die Engine ihn schreibt. Für die vier `dice.*`-Variablen ist das
+  **meist unnötig** — `keep`/`pool` begrenzen sie ohnehin (harte
+  Compile-Fehler `InvalidDicePool`/`InvalidDiceKeep`), und `engineVars` macht
+  sie ohnehin ohne Deklaration lesbar. Nützlich bleibt es dort, wo ein Wert
+  künstlich begrenzt werden soll, den der Effekt selbst nicht begrenzt.
+- **Was die Klammer nicht ersetzt:** einen Ereignis-Zustand, der *auf* einem
+  Maximalwert **feuert** (`on_overflow`). Dafür gibt es weiterhin kein
+  Vokabular; es bleibt K4 (siehe `plan-autorenfaehigkeiten.md`, Abschnitt F).
+  Wer eine Obergrenze braucht, klemmt die Variable und fragt die Bedingung
+  selbst ab.
+
 ### Variablen vergleichen (`compare_var`)
 
 `compare_var` vergleicht eine Variable mit einem **Literal** oder mit einer

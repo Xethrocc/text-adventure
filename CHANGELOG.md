@@ -51,7 +51,14 @@
   Worldbuilder-Validator.
 - **Doku:** `docs/adventure-schema.md` um `roll_dice`-Zeile in der Effekt-Tabelle und
   ausführlichen Abschnitt mit Parametern, Aggregaten, Schreibschutz und Variante A ergänzt.
-- **Noch offen (K1.3):** K4-Kleinkram (Doku der `VTInt`-Klammer für `dice.count` über `variables:`), Abschluss K1.
+- **K4-Kleinkram (K1.3, Doku statt Code):** Neuer Abschnitt „Wertebereiche (`min` / `max`)"
+  in `docs/adventure-schema.md`. `min`/`max` waren im Schema undokumentiert und konnten
+  Dekoration sein — sie sind es nicht: `clampToVarDef` klemmt jeden Schreibvorgang auf
+  eine `int`-Variable zentral (`src/Game.hs:1211`), unabhängig vom Effekt, und greift
+  daher auch auf engine-geschriebene Variablen wie `dice.count`. Der Abschnitt sagt
+  ausdrücklich, was die Klammer **nicht** leistet: ein `on_overflow`-**Ereignis** gibt
+  es weiterhin nicht — das bleibt K4.
+- **K1 abgeschlossen.** Alle drei Stufen umgesetzt, CI grün, 0 Compiler-Warnungen.
 
 ### Projekt-View und Quest-Diagnostik (4.6, S3)
 
