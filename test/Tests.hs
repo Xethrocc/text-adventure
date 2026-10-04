@@ -6991,13 +6991,14 @@ testFormatWithVarsBasics = do
         st4 = setVariable "deficit" (VVInt (-8)) st3
     r1 <- expectEqual "You have 42 gold." (formatWithVars "You have {gold} gold." st4)
     r2 <- expectEqual "Explicit: 42." (formatWithVars "Explicit: {var:gold}." st4)
+    r2b <- expectEqual "Explicit with space: 42." (formatWithVars "Explicit with space: {var: gold}." st4)
     r3 <- expectEqual "Welcome to Aethelgard!" (formatWithVars "Welcome to {city}!" st4)
     r4 <- expectEqual "Surplus: +15, Deficit: -8" (formatWithVars "Surplus: {surplus:+}, Deficit: {deficit:+}" st4)
     r5 <- expectEqual "Box: [    42] and [-8    ]" (formatWithVars "Box: [{gold:6}] and [{deficit:-6}]" st4)
     r6 <- expectEqual "HP: 100, Turn: 0" (formatWithVars "HP: {player.hp}, Turn: {turn.count}" st4)
     r7 <- expectEqual "Escaped: {literal} and {lit2}" (formatWithVars "Escaped: \\{literal\\} and {{lit2}}" st4)
     r8 <- expectEqual "Unknown stays: {unknown_var}" (formatWithVars "Unknown stays: {unknown_var}" st4)
-    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+    pure (r1 && r2 && r2b && r3 && r4 && r5 && r6 && r7 && r8)
 
 -- | Phase 1B: String interpolation integration in SendMessage and CondText
 testFormatWithVarsIntegration :: IO Bool

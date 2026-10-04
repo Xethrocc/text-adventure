@@ -899,12 +899,13 @@ formatStringWith ('{':cs) env =
                         let exprBody = trimStr (drop 1 stripped)
                         in handleExpr exprBody env ++ formatStringWith rest env
                     else
-                        let (isExplicitVar, clean) = if "var:" `isPrefixOf` inside
-                                                    then (True, drop 4 inside)
+                        let strippedInside = trimStr inside
+                            (isExplicitVar, clean) = if "var:" `isPrefixOf` strippedInside
+                                                    then (True, dropWhile isSpace (drop 4 strippedInside))
                                                     else (False, inside)
                             (varName, modif) = case break (== ':') clean of
-                                (name, ':':m) -> (name, m)
-                                (name, _)     -> (name, "")
+                                (name, ':':m) -> (if isExplicitVar then trimStr name else name, m)
+                                (name, _)     -> (if isExplicitVar then trimStr name else name, "")
                         in case env varName of
                             Just val
                                 | "<error:" `isPrefixOf` val -> val ++ formatStringWith rest env
