@@ -3892,6 +3892,8 @@ tests =
     , ("fuzz: clean world fuzzes without findings (B5)", testFuzzSmoke)
     -- B8: named RNG streams
     , ("rng: authored writes on rng.* are hard errors (B8)", testRngVarWriteGuard)
+    -- K6: unified variable write protection
+    , ("reserved variable write protection unified (K6)", testReservedVariablesUnified)
     -- K1: dice pool
     , ("dice pool: roll_dice compile validation rejects die: 1 and invalid pool/keep (K1.1)", testRollDiceValidation)
     , ("dice pool: {var: dice.*} placeholders emit no warnings without declaration (K1.1)", testDicePlaceholderNoWarning)
@@ -4148,6 +4150,82 @@ testCooldownConditionClash = do
                             (not ("CooldownConditionClash" `isInfixOf` issuesText errs))
             Right _   -> pure True
     pure (r1 && r2 && r3)
+
+-- | K6: Unified write protection for engine-reserved variable namespaces
+--   (rng., dice., chapter., combat.).
+--   - Each prefix triggers its own diagnostic code and verbatim message.
+--   - Outgoing write checks apply to rng. and dice., while chapter. and combat.
+--     deliberately check declarations under variables: only (today's check depth pinned).
+testReservedVariablesUnified :: IO Bool
+testReservedVariablesUnified = do
+    let withVar n = (minAdventure (minRoom "loc_0"))
+            { advVariables = [AVariable n "int" (Just (Aeson.Number 0)) Nothing Nothing] }
+        withWrite n = (minAdventure (minRoom "loc_0"))
+            { advTriggers = [ATrigger "t" "turn" Nothing [AOSetVar n 1] False 0 1 [] []] }
+
+    -- 1. rng. (B8): code RngVarWrite, verbatim message
+    r1 <- case compileAdventure (withVar "rng.stream") of
+        Left errs -> do
+            let matching = [ e | e <- errs, ciCode e == "RngVarWrite" ]
+            a <- expectEqual 1 (length matching)
+            b <- expectEqual "variable 'rng.stream' is reserved for named RNG streams (B8) and cannot be written by content"
+                             (if null matching then "" else ciMessage (head matching))
+            pure (a && b)
+        Right _ -> expectTrue "expected RngVarWrite for rng.stream in variables" False
+
+    r2 <- case compileAdventure (withWrite "rng.stream") of
+        Left errs -> expectTrue "rng. outcome write is rejected with RngVarWrite"
+                        (any (\e -> ciCode e == "RngVarWrite") errs)
+        Right _   -> expectTrue "expected RngVarWrite for rng.stream write" False
+
+    -- 2. dice. (K1): code RngVarWrite, verbatim message
+    r3 <- case compileAdventure (withVar "dice.custom") of
+        Left errs -> do
+            let matching = [ e | e <- errs, ciCode e == "RngVarWrite" ]
+            a <- expectEqual 1 (length matching)
+            b <- expectEqual "variable 'dice.custom' is reserved and cannot be written by content"
+                             (if null matching then "" else ciMessage (head matching))
+            pure (a && b)
+        Right _ -> expectTrue "expected RngVarWrite for dice.custom in variables" False
+
+    r4 <- case compileAdventure (withWrite "dice.last_roll") of
+        Left errs -> expectTrue "dice. outcome write is rejected with RngVarWrite"
+                        (any (\e -> ciCode e == "RngVarWrite") errs)
+        Right _   -> expectTrue "expected RngVarWrite for dice.last_roll write" False
+
+    -- 3. chapter. (W3): code ChapterVariableClash, verbatim message
+    r5 <- case compileAdventure (withVar "chapter.active") of
+        Left errs -> do
+            let matching = [ e | e <- errs, ciCode e == "ChapterVariableClash" ]
+            a <- expectEqual 1 (length matching)
+            b <- expectEqual "'chapter.active' is in the reserved 'chapter.' namespace; the engine owns the chapter state (W3)"
+                             (if null matching then "" else ciMessage (head matching))
+            pure (a && b)
+        Right _ -> expectTrue "expected ChapterVariableClash for chapter.active in variables" False
+
+    -- chapter. is NOT checked on outcome writes (depth = variables only)
+    r6 <- case compileAdventure (withWrite "chapter.current") of
+        Left errs -> expectTrue "chapter. outcome write is NOT rejected by variable clash"
+                        (not (any (\e -> ciCode e == "ChapterVariableClash") errs))
+        Right _   -> pure True
+
+    -- 4. combat. (7f-3): code CombatVariableClash, verbatim message
+    r7 <- case compileAdventure (withVar "combat.round") of
+        Left errs -> do
+            let matching = [ e | e <- errs, ciCode e == "CombatVariableClash" ]
+            a <- expectEqual 1 (length matching)
+            b <- expectEqual "'combat.round' is in the reserved 'combat.' namespace; the engine owns the combat round state (7f-3)"
+                             (if null matching then "" else ciMessage (head matching))
+            pure (a && b)
+        Right _ -> expectTrue "expected CombatVariableClash for combat.round in variables" False
+
+    -- combat. is NOT checked on outcome writes (depth = variables only)
+    r8 <- case compileAdventure (withWrite "combat.round") of
+        Left errs -> expectTrue "combat. outcome write is NOT rejected by variable clash"
+                        (not (any (\e -> ciCode e == "CombatVariableClash") errs))
+        Right _   -> pure True
+
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8])
 
 -- ---------------------------------------------------------------------------
 -- Rogue Phase 4a: SplitMix64 generator RNG (Worldbuilder.Rng)

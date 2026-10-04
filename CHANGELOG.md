@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Variablen-Schreibschutz-Vereinheitlichung & Doku (K6-Rest)
+
+- **Schreibschutz vereinheitlicht (`Worldbuilder.Compile`):**
+  - Eine zentrale Funktion `checkReservedVarWrites` (mit Rückwärtskompatibilitäts-Alias `checkRngVarWrites`) prüft alle reservierten Präfixe (`rng.`, `dice.`, `chapter.`, `combat.`) anhand deklarativer Regeln (`ReservedVarWriteRule`).
+  - Erhalt der bestehenden Fehlercodes und wörtlichen Meldungstexte (`RngVarWrite`, `ChapterVariableClash`, `CombatVariableClash`).
+  - Prüftiefe pro Präfix exakt beibehalten: `rng.` und `dice.` prüfen Schreib-Outcomes (`set_var`, `set_text_var`, `add_var`, `compute_var`), `variables:`, `initial_variables:` und `procedures:`; `chapter.` und `combat.` prüfen weiterhin ausschließlich `variables:`.
+  - `checkCooldownConditionReserved` bleibt bewusst getrennt (Bedingungen statt Variablen).
+- **Doku (`docs/adventure-schema.md`):**
+  - In der Effect-Tabelle `set_var` für Ganzzahlen und Textvariablen dokumentiert.
+  - Dokumentiert, dass `set_var` mit String-Wert Textvariablen schreibt, dass es bewusst kein eigenes `set_text_var` als Autoren-Form gibt („eine Vokabel, zwei Typen“), und welche Codes die reservierten Präfixe werfen.
+- **Tests & Disziplin:**
+  - Neuer Test `testReservedVariablesUnified` in `worldbuilder/test/Tests.hs` pinnt alle 4 Präfixe mit ihren Originalmeldungen und die unterschiedliche Prüftiefe ab.
+  - 475 Engine-Tests, 258 Worldbuilder-Tests, 0 failed; CI grün, 0 Warnungen.
+  - Alle 64 Abenteuer + Fixtures kompilieren byte-identisch.
+
 ### Event-Ketten und gewichtete Ziehungsfilter (K3)
 
 - **Drei neue Felder auf der Regel-Entität / `TriggerDef` (K3.1):**

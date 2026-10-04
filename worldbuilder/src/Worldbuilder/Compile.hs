@@ -28,6 +28,7 @@ module Worldbuilder.Compile
     , formatUnknownKey
     , checkKeywordCollisions
     , checkUnknownPlaceholders
+    , checkReservedVarWrites
     , checkRngVarWrites
     , checkRollDice
     , checkDarkRoomDeadEnds
@@ -46,7 +47,7 @@ import qualified Messages as Msg
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Char (toLower, isDigit, isSpace)
-import Data.List (nub, stripPrefix, isPrefixOf, minimumBy, intercalate, sortOn)
+import Data.List (nub, stripPrefix, isPrefixOf, minimumBy, intercalate, sortOn, find)
 import Data.Ord (comparing)
 import Data.Maybe (mapMaybe, fromMaybe, catMaybes, isNothing, isJust)
 import Data.Either (partitionEithers)
@@ -661,7 +662,6 @@ compileAdventure adv =
         (chapterErrs, chapterWarns) = checkChapterRefs (advChapters adv) adv
         (pursuitErrs, pursuitTriggers) =
             compilePursuit (advPursuit adv) (Map.keys npcDefsWithParty)
-        chapterVarErrs = checkChapterVarReserved varDefs
         compiledFacts = compileFacts (advFacts adv)
         compiledCombines = compileCombines (advCombines adv)
         factRefErrs = checkFactRefs (advFacts adv) gw adv
@@ -757,7 +757,6 @@ compileAdventure adv =
         cmdVerbErrs = checkCommandVerbRefs verbRegistry (advTriggers adv)
         chainTargetErrs = checkChainTargets (advTriggers adv)
         stopCostErrs = checkStopCostItems (advVehicles adv) gw
-        combatVarErrs = checkCombatVarReserved varDefs
         cooldownCondErrs = checkCooldownConditionReserved gw
         hotspotErrs = checkHotspotRefs gw
         setExitErrs = checkSetExitRefs roomKeys adv
@@ -768,7 +767,7 @@ compileAdventure adv =
         npcIxErrs = checkNpcInteractionRefs adv
         questRefErrs = checkQuestRefs adv
         mapOverlapErrs = checkMapPositions adv
-        rngVarErrs = checkRngVarWrites adv
+        reservedVarErrs = checkReservedVarWrites adv
         diceErrs = checkRollDice adv
         (langErrs, langWarns) = checkLanguageFields adv
         (gramErrs, gramWarns) = checkGrammarFields adv
@@ -787,7 +786,6 @@ compileAdventure adv =
                     ++ cmdVerbErrs
                     ++ chainTargetErrs
                     ++ stopCostErrs
-                    ++ combatVarErrs
                     ++ cooldownCondErrs
                     ++ hotspotErrs
                     ++ ambientErrs
@@ -802,7 +800,6 @@ compileAdventure adv =
                     ++ factRefErrs
                     ++ knownVarErrs
                     ++ chapterErrs
-                    ++ chapterVarErrs
                     ++ pursuitErrs
                     ++ containerErrs
                     ++ knowledgeClashErrs
@@ -815,7 +812,7 @@ compileAdventure adv =
                     ++ npcIxErrs
                     ++ questRefErrs
                     ++ mapOverlapErrs
-                    ++ rngVarErrs
+                    ++ reservedVarErrs
                     ++ diceErrs
                     ++ langErrs
                     ++ gramErrs
@@ -1828,15 +1825,6 @@ checkChapterRefs cs adv = (dupErrs ++ targetErrs ++ backwardErrs, unreachableWar
         , Nothing <- [achWhen c]
         , achId c `notElem` concatMap gotoTargets (allAOutcomes adv) ]
 
--- | W3: `chapter.` belongs to the chapter state — author-declared variables
---   in this namespace would collide with current/visited markers.
-checkChapterVarReserved :: Map.Map String E.VarDef -> [CompileIssue]
-checkChapterVarReserved varDefs =
-    [ ciError ("variables." ++ name) "ChapterVariableClash"
-        ("'" ++ name ++ "' is in the reserved 'chapter.' namespace; "
-         ++ "the engine owns the chapter state (W3)")
-    | name <- Map.keys varDefs, "chapter." `isPrefixOf` name ]
-
 -- | W1: author-facing actor reference - "player", "ship:<id>" or an NPC id
 --   (same convention as the engine's parseActorString).
 compileActorRef :: String -> E.ActorRef
@@ -2562,19 +2550,13 @@ checkProcRefs procs adv = concatMap siteIssues callSites ++ recursionErrs
             | x `Set.member` seen = go seen xs
             | otherwise = go (Set.insert x seen) (Map.findWithDefault [] x graph ++ xs)
 
-checkCombatVarReserved :: Map.Map String E.VarDef -> [CompileIssue]
-checkCombatVarReserved varDefs =
-    [ ciError ("variables." ++ name) "CombatVariableClash"
-        ("'" ++ name ++ "' is in the reserved 'combat.' namespace; "
-         ++ "the engine owns the combat round state (7f-3)")
-    | name <- Map.keys varDefs
-    , "combat." `isPrefixOf` name ]
-
 -- | Phase 7f-3 (A3): the engine marks an ability's cooldown as a **condition**
 --   named `cooldown_<abilityId>`. That prefix belongs to the engine — an author
 --   condition of the same name would silently share the marker with a cooldown,
 --   and the effect DSL cannot tell the two apart. Condition-side twin of
---   `checkCombatVarReserved` (variables have had that guard since A1).
+--   variable write protection ('checkReservedVarWrites').
+--   Hinweis: Bleibt bewusst getrennt von der Variablen-Schreibschutz-Prüfung,
+--   da Bedingungen (Conditions) eine andere semantische Ebene als Variablen sind.
 checkCooldownConditionReserved :: E.GameWorld -> [CompileIssue]
 checkCooldownConditionReserved gw =
     [ ciError ("conditions." ++ name) "CooldownConditionClash"
@@ -3888,39 +3870,98 @@ checkRollDice adv =
         | keep < 0 || keep > pool ]
     diceIssues _ _ = []
 
--- | B8: @rng.*@ is the engine namespace of named RNG streams. Authored
---   writes (@set_var@/@set_text_var@/@add_var@/@compute_var@), @variables:@
---   declarations and @initial_variables:@ entries on that namespace would
---   break the reproducibility contract — every one is a hard compile error.
---   K1 generalises this write-protection to reserved namespaces including @dice.*@.
---   Walks 'outcomeSurfaces' + 'deepOutcomes', the one surface contract.
-checkRngVarWrites :: Adventure -> [CompileIssue]
-checkRngVarWrites adv =
-    concatMap surfaceIssues (outcomeSurfaces adv)
-    ++ [ ciError ("variables." ++ n) "RngVarWrite" (reservedMsg n)
-       | n <- map avbVarName (advVariables adv), isReservedName n ]
-    ++ [ ciError ("initial_variables." ++ n) "RngVarWrite" (reservedMsg n)
-       | n <- Map.keys (advInitialVariables adv), isReservedName n ]
-    ++ [ ciError ("procedures." ++ apId pr ++ ".params." ++ n) "RngVarWrite" (reservedMsg n)
-       | pr <- advProcedures adv, n <- apParams pr, isReservedName n ]
-  where
-    reservedPrefixes = ["rng.", "dice."]
-    isReservedName n = any (`isPrefixOf` n) reservedPrefixes
-    reservedMsg n
-        | "rng." `isPrefixOf` n = "variable '" ++ n
+-- | Specification of an engine-reserved variable prefix and its write-protection rules.
+data ReservedVarWriteRule = ReservedVarWriteRule
+    { rvrPrefix        :: String
+    , rvrCode          :: String
+    , rvrMessage       :: String -> String
+    , rvrCheckOutcomes  :: Bool
+    , rvrCheckInitials :: Bool
+    , rvrCheckProcs    :: Bool
+    }
+
+reservedVarWriteRules :: [ReservedVarWriteRule]
+reservedVarWriteRules =
+    [ ReservedVarWriteRule
+        { rvrPrefix        = "rng."
+        , rvrCode          = "RngVarWrite"
+        , rvrMessage       = \n -> "variable '" ++ n
             ++ "' is reserved for named RNG streams (B8) and cannot be written by content"
-        | otherwise = "variable '" ++ n
+        , rvrCheckOutcomes  = True
+        , rvrCheckInitials = True
+        , rvrCheckProcs    = True
+        }
+    , ReservedVarWriteRule
+        { rvrPrefix        = "dice."
+        , rvrCode          = "RngVarWrite"
+        , rvrMessage       = \n -> "variable '" ++ n
             ++ "' is reserved and cannot be written by content"
+        , rvrCheckOutcomes  = True
+        , rvrCheckInitials = True
+        , rvrCheckProcs    = True
+        }
+    , ReservedVarWriteRule
+        { rvrPrefix        = "chapter."
+        , rvrCode          = "ChapterVariableClash"
+        , rvrMessage       = \n -> "'" ++ n
+            ++ "' is in the reserved 'chapter.' namespace; the engine owns the chapter state (W3)"
+        , rvrCheckOutcomes  = False
+        , rvrCheckInitials = False
+        , rvrCheckProcs    = False
+        }
+    , ReservedVarWriteRule
+        { rvrPrefix        = "combat."
+        , rvrCode          = "CombatVariableClash"
+        , rvrMessage       = \n -> "'" ++ n
+            ++ "' is in the reserved 'combat.' namespace; the engine owns the combat round state (7f-3)"
+        , rvrCheckOutcomes  = False
+        , rvrCheckInitials = False
+        , rvrCheckProcs    = False
+        }
+    ]
+
+-- | Unified write protection for engine-reserved variable namespaces:
+--   - @rng.*@ (B8) and @dice.*@ (K1): outcomes (@set_var@/@set_text_var@/@add_var@/@compute_var@),
+--     @variables:@, @initial_variables:@, and @procedures:@ parameters. Code: 'RngVarWrite'.
+--   - @chapter.*@ (W3): @variables:@ declarations. Code: 'ChapterVariableClash'.
+--   - @combat.*@ (7f-3): @variables:@ declarations. Code: 'CombatVariableClash'.
+--   Walks 'outcomeSurfaces' + 'deepOutcomes', the one surface contract.
+--
+--   Note: 'checkCooldownConditionReserved' guards the @cooldown_*@ condition namespace
+--   and deliberately remains separate, as conditions are a different semantic level than variables.
+checkReservedVarWrites :: Adventure -> [CompileIssue]
+checkReservedVarWrites adv =
+    concatMap surfaceIssues (outcomeSurfaces adv)
+    ++ [ ciError ("variables." ++ n) (rvrCode p) (rvrMessage p n)
+       | n <- map avbVarName (advVariables adv)
+       , Just p <- [findPrefix n] ]
+    ++ [ ciError ("initial_variables." ++ n) (rvrCode p) (rvrMessage p n)
+       | n <- Map.keys (advInitialVariables adv)
+       , Just p <- [findPrefix n]
+       , rvrCheckInitials p ]
+    ++ [ ciError ("procedures." ++ apId pr ++ ".params." ++ n) (rvrCode p) (rvrMessage p n)
+       | pr <- advProcedures adv
+       , n <- apParams pr
+       , Just p <- [findPrefix n]
+       , rvrCheckProcs p ]
+  where
+    findPrefix n = find (\p -> rvrPrefix p `isPrefixOf` n) reservedVarWriteRules
     surfaceIssues (path, os) = concatMap (writeIssues path) (deepOutcomes os)
     writeIssues path ao =
-        [ ciError (path ++ "." ++ key) "RngVarWrite" (reservedMsg n)
-        | (key, n) <- writes ao, isReservedName n ]
+        [ ciError (path ++ "." ++ key) (rvrCode p) (rvrMessage p n)
+        | (key, n) <- writes ao
+        , Just p <- [findPrefix n]
+        , rvrCheckOutcomes p ]
     writes ao = case ao of
         AOSetVar name _     -> [("set_var", name)]
         AOSetTextVar name _ -> [("set_text_var", name)]
         AOAddVar name _     -> [("add_var", name)]
         AOComputeVar name _ -> [("compute_var", name)]
         _                   -> []
+
+-- | Backward compatibility alias for 'checkReservedVarWrites'.
+checkRngVarWrites :: Adventure -> [CompileIssue]
+checkRngVarWrites = checkReservedVarWrites
 
 -- | Phase 0.4: warn when texts reference an unknown variable placeholder '{name}'.
 checkUnknownPlaceholders :: Adventure -> Map.Map String E.VarDef -> [CompileIssue]

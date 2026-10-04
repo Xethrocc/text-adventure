@@ -434,6 +434,8 @@ description:
 | `{ give: {item: id, to: actor} }` | MoveEntity to CarriedBy actor (B7: `"player"` oder NPC-ID) |
 | `{ consume: item_id }` | MoveEntity Removed |
 | `{ set_flag: name, val: "true" }` | SetValue (VRFlag name) "true" |
+| `{ set_var: { var: name, value: N } }` | SetValue (VRVariable name) N — ganzzahlige Variable setzen |
+| `{ set_var: { var: name, value: "text" } }` | SetValue (VRVariable name) "text" — Textvariable setzen (K6; intern `AOSetTextVar`) |
 | `{ if: { has_flag: name }, then: [...], else: [...] }` | Conditional HasFlag — Flag-Test (ersetzt das entfernte, nie dekodierbare `check_flag`, P1-18) |
 | `{ start_quest: id }` | QuestOp StartQuest |
 | `{ advance_quest: id }` | QuestOp AdvanceQuest |
@@ -475,8 +477,8 @@ Wirkung auf die Zufallsfolge eines anderen. Der Zustand eines Stroms lebt in der
 VarMap unter `rng.<name>` (Hex-Text) und wird beim ersten Zugriff aus
 Name-Hash + aktuellem Default-Strom initialisiert (ohne den Default-Strom zu
 verbrauchen; gleicher Name = gleiche Folge, verschiedene Namen = verschiedene
-Folgen). `rng.*` ist ein Engine-Reservierter Namensraum: `set_var`,
-`set_text_var`, `add_var` und `compute_var` darauf, `variables:`-Deklarationen,
+Folgen). `rng.*` ist ein Engine-Reservierter Namensraum: `set_var`
+(ob Zahl oder Text; intern `set_text_var`), `add_var` und `compute_var` darauf, `variables:`-Deklarationen,
 `initial_variables:`-Einträge und Prozedur-Parameter sind Compile-Fehler
 (`RngVarWrite`) — sonst wäre die Reproduzierbarkeit deterministischer Läufe
 (Fuzzer-Funde, `tests:`-Marker) nicht garantiert.
@@ -515,7 +517,7 @@ Der Effekt schreibt vier Variablen in die `VarMap`:
 
 - **Normale Variablen:** `dice.highest`, `dice.sum`, `dice.count` und `dice.last_roll` sind reguläre Variablen in der `VarMap`. Sie werden wie alle anderen Variablen mit `compare_var` ausgewertet (z. B. `compare_var: {name: dice.highest, op: gte, value: 4}`) oder über `{var: dice.last_roll}` in Texten ausgegeben.
 - **Keine Deklaration erforderlich (Variante A):** Die vier `dice.*`-Variablen gelten dem Validator als bekannt (engine-geliefert). Der Autor muss sie **nicht** unter `variables:` oder `initial_variables:` deklarieren; Platzhalter wie `{var: dice.last_roll}` im Raumtext erzeugen keine `UnknownPlaceholder`-Warnung.
-- **Schreibschutz:** `dice.*` ist wie `rng.*` ein engine-reservierter Namensraum. Autoren dürfen `dice.*` weder über `set_var`, `set_text_var`, `add_var` oder `compute_var` beschreiben noch in `variables:` oder `initial_variables:` deklarieren; Verstöße werden als harter Compile-Fehler (`RngVarWrite`) abgewiesen.
+- **Schreibschutz:** `dice.*` ist wie `rng.*` ein engine-reservierter Namensraum. Autoren dürfen `dice.*` weder über `set_var` (ob Zahl oder Text; intern `set_text_var`), `add_var` oder `compute_var` beschreiben noch in `variables:` oder `initial_variables:` deklarieren; Verstöße werden als harter Compile-Fehler (`RngVarWrite`) abgewiesen.
 
 **Text-Variablen** (`variables:` mit `type: text`) werden mit
 `{ var: <name>, is: <text> }` abgefragt; ihren Startwert setzt die Deklaration
@@ -536,14 +538,11 @@ matcht *nicht* gegen `is: "1"`. `not` und die übrigen Verknüpfungen funktionie
 wie bei jedem Prädikat. Die Engine selbst nutzt genau diese Form für
 `combat.action` / `combat.ability` (taktischer Kampf).
 
-**Schreiben zur Laufzeit:** Text-Variablen setzt ausschließlich die Engine
-(`combat.action` / `combat.ability`). Ein Autoren-Effekt dafür fehlt — `set_var`
-nimmt nur Ganzzahlen (`AOSetVar String Int`), ein
-`{ set_var: weather, value: "sturm" }` ist deshalb ein Schemafehler
-(„Unknown outcome type"). Für Zustände, die zur Laufzeit umschalten sollen,
-bleiben heute numerische Variablen (`compare_var`) oder Flags. Den *Startwert*
-darf man über `initial:` in der Deklaration oder über `initial_variables:`
-setzen (dort sind Strings erlaubt).
+**Schreiben zur Laufzeit:** Ein `set_var` mit einem **String-Wert** schreibt eine Textvariable (z. B. `variables:` mit `type: text`, dann `set_var: { var: stimmung, value: freundlich }`). Es gibt bewusst **kein eigenes `set_text_var`** als Autoren-Form: eine Vokabel, zwei Typen (`set_var` mit Int-Wert erzeugt intern `AOSetVar`, mit String-Wert `AOSetTextVar` — beide übersetzen in `SetValue (VRVariable …)`). Den *Startwert* setzt man über `initial:` in der Deklaration oder über `initial_variables:` (Strings erlaubt).
+
+**Reservierte Präfixe und Schreibschutz:** Die Präfixe `rng.`, `dice.`, `chapter.` und `combat.` sind für die Engine reserviert:
+- `rng.*` (B8) und `dice.*` (K1) sind gegen alle Autoren-Schreibvorgänge (`set_var`, `add_var`, `compute_var`), Deklarationen unter `variables:` / `initial_variables:` sowie Prozedur-Parameter geschützt (`RngVarWrite`).
+- `chapter.*` (W3) und `combat.*` (7f-3) sind reserviert und dürfen nicht unter `variables:` deklariert werden (`ChapterVariableClash` bzw. `CombatVariableClash`).
 
 Das frühere `check_flag`-Kürzel wurde entfernt
 (P1-18), weil es nie dekodierbar war und den Erwartungswert still verwarf.
