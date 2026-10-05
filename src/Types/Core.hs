@@ -1524,6 +1524,8 @@ data ItemDef = ItemDef
         , itemCapacity      :: Maybe Int          -- ^ 4.4: container capacity (count of items), Nothing = not a container
         , itemAscii         :: AsciiArt              -- ^ Optional state-dependent, animated ASCII art
         , itemGrammar       :: Grammar               -- ^ 4.3.5: optional article/gender metadata (empty = none)
+        , itemRepeatable    :: Bool                  -- ^ K15: repeatable/infinite world item or tool (default: False)
+        , itemHomeLocation  :: Maybe RoomID          -- ^ K15: authored starting room for repeatable lookup/respawn
         } deriving (Show, Eq)
 
 instance ToJSON ItemDef where
@@ -1543,6 +1545,8 @@ instance ToJSON ItemDef where
         ] ++ maybe [] (\c -> ["itemCapacity" .= c]) (itemCapacity def)
           ++ asciiPair "itemAscii" (itemAscii def)
           ++ grammarJSONFields (itemGrammar def)
+          ++ (if itemRepeatable def then ["itemRepeatable" .= True] else [])
+          ++ (if itemRepeatable def then maybe [] (\h -> ["itemHomeLocation" .= h]) (itemHomeLocation def) else [])
 
 instance FromJSON ItemDef where
     parseJSON = withObject "ItemDef" $ \o -> ItemDef
@@ -1561,6 +1565,8 @@ instance FromJSON ItemDef where
         <*> o .:? "itemCapacity"     .!= Nothing
         <*> o .:? "itemAscii"        .!= emptyAscii
         <*> grammarFromJSONFields o
+        <*> o .:? "itemRepeatable"   .!= False
+        <*> o .:? "itemHomeLocation" .!= Nothing
 
 -- | Dynamic item state
 data ItemState = ItemState
@@ -1711,14 +1717,28 @@ instance FromJSON ContainerState
 --   `containers:`. Portable containers are `ItemDef`s with `itemCapacity`.
 --   The live state (open/locked) lives in `entityStates` — no new save field.
 data ContainerDef = ContainerDef
-    { conId       :: EntityID
-    , conName     :: String
-    , conLocation :: RoomID
-    , conState    :: ContainerState  -- ^ initial state (open/locked/capacity)
+    { conId         :: EntityID
+    , conName       :: String
+    , conLocation   :: RoomID
+    , conState      :: ContainerState  -- ^ initial state (open/locked/capacity)
+    , conRepeatable :: Bool            -- ^ K15: repeatable container (default: False)
     } deriving (Show, Eq, Generic)
 
-instance ToJSON ContainerDef
-instance FromJSON ContainerDef
+instance ToJSON ContainerDef where
+    toJSON c = object $
+        [ "conId"       .= conId c
+        , "conName"     .= conName c
+        , "conLocation" .= conLocation c
+        , "conState"    .= conState c
+        ] ++ if conRepeatable c then ["conRepeatable" .= True] else []
+
+instance FromJSON ContainerDef where
+    parseJSON = withObject "ContainerDef" $ \o -> ContainerDef
+        <$> o .:  "conId"
+        <*> o .:  "conName"
+        <*> o .:  "conLocation"
+        <*> o .:  "conState"
+        <*> o .:? "conRepeatable" .!= False
 
 -- ---------------------------------------------------------------------------
 -- Player

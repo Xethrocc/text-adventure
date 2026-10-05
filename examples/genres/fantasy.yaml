@@ -135,6 +135,7 @@ items:
     keys: [mortar, bowl]
     location: hermit_hut
     portable: false
+    repeatable: true
   - id: mana_potion
     name: blue vial
     desc: A vial of blue liquid that hums faintly.

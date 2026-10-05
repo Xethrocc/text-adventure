@@ -2105,6 +2105,7 @@ compileContainers allRooms cons = (errs, Map.fromList [ (acnId c, toDef c) | c <
                 (if null (acnName c) then acnId c else acnName c)
                 (acnLocation c)
                 (E.ContainerState (acnOpen c) (acnLocked c) (acnCapacity c))
+                (fromMaybe False (acnRepeatable c))
     initials =
         [ (acnId c, if acnLocked c then "locked" else if acnOpen c then "open" else "closed")
         | c <- cons ]
@@ -2941,6 +2942,8 @@ compileItemDefSafe registry i =
                 , E.itemVerbMap = verbMap'
                 , E.itemCapacity = aiCapacity i
                 , E.itemGrammar = aiGrammar i
+                , E.itemRepeatable = fromMaybe False (aiRepeatable i)
+                , E.itemHomeLocation = if null (aiLocation i) then Nothing else Just (aiLocation i)
                 })
 
 compileItemStates :: [AItem] -> ([CompileIssue], Map.Map String E.ItemState)

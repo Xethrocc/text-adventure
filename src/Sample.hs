@@ -122,6 +122,8 @@ initSampleGame = GameState
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
+                , itemRepeatable = False
+                , itemHomeLocation = Nothing
                 })
             , ("key", ItemDef
                 { itemId = "key"
@@ -141,6 +143,8 @@ initSampleGame = GameState
                         , SetValue (VRFlag "quest_started") (EVString "true") ])
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
+                , itemRepeatable = False
+                , itemHomeLocation = Nothing
                 })
             , ("gold", ItemDef
                 { itemId = "gold"
@@ -157,6 +161,8 @@ initSampleGame = GameState
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
+                , itemRepeatable = False
+                , itemHomeLocation = Nothing
                 })
             , ("jewel", ItemDef
                 { itemId = "jewel"
@@ -173,6 +179,8 @@ initSampleGame = GameState
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
+                , itemRepeatable = False
+                , itemHomeLocation = Nothing
                 })
             , ("potion_healing", ItemDef
                 { itemId = "potion_healing"
@@ -193,6 +201,8 @@ initSampleGame = GameState
                         , SetValue (VRActorProp (ActorEntity "potion_healing") PState) (EVString "empty") ])
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
+                , itemRepeatable = False
+                , itemHomeLocation = Nothing
                 })
             -- Equipment examples
             , ("sword_rusty", ItemDef
@@ -210,6 +220,8 @@ initSampleGame = GameState
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
+                , itemRepeatable = False
+                , itemHomeLocation = Nothing
                 })
             , ("leather_armor", ItemDef
                 { itemId = "leather_armor"
@@ -226,6 +238,8 @@ initSampleGame = GameState
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
+                , itemRepeatable = False
+                , itemHomeLocation = Nothing
                 })
             , ("ring_vigor", ItemDef
                 { itemId = "ring_vigor"
@@ -242,6 +256,8 @@ initSampleGame = GameState
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
+                , itemRepeatable = False
+                , itemHomeLocation = Nothing
                 })
             -- Hidden item, found via `search`
             , ("note_old", ItemDef
@@ -259,6 +275,8 @@ initSampleGame = GameState
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
+                , itemRepeatable = False
+                , itemHomeLocation = Nothing
                 })
             -- Vehicle demo (Phase 3)
             , ("carriage", ItemDef
@@ -276,6 +294,8 @@ initSampleGame = GameState
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
+                , itemRepeatable = False
+                , itemHomeLocation = Nothing
                 })
             , ("hay", ItemDef
                 { itemId = "hay"
@@ -292,6 +312,8 @@ initSampleGame = GameState
                 , itemVerbMap = Map.empty
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
+                , itemRepeatable = False
+                , itemHomeLocation = Nothing
                 })
             ]
         , npcDefs = Map.fromList

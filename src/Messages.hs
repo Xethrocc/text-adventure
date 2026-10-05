@@ -364,6 +364,7 @@ catalogEntries =
     , ("look.fuel_out",           "\nOut of {item} (0/{max})")
     , ("look.fuel",               "\nFuel ({item}: {f}/{max})")
     -- -- quests / effects / journal -----------------------------------------
+    , ("consume.not_reachable",   "That is not within your reach.")
     , ("container.move_refused", "You can't move an item into a container that way.")
     , ("quest.cannot_start",      "You cannot start that quest right now.")
     , ("quest.not_active",        "That quest is not active.")

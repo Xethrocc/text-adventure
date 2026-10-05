@@ -432,7 +432,7 @@ description:
 | `{ damage: 5 }` | ModifyValue VRPlayerHealth -5 |
 | `{ give: item_id }` | MoveEntity to CarriedBy "player" (String-Form) |
 | `{ give: {item: id, to: actor} }` | MoveEntity to CarriedBy actor (B7: `"player"` oder NPC-ID) |
-| `{ consume: item_id }` | MoveEntity Removed (unterstützt auch dynamische Referenzen `"{item1}"` / `"{item2}"` in `interactions.item`) |
+| `{ consume: item_id }` | MoveEntity Removed (Ort-Regel K15.0: nur erreichbare Items im Inventar, ausgerüstet oder im Raum; geschützte Items in Containern oder bei NPCs werden mit `consume.not_reachable` verweigert; unterstützt dynamische Referenzen `"{item1}"` / `"{item2}"` in `interactions.item`) |
 | `{ set_flag: name, val: "true" }` | SetValue (VRFlag name) "true" |
 | `{ set_var: { var: name, value: N } }` | SetValue (VRVariable name) N — ganzzahlige Variable setzen |
 | `{ set_var: { var: name, value: "text" } }` | SetValue (VRVariable name) "text" — Textvariable setzen (K6; intern `AOSetTextVar`) |
@@ -2650,6 +2650,49 @@ beliebig tief (`look` zeigt den Inhalt offener Container).
   Überschreiten verweigert `take`/`take from` (`inventory.full`).
 - Die Kapazität (`capacity:`) zählt die **direkt** enthaltenen Items (zählbasiert, kein
   Gewicht/Volumen).
+
+## Weltobjekte und Endlichkeit: repeatable (K15)
+
+Weltobjekte (Items mit `location:`) und ortsfeste Container (`containers:`) sind standardmäßig **endlich** (Default `einmal`).
+
+```yaml
+items:
+  - id: herb
+    name: moonwort herb
+    location: forest_edge       # Default: endlich (verschwindet nach erstem Nehmen)
+  - id: mortar
+    name: stone mortar
+    location: hermit_hut
+    portable: false
+    repeatable: true            # Ausnahme: Werkzeug/wiederholbare Ressource (bleibt dauerhaft)
+
+containers:
+  - id: kiste
+    name: Kiste
+    location: forest_edge       # Default: endlich (verschwindet nach erstem Leeren/Nehmen)
+  - id: brunnen
+    name: Brunnen
+    location: markt
+    repeatable: true            # Ausnahme: unerschöpflicher Behälter/Quelle
+```
+
+### Regeln und Verträge
+
+1. **Default „einmal" (Endlichkeit):**
+   - Jedes Raumitem ohne `repeatable: true` wird beim Verlassen bzw. Wiederbetreten des Raums ausgeblendet, sobald es genommen oder verbraucht wurde (Status `taken`, `burnt`, `gathered` oder Location `Removed`/`CarriedBy`).
+   - Fehlt der Eintrag eines Items in `itemStates`, gilt es standardmäßig als **sichtbar** (kein Default-Blocker für unberührte Gegenstände).
+2. **Ausnahme `repeatable: true`:**
+   - Werkzeuge, Ambosse, Mörser oder nachwachsende Ressourcen erhalten `repeatable: true`. Sie bleiben auch nach Benutzung oder Verzehr an ihrem Heimatort (`itemHomeLocation`) dauerhaft erhalten.
+3. **Container-Regelung (gemeinsam geregelt):**
+   - Container teilen denselben Default und dieselbe Ausnahme: Container ohne `repeatable: true` verschwinden nach dem ersten Nehmen/Leeren. Container mit `repeatable: true` bleiben dauerhaft bestehen.
+4. **Ort-Regel für `consume:` (K15.0):**
+   - Ein `consume:`-Effekt (egal ob auf ein statisches Item oder dynamisch via `"{item1}"`/`"{item2}"`) darf Gegenstände nur verbrauchen, wenn sie **erreichbar** sind:
+     - **Erlaubt:** `InRoom _` (im aktuellen Raum), `CarriedBy ActorPlayer` (im Spielerinventar), `EquippedBy _` (vom Spieler ausgerüstet — ausgerüstet bedeutet am Körper getragen und damit in direktem Zugriff).
+     - **Verweigert:** `InContainer _` (in einem Container/Behälter) und `CarriedBy (ActorNPC _)` (im Besitz eines NPCs).
+   - Bei Verweigerung bricht `consume:` nicht mit einem Fehler ab, sondern meldet `consume.not_reachable` (*„Das liegt nicht bei dir."* / *„That is not within your reach."*), und das Item verbleibt unverändert an seinem Ort.
+5. **Offene Frage (Container-Inhalt vs. Weltitem):**
+   - *Was passiert mit einem Gegenstand, der AUS einem Container genommen und später im Raum abgelegt wird (`drop`) — wird er dadurch zu einem Weltitem an diesem Ort (und unterliegt beim erneuten Betreten der Endlichkeits-Regel) oder behält er den Status als ursprünglicher Container-Inhalt?*
+   - Dies ist eine offene Architekturfrage der Engine und ausdrücklich keine vorentschiedene Regel.
 
 ## NPC-Besitz (B7)
 

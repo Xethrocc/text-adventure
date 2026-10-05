@@ -356,8 +356,10 @@ applyOutcomeWith depth salt outcome targetId state
         in (state', [], salt)
     MoveEntity eid Removed ->
         let actualEid = resolveVarName eid state
-            state' = consumeItem actualEid state
-        in (state', [], salt)
+        in if isReachableForConsume actualEid state
+           then let state' = consumeItem actualEid state
+                in (state', [], salt)
+           else (state, evMsg "consume.not_reachable" [], salt)
     MoveEntity eid (EquippedBy actor) ->
         case equipItemFor actor eid state of
             Left err    -> (state, evRaw err, salt)

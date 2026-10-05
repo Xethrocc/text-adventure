@@ -3697,7 +3697,7 @@ testTakeEventOnlyOnSuccess = do
     let base = initSampleGame
         nonPortable = ItemDef "statue" "statue" (plainText "A heavy stone statue.")
                           ["statue"] Set.empty Nothing [] False Nothing False
-                          (Just "The statue will not budge.") Map.empty Nothing emptyAscii emptyGrammar
+                          (Just "The statue will not budge.") Map.empty Nothing emptyAscii emptyGrammar False Nothing
         st0 = base { world = (world base)
                          { itemDefs = Map.insert "statue" nonPortable (itemDefs (world base)) }
                    , save  = (save base)
@@ -3918,7 +3918,7 @@ testOnUseTriggerMultiWordAlias = do
         w = (world sample)
             { itemDefs = Map.insert "oil_can"
                 (ItemDef "oil_can" "oil can" (plainText "A dented oil can.") ["oil", "can"]
-                         Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar)
+                         Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing)
                 (itemDefs (world sample))
             , triggerDefs =
                 [ TriggerDef "light_lantern" (OnUse "oil_can") Nothing
@@ -3949,7 +3949,7 @@ testTakeWithOnTakePicksUp = do
             { itemDefs = Map.insert "token"
                 (ItemDef "token" "token" (plainText "A token.") ["token"] Set.empty
                          Nothing [] False Nothing True Nothing
-                         (Map.singleton (PhaseAfter, VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))) Nothing emptyAscii emptyGrammar)
+                         (Map.singleton (PhaseAfter, VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))) Nothing emptyAscii emptyGrammar False Nothing)
                 (itemDefs (world sample)) }
         here = currentRoom (save sample)
         st = sample { world = w
@@ -3970,7 +3970,7 @@ testTakeNonPortableFails = do
             { itemDefs = Map.insert "statue"
                 (ItemDef "statue" "statue" (plainText "A statue.") ["statue"] Set.empty
                          Nothing [] False Nothing False (Just "Too heavy to lift.")
-                         Map.empty Nothing emptyAscii emptyGrammar)
+                         Map.empty Nothing emptyAscii emptyGrammar False Nothing)
                 (itemDefs (world sample)) }
         here = currentRoom (save sample)
         st = sample { world = w
@@ -3988,7 +3988,7 @@ testTakeNonPortableFails = do
 -- Helper: an equippable item placed in the player's inventory.
 invItem :: String -> ItemDef
 invItem iid = ItemDef iid iid (plainText "x") [iid] Set.empty
-    (Just Weapon) [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar
+    (Just Weapon) [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing
 
 -- | Equipped items are always also carried.
 testEquippedImpliesCarried :: IO Bool
@@ -4578,7 +4578,7 @@ tradeWorld stock credits =
                 (ItemDef "rope" "rope" (plainText "A coil of rope.")
                     ["rope"] Set.empty Nothing [] False Nothing True Nothing
                     (Map.singleton (PhaseAfter, VCustom "buy", "intact") buyEff
-                        `Map.union` Map.singleton (PhaseAfter, VCustom "sell", "intact") sellEff) Nothing emptyAscii emptyGrammar)
+                        `Map.union` Map.singleton (PhaseAfter, VCustom "sell", "intact") sellEff) Nothing emptyAscii emptyGrammar False Nothing)
             , verbDefs = Map.singleton "buy" (VerbDef "buy" ["purchase"])
                 `Map.union` Map.singleton "sell" (VerbDef "sell" ["pawn"])
             }
@@ -4752,7 +4752,7 @@ testVisitedAcceptsBool = do
 testItemWithoutStateIsReported :: IO Bool
 testItemWithoutStateIsReported = do
     let lamp = ItemDef "lamp" "lamp" (plainText "A brass lamp.") ["lamp"] Set.empty
-                    Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar
+                    Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing
         gw = (world initSampleGame)
                 { itemDefs = Map.insert "lamp" lamp (itemDefs (world initSampleGame)) }
     r1 <- expectTrue "MissingItemState is reported"
@@ -6483,7 +6483,7 @@ mkTestRoom rId name = Room rId name (plainText name) Map.empty Set.empty Nothing
 --   helper without devices.
 mkTestItem :: String -> String -> ItemDef
 mkTestItem i n =
-    ItemDef i n (plainText n) [i] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar
+    ItemDef i n (plainText n) [i] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing
 
 mstate :: [Room] -> [(ItemDef, Location)] -> GameState
 mstate rms its =
@@ -6565,9 +6565,9 @@ dstate rms its devs =
 testActorHasPredicate :: IO Bool
 testActorHasPredicate = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar
-        it2 = ItemDef "schluessel" "Schlüssel" (plainText "Ein Schlüssel.") ["schluessel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar
-        it3 = ItemDef "kristall" "Kristall" (plainText "Ein Kristall.") ["kristall"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar
+        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing
+        it2 = ItemDef "schluessel" "Schlüssel" (plainText "Ein Schlüssel.") ["schluessel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing
+        it3 = ItemDef "kristall" "Kristall" (plainText "Ein Kristall.") ["kristall"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing
         dev1 = DeviceDef "halterung" "Halterung" ["halterung"] "krypta" (Just "Eine Halterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [ (it1, InRoom "krypta")
                           , (it2, CarriedBy (ActorNPC "guard"))
@@ -6583,7 +6583,7 @@ testActorHasPredicate = do
 testMountAndUnmountEffects :: IO Bool
 testMountAndUnmountEffects = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar
+        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing
         dev1 = DeviceDef "halterung" "Halterung" ["halterung"] "krypta" (Just "Eine Halterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [(it1, InRoom "krypta")] [dev1]
     let (st1, _, _) = applyOutcomeWith 0 0 (Mount "fackel" (ActorEntity "halterung")) "" st0
@@ -6597,7 +6597,7 @@ testMountAndUnmountEffects = do
 testDeviceInteractionExamine :: IO Bool
 testDeviceInteractionExamine = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "brennende Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar
+        it1 = ItemDef "fackel" "brennende Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing
         dev1 = DeviceDef "halterung" "Fackelhalterung" ["halterung"] "krypta" (Just "Eine Wandhalterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [(it1, CarriedBy (ActorEntity "halterung"))] [dev1]
         cmd = parseCommandWith Map.empty "examine halterung"
@@ -8188,6 +8188,8 @@ mkTestKey iid name = ItemDef
     , itemVerbMap = Map.empty
     , itemCapacity = Nothing, itemAscii = emptyAscii
     , itemGrammar = emptyGrammar
+    , itemRepeatable = False
+    , itemHomeLocation = Nothing
     }
 
 -- | Phase 0.1: Test central resolveTarget for Item, NPC, Vehicle, Bare, NotFound, and Ambiguous
@@ -8433,6 +8435,8 @@ mkTestEquip iid name slot = ItemDef
     , itemVerbMap = Map.empty
     , itemCapacity = Nothing, itemAscii = emptyAscii
     , itemGrammar = emptyGrammar
+    , itemRepeatable = False
+    , itemHomeLocation = Nothing
     }
 
 -- | Phase 0.2: Direct test of search order and preferInventoryTarget predicate
@@ -9600,6 +9604,196 @@ testItemOnItemConsumeDynamicResolvesOrder = do
     r8 <- expectEqual (Just (VVText "mortar")) (getVariable "item2" stFwd)
 
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- ---------------------------------------------------------------------------
+-- K15.0: Ort-Regel: consume:/Verbrauch nur auf Erreichbares
+-- ---------------------------------------------------------------------------
+
+-- | Item im Container: consume scheitert mit Meldung, Item bleibt im Container.
+testConsumeItemInContainerRefused :: IO Bool
+testConsumeItemInContainerRefused = do
+    let sample = initSampleGame
+        st0 = sample
+            { save = (save sample)
+                { itemStates = Map.insert "amulett" (ItemState (InContainer "truhe") "intact" Map.empty False)
+                             $ itemStates (save sample)
+                }
+            }
+        (st1, msg) = applyOutcome (MoveEntity "amulett" Removed) "" st0
+        locAfter = fmap itemLocation (Map.lookup "amulett" (itemStates (save st1)))
+    r1 <- expectEqual (Just (InContainer "truhe")) locAfter
+    r2 <- expectTrue "shows unreachable message" ("reach" `isInfixOf` msg || "nicht bei dir" `isInfixOf` msg)
+    pure (r1 && r2)
+
+-- | Item am NPC: consume scheitert mit Meldung, Item bleibt am NPC.
+testConsumeItemOnNPCRefused :: IO Bool
+testConsumeItemOnNPCRefused = do
+    let sample = initSampleGame
+        st0 = sample
+            { save = (save sample)
+                { itemStates = Map.insert "amulett" (ItemState (CarriedBy (ActorNPC "goblin")) "intact" Map.empty False)
+                             $ itemStates (save sample)
+                }
+            }
+        (st1, msg) = applyOutcome (MoveEntity "amulett" Removed) "" st0
+        locAfter = fmap itemLocation (Map.lookup "amulett" (itemStates (save st1)))
+    r1 <- expectEqual (Just (CarriedBy (ActorNPC "goblin"))) locAfter
+    r2 <- expectTrue "shows unreachable message" ("reach" `isInfixOf` msg || "nicht bei dir" `isInfixOf` msg)
+    pure (r1 && r2)
+
+-- | Item in der Hand: consume funktioniert, Item wird Removed.
+testConsumeItemInHandAllowed :: IO Bool
+testConsumeItemInHandAllowed = do
+    let sample = initSampleGame
+        st0 = sample
+            { save = (save sample)
+                { itemStates = Map.insert "elixier" (ItemState (CarriedBy ActorPlayer) "intact" Map.empty False)
+                             $ itemStates (save sample)
+                }
+            }
+        (st1, msg) = applyOutcome (MoveEntity "elixier" Removed) "" st0
+        locAfter = fmap itemLocation (Map.lookup "elixier" (itemStates (save st1)))
+    r1 <- expectEqual (Just Removed) locAfter
+    r2 <- expectTrue "no unreachable message" (not ("reach" `isInfixOf` msg || "nicht bei dir" `isInfixOf` msg))
+    pure (r1 && r2)
+
+-- | Ausgeruestet: ausgeruestet = getragen, consume funktioniert und raeumt Equipment auf.
+testConsumeItemEquippedAllowed :: IO Bool
+testConsumeItemEquippedAllowed = do
+    let sample = initSampleGame
+        withSword = pickupItem "sword_rusty" sample
+    case equipItem "sword_rusty" withSword of
+        Left err -> expectTrue err False
+        Right stEquipped -> do
+            let (st1, msg) = applyOutcome (MoveEntity "sword_rusty" Removed) "" stEquipped
+                locAfter = fmap itemLocation (Map.lookup "sword_rusty" (itemStates (save st1)))
+            r1 <- expectEqual (Just Removed) locAfter
+            r2 <- expectTrue "no longer equipped" (not (isEquipped "sword_rusty" st1))
+            r3 <- expectTrue "no unreachable message" (not ("reach" `isInfixOf` msg || "nicht bei dir" `isInfixOf` msg))
+            pure (r1 && r2 && r3)
+
+-- ---------------------------------------------------------------------------
+-- K15.1: Weltobjekte sind endlich (take_once), Ausnahme repeatable: true
+-- ---------------------------------------------------------------------------
+
+-- | K15.1: Default einmal — ein Weltitem ohne repeatable ist nach dem Nehmen und
+--   Wiederbetreten des Raums weg.
+testRoomItemFiniteDefault :: IO Bool
+testRoomItemFiniteDefault = do
+    let w = (world initSampleGame)
+            { itemDefs = Map.insert "blume" (mkTestItem "blume" "Blume") (itemDefs (world initSampleGame)) }
+        st0 = initSampleGame
+            { world = w
+            , save = (save initSampleGame)
+                { itemStates = Map.insert "blume" (ItemState (InRoom "start") "intact" Map.empty False)
+                             $ itemStates (save initSampleGame) } }
+    -- Item is in start room
+    let itemsBefore = map itemId (getItemsInLocation (InRoom "start") st0)
+    r1 <- expectTrue "item present initially" ("blume" `elem` itemsBefore)
+    -- Take item into inventory
+    let st1 = pickupItem "blume" st0
+        st2 = moveToRoom "hallway" st1
+        st3 = moveToRoom "start" st2
+        itemsAfter = map itemId (getItemsInLocation (InRoom "start") st3)
+    r2 <- expectTrue "item gone upon re-entry" ("blume" `notElem` itemsAfter)
+    pure (r1 && r2)
+
+-- | K15.1: Gegenbeweis repeatable: true — ein Item mit repeatable: true ist beim
+--   zweiten Betreten da, selbst wenn es genommen oder verbraucht wurde.
+testRoomItemRepeatablePresentOnReentry :: IO Bool
+testRoomItemRepeatablePresentOnReentry = do
+    let repItem = (mkTestItem "moerser" "Moerser") { itemRepeatable = True, itemHomeLocation = Just "start" }
+        w = (world initSampleGame)
+            { itemDefs = Map.insert "moerser" repItem (itemDefs (world initSampleGame)) }
+        st0 = initSampleGame
+            { world = w
+            , save = (save initSampleGame)
+                { itemStates = Map.insert "moerser" (ItemState (InRoom "start") "intact" Map.empty False)
+                             $ itemStates (save initSampleGame) } }
+    -- Consume the mortar (moves it to Removed)
+    let (st1, _) = applyOutcome (MoveEntity "moerser" Removed) "" st0
+        locRemoved = fmap itemLocation (Map.lookup "moerser" (itemStates (save st1)))
+    r1 <- expectEqual (Just Removed) locRemoved
+    -- Leave room and return
+    let st2 = moveToRoom "hallway" st1
+        st3 = moveToRoom "start" st2
+        itemsAfter = map itemId (getItemsInLocation (InRoom "start") st3)
+    r2 <- expectTrue "repeatable item present in home room upon re-entry" ("moerser" `elem` itemsAfter)
+    pure (r1 && r2)
+
+-- | K15.1: Container ohne repeatable: true verschwindet nach dem ersten Nehmen.
+testContainerFiniteWithoutRepeatable :: IO Bool
+testContainerFiniteWithoutRepeatable = do
+    let box = (mkTestItem "kiste" "Kiste") { itemCapacity = Just 3, itemPortable = True, itemRepeatable = False }
+        w = (world initSampleGame)
+            { itemDefs = Map.insert "kiste" box (itemDefs (world initSampleGame)) }
+        st0 = initSampleGame
+            { world = w
+            , save = (save initSampleGame)
+                { itemStates = Map.insert "kiste" (ItemState (InRoom "start") "intact" Map.empty False)
+                             $ itemStates (save initSampleGame) } }
+    let itemsBefore = map itemId (getItemsInLocation (InRoom "start") st0)
+    r1 <- expectTrue "container present initially" ("kiste" `elem` itemsBefore)
+    -- Take container
+    let st1 = pickupItem "kiste" st0
+        st2 = moveToRoom "hallway" st1
+        st3 = moveToRoom "start" st2
+        itemsAfter = map itemId (getItemsInLocation (InRoom "start") st3)
+    r2 <- expectTrue "container gone upon re-entry" ("kiste" `notElem` itemsAfter)
+    pure (r1 && r2)
+
+-- | K15.1: Rule 6 — ein Item, das in itemStates fehlt, defaultet zu SICHTBAR.
+testItemMissingFromItemStatesDefaultsToVisible :: IO Bool
+testItemMissingFromItemStatesDefaultsToVisible = do
+    let unplaced = (mkTestItem "kristall" "Kristall") { itemHomeLocation = Just "start" }
+        w = (world initSampleGame)
+            { itemDefs = Map.insert "kristall" unplaced (itemDefs (world initSampleGame)) }
+        st0 = initSampleGame { world = w }
+        itemsHere = map itemId (getItemsInLocation (InRoom "start") st0)
+    r1 <- expectTrue "missing from itemStates is visible" ("kristall" `elem` itemsHere)
+    pure r1
+
+-- | K15.1: Endlichkeit von Weltitems — der Default ist „einmal", die Ausnahme
+--   ist `repeatable: true`. Der itemStatus spielt dabei KEINE Rolle: es gibt
+--   keinen Wert, der ein Item leert. Das war eine frühere Fassung mit einer
+--   harten Liste ("taken"/"burnt"/"gathered"), die nie jemand gesetzt hat und
+--   die damit eine zweite, stille Wahrheit neben `repeatable` behauptete.
+--
+--   Der Test stellt die echte Behauptung: dasselbe Item, einmal genommen, ist
+--   danach weg — unabhaengig davon, welchen Status es trägt.
+testItemDepletedAfterTake :: IO Bool
+testItemDepletedAfterTake = do
+    let kraut = mkTestItem "kraut" "Kraut"
+        w = (world initSampleGame)
+            { itemDefs = Map.insert "kraut" kraut (itemDefs (world initSampleGame)) }
+        -- Im Raum, noch nicht genommen.
+        laid = initSampleGame
+            { world = w
+            , save = (save initSampleGame)
+                { itemStates = Map.insert "kraut" (ItemState (InRoom "start") "intact" Map.empty False)
+                             $ itemStates (save initSampleGame) } }
+        -- Genommen: liegt jetzt beim Spieler, nicht mehr im Raum.
+        taken = laid
+            { save = (save laid)
+                { itemStates = Map.adjust (\s -> s { itemLocation = CarriedBy ActorPlayer })
+                             "kraut" (itemStates (save laid)) } }
+    let inRoom st = "kraut" `elem` map itemId (getItemsInLocation (InRoom "start") st)
+    -- Ein Item ohne State-Eintrag ist sichtbar (der Ausgangszustand).
+    r1 <- expectTrue "item without state entry is visible" (inRoom laid)
+    -- Solange es im Raum liegt, ist es sichtbar — unabhaengig vom Status.
+    r2 <- expectTrue "intact item in the room is visible" (inRoom laid)
+    -- Nach dem Nehmen ist es nicht mehr im Raum: Endlichkeit war der Default.
+    r3 <- expectTrue "taken item is no longer in the room" (not (inRoom taken))
+    -- Der itemStatus ist fuer die Sichtbarkeit irrelevant (kein Wert leert).
+    let burnt = taken { save = (save taken)
+            { itemStates = Map.adjust (\s -> s { itemStatus = "burnt" })
+                         "kraut" (itemStates (save taken)) } }
+        laidBurnt = laid { save = (save laid)
+            { itemStates = Map.adjust (\s -> s { itemStatus = "burnt" })
+                         "kraut" (itemStates (save laid)) } }
+    r4 <- expectTrue "itemStatus does NOT hide a laid-out item" (inRoom laidBurnt)
+    r5 <- expectTrue "itemStatus does NOT restore a taken item" (not (inRoom burnt))
+    pure (r1 && r2 && r3 && r4 && r5)
 
 -- ---------------------------------------------------------------------------
 -- K7+K4: Variablen-Zyklen (refill_per_turn, reset_on, on_overflow)
@@ -10911,5 +11105,15 @@ main = do
         -- K11a: Crafting verbraucht seine Zutaten ({item1}, {item2})
         , runTest "crafting: use A on B binds item1/item2; neither exists before (K11a.1)" testItemOnItemBindsVars
         , runTest "crafting: consume {item1} eats correct item regardless of order (K11a.2)" testItemOnItemConsumeDynamicResolvesOrder
+        -- K15: Weltobjekte sind endlich (take_once), Ort-Regel
+        , runTest "consume on item in container is refused (K15.0)" testConsumeItemInContainerRefused
+        , runTest "consume on item on NPC is refused (K15.0)" testConsumeItemOnNPCRefused
+        , runTest "consume on item in hand is allowed (K15.0)" testConsumeItemInHandAllowed
+        , runTest "consume on equipped item is allowed (K15.0)" testConsumeItemEquippedAllowed
+        , runTest "room item finite by default on re-entry (K15.1)" testRoomItemFiniteDefault
+        , runTest "repeatable item present on re-entry (K15.1)" testRoomItemRepeatablePresentOnReentry
+        , runTest "container without repeatable disappears after take (K15.1)" testContainerFiniteWithoutRepeatable
+        , runTest "item missing from itemStates defaults to visible (K15.1)" testItemMissingFromItemStatesDefaultsToVisible
+        , runTest "world item is finite by default; status does not empty it (K15.1)" testItemDepletedAfterTake
         ]
     when (not (and results)) exitFailure

@@ -1,4 +1,4 @@
--- | Generated from lang/de.json (sha256: b43f968efab453f2cdd61fad2363af933f4fa74cd1e5f6b6cafad377ad35f05a) by scripts/gen-lang-pack.py.
+-- | Generated from lang/de.json (sha256: 0902d96fd91074dc88da56e9912918428c1d17c9cab7c85d84e1d7b853cf2f72) by scripts/gen-lang-pack.py.
 --   DO NOT EDIT by hand - rerun the generator after changing the JSON.
 --
 --   Language-pack data (Phase 4.3): message templates keyed like the
@@ -179,6 +179,7 @@ langDe =
       , ("vehicle.warning", "Warnung: {list}!")
       , ("look.fuel_out", "\n{item} aufgebraucht (0/{max})")
       , ("look.fuel", "\nTreibstoff ({item}: {f}/{max})")
+      , ("consume.not_reachable", "Das liegt nicht bei dir.")
       , ("container.move_refused", "So kannst du keinen Gegenstand in einen Behälter legen.")
       , ("quest.cannot_start", "Diese Quest kannst du gerade nicht beginnen.")
       , ("quest.not_active", "Diese Quest ist nicht aktiv.")

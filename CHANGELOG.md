@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Weltobjekte sind endlich: repeatable: true, Default einmal, Ort-Regel (K15)
+
+- **K15.0 Ort-Regel für `consume:` (`isReachableForConsume`):**
+  - `consumeItem` und `MoveEntity eid Removed` prüfen vor dem Entfernen den aktuellen Aufenthaltsort (`itemLocation`) des Gegenstands.
+  - **Erlaubt:** `InRoom _` (im Raum), `CarriedBy ActorPlayer` (im Spielerinventar), `EquippedBy _` (ausgerüstet = am Körper getragen und damit in direktem Zugriff).
+  - **Verweigert:** `InContainer _` (in einem Container/Behälter) und `CarriedBy (ActorNPC _)` (im Besitz eines NPCs).
+  - Bei Verweigerung bricht die Engine nicht ab, sondern gibt die Meldung `consume.not_reachable` aus (*„Das liegt nicht bei dir."* / *„That is not within your reach."*). Das Item bleibt an seinem Ort erhalten.
+  - Reihenfolge gewahrt: `resolveVarName` (K11a) wird vor der Ort-Prüfung ausgeführt, sodass dynamische Referenzen wie `"{item1}"` korrekt aufgelöst werden.
+- **K15.1 Sichtbarkeitsfilter (Default `einmal`, Ausnahme `repeatable: true`):**
+  - Raumitems sind standardmäßig endlich. Sobald ein Item genommen oder verbraucht wurde, wird es beim Wiederbetreten des Raumes nicht erneut materialisiert.
+  - **Ausnahme `repeatable: true`:** Werkzeuge und unerschöpfliche Ressourcen tragen `repeatable: true` und bleiben an ihrem Heimatort (`itemHomeLocation`) dauerhaft erhalten.
+  - **Fehlende States:** Items, die nicht im SaveState (`itemStates`) verzeichnet sind, gelten standardmäßig als sichtbar (kein Default-Blocker).
+  - **Container:** Ortsfeste Container (`containers:`) und Container-Items werden gemeinsam geregelt: Default endlich, Ausnahme `repeatable: true`.
+  - **Filterort:** Der Filter sitzt zentral in `getItemsInLocation` (`src/Game.hs`), der einzigen autoritativen Stelle für Raumgegenstände (von Parser, Look, Take, Completion gleichermaßen genutzt).
+- **K15.2 Referenzabenteuer `examples/genres/fantasy.yaml` & Spieltest:**
+  - `herb` (Waldrand) ist Default endlich; `mortar` (Einsiedlerhütte) trägt `repeatable: true`.
+  - Spieltest verifiziert: Salbe herstellen -> Hütte verlassen -> zurückkehren: Kraut ist am Waldrand WEG (*„You don't see 'herb' here."*), Mörser ist in der Hütte DA (*„stone mortar"*). Ein zweiter Versuch zur Salbenherstellung scheitert.
+- **K15.3 Dokumentation:**
+  - `docs/adventure-schema.md` aktualisiert mit `repeatable: true`, Default einmal, Ort-Regel für `consume:` und Dokumentation der offenen Frage bzgl. aus Containern entnommener und abgelegter Items.
+- **Byte-Vertrag:**
+  - Gemessen mit Worktree-Vergleich gegen `1b6bf88` über alle 67 kompilierbaren Abenteuer und Fixtures.
+  - **Ausschließlich** `fantasy/world.json` weicht ab (`itemRepeatable: true`, `itemHomeLocation: "hermit_hut"` auf `mortar`).
+  - Alle anderen 66 Abenteuer und Fixtures sind **100% byte-identisch**.
+- **Tests & CI:**
+  - 9 neue Engine-Tests (4 für K15.0, 5 für K15.1): Gesamtzahl **506 passed** (von 497).
+  - 2 neue Worldbuilder-Tests: Gesamtzahl **276 passed** (von 274).
+  - CI (`bash scripts/ci.sh`) 100% grün, 0 Compiler-Warnungen.
+
 ### Crafting verbraucht seine Zutaten: {item1} / {item2} in interactions.item (K11a)
 
 - **Dynamische Variablen `{item1}` / `{item2}` beim Item-auf-Item-Crafting:**

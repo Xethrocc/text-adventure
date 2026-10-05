@@ -1045,7 +1045,7 @@ testContainersCompile = do
     let mk cons = (minAdventure (minRoom "loc_0"))
             { advContainers = cons
             , advPlayer = Just (AAdventurePlayer Nothing Nothing Nothing Map.empty Nothing Nothing (Just 3)) }
-        mkC i open locked = AContainerDef i "" "loc_0" (Just 5) open locked
+        mkC i open locked = AContainerDef i "" "loc_0" (Just 5) open locked Nothing
     r1 <- case compileAdventure (mk [mkC "truhe" False True, mkC "schrank" True False]) of
             Left errs -> expectTrue ("containers compile, got: " ++ issuesText errs) False
             Right cr -> do
@@ -1059,7 +1059,7 @@ testContainersCompile = do
             Left errs -> expectTrue "duplicate container is DuplicateContainer"
                 (any (\i -> ciCode i == "DuplicateContainer") errs)
             Right _ -> expectTrue "duplicate container must fail" False
-    r3 <- case compileAdventure (mk [AContainerDef "ortlos" "" "nirgendwo" Nothing False False]) of
+    r3 <- case compileAdventure (mk [AContainerDef "ortlos" "" "nirgendwo" Nothing False False Nothing]) of
             Left errs -> expectTrue "unknown room is MissingRoom"
                 (any (\i -> ciCode i == "MissingRoom") errs)
             Right _ -> expectTrue "unknown room must fail" False
@@ -1442,6 +1442,7 @@ minItem iid = AItem
     , aiInContainer = Nothing
     , aiCarriedBy = Nothing
     , aiGrammar = E.emptyGrammar
+    , aiRepeatable = Nothing
     }
 
 advWithItem :: AItem -> Adventure
@@ -4295,6 +4296,9 @@ tests =
     -- K11a: Crafting verbraucht seine Zutaten
     , ("crafting: compile of valid recipe with consume {item1}/{item2} (K11a)", testCraftingCompileValidForm)
     , ("crafting: unbound dynamic ref {item9} produces hard compile error (K11a)", testCraftingUnboundRefRejected)
+    -- K15: Weltobjekte sind endlich (repeatable: true, Default einmal)
+    , ("repeatable: YAML parsing and knownKeys clean (K15)", testRepeatableYamlAndKnownKeysClean)
+    , ("repeatable: compile of repeatable items and containers (K15)", testRepeatableCompilation)
     ]
 
 -- ---------------------------------------------------------------------------
@@ -6542,6 +6546,7 @@ minItemKey iid = AItem
     , aiInContainer = Nothing
     , aiCarriedBy = Nothing
     , aiGrammar = E.emptyGrammar
+    , aiRepeatable = Nothing
     }
 
 -- | Minimal usable ANPC for pool entries. Map.empty
@@ -8182,6 +8187,80 @@ testCraftingUnboundRefRejected = do
         Right _ -> expectTrue "unbound {item1} in rule must fail compilation" False
 
     pure (r1 && r2)
+
+-- ---------------------------------------------------------------------------
+-- K15: Weltobjekte sind endlich (repeatable: true, Default einmal)
+-- ---------------------------------------------------------------------------
+
+-- | K15: YAML parsing and knownKeys clean for repeatable: true on item and container.
+testRepeatableYamlAndKnownKeysClean :: IO Bool
+testRepeatableYamlAndKnownKeysClean = do
+    let yaml = unlines
+            [ "name: Repeatable Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: A test room."
+            , "items:"
+            , "  - id: mortar"
+            , "    name: stone mortar"
+            , "    location: loc_0"
+            , "    repeatable: true"
+            , "containers:"
+            , "  - id: kiste"
+            , "    name: Kiste"
+            , "    location: loc_0"
+            , "    repeatable: true"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml decode failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  unexpected compile error: " ++ show errs
+                pure False
+            Right cr -> do
+                let warns = crWarnings cr
+                r1 <- expectTrue "compiles with zero warnings (no UnknownYamlKey)" (null warns)
+                let mIt = Map.lookup "mortar" (E.itemDefs (crWorld cr))
+                let mCn = Map.lookup "kiste" (E.containerDefs (crWorld cr))
+                r2 <- expectEqual (Just True) (E.itemRepeatable <$> mIt)
+                r3 <- expectEqual (Just True) (E.conRepeatable <$> mCn)
+                r4 <- expectTrue "repeatable in knownKeys EntItem" ("repeatable" `Set.member` knownKeys EntItem)
+                pure (r1 && r2 && r3 && r4)
+
+-- | K15: Compile repeatable: true on item and container, and default to False when omitted.
+testRepeatableCompilation :: IO Bool
+testRepeatableCompilation = do
+    let r0 = minRoom "loc_0"
+        itRep = (minItem "mortar") { aiRepeatable = Just True, aiLocation = "loc_0" }
+        itFin = (minItem "herb") { aiRepeatable = Nothing, aiLocation = "loc_0" }
+        cnRep = AContainerDef "kessel" "Kessel" "loc_0" (Just 2) False False (Just True)
+        cnFin = AContainerDef "kiste" "Kiste" "loc_0" (Just 2) False False Nothing
+        adv = (minAdventure r0)
+            { advItems = [itRep, itFin]
+            , advContainers = [cnRep, cnFin]
+            }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn ("compileAdventure failed: " ++ show errs)
+            pure False
+        Right cr -> do
+            let w = crWorld cr
+                defs = E.itemDefs w
+                cdefs = E.containerDefs w
+                mDef = Map.lookup "mortar" defs
+                hDef = Map.lookup "herb" defs
+                kesselDef = Map.lookup "kessel" cdefs
+                kisteDef = Map.lookup "kiste" cdefs
+            r1 <- expectEqual (Just True) (fmap E.itemRepeatable mDef)
+            r2 <- expectEqual (Just (Just "loc_0")) (fmap E.itemHomeLocation mDef)
+            r3 <- expectEqual (Just False) (fmap E.itemRepeatable hDef)
+            r4 <- expectEqual (Just True) (fmap E.conRepeatable kesselDef)
+            r5 <- expectEqual (Just False) (fmap E.conRepeatable kisteDef)
+            pure (r1 && r2 && r3 && r4 && r5)
 
 main :: IO ()
 main = do

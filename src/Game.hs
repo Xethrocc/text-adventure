@@ -68,6 +68,7 @@ module Game
     , deviceCantRemoveMsg
     , deviceCantFlipMsg
     , consumeItem
+    , isReachableForConsume
     , equipItem
     , equipItemFor
     , wornInSlot
@@ -425,12 +426,50 @@ addDiagnostic msg st = st { diagnostics = diagnostics st ++ [msg] }
 --   12 ns; at 100x that size (5000/5000): 130 ns. Not worth that risk.
 getItemsInLocation :: Location -> GameState -> [ItemDef]
 getItemsInLocation loc state =
-    [ def
-    | (iId, st) <- Map.toList (itemStates (save state))
-    , itemLocation st == loc
-    , Just def <- [Map.lookup iId (itemDefs (world state))]
-    , not (itemHidden def) || itemDiscovered st
-    ]
+    case loc of
+        InRoom r ->
+            let -- Direct items currently in this room according to itemStates:
+                -- K15.1: ein Item ist endlich, wenn es nicht `repeatable: true`
+                -- traegt. Sichtbarkeit haengt am Ort (itemLocation) und an
+                -- itemRepeatable — NICHT am itemStatus: es gibt keinen Statuswert,
+                -- der ein Item leert. Das war eine fruehere Fassung mit einer
+                -- harten Liste ("taken"/"burnt"/"gathered"), die niemand gesetzt
+                -- hat und die damit eine zweite, stille Wahrheit neben
+                -- `repeatable` behauptete. Endlichkeit ist EINE Regel, an einer
+                -- Stelle, fuer alle Items.
+                direct =
+                    [ def
+                    | (iId, st) <- Map.toList (itemStates (save state))
+                    , itemLocation st == loc
+                    , Just def <- [Map.lookup iId (itemDefs (world state))]
+                    , not (itemHidden def) || itemDiscovered st
+                    ]
+                -- K15.1: Repeatable items remain present in their home room even if taken or consumed
+                repeatable =
+                    [ def
+                    | def <- Map.elems (itemDefs (world state))
+                    , itemRepeatable def
+                    , itemHomeLocation def == Just r
+                    , not (itemHidden def) || maybe True itemDiscovered (Map.lookup (itemId def) (itemStates (save state)))
+                    ]
+                -- K15.1 Rule 6: Items in worldDefs whose home location is r, but which have NO entry
+                -- in itemStates, default to VISIBLE (not blocked).
+                missing =
+                    [ def
+                    | def <- Map.elems (itemDefs (world state))
+                    , itemHomeLocation def == Just r
+                    , not (Map.member (itemId def) (itemStates (save state)))
+                    , not (itemHidden def)
+                    ]
+                extra = [ d | d <- nub (repeatable ++ missing), itemId d `notElem` map itemId direct ]
+            in direct ++ extra
+        _ ->
+            [ def
+            | (iId, st) <- Map.toList (itemStates (save state))
+            , itemLocation st == loc
+            , Just def <- [Map.lookup iId (itemDefs (world state))]
+            , not (itemHidden def) || itemDiscovered st
+            ]
 
 -- ---------------------------------------------------------------------------
 -- 4.4: containers
@@ -762,9 +801,32 @@ deviceCantFlipMsg :: String
 deviceCantFlipMsg = renderMsg "device.cant_flip" []
 
 
--- | Consume an item, removing it from play entirely
+-- | K15.0: Location rule for item consumption.
+--   An item can only be consumed if it is physically reachable by the player:
+--   - In a room (InRoom _)
+--   - In the player's inventory (CarriedBy ActorPlayer)
+--   - Equipped on the player (EquippedBy _)
+--   Items in containers (InContainer _) or held by NPCs (CarriedBy (ActorNPC _))
+--   are not reachable and cannot be consumed.
+--   EquippedBy is explicitly allowed because equipped items are worn or wielded
+--   by the player (immediately accessible on their person), and consuming them
+--   automatically unequips them via relocateItem.
+isReachableForConsume :: ItemID -> GameState -> Bool
+isReachableForConsume iId state =
+    case Map.lookup iId (itemStates (save state)) of
+        Just is -> case itemLocation is of
+            InRoom _              -> True
+            CarriedBy ActorPlayer -> True
+            EquippedBy _          -> True
+            _                     -> False
+        Nothing -> False
+
+-- | Consume an item, removing it from play entirely if reachable.
 consumeItem :: ItemID -> GameState -> GameState
-consumeItem iId state = relocateItem iId Removed state
+consumeItem iId state =
+    if isReachableForConsume iId state
+    then relocateItem iId Removed state
+    else state
 
 -- | Central relocation: move an item to a new location and keep inventory
 --   and equipment consistent.  If the item was equipped it is unequipped

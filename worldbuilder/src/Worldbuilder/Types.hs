@@ -573,6 +573,7 @@ data AItem = AItem
     , aiCapacity :: Maybe Int        -- ^ 4.4: container capacity (count of items); Nothing = not a container
     , aiCarriedBy :: Maybe String    -- ^ B7: npc id (or "player") — the item starts in this actor's possession
     , aiGrammar :: E.Grammar         -- ^ 4.3.5: article:/gender: grammar metadata (empty = none)
+    , aiRepeatable :: Maybe Bool     -- ^ K15: repeatable world object (default: False)
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AItem where
@@ -598,6 +599,7 @@ instance FromJSON AItem where
         <*> o .:? "capacity"
         <*> o .:? "carried_by"
         <*> E.grammarFromJSONFields o
+        <*> o .:? "repeatable"
 
 -- ---------------------------------------------------------------------------
 -- NPCs
@@ -1425,6 +1427,7 @@ data AContainerDef = AContainerDef
     , acnCapacity :: Maybe Int        -- ^ count of items it holds
     , acnOpen     :: Bool             -- ^ starts open (default: closed)
     , acnLocked   :: Bool             -- ^ starts locked (default: no)
+    , acnRepeatable :: Maybe Bool     -- ^ K15: repeatable container (default: False)
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AContainerDef where
@@ -1435,6 +1438,7 @@ instance FromJSON AContainerDef where
         <*> o .:? "capacity"
         <*> o .:? "open"     .!= False
         <*> o .:? "locked"   .!= False
+        <*> o .:? "repeatable"
 
 -- | An interactive device / fixture (W4) authored under `devices:`.
 data ADeviceDef = ADeviceDef
@@ -1935,7 +1939,7 @@ knownKeys EntItem = Set.fromList
     [ "id", "name", "desc", "description", "ascii", "keys", "tags"
     , "location", "state", "slot", "effects", "hidden", "discover"
     , "props", "on_take", "verb_map", "portable", "take_failure", "in_container"
-    , "capacity", "carried_by", "article", "gender"
+    , "capacity", "carried_by", "article", "gender", "repeatable"
     ]
 knownKeys EntNPC = Set.fromList
     [ "id", "name", "desc", "description", "ascii", "keys", "location"

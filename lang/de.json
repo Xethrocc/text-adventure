@@ -164,6 +164,7 @@
     "vehicle.warning": "Warnung: {list}!",
     "look.fuel_out": "\n{item} aufgebraucht (0/{max})",
     "look.fuel": "\nTreibstoff ({item}: {f}/{max})",
+    "consume.not_reachable": "Das liegt nicht bei dir.",
     "container.move_refused": "So kannst du keinen Gegenstand in einen Behälter legen.",
     "quest.cannot_start": "Diese Quest kannst du gerade nicht beginnen.",
     "quest.not_active": "Diese Quest ist nicht aktiv.",
