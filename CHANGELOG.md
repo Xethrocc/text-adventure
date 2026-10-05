@@ -2,6 +2,60 @@
 
 ## Unreleased
 
+### Aussagen mit Sprecher und Wahrheitsgehalt: statements: (K9)
+
+- **Aussagen-Sektion (`statements:`):**
+  - Eigene Top-Level-Sektion neben `facts:`, die Berichte über Sachverhalte mit Urheber (`speaker`), Inhalt (`claims`), Wahrheitswert (`truth`, Default `true`), Wortlaut (`text`), optionalem Gate (`when`) und Gruppierung (`tag`) erfasst.
+  - Unterstützt sowohl Listen- als auch Map-Syntax (`parseStatementsField`).
+  - Merge-Vertrag bei `include:`: eigene Sektionen zuerst, dann Includes; doppelte IDs über Dateien hinweg lösen `DuplicateStatement` aus und benennen beide Quellen.
+  - Byte-Gleichheit: Leere `statementDefs` werden in `world.json` ausgelassen (`[ "statementDefs" .= statementDefs gw | not (null (statementDefs gw)) ]`).
+- **Roundtrip-Bug im `knows:`-Prädikat (vorbestehend seit W1, 2026-09-29):** Beim
+  seriellen/deserialisieren einer Welt schrieb `ToJSON` die Form
+  `{"knows": "<actor>", "fact": "<id>"}`, während `FromJSON` an der Stelle
+  `knows` als **Objekt** erwartete. Der String-Zweig griff also für jeden Actor und
+  las `"player"` als Fakt-ID — jedes `knows:` mit Actor prüfte zur Laufzeit
+  `known.player.player` statt `known.player.<id>`. **Kein Abenteuer war betroffen,
+  weil keines je `knows:` mit Actor verwendet hat** (gemessen: 0 Treffer über alle 66
+  Abenteuer und Fixtures). Erst `detective.yaml` durch K9 machte es sichtbar.
+  Der Decoder akzeptiert nun alle drei Formen — `{knows: {actor, fact}}` (kanonisch),
+  `{knows: <actor>, fact: <id>}` (Encoder-Form) und die Autoren-Kurzform
+  `{knows: <fact>}` (unverändert, ActorPlayer). Der Kurzform-Vertrag aus
+  `docs/adventure-schema.md` bleibt gewahrt.
+  **Regressionsschutz:** ein Roundtrip-Test über *jeden* Predicate-Konstruktor
+  (`GameWorld -> JSON -> GameWorld`), ein Test auf die erhaltene YAML-Kurzform, ein
+  **Spieltest**, der eine Aussage lernt und danach die Sichtbarkeit eines
+  `visible_when: {knows: …}` prüft, sowie ein Test auf Byte-Stabilität der
+  Welt-Datei über einen Serialize-Deserialize-Zyklus.
+  **Byte-Auswirkung:** von 134 Artefakten weicht **ausschließlich**
+  `examples_genres_detective/world.json` ab — die anderen 66 Abenteuer und Fixtures
+  bleiben byte-identisch, weil keines die betroffenen Prädikatformen verwendet.
+- **`actorId (ActorShip v)` liefert `"ship:" ++ v`** — die Doku führt `ship:<id>`
+  seit längerem als Zielform (`docs/adventure-schema.md`), `actorId` lieferte aber die
+  nackte Vehicle-ID. Keine Laufzeitkollision, weil `ActorShip` in den Effekten über
+  Pattern-Matching aufgelöst wird; die Änderung gleicht Encoder und Doku an.
+- **Variablen-Spiegel beim `learn:` (Spielzustand):**
+  - Beim Erlernen einer Aussage via `learn: <id>` spiegelt die Engine Metadaten dynamisch in die VarMap:
+    - `statement.<id>.truth` (`"true"` oder `"false"` als Text-Variable)
+    - `statement.<id>.speaker` (Text-Variable)
+    - `statement.<id>.claims` (Text-Variable)
+  - `forget: <id>` räumt `known.<actor>.<id>` und alle gespiegelten `statement.<id>.*`-Variablen rückstandsfrei ab.
+  - **Architekturentscheidung zur Wahrheit:** Die Wahrheit wird dynamisch beim `learn` gesetzt (Spielzustand). Begründung: Statische Weltvariablen sind nicht dynamisch über `compare_var`/`getVariable` erreichbar, und ein Vorbefüllen von `initialVars` würde den SaveState vor dem Verhör verschmutzen sowie nach `forget` bestehen bleiben.
+  - **Auswertung:** `evalPredicate (CompareVar name op n)` und `resolveValueRef (VRVariable name)` interpretieren `"true"` als 1 und `"false"` als 0, sodass `compare_var` numerisch (`op: eq`, `value: 0`/`1`) und `{ var: statement.<id>.truth, is: "false" }` per Textvergleich auf den Wahrheitsgehalt prüfen können.
+- **Autorenverantwortung statt Solver-Magie:**
+  - Kein automatisches `contradicts:`-Prädikat, keine Auto-Lügenerkennung, kein Solver. Widersprüche und Konfrontationen sind Autorenarbeit via `visible_when` (`all: [{knows: ...}, {knows: ...}]`) und `compare_var`/`var: ... is:`.
+  - Fakten und Aussagen bleiben getrennt: Aussagen erscheinen nicht im Notizbuch (`journal: notes`).
+- **Compiler-Checks & Validator (`Worldbuilder.Compile`):**
+  - Harte Diagnose `DuplicateStatement` bei mehrfacher Deklaration.
+  - Harte Diagnose `StatementFactClash` bei Namenskollision zwischen `facts:` und `statements:`.
+  - Harte Diagnose `UnknownFact` bei `learn:`, `forget:` oder `knows:` mit unbekannter ID (vereinheitlicht für Fakten und Aussagen).
+  - Schutzregel `StatementVariableClash` gegen Autorenschreiben oder Deklarieren von `statement.*`-Variablen.
+  - Schema-Prüfung: `checkUnknownYamlKeys` prüft `statements` mit `EntStatement` (inkl. Tippfehler-Vorschlägen).
+  - **Validator-Bugfix für `checkUnknownPlaceholders`:** Platzhalter `{var: statement.*}` und `{var: known.*}` werfen keine ungerechtfertigten `UnknownPlaceholder`-Warnungen mehr.
+- **Referenzgenre `examples/genres/detective.yaml`:**
+  - Sieben Aussagen deklariert: `butler_alibi` (false), `butler_ledger` (true), `butler_knew` (true), `widow_letter` (true), `doctor_greeting` (false), `doctor_confront` (false, da gezielte Schutzbehauptung zur Diskreditierung des Stallburschen), `doctor_glove` (true, formal gültiges Argument mit Tag `argument`).
+  - Dialogknoten und Trigger auf `learn: <statement-id>` umgestellt.
+  - **Spielbarer Widerspruch:** Im Dialog mit dem Doktor erscheint bei Vorliegen von Butler- und Doktor-Alibi (`knows: butler_alibi` und `knows: doctor_greeting`) eine neue Konfrontations-Option, die über `if: { var: statement.doctor_greeting.truth, is: "false" }` den Argwohn (`suspicion`) des Verdächtigen steigert — spielbar VOR der eigentlichen Anklage.
+
 ### Content-Migration: Detektiv-Genre auf Wissensmodell (K13)
 
 - **Migration von `examples/genres/detective.yaml`:**

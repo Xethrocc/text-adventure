@@ -2325,6 +2325,61 @@ combine_verb: kombiniere # optional: das Wort fürs Kombinieren (Default: kombin
 - **Checks:** `UnknownFact`, `DuplicateFact`, `YieldsWithoutPremises`,
   `KnownVariableClash` (`known.` gehört der Engine), Kollisionen der generierten Verben.
 
+## Aussagen mit Sprecher und Wahrheitsgehalt: `statements:` (K9)
+
+Aussagen modellieren Zeugen- und Verdächtigenberichte getrennt von objektiven Weltfakten (`facts:`).
+Eine Aussage dokumentiert, **wer** etwas behauptet hat, **was** behauptet wurde (`claims:`), und
+welchen Wahrheitsgehalt der Autor festgelegt hat (`truth:`).
+
+```yaml
+statements:
+  - id: butler_alibi
+    speaker: butler                      # NPC- oder Item-ID des Urhebers
+    claims: doktor_war_fort              # Was behauptet wird (Fact-ID oder Flag-Name)
+    truth: false                         # Autorentscheidung: wahr oder falsch (Default: true)
+    text: "Below stairs, sir, laying the fires."  # Wortlaut
+    when: { has_item: note }             # optional: ab wann der Spieler sie kennt
+    tag: alibi                           # optional: Gruppierung
+```
+
+**Felder:**
+
+| Feld | Pflicht | Typ | Bedeutung |
+|---|---|---|---|
+| `id` | ja | String | Eindeutige Kennung der Aussage (darf nicht mit `facts:` kollidieren) |
+| `speaker` | ja | String | NPC- oder Item-ID des Urhebers |
+| `claims` | ja | String | Was behauptet wird (Referenz, z. B. Fact-ID oder Sachverhalts-Schlagwort) |
+| `truth` | nein | Bool | Autorentscheidung: `true` oder `false` (Default: `true`) |
+| `text` | ja | String | Wortlaut der Aussage |
+| `when` | nein | Predicate | Bedingung / Gate für Sichtbarkeit |
+| `tag` | nein | String | Optionale Gruppierung |
+
+**Regeln & Variablen-Spiegel:**
+
+- **Wissen per `learn: <id>`:** Aussagen werden wie Fakten über `learn: <statement-id>` erlernt
+  und erzeugen den Eintrag `known.<actor>.<statement-id>` in der VarMap.
+- **Automatischer Variablen-Spiegel beim `learn`:** Sobald ein Akteur eine Aussage erlernt,
+  spiegelt die Engine deren Metadaten in den reservierten Namensraum:
+  - `statement.<id>.truth` (`"true"` oder `"false"` als Text-Variable)
+  - `statement.<id>.speaker` (Text-Variable)
+  - `statement.<id>.claims` (Text-Variable)
+- **Abfrage über `compare_var` und `{ var: ..., is: ... }`:**
+  - `if: { var: statement.<id>.truth, is: "false" }` prüft auf Falschaussage.
+  - `if: { compare_var: { var: statement.<id>.truth, op: eq, value: 0 } }` (0 = false, 1 = true).
+- **Bereinigung beim `forget:`** Ein `forget: <id>` entfernt sowohl `known.<actor>.<id>` als auch
+  die gespiegelten `statement.<id>.*`-Variablen aus dem Spielzustand.
+- **Grenze: `truth` ist eine AUTORENTSCHEIDUNG, keine berechnete Größe:**
+  Es gibt kein automatisches Widerspruchs-Prädikat (`contradicts:`), keinen Theorem-Prover und
+  keine automatische Lügen-Erkennung. Die Konfrontation oder Aufdeckung eines Widerspruchs
+  zwischen zwei Aussagen ist Autorenarbeit über Bedingungen (`visible_when:` mit `all: [{knows: a}, {knows: b}]`
+  und `compare_var`/`var: ... is:`).
+- **Trennung von Fakten und Aussagen:**
+  `facts:` beschreiben, was objektiv in der Welt gilt; `statements:` erfassen, was Personen behauptet haben.
+  Aussagen werden nicht in das Notizbuch (`journal: notes`) gemischt.
+- **Checks:** `DuplicateStatement`, `StatementFactClash` (Aussage- und Fakten-IDs müssen disjunkt sein),
+  `UnknownFact` bei `learn:`/`forget:`/`knows:` mit unbekannter ID, `StatementVariableClash` bei manueller Deklaration
+  oder manuellem Schreiben von `statement.*`-Variablen.
+
 ## Kapitel: `chapters:` (W3)
 
 Narrative Struktur als Daten: benannte Kapitel mit optionaler Auto-Gate-Bedingung und

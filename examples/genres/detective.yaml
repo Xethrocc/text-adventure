@@ -39,6 +39,68 @@ facts:
     source: "in the corner"
     tag: tat
 
+statements:
+  - id: butler_alibi
+    speaker: butler
+    claims: butler_unten
+    truth: false
+    text: "Below stairs, sir, laying the fires. The whole staff will swear to it."
+    tag: alibi
+
+  - id: butler_ledger
+    speaker: butler
+    claims: doktor_abrechnungen
+    truth: true
+    text: "Two payments erased? ...Then you had best speak to the doctor, sir. Not I."
+    tag: motive
+
+  - id: butler_knew
+    speaker: butler
+    claims: erpressung_bekannt
+    truth: true
+    text: "I knew the master was being bled by someone. I did not know by whom. I swear it."
+    tag: motive
+
+  - id: widow_letter
+    speaker: widow
+    claims: doktor_identifikation
+    truth: true
+    text: "'R'? No — the doctor signs himself 'R. Ashgrove'. He was my husband's physician, and his creditor."
+    tag: motive
+
+  - id: doctor_greeting
+    speaker: doctor
+    claims: doktor_im_zimmer
+    truth: false
+    text: "A sad business. A blow to the head, I should say. I was in my room all evening, of course."
+    tag: alibi
+
+  # Begründung truth doctor_confront:
+  # Der Doktor tut die Aussage des Stallburschen als Trunkenheit ab, um dessen
+  # Zeugenschaft zu diskreditieren. In der Spielwelt ist die Beobachtung des Burschen
+  # jedoch zutreffend; die Behauptung des Doktors ist eine gezielte Falschaussage
+  # (Schutzbehauptung), daher truth: false.
+  - id: doctor_confront
+    speaker: doctor
+    claims: stallbursche_unglaubwuerdig
+    truth: false
+    text: "...The stable boy is a drunk. Believe whom you like."
+    tag: alibi
+
+  # Begründung truth doctor_glove:
+  # "A gardener's glove proves a gardener's hand, not mine."
+  # Dies ist kein Tatsachenbericht über ein Alibi, sondern ein formallogisches
+  # Argument. Als solches ist der Satz formallogisch wahr (ein Gärtnerhandschuh
+  # weist prima facie auf einen Gärtner), dient aber der Irreführung über die
+  # tatsächliche Handgröße. Daher als Aussage deklariert mit truth: true und dem Tag "argument".
+  - id: doctor_glove
+    speaker: doctor
+    claims: handschuh_formal_gaertner
+    truth: true
+    text: "A gardener's glove proves a gardener's hand, not mine."
+    tag: argument
+
+
 
 rooms:
   - id: street
@@ -187,10 +249,15 @@ npcs:
           greeting:
             text: "A tragedy, sir. I have served this house since before you were born."
             choices:
-              - {text: "Where were you at eleven?", next: alibi}
+              - text: "Where were you at eleven?"
+                next: alibi
+                outcomes:
+                  - {learn: butler_alibi}
               - text: "I found the household ledger."
                 next: ledger
                 visible_when: {has_item: ledger}
+                outcomes:
+                  - {learn: butler_ledger}
               - {text: "That is all.", next: null}
           alibi:
             text: "Below stairs, sir, laying the fires. The whole staff will swear to it."
@@ -203,6 +270,7 @@ npcs:
                 next: knew
                 outcomes:
                   - {add_var: suspicion, delta: 1}
+                  - {learn: butler_knew}
               - {text: "We shall see.", next: null}
           knew:
             text: "I knew the master was being bled by someone. I did not know by whom. I swear it."
@@ -249,6 +317,7 @@ npcs:
                 next: null
                 outcomes:
                   - {add_var: suspicion, delta: 1}
+                  - {learn: widow_letter}
     verb_map:
       accuse,alive:
         - if: {has_item: torn_letter}
@@ -266,13 +335,31 @@ npcs:
           greeting:
             text: "A sad business. A blow to the head, I should say. I was in my room all evening, of course."
             choices:
+              - text: "The butler claims he was below stairs, and you claim you were in your room."
+                next: widerspruch
+                visible_when:
+                  all:
+                    - {knows: butler_alibi}
+                    - {knows: doctor_greeting}
               - text: "The stables say otherwise."
                 next: confront
                 visible_when: {has_item: alibi_note}
+                outcomes:
+                  - {learn: doctor_confront}
               - text: "These are your payments in the ledger?"
                 next: payments
                 visible_when: {has_item: ledger}
               - {text: "Of course.", next: null}
+          widerspruch:
+            text: "The butler swears he was laying the fires. You swear you were in your room. Both cannot be unobserved at once — and one of you is lying."
+            choices:
+              - text: "Confront him with his false alibi."
+                next: null
+                outcomes:
+                  - if: { var: statement.doctor_greeting.truth, is: "false" }
+                    then:
+                      - {add_var: suspicion, delta: 1}
+                      - {msg: "The doctor blanches for an instant before recovering his sneer. 'A clever inference, detective. But an inference is not an indictment.'"}
           confront:
             text: "...The stable boy is a drunk. Believe whom you like."
             choices:
@@ -281,6 +368,7 @@ npcs:
                 visible_when: {has_item: bloody_glove}
                 outcomes:
                   - {add_var: suspicion, delta: 1}
+                  - {learn: doctor_glove}
               - {text: "We shall see.", next: null}
           payments:
             text: "A physician extends credit. That is not a crime."
@@ -291,6 +379,8 @@ npcs:
             choices:
               - {text: "It would not fit a gardener. It would fit you.", next: null}
     verb_map:
+      before:talk,alive:
+        - {learn: doctor_greeting}
       accuse,alive:
         - if:
             all:

@@ -125,6 +125,7 @@ module Types.Core
     , TriggerState (..)
     , ProcDef (..)
     , FactDef (..)
+    , StatementDef (..)
     , CombineDef (..)
     , ChapterDef (..)
     , DeviceDef (..)
@@ -398,7 +399,7 @@ instance FromJSON ActorRef where
 actorId :: ActorRef -> String
 actorId ActorPlayer       = "player"
 actorId (ActorNPC nId)    = nId
-actorId (ActorShip vId)   = vId
+actorId (ActorShip vId)   = "ship:" ++ vId
 actorId (ActorRoom rId)   = rId
 actorId (ActorEntity eId) = eId
 
@@ -896,9 +897,19 @@ instance FromJSON Predicate where
         <|> (HasCondition <$> o .: "has_condition")
         -- W1: knowledge — `knows: <fact>` (player) or `{knows: <actor>, fact: <fact>}`
         <|> (do k <- o .: "knows"
-                case k of
-                    String f -> pure (Knows ActorPlayer (T.unpack f))
-                    _        -> Knows <$> parseJSON k <*> o .: "fact")
+                mFact  <- o .:? "fact"
+                mActor <- o .:? "actor"
+                case (mFact, mActor) of
+                    (Just fact, _) -> do
+                        act <- parseJSON k
+                        pure (Knows act fact)
+                    (Nothing, Just act) -> case k of
+                        String f -> pure (Knows act (T.unpack f))
+                        _        -> fail "Expected fact string for knows"
+                    (Nothing, Nothing) -> case k of
+                        String f  -> pure (Knows ActorPlayer (T.unpack f))
+                        Object ko -> Knows <$> (ko .: "actor" <|> ko .: "knows") <*> ko .: "fact"
+                        _         -> fail "Expected fact string or object for knows")
         <|> (EntityHasState <$> o .: "state" <*> o .: "is")
         -- Text comparison for variables holding text (`type: text`), e.g. the
         -- engine's own `combat.action`. Distinct from `state`/`is`, which tests
@@ -2027,6 +2038,39 @@ data FactDef = FactDef
 instance ToJSON FactDef
 instance FromJSON FactDef
 
+-- | A statement (K9): authored under `statements:` with speaker, claims,
+--   truth value, text, optional condition and tag.
+data StatementDef = StatementDef
+    { stDefId      :: String
+    , stDefSpeaker :: String
+    , stDefClaims  :: String
+    , stDefTruth   :: Bool
+    , stDefText    :: String
+    , stDefWhen    :: Maybe Predicate
+    , stDefTag     :: Maybe String
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON StatementDef where
+    toJSON st = object $
+        [ "id"      .= stDefId st
+        , "speaker" .= stDefSpeaker st
+        , "claims"  .= stDefClaims st
+        , "truth"   .= stDefTruth st
+        , "text"    .= stDefText st
+        ]
+        ++ [ "when" .= w | Just w <- [stDefWhen st] ]
+        ++ [ "tag"  .= t | Just t <- [stDefTag st] ]
+
+instance FromJSON StatementDef where
+    parseJSON = withObject "StatementDef" $ \o -> StatementDef
+        <$> o .:  "id"
+        <*> o .:? "speaker" .!= ""
+        <*> o .:? "claims"  .!= ""
+        <*> o .:? "truth"   .!= True
+        <*> o .:? "text"    .!= ""
+        <*> o .:? "when"
+        <*> o .:? "tag"
+
 -- | A derivation rule (W1, `combine:`): when an actor knows **all** premises,
 --   the yields fact follows — the auto-cascade applies this table as a pure
 --   fixpoint in the Learn application (never over trigger recursion).
@@ -2118,6 +2162,7 @@ data GameWorld = GameWorld
     , sandboxZones       :: Map.Map String SandboxZone               -- ^ Procedural infinite sandbox zones (Genre 3)
     , procDefs           :: Map.Map String ProcDef                   -- ^ Named procedures (Phase 2.5); empty map is omitted from world.json
     , factDefs           :: [FactDef]                                -- ^ Knowledge facts (W1), in declaration order; empty list is omitted
+    , statementDefs      :: [StatementDef]                           -- ^ Knowledge statements (K9), in declaration order; empty list is omitted
     , combineDefs        :: [CombineDef]                             -- ^ Derivation rules (W1); empty list is omitted
     , chapterDefs        :: [ChapterDef]                             -- ^ Chapters (W3) in narrative order; empty list is omitted
     , deviceDefs         :: Map.Map DeviceID DeviceDef               -- ^ Interactive devices/fixtures (W4); empty map is omitted
@@ -2165,7 +2210,7 @@ instance ToJSON GameWorld where
         , "worldName"          .= worldName gw
         , "abilities"          .= abilities gw
         ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair ++ sandboxPair
-          ++ procPair ++ factPair ++ combinePair ++ chapterPair ++ devicePair ++ containerPair ++ progPair
+          ++ procPair ++ factPair ++ statementPair ++ combinePair ++ chapterPair ++ devicePair ++ containerPair ++ progPair
           ++ langPair ++ msgPair ++ npcInteractionPair
       where
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
@@ -2182,6 +2227,7 @@ instance ToJSON GameWorld where
         -- world checksum) of every existing adventure stays bit-identical.
         procPair = [ "procDefs" .= procDefs gw | not (Map.null (procDefs gw)) ]
         factPair = [ "factDefs" .= factDefs gw | not (null (factDefs gw)) ]
+        statementPair = [ "statementDefs" .= statementDefs gw | not (null (statementDefs gw)) ]
         combinePair = [ "combineDefs" .= combineDefs gw | not (null (combineDefs gw)) ]
         chapterPair = [ "chapterDefs" .= chapterDefs gw | not (null (chapterDefs gw)) ]
         devicePair = [ "deviceDefs" .= deviceDefs gw | not (Map.null (deviceDefs gw)) ]
@@ -2259,6 +2305,7 @@ instance FromJSON GameWorld where
         <*> o .:? "sandboxZones" .!= Map.empty
         <*> o .:? "procDefs" .!= Map.empty
         <*> o .:? "factDefs" .!= []
+        <*> o .:? "statementDefs" .!= []
         <*> o .:? "combineDefs" .!= []
         <*> o .:? "chapterDefs" .!= []
         <*> o .:? "deviceDefs" .!= Map.empty

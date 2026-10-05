@@ -182,6 +182,7 @@ duplicateSections adv =
     , ("procedures", map apId (advProcedures adv))
     , ("chapters", map achId (advChapters adv))
     , ("facts", map afdId (advFacts adv))
+    , ("statements", map stId (advStatements adv))
     , ("devices", map adId (advDevices adv))
     , ("clips", map acId (advClips adv))
     , ("abilities", map aabId (advAbilities adv))
@@ -238,6 +239,7 @@ mergeSources ((_, main) : incls) = foldl mergeOne main { advInclude = [] } incls
         , advChapters        = advChapters acc ++ advChapters inc
         , advPursuit         = advPursuit acc ++ advPursuit inc
         , advFacts           = advFacts acc ++ advFacts inc
+        , advStatements      = advStatements acc ++ advStatements inc
         , advCombines        = advCombines acc ++ advCombines inc
         , advDevices         = advDevices acc ++ advDevices inc
         , advTests           = advTests acc ++ advTests inc

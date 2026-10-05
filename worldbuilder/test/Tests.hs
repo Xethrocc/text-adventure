@@ -73,6 +73,7 @@ minWorld = E.GameWorld
     , cardDefs = Map.empty
     , sandboxZones = Map.empty
     , factDefs = []
+    , statementDefs = []
     , combineDefs = []
     , procDefs = Map.empty
     , chapterDefs = []
@@ -218,6 +219,7 @@ minAdventure room = Adventure
     , advPursuit = [], advContainers = []
     , advInclude = []
     , advFacts = []
+    , advStatements = []
     , advCombines = []
     , advDevices = []
     , advProgression = Nothing
@@ -475,6 +477,230 @@ testKnowsSugar = do
         Just o -> expectEqual (AOForget "brief" "player") o
         Nothing -> expectTrue "forget: parses" False
     pure (r1 && r2 && r3 && r4)
+
+-- ---------------------------------------------------------------------------
+-- K9: statements
+-- ---------------------------------------------------------------------------
+
+-- | `statements:` compiles into statementDefs; empty is omitted from world.json;
+--   list and map syntax parse all fields with .:? defaults.
+testStatementsCompile :: IO Bool
+testStatementsCompile = withIncludeDir $ \dir -> do
+    let empty = minAdventure (minRoom "loc_0")
+    r0 <- case compileAdventure empty of
+            Left _ -> expectTrue "default compiles" False
+            Right cr -> do
+                a <- expectTrue "no statements by default" (null (E.statementDefs (crWorld cr)))
+                b <- expectTrue "world.json omits empty statementDefs"
+                        (not ("statementDefs" `isInfixOf` BLC.unpack (Aeson.encode (crWorld cr))))
+                pure (a && b)
+    let listYaml = unlines
+            [ "start_room: loc_0"
+            , "rooms: [ {id: loc_0, name: R, desc: D} ]"
+            , "statements:"
+            , "  - id: stmt_list"
+            , "    speaker: butler"
+            , "    claims: doktor_war_fort"
+            , "    truth: false"
+            , "    text: \"Er war nicht da.\""
+            , "    when: {has_item: note}"
+            , "    tag: alibi"
+            ]
+        mapYaml = unlines
+            [ "start_room: loc_0"
+            , "rooms: [ {id: loc_0, name: R, desc: D} ]"
+            , "statements:"
+            , "  stmt_map:"
+            , "    speaker: widow"
+            , "    claims: unterschrift"
+            , "    text: \"Die Unterschrift ist echt.\""
+            ]
+    writeFile (dir </> "list.yaml") listYaml
+    writeFile (dir </> "map.yaml") mapYaml
+    advRes1 <- parseAdventureFile (dir </> "list.yaml")
+    advRes2 <- parseAdventureFile (dir </> "map.yaml")
+    r1 <- case (advRes1, advRes2) of
+            (Right adv1, Right adv2) -> case (compileAdventure adv1, compileAdventure adv2) of
+                (Right cr1, Right cr2) -> do
+                    let defs1 = E.statementDefs (crWorld cr1)
+                        defs2 = E.statementDefs (crWorld cr2)
+                    a <- expectEqual 1 (length defs1)
+                    b <- expectEqual 1 (length defs2)
+                    let s1 = head defs1
+                        s2 = head defs2
+                    c <- expectEqual "stmt_list" (E.stDefId s1)
+                    d <- expectEqual "butler" (E.stDefSpeaker s1)
+                    e <- expectEqual "doktor_war_fort" (E.stDefClaims s1)
+                    f <- expectEqual False (E.stDefTruth s1)
+                    g <- expectEqual "Er war nicht da." (E.stDefText s1)
+                    h <- expectEqual (Just (E.PlayerHas "note")) (E.stDefWhen s1)
+                    i <- expectEqual (Just "alibi") (E.stDefTag s1)
+                    -- s2 has map syntax and defaults (truth defaults to True, when/tag to Nothing)
+                    j <- expectEqual "stmt_map" (E.stDefId s2)
+                    k <- expectEqual "widow" (E.stDefSpeaker s2)
+                    l <- expectEqual True (E.stDefTruth s2)
+                    m <- expectEqual Nothing (E.stDefWhen s2)
+                    n <- expectEqual Nothing (E.stDefTag s2)
+                    pure (and [a, b, c, d, e, f, g, h, i, j, k, l, m, n])
+                (Left errs1, _) -> expectTrue ("list compile failed: " ++ issuesText errs1) False
+                (_, Left errs2) -> expectTrue ("map compile failed: " ++ issuesText errs2) False
+            (Left err1, _) -> expectTrue ("list parse failed: " ++ err1) False
+            (_, Left err2) -> expectTrue ("map parse failed: " ++ err2) False
+    pure (r0 && r1)
+
+-- | Static checks on statements:
+--   - duplicate statement id is DuplicateStatement
+--   - clash with fact id is StatementFactClash
+--   - learn of undeclared statement id is UnknownFact
+--   - variables/initial_variables with statement.* is StatementVariableClash
+--   - checkUnknownPlaceholders accepts {var: known.*} and {var: statement.*} without warning
+--   - checkUnknownYamlKeys catches typos on EntStatement with suggestion
+testStatementChecks :: IO Bool
+testStatementChecks = withIncludeDir $ \dir -> do
+    let advWith extraStmts extraFacts extraRules extraVars = (minAdventure (minRoom "loc_0"))
+            { advStatements = [AStatement "s1" "butler" "c" True "T" Nothing Nothing] ++ extraStmts
+            , advFacts = extraFacts
+            , advTriggers = [ ATrigger "t" "turn" Nothing extraRules False 0 1 [] [] ]
+            , advVariables = extraVars }
+    -- Duplicate statement
+    r1 <- case compileAdventure (advWith [AStatement "s1" "doc" "c2" False "T2" Nothing Nothing] [] [] []) of
+            Left errs -> expectTrue "duplicate statement is DuplicateStatement"
+                (any (\i -> ciCode i == "DuplicateStatement") errs)
+            Right _ -> expectTrue "duplicate statement must fail" False
+    -- Clash with fact
+    r2 <- case compileAdventure (advWith [] [AFactDef "s1" [] "T" Nothing Nothing Nothing Nothing] [] []) of
+            Left errs -> expectTrue "statement/fact clash is StatementFactClash"
+                (any (\i -> ciCode i == "StatementFactClash") errs)
+            Right _ -> expectTrue "statement/fact clash must fail" False
+    -- Unknown fact/statement in learn
+    r3 <- case compileAdventure (advWith [] [] [AOLearn "unknown_stmt" "player"] []) of
+            Left errs -> expectTrue "learn of unknown statement is UnknownFact"
+                (any (\i -> ciCode i == "UnknownFact") errs)
+            Right _ -> expectTrue "unknown learn must fail" False
+    -- Learn of declared statement is allowed (no UnknownFact)
+    r4 <- case compileAdventure (advWith [] [] [AOLearn "s1" "player"] []) of
+            Left errs -> expectTrue ("learn of declared statement must succeed, got: " ++ issuesText errs) False
+            Right _ -> expectTrue "learn of declared statement succeeds" True
+    -- Reserved statement.* in variables:
+    r5 <- case compileAdventure (advWith [] [] [] [AVariable "statement.s1.truth" "text" Nothing Nothing Nothing 0 Nothing []]) of
+            Left errs -> expectTrue "statement.* in variables: is StatementVariableClash"
+                (any (\i -> ciCode i == "StatementVariableClash") errs)
+            Right _ -> expectTrue "statement.* in variables: must fail" False
+    -- Reserved known.* in variables:
+    r6 <- case compileAdventure (advWith [] [] [] [AVariable "known.player.s1" "int" Nothing Nothing Nothing 0 Nothing []]) of
+            Left errs -> expectTrue "known.* in variables: is KnownVariableClash"
+                (any (\i -> ciCode i == "KnownVariableClash") errs)
+            Right _ -> expectTrue "known.* in variables: must fail" False
+    -- Check unknown placeholders: {var: known.*} and {var: statement.*} do NOT produce warnings
+    let advPlaceholders = (minAdventure ((minRoom "loc_0") { arTexts = ACondText "{var: statement.s1.truth} and {var: known.player.s1}" [] }))
+            { advStatements = [AStatement "s1" "butler" "c" True "T" Nothing Nothing] }
+    r7 <- case compileAdventure advPlaceholders of
+            Left errs -> expectTrue ("compile failed: " ++ issuesText errs) False
+            Right cr -> expectTrue "known.* and statement.* placeholders emit zero UnknownPlaceholder warnings"
+                (not (any (\i -> ciCode i == "UnknownPlaceholder") (crWarnings cr)))
+    -- checkUnknownYamlKeys catches typo on EntStatement with suggestion
+    let typoYaml = unlines
+            [ "start_room: loc_0"
+            , "rooms: [ {id: loc_0, name: R, desc: D} ]"
+            , "statements:"
+            , "  - id: s1"
+            , "    speeker: butler"
+            , "    claims: c"
+            , "    text: T"
+            ]
+    writeFile (dir </> "typo.yaml") typoYaml
+    advTypoRes <- parseAdventureFile (dir </> "typo.yaml")
+    r8 <- case advTypoRes of
+            Left err -> expectTrue ("yaml parse failed: " ++ err) False
+            Right adv -> case compileAdventure adv of
+                Left errs -> expectTrue ("compile failed: " ++ issuesText errs) False
+                Right cr -> do
+                    let unkWarns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
+                    a <- expectTrue "UnknownYamlKey warning produced for speeker"
+                            (any (\i -> "speeker" `isInfixOf` ciMessage i) unkWarns)
+                    b <- expectTrue "suggestion offered for speaker"
+                            (any (\i -> "speaker" `isInfixOf` ciMessage i) unkWarns)
+                    pure (a && b)
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8])
+
+-- | Merge-Test: main + include with the same statement ID triggers duplicate ID error naming both files.
+testIncludeStatementDuplicates :: IO Bool
+testIncludeStatementDuplicates = withIncludeDir $ \dir -> do
+    writeFile (dir </> "main.yaml") $ unlines
+        [ "start_room: halle"
+        , "rooms: [ {id: halle, name: H, desc: D} ]"
+        , "statements: [ {id: stmt1, speaker: butler, claims: c, truth: false, text: T} ]"
+        , "include: [lib.yaml]"
+        ]
+    writeFile (dir </> "lib.yaml") "statements: [ {id: stmt1, speaker: doktor, claims: c, truth: true, text: T2} ]\n"
+    r <- parseAdventureFile (dir </> "main.yaml")
+    case r of
+        Left err -> do
+            a <- expectTrue "duplicate statement id is named" ("'stmt1' defined in" `isInfixOf` err)
+            b <- expectTrue "both files are named"
+                    ("main.yaml" `isInfixOf` err && "lib.yaml" `isInfixOf` err)
+            pure (a && b)
+        Right _ -> expectTrue "duplicate statement id must fail" False
+
+-- | End-to-end playable contradiction in detective.yaml:
+--   (a) before interrogation: contradiction choice is not visible
+--   (b) after interrogation: contradiction choice becomes visible
+--   (c) contradiction is playable before accusation is possible
+testDetectiveContradictionPlayable :: IO Bool
+testDetectiveContradictionPlayable = do
+    mbPath <- findExample "detective.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  detective.yaml not found"
+            pure False
+        Just path -> do
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse detective.yaml: " ++ err
+                    pure False
+                Right adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  detective.yaml compile errors: " ++ issuesText errs
+                        pure False
+                    Right cr -> do
+                        -- (a) Before interrogation: doctor greeting does NOT show the contradiction option
+                        let ctBefore = AContentTest "before"
+                                [ "north", "north", "north", "east", "north", "north", "talk doctor" ]
+                                [ "A sad business", "Of course." ]
+                            resBefore = executeContentTest ctBefore (crWorld cr) (crSave cr)
+                        r1 <- expectEqual Nothing resBefore
+                        -- Ensure "below stairs" was NOT offered
+                        let ctCheckAbsent = AContentTest "absent"
+                                [ "north", "north", "north", "east", "north", "north", "talk doctor" ]
+                                [ "The butler claims he was below stairs" ]
+                            resAbsent = executeContentTest ctCheckAbsent (crWorld cr) (crSave cr)
+                        r2 <- expectTrue "contradiction choice absent before interrogation" (isJust resAbsent)
+                        -- (b) After interrogation: talk butler -> choose 1 -> go to doctor -> talk doctor
+                        -- The contradiction option IS offered, can be chosen, and suspicion is raised before accusation!
+                        let ctAfter = AContentTest "after"
+                                [ "north", "north", "north" -- foyer
+                                , "talk butler"
+                                , "choose 1" -- "Where were you at eleven?" -> learns butler_alibi
+                                , "east", "north", "north" -- study
+                                , "talk doctor" -- learns doctor_greeting
+                                , "choose 1" -- "The butler claims he was below stairs..." -> widerspruch node
+                                , "choose 1" -- "Confront him with his false alibi." -> checks truth: false, suspicion +1
+                                , "accuse doctor" -- fails because missing items, case not closed yet
+                                ]
+                                [ "Below stairs, sir, laying the fires."
+                                , "The butler claims he was below stairs, and you claim you were in your room."
+                                , "The butler swears he was laying the fires."
+                                , "The doctor blanches for an instant"
+                                , "A theory, sir, is not a case."
+                                ]
+                            resAfter = executeContentTest ctAfter (crWorld cr) (crSave cr)
+                        r3 <- case resAfter of
+                                Nothing -> pure True
+                                Just missing -> do
+                                    putStrLn ("  missing expected marker: " ++ missing)
+                                    pure False
+                        pure (r1 && r2 && r3)
 
 -- ---------------------------------------------------------------------------
 -- W3: chapters
@@ -3933,6 +4159,11 @@ tests =
     , ("facts: facts compile in order; empty lists omitted from world.json", testFactsCompile)
     , ("facts: static checks (UnknownFact, DuplicateFact, YieldsWithoutPremises)", testFactChecks)
     , ("facts: knows/learn/forget YAML sugar parses", testKnowsSugar)
+    -- K9: statements
+    , ("statements: compile, list/map syntax, defaults, and json omission (K9.1)", testStatementsCompile)
+    , ("statements: static checks (Duplicate, Clash, UnknownFact, Clashes, Placeholders) (K9.1/K9.2)", testStatementChecks)
+    , ("statements: include duplicate id names both files (K9.1)", testIncludeStatementDuplicates)
+    , ("detective: playable contradiction with truth check before accusation (K9.3)", testDetectiveContradictionPlayable)
     -- W2: progression (XP & Level)
     , ("progression: levels compile, variables merge, empty omitted", testProgressionCompile)
     , ("progression: static checks (EmptyLevels, BadLevelXp, NonMonotonicXp, Clash, Warn)", testProgressionChecks)

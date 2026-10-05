@@ -48,7 +48,7 @@ import Worldbuilder.QuestCheck (QuestDiagnostic (..), questDiagnostics)
 import Types hiding
     ( itemDefs, itemStates, npcDefs, npcStates, questDefs
     , vehicleDefs, vehicleStates, entityInteractions, itemInteractions
-    , varDefs, triggerDefs, rooms )
+    , varDefs, triggerDefs, rooms, stText )
 import qualified Types as E
 import qualified Messages as Msg
 import qualified Data.Map.Strict as Map
@@ -671,8 +671,9 @@ compileAdventure adv =
         (pursuitErrs, pursuitTriggers) =
             compilePursuit (advPursuit adv) (Map.keys npcDefsWithParty)
         compiledFacts = compileFacts (advFacts adv)
+        compiledStatements = compileStatements (advStatements adv)
         compiledCombines = compileCombines (advCombines adv)
-        factRefErrs = checkFactRefs (advFacts adv) gw adv
+        factRefErrs = checkFactRefs (advFacts adv) (advStatements adv) gw adv
         knownVarErrs = checkKnownVarReserved varDefs
         -- W1.4/W1.5: `kombiniere`-Trigger aus combine: (nur wenn Eintraege
         -- existieren) und der `notizen`-Befehl nur bei `journal: notes`.
@@ -751,6 +752,7 @@ compileAdventure adv =
                 , E.procDefs = compiledProcs
                 , E.chapterDefs = compiledChapters
                 , E.factDefs = compiledFacts
+                , E.statementDefs = compiledStatements
                 , E.combineDefs = compiledCombines
                 , E.deviceDefs = compiledDevices
                 , E.containerDefs = compiledContainers
@@ -946,6 +948,7 @@ checkUnknownYamlKeys (Aeson.Object topObj) =
             ++ checkCombat (KM.lookup "combat" topObj)
             ++ checkSingleton "interactions" EntInteractions (KM.lookup "interactions" topObj)
             ++ checkProgressionSection (KM.lookup "progression" topObj)
+            ++ checkListOrMap "statements" EntStatement (KM.lookup "statements" topObj) noNested
     in topWarns ++ sectionWarns
 checkUnknownYamlKeys _ = []
 
@@ -1995,15 +1998,24 @@ compileCombines :: [ACombineDef] -> [E.CombineDef]
 compileCombines cs =
     [ E.CombineDef (acdFacts c) (acdYields c) (acdMsg c) | c <- cs ]
 
--- | Validate the knowledge model: unknown fact references (premises, yields,
+-- | K9: statements with speaker and truth value
+compileStatements :: [AStatement] -> [E.StatementDef]
+compileStatements sdefs =
+    [ E.StatementDef (stId s) (stSpeaker s) (stClaims s)
+                     (stTruth s) (stText s) (stWhen s) (stTag s)
+    | s <- sdefs ]
+
+-- | Validate the knowledge model: unknown fact or statement references (premises, yields,
 --   'knows:' predicates, learn:/forget: outcomes, combine premises), a yields
---   without premises, and duplicate fact ids. Walked over the raw outcomes
---   (via 'allAOutcomes') so rules, procedures and rooms are all covered.
-checkFactRefs :: [AFactDef] -> E.GameWorld -> Adventure -> [CompileIssue]
-checkFactRefs fdefs gw adv =
-    dupErrs ++ yieldsErrs ++ refErrs ++ predErrs
+--   without premises, duplicate fact ids, duplicate statement ids, and clashing fact/statement ids.
+--   Walked over the raw outcomes (via 'allAOutcomes') so rules, procedures and rooms are all covered.
+checkFactRefs :: [AFactDef] -> [AStatement] -> E.GameWorld -> Adventure -> [CompileIssue]
+checkFactRefs fdefs sdefs gw adv =
+    dupErrs ++ dupStmtErrs ++ clashErrs ++ yieldsErrs ++ refErrs ++ predErrs
   where
     factIds = Set.fromList (map afdId fdefs)
+    statementIds = Set.fromList (map stId sdefs)
+    allKnowledgeIds = Set.union factIds statementIds
     dupErrs =
         [ ciError ("facts." ++ fid) "DuplicateFact"
             ("fact '" ++ fid ++ "' is declared more than once")
@@ -2011,6 +2023,17 @@ checkFactRefs fdefs gw adv =
       where
         dupMap = Map.filter (> (1 :: Int))
             (Map.fromListWith (+) [ (afdId f, 1 :: Int) | f <- fdefs ])
+    dupStmtErrs =
+        [ ciError ("statements." ++ sid) "DuplicateStatement"
+            ("statement '" ++ sid ++ "' is declared more than once")
+        | sid <- Map.keys dupStmtMap ]
+      where
+        dupStmtMap = Map.filter (> (1 :: Int))
+            (Map.fromListWith (+) [ (stId s, 1 :: Int) | s <- sdefs ])
+    clashErrs =
+        [ ciError ("statements." ++ sid) "StatementFactClash"
+            ("'" ++ sid ++ "' is declared as both a fact and a statement")
+        | sid <- Set.toList (Set.intersection factIds statementIds) ]
     yieldsErrs = concat
         [ [ ciError ("combine." ++ cdYields c) "YieldsWithoutPremises"
                 ("combine entry for '" ++ cdYields c
@@ -2025,12 +2048,12 @@ checkFactRefs fdefs gw adv =
         [ ciError ("outcomes." ++ kind) "UnknownFact"
             ("'" ++ kind ++ "' references undeclared fact '" ++ f ++ "'")
         | (kind, f) <- nub (concatMap factRefsIn (allAOutcomes adv))
-        , f `Set.notMember` factIds ]
+        , f `Set.notMember` allKnowledgeIds ]
     predErrs =
         [ ciError "predicates.knows" "UnknownFact"
             ("'knows' references undeclared fact '" ++ f ++ "'")
         | f <- nub (concatMap knowsInPredicate (allWorldPredicates gw))
-        , f `Set.notMember` factIds ]
+        , f `Set.notMember` allKnowledgeIds ]
     knowsInPredicate p = case p of
         E.Knows _ f -> [f]
         E.PNot q    -> knowsInPredicate q
@@ -2048,12 +2071,18 @@ checkFactRefs fdefs gw adv =
 
 -- | W1: `known.` belongs to the knowledge model — author-declared variables
 --   in this namespace would collide with learned facts.
+--   K9: `statement.` belongs to statement metadata variables.
 checkKnownVarReserved :: Map.Map String E.VarDef -> [CompileIssue]
 checkKnownVarReserved varDefs =
     [ ciError ("variables." ++ name) "KnownVariableClash"
         ("'" ++ name ++ "' is in the reserved 'known.' namespace; "
          ++ "the engine owns the learned-fact state (W1)")
     | name <- Map.keys varDefs, "known." `isPrefixOf` name ]
+    ++
+    [ ciError ("variables." ++ name) "StatementVariableClash"
+        ("'" ++ name ++ "' is in the reserved 'statement.' namespace; "
+         ++ "the engine owns the statement metadata variables (K9)")
+    | name <- Map.keys varDefs, "statement." `isPrefixOf` name ]
 
 -- ---------------------------------------------------------------------------
 -- W4: Interactive Devices / Fixtures (Hebel / Halterung)
@@ -2745,6 +2774,7 @@ allWorldPredicates gw = concat
     , concatMap condTextPreds (map roomDescription (Map.elems (E.rooms gw)))
     , concatMap condTextPreds (map itemDescription (Map.elems (E.itemDefs gw)))
     , concatMap condTextPreds (map npcDescription (Map.elems (E.npcDefs gw)))
+    , [ p | Just p <- map E.stDefWhen (E.statementDefs gw) ]
     ]
   where
     condTextPreds ct = map tvWhen (ctVariants ct)
@@ -4303,6 +4333,15 @@ reservedVarWriteRules =
         , rvrCheckInitials = False
         , rvrCheckProcs    = False
         }
+    , ReservedVarWriteRule
+        { rvrPrefix        = "statement."
+        , rvrCode          = "StatementVariableClash"
+        , rvrMessage       = \n -> "'" ++ n
+            ++ "' is in the reserved 'statement.' namespace; the engine owns the statement metadata variables (K9)"
+        , rvrCheckOutcomes  = True
+        , rvrCheckInitials = True
+        , rvrCheckProcs    = True
+        }
     ]
 
 -- | Author-owned variable prefixes that content is expected and encouraged to write.
@@ -4390,6 +4429,8 @@ checkUnknownPlaceholders adv varDefs =
         | "flag." `isPrefixOf` name = True
         | "flag:" `isPrefixOf` name = True
         | "condition_turns." `isPrefixOf` name = True
+        | "known." `isPrefixOf` name = True
+        | "statement." `isPrefixOf` name = True
         | name `elem` ["x", "y", "z"] = True
         | hasDynamicCmd name = True
         | otherwise = False
@@ -4517,6 +4558,9 @@ checkUnknownPlaceholders adv varDefs =
                  ++ [ ("sandbox_zones." ++ aszId z ++ ".biomes." ++ abtId b ++ ".ascii", s)
                     | s <- maybe [] asciiStrings (abtAsciiArt b) ]
                  | z <- advSandboxZones a, b <- aszBiomes z ]
+          -- Statements
+        , [ ("statements." ++ stId s ++ ".text", stText s)
+          | s <- advStatements a ]
         ]
 
     outcomeTexts path ao = case ao of

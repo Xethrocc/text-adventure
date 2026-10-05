@@ -860,6 +860,133 @@ testPredicateLocationJsonRoundTrip = do
     r4 <- expectEqual (Just pNpc) legacyNpc
     pure (r1 && r2 && r3 && r4)
 
+-- | Predicate round-trip: tests every Predicate constructor through ToJSON and FromJSON.
+testAllPredicateRoundtrip :: IO Bool
+testAllPredicateRoundtrip = do
+    let testCases :: [(String, Predicate)]
+        testCases =
+            [ ("PTrue", PTrue)
+            , ("PNot", PNot (HasFlag "f1"))
+            , ("PAll", PAll [PlayerHas "item1", HasFlag "f1"])
+            , ("PAny", PAny [PlayerHas "item1", HasFlag "f1"])
+            , ("Compare", Compare (VRVariable "gold") CGte (VRVariable "cost"))
+            , ("PlayerHas", PlayerHas "item1")
+            , ("EntityHasState", EntityHasState "door" "open")
+            , ("HasFlag", HasFlag "flag1")
+            , ("RoomHasTag", RoomHasTag "room1" "dark")
+            , ("Location(player)", Location ActorPlayer "room1")
+            , ("Location(npc)", Location (ActorNPC "guard") "room1")
+            , ("Location(ship)", Location (ActorShip "kestrel") "room1")
+            , ("CompareVar", CompareVar "health" CGt 50)
+            , ("VarIs", VarIs "mode" "stealth")
+            , ("HasCondition", HasCondition "poison")
+            , ("Knows(player)", Knows ActorPlayer "butler_alibi")
+            , ("Knows(npc)", Knows (ActorNPC "butler") "butler_alibi")
+            , ("ActorHas(player)", ActorHas ActorPlayer "key")
+            , ("ActorHas(npc)", ActorHas (ActorNPC "guard") "sword")
+            , ("ActorHas(ship)", ActorHas (ActorShip "kestrel") "cargo")
+            , ("HasTaggedItem(player)", HasTaggedItem ActorPlayer "weapon")
+            , ("HasTaggedItem(npc)", HasTaggedItem (ActorNPC "guard") "weapon")
+            , ("HasTaggedItem(ship)", HasTaggedItem (ActorShip "kestrel") "weapon")
+            , ("RoomHasTaggedItem", RoomHasTaggedItem "room1" "treasure")
+            ]
+    results <- mapM runSingle testCases
+    pure (and results)
+  where
+    runSingle (name, p) = do
+        let enc = Aeson.encode p
+            dec = Aeson.decode enc
+        if dec == Just p
+            then do
+                putStrLn $ "  [OK] " ++ name ++ " -> " ++ BLC.unpack enc
+                pure True
+            else do
+                putStrLn $ "  [FAIL] " ++ name ++ " roundtrip failed!"
+                putStrLn $ "    original: " ++ show p
+                putStrLn $ "    encoded:  " ++ BLC.unpack enc
+                putStrLn $ "    decoded:  " ++ show (dec :: Maybe Predicate)
+                pure False
+
+-- | Regression test: YAML shorthand {knows: <fact>} compiles to ActorPlayer, and full forms round-trip.
+testKnowsPredicateYamlShorthand :: IO Bool
+testKnowsPredicateYamlShorthand = do
+    -- 1. YAML shorthand: { "knows": "butler_alibi" } -> Knows ActorPlayer "butler_alibi"
+    let j1 = "{\"knows\":\"butler_alibi\"}"
+    r1 <- expectEqual (Just (Knows ActorPlayer "butler_alibi")) (Aeson.decode (BLC.pack j1))
+    -- 2. Full form (player): { "knows": "player", "fact": "butler_alibi" }
+    let j2 = "{\"knows\":\"player\",\"fact\":\"butler_alibi\"}"
+    r2 <- expectEqual (Just (Knows ActorPlayer "butler_alibi")) (Aeson.decode (BLC.pack j2))
+    -- 3. Full form (NPC): { "knows": "butler", "fact": "butler_alibi" }
+    let j3 = "{\"knows\":\"butler\",\"fact\":\"butler_alibi\"}"
+    r3 <- expectEqual (Just (Knows (ActorNPC "butler") "butler_alibi")) (Aeson.decode (BLC.pack j3))
+    -- 4. Alternative form: { "actor": "butler", "knows": "butler_alibi" }
+    let j4 = "{\"actor\":\"butler\",\"knows\":\"butler_alibi\"}"
+    r4 <- expectEqual (Just (Knows (ActorNPC "butler") "butler_alibi")) (Aeson.decode (BLC.pack j4))
+    -- 5. Nested object form: { "knows": { "actor": "butler", "fact": "butler_alibi" } }
+    let j5 = "{\"knows\":{\"actor\":\"butler\",\"fact\":\"butler_alibi\"}}"
+    r5 <- expectEqual (Just (Knows (ActorNPC "butler") "butler_alibi")) (Aeson.decode (BLC.pack j5))
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | Gameplay regression test (not just constructor-level): learning a statement
+--   writes known.player.<stmt> = 1 AND a dialogue choice with visible_when: {knows: X}
+--   is hidden before learning and visible afterwards, EVEN AFTER a full world.json
+--   encode/decode cycle. (This is the exact regression gap where K9 failed).
+testKnowsGamePlayThroughVisibleWhen :: IO Bool
+testKnowsGamePlayThroughVisibleWhen = do
+    let choiceGated = DialogueChoice "Confront with alibi" (Just "confronted") (Just (Knows ActorPlayer "butler_alibi")) (SendMessage "You confront him.")
+        choiceAlways = DialogueChoice "Ask about the weather" (Just "weather") Nothing (SendMessage "Fine weather.")
+        node = DialogueNode "greeting" "Hello detective." [choiceGated, choiceAlways]
+        tree = DialogueTree "greeting" (Map.singleton "greeting" node)
+        npc = (npcDefs (world initSampleGame) Map.! "oldman") { npcDialogueTrees = Map.singleton "alive" tree }
+        gw0 = (world initSampleGame)
+            { npcDefs = Map.insert "doctor" npc (npcDefs (world initSampleGame))
+            , statementDefs = [ StatementDef "butler_alibi" "butler" "keller" False "Unten im Keller." Nothing (Just "alibi") ]
+            }
+    -- Round-trip the GameWorld through JSON serialization/deserialization to test the real-world pipeline!
+    case Aeson.decode (Aeson.encode gw0) of
+        Nothing -> do
+            putStrLn "  failed to decode round-tripped GameWorld"
+            pure False
+        Just gwDecoded -> do
+            let st0 = initSampleGame { world = gwDecoded }
+                docNpc0 = npcDefs (world st0) Map.! "doctor"
+                docTree0 = npcDialogueTrees docNpc0 Map.! "alive"
+                docNode0 = dtNodes docTree0 Map.! "greeting"
+                docChoices0 = filter (maybe True (`evalPredicate` st0) . dcVisible) (dnChoices docNode0)
+            -- 1. Before learning: variable is unset and gated choice is hidden
+            r1 <- expectEqual Nothing (getVariable "known.player.butler_alibi" st0)
+            r2 <- expectEqual ["Ask about the weather"] (map dcText docChoices0)
+            -- 2. Learn butler_alibi
+            let (st1, _, _) = applyOutcomeWith 0 0 (Learn ActorPlayer "butler_alibi") "" st0
+            -- 3. After learning: variable is 1 and gated choice is visible
+            r3 <- expectEqual (Just (VVInt 1)) (getVariable "known.player.butler_alibi" st1)
+            let docChoices1 = filter (maybe True (`evalPredicate` st1) . dcVisible) (dnChoices docNode0)
+            r4 <- expectEqual ["Confront with alibi", "Ask about the weather"] (map dcText docChoices1)
+            pure (r1 && r2 && r3 && r4)
+
+-- | File-level byte stability round-trip: GameWorld -> JSON -> GameWorld -> JSON produces byte-identical output.
+testGameWorldFileByteStabilityRoundTrip :: IO Bool
+testGameWorldFileByteStabilityRoundTrip = do
+    let choiceGated = DialogueChoice "Confront" (Just "c") (Just (Knows ActorPlayer "fact1")) (SendMessage "done")
+        node = DialogueNode "greeting" "Hello" [choiceGated]
+        tree = DialogueTree "greeting" (Map.singleton "greeting" node)
+        npc = (npcDefs (world initSampleGame) Map.! "oldman") { npcDialogueTrees = Map.singleton "alive" tree }
+        gw = (world initSampleGame)
+            { npcDefs = Map.insert "doctor" npc (npcDefs (world initSampleGame))
+            , statementDefs = [ StatementDef "fact1" "butler" "keller" False "Claim" Nothing (Just "alibi") ]
+            , factDefs = [ FactDef "fact2" ["f2"] "Fact 2" (Just "source") (Just "tag") Nothing Nothing ]
+            }
+        bs1 = Aeson.encode gw
+    case Aeson.decode bs1 of
+        Nothing -> do
+            putStrLn "  failed to decode GameWorld in byte stability test"
+            pure False
+        Just gwDecoded -> do
+            let bs2 = Aeson.encode (gwDecoded :: GameWorld)
+            r1 <- expectEqual bs1 bs2
+            r2 <- expectEqual gw gwDecoded
+            pure (r1 && r2)
+
 -- | Phase 2.1: Predicate has_condition evaluates active conditions and round-trips.
 testPredicateHasCondition :: IO Bool
 testPredicateHasCondition = do
@@ -5943,6 +6070,82 @@ testNpcKnowledgeCascade = do
     pure (r1 && r2 && r3)
 
 -- ---------------------------------------------------------------------------
+-- K9: statements with speaker and truth value
+-- ---------------------------------------------------------------------------
+
+-- | K9: A learned statement mirrors truth, speaker, and claims as variables
+--   queryable by compare_var and VarIs. Unlearned statements have no variables;
+--   forget cleans them up.
+testStatementTruthAndVariables :: IO Bool
+testStatementTruthAndVariables = do
+    let sdefs =
+            [ StatementDef "butler_alibi" "butler" "unten" False "Unten im Keller." Nothing (Just "alibi")
+            , StatementDef "witwe_brief" "widow" "doktor" True "Der Doktor." Nothing (Just "motive")
+            ]
+        gw = (world emptyGameState) { statementDefs = sdefs }
+        st0 = emptyGameState { world = gw }
+    -- Before learning: variables are unset and compare_var / VarIs evaluates to False
+    r1 <- expectEqual Nothing (getVariable "statement.butler_alibi.truth" st0)
+    r2 <- expectTrue "unlearned statement truth compare is false"
+            (not (evalPredicate (CompareVar "statement.butler_alibi.truth" CEq 0) st0))
+    r3 <- expectTrue "unlearned statement VarIs is false"
+            (not (evalPredicate (VarIs "statement.butler_alibi.truth" "false") st0))
+    -- Learn butler_alibi (truth: False)
+    let (st1, _, _) = applyOutcomeWith 0 0 (Learn ActorPlayer "butler_alibi") "" st0
+    r4 <- expectTrue "knows butler_alibi is true"
+            (evalPredicate (Knows ActorPlayer "butler_alibi") st1)
+    r5 <- expectEqual (Just (VVText "false")) (getVariable "statement.butler_alibi.truth" st1)
+    r6 <- expectEqual (Just (VVText "butler")) (getVariable "statement.butler_alibi.speaker" st1)
+    r7 <- expectEqual (Just (VVText "unten")) (getVariable "statement.butler_alibi.claims" st1)
+    r8 <- expectTrue "compare_var truth eq 0 matches false"
+            (evalPredicate (CompareVar "statement.butler_alibi.truth" CEq 0) st1)
+    r9 <- expectTrue "compare_var truth eq 1 does not match false"
+            (not (evalPredicate (CompareVar "statement.butler_alibi.truth" CEq 1) st1))
+    r10 <- expectTrue "VarIs truth 'false' matches"
+            (evalPredicate (VarIs "statement.butler_alibi.truth" "false") st1)
+    r11 <- expectTrue "VarIs truth 'true' does not match"
+            (not (evalPredicate (VarIs "statement.butler_alibi.truth" "true") st1))
+    -- Learn witwe_brief (truth: True)
+    let (st2, _, _) = applyOutcomeWith 0 0 (Learn ActorPlayer "witwe_brief") "" st1
+    r12 <- expectEqual (Just (VVText "true")) (getVariable "statement.witwe_brief.truth" st2)
+    r13 <- expectTrue "compare_var truth eq 1 matches true"
+            (evalPredicate (CompareVar "statement.witwe_brief.truth" CEq 1) st2)
+    r14 <- expectTrue "VarIs truth 'true' matches"
+            (evalPredicate (VarIs "statement.witwe_brief.truth" "true") st2)
+    -- Forget butler_alibi: cleans up known.<actor>.<fact> and statement.<id>.* variables
+    let (st3, _, _) = applyOutcomeWith 0 0 (Forget ActorPlayer "butler_alibi") "" st2
+    r15 <- expectTrue "forget removes knowledge"
+            (not (evalPredicate (Knows ActorPlayer "butler_alibi") st3))
+    r16 <- expectEqual Nothing (getVariable "statement.butler_alibi.truth" st3)
+    r17 <- expectEqual Nothing (getVariable "statement.butler_alibi.speaker" st3)
+    r18 <- expectEqual Nothing (getVariable "statement.butler_alibi.claims" st3)
+    -- witwe_brief remains unaffected
+    r19 <- expectTrue "witwe_brief still known after forgetting butler_alibi"
+            (evalPredicate (Knows ActorPlayer "witwe_brief") st3)
+    r20 <- expectEqual (Just (VVText "true")) (getVariable "statement.witwe_brief.truth" st3)
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18, r19, r20])
+
+-- | K9: GameWorld statementDefs M2 invariant (omitted when empty, preserves bit-stability)
+testGameWorldStatementDefsM2Invariant :: IO Bool
+testGameWorldStatementDefsM2Invariant = do
+    let gw = emptyGameWorld
+        enc = Aeson.encode gw
+    -- "statementDefs" must not appear in JSON when empty
+    r1 <- expectEqual False (isInfixOf "\"statementDefs\"" (BLC.unpack enc))
+    -- Populated statementDefs round-trips
+    let sdef = StatementDef "s1" "speaker1" "claim1" False "Text 1" Nothing (Just "alibi")
+        gwWithStmts = gw { statementDefs = [sdef] }
+        encWithStmts = Aeson.encode gwWithStmts
+    r2 <- expectTrue "statementDefs present when non-empty"
+            (isInfixOf "\"statementDefs\"" (BLC.unpack encWithStmts))
+    case Aeson.decode encWithStmts of
+        Nothing -> putStrLn "Failed to decode GameWorld with statementDefs" >> pure False
+        Just decoded -> do
+            r3 <- expectEqual [sdef] (statementDefs decoded)
+            pure (r1 && r2 && r3)
+
+
+-- ---------------------------------------------------------------------------
 -- W3: chapters
 -- ---------------------------------------------------------------------------
 
@@ -10337,6 +10540,9 @@ main = do
         , runTest "learn cascade, idempotency and forget (W1)" testLearnCascadeAndForget
         , runTest "OnLearn fires per fact; silent and author messages (W1)" testOnLearnAndMessages
         , runTest "npc knowledge cascades separately (W1)" testNpcKnowledgeCascade
+        -- K9: statements
+        , runTest "statement truth, speaker and claims as queryable variables (K9)" testStatementTruthAndVariables
+        , runTest "GameWorld statementDefs M2 invariant (K9)" testGameWorldStatementDefsM2Invariant
         , runTest "chapter auto-gate: first eligible, one per turn (W3)" testChapterGate
         , runTest "goto/next: refusal, diagnostics, OnChapter (W3)" testChapterSwitchEffects
         , runTest "chapter gate does not cascade (W3)" testChapterOnChapterDoesNotCascade
@@ -10524,6 +10730,10 @@ main = do
         -- R1: Location & Predicate.Location typed ActorRef and backward compatibility
         , runTest "Location round-trip and backward-compatible decoding (R1)" testLocationJsonRoundTrip
         , runTest "Predicate.Location round-trip and backward-compatible decoding (R1)" testPredicateLocationJsonRoundTrip
+        , runTest "Predicate ToJSON/FromJSON round-trip for every constructor" testAllPredicateRoundtrip
+        , runTest "Predicate.Knows YAML shorthand and full-form decoding" testKnowsPredicateYamlShorthand
+        , runTest "gameplay: learning statement gates visible_when through world.json (K9 regression)" testKnowsGamePlayThroughVisibleWhen
+        , runTest "GameWorld file-level byte-stability round-trip" testGameWorldFileByteStabilityRoundTrip
         , runTest "at: palyer typo fixture produces validation error (R1)" testValidateTypoInPredicateLocation
         -- Phase 2.1: Predicate has_condition, ValueRef condition_turns, Condition hidden
         , runTest "has_condition predicate evaluation and JSON (Phase 2.1)" testPredicateHasCondition

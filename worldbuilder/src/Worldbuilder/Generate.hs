@@ -1388,6 +1388,7 @@ emitAdventure t plan seed =
             , advContainers        = []
             , advInclude           = []
             , advFacts             = []
+            , advStatements        = []
             , advCombines          = []
             , advDevices           = []
             , advProgression       = Nothing

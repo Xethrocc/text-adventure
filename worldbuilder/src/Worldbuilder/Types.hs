@@ -61,6 +61,7 @@ data Adventure = Adventure
     , advPursuit          :: [APursuitEntry]             -- ^ pursuit (Tür IV): per-pursuer chase config
     , advContainers       :: [AContainerDef]             -- ^ stationary containers (4.4)
     , advFacts            :: [AFactDef]                  -- ^ knowledge facts (W1)
+    , advStatements       :: [AStatement]                -- ^ knowledge statements (K9)
     , advCombines         :: [ACombineDef]               -- ^ derivation rules (W1)
     , advDevices          :: [ADeviceDef]                -- ^ interactive devices/fixtures (W4)
     , advProgression      :: Maybe AProgressionDef       -- ^ player progression (W2)
@@ -147,6 +148,7 @@ instance FromJSON Adventure where
         <*> o .:? "pursuit"    .!= []
         <*> o .:? "containers" .!= []
         <*> o .:? "facts"      .!= []
+        <*> parseStatementsField o
         <*> o .:? "combine"    .!= []
         <*> parseDevicesField o
         <*> o .:? "progression"
@@ -238,6 +240,21 @@ parseSandboxZonesField o = do
                     pure sz { aszId = zid }
                  ) (KM.toList obj)
         Just _ -> fail "Expected 'sandbox_zones' to be an object (map) or array (list)"
+
+-- | Parse 'statements' field: supports both a map (`statements: { butler_alibi: { ... } }`) and a list (`statements: [ { id: "butler_alibi", ... } ]`).
+parseStatementsField :: Object -> Parser [AStatement]
+parseStatementsField o = do
+    mVal <- o .:? "statements"
+    case mVal of
+        Nothing -> pure []
+        Just (Array arr) -> mapM parseJSON (Foldable.toList arr)
+        Just (Object obj) ->
+            mapM (\(k, v) -> do
+                    st <- parseJSON v
+                    let sid = if null (stId st) then K.toString k else stId st
+                    pure st { stId = sid }
+                 ) (KM.toList obj)
+        Just _ -> fail "Expected 'statements' to be an object (map) or array (list)"
 
 -- ---------------------------------------------------------------------------
 -- Cards (Schritt 2 / Phase 2D)
@@ -1332,6 +1349,28 @@ instance FromJSON AFactDef where
         <*> o .:? "learn_msg" .!= Nothing
         <*> o .:? "silent"    .!= Nothing
 
+-- | A statement authored under `statements:` (K9) — speaker, claims, truth, text,
+--   optional gate condition and tag.
+data AStatement = AStatement
+    { stId      :: String
+    , stSpeaker :: String
+    , stClaims  :: String
+    , stTruth   :: Bool
+    , stText    :: String
+    , stWhen    :: Maybe E.Predicate
+    , stTag     :: Maybe String
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AStatement where
+    parseJSON = withObject "AStatement" $ \o -> AStatement
+        <$> o .:? "id"      .!= ""
+        <*> o .:? "speaker" .!= ""
+        <*> o .:? "claims"  .!= ""
+        <*> o .:? "truth"   .!= True
+        <*> o .:? "text"    .!= ""
+        <*> o .:? "when"
+        <*> o .:? "tag"
+
 -- | A derivation rule authored under `combine:` (W1): premises -> yields,
 --   with an optional confirmation message.
 data ACombineDef = ACombineDef
@@ -1869,6 +1908,7 @@ data EntityType
     | EntProgression
     | EntLevel
     | EntRollDice
+    | EntStatement
     deriving (Show, Eq, Ord, Enum, Bounded)
 
 -- | Single source of truth for allowed YAML mapping keys per entity type,
@@ -1881,7 +1921,7 @@ knownKeys EntAdventure = Set.fromList
     , "encounter_tables", "environment", "stealth", "patrol", "combat"
     , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
     , "handLimit", "hand_limit", "sandbox_zones", "procedures", "tests", "include"
-    , "facts", "combine", "combine_verb", "journal", "chapters", "devices", "pursuit", "containers"
+    , "facts", "statements", "combine", "combine_verb", "journal", "chapters", "devices", "pursuit", "containers"
     , "progression", "assets", "language", "messages"
     ]
 knownKeys EntRoom = Set.fromList
@@ -1964,3 +2004,5 @@ knownKeys EntLevel = Set.fromList
     [ "level", "xp", "name", "level_msg", "msg", "effects" ]
 knownKeys EntRollDice = Set.fromList
     [ "pool", "die", "stream", "keep" ]
+knownKeys EntStatement = Set.fromList
+    [ "id", "speaker", "claims", "truth", "text", "when", "tag" ]

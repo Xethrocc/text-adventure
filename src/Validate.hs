@@ -361,7 +361,8 @@ allPredicates gw = concat
      [ [ p | TriggerDef { trCondition = Just p } <- triggerDefs gw ]
      , [ p | room <- Map.elems (rooms gw), Guarded _ p _ <- Map.elems (roomConnections room) ]
      , catMaybes (map dcVisible (worldDialogueChoices gw))
-    , concatMap (map tvWhen . ctVariants) (map roomDescription (Map.elems (rooms gw)))
+     , catMaybes (map stDefWhen (statementDefs gw))
+     , concatMap (map tvWhen . ctVariants) (map roomDescription (Map.elems (rooms gw)))
     , concatMap (map tvWhen . ctVariants) (map itemDescription (Map.elems (itemDefs gw)))
     , concatMap (map tvWhen . ctVariants) (map npcDescription (Map.elems (npcDefs gw)))
     ]

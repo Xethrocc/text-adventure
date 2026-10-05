@@ -453,13 +453,31 @@ applyOutcomeWith depth salt outcome targetId state
             = cascade st learned q
             | otherwise =
                 let st1 = setVariableChecked ("known." ++ aId ++ "." ++ f) (VVInt 1) st
+                    -- K9: Entscheidung 'beim learn':
+                    -- Die Aussage-Variablen (statement.<id>.truth, .speaker, .claims) werden
+                    -- beim `learn` gesetzt, nicht zur Compile-Zeit:
+                    -- 1. Statische Weltvariablen in varDefs sind über getVariable (und damit compare_var/VarIs)
+                    --    nicht erreichbar (clampToVarDef prüft nur Schranken, getVariable liest SaveState.variables).
+                    -- 2. Spielzustand: Aussagen existieren erst mit ihrer Äußerung im Wissen des Spielers.
+                    --    Eine Vorbelegung würde Abfragen erlauben, bevor der Zeuge überhaupt vernommen wurde.
+                    -- 3. Nach `forget` wird die Aussage auch aus den Variablen entfernt (sauberer Spielzustand).
+                    st2 = case find (\s -> stDefId s == f) (statementDefs (world st1)) of
+                        Just sDef ->
+                            setVariableChecked ("statement." ++ f ++ ".truth")
+                                (VVText (if stDefTruth sDef then "true" else "false"))
+                            . setVariableChecked ("statement." ++ f ++ ".speaker")
+                                (VVText (stDefSpeaker sDef))
+                            . setVariableChecked ("statement." ++ f ++ ".claims")
+                                (VVText (stDefClaims sDef))
+                            $ st1
+                        Nothing -> st1
                     derived =
                         [ (aId, cdYields c, AuthorMsg (cdMsg c))
                         | c <- defs, cdYields c `notElem` map snd3 ((aId, f, mMsg) : q)
-                        , all (\p -> getVariable ("known." ++ aId ++ "." ++ p) st1
+                        , all (\p -> getVariable ("known." ++ aId ++ "." ++ p) st2
                                     == Just (VVInt 1)) (cdFacts c) ]
                     learned' = (aId, f, learnMsgFor aId f mMsg) : learned
-                in cascade st1 learned' (q ++ derived)
+                in cascade st2 learned' (q ++ derived)
         -- Only the player sees notes; `silent: true` suppresses everything;
         -- author messages (combine cdMsg or fact learn_msg) win over the
         -- catalog default.
@@ -471,7 +489,9 @@ applyOutcomeWith depth salt outcome targetId state
                 AuthorMsg (Just m) -> AuthorMsg (Just m)
                 AuthorMsg Nothing  -> case find (\fd -> factId fd == f) facts of
                     Just fd | Just m <- factLearnMsg fd -> AuthorMsg (Just m)
-                    _       -> DefaultMsg
+                    _       -> case find (\sd -> stDefId sd == f) (statementDefs (world state)) of
+                        Just _  -> NoMsg
+                        Nothing -> DefaultMsg
                 DefaultMsg         -> DefaultMsg
                 NoMsg              -> NoMsg
         factSilentFor f = case find (\fd -> factId fd == f) facts of
@@ -571,8 +591,18 @@ applyOutcomeWith depth salt outcome targetId state
     Forget actor fact ->
         let key = "known." ++ actorId actor ++ "." ++ fact
         in if getVariable key state == Just (VVInt 1)
-           then (state { save = (save state) { variables = Map.delete key (variables (save state)) } }
-                , [], salt)
+           then
+               let st1 = state { save = (save state) { variables = Map.delete key (variables (save state)) } }
+                   st2 = case find (\s -> stDefId s == fact) (statementDefs (world st1)) of
+                       Just _ ->
+                           let vars = variables (save st1)
+                               vars' = Map.delete ("statement." ++ fact ++ ".truth")
+                                     . Map.delete ("statement." ++ fact ++ ".speaker")
+                                     . Map.delete ("statement." ++ fact ++ ".claims")
+                                     $ vars
+                           in st1 { save = (save st1) { variables = vars' } }
+                       Nothing -> st1
+               in (st2, [], salt)
            else (state, [], salt)
 
     SetExit from dir exit ->

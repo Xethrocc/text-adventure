@@ -201,6 +201,7 @@ emptyGameWorld = GameWorld
     , sandboxZones       = Map.empty
     , procDefs           = Map.empty
     , factDefs           = []
+    , statementDefs      = []
     , combineDefs        = []
     , chapterDefs        = []
     , deviceDefs         = Map.empty
@@ -1428,6 +1429,9 @@ evalPredicate (Location actor rId) st = case actor of
 evalPredicate (CompareVar name op n) st =
     case getVariable name st of
         Just (VVInt v) -> fromMaybe False (compareValues op v n)
+        Just (VVText s)
+            | s == "true"  -> fromMaybe False (compareValues op 1 n)
+            | s == "false" -> fromMaybe False (compareValues op 0 n)
         _              -> case name of
             _ | Just cn <- stripPrefix "condition_turns." name ->
                 fromMaybe False (compareValues op (resolveValueRef (VRConditionTurns cn) st) n)
@@ -1470,7 +1474,10 @@ resolveValueRef (VRConditionTurns cName) st =
 resolveValueRef (VRVariable name) st =
     case getVariable name st of
         Just (VVInt n)  -> n
-        Just (VVText s) -> case reads s of [(n,"")] -> n; _ -> 0
+        Just (VVText s)
+            | s == "true"  -> 1
+            | s == "false" -> 0
+            | otherwise    -> case reads s of [(n,"")] -> n; _ -> 0
         _               -> case name of
             "player.hp"         -> playerHealth (player (save st))
             "player.health"     -> playerHealth (player (save st))
