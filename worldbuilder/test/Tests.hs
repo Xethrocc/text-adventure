@@ -4,7 +4,7 @@
 module Main where
 
 import Control.Monad (forM, when)
-import Data.List (isInfixOf, isPrefixOf, nub, find)
+import Data.List (isInfixOf, isPrefixOf, nub, find, elemIndex)
 import qualified Data.Aeson as Aeson
 import Data.Maybe (isJust, listToMaybe)
 import qualified Data.ByteString.Lazy.Char8 as BLC
@@ -791,7 +791,7 @@ testProgressionChecks = do
 
     -- 5. Reserved variable clash in author variables -> ProgressionVariableClash error
     let clashAdv = (mkProg [ALevelDef (Just 1) 0 "Novize" Nothing []])
-            { advVariables = [ AVariable "xp.current" "int" (Just (Aeson.Number 0)) Nothing Nothing ] }
+            { advVariables = [ AVariable "xp.current" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] ] }
     r5 <- case compileAdventure clashAdv of
             Left errs -> expectTrue "declaring xp.current is ProgressionVariableClash"
                 (any (\i -> ciCode i == "ProgressionVariableClash") errs)
@@ -2058,7 +2058,7 @@ testFactionsSeedVariables = do
         Right cr -> do
             let defs = E.varDefs (crWorld cr)
                 vars = E.variables (crSave cr)
-            r1 <- expectEqual (Just (E.VarDef "faction.corp" (E.VTInt Nothing Nothing) (E.VVInt 0)))
+            r1 <- expectEqual (Just (E.VarDef "faction.corp" (E.VTInt Nothing Nothing) (E.VVInt 0) []))
                       (Map.lookup "faction.corp" defs)
             r2 <- expectEqual (Just (E.VVInt 5)) (Map.lookup "faction.guild" vars)
             pure (r1 && r2)
@@ -2712,7 +2712,7 @@ testEnvironmentDrainCompiles = do
                 [ AOGameEnd "death" (Just "Du verhungerst.") ]
         adv = (minAdventure (minRoom "loc_0"))
             { advEnvironment = Just (AEnvironment Nothing [drain])
-            , advVariables = [ AVariable "hunger" "int" (Just (Aeson.Number 2)) Nothing Nothing ] }
+            , advVariables = [ AVariable "hunger" "int" (Just (Aeson.Number 2)) Nothing Nothing 0 Nothing [] ] }
     case compileAdventure adv of
         Left errs -> do
             putStrLn $ "  compile errors: " ++ show errs
@@ -2841,7 +2841,7 @@ testStealthValidation = do
             Right _   -> expectTrue "expected UnknownObserverNPC" False
     let advClash = (minAdventure (minRoom "loc_0"))
             { advStealth = Just (AStealth (ANoiseSpec "noise" 2 (-1) 10) [])
-            , advVariables = [ AVariable "noise" "int" (Just (Aeson.Number 0)) Nothing Nothing ] }
+            , advVariables = [ AVariable "noise" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] ] }
     r2 <- case compileAdventure advClash of
             Left errs -> expectContains "StealthVariableClash" (issuesText errs)
             Right _   -> expectTrue "expected StealthVariableClash" False
@@ -2979,7 +2979,7 @@ testPatrolValidation = do
             Right _   -> expectTrue "expected UnknownPatrolRoom" False
     r4 <- case compileAdventure (base [ minRoom "loc_1" ] [ wolfNPC "loc_1" ])
                 { advPatrol = Just (APatrol [AHostile "wolf" ["loc_1"] 0 False Nothing []])
-                , advVariables = [ AVariable "patrol.wolf.moved" "int" (Just (Aeson.Number 0)) Nothing Nothing ] } of
+                , advVariables = [ AVariable "patrol.wolf.moved" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] ] } of
             Left errs -> expectContains "PatrolVariableClash" (issuesText errs)
             Right _   -> expectTrue "expected PatrolVariableClash" False
     pure (or [r1, r2, r3, r4] && and [r1, r2, r3, r4])
@@ -3216,7 +3216,7 @@ testPartyValidation = do
     let advClash = (minAdventure (minRoom "loc_0"))
             { advVerbs = [followVerb]
             , advNPCs = [partySquire (Just (AParty True "follow" True Nothing Nothing))]
-            , advVariables = [ AVariable "party.squire" "int" (Just (Aeson.Number 0)) Nothing Nothing ] }
+            , advVariables = [ AVariable "party.squire" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] ] }
     r4 <- case compileAdventure advClash of
             Left errs -> expectContains "PartyVariableClash" (issuesText errs)
             Right _   -> expectTrue "expected PartyVariableClash" False
@@ -3389,7 +3389,7 @@ testShipSystemsValidation = do
     -- the system variable is module-owned
     let advClash = (minAdventure (minRoom "loc_0"))
             { advVehicles = [minShip "kestrel"]
-            , advVariables = [AVariable "ship.kestrel.hull" "int" (Just (Aeson.Number 0)) Nothing Nothing] }
+            , advVariables = [AVariable "ship.kestrel.hull" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing []] }
     r4 <- case compileAdventure advClash of
             Left errs -> expectContains "ShipVariableClash" (issuesText errs)
             Right _   -> expectTrue "expected ShipVariableClash" False
@@ -4057,6 +4057,10 @@ tests =
     -- K12: dynamic variable names
     , ("dynamic var names: {var: ..._{cmd.arg1}} emits zero UnknownPlaceholder warnings (K12)", testDynamicVarPlaceholderNoWarning)
     , ("dynamic var names: normal unknown placeholder still emits warning (K12)", testNormalUnknownPlaceholderStillWarns)
+    -- K7+K4: variable cycles (refill_per_turn, reset_on, on_overflow)
+    , ("variable cycles: sugar triggers compiled in correct order; clean without cycle fields (K7.1/K7.2)", testVarCyclesSugarTriggers)
+    , ("variable cycles: YAML parsing and knownKeys clean (K7/K4)", testVarCyclesYamlParsingAndKnownKeys)
+    , ("variable cycles: static validation for reset_on, on_overflow and refill (K7/K4)", testVarCyclesValidation)
     ]
 
 -- ---------------------------------------------------------------------------
@@ -4263,7 +4267,7 @@ testMissingGrammarWarning = do
 testCombatVariableClash :: IO Bool
 testCombatVariableClash = do
     let withVar n = (minAdventure (minRoom "loc_0"))
-            { advVariables = [AVariable n "int" (Just (Aeson.Number 0)) Nothing Nothing] }
+            { advVariables = [AVariable n "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing []] }
     r1 <- case compileAdventure (withVar "combat.round") of
             Left errs -> expectContains "CombatVariableClash" (issuesText errs)
             Right _   -> expectTrue "expected CombatVariableClash for combat.round" False
@@ -4306,7 +4310,7 @@ testCooldownConditionClash = do
 testReservedVariablesUnified :: IO Bool
 testReservedVariablesUnified = do
     let withVar n = (minAdventure (minRoom "loc_0"))
-            { advVariables = [AVariable n "int" (Just (Aeson.Number 0)) Nothing Nothing] }
+            { advVariables = [AVariable n "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing []] }
         withWrite n = (minAdventure (minRoom "loc_0"))
             { advTriggers = [ATrigger "t" "turn" Nothing [AOSetVar n 1] False 0 1 [] []] }
 
@@ -6079,7 +6083,7 @@ testWarningUnknownPlaceholder = do
     -- Declared variables, modifiers ({gold:6}), and system variables emit zero warnings
     let r0Known = (minRoom "loc_0")
             { arTexts = ACondText "Gold: {gold:6}, HP: {player.hp}, Turns: {turn.count}, Arg: {cmd.arg1}." [] }
-        vGold = AVariable "gold" "int" (Just (Aeson.Number 50)) Nothing Nothing
+        vGold = AVariable "gold" "int" (Just (Aeson.Number 50)) Nothing Nothing 0 Nothing []
         advKnown = (minAdventure r0Known) { advVariables = [vGold] }
     r3 <- case compileAdventure advKnown of
         Left errs -> do
@@ -7506,7 +7510,8 @@ testRngVarWriteGuard = do
             Right _   -> 0
         textVarDecl = AVariable
             { avbVarName = "rng.d", avbVarType = "int", avbInitial = Nothing
-            , avbMin = Nothing, avbMax = Nothing }
+            , avbMin = Nothing, avbMax = Nothing
+            , avbRefillPerTurn = 0, avbResetOn = Nothing, avbOnOverflow = [] }
         procWithRngParam = AProcDef
             { apId = "p", apParams = ["rng.p"], apEffects = [] }
         rawRandomVal = maybe (Aeson.object []) id (Aeson.decode (BLC.pack
@@ -7754,6 +7759,126 @@ testVerbMapPhaseClash = do
             , ("use,intact", [AOSetFlag "b" "true"]) ]), c == "VerbPhaseClash" ])
     r4 <- expectTrue "unknown verb errors with prefix"
             ("UnknownVerb" `elem` codes (Map.fromList [("before:frobnicate", [AOSetFlag "a" "true"])]))
+    pure (and [r1, r2, r3, r4])
+
+-- ---------------------------------------------------------------------------
+-- K7+K4: Variablen-Zyklen (refill_per_turn, reset_on, on_overflow)
+-- ---------------------------------------------------------------------------
+
+-- | K7+K4: Variables with refill_per_turn, reset_on compile to triggers in correct order.
+--   Variables without cycle declarations generate 0 triggers.
+testVarCyclesSugarTriggers :: IO Bool
+testVarCyclesSugarTriggers = do
+    let vAp = AVariable "ap" "int" (Just (Aeson.Number 6)) (Just 0) (Just 6) 2 (Just "turn") []
+        vEnergy = AVariable "energy" "int" (Just (Aeson.Number 10)) (Just 0) (Just 10) 0 (Just "combat_start") []
+        vPlain = AVariable "plain" "int" (Just (Aeson.Number 5)) (Just 0) (Just 10) 0 Nothing []
+        advWithVars = (minAdventure (minRoom "loc_0")) { advVariables = [vAp, vEnergy, vPlain] }
+    case compileAdventure advWithVars of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let trigs = E.triggerDefs (crWorld cr)
+                mResetAp = find (\t -> E.trId t == "var.ap.reset") trigs
+                mRefillAp = find (\t -> E.trId t == "var.ap.refill") trigs
+                mCombatEnergy = find (\t -> E.trId t == "var.energy.combatreset") trigs
+                plainTrigs = filter (\t -> "var.plain." `isPrefixOf` E.trId t) trigs
+
+            r1 <- expectEqual (Just E.OnTurn) (E.trEvent <$> mResetAp)
+            r2 <- expectEqual (Just [E.SetValue (E.VRVariable "ap") (E.EVInt 6)]) (E.trEffects <$> mResetAp)
+            r3 <- expectEqual (Just E.OnTurn) (E.trEvent <$> mRefillAp)
+            r4 <- expectEqual (Just [E.ModifyValue (E.VRVariable "ap") 2]) (E.trEffects <$> mRefillAp)
+            r5 <- expectEqual (Just E.OnCombatStart) (E.trEvent <$> mCombatEnergy)
+            r6 <- expectEqual (Just [E.SetValue (E.VRVariable "energy") (E.EVInt 10)]) (E.trEffects <$> mCombatEnergy)
+            r7 <- expectTrue "plain variable generates NO triggers" (null plainTrigs)
+
+            -- Order guarantee: reset trigger precedes refill trigger in compiled triggers
+            let idxReset = elemIndex "var.ap.reset" (map E.trId trigs)
+                idxRefill = elemIndex "var.ap.refill" (map E.trId trigs)
+            r8 <- case (idxReset, idxRefill) of
+                (Just r, Just f) -> expectTrue "var.ap.reset appears BEFORE var.ap.refill" (r < f)
+                _                -> pure False
+
+            -- Variable without cycle fields generates zero var.* triggers
+            let advPlainOnly = (minAdventure (minRoom "loc_0")) { advVariables = [vPlain] }
+            r9 <- case compileAdventure advPlainOnly of
+                Left _ -> pure False
+                Right crPlain ->
+                    let varTrigs = filter (\t -> "var." `isPrefixOf` E.trId t) (E.triggerDefs (crWorld crPlain))
+                    in expectTrue "empty cycle declarations generate zero var.* triggers" (null varTrigs)
+
+            pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9])
+
+-- | K7+K4: YAML parsing and knownKeys for refill_per_turn, reset_on, on_overflow.
+testVarCyclesYamlParsingAndKnownKeys :: IO Bool
+testVarCyclesYamlParsingAndKnownKeys = do
+    let yaml = unlines
+            [ "name: Cycles YAML Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Room 0"
+            , "    desc: Room"
+            , "variables:"
+            , "  - name: ap"
+            , "    type: int"
+            , "    initial: 6"
+            , "    min: 0"
+            , "    max: 6"
+            , "    refill_per_turn: 2"
+            , "    reset_on: turn"
+            , "    on_overflow:"
+            , "      - msg: 'AP overflow!'"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml decode failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  unexpected compile error: " ++ show errs
+                pure False
+            Right cr -> do
+                let warns = crWarnings cr
+                r1 <- expectTrue "compiles with zero warnings (no UnknownYamlKey)" (null warns)
+                let mVd = Map.lookup "ap" (E.varDefs (crWorld cr))
+                r2 <- expectEqual (Just [E.SendMessage "AP overflow!"]) (E.vdOnOverflow <$> mVd)
+                pure (r1 && r2)
+
+-- | K7+K4: Static validation for reset_on, on_overflow, and refill_per_turn.
+testVarCyclesValidation :: IO Bool
+testVarCyclesValidation = do
+    let baseRoom = minRoom "loc_0"
+        compileWithVar v = compileAdventure ((minAdventure baseRoom) { advVariables = [v] })
+
+    -- 1. reset_on without max -> ResetWithoutMax
+    let vNoMax = AVariable "v" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 (Just "turn") []
+    r1 <- expectTrue "reset_on without max is rejected"
+            (case compileWithVar vNoMax of
+                Left errs -> any (\e -> ciCode e == "ResetWithoutMax") errs
+                Right _   -> False)
+
+    -- 2. reset_on with unknown event -> InvalidResetOn
+    let vBadEvent = AVariable "v" "int" (Just (Aeson.Number 0)) Nothing (Just 10) 0 (Just "invalid_event") []
+    r2 <- expectTrue "reset_on with invalid event is rejected"
+            (case compileWithVar vBadEvent of
+                Left errs -> any (\e -> ciCode e == "InvalidResetOn") errs
+                Right _   -> False)
+
+    -- 3. on_overflow without max -> OverflowWithoutMax
+    let vOverflowNoMax = AVariable "v" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [AOMessage "hi"]
+    r3 <- expectTrue "on_overflow without max is rejected"
+            (case compileWithVar vOverflowNoMax of
+                Left errs -> any (\e -> ciCode e == "OverflowWithoutMax") errs
+                Right _   -> False)
+
+    -- 4. negative refill_per_turn -> NegativeRefill
+    let vNegRefill = AVariable "v" "int" (Just (Aeson.Number 0)) Nothing (Just 10) (-1) Nothing []
+    r4 <- expectTrue "negative refill_per_turn is rejected"
+            (case compileWithVar vNegRefill of
+                Left errs -> any (\e -> ciCode e == "NegativeRefill") errs
+                Right _   -> False)
+
     pure (and [r1, r2, r3, r4])
 
 main :: IO ()

@@ -122,8 +122,11 @@ module Game
     , setCombatRound
     , combatRoundKey
     , combatEngagedKey
+    , combatStartedKey
     , setCombatEngaged
     , isCombatEngaged
+    , setCombatStarted
+    , isCombatStarted
     , combatAbilityKey
     , combatActionKey
     , combatInitiativeKey
@@ -1321,6 +1324,21 @@ isCombatEngaged st = case getVariable combatEngagedKey st of
 setCombatEngaged :: Bool -> GameState -> GameState
 setCombatEngaged True  = setVariable combatEngagedKey (VVInt 1)
 setCombatEngaged False = setVariable combatEngagedKey (VVInt 0)
+
+-- | 1 while combat has started across any profile, 0 when ended.
+combatStartedKey :: String
+combatStartedKey = combatVarPrefix ++ "started"
+
+-- | Whether combat has started / is engaged.
+isCombatStarted :: GameState -> Bool
+isCombatStarted st = case getVariable combatStartedKey st of
+    Just (VVInt n) -> n >= 1
+    _              -> isCombatEngaged st
+
+-- | Set or clear the combat.started flag.
+setCombatStarted :: Bool -> GameState -> GameState
+setCombatStarted True  = setVariable combatStartedKey (VVInt 1)
+setCombatStarted False = setVariable combatStartedKey (VVInt 0)
 
 -- | The last player action inside a tactical fight ("attack", "defend",
 --   "flee", "ability"). The enemy's `on: turn` rule can gate on this with the

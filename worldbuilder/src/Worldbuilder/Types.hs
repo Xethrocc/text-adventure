@@ -918,11 +918,14 @@ instance FromJSON AVehicle where
 
 -- | An adventure-declared variable in the YAML schema.
 data AVariable = AVariable
-    { avbVarName    :: String
-    , avbVarType    :: String
-    , avbInitial    :: Maybe Value
-    , avbMin        :: Maybe Int
-    , avbMax        :: Maybe Int
+    { avbVarName       :: String
+    , avbVarType       :: String
+    , avbInitial       :: Maybe Value
+    , avbMin           :: Maybe Int
+    , avbMax           :: Maybe Int
+    , avbRefillPerTurn :: Int
+    , avbResetOn       :: Maybe String
+    , avbOnOverflow    :: [AActionOutcome]
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AVariable where
@@ -932,6 +935,9 @@ instance FromJSON AVariable where
         <*> o .:? "initial"
         <*> o .:? "min"
         <*> o .:? "max"
+        <*> o .:? "refill_per_turn" .!= 0
+        <*> o .:? "reset_on"
+        <*> o .:? "on_overflow"     .!= []
 
 -- ---------------------------------------------------------------------------
 -- Factions (Phase 7a)
@@ -1921,7 +1927,9 @@ knownKeys EntVehicle = Set.fromList
     , "stops", "keys", "fuel", "conditions", "start_stop", "systems", "stations"
     ]
 knownKeys EntVariable = Set.fromList
-    [ "name", "type", "initial", "min", "max" ]
+    [ "name", "type", "initial", "min", "max"
+    , "refill_per_turn", "reset_on", "on_overflow"
+    ]
 knownKeys EntVerb = Set.fromList
     [ "name", "aliases" ]
 knownKeys EntFaction = Set.fromList

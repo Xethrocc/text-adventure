@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+### Variablen-Zyklen: refill_per_turn, reset_on, on_overflow (K7/K4)
+
+- **Erweiterung von `AVariable` und `VarDef`:**
+  - `AVariable` (Worldbuilder) erweitert um `avbRefillPerTurn :: Int` (Default 0), `avbResetOn :: Maybe String` (Default Nothing) und `avbOnOverflow :: [AActionOutcome]` (Default []).
+  - `knownKeys EntVariable` ergänzt um `"refill_per_turn"`, `"reset_on"` und `"on_overflow"`.
+  - `VarDef` (Core) erweitert um `vdOnOverflow :: [Effect]`. Handgeschriebene `ToJSON`/`FromJSON`-Instanzen für `VarDef` lassen `vdOnOverflow` weg, wenn die Liste leer ist — garantiert Byte-Gleichheit aller bestehenden Abenteuer.
+- **Compiler-Sugar für Variablen-Trigger (`Worldbuilder.Compile`):**
+  - Pro Variable mit `refill_per_turn > 0`: erzeugt `TriggerDef` mit `trEvent = OnTurn`, ID `var.<name>.refill`, Effekt `ModifyValue (VRVariable <name>) delta`.
+  - Pro Variable mit `reset_on: turn`: erzeugt `TriggerDef` mit `trEvent = OnTurn`, ID `var.<name>.reset`, Effekt `SetValue (VRVariable <name>) (EVInt max)`.
+  - Pro Variable mit `reset_on: combat_start`: erzeugt `TriggerDef` mit neuem `trEvent = OnCombatStart`, ID `var.<name>.combatreset`, Effekt `SetValue (VRVariable <name>) (EVInt max)`.
+  - **Reihenfolge-Garantie:** `reset_on`-Trigger werden deterministisch VOR `refill_per_turn`-Triggern eingereiht (`varResetDefs ++ varRefillDefs`). Dadurch wird das Budget am Rundenanfang zuerst zurückgesetzt, bevor die Regeneration aufschlägt.
+  - **Byte-Vertrag:** Variablen ohne diese Deklarationen erzeugen 0 Trigger.
+- **Review-Befund vor dem Commit (Opus 5.5, danach behoben):** Die erste Fassung
+  ließ `fireTriggersWithDepth` laufen **und** sammelte die Effekte ein zweites Mal
+  über `concatMap trEffects` — die Trigger liefen also doppelt, `once:`/`cooldown:`
+  wirkten nicht (der `TriggerState` stand nur im verworfenen Lauf), und `chains_to`
+  verlor seine Zustandsänderungen. Der korrigierte Stand macht **einen** Lauf, nutzt
+  dessen Zustand und lässt das separate `matchingTriggers` entfallen.
+- **Einmaligkeit ohne Byte-Risiko:** Das Kriterium war zunächst
+  `combat.engaged == 0` — untauglich, weil `resolveClassic` (`Combat.hs:365`) und
+  `resolveNarrative` (`:129`) **überhaupt keine Kampfvariablen** pflegen; nur
+  `resolveTactical` tut das. Ersatz: ein eigenes VarMap-Flag `combat.started`, im
+  gemeinsamen Einstiegspunkt gesetzt und über `checkCombatEnd` (`:116`) zurückgesetzt —
+  das erkennt das Kampfende an **Meldungsschlüsseln und Effekten**, also
+  profilunabhängig, statt an einer Variablen, die nur ein Profil führt.
+- **Kampfstart-Ereignis `OnCombatStart` (`Combat` & `Types.Core`):**
+  - Neues `EventType`: `OnCombatStart`.
+  - In `resolveCombatEv` (`src/Combat.hs`): Feuert `OnCombatStart` genau beim Eintritt in einen Kampf (`not (isCombatStarted st)`), wenn passende Trigger existieren.
+  - Wendet Trigger direkt über `fireTriggersWithDepth 0 OnCombatStart st` an und übernimmt den resultierenden `GameState` (`stWithTrig`). Keine redundante `startEffs`-Sammlung, keine doppelte Ausführung, `once: true`, `cooldown:` und `chains_to`-Zustandsänderungen bleiben erhalten.
+  - Kampfgrenzen-Erkennung über `combat.started` in VarMap (mit Fallback auf `isCombatEngaged`) für alle drei Profile (Classic, Narrative, Tactical). Reset bei Kampfende (`checkCombatEnd` / `combat.started = 0`) und Raumwechsel (`transitionToRoom`).
+  - Manuelle `matchingTriggers`-Vorabfilterung ersatzlos entfernt — `fireTriggerList` ist die alleinige Filterlogik.
+  - Bei bestehenden Kämpfen ohne `OnCombatStart`-Trigger entsteht kein Overhead und die Bytes bleiben identisch.
+- **Überlauf-Erkennung `on_overflow` (`src/Effects.hs`):**
+  - Variante A: `clampToVarDef` in `src/Game.hs` bleibt eine reine Funktion.
+  - In `applySetValueWithDepth` und `modifyValuePropWithDepth`: Prüfung nach dem Schreiben, ob der Wert echt größer als `max` war (`rawVal > max`) und daraufhin auf `max` geklemmt wurde.
+  - Nur bei echtem Überschreiten feuern die Effekte aus `vdOnOverflow`. Ein Setzen auf genau `max` löst `on_overflow` nicht aus.
+  - Schutz vor Endlosrekursion durch Erhöhung von `depth + 1` beim Aufruf von `applyOutcomeWith`, wodurch `maxOutcomeDepth` (20) greift.
+- **Validierung (`Worldbuilder.Compile`):**
+  - `reset_on` ohne `max` wird als harter Fehler `ResetWithoutMax` abgewiesen.
+  - `reset_on` mit unbekanntem Ereignis (nur `turn` und `combat_start` erlaubt) wird mit `InvalidResetOn` abgewiesen.
+  - `on_overflow` ohne `max` wird als `OverflowWithoutMax` abgewiesen.
+  - Negatives `refill_per_turn` wird als `NegativeRefill` abgewiesen.
+- **Fixture & E2E:**
+  - Neue Fixture `examples/fixtures/zyklen.yaml` mit `tests:`-Sektion (10 Marker) und E2E-Playthrough `ci/e2e/zyklen.{in,expect}`.
+  - Beweist im Spiel: AP-Budget über Runden, Regeneration pro Runde, Reset+Refill-Kombination mit Beweis der Reihenfolge (Reset vor Refill erzeugt Überladung) und `on_overflow` nur bei echtem Überschreiten.
+  - In `scripts/ci.sh` Stufe 4 und 4b registriert.
+- **Doku & Tests:**
+  - `docs/adventure-schema.md`: Dokumentation der drei Felder, der Reihenfolgeregel, der Overflow-Bedingung und des Clamping-Hinweises.
+  - Engine: 489 Tests in `test/Tests.hs` (+10: `testVariableRefillPerTurn`, `testVariableResetOnTurn`, `testVariableResetBeforeRefillOrder`, `testVariableResetOnCombatStart`, `testVariableOnOverflowGenuine`, sowie 5 Review-Tests: `testCombatStartExactlyOnceThreeAttacksAllProfiles`, `testCombatStartOnceRule`, `testCombatStartChainsToState`, `testCombatStartEffectsRunExactlyOnce`, `testCombatStartRandomChoiceDeterministic`), alle grün.
+  - Worldbuilder: 268 Tests in `worldbuilder/test/Tests.hs` (+3: `testVarCyclesSugarTriggers`, `testVarCyclesYamlParsingAndKnownKeys`, `testVarCyclesValidation`), alle grün.
+  - 58 E2E-Playthroughs in `scripts/ci.sh` (+1: `zyklen`).
+
 ### Dynamische Variablennamen (K12)
 
 - **Laufzeit-Auflösung von Variablennamen (`Effects` & `Game`):**

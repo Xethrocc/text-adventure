@@ -912,11 +912,42 @@ welcher Effekt schreibt.
   Compile-Fehler `InvalidDicePool`/`InvalidDiceKeep`), und `engineVars` macht
   sie ohnehin ohne Deklaration lesbar. Nützlich bleibt es dort, wo ein Wert
   künstlich begrenzt werden soll, den der Effekt selbst nicht begrenzt.
-- **Was die Klammer nicht ersetzt:** einen Ereignis-Zustand, der *auf* einem
-  Maximalwert **feuert** (`on_overflow`). Dafür gibt es weiterhin kein
-  Vokabular; es bleibt K4 (siehe `plan-autorenfaehigkeiten.md`, Abschnitt F).
-  Wer eine Obergrenze braucht, klemmt die Variable und fragt die Bedingung
-  selbst ab.
+### Variablen-Zyklen (`refill_per_turn`, `reset_on`, `on_overflow`) (K7/K4)
+
+Das `variables:`-Objekt unterstützt automatische Zyklen und Reaktionsregeln für Ressourcen (z. B. Aktionspunkte, Mana, Ausdauer, Schilde):
+
+```yaml
+variables:
+  - name: ap
+    type: int
+    initial: 6
+    min: 0
+    max: 6
+    reset_on: turn          # K7/K4: auf max setzen bei diesem Ereignis
+    refill_per_turn: 2      # K7/K4: +2 pro Runde (addiert bei on: turn)
+    on_overflow:            # K4: Effekte bei echtem Überschreiten von max
+      - msg: "AP-Überladung!"
+```
+
+| Feld | Typ | Default | Wirkung |
+|---|---|---|---|
+| `refill_per_turn` | Int | `0` | **addiert** bei jedem `on: turn` den Wert auf die Variable (Regeneration, K7). Muss `>= 0` sein (`NegativeRefill`). |
+| `reset_on` | String | — | **setzt auf `max`** bei einem Ereignis (`turn` oder `combat_start`). Erfordert deklariertes `max` (`ResetWithoutMax`), unbekannte Events werden abgewiesen (`InvalidResetOn`). |
+| `on_overflow` | [Effekt] | `[]` | feuert Effekte, wenn ein Schreibvorgang den Wert **echt über `max` hinaus** erhöht und geklemmt wird. Erfordert deklariertes `max` (`OverflowWithoutMax`). |
+
+#### Regeln und Semantik
+
+1. **Reihenfolge bei kombinierten Feldern (`reset_on` vor `refill_per_turn`):**
+   Sind an einer Variable sowohl `reset_on: turn` als auch `refill_per_turn` gesetzt, wirkt `reset_on` **zuerst** (das Budget wird auf `max` gesetzt), und `refill_per_turn` **danach** (die Erholung addiert darauf). Dies wird deterministisch über die Definitionsreihenfolge der Compiler-Trigger sichergestellt (`var.<name>.reset` vor `var.<name>.refill`).
+
+2. **Bedingung für `on_overflow` (nur echtes Überschreiten):**
+   `on_overflow` feuert **NUR**, wenn vor dem Schreiben der Wert die Obergrenze `max` echt überstiegen hätte (`rawVal > max`) und daraufhin auf `max` geklemmt wurde. Ein explizites Setzen auf genau `max` (`set_var: { name: ap, value: 6 }` bei `max: 6`) löst den Overflow **nicht** aus.
+
+3. **`reset_on: combat_start` (nur beim ersten Kampf-Befehl):**
+   `reset_on: combat_start` erzeugt einen Trigger auf `OnCombatStart`. Das Ereignis feuert genau **einmal** beim Eintritt in den Kampf (wenn `combat.engaged == 0` vor der Auflösung ist), nicht bei jedem weiteren Kampfbefehl im selben Gefecht.
+
+4. **Klammerung (`clampToVarDef`):**
+   Die Wertebegrenzung über `min`/`max` (`clampToVarDef` in `src/Game.hs`) galt schon immer und bleibt eine reine Funktion. `on_overflow` hängt an den auflösenden Effekt-Einstiegspunkten (`applySetValue` und `modifyValueProp`) und ist über `applyOutcomeWith` gegen Endlosrekursion geschützt (Tiefenbegrenzung `maxOutcomeDepth`).
 
 ### Variablen vergleichen (`compare_var`)
 

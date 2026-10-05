@@ -2128,12 +2128,12 @@ executeAttack npc mNpcState targetStr state =
         actors = [PlayerActor]
                  ++ map CompanionActor (partyMembersInRoom state)
                  ++ [ShipActor vId | Just vId <- [currentVehicle (save state)]]
-        (effects, msgs) = resolveCombatEv profile actors (TargetNPC nId targetStr) CAAttack state
+        (stCombat, effects, msgs) = resolveCombatEv profile actors (TargetNPC nId targetStr) CAAttack state
         -- Apply the whole effect list through the shared interpreter: it
         -- threads the RNG salt and joins every effect message instead of
         -- discarding all but the last (killNPCWithMsg / OnStateChange rules
         -- produce text that must survive trailing companion/ship effects).
-        (st', effectMsg) = applyOutcomes effects nId state
+        (st', effectMsg) = applyOutcomes effects nId stCombat
         -- The authored combat screen (classic only) is rendered from the state
         -- *before* the round resolves — screen first, then the strike's
         -- outcome, exactly like the original fight loop.
@@ -2154,8 +2154,8 @@ executeAttackShip veh targetStr state =
         actors = [PlayerActor]
                  ++ map CompanionActor (partyMembersInRoom state)
                  ++ [ShipActor pvId | Just pvId <- [currentVehicle (save state)]]
-        (effects, msgs) = resolveCombatEv profile actors (TargetShip vId targetStr) CAAttack state
-        (st', effectMsg) = applyOutcomes effects vId state
+        (stCombat, effects, msgs) = resolveCombatEv profile actors (TargetShip vId targetStr) CAAttack state
+        (st', effectMsg) = applyOutcomes effects vId stCombat
         body = combineMsgsEv (effectMsg : msgs)
     in if null (renderEvents body) then (st', []) else (st', body)
 
@@ -2207,8 +2207,8 @@ executeTacticalAction action state =
                 actors = [PlayerActor]
                          ++ map CompanionActor (partyMembersInRoom state)
                          ++ [ShipActor vId | Just vId <- [currentVehicle (save state)]]
-                (effects, msgs) = resolveCombatEv profile actors (TargetNPC nId (npcName npc)) action state
-                (st', effectMsg) = applyOutcomes effects nId state
+                (stCombat, effects, msgs) = resolveCombatEv profile actors (TargetNPC nId (npcName npc)) action state
+                (st', effectMsg) = applyOutcomes effects nId stCombat
                 body = combineMsgsEv (effectMsg : msgs)
                 body' = combineMsgsEv [combatArtMsgEv nId st', body]
             in if null (renderEvents body') then (st', []) else (st', body')
@@ -2229,8 +2229,8 @@ executeTacticalAction action state =
                         actors = [PlayerActor]
                                  ++ map CompanionActor (partyMembersInRoom state)
                                  ++ [ShipActor pvId | Just pvId <- [currentVehicle (save state)]]
-                        (effects, msgs) = resolveCombatEv profile actors (TargetShip vId (vehicleName veh)) action state
-                        (st', effectMsg) = applyOutcomes effects vId state
+                        (stCombat, effects, msgs) = resolveCombatEv profile actors (TargetShip vId (vehicleName veh)) action state
+                        (st', effectMsg) = applyOutcomes effects vId stCombat
                         body = combineMsgsEv (effectMsg : msgs)
                     in if null (renderEvents body) then (st', []) else (st', body)
                 [] -> (state, evMsg "attack.none_here" [])

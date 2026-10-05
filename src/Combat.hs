@@ -13,6 +13,7 @@ module Combat
     , CombatTarget (..)
     , ShipSystems (..)
     , resolveCombat
+    , resolveCombatState
     , resolveCombatEv
     , shipAbsorb
     , shipAbsorbEv
@@ -30,7 +31,9 @@ import Game (effectiveAttack, effectiveDefense, getVariable,
             npcAttackWith, npcDefenseWith,
             combatRound, combatRoundKey, combatEngagedKey, combatActionKey,
             combatInitiativePlayerKey, combatInitiativeKey, combatAbilityKey,
+            isCombatStarted, setCombatStarted,
             hasCondition)
+import Effects (fireTriggersWithDepth)
 import qualified Data.Map.Strict as Map
 import Data.List (isPrefixOf)
 import Data.Maybe (listToMaybe, fromMaybe)
@@ -51,43 +54,100 @@ data CombatTarget
     deriving (Show, Eq)
 
 -- | Resolve one attack command against the authored combat profile.
---   Returns (effects, messages): the effects are applied by the caller
---   through the single outcome interpreter; the messages are added to the
---   command output. No state is mutated here.
+--   Returns (newState, effects, messages): the newState carries trigger state
+--   updates (e.g. from OnCombatStart) and combat.started bookkeeping; the effects
+--   are applied by the caller through the single outcome interpreter; the
+--   messages are added to the command output.
 --
 --   The `CombatAction` parameter selects the player's action within a round.
 --   `off`, `narrative` and `classic` profiles ignore it (single-shot
 --   resolution); `tactical` dispatches on it.
 resolveCombatEv :: CombatProfile -> [CombatActor] -> CombatTarget -> CombatAction
-              -> GameState -> ([Effect], [[OutputEvent]])
+                -> GameState -> (GameState, [Effect], [[OutputEvent]])
 resolveCombatEv profile actors target action st = case profile of
     -- off: attack is refused, no HP is spent by anyone.
-    CombatOff mRefused -> ([], [refusedMsg])
+    CombatOff mRefused -> (st, [], [refusedMsg])
       where
         refusedMsg = case mRefused of
             Just txt -> evRaw txt
             Nothing  -> evMsg "attack.cant_here" [("target", label target)]
-    -- narrative: opposed roll (player attack vs defense + difficulty).
-    --   No HP attrition — the on_win / on_lose effects decide everything.
-    CombatNarrative nc -> resolveNarrative nc actors target st
-    -- classic: exactly the behaviour that predates Phase 7f: the player
-    --   strikes first, the target retaliates in the same command,
-    --   damage = attack - defense (min 1 / min 0), death via HP <= 0.
-    CombatClassic _ -> resolveClassic actors target st
-    -- tactical (Phase 7f-3, A2): one action = one round. The enemy reacts
-    --   via an on: turn trigger, not in this function.
-    CombatTactical tc -> resolveTactical tc actors target action st
+    _ ->
+        let isStarted = isCombatStarted st
+            hasStartTriggers = any (\t -> trEvent t == OnCombatStart) (triggerDefs (world st))
+        in if isStarted
+           then
+               let (effs, msgs) = resolveActual profile actors target action st
+                   isEnd = checkCombatEnd effs msgs
+                   st' = if isEnd then setCombatStarted False st else st
+               in (st', effs, msgs)
+           else
+               -- K7+K4: OnCombatStart triggers fire once upon entering combat:
+               -- 1. Evaluated with fireTriggersWithDepth to produce stWithTrig,
+               --    updating triggerStates (once/cooldown), executing chains_to,
+               --    and applying all reset/trigger effects to the state.
+               -- 2. Mark combat as started in the VarMap (combat.started = 1).
+               -- 3. Combat resolution runs on stStarted, seeing all reset values.
+               -- 4. Check if the initial round directly ends combat (e.g. one-shot kill).
+               --    If so, reset combat.started = 0; otherwise it remains 1 for subsequent rounds.
+               -- 5. Trigger effects are NOT duplicated into the returned effect list,
+               --    preventing double execution.
+               let (stWithTrig, trigEvs) =
+                       if hasStartTriggers
+                       then fireTriggersWithDepth 0 OnCombatStart st
+                       else (st, [])
+                   stStarted = setCombatStarted True stWithTrig
+                   (effs, msgs) = resolveActual profile actors target action stStarted
+                   isEnd = checkCombatEnd effs msgs
+                   stFinal = if isEnd then setCombatStarted False stStarted else stStarted
+                   startMsgs = if null trigEvs then [] else [trigEvs]
+               in (stFinal, effs, startMsgs ++ msgs)
   where
+    resolveActual p a t act s = case p of
+        CombatOff _        -> ([], [])
+        CombatNarrative nc -> resolveNarrative nc a t s
+        CombatClassic _    -> resolveClassic a t s
+        CombatTactical tc  -> resolveTactical tc a t act s
     label (TargetNPC _ disp) = disp
     label (TargetShip _ disp) = disp
+
+-- | Determine whether a combat resolution concluded the fight.
+--   When true, the 'combat.started' flag is cleared so the next combat
+--   starts fresh and OnCombatStart can fire again.
+checkCombatEnd :: [Effect] -> [[OutputEvent]] -> Bool
+checkCombatEnd effs msgs =
+    any (any hasEndKey) msgs || any isEngagedReset effs
+  where
+    hasEndKey (EvMessage mp) = case mpKey mp of
+        Just k -> k `elem` endKeys
+        Nothing -> False
+    hasEndKey _ = False
+    endKeys =
+        [ "combat.attack_kill"
+        , "combat.attack_ship_destroy"
+        , "combat.flee"
+        , "combat.classic_kill"
+        , "combat.classic_destroy"
+        , "combat.strikes_back_kill"
+        , "combat.ship_destroyed"
+        , "combat.win"
+        ]
+    isEngagedReset (SetValue (VRVariable k) (EVInt 0)) = k == combatEngagedKey
+    isEngagedReset _                                   = False
 
 -- | Compatibility form (tests, Phase 1.2): the same resolution, messages
 --   rendered back to strings — list-shape identical to the pre-1.2 [String].
 resolveCombat :: CombatProfile -> [CombatActor] -> CombatTarget -> CombatAction
               -> GameState -> ([Effect], [String])
 resolveCombat profile actors target action st =
-    let (effs, evs) = resolveCombatEv profile actors target action st
+    let (_, effs, evs) = resolveCombatEv profile actors target action st
     in (effs, map (concatMap evTextOfCompat) evs)
+
+-- | State-threading form: returns (newState, effects, messages).
+resolveCombatState :: CombatProfile -> [CombatActor] -> CombatTarget -> CombatAction
+                   -> GameState -> (GameState, [Effect], [String])
+resolveCombatState profile actors target action st =
+    let (st', effs, evs) = resolveCombatEv profile actors target action st
+    in (st', effs, map (concatMap evTextOfCompat) evs)
 
 evTextOfCompat :: OutputEvent -> String
 evTextOfCompat ev = case ev of

@@ -327,12 +327,12 @@ applyOutcomeWith depth salt outcome targetId state
         in (st', msg', salt')
 
     SetValue vr ev ->
-        let (state', msg') = applySetValue vr ev state
+        let (state', msg') = applySetValueWithDepth depth vr ev state
         in (state', msg', salt)
 
     ComputeValue vr expr ->
         let val = evalExpr expr state
-            (state', msg') = applySetValue vr (EVInt val) state
+            (state', msg') = applySetValueWithDepth depth vr (EVInt val) state
         in (state', msg', salt)
 
     ModifyValue VRPlayerHealth delta ->
@@ -342,7 +342,7 @@ applyOutcomeWith depth salt outcome targetId state
                           in if isPlayerDead st' then endGame Death st' else st'
         in (state', [], salt)
     ModifyValue vr delta ->
-        let (state', m) = modifyValueProp vr delta state
+        let (state', m) = modifyValuePropWithDepth depth vr delta state
         in (state', m, salt)
 
     MoveEntity eid (InRoom room) ->
@@ -652,49 +652,102 @@ setScopedVariable name val state = go [] (procScopes state)
         | otherwise = go (scope : before) rest
 
 applySetValue :: ValueRef -> EffectValue -> GameState -> (GameState, [OutputEvent])
-applySetValue (VRFlag name) val state =
+applySetValue = applySetValueWithDepth 0
+
+applySetValueWithDepth :: Int -> ValueRef -> EffectValue -> GameState -> (GameState, [OutputEvent])
+applySetValueWithDepth _ (VRFlag name) val state =
     (setFlag name (effectValueToString val) state, [])
-applySetValue (VRVariable name) val state =
+applySetValueWithDepth depth (VRVariable name) val state =
     let realName = resolveVarName name state
-    in (setScopedVariable realName (effectValToVarVal val) state, [])
-applySetValue (VRActorProp (ActorEntity eId) PState) val state =
+        mVd = Map.lookup realName (varDefs (world state))
+        mMax = case vdVarType <$> mVd of
+            Just (VTInt _ (Just hi)) -> Just hi
+            _                        -> Nothing
+        rawInt = case val of
+            EVInt n    -> Just n
+            EVString s -> case reads s of [(n, "")] -> Just n; _ -> Nothing
+            _          -> Nothing
+        state' = setScopedVariable realName (effectValToVarVal val) state
+        -- K7+K4: on_overflow fires ONLY if the attempted write was strictly greater
+        -- than max and clamped to max afterwards. Setting to exactly max does not trigger overflow.
+        didOverflow = case (mMax, rawInt) of
+            (Just hi, Just n) -> n > hi && getVariable realName state' == Just (VVInt hi)
+            _                 -> False
+        overflowEffs = maybe [] vdOnOverflow mVd
+    in if didOverflow && not (null overflowEffs)
+       then
+           -- Verschachtelung / Rekursionsschutz:
+           -- Wenn on_overflow dieselbe Variable erneut überschreitet (oder wechselseitig
+           -- über Trigger-Ketten rekurriert), verhindert maxOutcomeDepth über
+           -- applyOutcomeWith eine Endlosschleife, ohne dass zusätzlicher transienter
+           -- Zustand im GameState/SaveState gehalten werden muss (Regel 6).
+           -- Die Tiefenbegrenzung bricht ab und setzt eine Engine-Diagnostik.
+           let (stFin, ofMsgs, _) = applyOutcomeWith (depth + 1) 0 (Sequence overflowEffs) "" state'
+           in (stFin, ofMsgs)
+       else (state', [])
+applySetValueWithDepth _ (VRActorProp (ActorEntity eId) PState) val state =
     setEntityStateWithEvents eId (effectValueToString val) state
-applySetValue (VRActorProp (ActorNPC nid) PState) val state =
+applySetValueWithDepth _ (VRActorProp (ActorNPC nid) PState) val state =
     setNpcStatusWithEvents nid (effectValueToString val) state
-applySetValue (VRActorProp ActorPlayer PRoom) val state =
+applySetValueWithDepth _ (VRActorProp ActorPlayer PRoom) val state =
     (fst (transitionToRoom (effectValueToString val) (clearActiveDialogue state)), [])
-applySetValue (VRActorProp (ActorRoom rId) PVisited) val state =
+applySetValueWithDepth _ (VRActorProp (ActorRoom rId) PVisited) val state =
     let b = case val of { EVInt n -> n /= 0; EVBool v -> v; _ -> False }
     in (setRoomVisited rId b state, [])
-applySetValue (VRActorProp ActorPlayer PHealth) val state =
+applySetValueWithDepth _ (VRActorProp ActorPlayer PHealth) val state =
     let n = case val of { EVInt m -> m; _ -> 0 }
     in if n <= 0 then (endGame Death (setPlayerHP n state), []) else (setPlayerHP n state, [])
-applySetValue (VRActorProp (ActorShip vId) PHealth) val state =
+applySetValueWithDepth _ (VRActorProp (ActorShip vId) PHealth) val state =
     let n = case val of { EVInt m -> m; _ -> 0 }
     in (setVariableChecked ("ship." ++ vId ++ ".hull") (VVInt n) state, [])
-applySetValue VRPlayerHealth val state =
+applySetValueWithDepth _ VRPlayerHealth val state =
     let n = case val of { EVInt m -> m; _ -> 0 }
     in if n <= 0 then (endGame Death (setPlayerHP n state), []) else (setPlayerHP n state, [])
-applySetValue _ _ state = (state, [])
+applySetValueWithDepth _ _ _ state = (state, [])
 
 -- | Apply ModifyValue to a non-player-health reference.
 modifyValueProp :: ValueRef -> Int -> GameState -> (GameState, [OutputEvent])
-modifyValueProp (VRFlag name) delta state =
+modifyValueProp = modifyValuePropWithDepth 0
+
+modifyValuePropWithDepth :: Int -> ValueRef -> Int -> GameState -> (GameState, [OutputEvent])
+modifyValuePropWithDepth _ (VRFlag name) delta state =
     let cur = case getFlag name state of
             Just "true" -> 1
             _           -> 0
         newVal = if cur + delta > 0 then "true" else "false"
     in (setFlag name newVal state, [])
-modifyValueProp (VRVariable name) delta state =
+modifyValuePropWithDepth depth (VRVariable name) delta state =
     let realName = resolveVarName name state
         cur = case getVariable realName state of
             Just (VVInt n)  -> n
             Just (VVText s) -> case reads s of [(n,_)] -> n; _ -> 0
             _               -> 0
-    in (setScopedVariable realName (VVInt (cur + delta)) state, [])
-modifyValueProp (VRItemProp iId prop) delta state =
+        rawInt = cur + delta
+        mVd = Map.lookup realName (varDefs (world state))
+        mMax = case vdVarType <$> mVd of
+            Just (VTInt _ (Just hi)) -> Just hi
+            _                        -> Nothing
+        state' = setScopedVariable realName (VVInt rawInt) state
+        -- K7+K4: on_overflow fires ONLY if the attempted write was strictly greater
+        -- than max and clamped to max afterwards. Setting to exactly max does not trigger overflow.
+        didOverflow = case mMax of
+            Just hi -> rawInt > hi && getVariable realName state' == Just (VVInt hi)
+            Nothing -> False
+        overflowEffs = maybe [] vdOnOverflow mVd
+    in if didOverflow && not (null overflowEffs)
+       then
+           -- Verschachtelung / Rekursionsschutz:
+           -- Wenn on_overflow dieselbe Variable erneut überschreitet (oder wechselseitig
+           -- über Trigger-Ketten rekurriert), verhindert maxOutcomeDepth über
+           -- applyOutcomeWith eine Endlosschleife, ohne dass zusätzlicher transienter
+           -- Zustand im GameState/SaveState gehalten werden muss (Regel 6).
+           -- Die Tiefenbegrenzung bricht ab und setzt eine Engine-Diagnostik.
+           let (stFin, ofMsgs, _) = applyOutcomeWith (depth + 1) 0 (Sequence overflowEffs) "" state'
+           in (stFin, ofMsgs)
+       else (state', [])
+modifyValuePropWithDepth _ (VRItemProp iId prop) delta state =
     (modifyItemProp iId prop delta state, [])
-modifyValueProp (VRActorProp (ActorNPC eId) PHealth) delta state
+modifyValuePropWithDepth _ (VRActorProp (ActorNPC eId) PHealth) delta state
     | resolveActorNpcId eId state `elem` ["all", "all_enemies"] =
         let curRoom = currentRoom (save state)
             enemies = [ npcId def
@@ -709,20 +762,20 @@ modifyValueProp (VRActorProp (ActorNPC eId) PHealth) delta state
         in (stFin, msgsFin)
     | otherwise =
         modifyNPCHealth (resolveActorNpcId eId state) delta state
-modifyValueProp (VRActorProp (ActorNPC nId) (PCustom prop)) delta state =
+modifyValuePropWithDepth _ (VRActorProp (ActorNPC nId) (PCustom prop)) delta state =
     (modifyNPCProp (resolveActorNpcId nId state) prop delta state, [])
-modifyValueProp (VRActorProp ActorPlayer PHealth) delta state =
+modifyValuePropWithDepth _ (VRActorProp ActorPlayer PHealth) delta state =
     let cur = playerHealth (player (save state))
         newHP = cur + delta
     in if newHP <= 0
        then (endGame Death (setPlayerHP newHP state), [])
        else (setPlayerHP newHP state, [])
-modifyValueProp (VRActorProp (ActorShip vId) PHealth) delta state =
+modifyValuePropWithDepth _ (VRActorProp (ActorShip vId) PHealth) delta state =
     let cur = case getVariable ("ship." ++ vId ++ ".hull") state of
             Just (VVInt n) -> n
             _              -> 0
     in (setVariableChecked ("ship." ++ vId ++ ".hull") (VVInt (cur + delta)) state, [])
-modifyValueProp _ _ state = (state, [])
+modifyValuePropWithDepth _ _ _ state = (state, [])
 
 -- | Convert EffectValue to VariableValue
 effectValToVarVal :: EffectValue -> VariableValue
@@ -813,7 +866,7 @@ transitionToRoom rawDest state =
         stateWithRoom = ensureRoomExists dest cur (fromMaybe North mDir) state
         stAfterDialogue = clearActiveDialogue stateWithRoom
         (stAfterExit, exitMsg) = runRoomHook roomOnExit cur stAfterDialogue
-        moved = moveToRoom dest stAfterExit
+        moved = setCombatStarted False (moveToRoom dest stAfterExit)
         visited = markCurrentRoomVisited moved
         (finalState, enterMsg) = runRoomHook roomOnEnter dest visited
         followed = followParty dest finalState

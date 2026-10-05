@@ -584,7 +584,7 @@ compileAdventure adv =
         (entityInteractions, itemInteractions, npcIx) = compileInteractions (advInteractions adv)
         
         (varErrs, varDefs, varInitials) = compileVariables (advVariables adv)
-        (trigErrs, triggerDefs) = compileTriggers (advTriggers adv) (advNPCs adv)
+        (trigErrs, triggerDefs) = compileTriggers (advTriggers adv) (advNPCs adv) (advVariables adv)
         (encErrs, encounterDefs) = compileEncounterTables (advEncounterTables adv)
         (facErrs, factionDefs, factionInitials) = compileFactions (advFactions adv)
         (facConflictErrs, facVarDefs, facVarInitials) =
@@ -1220,11 +1220,34 @@ compileVar :: AVariable -> Either [CompileIssue] (AVariable, E.VarDef, E.Variabl
 compileVar av =
     let bp = "variables." ++ avbVarName av
         vtype = parseVarType (avbVarType av) (avbMin av) (avbMax av)
-    in case vtype of
-        Left msg -> Left [ciError bp "InvalidVariableType" msg]
-        Right vt -> case compileVarInitial av vt of
-            Left msg -> Left [ciError (bp ++ ".initial") "InvalidVariableInitial" msg]
-            Right vv -> Right (av, E.VarDef (avbVarName av) vt vv, vv)
+        resetErr = case avbResetOn av of
+            Just rEv
+                | rEv `notElem` ["turn", "combat_start"] ->
+                    [ciError (bp ++ ".reset_on") "InvalidResetOn"
+                        ("unknown reset_on event '" ++ rEv ++ "' (expected: turn, combat_start)")]
+                | isNothing (avbMax av) ->
+                    [ciError (bp ++ ".reset_on") "ResetWithoutMax"
+                        ("variable '" ++ avbVarName av ++ "' has reset_on but no max declared")]
+                | otherwise -> []
+            Nothing -> []
+        overflowErr = case (avbOnOverflow av, avbMax av) of
+            (effs, Nothing) | not (null effs) ->
+                [ciError (bp ++ ".on_overflow") "OverflowWithoutMax"
+                    ("variable '" ++ avbVarName av ++ "' has on_overflow but no max declared")]
+            _ -> []
+        refillErr = if avbRefillPerTurn av < 0
+            then [ciError (bp ++ ".refill_per_turn") "NegativeRefill"
+                    ("variable '" ++ avbVarName av ++ "' has negative refill_per_turn")]
+            else []
+        valErrs = resetErr ++ overflowErr ++ refillErr
+        overflowEffs = map compileAActionOutcome (avbOnOverflow av)
+    in if not (null valErrs)
+       then Left valErrs
+       else case vtype of
+           Left msg -> Left [ciError bp "InvalidVariableType" msg]
+           Right vt -> case compileVarInitial av vt of
+               Left msg -> Left [ciError (bp ++ ".initial") "InvalidVariableInitial" msg]
+               Right vv -> Right (av, E.VarDef (avbVarName av) vt vv overflowEffs, vv)
 
 parseVarType :: String -> Maybe Int -> Maybe Int -> Either String E.VariableType
 parseVarType "bool" _ _     = Right E.VTBool
@@ -1267,7 +1290,7 @@ compileFactions factions =
             | (fid, others) <- collisions [(afId f, afId f) | f <- factions]
             , not (null others) ]
         defs = Map.fromList
-            [ ("faction." ++ afId f, E.VarDef ("faction." ++ afId f) (E.VTInt Nothing Nothing) (E.VVInt (afInitial f)))
+            [ ("faction." ++ afId f, E.VarDef ("faction." ++ afId f) (E.VTInt Nothing Nothing) (E.VVInt (afInitial f)) [])
             | f <- factions ]
         initials = Map.fromList
             [ ("faction." ++ afId f, E.VVInt (afInitial f))
@@ -1339,7 +1362,7 @@ compileWeather (Just wd) =
             , wtTo t `notElem` states ]
         initIdx = stateIndex (weaInitial wd)
         varDefs = Map.singleton "env.weather"
-            (E.VarDef "env.weather" (E.VTInt Nothing Nothing) (E.VVInt initIdx))
+            (E.VarDef "env.weather" (E.VTInt Nothing Nothing) (E.VVInt initIdx) [])
         initials = Map.singleton "env.weather" (E.VVInt initIdx)
         transitions =
             [ E.TriggerDef ("environment.weather." ++ show i) E.OnTurn (wtWhen t)
@@ -1400,7 +1423,7 @@ compileStealth roomIds npcIds (Just st) =
         onMove = nsOnMove spec
         decay = nsDecay spec
         maxN = nsMax spec
-        varDefs = Map.singleton var (E.VarDef var (E.VTInt Nothing (Just maxN)) (E.VVInt 0))
+        varDefs = Map.singleton var (E.VarDef var (E.VTInt Nothing (Just maxN)) (E.VVInt 0) [])
         initials = Map.singleton var (E.VVInt 0)
         clampToMax = E.Conditional (E.CompareVar var E.CGte maxN)
                          (E.SetValue (E.VRVariable var) (E.EVInt maxN)) E.Noop
@@ -1479,9 +1502,9 @@ compilePatrol roomIds npcIds (Just p) =
         movedVar h = "patrol." ++ ahNPC h ++ ".moved"
         indexVar h = "patrol." ++ ahNPC h ++ ".index"
         varDefs = Map.union
-            (Map.fromList [ (movedVar h, E.VarDef (movedVar h) (E.VTInt Nothing Nothing) (E.VVInt 0))
+            (Map.fromList [ (movedVar h, E.VarDef (movedVar h) (E.VTInt Nothing Nothing) (E.VVInt 0) [])
                           | h <- walkers ])
-            (Map.fromList [ (indexVar h, E.VarDef (indexVar h) (E.VTInt Nothing Nothing) (E.VVInt (ahStartIndex h)))
+            (Map.fromList [ (indexVar h, E.VarDef (indexVar h) (E.VTInt Nothing Nothing) (E.VVInt (ahStartIndex h)) [])
                           | h <- walkers ])
         initials = Map.union
             (Map.fromList [ (movedVar h, E.VVInt 0) | h <- walkers ])
@@ -1574,7 +1597,7 @@ compileParty registry npcs =
     let parties = [(n, p) | n <- npcs, Just p <- [anParty n], aptCanJoin p]
         varName n = "party." ++ anId n
         varDefs = Map.fromList
-            [ (varName n, E.VarDef (varName n) (E.VTInt (Just 0) (Just 1)) (E.VVInt 0))
+            [ (varName n, E.VarDef (varName n) (E.VTInt (Just 0) (Just 1)) (E.VVInt 0) [])
             | (n, _) <- parties ]
         initials = Map.fromList [(varName n, E.VVInt 0) | (n, _) <- parties]
         toggle n p = E.Conditional (E.CompareVar (varName n) E.CGte 1)
@@ -1645,7 +1668,7 @@ compileShipSystems registry vehicles =
         entries = [ (v, name, spec)
                   | v <- vehicles, (name, spec) <- Map.toList (avSystems v) ]
         varDefs = Map.fromList
-            [ (sysVar v name, E.VarDef (sysVar v name) (E.VTInt (Just 0) (bound spec)) (E.VVInt (asInitial spec)))
+            [ (sysVar v name, E.VarDef (sysVar v name) (E.VTInt (Just 0) (bound spec)) (E.VVInt (asInitial spec)) [])
             | (v, name, spec) <- entries ]
         initials = Map.fromList
             [ (sysVar v name, E.VVInt (asInitial spec))
@@ -2447,11 +2470,11 @@ compileProgression (Just prog) =
         compiledLevels = zipWith compileLevel [1 :: Int ..] levels
         compiledProg = if null emptyErrs then Just (E.ProgressionDef compiledLevels) else Nothing
         progDefs = Map.fromList
-            [ ("xp.current",    E.VarDef "xp.current" (E.VTInt (Just 0) Nothing) (E.VVInt 0))
-            , ("level.current", E.VarDef "level.current" (E.VTInt (Just 1) Nothing) (E.VVInt 1))
-            , ("bonus.attack",  E.VarDef "bonus.attack" (E.VTInt Nothing Nothing) (E.VVInt 0))
-            , ("bonus.defense", E.VarDef "bonus.defense" (E.VTInt Nothing Nothing) (E.VVInt 0))
-            , ("bonus.hp",       E.VarDef "bonus.hp" (E.VTInt Nothing Nothing) (E.VVInt 0))
+            [ ("xp.current",    E.VarDef "xp.current" (E.VTInt (Just 0) Nothing) (E.VVInt 0) [])
+            , ("level.current", E.VarDef "level.current" (E.VTInt (Just 1) Nothing) (E.VVInt 1) [])
+            , ("bonus.attack",  E.VarDef "bonus.attack" (E.VTInt Nothing Nothing) (E.VVInt 0) [])
+            , ("bonus.defense", E.VarDef "bonus.defense" (E.VTInt Nothing Nothing) (E.VVInt 0) [])
+            , ("bonus.hp",       E.VarDef "bonus.hp" (E.VTInt Nothing Nothing) (E.VVInt 0) [])
             ]
         progInitials = Map.fromList
             [ ("xp.current",    E.VVInt 0)
@@ -3449,13 +3472,14 @@ compileAscii a = E.AsciiArt
 -- ---------------------------------------------------------------------------
 
 -- | Compile authored trigger rules into engine TriggerDefs.
-compileTriggers :: [ATrigger] -> [ANPC] -> ([CompileIssue], [E.TriggerDef])
-compileTriggers triggers npcs =
+compileTriggers :: [ATrigger] -> [ANPC] -> [AVariable] -> ([CompileIssue], [E.TriggerDef])
+compileTriggers triggers npcs vars =
     let results = map compileOne triggers
         errors = concat [e | Left e <- results]
         defs = [d | Right d <- results]
         (aiErrors, aiDefs) = compileNpcAI npcs
-    in (errors ++ aiErrors, defs ++ barkDefs ++ talkDefs ++ aiDefs)
+        (varResetDefs, varRefillDefs) = compileVarTriggers vars
+    in (errors ++ aiErrors, defs ++ barkDefs ++ talkDefs ++ aiDefs ++ varResetDefs ++ varRefillDefs)
   where
     -- 4.5 sugar: `barks:` on an NPC becomes `on: turn` triggers with a
     -- cooldown (one mechanism, the compiler owns the ids).
@@ -3500,6 +3524,68 @@ compileTriggers triggers npcs =
             , E.trRequires = atRequires t
             , E.trChainsTo = atChainsTo t
             }
+
+-- | K7+K4: Compiler-sugar for variable cycles (refill_per_turn, reset_on).
+-- Variables with cycle fields compile to engine TriggerDefs with id schema
+-- `var.<name>.reset`, `var.<name>.combatreset`, and `var.<name>.refill`.
+--
+-- REIHENFOLGE:
+-- 1. Autoren-Regeln ('defs') stehen GANZ VORNE in der TriggerDef-Liste:
+--    `defs ++ barkDefs ++ talkDefs ++ aiDefs ++ varResetDefs ++ varRefillDefs`.
+--    Eine Autorenregel auf 'on: turn' sieht daher den Zustand VOR dem Reset.
+-- 2. Zwischen den Compiler-Zucker-Listen werden 'varResetDefs' VOR 'varRefillDefs'
+--    eingehängt. Da 'fireTriggers' / 'fireTriggerList' die Trigger per 'foldl''
+--    strikt in Definitionsreihenfolge (der Listenreihenfolge, NICHT alphabetisch)
+--    ausführt, wird bei 'OnTurn' immer zuerst der Reset auf 'max' durchgeführt
+--    und danach der Refill addiert. Ein Reset überschreibt somit niemals den
+--    im selben Zug regenerierten Refill.
+compileVarTriggers :: [AVariable] -> ([E.TriggerDef], [E.TriggerDef])
+compileVarTriggers vars = (concatMap makeResetTriggers vars, concatMap makeRefillTriggers vars)
+  where
+    makeResetTriggers av = case (avbResetOn av, avbMax av) of
+        (Just "turn", Just maxVal) ->
+            [ E.TriggerDef
+                { E.trId         = "var." ++ avbVarName av ++ ".reset"
+                , E.trEvent      = E.OnTurn
+                , E.trCondition  = Nothing
+                , E.trEffects    = [E.SetValue (E.VRVariable (avbVarName av)) (E.EVInt maxVal)]
+                , E.trOnce       = False
+                , E.trCooldown   = 0
+                , E.trWeight     = 1
+                , E.trRequires   = []
+                , E.trChainsTo   = []
+                }
+            ]
+        (Just "combat_start", Just maxVal) ->
+            [ E.TriggerDef
+                { E.trId         = "var." ++ avbVarName av ++ ".combatreset"
+                , E.trEvent      = E.OnCombatStart
+                , E.trCondition  = Nothing
+                , E.trEffects    = [E.SetValue (E.VRVariable (avbVarName av)) (E.EVInt maxVal)]
+                , E.trOnce       = False
+                , E.trCooldown   = 0
+                , E.trWeight     = 1
+                , E.trRequires   = []
+                , E.trChainsTo   = []
+                }
+            ]
+        _ -> []
+
+    makeRefillTriggers av
+        | avbRefillPerTurn av > 0 =
+            [ E.TriggerDef
+                { E.trId         = "var." ++ avbVarName av ++ ".refill"
+                , E.trEvent      = E.OnTurn
+                , E.trCondition  = Nothing
+                , E.trEffects    = [E.ModifyValue (E.VRVariable (avbVarName av)) (avbRefillPerTurn av)]
+                , E.trOnce       = False
+                , E.trCooldown   = 0
+                , E.trWeight     = 1
+                , E.trRequires   = []
+                , E.trChainsTo   = []
+                }
+            ]
+        | otherwise = []
 
 -- | K2: Canonical custom event name for an NPC AI state.
 -- Schema: "npc_ai_<npcId>_<stateName>"
@@ -3615,7 +3701,7 @@ compileNpcAI npcs =
 --   these ids (encounter.<id>, environment.*, stealth.*, ship.*, party.*) and
 --   they share the runtime `triggerStates` namespace with author `rules:` ids.
 reservedTriggerPrefixes :: [String]
-reservedTriggerPrefixes = ["encounter.", "environment.", "stealth.", "ship.", "party.", "bark.", "talk.", "ai."]
+reservedTriggerPrefixes = ["encounter.", "environment.", "stealth.", "ship.", "party.", "bark.", "talk.", "ai.", "var."]
 
 -- | Validate authored trigger rules: ids must be unique and must not use a
 --   compiler-owned prefix (which would silently hijack a module trigger).
@@ -3752,6 +3838,8 @@ compileAtOn :: String -> Either String E.EventType
 compileAtOn s =
     case words (map toLower s) of
         ["turn"]                     -> Right E.OnTurn
+        ["combat_start"]             -> Right E.OnCombatStart
+        ["combat", "start"]          -> Right E.OnCombatStart
         ["talk"]                     -> Right (E.OnTalk "" "")
         ["enter", r]                 -> Right (E.OnEnter r)
         ["leave", r]                 -> Right (E.OnLeave r)

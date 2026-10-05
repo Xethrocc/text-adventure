@@ -253,10 +253,25 @@ data VarDef = VarDef
     { vdVarName    :: String
     , vdVarType    :: VariableType
     , vdVarInitial :: VariableValue
+    , vdOnOverflow :: [Effect]
     } deriving (Show, Eq, Generic)
 
-instance ToJSON VarDef
-instance FromJSON VarDef
+-- | K7+K4: Hand-written ToJSON/FromJSON preserving the byte contract.
+-- When 'vdOnOverflow' is empty (all existing adventures), the field is omitted,
+-- keeping world.json encoding 100% byte-identical.
+instance ToJSON VarDef where
+    toJSON vd = object $
+        [ "vdVarInitial" .= vdVarInitial vd
+        , "vdVarName"    .= vdVarName vd
+        , "vdVarType"    .= vdVarType vd
+        ] ++ [ "vdOnOverflow" .= vdOnOverflow vd | not (null (vdOnOverflow vd)) ]
+
+instance FromJSON VarDef where
+    parseJSON = withObject "VarDef" $ \o -> VarDef
+        <$> o .:  "vdVarName"
+        <*> o .:  "vdVarType"
+        <*> o .:  "vdVarInitial"
+        <*> o .:? "vdOnOverflow" .!= []
 
 -- | Basic enumerations
 -- ---------------------------------------------------------------------------
@@ -1917,6 +1932,7 @@ data EventType
     | OnLearn String                   -- ^ W1: fired once per newly learned fact, in learning order
     | OnChapter String                 -- ^ W3: fired when entering chapter <id>
     | OnLevelUp Int                    -- ^ W2: fired when player reaches level <n>
+    | OnCombatStart                    -- ^ K7/K4: fired once when combat starts (combat.engaged == 0)
     | OnTalk String String             -- ^ 4.5: fired on ask/tell (npc id, topic)
     deriving (Show, Eq, Generic)
 

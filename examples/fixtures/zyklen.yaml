@@ -1,0 +1,110 @@
+# K7+K4: Variablen-Zyklen (refill_per_turn, reset_on, on_overflow)
+#
+# Mechaniken in dieser Fixture:
+# 1. AP-Budget ueber Runden (reset_on: turn):
+#    - 'ap' startet bei 6, wird durch 'schlag' um 4 verringert.
+#    - Am Rundenende wird 'ap' automatisch auf 6 (max) zurueckgesetzt.
+# 2. Regeneration pro Runde (refill_per_turn: 3):
+#    - 'mana' startet bei 2, erhoeht sich jede Runde um 3 bis max 10.
+# 3. Reihenfolge-Beweis (reset_on vor refill_per_turn) auf 'shield':
+#    - 'shield' startet bei 4, max 6, reset_on: turn, refill_per_turn: 2.
+#    - reset_on setzt auf 6 (genau max -> kein Overflow).
+#    - refill_per_turn addiert danach 2 -> 8 > 6 -> klammert auf 6 und loest on_overflow aus!
+#    - Dies belegt im Spiel, dass reset_on VOR refill_per_turn wirkt.
+# 4. on_overflow feuert NUR bei echtem Ueberschreiten (auf 'rage'):
+#    - 'rage' startet bei 80, max 100.
+#    - 'fokus' setzt Wut auf genau 100 -> KEIN Overflow-Ereignis.
+#    - 'raserei' addiert 25 auf Wut (125 > 100) -> ECHTER Overflow -> 'Wutanfall' feuert.
+
+name: Zyklen Fixture
+start_room: arena
+
+verbs:
+  - name: schlag
+  - name: fokus
+  - name: raserei
+  - name: status
+
+variables:
+  - name: ap
+    type: int
+    initial: 6
+    min: 0
+    max: 6
+    reset_on: turn
+
+  - name: mana
+    type: int
+    initial: 2
+    min: 0
+    max: 10
+    refill_per_turn: 3
+
+  - name: shield
+    type: int
+    initial: 4
+    min: 0
+    max: 6
+    reset_on: turn
+    refill_per_turn: 2
+    on_overflow:
+      - msg: "Schild-Ueberladung: Blitzentladung!"
+
+  - name: rage
+    type: int
+    initial: 80
+    min: 0
+    max: 100
+    on_overflow:
+      - msg: "Wutanfall: Der Kessel explodiert!"
+
+rooms:
+  - id: arena
+    name: Uebungsarena
+    desc: Ein sandiger Platz fuer Kampfuebungen und Zauberei.
+
+rules:
+  - id: r_status
+    on: "command status"
+    effects:
+      - text: "AP: {var: ap}, Mana: {var: mana}, Schild: {var: shield}, Wut: {var: rage}"
+
+  - id: r_fokus
+    on: "command fokus"
+    effects:
+      - set_var: { name: rage, value: 100 }
+      - text: "Wut fokussiert auf 100."
+
+  - id: r_schlag
+    on: "command schlag"
+    effects:
+      - compute_var: { var: ap, expr: "ap - 4" }
+      - text: "Schlag ausgefuehrt (-4 AP)."
+
+  - id: r_raserei
+    on: "command raserei"
+    effects:
+      - text: "Raserei entfesselt!"
+      - add_var: { var: rage, delta: 25 }
+
+tests:
+  - name: "zyklen ablauf"
+    input:
+      - status
+      - fokus
+      - status
+      - schlag
+      - status
+      - raserei
+      - status
+    expect:
+      - "AP: 6, Mana: 2, Schild: 4, Wut: 80"
+      - "Wut fokussiert auf 100."
+      - "Schild-Ueberladung: Blitzentladung!"
+      - "AP: 6, Mana: 5, Schild: 6, Wut: 100"
+      - "Schlag ausgefuehrt (-4 AP)."
+      - "Schild-Ueberladung: Blitzentladung!"
+      - "AP: 6, Mana: 8, Schild: 6, Wut: 100"
+      - "Raserei entfesselt!"
+      - "Wutanfall: Der Kessel explodiert!"
+      - "AP: 6, Mana: 10, Schild: 6, Wut: 100"

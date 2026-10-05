@@ -43,7 +43,7 @@ import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, par
                defaultDarkMessage,
                pattern TargetItem, pattern TargetVehicle, pattern TargetAmbiguous, pattern TargetNotFound, pattern TargetBare)
 import Verbs (verbAliasMap)
-import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombat, shipAbsorb)
+import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombat, resolveCombatState, shipAbsorb)
 import Validate (ValidationError (..), validateWorld, validateWorldWithFlags, validateGameState, idsFromOutcomeRoom)
 import Sample (initSampleGame)
 import SaveLoad (computeWorldChecksum, formatSaveEntry, currentSaveVersion)
@@ -1494,7 +1494,7 @@ testSessionTransitionRestart :: IO Bool
 testSessionTransitionRestart = do
     let metaSt = initSampleGame
             { world = (world initSampleGame)
-                { varDefs = Map.singleton "meta.runs" (VarDef "Runs" (VTInt Nothing Nothing) (VVInt 0)) }
+                { varDefs = Map.singleton "meta.runs" (VarDef "Runs" (VTInt Nothing Nothing) (VVInt 0) []) }
             , save = (save initSampleGame)
                 { rngState = 1234
                 , variables = Map.singleton "meta.runs" (VVInt 3) }
@@ -2064,7 +2064,7 @@ testDefaultSaveStateFieldsInitialised = do
     let base = initSampleGame
         w = (world base)
             { varDefs = Map.fromList
-                [ ("quest_stage", VarDef "quest_stage" (VTInt Nothing Nothing) (VVInt 3)) ]
+                [ ("quest_stage", VarDef "quest_stage" (VTInt Nothing Nothing) (VVInt 3) []) ]
             , triggerDefs =
                 [ TriggerDef "welcome" (OnEnter "start") Nothing
                     [ SendMessage "Willkommen zurück." ] False 0 1 [] [] ]
@@ -2371,7 +2371,7 @@ testMetaRunsCounter :: IO Bool
 testMetaRunsCounter = do
     -- a meta adventure: declares meta.souls, counter carried from the disk map
     let metaWorld = (world initSampleGame)
-            { varDefs = Map.fromList [("meta.souls", VarDef "meta.souls" (VTInt Nothing Nothing) (VVInt 0))] }
+            { varDefs = Map.fromList [("meta.souls", VarDef "meta.souls" (VTInt Nothing Nothing) (VVInt 0) [])] }
         pristine = initSampleGame
             { world = metaWorld
             , save = (save initSampleGame)
@@ -4506,7 +4506,7 @@ testVTIntBoundsEnforcedOnSet :: IO Bool
 testVTIntBoundsEnforcedOnSet = do
     let w = (world initSampleGame)
             { varDefs = Map.insert "score"
-                (VarDef "score" (VTInt (Just 0) (Just 10)) (VVInt 5))
+                (VarDef "score" (VTInt (Just 0) (Just 10)) (VVInt 5) [])
                 (varDefs (world initSampleGame)) }
         base = initSampleGame { world = w }
         (over, _)  = applyOutcome (SetValue (VRVariable "score") (EVInt 15)) "" base
@@ -4520,7 +4520,7 @@ testVTIntBoundsEnforcedOnModify :: IO Bool
 testVTIntBoundsEnforcedOnModify = do
     let w = (world initSampleGame)
             { varDefs = Map.insert "score"
-                (VarDef "score" (VTInt (Just 0) (Just 10)) (VVInt 8))
+                (VarDef "score" (VTInt (Just 0) (Just 10)) (VVInt 8) [])
                 (varDefs (world initSampleGame)) }
         base = initSampleGame
             { world = w
@@ -9332,6 +9332,304 @@ testDynamicVarNameFormat = do
     pure (and [r1, r2, r3, r4])
 
 -- ---------------------------------------------------------------------------
+-- K7+K4: Variablen-Zyklen (refill_per_turn, reset_on, on_overflow)
+-- ---------------------------------------------------------------------------
+
+-- | K7+K4: refill_per_turn adds to the variable upon OnTurn.
+testVariableRefillPerTurn :: IO Bool
+testVariableRefillPerTurn = do
+    let w = (world initSampleGame)
+            { varDefs = Map.insert "ap" (VarDef "ap" (VTInt (Just 0) (Just 10)) (VVInt 2) []) (varDefs (world initSampleGame))
+            , triggerDefs = [TriggerDef "var.ap.refill" OnTurn Nothing [ModifyValue (VRVariable "ap") 2] False 0 1 [] []]
+            }
+        st0 = initSampleGame { world = w, save = (save initSampleGame) { variables = Map.singleton "ap" (VVInt 2) } }
+        (st1, _) = fireTriggers OnTurn st0
+    r1 <- expectEqual (Just (VVInt 4)) (getVariable "ap" st1)
+    let (st2, _) = fireTriggers OnTurn st1
+    r2 <- expectEqual (Just (VVInt 6)) (getVariable "ap" st2)
+    pure (r1 && r2)
+
+-- | K7+K4: reset_on: turn sets the variable to max upon OnTurn.
+testVariableResetOnTurn :: IO Bool
+testVariableResetOnTurn = do
+    let w = (world initSampleGame)
+            { varDefs = Map.insert "ap" (VarDef "ap" (VTInt (Just 0) (Just 10)) (VVInt 10) []) (varDefs (world initSampleGame))
+            , triggerDefs = [TriggerDef "var.ap.reset" OnTurn Nothing [SetValue (VRVariable "ap") (EVInt 10)] False 0 1 [] []]
+            }
+        st0 = initSampleGame { world = w, save = (save initSampleGame) { variables = Map.singleton "ap" (VVInt 3) } }
+        (st1, _) = fireTriggers OnTurn st0
+    r1 <- expectEqual (Just (VVInt 10)) (getVariable "ap" st1)
+    pure r1
+
+-- | K7+K4: Order guarantee — reset_on acts BEFORE refill_per_turn.
+--   When current is 5, max is 10, reset_on sets 10, refill adds 2:
+--   - If reset acts first: 5 -> 10 (exact max, no overflow), then 10 + 2 -> clamps to 10 and triggers on_overflow!
+--   - If refill acted first: 5 + 2 = 7 (no overflow), then sets 10 (exact max, no overflow).
+--   Thus, on_overflow firing proves that reset_on executed before refill_per_turn.
+testVariableResetBeforeRefillOrder :: IO Bool
+testVariableResetBeforeRefillOrder = do
+    let overflowEff = [SetValue (VRFlag "overflow_fired") (EVString "true")]
+        w = (world initSampleGame)
+            { varDefs = Map.insert "energy" (VarDef "energy" (VTInt (Just 0) (Just 10)) (VVInt 10) overflowEff) (varDefs (world initSampleGame))
+            , triggerDefs =
+                [ TriggerDef "var.energy.reset" OnTurn Nothing [SetValue (VRVariable "energy") (EVInt 10)] False 0 1 [] []
+                , TriggerDef "var.energy.refill" OnTurn Nothing [ModifyValue (VRVariable "energy") 2] False 0 1 [] []
+                ]
+            }
+        st0 = initSampleGame { world = w, save = (save initSampleGame) { variables = Map.singleton "energy" (VVInt 5) } }
+        (st1, _) = fireTriggers OnTurn st0
+    r1 <- expectEqual (Just (VVInt 10)) (getVariable "energy" st1)
+    r2 <- expectEqual (Just "true") (getFlag "overflow_fired" st1)
+    pure (r1 && r2)
+
+-- | K7+K4: reset_on: combat_start fires ONCE upon entering combat,
+--   not on subsequent combat commands in the same combat.
+testVariableResetOnCombatStart :: IO Bool
+testVariableResetOnCombatStart = do
+    let w = (world initSampleGame)
+            { varDefs = Map.insert "stamina" (VarDef "stamina" (VTInt (Just 0) (Just 10)) (VVInt 10) []) (varDefs (world initSampleGame))
+            , triggerDefs = [TriggerDef "var.stamina.combatreset" OnCombatStart Nothing [SetValue (VRVariable "stamina") (EVInt 10)] False 0 1 [] []]
+            }
+        st0 = initSampleGame
+            { world = w
+            , save = (save initSampleGame)
+                { currentRoom = "hallway"
+                , variables = Map.singleton "stamina" (VVInt 3)
+                }
+            }
+        tc = TacticalCombat PlayerFirst True 100 "speed"
+        profile = CombatTactical tc
+        actors = [PlayerActor]
+        target = TargetNPC "goblin" "goblin"
+    -- First combat command: resolveCombatState applies OnCombatStart to state,
+    -- but does NOT duplicate it into returned effect list
+    let (st1, effs1, _) = resolveCombatState profile actors target CAAttack st0
+        hasResetEff = SetValue (VRVariable "stamina") (EVInt 10) `elem` effs1
+    r1 <- expectTrue "effs1 does NOT duplicate OnCombatStart trigger effect" (not hasResetEff)
+    r2 <- expectEqual (Just (VVInt 10)) (getVariable "stamina" st1)
+    r3 <- expectTrue "combat is now started" (isCombatStarted st1)
+
+    -- Spend stamina during the fight: set stamina to 4
+    let st1MidFight = setVariableChecked "stamina" (VVInt 4) st1
+    -- Second combat command in the same fight: OnCombatStart must NOT fire again
+    let (st2, effs2, _) = resolveCombatState profile actors target CAAttack st1MidFight
+        hasResetEff2 = SetValue (VRVariable "stamina") (EVInt 10) `elem` effs2
+    r4 <- expectTrue "second combat command does NOT duplicate OnCombatStart" (not hasResetEff2)
+    r5 <- expectEqual (Just (VVInt 4)) (getVariable "stamina" st2)
+    pure (and [r1, r2, r3, r4, r5])
+
+-- | K7+K4 / Opus-Review: OnCombatStart fires EXACTLY ONCE for three attacks in one combat,
+--   in ALL three profiles (classic, narrative, tactical).
+testCombatStartExactlyOnceThreeAttacksAllProfiles :: IO Bool
+testCombatStartExactlyOnceThreeAttacksAllProfiles = do
+    let trig = TriggerDef "start.cnt" OnCombatStart Nothing [ModifyValue (VRVariable "combat_cnt") 1] False 0 1 [] []
+        vd = VarDef "combat_cnt" (VTInt (Just 0) (Just 100)) (VVInt 0) []
+        wBase = (world initSampleGame)
+            { varDefs = Map.insert "combat_cnt" vd (varDefs (world initSampleGame))
+            , triggerDefs = trig : triggerDefs (world initSampleGame)
+            }
+        -- Goblin with 100 HP so 3 attacks never kill it
+        stBase = initSampleGame
+            { world = wBase
+            , save = (save initSampleGame)
+                { currentRoom = "hallway"
+                , npcStates = Map.insert "goblin" (NPCState (InRoom "hallway") "alive" (Just 100) Map.empty Nothing)
+                                         (npcStates (save initSampleGame))
+                , variables = Map.singleton "combat_cnt" (VVInt 0)
+                }
+            }
+
+    -- 1. Classic Profile
+    let stCl0 = stBase { world = (world stBase) { combatProfile = CombatClassic Nothing } }
+    let (stCl1, _) = executeCommand (Interact VAttack "goblin") stCl0
+    rCl1 <- expectEqual (Just (VVInt 1)) (getVariable "combat_cnt" stCl1)
+    let (stCl2, _) = executeCommand (Interact VAttack "goblin") stCl1
+    rCl2 <- expectEqual (Just (VVInt 1)) (getVariable "combat_cnt" stCl2)
+    let (stCl3, _) = executeCommand (Interact VAttack "goblin") stCl2
+    rCl3 <- expectEqual (Just (VVInt 1)) (getVariable "combat_cnt" stCl3)
+
+    -- 2. Tactical Profile
+    let tactical = CombatTactical (TacticalCombat PlayerFirst True 100 "speed")
+        stTc0 = stBase { world = (world stBase) { combatProfile = tactical } }
+    let (stTc1, _) = executeCommand (Interact VAttack "goblin") stTc0
+    rTc1 <- expectEqual (Just (VVInt 1)) (getVariable "combat_cnt" stTc1)
+    let (stTc2, _) = executeCommand (Interact VAttack "goblin") stTc1
+    rTc2 <- expectEqual (Just (VVInt 1)) (getVariable "combat_cnt" stTc2)
+    let (stTc3, _) = executeCommand (Interact VAttack "goblin") stTc2
+    rTc3 <- expectEqual (Just (VVInt 1)) (getVariable "combat_cnt" stTc3)
+
+    -- 3. Narrative Profile (high difficulty so opposed roll is not won and fight continues)
+    let narrative = CombatNarrative (NarrativeCombat 100 (SendMessage "win") (SendMessage "lose"))
+        stNr0 = stBase { world = (world stBase) { combatProfile = narrative } }
+    let (stNr1, _) = executeCommand (Interact VAttack "goblin") stNr0
+    rNr1 <- expectEqual (Just (VVInt 1)) (getVariable "combat_cnt" stNr1)
+    let (stNr2, _) = executeCommand (Interact VAttack "goblin") stNr1
+    rNr2 <- expectEqual (Just (VVInt 1)) (getVariable "combat_cnt" stNr2)
+    let (stNr3, _) = executeCommand (Interact VAttack "goblin") stNr2
+    rNr3 <- expectEqual (Just (VVInt 1)) (getVariable "combat_cnt" stNr3)
+
+    pure (and [rCl1, rCl2, rCl3, rTc1, rTc2, rTc3, rNr1, rNr2, rNr3])
+
+-- | K7+K4 / Opus-Review: A combat_start trigger with once: true does not fire again in a new combat.
+testCombatStartOnceRule :: IO Bool
+testCombatStartOnceRule = do
+    let trig = TriggerDef "start.once" OnCombatStart Nothing [ModifyValue (VRVariable "once_hits") 1] True 0 1 [] []
+        vd = VarDef "once_hits" (VTInt (Just 0) (Just 100)) (VVInt 0) []
+        orc = (maybe (error "no goblin") id (Map.lookup "goblin" (npcDefs (world initSampleGame))))
+            { npcId = "orc", npcName = "Orc", npcKeywords = ["orc"] }
+        wBase = (world initSampleGame)
+            { varDefs = Map.insert "once_hits" vd (varDefs (world initSampleGame))
+            , npcDefs = Map.insert "orc" orc (npcDefs (world initSampleGame))
+            , triggerDefs = trig : triggerDefs (world initSampleGame)
+            }
+        st0 = initSampleGame
+            { world = wBase
+            , save = (save initSampleGame)
+                { currentRoom = "hallway"
+                , npcStates = Map.fromList
+                    [ ("goblin", NPCState (InRoom "hallway") "alive" (Just 1) Map.empty Nothing)
+                    , ("orc",    NPCState (InRoom "hallway") "alive" (Just 1) Map.empty Nothing)
+                    ]
+                , variables = Map.singleton "once_hits" (VVInt 0)
+                }
+            }
+    -- Fight 1: kill goblin (1 HP -> killed in one blow, combat ends)
+    let (st1, _) = executeCommand (Interact VAttack "goblin") st0
+    r1 <- expectEqual (Just (VVInt 1)) (getVariable "once_hits" st1)
+    r2 <- expectEqual (Just "dead") (npcStatus <$> Map.lookup "goblin" (npcStates (save st1)))
+
+    -- Fight 2: attack orc in fresh combat. once: true MUST prevent firing again!
+    let (st2, _) = executeCommand (Interact VAttack "orc") st1
+    r3 <- expectEqual (Just (VVInt 1)) (getVariable "once_hits" st2)
+    pure (r1 && r2 && r3)
+
+-- | K7+K4 / Opus-Review: chains_to from a combat_start trigger executes its state changes.
+testCombatStartChainsToState :: IO Bool
+testCombatStartChainsToState = do
+    let trig1 = TriggerDef "start.c1" OnCombatStart Nothing [SetValue (VRVariable "c1_var") (EVInt 42)] False 0 1 [] ["chain_step2"]
+        trig2 = TriggerDef "start.c2" (OnCustomEvent "chain_step2") Nothing [SetValue (VRVariable "c2_var") (EVInt 99)] False 0 1 [] []
+        vd1 = VarDef "c1_var" (VTInt (Just 0) (Just 100)) (VVInt 0) []
+        vd2 = VarDef "c2_var" (VTInt (Just 0) (Just 100)) (VVInt 0) []
+        wBase = (world initSampleGame)
+            { varDefs = Map.insert "c1_var" vd1 $ Map.insert "c2_var" vd2 (varDefs (world initSampleGame))
+            , triggerDefs = trig1 : trig2 : triggerDefs (world initSampleGame)
+            }
+        st0 = initSampleGame
+            { world = wBase
+            , save = (save initSampleGame)
+                { currentRoom = "hallway"
+                , variables = Map.fromList [("c1_var", VVInt 0), ("c2_var", VVInt 0)]
+                }
+            }
+    let (st1, _) = executeCommand (Interact VAttack "goblin") st0
+    r1 <- expectEqual (Just (VVInt 42)) (getVariable "c1_var" st1)
+    r2 <- expectEqual (Just (VVInt 99)) (getVariable "c2_var" st1)
+    pure (r1 && r2)
+
+-- | K7+K4 / Opus-Review: effects of a combat_start trigger run EXACTLY ONCE (counter is proof, no duplicate messages).
+testCombatStartEffectsRunExactlyOnce :: IO Bool
+testCombatStartEffectsRunExactlyOnce = do
+    let trig = TriggerDef "start.exact" OnCombatStart Nothing
+                [ ModifyValue (VRVariable "counter") 7
+                , SendMessage "BATTLE_HORN_BLOWS"
+                ] False 0 1 [] []
+        vd = VarDef "counter" (VTInt (Just 0) (Just 100)) (VVInt 10) []
+        wBase = (world initSampleGame)
+            { varDefs = Map.insert "counter" vd (varDefs (world initSampleGame))
+            , triggerDefs = trig : triggerDefs (world initSampleGame)
+            }
+        st0 = initSampleGame
+            { world = wBase
+            , save = (save initSampleGame)
+                { currentRoom = "hallway"
+                , variables = Map.singleton "counter" (VVInt 10)
+                }
+            }
+    let (st1, msg) = executeCommand (Interact VAttack "goblin") st0
+    -- Exactly one execution: 10 + 7 = 17 (NOT 24 from double execution!)
+    r1 <- expectEqual (Just (VVInt 17)) (getVariable "counter" st1)
+    -- Exactly one message: not duplicated in output stream
+    let occurrences = length (filter ("BATTLE_HORN_BLOWS" `isInfixOf`) (lines msg))
+    r2 <- expectEqual 1 occurrences
+    pure (r1 && r2)
+
+-- | K7+K4 / Opus-Review: random choice in combat_start trigger produces same result with salt 0
+--   and does not alter subsequent combat RNG salts.
+testCombatStartRandomChoiceDeterministic :: IO Bool
+testCombatStartRandomChoiceDeterministic = do
+    let cands = [(1, SetValue (VRVariable "rng_choice") (EVInt 111)), (1, SetValue (VRVariable "rng_choice") (EVInt 222))]
+        trig = TriggerDef "start.rng" OnCombatStart Nothing [RandomChoice cands] False 0 1 [] []
+        vd = VarDef "rng_choice" (VTInt (Just 0) (Just 1000)) (VVInt 0) []
+        wBase = (world initSampleGame)
+            { varDefs = Map.insert "rng_choice" vd (varDefs (world initSampleGame))
+            , triggerDefs = trig : triggerDefs (world initSampleGame)
+            }
+        st0 = initSampleGame
+            { world = wBase
+            , save = (save initSampleGame)
+                { currentRoom = "hallway"
+                , variables = Map.singleton "rng_choice" (VVInt 0)
+                }
+            }
+    -- Baseline direct run of fireTriggersWithDepth 0 OnCombatStart
+    let (stDirect, _) = fireTriggersWithDepth 0 OnCombatStart st0
+        expectedChoice = getVariable "rng_choice" stDirect
+    -- Full game command through parser & combat resolver
+    let (stGame, _) = executeCommand (Interact VAttack "goblin") st0
+        actualChoice = getVariable "rng_choice" stGame
+    r1 <- expectEqual expectedChoice actualChoice
+    r2 <- expectTrue "choice was evaluated to either 111 or 222" (actualChoice `elem` [Just (VVInt 111), Just (VVInt 222)])
+    pure (r1 && r2)
+
+-- | K7+K4: on_overflow fires ONLY when genuinely written beyond max (n > max),
+--   NOT when set or modified to exactly max.
+testVariableOnOverflowGenuine :: IO Bool
+testVariableOnOverflowGenuine = do
+    let overflowEff = [SetValue (VRFlag "overflow_hit") (EVString "yes")]
+        w = (world initSampleGame)
+            { varDefs = Map.insert "shield" (VarDef "shield" (VTInt (Just 0) (Just 100)) (VVInt 80) overflowEff) (varDefs (world initSampleGame))
+            }
+        st0 = initSampleGame
+            { world = w
+            , save = (save initSampleGame) { variables = Map.singleton "shield" (VVInt 80) }
+            }
+
+    -- 1. Setting to exactly max does NOT trigger on_overflow
+    let (stExactSet, _) = applyOutcome (SetValue (VRVariable "shield") (EVInt 100)) "" st0
+    r1 <- expectEqual (Just (VVInt 100)) (getVariable "shield" stExactSet)
+    r2 <- expectEqual Nothing (getFlag "overflow_hit" stExactSet)
+
+    -- 2. Modifying to exactly max (80 + 20 = 100) does NOT trigger on_overflow
+    let (stExactMod, _) = applyOutcome (ModifyValue (VRVariable "shield") 20) "" st0
+    r3 <- expectEqual (Just (VVInt 100)) (getVariable "shield" stExactMod)
+    r4 <- expectEqual Nothing (getFlag "overflow_hit" stExactMod)
+
+    -- 3. Setting beyond max (105 > 100) clamps to 100 and FIRES on_overflow
+    let (stOverSet, _) = applyOutcome (SetValue (VRVariable "shield") (EVInt 105)) "" st0
+    r5 <- expectEqual (Just (VVInt 100)) (getVariable "shield" stOverSet)
+    r6 <- expectEqual (Just "yes") (getFlag "overflow_hit" stOverSet)
+
+    -- 4. Modifying beyond max (80 + 25 = 105 > 100) clamps to 100 and FIRES on_overflow
+    let (stOverMod, _) = applyOutcome (ModifyValue (VRVariable "shield") 25) "" st0
+    r7 <- expectEqual (Just (VVInt 100)) (getVariable "shield" stOverMod)
+    r8 <- expectEqual (Just "yes") (getFlag "overflow_hit" stOverMod)
+
+    -- 5. Recursion protection: on_overflow that attempts to modify the same variable again terminates safely
+    let loopEff = [ModifyValue (VRVariable "loopvar") 5]
+        wLoop = (world initSampleGame)
+            { varDefs = Map.insert "loopvar" (VarDef "loopvar" (VTInt (Just 0) (Just 10)) (VVInt 10) loopEff) (varDefs (world initSampleGame))
+            }
+        stLoop0 = initSampleGame
+            { world = wLoop
+            , save = (save initSampleGame) { variables = Map.singleton "loopvar" (VVInt 10) }
+            }
+    -- Writing 15 triggers overflow which tries to add 5; bounded by depth without infinite loop
+    let (stLoop1, _) = applyOutcome (ModifyValue (VRVariable "loopvar") 5) "" stLoop0
+    r9 <- expectEqual (Just (VVInt 10)) (getVariable "loopvar" stLoop1)
+
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9])
+
+-- ---------------------------------------------------------------------------
 -- Phase 4.2: verb_map phases (before:/instead:)
 -- ---------------------------------------------------------------------------
 
@@ -10321,5 +10619,17 @@ main = do
         -- K12: dynamic variable names
         , runTest "dynamic var names: compute_var / add_var / set_var write to resolved name (K12.1)" testDynamicVarNameWrite
         , runTest "dynamic var names: lookupVarForFormat resolves dynamic placeholders in texts (K12.2)" testDynamicVarNameFormat
+        -- K7+K4: variable cycles (refill_per_turn, reset_on, on_overflow)
+        , runTest "variable cycles: refill_per_turn adds after turn (K7.1)" testVariableRefillPerTurn
+        , runTest "variable cycles: reset_on: turn sets to max (K7.1)" testVariableResetOnTurn
+        , runTest "variable cycles: reset_on acts BEFORE refill_per_turn (K7.1/K4)" testVariableResetBeforeRefillOrder
+        , runTest "variable cycles: reset_on: combat_start fires only on first combat command (K7.2)" testVariableResetOnCombatStart
+        , runTest "variable cycles: on_overflow fires ONLY on genuine overflow beyond max (K4.3)" testVariableOnOverflowGenuine
+        -- K7+K4 / Opus-Review: OnCombatStart lifecycle, deduplication, and determinism
+        , runTest "combat start: OnCombatStart fires exactly once across 3 attacks in classic/narrative/tactical" testCombatStartExactlyOnceThreeAttacksAllProfiles
+        , runTest "combat start: once: true does not fire in subsequent combat" testCombatStartOnceRule
+        , runTest "combat start: chains_to state changes survive" testCombatStartChainsToState
+        , runTest "combat start: effects run exactly once (no duplicate messages or double count)" testCombatStartEffectsRunExactlyOnce
+        , runTest "combat start: random choice yields deterministic salt 0 outcome" testCombatStartRandomChoiceDeterministic
         ]
     when (not (and results)) exitFailure
