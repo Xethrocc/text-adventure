@@ -2132,7 +2132,7 @@ testItemInteractionCompiles :: IO Bool
 testItemInteractionCompiles = do
     let ix = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction "herb" "mortar" [AOMessage "paste made"] ]
+            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] [AOMessage "paste made"] ]
             , aiNpc = [] }
         adv = (minAdventure (minRoom "loc_0")) { advInteractions = Just ix }
     case compileAdventure adv of
@@ -2140,7 +2140,7 @@ testItemInteractionCompiles = do
             putStrLn $ "  compile errors: " ++ show errs
             pure False
         Right cr -> expectTrue "item-on-item interaction present"
-            (Map.member ("herb", "mortar") (E.itemInteractions (crWorld cr)))
+            (Map.member (E.RecipePair "herb" "mortar") (E.itemInteractions (crWorld cr)))
 
 -- | Phase 6: entity interaction (use item on target) compiles to unlock state.
 testEntityInteractionCompiles :: IO Bool
@@ -4296,6 +4296,11 @@ tests =
     -- K11a: Crafting verbraucht seine Zutaten
     , ("crafting: compile of valid recipe with consume {item1}/{item2} (K11a)", testCraftingCompileValidForm)
     , ("crafting: unbound dynamic ref {item9} produces hard compile error (K11a)", testCraftingUnboundRefRejected)
+    -- K11c: ingredients: — Rezepte mit mehr als zwei Zutaten
+    , ("crafting: compile of valid recipe with ingredients (K11c)", testIngredientsCompileValidForm)
+    , ("crafting: hard error when item1/item2 and ingredients conflict (K11c)", testIngredientsConflictRejected)
+    , ("crafting: ingredients in knownKeys and typo warns (K11c)", testIngredientsKnownKeysAndTypoWarns)
+    , ("crafting: dynamic item refs {ingredient1..N} validated statically (K11c)", testIngredientsDynamicRefValidation)
     -- K15: Weltobjekte sind endlich (repeatable: true, Default einmal)
     , ("repeatable: YAML parsing and knownKeys clean (K15)", testRepeatableYamlAndKnownKeysClean)
     , ("repeatable: compile of repeatable items and containers (K15)", testRepeatableCompilation)
@@ -8130,7 +8135,7 @@ testCraftingCompileValidForm = do
     let r0 = minRoom "loc_0"
         ix = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction "herb" "mortar"
+            , aiItem = [ AItemInteraction Nothing "herb" "mortar" []
                             [ AOConsumeItem "{item1}"
                             , AOConsumeItem "{item2}"
                             , AOMessage "You grind herb in mortar."
@@ -8159,7 +8164,7 @@ testCraftingUnboundRefRejected = do
         -- 1. Unbound {item9} in interactions: item:
         ixBad = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction "herb" "mortar"
+            , aiItem = [ AItemInteraction Nothing "herb" "mortar" []
                             [ AOConsumeItem "{item9}" ]
                        ]
             , aiNpc = []
@@ -8261,6 +8266,203 @@ testRepeatableCompilation = do
             r4 <- expectEqual (Just True) (fmap E.conRepeatable kesselDef)
             r5 <- expectEqual (Just False) (fmap E.conRepeatable kisteDef)
             pure (r1 && r2 && r3 && r4 && r5)
+
+-- ---------------------------------------------------------------------------
+-- K11c: ingredients: — Rezepte mit mehr als zwei Zutaten
+-- ---------------------------------------------------------------------------
+
+-- | K11c: compile of valid recipe with ingredients: [kessel, blatt_a, blatt_b]
+testIngredientsCompileValidForm :: IO Bool
+testIngredientsCompileValidForm = do
+    let yaml = unlines
+            [ "name: Ingredients Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: A test room."
+            , "items:"
+            , "  - id: kessel"
+            , "    name: Kessel"
+            , "    location: loc_0"
+            , "  - id: blatt_a"
+            , "    name: Blatt A"
+            , "    location: loc_0"
+            , "  - id: blatt_b"
+            , "    name: Blatt B"
+            , "    location: loc_0"
+            , "interactions:"
+            , "  item:"
+            , "    - id: trank_rezept"
+            , "      ingredients: [kessel, blatt_a, blatt_b]"
+            , "      effects:"
+            , "        - consume: \"{ingredient1}\""
+            , "        - consume: \"{ingredient2}\""
+            , "        - consume: \"{ingredient3}\""
+            , "        - msg: \"Trank gebraut.\""
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml decode failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  unexpected compile error: " ++ show errs
+                pure False
+            Right cr -> do
+                let warns = crWarnings cr
+                    w = crWorld cr
+                    mRx = Map.lookup (E.RecipeIngredients (Just "trank_rezept") ["kessel", "blatt_a", "blatt_b"]) (E.itemInteractions w)
+                    valErrs = validateWorld w
+                r1 <- expectTrue "compiles with zero warnings" (null warns)
+                r2 <- expectTrue "recipe present in itemInteractions" (isJust mRx)
+                r3 <- expectTrue "validateWorld clean" (null valErrs)
+                pure (r1 && r2 && r3)
+
+-- | K11c: hard error when both item1/item2 and ingredients are specified.
+testIngredientsConflictRejected :: IO Bool
+testIngredientsConflictRejected = do
+    let yaml = unlines
+            [ "name: Conflict Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: A test room."
+            , "items:"
+            , "  - id: kessel"
+            , "    name: Kessel"
+            , "    location: loc_0"
+            , "  - id: blatt_a"
+            , "    name: Blatt A"
+            , "    location: loc_0"
+            , "interactions:"
+            , "  item:"
+            , "    - item1: kessel"
+            , "      item2: blatt_a"
+            , "      ingredients: [kessel, blatt_a]"
+            , "      effects:"
+            , "        - msg: \"conflict\""
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> expectTrue "ItemInteractionConflict in parse error" ("ItemInteractionConflict" `isInfixOf` show err)
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> expectTrue "ItemInteractionConflict in compile error"
+                (any (\e -> ciCode e == "ItemInteractionConflict") errs)
+            Right _ -> expectTrue "must fail with ItemInteractionConflict" False
+
+-- | K11c: knownKeys includes ingredients, typo emits UnknownYamlKey.
+testIngredientsKnownKeysAndTypoWarns :: IO Bool
+testIngredientsKnownKeysAndTypoWarns = do
+    r1 <- expectTrue "ingredients in knownKeys EntItemInteraction"
+        ("ingredients" `Set.member` knownKeys EntItemInteraction)
+    let yamlTypo = unlines
+            [ "name: Typo Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: A test room."
+            , "items:"
+            , "  - id: kessel"
+            , "    name: Kessel"
+            , "    location: loc_0"
+            , "  - id: blatt_a"
+            , "    name: Blatt A"
+            , "    location: loc_0"
+            , "interactions:"
+            , "  item:"
+            , "    - item1: kessel"
+            , "      item2: blatt_a"
+            , "      ingredietns: [kessel, blatt_a]"
+            , "      effects:"
+            , "        - msg: \"typo\""
+            ]
+    case decode1 (BLC.pack yamlTypo) of
+        Left err -> do
+            putStrLn $ "  yaml decode failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  unexpected compile error: " ++ show errs
+                pure False
+            Right cr -> do
+                let warns = crWarnings cr
+                r2 <- expectTrue "typo ingredietns triggers UnknownYamlKey warning"
+                    (any (\w -> ciCode w == "UnknownYamlKey" && "ingredietns" `isInfixOf` ciMessage w) warns)
+                pure (r1 && r2)
+
+-- | K11c: dynamic item refs {ingredient1..N} validated statically.
+testIngredientsDynamicRefValidation :: IO Bool
+testIngredientsDynamicRefValidation = do
+    let r0 = minRoom "loc_0"
+        -- 1. Valid: {ingredient1..3} for 3-ingredient recipe
+        ixGood = AInteractions
+            { aiEntity = []
+            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"]
+                            [ AOConsumeItem "{ingredient1}"
+                            , AOConsumeItem "{ingredient2}"
+                            , AOConsumeItem "{ingredient3}"
+                            ]
+                       ]
+            , aiNpc = []
+            }
+        advGood = (minAdventure r0)
+            { advItems = [ (minItem "kessel") { aiLocation = "loc_0" }
+                         , (minItem "blatt_a") { aiLocation = "loc_0" }
+                         , (minItem "blatt_b") { aiLocation = "loc_0" }
+                         ]
+            , advInteractions = Just ixGood
+            }
+    r1 <- case compileAdventure advGood of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error in good: " ++ issuesText errs
+            pure False
+        Right cr -> pure (null (validateWorld (crWorld cr)))
+
+    -- 2. Invalid: {ingredient4} in 3-ingredient recipe
+    let ixBad4 = AInteractions
+            { aiEntity = []
+            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"]
+                            [ AOConsumeItem "{ingredient4}" ]
+                       ]
+            , aiNpc = []
+            }
+        advBad4 = advGood { advInteractions = Just ixBad4 }
+    r2 <- case compileAdventure advBad4 of
+        Left errs -> expectTrue "out of range {ingredient4} rejected"
+            (any (\e -> ciCode e == "UnknownItemRef" && "{ingredient4}" `isInfixOf` ciMessage e) errs)
+        Right _ -> expectTrue "out of range {ingredient4} must fail" False
+
+    -- 3. Invalid: {item1} in ingredients recipe
+    let ixBadItem1 = AInteractions
+            { aiEntity = []
+            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"]
+                            [ AOConsumeItem "{item1}" ]
+                       ]
+            , aiNpc = []
+            }
+        advBadItem1 = advGood { advInteractions = Just ixBadItem1 }
+    r3 <- case compileAdventure advBadItem1 of
+        Left errs -> expectTrue "{item1} in ingredients recipe rejected"
+            (any (\e -> ciCode e == "UnknownItemRef" && "{item1}" `isInfixOf` ciMessage e) errs)
+        Right _ -> expectTrue "{item1} in ingredients recipe must fail" False
+
+    -- 4. Invalid: {ingredient1} in pair recipe
+    let ixBadIngInPair = AInteractions
+            { aiEntity = []
+            , aiItem = [ AItemInteraction Nothing "kessel" "blatt_a" []
+                            [ AOConsumeItem "{ingredient1}" ]
+                       ]
+            , aiNpc = []
+            }
+        advBadIngInPair = advGood { advInteractions = Just ixBadIngInPair }
+    r4 <- case compileAdventure advBadIngInPair of
+        Left errs -> expectTrue "{ingredient1} in pair recipe rejected"
+            (any (\e -> ciCode e == "UnknownItemRef" && "{ingredient1}" `isInfixOf` ciMessage e) errs)
+        Right _ -> expectTrue "{ingredient1} in pair recipe must fail" False
+
+    pure (r1 && r2 && r3 && r4)
 
 main :: IO ()
 main = do

@@ -779,6 +779,7 @@ compileAdventure adv =
         possessionErrs = checkNpcPossessionRefs adv
         npcIxErrs = checkNpcInteractionRefs adv
         dynamicItemErrs = checkDynamicItemRefs adv
+        itemConflictErrs = checkItemInteractionConflicts adv
         questRefErrs = checkQuestRefs adv
         mapOverlapErrs = checkMapPositions adv
         reservedVarErrs = checkReservedVarWrites adv
@@ -826,6 +827,7 @@ compileAdventure adv =
                     ++ possessionErrs
                     ++ npcIxErrs
                     ++ dynamicItemErrs
+                    ++ itemConflictErrs
                     ++ questRefErrs
                     ++ mapOverlapErrs
                     ++ reservedVarErrs
@@ -948,11 +950,18 @@ checkUnknownYamlKeys (Aeson.Object topObj) =
             ++ checkSingleton "stealth" EntStealth (KM.lookup "stealth" topObj)
             ++ checkSingleton "patrol" EntPatrol (KM.lookup "patrol" topObj)
             ++ checkCombat (KM.lookup "combat" topObj)
-            ++ checkSingleton "interactions" EntInteractions (KM.lookup "interactions" topObj)
+            ++ checkInteractionsSection (KM.lookup "interactions" topObj)
             ++ checkProgressionSection (KM.lookup "progression" topObj)
             ++ checkListOrMap "statements" EntStatement (KM.lookup "statements" topObj) noNested
     in topWarns ++ sectionWarns
 checkUnknownYamlKeys _ = []
+
+checkInteractionsSection :: Maybe Aeson.Value -> [CompileIssue]
+checkInteractionsSection Nothing = []
+checkInteractionsSection (Just (Aeson.Object ixObj)) =
+    checkKeys "interactions" EntInteractions (KM.keys ixObj)
+    ++ checkListOrMap "interactions.item" EntItemInteraction (KM.lookup "item" ixObj) noNested
+checkInteractionsSection (Just _) = []
 
 checkProgressionSection :: Maybe Aeson.Value -> [CompileIssue]
 checkProgressionSection Nothing = []
@@ -3152,7 +3161,7 @@ compileVehicleState v = E.VehicleState
 
 compileInteractions :: Maybe AInteractions
                     -> ( Map.Map (String, String) (String, String)
-                       , Map.Map (String, String) E.Effect
+                       , Map.Map E.RecipeKey E.Effect
                        , Map.Map (String, String) E.Effect
                        )
 compileInteractions Nothing = (Map.empty, Map.empty, Map.empty)
@@ -3162,11 +3171,16 @@ compileInteractions (Just ix) = (entityMap, itemMap, npcMap)
         [ ((aeiItem e, aeiTarget e), (aeiState e, fromMaybe "" (aeiMsg e)))
         | e <- aiEntity ix ]
     itemMap = Map.fromList
-        [ ((aiiItem1 i, aiiItem2 i), compileOutcomes (aiiEffects i))
+        [ (compileRecipeKey i, compileOutcomes (aiiEffects i))
         | i <- aiItem ix ]
     npcMap = Map.fromList
         [ ((aniItem n, aniTarget n), compileOutcomes (aniEffects n))
         | n <- aiNpc ix ]
+
+compileRecipeKey :: AItemInteraction -> E.RecipeKey
+compileRecipeKey i
+    | not (null (aiiIngredients i)) = E.RecipeIngredients (aiiId i) (aiiIngredients i)
+    | otherwise                     = E.RecipePair (aiiItem1 i) (aiiItem2 i)
 
 -- ---------------------------------------------------------------------------
 -- Verb maps (strict — unknown verb = compile error, custom verbs resolved)
@@ -4180,21 +4194,41 @@ checkNpcInteractionRefs adv = concatMap entryGo (maybe [] aiNpc (advInteractions
         | aniTarget n `Set.notMember` npcIds ]
         ]
 
--- | K11a: dynamic item references in consume: must be bound.
---   Inside 'interactions: item:', {item1} and {item2} are bound.
---   Everywhere else, dynamic {item*} references are unbound and rejected.
+-- | K11a/K11c: dynamic item references in consume: must be bound.
+--   Inside 'interactions: item:':
+--     * For pair recipes: {item1} and {item2} are bound.
+--     * For ingredients recipes: {ingredient1..N} are bound (N = length of ingredients).
+--   Everywhere else, dynamic {item*} and {ingredient*} references are unbound and rejected.
 checkDynamicItemRefs :: Adventure -> [CompileIssue]
 checkDynamicItemRefs adv = itemIxIssues ++ otherIssues
   where
     itemIxIssues = concatMap checkItemIx (maybe [] aiItem (advInteractions adv))
-    checkItemIx ix =
-        let path = "interactions.item[" ++ aiiItem1 ix ++ "," ++ aiiItem2 ix ++ "]"
-            allowed = Set.fromList ["{item1}", "{item2}", "{var:item1}", "{var:item2}"]
-        in [ ciError (path ++ ".consume") "UnknownItemRef"
-                ("consume: " ++ formatUnknownKey ref (Set.fromList ["{item1}", "{item2}"]))
-           | AOConsumeItem ref <- deepOutcomes (aiiEffects ix)
-           , '{' `elem` ref
-           , ref `Set.notMember` allowed ]
+    checkItemIx ix
+        | not (null (aiiIngredients ix)) =
+            let n = length (aiiIngredients ix)
+                path = case aiiId ix of
+                    Just ident -> "interactions.item." ++ ident
+                    Nothing    -> "interactions.item[" ++ intercalate "," (aiiIngredients ix) ++ "]"
+                allowed = Set.fromList $
+                    [ "{ingredient" ++ show k ++ "}" | k <- [1..n] ]
+                    ++ [ "{var:ingredient" ++ show k ++ "}" | k <- [1..n] ]
+                suggest = Set.fromList [ "{ingredient" ++ show k ++ "}" | k <- [1..n] ]
+            in [ ciError (path ++ ".consume") "UnknownItemRef"
+                    ("consume: " ++ formatUnknownKey ref suggest)
+               | AOConsumeItem ref <- deepOutcomes (aiiEffects ix)
+               , '{' `elem` ref
+               , ref `Set.notMember` allowed ]
+        | otherwise =
+            let path = case aiiId ix of
+                    Just ident -> "interactions.item." ++ ident
+                    Nothing    -> "interactions.item[" ++ aiiItem1 ix ++ "," ++ aiiItem2 ix ++ "]"
+                allowed = Set.fromList ["{item1}", "{item2}", "{var:item1}", "{var:item2}"]
+                suggest = Set.fromList ["{item1}", "{item2}"]
+            in [ ciError (path ++ ".consume") "UnknownItemRef"
+                    ("consume: " ++ formatUnknownKey ref suggest)
+               | AOConsumeItem ref <- deepOutcomes (aiiEffects ix)
+               , '{' `elem` ref
+               , ref `Set.notMember` allowed ]
 
     otherSurfaces =
         [ (path, outs)
@@ -4210,6 +4244,26 @@ checkDynamicItemRefs adv = itemIxIssues ++ otherIssues
         | (path, outs) <- otherSurfaces
         , AOConsumeItem ref <- deepOutcomes outs
         , '{' `elem` ref ]
+
+-- | K11c: Item interactions cannot specify both item1/item2 and ingredients.
+checkItemInteractionConflicts :: Adventure -> [CompileIssue]
+checkItemInteractionConflicts adv =
+    case advInteractions adv of
+        Nothing -> []
+        Just ai ->
+            [ ciError ("interactions.item" ++ ixLabel i) "ItemInteractionConflict"
+                "item interaction cannot specify both item1/item2 and ingredients"
+            | i <- aiItem ai
+            , (not (null (aiiItem1 i)) || not (null (aiiItem2 i)))
+            , not (null (aiiIngredients i))
+            ]
+  where
+    ixLabel i = case aiiId i of
+        Just ident -> "." ++ ident
+        Nothing
+            | not (null (aiiItem1 i)) -> "[" ++ aiiItem1 i ++ "," ++ aiiItem2 i ++ "]"
+            | not (null (aiiIngredients i)) -> "[" ++ intercalate "," (aiiIngredients i) ++ "]"
+            | otherwise -> ""
 
 -- | 4.6: two authored map positions on the same cell of the same floor. A hard
 --   error like every other duplicate in the schema (cf. `DuplicateDirection`):
@@ -4467,9 +4521,12 @@ checkUnknownPlaceholders adv varDefs =
         | "condition_turns." `isPrefixOf` name = True
         | "known." `isPrefixOf` name = True
         | "statement." `isPrefixOf` name = True
-        | name `elem` ["x", "y", "z", "item1", "item2"] = True
+        | name `elem` ["x", "y", "z", "item1", "item2"] || isIngredientPlaceholder name = True
         | hasDynamicCmd name = True
         | otherwise = False
+
+    isIngredientPlaceholder s =
+        "ingredient" `isPrefixOf` s && all isDigit (drop 10 s) && not (null (drop 10 s))
 
     hasDynamicCmd s = "{cmd." `isInfixOf` s
 

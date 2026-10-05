@@ -1269,11 +1269,13 @@ data AEntityInteraction = AEntityInteraction
     , aeiMsg    :: Maybe String
     } deriving (Show, Eq, Generic)
 
--- | Item-on-item interaction (crafting): `use <item1> on <item2>`.
+-- | Item-on-item interaction (crafting): `use <item1> on <item2>` or `ingredients: [...]`.
 data AItemInteraction = AItemInteraction
-    { aiiItem1   :: String
-    , aiiItem2   :: String
-    , aiiEffects :: [AActionOutcome]
+    { aiiId          :: Maybe String
+    , aiiItem1       :: String
+    , aiiItem2       :: String
+    , aiiIngredients :: [String]
+    , aiiEffects     :: [AActionOutcome]
     } deriving (Show, Eq, Generic)
 
 -- | B9: Item-on-NPC interaction: `use <item> on <npc>`. The target is an NPC
@@ -1294,10 +1296,25 @@ instance FromJSON AEntityInteraction where
         <*> o .:? "msg")
 
 instance FromJSON AItemInteraction where
-    parseJSON = withObject "AItemInteraction" (\o -> AItemInteraction
-        <$> o .:  "item1"
-        <*> o .:  "item2"
-        <*> o .:? "effects" .!= [])
+    parseJSON = withObject "AItemInteraction" (\o -> do
+        mId   <- o .:? "id"
+        mI1   <- o .:? "item1"
+        mI2   <- o .:? "item2"
+        mIngs <- o .:? "ingredients"
+        effs  <- o .:? "effects" .!= []
+        case (mI1, mI2, mIngs) of
+            (Just _, _, Just _) -> fail "ItemInteractionConflict: both item1/item2 and ingredients specified"
+            (_, Just _, Just _) -> fail "ItemInteractionConflict: both item1/item2 and ingredients specified"
+            (Just i1, Just i2, Nothing) ->
+                pure $ AItemInteraction mId i1 i2 [] effs
+            (Nothing, Nothing, Just ings) ->
+                pure $ AItemInteraction mId "" "" ings effs
+            (Just _, Nothing, Nothing) ->
+                fail "AItemInteraction requires both item1 and item2"
+            (Nothing, Just _, Nothing) ->
+                fail "AItemInteraction requires both item1 and item2"
+            (Nothing, Nothing, Nothing) ->
+                fail "AItemInteraction requires either item1/item2 or ingredients")
 
 instance FromJSON ANPCInteraction where
     parseJSON = withObject "ANPCInteraction" (\o -> ANPCInteraction
@@ -1909,6 +1926,7 @@ data EntityType
     | EntCombat
     | EntCombatScreen
     | EntInteractions
+    | EntItemInteraction
     | EntProgression
     | EntLevel
     | EntRollDice
@@ -2002,6 +2020,8 @@ knownKeys EntCombatScreen = Set.fromList
     [ "art", "bar_width", "scene", "footer" ]
 knownKeys EntInteractions = Set.fromList
     [ "entity", "item", "npc" ]
+knownKeys EntItemInteraction = Set.fromList
+    [ "id", "item1", "item2", "ingredients", "effects" ]
 knownKeys EntProgression = Set.fromList
     [ "levels" ]
 knownKeys EntLevel = Set.fromList

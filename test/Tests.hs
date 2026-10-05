@@ -4777,7 +4777,7 @@ testCompoundKeyRoundTrip = do
                 (item0 { itemVerbMap = Map.fromList [((PhaseAfter, VCustom "buy", "intact:v2"), SendMessage "a")] })
                 (itemDefs gw0)
             , entityInteractions = Map.fromList [(("a|b", "c"), ("unlocked", "msg"))]
-            , itemInteractions   = Map.fromList [(("x:y", "z|w"), SendMessage "b")] }
+            , itemInteractions   = Map.fromList [(RecipePair "x:y" "z|w", SendMessage "b")] }
     r1 <- expectEqual (Just gw) (Aeson.decode (Aeson.encode gw))
     -- legacy form of the verb map: "VTake:intact"
     let legacyVerbValue = Aeson.toJSON (Map.fromList [("VTake:intact", SendMessage "x")] :: Map.Map String Effect)
@@ -9549,7 +9549,7 @@ testItemOnItemBindsVars = do
         w = (world sample)
             { itemDefs = Map.insert "herb" (invItem "herb")
                        $ Map.insert "mortar" (invItem "mortar") (itemDefs (world sample))
-            , itemInteractions = Map.singleton ("herb", "mortar") (SendMessage "Crafted!")
+            , itemInteractions = Map.singleton (RecipePair "herb" "mortar") (SendMessage "Crafted!")
             }
         st0 = sample
             { world = w
@@ -9577,7 +9577,7 @@ testItemOnItemConsumeDynamicResolvesOrder = do
         w = (world sample)
             { itemDefs = Map.insert "herb" (invItem "herb")
                        $ Map.insert "mortar" (invItem "mortar") (itemDefs (world sample))
-            , itemInteractions = Map.singleton ("herb", "mortar") (MoveEntity "{item1}" Removed)
+            , itemInteractions = Map.singleton (RecipePair "herb" "mortar") (MoveEntity "{item1}" Removed)
             }
         -- Both carried by player
         st0 = sample
@@ -9604,6 +9604,117 @@ testItemOnItemConsumeDynamicResolvesOrder = do
     r8 <- expectEqual (Just (VVText "mortar")) (getVariable "item2" stFwd)
 
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- ---------------------------------------------------------------------------
+-- K11c: ingredients: — Rezepte mit mehr als zwei Zutaten
+-- ---------------------------------------------------------------------------
+
+-- | K11c.1: Listen-Rezept feuert bei 'use X on Y' wenn alle Zutaten erreichbar sind,
+--   bindet {ingredient1..N}, und consume: "{ingredient1..3}" frisst alle drei.
+testIngredientsRecipeFiresWithUseXOnY :: IO Bool
+testIngredientsRecipeFiresWithUseXOnY = do
+    let sample = initSampleGame
+        w = (world sample)
+            { itemDefs = Map.insert "kessel" (invItem "kessel")
+                       $ Map.insert "blatt_a" (invItem "blatt_a")
+                       $ Map.insert "blatt_b" (invItem "blatt_b") (itemDefs (world sample))
+            , itemInteractions = Map.singleton
+                (RecipeIngredients (Just "sturmtrank") ["kessel", "blatt_a", "blatt_b"])
+                (Sequence [ MoveEntity "{ingredient1}" Removed
+                          , MoveEntity "{ingredient2}" Removed
+                          , MoveEntity "{ingredient3}" Removed
+                          , SendMessage "Der Trank ist gebraut!"
+                          ])
+            }
+        -- kessel in current room, blatt_a and blatt_b carried by player
+        st0 = sample
+            { world = w
+            , save = (save sample)
+                { itemStates = Map.insert "kessel" (ItemState (InRoom (currentRoom (save sample))) "normal" Map.empty False)
+                             $ Map.insert "blatt_a" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ Map.insert "blatt_b" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ itemStates (save sample)
+                }
+            }
+    -- 'use blatt_a on kessel': mentions blatt_a and kessel; all 3 items are reachable
+    let (st1, msg) = executeCommand (parseCommand "use blatt_a on kessel") st0
+        locOf iId st = fmap itemLocation (Map.lookup iId (itemStates (save st)))
+    r1 <- expectTrue "potion message emitted" ("Der Trank ist gebraut!" `isInfixOf` msg)
+    r2 <- expectEqual (Just Removed) (locOf "kessel" st1)
+    r3 <- expectEqual (Just Removed) (locOf "blatt_a" st1)
+    r4 <- expectEqual (Just Removed) (locOf "blatt_b" st1)
+    r5 <- expectEqual (Just (VVText "kessel")) (getVariable "ingredient1" st1)
+    r6 <- expectEqual (Just (VVText "blatt_a")) (getVariable "ingredient2" st1)
+    r7 <- expectEqual (Just (VVText "blatt_b")) (getVariable "ingredient3" st1)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | K11c.2: Listen-Rezept feuert NICHT wenn eine Zutat fehlt (nicht erreichbar ist).
+testIngredientsRecipeFailsWhenIngredientMissing :: IO Bool
+testIngredientsRecipeFailsWhenIngredientMissing = do
+    let sample = initSampleGame
+        w = (world sample)
+            { itemDefs = Map.insert "kessel" (invItem "kessel")
+                       $ Map.insert "blatt_a" (invItem "blatt_a")
+                       $ Map.insert "blatt_b" (invItem "blatt_b") (itemDefs (world sample))
+            , itemInteractions = Map.singleton
+                (RecipeIngredients (Just "sturmtrank") ["kessel", "blatt_a", "blatt_b"])
+                (Sequence [ MoveEntity "{ingredient1}" Removed
+                          , MoveEntity "{ingredient2}" Removed
+                          , MoveEntity "{ingredient3}" Removed
+                          , SendMessage "Der Trank ist gebraut!"
+                          ])
+            }
+        -- kessel in room, blatt_a carried, but blatt_b in a DIFFERENT room (unreachable)
+        st0 = sample
+            { world = w
+            , save = (save sample)
+                { itemStates = Map.insert "kessel" (ItemState (InRoom (currentRoom (save sample))) "normal" Map.empty False)
+                             $ Map.insert "blatt_a" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ Map.insert "blatt_b" (ItemState (InRoom "other_room") "normal" Map.empty False)
+                             $ itemStates (save sample)
+                }
+            }
+    let (st1, msg) = executeCommand (parseCommand "use blatt_a on kessel") st0
+        locOf iId st = fmap itemLocation (Map.lookup iId (itemStates (save st)))
+    r1 <- expectTrue "potion message NOT emitted" (not ("Der Trank ist gebraut!" `isInfixOf` msg))
+    r2 <- expectEqual (Just (InRoom (currentRoom (save sample)))) (locOf "kessel" st1)
+    r3 <- expectEqual (Just (CarriedBy ActorPlayer)) (locOf "blatt_a" st1)
+    r4 <- expectEqual Nothing (getVariable "ingredient1" st1)
+    pure (r1 && r2 && r3 && r4)
+
+-- | K11c.3: Listen-Rezept feuert NICHT wenn der Befehl kein Rezept-Item nennt
+--   (zweiter Teil der Match-Regel: R ⊆ erreichbar UND cmd nennt mindestens ein R-Item).
+testIngredientsRecipeDoesNotFireWhenCommandNamesNoRecipeItem :: IO Bool
+testIngredientsRecipeDoesNotFireWhenCommandNamesNoRecipeItem = do
+    let sample = initSampleGame
+        w = (world sample)
+            { itemDefs = Map.insert "kessel" (invItem "kessel")
+                       $ Map.insert "blatt_a" (invItem "blatt_a")
+                       $ Map.insert "blatt_b" (invItem "blatt_b")
+                       $ Map.insert "messer" (invItem "messer")
+                       $ Map.insert "apfel" (invItem "apfel") (itemDefs (world sample))
+            , itemInteractions = Map.singleton
+                (RecipeIngredients (Just "sturmtrank") ["kessel", "blatt_a", "blatt_b"])
+                (SendMessage "Der Trank ist gebraut!")
+            }
+        -- All 3 recipe ingredients are carried in inventory!
+        -- Also messer and apfel are in inventory.
+        st0 = sample
+            { world = w
+            , save = (save sample)
+                { itemStates = Map.insert "kessel" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ Map.insert "blatt_a" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ Map.insert "blatt_b" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ Map.insert "messer" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ Map.insert "apfel" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ itemStates (save sample)
+                }
+            }
+    -- Player uses messer on apfel (neither is in the recipe!)
+    let (st1, msg) = executeCommand (parseCommand "use messer on apfel") st0
+    r1 <- expectTrue "potion message NOT emitted" (not ("Der Trank ist gebraut!" `isInfixOf` msg))
+    r2 <- expectEqual Nothing (getVariable "ingredient1" st1)
+    pure (r1 && r2)
 
 -- ---------------------------------------------------------------------------
 -- K15.0: Ort-Regel: consume:/Verbrauch nur auf Erreichbares
@@ -11105,6 +11216,10 @@ main = do
         -- K11a: Crafting verbraucht seine Zutaten ({item1}, {item2})
         , runTest "crafting: use A on B binds item1/item2; neither exists before (K11a.1)" testItemOnItemBindsVars
         , runTest "crafting: consume {item1} eats correct item regardless of order (K11a.2)" testItemOnItemConsumeDynamicResolvesOrder
+        -- K11c: ingredients: — Rezepte mit mehr als zwei Zutaten
+        , runTest "crafting: ingredients recipe fires when all reachable and binds {ingredient1..N} (K11c.1)" testIngredientsRecipeFiresWithUseXOnY
+        , runTest "crafting: ingredients recipe fails when ingredient missing (K11c.2)" testIngredientsRecipeFailsWhenIngredientMissing
+        , runTest "crafting: ingredients recipe does not fire when command mentions no recipe item (K11c.3)" testIngredientsRecipeDoesNotFireWhenCommandNamesNoRecipeItem
         -- K15: Weltobjekte sind endlich (take_once), Ort-Regel
         , runTest "consume on item in container is refused (K15.0)" testConsumeItemInContainerRefused
         , runTest "consume on item on NPC is refused (K15.0)" testConsumeItemOnNPCRefused

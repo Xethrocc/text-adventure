@@ -2021,21 +2021,55 @@ tryItemOnItem usedId targetStr state =
     case findMatchingItem targetStr state of
         Nothing -> Nothing
         Just target ->
-            let key = (usedId, itemId target)
-                altKey = (itemId target, usedId)
-            in case Map.lookup key (itemInteractions (world state)) of
+            let targetId = itemId target
+                interactions = itemInteractions (world state)
+                -- 1. Pair recipes (K11a: {item1}/{item2} unchanged)
+                key    = RecipePair usedId targetId
+                altKey = RecipePair targetId usedId
+            in case Map.lookup key interactions of
                 Just outcome ->
-                    let state' = bindItemVars usedId (itemId target) state
-                    in Just (applyOutcomeEv outcome (itemId target) state')
-                Nothing -> case Map.lookup altKey (itemInteractions (world state)) of
+                    let state' = bindItemVars usedId targetId state
+                    in Just (applyOutcomeEv outcome targetId state')
+                Nothing -> case Map.lookup altKey interactions of
                     Just outcome ->
-                        let state' = bindItemVars (itemId target) usedId state
-                        in Just (applyOutcomeEv outcome (itemId target) state')
-                    Nothing -> Nothing
+                        let state' = bindItemVars targetId usedId state
+                        in Just (applyOutcomeEv outcome targetId state')
+                    Nothing ->
+                        -- 2. Multi-ingredient recipes (K11c: {ingredient1..N})
+                        -- Match rule:
+                        --   Rezept R feuert, wenn  R ⊆ erreichbare Items  UND
+                        --                   der Befehl mindestens EINEN Zutaten von R nennt
+                        matchMultiIngredient targetId state interactions
   where
     bindItemVars i1 i2 st =
         let vm = variables (save st)
             vm' = Map.insert "item1" (VVText i1) (Map.insert "item2" (VVText i2) vm)
+        in st { save = (save st) { variables = vm' } }
+
+    matchMultiIngredient tId st interactions =
+        let reachable = Set.fromList $ map itemId $
+                getItemsInLocation (InRoom (currentRoom (save st))) st
+                ++ getItemsInLocation (CarriedBy ActorPlayer) st
+                ++ getItemsInLocation (EquippedBy ActorPlayer) st
+            cmdItems = Set.fromList [usedId, tId]
+            candidates =
+                [ (ings, outcome)
+                | (RecipeIngredients _ ings, outcome) <- Map.toList interactions
+                , let rSet = Set.fromList ings
+                , rSet `Set.isSubsetOf` reachable
+                , not (Set.null (rSet `Set.intersection` cmdItems))
+                ]
+        in case candidates of
+            ((ings, outcome):_) ->
+                let st' = bindIngredientVars ings st
+                in Just (applyOutcomeEv outcome tId st')
+            [] -> Nothing
+
+    bindIngredientVars ings st =
+        let vm = variables (save st)
+            bindings = [ ("ingredient" ++ show idx, VVText ing)
+                       | (idx, ing) <- zip ([1..] :: [Int]) ings ]
+            vm' = foldr (uncurry Map.insert) vm bindings
         in st { save = (save st) { variables = vm' } }
 
 -- | Dialogue: use the tree if present, otherwise fall back to the legacy single line

@@ -4,7 +4,8 @@ module Validate (ValidationError(..), validateWorld, validateWorldWithFlags,
     validateGameState, setFlagsInWorld, idsFromOutcomeRoom) where
 
 import Types
-import Data.List (nub, stripPrefix, foldl')
+import Data.Char (isDigit)
+import Data.List (nub, stripPrefix, foldl', isPrefixOf, isSuffixOf)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
@@ -265,9 +266,11 @@ checkMissingItemsInDefs gw =
         npcRefs = Set.fromList (Map.keys (npcDefs gw))
         allRefs =
             concatMap idsFromOutcomeItem (allOutcomes gw)
-            ++ [i1 | (i1, _) <- Map.keys (itemInteractions gw)]
-            ++ [i2 | (_, i2) <- Map.keys (itemInteractions gw)]
+            ++ concatMap recipeItemIds (Map.keys (itemInteractions gw))
     in [MissingItem iId | iId <- nub allRefs, not (Set.member iId itemRefs), not (Set.member iId npcRefs)]
+  where
+    recipeItemIds (RecipePair i1 i2) = [i1, i2]
+    recipeItemIds (RecipeIngredients _ ings) = ings
 
 checkMissingNPCsInDefs :: GameWorld -> [ValidationError]
 checkMissingNPCsInDefs gw =
@@ -385,7 +388,18 @@ catMaybes xs = [x | Just x <- xs]
 -- ---------------------------------------------------------------------------
 
 isDynamicItemRef :: String -> Bool
-isDynamicItemRef s = s `elem` ["{item1}", "{item2}", "{var:item1}", "{var:item2}"]
+isDynamicItemRef s =
+    s `elem` ["{item1}", "{item2}", "{var:item1}", "{var:item2}"]
+    || isIngredientRef s
+  where
+    isIngredientRef str =
+        let inner = if "{var:" `isPrefixOf` str
+                    then drop 5 str
+                    else if "{" `isPrefixOf` str then drop 1 str else ""
+            core = if "}" `isSuffixOf` inner then init inner else ""
+        in "ingredient" `isPrefixOf` core
+           && all isDigit (drop 10 core)
+           && not (null (drop 10 core))
 
 idsFromOutcomeItem :: Effect -> [String]
 idsFromOutcomeItem outcome = case outcome of

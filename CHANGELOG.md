@@ -2,6 +2,77 @@
 
 ## Unreleased
 
+### Multi-Zutaten-Rezepte: ingredients: in interactions.item (K11c)
+
+- **Unabhängiger Byte-Nachweis:** Von **134** Artefakten (67 Abenteuer und
+  Fixtures) weicht **kein einziges** ab — alle byte-identisch gegen `40dbfd6`,
+  mit Worktree-Vergleich über `demo`, `thefog`, `genres/*`, `modules/*`,
+  `fixtures/*`. Das Paar-Rezept in `fantasy.yaml` ist unverändert. Das ist der
+  Beweis, dass die Umstellung der World-Datenstruktur von `(String, String)` auf
+  `RecipeKey` **rückwärtskompatibel** ist: `Map.fromList [((a,b), eff)]` und
+  `Map.fromList [(RecipePair a b, eff)]` erzeugen dieselbe Ausgabe.
+- **Match-Regel, beide Teile getestet** (K11c.3):
+  1. `R ⊆ erreichbare Items` — das Rezept feuert nur, wenn **alle** Zutaten
+     erreichbar sind.
+  2. **Der Befehl nennt mindestens einen Rezept-Zutaten.** Der Test
+     `testIngredientsRecipeDoesNotFireWhenCommandNamesNoRecipeItem` legt alle
+     drei Zutaten ins Inventar, tippt `use messer auf apfel` (keine Zutat) und
+     prüft, dass das Rezept **nicht** feuert. Der zweite Teil ist nicht
+     optional: ohne ihn würde jedes Rezept bei jedem `use` feuern, sobald die
+     Zutaten zufällig mitgeführt werden.
+- **Reihenfolge** (aus K11a und K15 übernommen): `{item1}`/`{item2}` bleiben
+  unverändert, `{ingredient1..N}` kommen danach; `resolveVarName` läuft **vor**
+  jeder Ortprüfung; die K15.0-Ort-Regel gilt für jede `consume:` einzeln.
+- **Byte-Vertrag:** 134/134 byte-identisch. `scripts/ci.sh` grün
+  (`All checks passed`), 0 Compiler-Warnungen, **509** Engine- und **280**
+  Worldbuilder-Tests.
+
+- **Optionale Listenform `ingredients:` im bestehenden `interactions.item`-Block:**
+  - `AItemInteraction` erweitert um `aiiId :: Maybe String` und `aiiIngredients :: [String]`.
+  - **Bewusster Verzicht auf `recipes:`-Block und `craft`-Verb:** `interactions.item` ist die autoritative Sektion für Item-auf-Item-Interaktionen. Ein separater Block wurde verworfen; die Auslösung bleibt das bewährte `use X on Y`.
+  - **Konfliktverbot:** Entweder Paar (`item1`/`item2`) oder Liste (`ingredients:`). Die Angabe von beidem gleichzeitig führt zu einer harten Diagnose (`ItemInteractionConflict`), kein stilles Übernehmen.
+  - `ingredients` ist in `knownKeys EntItemInteraction` registriert (0 unbekannte Schlüsselwarnungen; Tippfehler werden zuverlässig gewarnt).
+
+- **World-Datenstruktur und Match-Regel:**
+  - `itemInteractions` im `GameWorld` wurde von `Map (ItemID, ItemID) Effect` auf `Map RecipeKey Effect` generalisiert mit:
+    `data RecipeKey = RecipePair String String | RecipeIngredients (Maybe String) [String]`.
+  - **Begründung der Struktur:**
+    1. Trennt Paar-Schlüssel sauber von Multi-Zutaten-Mengen.
+    2. Die `Ord`-Instanz sortiert `RecipePair` vor `RecipeIngredients`, wodurch Paar-Rezepte deterministisch Vorrang genießen.
+    3. `RecipePair` serialisiert unverändert zu `{"a": a, "b": b, "effect": ...}`, womit bestehende Abenteuer 100% byte-identisch bleiben.
+  - **Die nicht verhandelbare Match-Regel:**
+    Ein Rezept $R$ feuert genau dann, wenn:
+    $R \subseteq \text{erreichbare Items} \land \text{Befehl nennt mindestens ein Item aus } R$.
+    Ohne den zweiten Teil würde jedes Rezept bei jedem `use` feuern, sobald die Zutaten zufällig im Inventar liegen.
+  - **Zumsortierung / Prüfungsreihenfolge:**
+    1. `{item1}` / `{item2}` Paar-Rezepte unverändert zuerst.
+    2. Multi-Zutaten-Rezepte danach, binden `{ingredient1..N}`.
+    3. `resolveVarName` läuft VOR jeder Ortprüfung.
+    4. Ortprüfung (`isReachableForConsume`, K15.0) greift für jedes `consume:` einzeln.
+
+- **Dynamische Variablen `{ingredient1..N}`:**
+  - Bindet `{ingredient1}`, `{ingredient2}`, ..., `{ingredientN}` positional an die deklarierte Zutatenliste.
+  - Validierung: Zugriff auf nicht deklarierte Indizes (z. B. `{ingredient4}` bei 3 Zutaten), `{item1}` in Listenrezepten oder `{ingredient1}` außerhalb von Zutatenrezepten wird zur Compile-Zeit mit `UnknownItemRef` abgewiesen.
+
+- **EHRLICHE DOKUMENTATION: Echte Verhaltensänderung:**
+  - Ein Listen-Rezept benennt dem Spieler **nicht**, welches konkrete Item es ausgelöst hat. Bei $N$ Zutaten ist $X$ (oder $Y$) im Befehl nur noch der Impulsgeber; das Rezept prüft die Vollständigkeit der Menge über Raum und Inventar.
+  - Kein impliziter Verbrauch: Zutaten werden nur verbraucht, wenn `consume: "{ingredientK}"` in `effects:` steht.
+
+- **Spielverifikation (EIN Lauf, beide Zweige nebeneinander):**
+  - Eigene Probe mit 3 Zutaten (`cauldron` im Raum, `fire_essence` und `water_essence`):
+    - Zweig 1 (Zutat fehlt): `use fire_essence on cauldron` ohne `water_essence` -> feuert nicht (*„Nothing happens."*), beide Items bleiben erhalten.
+    - Zweig 2 (alle erreichbar): Nach Aufnahme von `water_essence` -> `use fire_essence on cauldron` feuert (*„The cauldron hisses violently! Fire and water fuse into a storm potion."*).
+    - `inventory` danach: `storm potion` — alle drei Zutaten (`fire_essence`, `water_essence` und `cauldron` aus dem Raum) wurden ordnungsgemäß verbraucht.
+
+- **Byte-Vertrag (gemessen):**
+  - Alle 67 Abenteuer und Fixtures (134 Artefakte: `world.json` und `save.json`) wurden mit dem Baseline-Compiler (`40dbfd6`) und dem aktuellen Stand verglichen.
+  - **0 Abweichungen:** Alle 67 Abenteuer inklusive `fantasy.yaml` (dessen Rezept ein Paar ist) sind 100% byte-identisch.
+
+- **Tests & CI:**
+  - 3 neue Engine-Tests: Gesamt **509 passed** (von 506).
+  - 4 neue Worldbuilder-Tests: Gesamt **280 passed** (von 276).
+  - `bash scripts/ci.sh` 100% grün, 0 Compiler-Warnungen.
+
 ### Weltobjekte sind endlich: repeatable: true, Default einmal, Ort-Regel (K15)
 
 - **K15.0 Ort-Regel für `consume:` (`isReachableForConsume`):**

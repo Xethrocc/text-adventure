@@ -1317,13 +1317,14 @@ resolveVarName name st
         case break (\c -> c == '}' || c == '{') rest of
             (rawPh, '}':after) ->
                 let ph = if "var:" `isPrefixOf` rawPh then drop 4 rawPh else rawPh
-                in if "cmd." `isPrefixOf` ph || ph == "item1" || ph == "item2"
+                in if "cmd." `isPrefixOf` ph || ph == "item1" || ph == "item2" || isIngredientVar ph
                    then case getVariable ph st of
                        Just val -> varToString val ++ go after
                        Nothing  -> '{' : rawPh ++ '}' : go after
                    else '{' : rawPh ++ '}' : go after
             _ -> '{' : go rest
     go (c:cs) = c : go cs
+    isIngredientVar s = "ingredient" `isPrefixOf` s && all isDigit (drop 10 s) && not (null (drop 10 s))
 
 -- ---------------------------------------------------------------------------
 -- Progression (W2)

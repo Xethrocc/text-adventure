@@ -1401,6 +1401,76 @@ beiden beteiligten Gegenstände automatisch an die Variablen `item1` und `item2`
   werden vom Worldbuilder als harter Fehler (`UnknownItemRef`) mit Levenshtein-Korrekturvorschlag
   abgewiesen, statt zur Laufzeit still ins Leere zu laufen.
 
+### Rezepte mit mehr als zwei Zutaten: `ingredients:` (K11c)
+
+Für Rezepte mit drei oder mehr Zutaten (oder flexiblen Zutatenmengen) bietet
+`interactions: item:` alternativ das Listenfeld `ingredients:`:
+
+```yaml
+interactions:
+  item:
+    # 1. Paar-Rezept (bleibt vollstaendig gueltig und unveraendert):
+    - item1: herb
+      item2: mortar
+      effects:
+        - {msg: "You grind the herb into a paste."}
+        - {consume: "{item1}"}
+
+    # 2. Multi-Zutaten-Rezept (K11c):
+    - id: sturmtrank
+      ingredients: [kessel, mana_feuer, mana_wasser]
+      effects:
+        - {msg: "Der Sturm tobt im Kessel."}
+        - {consume: "{ingredient1}"}
+        - {consume: "{ingredient2}"}
+        - {consume: "{ingredient3}"}
+```
+
+- **Die Match-Regel:**
+  Ein Listen-Rezept $R$ feuert genau dann, wenn:
+  1. $R \subseteq \text{erreichbare Items}$ (alle in `ingredients:` genannten Items
+     sind erreichbar: im aktuellen Raum, im Inventar oder am Spieler angelegt).
+  2. Der Befehl (`use X on Y`) nennt mindestens **ein** Item aus $R$
+     ($X \in R \lor Y \in R$).
+
+  *Warum der zweite Teil zwingend ist:* Ohne die Bedingung, dass der Befehl
+  mindestens eine Zutat nennt, würde jedes Rezept bei jedem beliebigen `use`-Befehl
+  (z. B. `use messer on apfel`) unweigerlich feuern, sobald die Zutaten zufällig
+  im Inventar liegen. Durch die Prüfung bleibt `use X on Y` eine gezielte Handlung.
+
+- **Auswertungsreihenfolge / Paar-Präzedenz:**
+  1. Zuerst werden Paar-Rezepte (`item1`/`item2`) geprüft. Matcht das Paar
+     (vorwärts oder rückwärts), feuert es mit `{item1}` und `{item2}`.
+  2. Erst wenn kein Paar-Rezept greift, werden Multi-Zutaten-Rezepte (`ingredients:`)
+     geprüft.
+
+- **Dynamische Platzhalter `{ingredient1..N}`:**
+  Innerhalb der `effects:` eines `ingredients:`-Eintrags werden die Variablen
+  `ingredient1`, `ingredient2`, …, `ingredientN` positional an die deklarierte
+  Zutatenliste gebunden (z. B. `{ingredient1}` = erstes Item in `ingredients`).
+  Sie können in Texten, Prädikaten und für `consume: "{ingredientK}"` verwendet werden.
+
+- **Harte Compiler-Diagnosen:**
+  - **Konfliktverbot (`ItemInteractionConflict`):** Ein Eintrag darf entweder
+    ein Paar (`item1` und `item2`) ODER eine Liste (`ingredients:`) sein. Beides
+    gleichzeitig wird vom Worldbuilder und Parser strikt abgewiesen.
+  - **Unbekannte Referenzen (`UnknownItemRef`):** Ein Zugriff auf `{ingredient4}`
+    in einem Rezept mit 3 Zutaten, der Zugriff auf `{item1}` in einem
+    `ingredients:`-Rezept oder `{ingredient1}` außerhalb von Zutatenrezepten
+    wird als harter Fehler abgewiesen.
+
+- **EHRLICHE DOKUMENTATION: Echte Verhaltensänderung bei Listen-Rezepten!**
+  Ein Listen-Rezept benennt dem Spieler **nicht**, welches konkrete Item es
+  ausgelöst hat. Bisher bezeichnete `use X on Y` genau die beiden interagierenden
+  Objekte. Bei $N$ Zutaten ist $X$ (oder $Y$) im Befehl nur noch der Impulsgeber;
+  das Rezept matcht über die Vollständigkeit der erreichbaren Gesamtmenge.
+
+- **Kein impliziter Verbrauch:**
+  Wie bei K11a werden Zutaten **nicht automatisch konsumiert**. Jedes Item, das
+  verbraucht werden soll, muss ausdrücklich mit `consume: "{ingredient1}"` etc.
+  in `effects:` notiert werden. Wiederverwendbare Werkzeuge (wie Kessel oder Kolben)
+  bleiben erhalten, wenn kein `consume:` für sie deklariert ist.
+
 **Reihenfolge von `use <item> on <npc>`:** Ohne passenden `npc:`-Eintrag greift
 weiter der **Angriffs-Fallback** — `use` auf eine lebende Figur ist ein
 Angriff. Ein Eintrag unterbricht das: die Effektliste laeuft, der Angriff

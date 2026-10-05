@@ -139,9 +139,12 @@ module Types.Core
       -- * Game Policy & World
     , GamePolicy (..)
     , defaultGamePolicy
+    , RecipeKey (..)
     , GameWorld (..)
     , itemInteractionsToJSON
     , parseItemInteractions
+    , npcInteractionsToJSON
+    , parseNpcInteractions
       -- * Save & Game State
     , SaveState (..)
     , exitOverridesToJSON
@@ -2158,13 +2161,43 @@ data ProgressionDef = ProgressionDef
 instance ToJSON ProgressionDef
 instance FromJSON ProgressionDef
 
+-- | Recipe key for item interactions (crafting).
+--
+-- Historical note (K11c):
+-- Originally, 'itemInteractions' used a pair key @(String, String)@
+-- (@Map.fromList [((i1, i2), eff)]@). This structure was fundamentally
+-- limited to 2-ingredient recipes and could not represent multi-ingredient
+-- recipes (e.g. 3 or more ingredients in alchemy or crafting).
+--
+-- K11c generalizes the map key from a pair to 'RecipeKey':
+--   * 'RecipePair a b': exact pair of items (backwards compatible, binds
+--     {item1}/{item2}).
+--   * 'RecipeIngredients mId ings': N ingredients as an authored sequence / set
+--     (binds {ingredient1..N}).
+--
+-- Why this structure?
+-- 1. Dual semantics: Pair recipes match the exact pair (independent of other
+--    inventory contents), while list recipes match by subset inclusion
+--    (R ⊆ reachableItems) plus command reference.
+-- 2. Backwards compatibility: Existing pair recipes serialize to the exact same
+--    @{"a": a, "b": b, "effect": ...}@ JSON objects, keeping world.json
+--    byte-identical for all existing adventures.
+-- 3. Sequence preservation: Even though multi-ingredient matching tests subset
+--    inclusion as a set, the authored list order is preserved so that
+--    dynamic variables ({ingredient1..N}) and ordered effects (consume) are
+--    deterministic.
+data RecipeKey
+    = RecipePair String String
+    | RecipeIngredients (Maybe String) [String]
+    deriving (Show, Eq, Ord)
+
 -- | Static world definition containing blueprint/map data
 data GameWorld = GameWorld
     { rooms              :: Map.Map RoomID Room
     , itemDefs           :: Map.Map ItemID ItemDef
     , npcDefs            :: Map.Map NPCID NPCDef
     , entityInteractions :: Map.Map (String, String) (String, String)
-    , itemInteractions   :: Map.Map (String, String) Effect  -- ^ (Item, Item) -> outcome
+    , itemInteractions   :: Map.Map RecipeKey Effect  -- ^ Recipe -> outcome
     , npcInteractions    :: Map.Map (String, String) Effect  -- ^ (Item, NPC) -> outcome (B9); empty map is omitted
     , questDefs          :: Map.Map QuestID Quest                    -- ^ Static quest definitions
     , vehicleDefs        :: Map.Map VehicleID VehicleDef             -- ^ Static vehicle definitions (Phase 3)
@@ -2262,7 +2295,7 @@ instance ToJSON GameWorld where
         -- every existing adventure stays bit-identical (same contract as
         -- procDefs).
         npcInteractionPair =
-            [ "npcInteractions" .= itemInteractionsToJSON (npcInteractions gw)
+            [ "npcInteractions" .= npcInteractionsToJSON (npcInteractions gw)
             | not (Map.null (npcInteractions gw)) ]
         endArt = Map.filter (not . isEmptyAscii) (worldEndArt gw)
         titleArt = worldTitleArt gw
@@ -2308,7 +2341,7 @@ instance FromJSON GameWorld where
         <*> o .:  "npcDefs"
         <*> (o .: "entityInteractions" >>= tupleMapFromJSON)
         <*> (o .:? "itemInteractions" >>= maybe (pure Map.empty) parseItemInteractions)
-        <*> (o .:? "npcInteractions" >>= maybe (pure Map.empty) parseItemInteractions)
+        <*> (o .:? "npcInteractions" >>= maybe (pure Map.empty) parseNpcInteractions)
         <*> o .:? "questDefs" .!= Map.empty
         <*> o .:? "vehicleDefs" .!= Map.empty
         <*> o .:? "verbDefs" .!= Map.empty
@@ -2334,23 +2367,38 @@ instance FromJSON GameWorld where
         <*> o .:? "language" .!= Nothing
         <*> o .:? "messages" .!= Map.empty
 
--- | Encode item-on-item outcomes as objects (P2-9).
-itemInteractionsToJSON :: Map.Map (String, String) Effect -> Value
+-- | Encode item-on-item outcomes as objects (P2-9, K11c).
+--   Pair recipes emit historical {"a": ..., "b": ..., "effect": ...} objects.
+--   Multi-ingredient recipes emit {"ingredients": [...], "effect": ...} objects,
+--   with optional "id".
+itemInteractionsToJSON :: Map.Map RecipeKey Effect -> Value
 itemInteractionsToJSON m =
-    toJSON [ object [ "a" .= a, "b" .= b, "effect" .= e ]
-           | ((a, b), e) <- Map.toList m ]
+    toJSON [ encodeEntry k e | (k, e) <- Map.toList m ]
+  where
+    encodeEntry (RecipePair a b) e =
+        object [ "a" .= a, "b" .= b, "effect" .= e ]
+    encodeEntry (RecipeIngredients mId ings) e =
+        object $ [ "ingredients" .= ings, "effect" .= e ]
+               ++ [ "id" .= i | Just i <- [mId] ]
 
-parseItemInteractions :: Value -> Parser (Map.Map (String, String) Effect)
+parseItemInteractions :: Value -> Parser (Map.Map RecipeKey Effect)
 parseItemInteractions v =
     (do xs <- parseJSON v :: Parser [Value]
         Map.fromList <$> mapM entry xs)
     <|> legacy
   where
     entry = withObject "item interaction entry" $ \o -> do
-        a <- o .: "a"
-        b <- o .: "b"
-        e <- o .: "effect"
-        pure ((a, b), e)
+        mIngs <- o .:? "ingredients"
+        case mIngs of
+            Just ings -> do
+                mId <- o .:? "id"
+                e   <- o .: "effect"
+                pure (RecipeIngredients mId ings, e)
+            Nothing -> do
+                a <- o .: "a"
+                b <- o .: "b"
+                e <- o .: "effect"
+                pure (RecipePair a b, e)
     -- Legacy form: `"a|b"` string keys.
     legacy = do
         m <- parseJSON v :: Parser (Map.Map String Effect)
@@ -2358,8 +2406,34 @@ parseItemInteractions v =
             Right kvs -> pure (Map.fromList kvs)
             Left err  -> fail err
     parseKey (k, e) = case break (== '|') k of
-        (a, '|':b) -> Right ((a, b), e)
+        (a, '|':b) -> Right (RecipePair a b, e)
         _          -> Left ("Bad item interaction key: " ++ k)
+
+-- | Encode item-on-NPC outcomes as objects (B9).
+npcInteractionsToJSON :: Map.Map (String, String) Effect -> Value
+npcInteractionsToJSON m =
+    toJSON [ object [ "a" .= a, "b" .= b, "effect" .= e ]
+           | ((a, b), e) <- Map.toList m ]
+
+parseNpcInteractions :: Value -> Parser (Map.Map (String, String) Effect)
+parseNpcInteractions v =
+    (do xs <- parseJSON v :: Parser [Value]
+        Map.fromList <$> mapM entry xs)
+    <|> legacy
+  where
+    entry = withObject "npc interaction entry" $ \o -> do
+        a <- o .: "a"
+        b <- o .: "b"
+        e <- o .: "effect"
+        pure ((a, b), e)
+    legacy = do
+        m <- parseJSON v :: Parser (Map.Map String Effect)
+        case mapM parseKey (Map.toList m) of
+            Right kvs -> pure (Map.fromList kvs)
+            Left err  -> fail err
+    parseKey (k, e) = case break (== '|') k of
+        (a, '|':b) -> Right ((a, b), e)
+        _          -> Left ("Bad npc interaction key: " ++ k)
 
 -- | Dynamic state of an active playthrough
 data SaveState = SaveState
