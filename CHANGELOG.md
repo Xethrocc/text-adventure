@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Content-Migration: Detektiv-Genre auf Wissensmodell (K13)
+
+- **Migration von `examples/genres/detective.yaml`:**
+  - Reine Content-Migration ohne Engine-Code-Änderungen: Das Detektiv-Genre nutzt nun das W1-Wissensmodell (`facts:`, `learn:`, `journal: notes`).
+  - **Entfernung toter Flags:** Die vier Beweis-Flags (`note_found`, `ledger_found`, `letter_found`, `glove_found`) sowie das Dialog-Flag `knows_name` und das Abschluss-Flag `solved` wurden gesetzt, aber an keiner Stelle im Spiel gelesen (toter Ballast). Alle sechs Flags wurden ersatzlos entfernt.
+  - **Fakten-Sektion (`facts:`):** Vier Beweise deklariert (`beweis_alibi`, `beweis_ledger`, `beweis_letter`, `beweis_glove`) mit Text aus den bisherigen `on_take`-Nachrichten, Fundort-Quelle (`source`) aus den Ortsbeschreibungen und Tags nach Beweisart (`alibi`, `motive`, `tat`).
+  - **Effekte bei Aufnahme:** In `on_take` der vier Beweisstücke ersetzen `{learn: <fact-id>}` die alten Flags und `msg`-Einträge.
+  - **Notizbuch:** Durch `journal: notes` steht der Befehl `notizen` (bzw. `notes`) zur Verfügung, der gesammelte Beweise nach Tag-Gruppen formatiert auflistet.
+  - **Siegpfad und Spielmechanik unverändert:** Die Vierer-`has_item`-Bedingung für `accuse` und die Quests bleiben unverändert; der bestehende E2E-Siegpfad funktioniert identisch.
+- **Unabhängig nachgemessen:** Der bestehende E2E-Lauf `ci/e2e/detective.in` ergibt
+  weiterhin `VICTORY`. `notizen` nach dem Fund aller vier Beweise zeigt:
+  `[alibi]` (1 Eintrag), `[motive]` (2), `[tat]` (1) — je mit `source`-Angabe in
+  Klammern, in Deklarationsreihenfolge. Byte-Nachweis: von 134 Artefakten weicht
+  **genau eine Datei** ab (`examples_genres_detective/world.json`), die 65 anderen
+  Abenteuer und Fixtures sind byte-identisch.
+- **Befund — was W1 nicht kann (der Grund für diese Stufe):** W1 speichert einen
+  **Fakt**, keinen **Bericht über einen Fakt mit Urheber**. Die drei Aussagen des
+  Genres — der Butler belegt die Ausrede, die Witwe identifiziert „R." als Doktor,
+  der Doktor führt eine Schutzbehauptung — sind genau das, was `learn:` nicht
+  abbildet: „der Doktor war nicht im Zimmer" und „der Butler sagt, der Doktor war
+  nicht im Zimmer" sind verschiedene Dinge. `combine:` kann Diskrepanz zwischen
+  gegensätzlichen Aussagen nicht ableiten, weil es das gleichzeitige Vorhandensein
+  **wahrer** Prämissen verlangt. Und weil `accuse`/`visible_when` nur über
+  `has_item`/`compare_var` prüfen, bleibt die Anklage an Gegenstände gebunden —
+  ein Ermittler kann einen Verdächtigen nicht mit der *Aussage eines anderen*
+  konfrontieren. Das ist die Begründung für einen möglichen Kandidaten
+  `statements:` — hier **nicht** gebaut, nur festgehalten.
+
 ### Variablen-Zyklen: refill_per_turn, reset_on, on_overflow (K7/K4)
 
 - **Erweiterung von `AVariable` und `VarDef`:**

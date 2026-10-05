@@ -1,5 +1,6 @@
 name: The Glass Alibi (Detective)
 start_room: street
+journal: notes
 
 # Genre: Detective — predicate chains, dialogue gated by visible_when, a custom
 # `accuse` verb whose outcome depends on the evidence you collected.
@@ -15,6 +16,29 @@ variables:
     initial: 0
     min: 0
     max: 5
+
+facts:
+  - id: beweis_alibi
+    keys: [note, alibi]
+    text: "The note reads: 'The doctor was not in his room at eleven. He lied.'"
+    source: "pinned to the last stall"
+    tag: alibi
+  - id: beweis_ledger
+    keys: [ledger, book]
+    text: "Two payments to a chemist, both in the doctor's hand, both erased."
+    source: "open on the reading desk"
+    tag: motive
+  - id: beweis_letter
+    keys: [letter, torn]
+    text: "Only the end survives: '...and if the will is read, I am ruined. — R.'"
+    source: "under a loose floorboard"
+    tag: motive
+  - id: beweis_glove
+    keys: [glove]
+    text: "The stain is not soil. The glove is far too large for any gardener here."
+    source: "in the corner"
+    tag: tat
+
 
 rooms:
   - id: street
@@ -125,16 +149,14 @@ items:
     keys: [note, alibi]
     location: stables
     on_take:
-      - {set_flag: note_found, val: "true"}
-      - {msg: "The note reads: 'The doctor was not in his room at eleven. He lied.'"}
+      - {learn: beweis_alibi}
   - id: ledger
     name: household ledger
     desc: The household ledger, half-corrected in two different inks.
     keys: [ledger, book]
     location: library
     on_take:
-      - {set_flag: ledger_found, val: "true"}
-      - {msg: "Two payments to a chemist, both in the doctor's hand, both erased."}
+      - {learn: beweis_ledger}
   - id: torn_letter
     name: torn letter
     desc: Half a letter, torn across.
@@ -143,16 +165,14 @@ items:
     hidden: true
     discover: "Under a loose floorboard you find half a letter."
     on_take:
-      - {set_flag: letter_found, val: "true"}
-      - {msg: "Only the end survives: '...and if the will is read, I am ruined. — R.'"}
+      - {learn: beweis_letter}
   - id: bloody_glove
     name: gardener's glove
     desc: A gardener's glove, stained dark.
     keys: [glove]
     location: cellar
     on_take:
-      - {set_flag: glove_found, val: "true"}
-      - {msg: "The stain is not soil. The glove is far too large for any gardener here."}
+      - {learn: beweis_glove}
 
 npcs:
   - id: butler
@@ -228,7 +248,6 @@ npcs:
               - text: "That is the name I needed."
                 next: null
                 outcomes:
-                  - {set_flag: knows_name, val: "true"}
                   - {add_var: suspicion, delta: 1}
     verb_map:
       accuse,alive:
@@ -281,7 +300,6 @@ npcs:
               - {has_item: bloody_glove}
           then:
             - {msg: "You lay it out: the erased payments, the false alibi, the letter signed 'R', the glove no gardener could wear. The doctor's hands, at last, are not steady."}
-            - {set_flag: solved, val: "true"}
             - {game_end: victory, msg: "VICTORY — Dr. R. Ashgrove confesses. The case is closed, and the glass alibi is broken."}
           else:
             - {msg: "You accuse the doctor. He smiles thinly. 'A theory, sir, is not a case.' You need the payments, the alibi, the letter and the glove."}
