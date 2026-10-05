@@ -432,7 +432,7 @@ description:
 | `{ damage: 5 }` | ModifyValue VRPlayerHealth -5 |
 | `{ give: item_id }` | MoveEntity to CarriedBy "player" (String-Form) |
 | `{ give: {item: id, to: actor} }` | MoveEntity to CarriedBy actor (B7: `"player"` oder NPC-ID) |
-| `{ consume: item_id }` | MoveEntity Removed |
+| `{ consume: item_id }` | MoveEntity Removed (unterstützt auch dynamische Referenzen `"{item1}"` / `"{item2}"` in `interactions.item`) |
 | `{ set_flag: name, val: "true" }` | SetValue (VRFlag name) "true" |
 | `{ set_var: { var: name, value: N } }` | SetValue (VRVariable name) N — ganzzahlige Variable setzen |
 | `{ set_var: { var: name, value: "text" } }` | SetValue (VRVariable name) "text" — Textvariable setzen (K6; intern `AOSetTextVar`) |
@@ -1351,6 +1351,7 @@ interactions:
       effects:
         - {msg: "You grind the herb into a paste."}
         - {set_flag: paste_made, val: "true"}
+        - {consume: "{item1}"}
   # Item-auf-NPC (B9): use <item> on <npc> laesst diese Effektliste laufen
   npc:
     - item: verband
@@ -1363,8 +1364,42 @@ interactions:
 
 **Die drei Zielarten:** `entity:` setzt nur einen Zustand am Ziel (der
 Schluessel oeffnet), `item:` ist freie Effektliste (Crafting), `npc:` ist
-freie Effektliste mit einer Figur als Ziel (B9). `entity:` und `item:` bleiben
-unveraendert; `npc:` ist die einzige neue Liste.
+freie Effektliste mit einer Figur als Ziel (B9).
+
+### Dynamische Variablen `{item1}` und `{item2}` beim Crafting (K11a)
+
+Innerhalb der `effects:` eines `interactions.item`-Rezepts bindet die Engine die
+beiden beteiligten Gegenstände automatisch an die Variablen `item1` und `item2`:
+
+- **Nutzung in Effekten und Texten:**
+  `{item1}` und `{item2}` können in Nachrichtentexten (`{item1}`), Prädikaten
+  (`{ var: item1, is: "..." }`) und insbesondere in `consume: "{item1}"` bzw.
+  `consume: "{item2}"` verwendet werden.
+- **Rezept-Treue bei umgekehrter Reihenfolge:**
+  Egal ob der Spieler `use herb on mortar` oder `use mortar on herb` eingibt:
+  `{item1}` wird immer an das im YAML-Rezept deklarierte `item1` gebunden und
+  `{item2}` an `item2`. Dadurch verbraucht z. B. `consume: "{item1}"` zuverlässig
+  die Zutat und niemals versehentlich das Werkzeug.
+- **EHRLICHER HINWEIS: Kein impliziter Verbrauch!**
+  Crafting verbraucht Zutaten **nicht automatisch oder implizit**. Wer Zutaten
+  verbrauchen will, muss dies ausdrücklich über `consume: "{item1}"` bzw.
+  `consume: "{item2}"` (oder eine literale Item-ID) in die `effects:`-Liste
+  schreiben. Werkzeuge (wie Mörser, Hammer etc.) bleiben somit wie gewohnt
+  erhalten, wenn kein `consume:` für sie notiert ist. Es gibt keine versteckte Magie.
+- **Warum nur `consume:` dynamisch auflöst (und nicht `give:`):**
+  `give:` erzeugt ein konkretes Resultat im Spielgeschehen. Ein solches Item muss
+  in `items:` vollständig deklariert sein (Name, Beschreibung, Gewicht, Slots usw.).
+  Eine dynamische Auflösung von `give:` wird bewusst nicht unterstützt, um die
+  Erzeugung undefinierter Phantom-Items zu verhindern.
+- **Gültigkeitsbereich (Scope) und Kollisionsfreiheit:**
+  Die Bindung von `item1` und `item2` existiert ausschließlich temporär im
+  Ausführungskontext von `tryItemOnItem`. Es werden keine globalen Variablen
+  angelegt, sodass keine Kollisionen mit Adventure-Variablen entstehen.
+- **Harte Compiler-Diagnose (`UnknownItemRef`):**
+  Ungebundene dynamische Referenzen (z. B. `consume: "{item9}"` oder Tippfehler)
+  sowie die Verwendung von `{item1}` / `{item2}` außerhalb von `interactions: item:`
+  werden vom Worldbuilder als harter Fehler (`UnknownItemRef`) mit Levenshtein-Korrekturvorschlag
+  abgewiesen, statt zur Laufzeit still ins Leere zu laufen.
 
 **Reihenfolge von `use <item> on <npc>`:** Ohne passenden `npc:`-Eintrag greift
 weiter der **Angriffs-Fallback** — `use` auf eine lebende Figur ist ein

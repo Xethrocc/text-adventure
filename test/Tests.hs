@@ -9535,6 +9535,73 @@ testDynamicVarNameFormat = do
     pure (and [r1, r2, r3, r4])
 
 -- ---------------------------------------------------------------------------
+-- K11a: Crafting verbraucht seine Zutaten ({item1}, {item2})
+-- ---------------------------------------------------------------------------
+
+-- | K11a.1: 'use A on B' binds item1 and item2 in variables; they do not exist before.
+testItemOnItemBindsVars :: IO Bool
+testItemOnItemBindsVars = do
+    let sample = initSampleGame
+        w = (world sample)
+            { itemDefs = Map.insert "herb" (invItem "herb")
+                       $ Map.insert "mortar" (invItem "mortar") (itemDefs (world sample))
+            , itemInteractions = Map.singleton ("herb", "mortar") (SendMessage "Crafted!")
+            }
+        st0 = sample
+            { world = w
+            , save = (save sample)
+                { itemStates = Map.insert "herb" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ Map.insert "mortar" (ItemState (InRoom (currentRoom (save sample))) "normal" Map.empty False)
+                             $ itemStates (save sample)
+                }
+            }
+    -- Before: neither item1 nor item2 exist
+    r1 <- expectEqual Nothing (getVariable "item1" st0)
+    r2 <- expectEqual Nothing (getVariable "item2" st0)
+
+    -- Command 'use herb on mortar'
+    let (st1, _) = executeCommand (parseCommand "use herb on mortar") st0
+    r3 <- expectEqual (Just (VVText "herb")) (getVariable "item1" st1)
+    r4 <- expectEqual (Just (VVText "mortar")) (getVariable "item2" st1)
+
+    pure (r1 && r2 && r3 && r4)
+
+-- | K11a.2: consume: "{item1}" resolves the correct item at runtime, even in reverse order (use B on A).
+testItemOnItemConsumeDynamicResolvesOrder :: IO Bool
+testItemOnItemConsumeDynamicResolvesOrder = do
+    let sample = initSampleGame
+        w = (world sample)
+            { itemDefs = Map.insert "herb" (invItem "herb")
+                       $ Map.insert "mortar" (invItem "mortar") (itemDefs (world sample))
+            , itemInteractions = Map.singleton ("herb", "mortar") (MoveEntity "{item1}" Removed)
+            }
+        -- Both carried by player
+        st0 = sample
+            { world = w
+            , save = (save sample)
+                { itemStates = Map.insert "herb" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ Map.insert "mortar" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ itemStates (save sample)
+                }
+            }
+
+    -- 1. Reverse order: 'use mortar on herb' matches altKey ("herb", "mortar")
+    let (stRev, _) = executeCommand (parseCommand "use mortar on herb") st0
+    r1 <- expectTrue "reverse: herb is consumed" (not (hasItem "herb" stRev))
+    r2 <- expectTrue "reverse: mortar remains carried" (hasItem "mortar" stRev)
+    r3 <- expectEqual (Just (VVText "herb")) (getVariable "item1" stRev)
+    r4 <- expectEqual (Just (VVText "mortar")) (getVariable "item2" stRev)
+
+    -- 2. Forward order: 'use herb on mortar' matches key ("herb", "mortar")
+    let (stFwd, _) = executeCommand (parseCommand "use herb on mortar") st0
+    r5 <- expectTrue "forward: herb is consumed" (not (hasItem "herb" stFwd))
+    r6 <- expectTrue "forward: mortar remains carried" (hasItem "mortar" stFwd)
+    r7 <- expectEqual (Just (VVText "herb")) (getVariable "item1" stFwd)
+    r8 <- expectEqual (Just (VVText "mortar")) (getVariable "item2" stFwd)
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- ---------------------------------------------------------------------------
 -- K7+K4: Variablen-Zyklen (refill_per_turn, reset_on, on_overflow)
 -- ---------------------------------------------------------------------------
 
@@ -10841,5 +10908,8 @@ main = do
         , runTest "combat start: chains_to state changes survive" testCombatStartChainsToState
         , runTest "combat start: effects run exactly once (no duplicate messages or double count)" testCombatStartEffectsRunExactlyOnce
         , runTest "combat start: random choice yields deterministic salt 0 outcome" testCombatStartRandomChoiceDeterministic
+        -- K11a: Crafting verbraucht seine Zutaten ({item1}, {item2})
+        , runTest "crafting: use A on B binds item1/item2; neither exists before (K11a.1)" testItemOnItemBindsVars
+        , runTest "crafting: consume {item1} eats correct item regardless of order (K11a.2)" testItemOnItemConsumeDynamicResolvesOrder
         ]
     when (not (and results)) exitFailure

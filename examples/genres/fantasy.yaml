@@ -221,5 +221,7 @@ interactions:
       item2: mortar
       effects:
         - {set_flag: salve_made, val: "true"}
+        - {consume: "{item1}"}
+        - {consume: "{item2}"}
         - {msg: "You grind the moonwort in the stone mortar into a bright paste."}
         - {advance_quest: cleanse_emberhold}

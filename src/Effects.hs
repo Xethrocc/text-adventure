@@ -355,7 +355,8 @@ applyOutcomeWith depth salt outcome targetId state
         let state' = relocateItem eid (CarriedBy actor) state
         in (state', [], salt)
     MoveEntity eid Removed ->
-        let state' = consumeItem eid state
+        let actualEid = resolveVarName eid state
+            state' = consumeItem actualEid state
         in (state', [], salt)
     MoveEntity eid (EquippedBy actor) ->
         case equipItemFor actor eid state of

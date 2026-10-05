@@ -2023,10 +2023,20 @@ tryItemOnItem usedId targetStr state =
         Just target ->
             let key = (usedId, itemId target)
                 altKey = (itemId target, usedId)
-            in case Map.lookup key (itemInteractions (world state)) <|>
-                    Map.lookup altKey (itemInteractions (world state)) of
-                Just outcome -> Just (applyOutcomeEv outcome (itemId target) state)
-                Nothing -> Nothing
+            in case Map.lookup key (itemInteractions (world state)) of
+                Just outcome ->
+                    let state' = bindItemVars usedId (itemId target) state
+                    in Just (applyOutcomeEv outcome (itemId target) state')
+                Nothing -> case Map.lookup altKey (itemInteractions (world state)) of
+                    Just outcome ->
+                        let state' = bindItemVars (itemId target) usedId state
+                        in Just (applyOutcomeEv outcome (itemId target) state')
+                    Nothing -> Nothing
+  where
+    bindItemVars i1 i2 st =
+        let vm = variables (save st)
+            vm' = Map.insert "item1" (VVText i1) (Map.insert "item2" (VVText i2) vm)
+        in st { save = (save st) { variables = vm' } }
 
 -- | Dialogue: use the tree if present, otherwise fall back to the legacy single line
 talkTo :: NPCDef -> Maybe NPCState -> GameState -> (GameState, [OutputEvent])

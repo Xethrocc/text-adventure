@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+### Crafting verbraucht seine Zutaten: {item1} / {item2} in interactions.item (K11a)
+
+- **Dynamische Variablen `{item1}` / `{item2}` beim Item-auf-Item-Crafting:**
+  - `tryItemOnItem` bindet im Ausführungskontext die IDs der beiden Zutaten als `item1` und `item2` (ohne `cmd.`-Präfix, symmetrisch zum Entity- und NPC-Namensraum).
+  - **Rezept-Treue bei umgekehrter Reihenfolge:** Bei `use B on A` für ein deklariertes Rezept `item1: A, item2: B` bindet `{item1}` an `A` und `{item2}` an `B`. Damit zerstört `consume: "{item1}"` immer die deklarierte Zutat `item1` und schützt Werkzeuge unabhängig von der syntaktischen Eingabereihenfolge.
+  - **Gültigkeitsbereich:** Die Variablen existieren ausschließlich während des Item-auf-Item-Aufrufs; sie existieren vorher nicht und kollidieren nicht mit Adventure-Variablen (gemessen: 0 Kollisionen über alle 69 Abenteuer und Fixtures).
+- **Laufzeit-Auflösung in `consume:`:**
+  - `consume: "{item1}"` bzw. `consume: "{item2}"` löst dynamische Referenzen zur Laufzeit über `resolveVarName` (K12-Namensauflösung) auf und entfernt das entsprechende Item aus dem Spielzustand (`MoveEntity actualEid Removed`).
+  - **Ehrlicher Hinweis: Kein impliziter Verbrauch:** Zutaten werden nicht magisch verbraucht. Wer Zutaten konsumieren möchte, notiert `consume:` explizit. Werkzeuge bleiben ohne `consume:` im Inventar.
+  - **Bewusste Nicht-Ausweitung auf `give:`:** `give:` erfordert ein vollständig in `itemDefs` deklariertes Item (Name, Beschreibung, Gewicht etc.); eine dynamische Namensauflösung würde nicht-deklarierte Phantom-Items erzeugen.
+- **Unabhängig nachgemessen (Spiel, nicht Test):** `ci/e2e/fantasy.in` bis Zeile 16,
+  dann `use herb on mortar`:
+  - Ergebnis: `> You grind the moonwort in the stone mortar into a bright paste.`
+  - `inventory` danach: `blue vial, rusty sword` — **beide Zutaten** (Kraut *und*
+    Mörser) sind verschwunden, nicht nur eines.
+  - Ein **zweiter** `use herb on mortar` scheitert mit
+    `> You need to be carrying 'herb' to use it.` Das Rezept ist damit nicht mehr
+    unbegrenzt wiederholbar — der eigentliche Zweck der Stufe.
+  - Die Bindung im `altKey`-Zweig tauscht mit (`bindItemVars (itemId target)
+    usedId`, `src/Parser.hs`), d. h. `{item1}` bleibt auch bei `use B on A` das
+    **zuerst genannte** Item. Gemessen, nicht angenommen.
+- **Validator-Nebenbefund:** `MoveEntity` mit dynamischer Item-Referenz wurde intern
+  **zweimal** eingesammelt — `idsFromOutcomeItem` *und* `idsFromOutcomeNPC` — was
+  `MissingNPC "{item1}"` meldete, obwohl kein NPC gemeint war. Beide Sammler
+  filtern dynamische Platzhalter jetzt aus; die neue Diagnose `UnknownItemRef`
+  (Compile) greift für ungebundene Referenzen wie `{item9}`.
+- **Byte-Vertrag:** von 134 Artefakten weicht **ausschließlich**
+  `examples_genres_fantasy/world.json` ab. Die 68 anderen Abenteuer und Fixtures
+  sind byte-identisch (Worktree-Vergleich gegen `8457430`). `fantasy` ist ein
+  Siegpfad-Genre — die `ci/e2e`-Marker bleiben grün, `scripts/ci.sh` meldet
+  `All checks passed`, 0 Compiler-Warnungen.
+- **Harte Compiler-Diagnose (`UnknownItemRef`):**
+  - Ungebundene dynamische Referenzen wie `consume: "{item9}"` oder die Verwendung von `{item1}`/`{item2}` außerhalb von `interactions: item:` werden vom Worldbuilder als harter Compile-Fehler (`ciError` mit Code `UnknownItemRef`) und Levenshtein-Korrekturvorschlag (`formatUnknownKey`) abgewiesen.
+  - Statische Validierung in `idsFromOutcomeItem` und `idsFromOutcomeNPC`: Dynamische Platzhalter (`{item1}`, `{item2}`) werden ignoriert und nicht fälschlich als fehlende statische Items oder NPCs bemängelt.
+- **Referenzrezept `examples/genres/fantasy.yaml`:**
+  - Rezept `herb` + `mortar` ergänzt um `consume: "{item1}"` und `consume: "{item2}"`.
+  - Spieltest verifiziert: Kraut und Mörser werden zu Salbe verarbeitet; Mörser ist danach verbraucht, ein zweiter Versuch schlägt fehl.
+
 ### Aussagen mit Sprecher und Wahrheitsgehalt: statements: (K9)
 
 - **Aussagen-Sektion (`statements:`):**

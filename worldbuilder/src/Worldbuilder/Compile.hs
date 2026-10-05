@@ -778,6 +778,7 @@ compileAdventure adv =
         procCallErrs = checkProcRefs (advProcedures adv) adv
         possessionErrs = checkNpcPossessionRefs adv
         npcIxErrs = checkNpcInteractionRefs adv
+        dynamicItemErrs = checkDynamicItemRefs adv
         questRefErrs = checkQuestRefs adv
         mapOverlapErrs = checkMapPositions adv
         reservedVarErrs = checkReservedVarWrites adv
@@ -824,6 +825,7 @@ compileAdventure adv =
                     ++ progVarErrs
                     ++ possessionErrs
                     ++ npcIxErrs
+                    ++ dynamicItemErrs
                     ++ questRefErrs
                     ++ mapOverlapErrs
                     ++ reservedVarErrs
@@ -4175,6 +4177,37 @@ checkNpcInteractionRefs adv = concatMap entryGo (maybe [] aiNpc (advInteractions
         | aniTarget n `Set.notMember` npcIds ]
         ]
 
+-- | K11a: dynamic item references in consume: must be bound.
+--   Inside 'interactions: item:', {item1} and {item2} are bound.
+--   Everywhere else, dynamic {item*} references are unbound and rejected.
+checkDynamicItemRefs :: Adventure -> [CompileIssue]
+checkDynamicItemRefs adv = itemIxIssues ++ otherIssues
+  where
+    itemIxIssues = concatMap checkItemIx (maybe [] aiItem (advInteractions adv))
+    checkItemIx ix =
+        let path = "interactions.item[" ++ aiiItem1 ix ++ "," ++ aiiItem2 ix ++ "]"
+            allowed = Set.fromList ["{item1}", "{item2}", "{var:item1}", "{var:item2}"]
+        in [ ciError (path ++ ".consume") "UnknownItemRef"
+                ("consume: " ++ formatUnknownKey ref (Set.fromList ["{item1}", "{item2}"]))
+           | AOConsumeItem ref <- deepOutcomes (aiiEffects ix)
+           , '{' `elem` ref
+           , ref `Set.notMember` allowed ]
+
+    otherSurfaces =
+        [ (path, outs)
+        | (path, outs) <- outcomeSurfaces adv
+        , path /= "interactions" ]
+        ++ case advInteractions adv of
+            Just ai -> [ ("interactions.npc[" ++ aniItem n ++ "]", aniEffects n) | n <- aiNpc ai ]
+            Nothing -> []
+
+    otherIssues =
+        [ ciError (path ++ ".consume") "UnknownItemRef"
+            ("consume references unbound dynamic item '" ++ ref ++ "'")
+        | (path, outs) <- otherSurfaces
+        , AOConsumeItem ref <- deepOutcomes outs
+        , '{' `elem` ref ]
+
 -- | 4.6: two authored map positions on the same cell of the same floor. A hard
 --   error like every other duplicate in the schema (cf. `DuplicateDirection`):
 --   the map cannot say which room owns the cell, and the editor would draw one
@@ -4431,7 +4464,7 @@ checkUnknownPlaceholders adv varDefs =
         | "condition_turns." `isPrefixOf` name = True
         | "known." `isPrefixOf` name = True
         | "statement." `isPrefixOf` name = True
-        | name `elem` ["x", "y", "z"] = True
+        | name `elem` ["x", "y", "z", "item1", "item2"] = True
         | hasDynamicCmd name = True
         | otherwise = False
 

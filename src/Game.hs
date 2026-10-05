@@ -1241,8 +1241,8 @@ varToString (VVInt n)  = show n
 varToString (VVBool b) = if b then "true" else "false"
 varToString (VVText s) = s
 
--- | Resolve dynamic placeholders like @{cmd.arg1}@ in variable names.
---   Only resolves @cmd.*@ placeholders from current GameState variables.
+-- | Resolve dynamic placeholders like @{cmd.arg1}@, @{item1}@, @{item2}@ in variable names.
+--   Resolves @cmd.*@ and @item1@/@item2@ placeholders from current GameState variables.
 --   If a placeholder is not resolvable (e.g. unknown cmd.argN), it remains unchanged.
 --   If the name contains no '{', it is returned as-is.
 resolveVarName :: String -> GameState -> String
@@ -1253,12 +1253,13 @@ resolveVarName name st
     go [] = []
     go ('{':rest) =
         case break (\c -> c == '}' || c == '{') rest of
-            (ph, '}':after)
-                | "cmd." `isPrefixOf` ph ->
-                    case getVariable ph st of
-                        Just val -> varToString val ++ go after
-                        Nothing  -> '{' : ph ++ '}' : go after
-                | otherwise -> '{' : ph ++ '}' : go after
+            (rawPh, '}':after) ->
+                let ph = if "var:" `isPrefixOf` rawPh then drop 4 rawPh else rawPh
+                in if "cmd." `isPrefixOf` ph || ph == "item1" || ph == "item2"
+                   then case getVariable ph st of
+                       Just val -> varToString val ++ go after
+                       Nothing  -> '{' : rawPh ++ '}' : go after
+                   else '{' : rawPh ++ '}' : go after
             _ -> '{' : go rest
     go (c:cs) = c : go cs
 

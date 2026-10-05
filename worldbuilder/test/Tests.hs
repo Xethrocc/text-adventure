@@ -4292,6 +4292,9 @@ tests =
     , ("variable cycles: sugar triggers compiled in correct order; clean without cycle fields (K7.1/K7.2)", testVarCyclesSugarTriggers)
     , ("variable cycles: YAML parsing and knownKeys clean (K7/K4)", testVarCyclesYamlParsingAndKnownKeys)
     , ("variable cycles: static validation for reset_on, on_overflow and refill (K7/K4)", testVarCyclesValidation)
+    -- K11a: Crafting verbraucht seine Zutaten
+    , ("crafting: compile of valid recipe with consume {item1}/{item2} (K11a)", testCraftingCompileValidForm)
+    , ("crafting: unbound dynamic ref {item9} produces hard compile error (K11a)", testCraftingUnboundRefRejected)
     ]
 
 -- ---------------------------------------------------------------------------
@@ -8111,6 +8114,74 @@ testVarCyclesValidation = do
                 Right _   -> False)
 
     pure (and [r1, r2, r3, r4])
+
+-- ---------------------------------------------------------------------------
+-- K11a: Crafting verbraucht seine Zutaten ({item1}, {item2})
+-- ---------------------------------------------------------------------------
+
+-- | K11a: compile of valid crafting recipe with consume: "{item1}" and "{item2}".
+testCraftingCompileValidForm :: IO Bool
+testCraftingCompileValidForm = do
+    let r0 = minRoom "loc_0"
+        ix = AInteractions
+            { aiEntity = []
+            , aiItem = [ AItemInteraction "herb" "mortar"
+                            [ AOConsumeItem "{item1}"
+                            , AOConsumeItem "{item2}"
+                            , AOMessage "You grind herb in mortar."
+                            ]
+                       ]
+            , aiNpc = []
+            }
+        adv = (minAdventure r0)
+            { advItems = [ (minItem "herb") { aiLocation = "loc_0" }
+                         , (minItem "mortar") { aiLocation = "loc_0" }
+                         ]
+            , advInteractions = Just ix
+            }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  unexpected compile errors: " ++ issuesText errs
+            pure False
+        Right cr -> do
+            let valErrs = validateWorld (crWorld cr)
+            expectTrue ("validateWorld clean, got: " ++ show valErrs) (null valErrs)
+
+-- | K11a: unbound dynamic item references like {item9} produce a hard compile error.
+testCraftingUnboundRefRejected :: IO Bool
+testCraftingUnboundRefRejected = do
+    let r0 = minRoom "loc_0"
+        -- 1. Unbound {item9} in interactions: item:
+        ixBad = AInteractions
+            { aiEntity = []
+            , aiItem = [ AItemInteraction "herb" "mortar"
+                            [ AOConsumeItem "{item9}" ]
+                       ]
+            , aiNpc = []
+            }
+        advBadIx = (minAdventure r0)
+            { advItems = [ (minItem "herb") { aiLocation = "loc_0" }
+                         , (minItem "mortar") { aiLocation = "loc_0" }
+                         ]
+            , advInteractions = Just ixBad
+            }
+    r1 <- case compileAdventure advBadIx of
+        Left errs -> expectTrue "unbound {item9} in recipe produces UnknownItemRef"
+            (any (\e -> ciCode e `elem` ["UnknownItemRef", "UnknownYamlKey"] && "{item9}" `isInfixOf` ciMessage e) errs)
+        Right _ -> expectTrue "unbound {item9} must fail compilation" False
+
+    -- 2. Unbound {item1} outside interactions (in a rule)
+    let badRule = ATrigger "r_bad" "turn" Nothing [AOConsumeItem "{item1}"] False 0 1 [] []
+        advBadRule = (minAdventure r0)
+            { advItems = [ (minItem "herb") { aiLocation = "loc_0" } ]
+            , advTriggers = [badRule]
+            }
+    r2 <- case compileAdventure advBadRule of
+        Left errs -> expectTrue "unbound {item1} in rule produces UnknownItemRef"
+            (any (\e -> ciCode e `elem` ["UnknownItemRef", "UnknownYamlKey"]) errs)
+        Right _ -> expectTrue "unbound {item1} in rule must fail compilation" False
+
+    pure (r1 && r2)
 
 main :: IO ()
 main = do

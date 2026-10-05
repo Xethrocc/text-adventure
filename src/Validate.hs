@@ -384,9 +384,14 @@ catMaybes xs = [x | Just x <- xs]
 -- Type-specific ID collectors from Outcome trees
 -- ---------------------------------------------------------------------------
 
+isDynamicItemRef :: String -> Bool
+isDynamicItemRef s = s `elem` ["{item1}", "{item2}", "{var:item1}", "{var:item2}"]
+
 idsFromOutcomeItem :: Effect -> [String]
 idsFromOutcomeItem outcome = case outcome of
-    MoveEntity iId _             -> [iId]
+    MoveEntity iId _
+        | isDynamicItemRef iId -> []
+        | otherwise            -> [iId]
     Mount iId _                  -> [iId]
     Unmount iId                  -> [iId]
     SetValue (VRItemProp iId _) _ -> [iId]
@@ -400,7 +405,9 @@ idsFromOutcomeItem outcome = case outcome of
 
 idsFromOutcomeNPC :: Effect -> [String]
 idsFromOutcomeNPC outcome = case outcome of
-    MoveEntity nId _             -> [nId]
+    MoveEntity nId _
+        | isDynamicItemRef nId -> []
+        | otherwise            -> [nId]
     Sequence os                  -> concatMap idsFromOutcomeNPC os
     RandomChoice os              -> concatMap (idsFromOutcomeNPC . snd) os
     RandomChoiceOn _ os          -> concatMap (idsFromOutcomeNPC . snd) os
