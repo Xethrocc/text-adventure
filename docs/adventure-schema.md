@@ -2845,6 +2845,30 @@ semantisch wirksam ist):**
 5. **Byte-Identität**: derselbe Inhalt kompiliert zur identischen Welt, egal ob er in
    einer Datei liegt oder in Bibliotheken aufgeteilt ist (getestet).
 
+### Arbeitstoleranz für den Byte-Vertrag (Entscheidung der Projektleitung, 2026-10-05)
+
+Die Byte-Identität ist ein **Werkzeug, kein Gesetz**. Sie macht ungewollte
+Nebenwirkungen einer Erweiterung sichtbar — sie soll Lösungen nicht verhindern.
+
+**Für Autoren:** eine Änderung, die ein Abenteuer anders kompiliert als früher, ist
+normal und in der Regel beabsichtigt. **Kein Abenteuer muss umgebaut werden, damit
+ein anderes byte-identisch bleibt.**
+
+**Für die Entwicklung:** sobald eine Erweiterung einen **Workaround-Trip durch das
+Repo** erzwingt — Dateien, die es nur zur Stabilität gibt, Sonderpfade ohne Bezug zum
+Problem, eine zweite Wahrheit neben der ersten — ist das ein **Befund, kein Rezept**.
+Dann wird die Regel geprüft, nicht umgangen: Welche Zusage ist betroffen (kompiliertes
+Artefakt oder gespeicherte Welt)? Was kostet das Brechen konkret? Gibt es einen Weg,
+der die Zusage erhält *und* sauber bleibt?
+
+Die Reihenfolge ist **erst die Regel prüfen, dann bauen** — und die Entscheidung wird
+vorher getroffen und dokumentiert, nicht als nachträgliche Rechtfertigung.
+
+Beleg, dass die Klausel praktisch ist: der `knows:`-Roundtrip-Bug war seit dem
+2026-09-29 latent. Unter einer starren Byte-Regel hätte jede Autorentest mit `knows:`
+einen Workaround gebraucht. Der Fix durfte die Ausgabe ändern, und alle 133 anderen
+Artefakte blieben byte-identisch — weil keines die betroffene Form benutzt.
+
 ## Verfolgung: `pursuit:` und die Distanz-Vokabel (Tür IV)
 
 Verfolgung/Pfadsuche als **Kern-Abfrage über den Laufzeit-Graphen**: der Autor schreibt nur
