@@ -11823,6 +11823,7 @@ main = do
         , runTest "set_var faction.empire over threshold fires trigger (G9c)" testStandingChangeSetVarFires
         , runTest "non-faction variable write does not fire standing trigger (G9c)" testStandingChangeUnrelatedVarDoesNotFire
         , runTest "standing change recursion depth protection stops loop with diagnostic (G9c)" testStandingChangeRecursionProtection
+        , runTest "consequence chain: tier -> custom event -> chained event, once holds (G9)" testStandingChangeChainE2E
         ]
     when (not (and results)) exitFailure
 
@@ -12039,6 +12040,49 @@ testStandingChangeCrossingThresholdFires = do
     r2 <- expectEqual "ally" (lookupStandingName "empire" st1)
     r3 <- expectTrue "trigger message fired" (isInfixOf "Das Imperium sieht dich" out)
     pure (and [r1, r2, r3])
+
+-- | G9-Konsequenzketten (E2E): Stufenwechsel -> RaiseEvent -> OnCustomEvent.
+--   Die komplette Kette ist bestehende Vokabel — dieser Test beweist, dass
+--   sie end-to-end durch die Engine läuft:
+--     add_var über die Schwelle  ->  OnStandingChange-Trigger
+--     ->  SendMessage + RaiseEvent "imperial_invite"  (trChainsTo äquivalent)
+--     ->  OnCustomEvent-Trigger (once) -> Ketten-Effekt + Flag.
+testStandingChangeChainE2E :: IO Bool
+testStandingChangeChainE2E = do
+    let trigTier = TriggerDef "t_tier" (OnStandingChange "empire")
+                    (Just (VarIs "standing_name.empire" "ally"))
+                    [ SendMessage "Das Imperium lädt dich ein."
+                    , RaiseEvent "imperial_invite"
+                    ]
+                    False 0 1 [] []
+        -- Die Kette: requires + once + chains_to — die K3-Vokabel.
+        trigChain = TriggerDef "t_chain" (OnCustomEvent "imperial_invite")
+                    Nothing
+                    [ SendMessage "Der Botschafter erscheint."
+                    , SetValue (VRFlag "invitation_sent") (EVString "true")
+                    , RaiseEvent "imperial_audience"
+                    ]
+                    True 0 1 [] ["imperial_audience"]
+        trigTail = TriggerDef "t_tail" (OnCustomEvent "imperial_audience")
+                    Nothing
+                    [ SendMessage "Die Audienz ist gewährt." ]
+                    True 0 1 [] []
+        w = sampleG9cWorld { triggerDefs = [trigTier, trigChain, trigTail] }
+        st0 = setVariable "faction.empire" (VVInt 0) (initSampleGame { world = w })
+        -- 1. Schwelle überschreiten -> Kette der Länge 3 in EINEM Zug:
+        --    tier -> imperial_invite -> imperial_audience
+        (st1, out1) = applyOutcome (ModifyValue (VRVariable "faction.empire") 20) "" st0
+        -- 2. Ein zweiter Wechsel in dieselbe Stufe (hin und zurück) darf die
+        --    once-Kette NICHT erneut feuern.
+        (st2, out2) = applyOutcome (ModifyValue (VRVariable "faction.empire") (-10)) "" st1
+        (st3, out3) = applyOutcome (ModifyValue (VRVariable "faction.empire") 20) "" st2
+    r1 <- expectTrue "tier message fired" (isInfixOf "Das Imperium lädt dich ein" out1)
+    r2 <- expectTrue "chain message fired (imperial_invite)" (isInfixOf "Der Botschafter erscheint" out1)
+    r3 <- expectTrue "tail message fired (imperial_audience)" (isInfixOf "Die Audienz ist gewährt" out1)
+    r4 <- expectEqual (Just "true") (getFlag "invitation_sent" st1)
+    r5 <- expectTrue "once-chain does NOT re-fire on re-crossing" (not (isInfixOf "Der Botschafter erscheint" out3))
+    pure (and [r1, r2, r3, r4, r5])
+
 
 -- | 2. 40 -> 45 INNERHALB derselben Stufe feuert NICHT.
 --   40 is "ally" (20..99), 45 is still "ally". Old level == new level -> no trigger.

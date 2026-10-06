@@ -1630,6 +1630,43 @@ rules:
 deklariert; Referenz auf nicht deklarierte Faktion (wenn das `factions:`-Segment
 existiert).
 
+### Konsequenzketten ab Stufenwechseln (Phase G9, E2E)
+
+Stufenwechsel, Custom-Events und Ketten sind **bestehende Vokabel** — eine
+Kette braucht keinen neuen Engine-Code, nur Trigger-Daten:
+
+```yaml
+triggers:
+  # Ebene 1: Schwelle überschritten -> Einladung + nächstes Event anstoßen
+  - on_standing_change:
+      faction: empire
+      to: freundlich
+    effects:
+      - { msg: "Das Imperium lädt dich ein." }
+      - { raise_event: imperial_invite }
+
+  # Ebene 2: K3-Kette — requires, once, chains_to
+  - on: custom imperial_invite
+    once: true
+    chains_to: [imperial_audience]
+    effects:
+      - { msg: "Der Botschafter erscheint." }
+      - { set_flag: invitation_sent }
+
+  - on: custom imperial_audience
+    once: true
+    effects:
+      - { msg: "Die Audienz ist gewährt." }
+```
+
+- **E2E beweist den Test** `consequence chain: tier -> custom event ->
+  chained event, once holds (G9)`: alle drei Ebenen feuern in **einem** Zug
+  (der Stufenwechsel stößt die Kette rekursiv an), und `once` hält — ein
+  erneutes Überqueren derselben Schwelle feuert die Kette **nicht** erneut.
+- **Kombinierbar** mit `standing_name` (G9a) für Text und
+  `standing:`-Bedingungen für Gate-Logik; das Polling-Muster (`on: turn` +
+  `standing: {at_least: …}`) ist damit vollständig ersetzt.
+
 ---
 
 ## Encounter-Tabellen (Module 7c)
