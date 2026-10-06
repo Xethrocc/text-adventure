@@ -122,6 +122,7 @@ module Types.Core
     , MapPos (..)
       -- * Events and Triggers
     , EventType (..)
+    , TriggerEvent
     , TriggerDef (..)
     , TriggerState (..)
     , ProcDef (..)
@@ -1984,6 +1985,7 @@ data EventType
     | OnUse ItemID
     | OnSearch RoomID
     | OnStateChange String
+    | OnStandingChange FactionID       -- ^ G9c: fired when standing level changes
     | OnCustomEvent String
     | OnTurn
     | OnCommand String                 -- ^ verb name (e.g. "activate")
@@ -1997,6 +1999,9 @@ data EventType
 
 instance ToJSON EventType
 instance FromJSON EventType
+
+-- | G9c alias for EventType
+type TriggerEvent = EventType
 
 -- | A trigger rule: when event matches conditions, fire effects.
 data TriggerDef = TriggerDef

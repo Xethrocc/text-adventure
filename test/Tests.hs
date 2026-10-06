@@ -11598,6 +11598,15 @@ main = do
         , runTest "standing_name faction with no levels returns empty string (G9a)" testStandingNameNoLevels
         , runTest "standing_name unknown faction returns empty string (G9a)" testStandingNameUnknownFaction
         , runTest "standing_name unknown typo returns empty string, no error or lockup (G9a)" testStandingNameNegativeUnknown
+        -- G9c: on_standing_change Stufenwechsel-Trigger
+        , runTest "standing change 0 -> 20 fires trigger with to: ally (G9c)" testStandingChangeCrossingThresholdFires
+        , runTest "standing change 40 -> 45 within same tier does not fire (G9c)" testStandingChangeWithinTierDoesNotFire
+        , runTest "standing change same value 20 -> 20 does not fire (G9c)" testStandingChangeSameValueDoesNotFire
+        , runTest "standing change backward 20 -> 0 fires for to: neutral (G9c)" testStandingChangeBackwardFires
+        , runTest "standing change without to condition fires on any tier change (G9c)" testStandingChangeWithoutToFiresAnyChange
+        , runTest "set_var faction.empire over threshold fires trigger (G9c)" testStandingChangeSetVarFires
+        , runTest "non-faction variable write does not fire standing trigger (G9c)" testStandingChangeUnrelatedVarDoesNotFire
+        , runTest "standing change recursion depth protection stops loop with diagnostic (G9c)" testStandingChangeRecursionProtection
         ]
     when (not (and results)) exitFailure
 
@@ -11783,4 +11792,154 @@ testStandingNameNegativeUnknown = do
     r3 <- expectEqual "Stand: []" rendered3
 
     pure (and [r1, r2, r3])
+
+-- ---------------------------------------------------------------------------
+-- Phase G9c: on_standing_change (Stufenwechsel-Trigger)
+-- ---------------------------------------------------------------------------
+
+-- | Shared 3-tier faction definition for G9c tests:
+--   feindlich (-50), neutral (0), ally (20), honored (100)
+sampleG9cWorld :: GameWorld
+sampleG9cWorld =
+    let empireLevels =
+            [ FactionLevel (-50) "feindlich"
+            , FactionLevel 0     "neutral"
+            , FactionLevel 20    "ally"
+            , FactionLevel 100   "honored"
+            ]
+    in (world initSampleGame) { factions = Map.singleton "empire" empireLevels }
+
+-- | 1. Wechsel 0 -> 20 (neutral -> ally) feuert; Bedingung to: ally greift.
+testStandingChangeCrossingThresholdFires :: IO Bool
+testStandingChangeCrossingThresholdFires = do
+    let trig = TriggerDef "t_ally" (OnStandingChange "empire")
+                (Just (VarIs "standing_name.empire" "ally"))
+                [ SendMessage "Das Imperium sieht dich jetzt als Verbündeten." ]
+                False 0 1 [] []
+        w = sampleG9cWorld { triggerDefs = [trig] }
+        st0 = setVariable "faction.empire" (VVInt 0) (initSampleGame { world = w })
+        (st1, out) = applyOutcome (ModifyValue (VRVariable "faction.empire") 20) "" st0
+    r1 <- expectEqual (Just (VVInt 20)) (getVariable "faction.empire" st1)
+    r2 <- expectEqual "ally" (lookupStandingName "empire" st1)
+    r3 <- expectTrue "trigger message fired" (isInfixOf "Das Imperium sieht dich" out)
+    pure (and [r1, r2, r3])
+
+-- | 2. 40 -> 45 INNERHALB derselben Stufe feuert NICHT.
+--   40 is "ally" (20..99), 45 is still "ally". Old level == new level -> no trigger.
+testStandingChangeWithinTierDoesNotFire :: IO Bool
+testStandingChangeWithinTierDoesNotFire = do
+    let trig = TriggerDef "t_ally" (OnStandingChange "empire")
+                Nothing
+                [ SendMessage "FEHLER: Unerwarteter Trigger innerhalb der Stufe gefeuert!" ]
+                False 0 1 [] []
+        w = sampleG9cWorld { triggerDefs = [trig] }
+        st0 = setVariable "faction.empire" (VVInt 40) (initSampleGame { world = w })
+        (st1, out) = applyOutcome (ModifyValue (VRVariable "faction.empire") 5) "" st0
+    r1 <- expectEqual (Just (VVInt 45)) (getVariable "faction.empire" st1)
+    r2 <- expectEqual "ally" (lookupStandingName "empire" st1)
+    r3 <- expectTrue "kein Trigger innerhalb derselben Stufe" (not (isInfixOf "FEHLER" out))
+    pure (and [r1, r2, r3])
+
+-- | 3. Gleicher Wert erneut setzen (20 -> 20) feuert NICHT (OnStateChange-Schutz).
+testStandingChangeSameValueDoesNotFire :: IO Bool
+testStandingChangeSameValueDoesNotFire = do
+    let trig = TriggerDef "t_ally" (OnStandingChange "empire")
+                Nothing
+                [ SendMessage "FEHLER: Trigger bei identischem Wert gefeuert!" ]
+                False 0 1 [] []
+        w = sampleG9cWorld { triggerDefs = [trig] }
+        st0 = setVariable "faction.empire" (VVInt 20) (initSampleGame { world = w })
+        (st1, out) = applyOutcome (SetValue (VRVariable "faction.empire") (EVInt 20)) "" st0
+    r1 <- expectEqual (Just (VVInt 20)) (getVariable "faction.empire" st1)
+    r2 <- expectTrue "kein Trigger bei identischem Wert" (not (isInfixOf "FEHLER" out))
+    pure (and [r1, r2])
+
+-- | 4. Rückwechsel 20 -> 0 (ally -> neutral) feuert bei to: neutral.
+testStandingChangeBackwardFires :: IO Bool
+testStandingChangeBackwardFires = do
+    let trig = TriggerDef "t_neutral" (OnStandingChange "empire")
+                (Just (VarIs "standing_name.empire" "neutral"))
+                [ SendMessage "Das Imperium begegnet dir wieder neutral." ]
+                False 0 1 [] []
+        w = sampleG9cWorld { triggerDefs = [trig] }
+        st0 = setVariable "faction.empire" (VVInt 20) (initSampleGame { world = w })
+        (st1, out) = applyOutcome (ModifyValue (VRVariable "faction.empire") (-20)) "" st0
+    r1 <- expectEqual (Just (VVInt 0)) (getVariable "faction.empire" st1)
+    r2 <- expectEqual "neutral" (lookupStandingName "empire" st1)
+    r3 <- expectTrue "Rückwechsel-Trigger gefeuert" (isInfixOf "wieder neutral" out)
+    pure (and [r1, r2, r3])
+
+-- | 5. Ohne to feuert bei jedem Wechsel der Faktion.
+--   0 -> 20 (neutral -> ally) feuert.
+--   20 -> 100 (ally -> honored) feuert.
+--   100 -> 105 (honored -> honored) feuert NICHT.
+testStandingChangeWithoutToFiresAnyChange :: IO Bool
+testStandingChangeWithoutToFiresAnyChange = do
+    let trig = TriggerDef "t_any" (OnStandingChange "empire")
+                Nothing
+                [ SendMessage "Stufenwechsel bemerkt!" ]
+                False 0 1 [] []
+        w = sampleG9cWorld { triggerDefs = [trig] }
+        st0 = setVariable "faction.empire" (VVInt 0) (initSampleGame { world = w })
+        (st1, out1) = applyOutcome (ModifyValue (VRVariable "faction.empire") 20) "" st0
+        (st2, out2) = applyOutcome (ModifyValue (VRVariable "faction.empire") 80) "" st1
+        (st3, out3) = applyOutcome (ModifyValue (VRVariable "faction.empire") 5) "" st2
+    r1 <- expectTrue "0 -> 20 feuert" (isInfixOf "Stufenwechsel bemerkt!" out1)
+    r2 <- expectTrue "20 -> 100 feuert" (isInfixOf "Stufenwechsel bemerkt!" out2)
+    r3 <- expectTrue "100 -> 105 feuert NICHT" (not (isInfixOf "Stufenwechsel bemerkt!" out3))
+    pure (and [r1, r2, r3])
+
+-- | 6. set_var faction.empire über die Schwelle feuert — der Hook fängt alle Schreibwege.
+--   SetValue 0 -> 25 feuert.
+--   SetValue 25 -> 30 (innerhalb Stufe ally) feuert NICHT.
+testStandingChangeSetVarFires :: IO Bool
+testStandingChangeSetVarFires = do
+    let trig = TriggerDef "t_setvar" (OnStandingChange "empire")
+                (Just (VarIs "standing_name.empire" "ally"))
+                [ SendMessage "SetVar Schwelle überschritten!" ]
+                False 0 1 [] []
+        w = sampleG9cWorld { triggerDefs = [trig] }
+        st0 = setVariable "faction.empire" (VVInt 0) (initSampleGame { world = w })
+        (st1, out1) = applyOutcome (SetValue (VRVariable "faction.empire") (EVInt 25)) "" st0
+        (st2, out2) = applyOutcome (SetValue (VRVariable "faction.empire") (EVInt 30)) "" st1
+    r1 <- expectTrue "set_var über Schwelle feuert" (isInfixOf "Schwelle überschritten" out1)
+    r2 <- expectTrue "set_var innerhalb Stufe feuert NICHT" (not (isInfixOf "Schwelle überschritten" out2))
+    pure (and [r1, r2])
+
+-- | 7. Keine faction.*-Variable betroffen -> keine Trigger.
+testStandingChangeUnrelatedVarDoesNotFire :: IO Bool
+testStandingChangeUnrelatedVarDoesNotFire = do
+    let trig = TriggerDef "t_empire" (OnStandingChange "empire")
+                Nothing
+                [ SendMessage "FEHLER: Unerwarteter Trigger bei fremder Variable!" ]
+                False 0 1 [] []
+        w = sampleG9cWorld { triggerDefs = [trig] }
+        st0 = setVariable "faction.empire" (VVInt 0) (initSampleGame { world = w })
+        (st1, out1) = applyOutcome (SetValue (VRVariable "gold") (EVInt 100)) "" st0
+        (st2, out2) = applyOutcome (ModifyValue (VRVariable "gold") 50) "" st1
+    r1 <- expectTrue "fremde Variable feuert keinen Standing-Trigger"
+        (not (isInfixOf "FEHLER" out1) && not (isInfixOf "FEHLER" out2))
+    pure r1
+
+-- | 8. Rekursiver Trigger: ein on_standing_change-Trigger, der selbst add_var/set_var
+--   auf dieselbe Variable schreibt, bricht ab (Tiefenschutz) und erzeugt eine
+--   Diagnose, keine Endlosschleife.
+testStandingChangeRecursionProtection :: IO Bool
+testStandingChangeRecursionProtection = do
+    -- Trigger ping-pongs between 0 (neutral) and 20 (ally)
+    let loopTrig = TriggerDef "t_loop" (OnStandingChange "empire")
+            Nothing
+            [ Conditional (VarIs "standing_name.empire" "ally")
+                (SetValue (VRVariable "faction.empire") (EVInt 0))
+                (SetValue (VRVariable "faction.empire") (EVInt 20))
+            ]
+            False 0 1 [] []
+        w = sampleG9cWorld { triggerDefs = [loopTrig] }
+        st0 = setVariable "faction.empire" (VVInt 0) (initSampleGame { world = w })
+        (st1, _) = applyOutcome (SetValue (VRVariable "faction.empire") (EVInt 20)) "" st0
+        diags = diagnostics st1
+    r1 <- expectTrue "Tiefenschutz hat angeschlagen und Diagnose erzeugt"
+        (any (\d -> isInfixOf "depth exceeded" d || isInfixOf "nesting exceeded" d) diags)
+    pure r1
+
 

@@ -1202,12 +1202,12 @@ rules:
     once: true
 ```
 
-Events: `enter room`, `leave room`, `look room`, `search room`, `take item`, `drop item`, `use item`, `state entity`, `command verb`, `before verb`, `custom name`, `turn`.
+Events: `enter room`, `leave room`, `look room`, `search room`, `take item`, `drop item`, `use item`, `state entity`, `standing_change faction` (G9c), `command verb`, `before verb`, `custom name`, `turn`. Alternativ kann die Mapping-Form `on_standing_change: {faction: <id>, to: <stufenname>}` direkt verwendet werden.
 
 | Feld | Typ | Pflicht / Default | Bedeutung |
 |---|---|---|---|
-| `id` | String | Pflicht | Eindeutige Kennung der Regel. |
-| `on` | String | Pflicht | Auslösendes Ereignis (z. B. `enter <room>`, `turn`, `custom <name>`). |
+| `id` | String | optional / generiert | Eindeutige Kennung der Regel (wird bei `on_standing_change` automatisch als `on_standing_change.<faction>[.<to>]` vergeben, falls weggelassen). |
+| `on` | String | Pflicht (oder `on_standing_change`) | Auslösendes Ereignis (z. B. `enter <room>`, `turn`, `standing_change <faction>`, `custom <name>`). |
 | `when` | Prädikat | optional | Zusätzliche Bedingung, die vor der Regelausführung erfüllt sein muss. |
 | `effects` | Liste | optional, Default `[]` | Liste von Aktionen/Outcomes, die beim Feuern ausgeführt werden. |
 | `once` | Bool | optional, Default `false` | Feuert die Regel nur genau einmal (`tsFired`). |
@@ -1529,6 +1529,44 @@ Alternativ wird auch die Punkt-Syntax `{standing_name.<faction>}` unterstützt (
   *Begründung:* Der tatsächliche Beziehungsname hängt dynamisch am Spielstand (dem aktuellen `faction.<id>`-Wert) und nicht am statischen YAML — ein statischer Compile-Fehler wäre eine Lüge.
 - **Keine neue Variable:**
   `standing_name` ist keine eigene Variable in der `VarMap` und verändert `SaveState` nicht. Der Wert wird bei jeder Textausgabe wie `dice.highest` (K1) oder `set_completion` (K15) rein dynamisch berechnet.
+
+### Stufenwechsel-Trigger (`on_standing_change` — Phase G9c)
+
+Ereignisgesteuertes Auslösen von Regeln, sobald sich die Beziehungsstufe zu einer Faktion ändert:
+
+```yaml
+triggers: # bzw. rules:
+  - on_standing_change:
+      faction: empire
+      to: freundlich        # optional: Name der Zielstufe
+    effects:
+      - { msg: "Das Imperium sieht dich jetzt als Freund an." }
+```
+
+Alternativ wird auch die String-Form `on: standing_change <faction>` unterstützt:
+```yaml
+rules:
+  - on: standing_change empire
+    when: { var: standing_name.empire, is: freundlich }
+    effects:
+      - { msg: "Das Imperium sieht dich jetzt als Freund an." }
+```
+
+- **Semantik (echter Stufenwechsel, keine reine Wertänderung):**
+  - Feuert bei **jedem echten Stufenwechsel**, d. h. wenn der Standing-Wert eine Stufenschwelle überschreitet und sich dadurch der Stufenname ändert (`alter_stufenname /= neuer_stufenname`).
+  - Wertänderungen **innerhalb derselben Stufe** (z. B. 40 → 45 innerhalb der Stufe „neutral“) feuern **nicht**.
+  - Gleichen Wert erneut setzen (z. B. 20 → 20) feuert **nicht** (symmetrisch zum Schutz bei `OnStateChange`).
+  - `to` ist **optional**: Ohne `to` feuert der Trigger bei **jedem** Stufenwechsel der angegebenen Faktion (egal in welche neue Stufe gewechselt wird).
+  - Der Hook greift auf allen Schreibwegen (`add_var`, `set_var`, `compute_var`, `standing: {add/set}` sowie Dialog-Effekte) für Variablen des Schemas `faction.<id>` mit bekannter Faktion.
+  - Der vorherige Stufenname wird dynamisch vor der Änderung berechnet (`lookupStandingName`). Es gibt **kein neues SaveState-Feld** und keine Migration; bestehende Saves bleiben 100 % kompatibel.
+  - Rekursionsschutz: Schreibt ein `on_standing_change`-Trigger selbst wieder auf die Faktion und droht eine Schleife, bricht die Engine nach Erreichen der Maximaltiefe (`maxOutcomeDepth = 20`) ab und zeichnet eine defensive Diagnose auf (`diagnostics`).
+- **Ehrliche Compile-Warnungen:**
+  - Da Faktionen und deren Stufennamen zur Compile-Zeit statisch bekannt sind, validiert der Compiler diese Trigger ehrlich:
+    - Unbekannte Faktion in `faction` → Warnung `UnknownFaction`.
+    - Unbekannter Stufenname in `to` → Warnung `UnknownFactionLevel`.
+  - Beide Meldungen sind `ciWarning`s (keine harten Fehler): Die Welt kompiliert und läuft, aber der Autor wird vor toten Triggern gewarnt.
+- **Polling überflüssig:**
+  - Vor G9c mussten Autoren Stufenwechsel über Polling abfangen: z. B. `on: turn` mit der Bedingung `standing: { at_least: 50 }` und Hilfsflags oder `once: true`. Das verbrauchte Trigger-Budget in jedem Zug und war fehleranfällig. Mit `on_standing_change` reagiert das Abenteuer sofort und ereignisgesteuert genau bei der Schwellenüberschreitung.
 
 **Fehler:** doppelte Faktions-IDs; `faction.X` als gewöhnliche Variable
 deklariert; Referenz auf nicht deklarierte Faktion (wenn das `factions:`-Segment

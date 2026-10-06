@@ -58,6 +58,7 @@ import Data.List (nub, stripPrefix, isPrefixOf, isInfixOf, minimumBy, intercalat
 import Data.Ord (comparing)
 import Data.Maybe (mapMaybe, fromMaybe, catMaybes, isNothing, isJust)
 import Data.Either (partitionEithers)
+import Control.Applicative ((<|>))
 import Text.Read (readMaybe)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KM
@@ -884,6 +885,7 @@ compileAdventure adv =
                 deadContentWarns = checkUnreachableTriggers adv ++ checkUnsatisfiableConditions adv
                                 ++ checkDeadExits adv ++ checkUnreachableRooms adv
                                 ++ checkQuestProgress adv
+                standingChangeWarns = checkStandingChangeTriggers (advFactions adv) (advTriggers adv)
                 allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ darkRoomWarns
                           ++ chapterWarns
                           ++ deviceWarns
@@ -891,6 +893,7 @@ compileAdventure adv =
                           ++ deadContentWarns
                           ++ langWarns
                           ++ gramWarns
+                          ++ standingChangeWarns
             in Right (CompileResult gwResolved startSave allWarns)
   where
     -- Every locked exit starts locked in entityStates
@@ -935,7 +938,7 @@ checkUnknownYamlKeys (Aeson.Object topObj) =
             ++ checkListOrMap "items" EntItem (KM.lookup "items" topObj) noNested
             ++ checkListOrMap "npcs" EntNPC (KM.lookup "npcs" topObj) checkNpcNested
             ++ checkListOrMap "quests" EntQuest (KM.lookup "quests" topObj) checkQuestNested
-            ++ checkListOrMap "rules" EntRule (KM.lookup "rules" topObj) noNested
+            ++ checkListOrMap "rules" EntRule (KM.lookup "rules" topObj <|> KM.lookup "triggers" topObj) checkRuleNested
             ++ checkListOrMap "cards" EntCard (KM.lookup "cards" topObj) noNested
             ++ checkListOrMap "sandbox_zones" EntSandboxZone (KM.lookup "sandbox_zones" topObj) checkZoneNested
             ++ checkListOrMap "vehicles" EntVehicle (KM.lookup "vehicles" topObj) noNested
@@ -988,6 +991,12 @@ checkKeys prefix entType actualKeys =
 noNested :: String -> Aeson.Object -> [CompileIssue]
 noNested _ _ = []
 
+checkRuleNested :: String -> Aeson.Object -> [CompileIssue]
+checkRuleNested path o =
+    case KM.lookup "on_standing_change" o of
+        Just (Aeson.Object so) -> checkKeys (path ++ ".on_standing_change") EntStandingChange (KM.keys so)
+        _                      -> []
+
 checkListOrMap :: String
                -> EntityType
                -> Maybe Aeson.Value
@@ -1019,7 +1028,11 @@ extractEntityId o =
         Just (Aeson.String s) -> T.unpack s
         _ -> case KM.lookup "name" o of
             Just (Aeson.String s) -> T.unpack s
-            _ -> "?"
+            _ -> case KM.lookup "on_standing_change" o of
+                Just (Aeson.Object so) -> case KM.lookup "faction" so of
+                    Just (Aeson.String s) -> "on_standing_change." ++ T.unpack s
+                    _                     -> "?"
+                _ -> "?"
 
 checkRoomNested :: String -> Aeson.Object -> [CompileIssue]
 checkRoomNested roomPath o =
@@ -3842,6 +3855,34 @@ checkChainTargets triggers npcs =
         , map toLower target `Set.notMember` knownCustomEvents
         ]
 
+-- | Validate `on_standing_change` triggers: faction must be known, and if `to` is
+--   specified, the level name must be declared for that faction. Both emit warnings
+--   (G9c: honest compile-time validation, not errors — world still runs).
+checkStandingChangeTriggers :: [AFaction] -> [ATrigger] -> [CompileIssue]
+checkStandingChangeTriggers facs triggers =
+    concatMap checkOne triggers
+  where
+    knownFactions = Map.fromList [ (afId f, Set.fromList (map aflName (afLevels f))) | f <- facs ]
+    checkOne t = case words (atOn t) of
+        (prefix:fid:_) | map toLower prefix `elem` ["standing_change", "standing"] ->
+            case Map.lookup fid knownFactions of
+                Nothing ->
+                    [ ciWarning ("rules." ++ atId t) "UnknownFaction"
+                        ("rule '" ++ atId t ++ "' references unknown faction '" ++ fid ++ "'") ]
+                Just knownLvls ->
+                    [ ciWarning ("rules." ++ atId t) "UnknownFactionLevel"
+                        ("rule '" ++ atId t ++ "' references unknown standing level '" ++ lvl
+                         ++ "' for faction '" ++ fid ++ "'")
+                    | lvl <- maybe [] (standingLevelInPred fid) (atWhen t)
+                    , Set.notMember lvl knownLvls
+                    ]
+        _ -> []
+    standingLevelInPred fid p = case p of
+        E.VarIs name lvl | name == "standing_name." ++ fid || name == "standing_name:" ++ fid -> [lvl]
+        E.PAll ps -> concatMap (standingLevelInPred fid) ps
+        E.PAny ps -> concatMap (standingLevelInPred fid) ps
+        _ -> []
+
 -- | K2: Every `set_state` target must resolve to a known NPC, item, device,
 --   container, vehicle, or exit lock (static or dynamic).
 --
@@ -3910,6 +3951,8 @@ compileAtOn s =
         ["drop", i]                  -> Right (E.OnDrop i)
         ["use", i]                   -> Right (E.OnUse i)
         ["state", e]                 -> Right (E.OnStateChange e)
+        ["standing_change", f]       -> Right (E.OnStandingChange f)
+        ["standing", f]              -> Right (E.OnStandingChange f)
         ["custom", n]                -> Right (E.OnCustomEvent n)
         ["command", v]               -> Right (E.OnCommand v)
         ["chapter", cid]             -> Right (E.OnChapter cid)

@@ -36,7 +36,7 @@ import Game
 import Messages (evMsg)
 import Quests (canStartQuest, startQuest, advanceQuest, completeQuestWith)
 import Vehicles (vehicleConditionTickWith)
-import Data.List (intercalate, foldl', find, sort)
+import Data.List (intercalate, foldl', find, sort, stripPrefix)
 import Data.Bits (shiftR, xor)
 import Data.Char (ord)
 import Data.Word (Word64)
@@ -687,6 +687,18 @@ setScopedVariable name val state = go [] (procScopes state)
 applySetValue :: ValueRef -> EffectValue -> GameState -> (GameState, [OutputEvent])
 applySetValue = applySetValueWithDepth 0
 
+-- | Phase G9c: Check if a faction standing level changed and fire OnStandingChange.
+checkStandingTrigger :: Int -> Maybe FactionID -> String -> GameState -> [OutputEvent] -> (GameState, [OutputEvent])
+checkStandingTrigger depth mFaction oldLevel st msgs =
+    case mFaction of
+        Just fid ->
+            let newLevel = lookupStandingName fid st
+            in if oldLevel /= newLevel
+               then let (st', trigMsgs) = fireTriggersWithDepth (depth + 1) (OnStandingChange fid) st
+                    in (st', msgs ++ trigMsgs)
+               else (st, msgs)
+        Nothing -> (st, msgs)
+
 applySetValueWithDepth :: Int -> ValueRef -> EffectValue -> GameState -> (GameState, [OutputEvent])
 applySetValueWithDepth _ (VRFlag name) val state =
     (setFlag name (effectValueToString val) state, [])
@@ -700,6 +712,10 @@ applySetValueWithDepth depth (VRVariable name) val state =
             EVInt n    -> Just n
             EVString s -> case reads s of [(n, "")] -> Just n; _ -> Nothing
             _          -> Nothing
+        mFaction = case stripPrefix "faction." realName of
+            Just fid | Map.member fid (factions (world state)) -> Just fid
+            _                                                  -> Nothing
+        oldLevel = maybe "" (`lookupStandingName` state) mFaction
         state' = setScopedVariable realName (effectValToVarVal val) state
         -- K7+K4: on_overflow fires ONLY if the attempted write was strictly greater
         -- than max and clamped to max afterwards. Setting to exactly max does not trigger overflow.
@@ -707,17 +723,12 @@ applySetValueWithDepth depth (VRVariable name) val state =
             (Just hi, Just n) -> n > hi && getVariable realName state' == Just (VVInt hi)
             _                 -> False
         overflowEffs = maybe [] vdOnOverflow mVd
-    in if didOverflow && not (null overflowEffs)
-       then
-           -- Verschachtelung / Rekursionsschutz:
-           -- Wenn on_overflow dieselbe Variable erneut überschreitet (oder wechselseitig
-           -- über Trigger-Ketten rekurriert), verhindert maxOutcomeDepth über
-           -- applyOutcomeWith eine Endlosschleife, ohne dass zusätzlicher transienter
-           -- Zustand im GameState/SaveState gehalten werden muss (Regel 6).
-           -- Die Tiefenbegrenzung bricht ab und setzt eine Engine-Diagnostik.
-           let (stFin, ofMsgs, _) = applyOutcomeWith (depth + 1) 0 (Sequence overflowEffs) "" state'
-           in (stFin, ofMsgs)
-       else (state', [])
+        (stAfterOf, ofMsgs) =
+            if didOverflow && not (null overflowEffs)
+            then let (stFin, ms, _) = applyOutcomeWith (depth + 1) 0 (Sequence overflowEffs) "" state'
+                 in (stFin, ms)
+            else (state', [])
+    in checkStandingTrigger depth mFaction oldLevel stAfterOf ofMsgs
 applySetValueWithDepth _ (VRActorProp (ActorEntity eIdRaw) PState) val state =
     let eId = resolveVarName eIdRaw state
     in if Map.member eId (npcStates (save state))
@@ -767,6 +778,10 @@ modifyValuePropWithDepth depth (VRVariable name) delta state =
         mMax = case vdVarType <$> mVd of
             Just (VTInt _ (Just hi)) -> Just hi
             _                        -> Nothing
+        mFaction = case stripPrefix "faction." realName of
+            Just fid | Map.member fid (factions (world state)) -> Just fid
+            _                                                  -> Nothing
+        oldLevel = maybe "" (`lookupStandingName` state) mFaction
         state' = setScopedVariable realName (VVInt rawInt) state
         -- K7+K4: on_overflow fires ONLY if the attempted write was strictly greater
         -- than max and clamped to max afterwards. Setting to exactly max does not trigger overflow.
@@ -774,17 +789,12 @@ modifyValuePropWithDepth depth (VRVariable name) delta state =
             Just hi -> rawInt > hi && getVariable realName state' == Just (VVInt hi)
             Nothing -> False
         overflowEffs = maybe [] vdOnOverflow mVd
-    in if didOverflow && not (null overflowEffs)
-       then
-           -- Verschachtelung / Rekursionsschutz:
-           -- Wenn on_overflow dieselbe Variable erneut überschreitet (oder wechselseitig
-           -- über Trigger-Ketten rekurriert), verhindert maxOutcomeDepth über
-           -- applyOutcomeWith eine Endlosschleife, ohne dass zusätzlicher transienter
-           -- Zustand im GameState/SaveState gehalten werden muss (Regel 6).
-           -- Die Tiefenbegrenzung bricht ab und setzt eine Engine-Diagnostik.
-           let (stFin, ofMsgs, _) = applyOutcomeWith (depth + 1) 0 (Sequence overflowEffs) "" state'
-           in (stFin, ofMsgs)
-       else (state', [])
+        (stAfterOf, ofMsgs) =
+            if didOverflow && not (null overflowEffs)
+            then let (stFin, ms, _) = applyOutcomeWith (depth + 1) 0 (Sequence overflowEffs) "" state'
+                 in (stFin, ms)
+            else (state', [])
+    in checkStandingTrigger depth mFaction oldLevel stAfterOf ofMsgs
 modifyValuePropWithDepth _ (VRItemProp iId prop) delta state =
     (modifyItemProp iId prop delta state, [])
 modifyValuePropWithDepth _ (VRActorProp (ActorNPC eId) PHealth) delta state

@@ -13,6 +13,7 @@ import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.List (isPrefixOf)
+import Data.Char (isAlphaNum)
 import qualified Data.Text as T
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Aeson.Key as K
@@ -121,7 +122,7 @@ instance FromJSON Adventure where
         <*> o .:? "interactions"
         <*> o .:? "verbs"           .!= []
         <*> o .:? "variables"       .!= []
-        <*> o .:? "rules"           .!= []
+        <*> parseRulesOrTriggers o
         <*> o .:? "player"
         <*> o .:? "initial_variables" .!= Map.empty
         <*> o .:? "initial_flags"     .!= Map.empty
@@ -159,6 +160,17 @@ instance FromJSON Adventure where
         <*> o .:? "messages" .!= Map.empty
         <*> pure (Just v)
     parseJSON _ = fail "Expected Adventure to be an object"
+
+-- | Parse 'rules' or 'triggers' field (Phase G9c).
+parseRulesOrTriggers :: Object -> Parser [ATrigger]
+parseRulesOrTriggers o = do
+    mr <- o .:? "rules"
+    mt <- o .:? "triggers"
+    case (mr, mt) of
+        (Just r, Just t)   -> pure (r ++ t)
+        (Just r, Nothing)  -> pure r
+        (Nothing, Just t)  -> pure t
+        (Nothing, Nothing) -> pure []
 
 -- | Parse 'devices' field: supports both a map (`devices: { halter: { ... } }`) and a list (`devices: [ { id: "halter", ... } ]`).
 parseDevicesField :: Object -> Parser [ADeviceDef]
@@ -322,18 +334,30 @@ instance FromJSON AVerb where
         <$> o .:  "name"
         <*> o .:? "aliases" .!= []
 
+-- | Phase G9c: A standing change trigger configuration
+data AStandingChange = AStandingChange
+    { aoscFaction :: String
+    , aoscTo      :: Maybe String
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON AStandingChange
+instance FromJSON AStandingChange where
+    parseJSON = withObject "AStandingChange" $ \o -> AStandingChange
+        <$> (o .: "faction" <|> o .: "id")
+        <*> o .:? "to"
+
 -- | A trigger rule as authored in YAML (Phase 3f).
 --   `on` is a string like "enter loc_3", "take crystal", "turn", "custom foo".
 data ATrigger = ATrigger
-    { atId        :: String
-    , atOn        :: String
-    , atWhen      :: Maybe E.Predicate     -- ^ optional condition (reuses engine predicate parsing)
-    , atEffects   :: [AActionOutcome]
-    , atOnce      :: Bool
-    , atCooldown  :: Int
-    , atWeight    :: Int                   -- ^ K3: weight for weighted random selection (default 1)
-    , atRequires  :: [String]              -- ^ K3: flags that must be set (default [])
-    , atChainsTo  :: [String]              -- ^ K3: custom event names raised after firing (default [])
+    { atId             :: String
+    , atOn             :: String
+    , atWhen           :: Maybe E.Predicate     -- ^ optional condition (reuses engine predicate parsing)
+    , atEffects        :: [AActionOutcome]
+    , atOnce           :: Bool
+    , atCooldown       :: Int
+    , atWeight         :: Int                   -- ^ K3: weight for weighted random selection (default 1)
+    , atRequires       :: [String]              -- ^ K3: flags that must be set (default [])
+    , atChainsTo       :: [String]              -- ^ K3: custom event names raised after firing (default [])
     } deriving (Show, Eq, Generic)
 
 -- | Parse a field that can be either a single string or a list of strings (Phase K3).
@@ -346,16 +370,34 @@ parseStringOrList o k = do
         Just v          -> parseJSON v
 
 instance FromJSON ATrigger where
-    parseJSON = withObject "ATrigger" $ \o -> ATrigger
-        <$> o .:  "id"
-        <*> o .:  "on"
-        <*> o .:? "when"
-        <*> o .:? "effects"   .!= []
-        <*> o .:? "once"      .!= False
-        <*> o .:? "cooldown"  .!= 0
-        <*> o .:? "weight"    .!= 1
-        <*> parseStringOrList o "requires"
-        <*> parseStringOrList o "chains_to"
+    parseJSON = withObject "ATrigger" $ \o -> do
+        mOsc <- o .:? "on_standing_change"
+        mOn  <- o .:? "on"
+        onStr <- case (mOn, mOsc) of
+            (Just s, _)              -> pure s
+            (Nothing, Just osc)      -> pure ("standing_change " ++ aoscFaction osc)
+            (Nothing, Nothing)       -> fail "rule must have either 'on' or 'on_standing_change'"
+        mId <- o .:? "id"
+        let ruleId = case mId of
+                Just i  -> i
+                Nothing -> case mOsc of
+                    Just osc -> "on_standing_change." ++ aoscFaction osc ++ maybe "" ("." ++) (aoscTo osc)
+                    Nothing  -> "rule." ++ filter isAlphaNum onStr
+        rawWhen <- o .:? "when"
+        let whenCond = case mOsc of
+                Just osc | Just toLvl <- aoscTo osc ->
+                    let standingCond = E.VarIs ("standing_name." ++ aoscFaction osc) toLvl
+                    in Just (case rawWhen of
+                                Just w  -> E.PAll [w, standingCond]
+                                Nothing -> standingCond)
+                _ -> rawWhen
+        effs     <- o .:? "effects"   .!= []
+        once     <- o .:? "once"      .!= False
+        cd       <- o .:? "cooldown"  .!= 0
+        wt       <- o .:? "weight"    .!= 1
+        reqs     <- parseStringOrList o "requires"
+        chains   <- parseStringOrList o "chains_to"
+        pure (ATrigger ruleId onStr whenCond effs once cd wt reqs chains)
 
 -- | A conditional text variant in YAML: `when:` predicate gates `text:`.
 data ATextVariant = ATextVariant
@@ -1931,6 +1973,7 @@ data EntityType
     | EntLevel
     | EntRollDice
     | EntStatement
+    | EntStandingChange
     deriving (Show, Eq, Ord, Enum, Bounded)
 
 -- | Single source of truth for allowed YAML mapping keys per entity type,
@@ -1938,7 +1981,7 @@ data EntityType
 knownKeys :: EntityType -> Set.Set String
 knownKeys EntAdventure = Set.fromList
     [ "name", "start_room", "rooms", "items", "npcs", "quests", "vehicles"
-    , "interactions", "verbs", "variables", "rules", "player"
+    , "interactions", "verbs", "variables", "rules", "triggers", "player"
     , "initial_variables", "initial_flags", "active_quests", "factions"
     , "encounter_tables", "environment", "stealth", "patrol", "combat"
     , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
@@ -1971,9 +2014,11 @@ knownKeys EntQuest = Set.fromList
 knownKeys EntQuestStage = Set.fromList
     [ "id", "desc", "hint" ]
 knownKeys EntRule = Set.fromList
-    [ "id", "on", "when", "effects", "once", "cooldown"
+    [ "id", "on", "on_standing_change", "when", "effects", "once", "cooldown"
     , "weight", "requires", "chains_to"
     ]
+knownKeys EntStandingChange = Set.fromList
+    [ "faction", "id", "to" ]
 knownKeys EntCard = Set.fromList
     [ "id", "name", "cost", "type", "target", "description", "desc"
     , "exhaust", "outcomes", "effects"

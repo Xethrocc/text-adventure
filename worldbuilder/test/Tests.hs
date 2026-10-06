@@ -4310,6 +4310,9 @@ tests =
     , ("dynamic var names: normal unknown placeholder still emits warning (K12)", testNormalUnknownPlaceholderStillWarns)
     -- G9a: standing_name
     , ("standing_name: compiles factions and emits zero UnknownPlaceholder warnings (G9a)", testStandingNameCompilationAndPlaceholderNoWarning)
+    -- G9c: on_standing_change
+    , ("standing_change: compiles from YAML and registers trigger (G9c)", testStandingChangeYamlParsing)
+    , ("standing_change: static validation for unknown faction and level (G9c)", testStandingChangeValidation)
     -- K7+K4: variable cycles (refill_per_turn, reset_on, on_overflow)
     , ("variable cycles: sugar triggers compiled in correct order; clean without cycle fields (K7.1/K7.2)", testVarCyclesSugarTriggers)
     , ("variable cycles: YAML parsing and knownKeys clean (K7/K4)", testVarCyclesYamlParsingAndKnownKeys)
@@ -7924,6 +7927,106 @@ testStandingNameCompilationAndPlaceholderNoWarning = do
             let gw = crWorld cr
             r2 <- expectEqual (Map.singleton "empire" [E.FactionLevel (-50) "feindlich", E.FactionLevel 0 "neutral", E.FactionLevel 50 "freundlich"]) (E.factions gw)
             pure (r1 && r2)
+
+-- | G9c: YAML parsing of on_standing_change under triggers:
+testStandingChangeYamlParsing :: IO Bool
+testStandingChangeYamlParsing = do
+    let yaml = unlines
+            [ "start_room: loc_0"
+            , "rooms: [ {id: loc_0, name: Start, desc: Raum} ]"
+            , "factions:"
+            , "  - id: empire"
+            , "    name: Imperium"
+            , "    levels:"
+            , "      - at: 0"
+            , "        name: neutral"
+            , "      - at: 50"
+            , "        name: freundlich"
+            , "triggers:"
+            , "  - on_standing_change:"
+            , "      faction: empire"
+            , "      to: freundlich"
+            , "    effects:"
+            , "      - msg: 'Verbuendet!'"
+            ]
+    case decode1 (BL.fromStrict (TE.encodeUtf8 (T.pack yaml))) of
+        Left err -> do
+            putStrLn $ "  yaml decode failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  unexpected compile error: " ++ show errs
+                pure False
+            Right cr -> do
+                let trs = E.triggerDefs (crWorld cr)
+                let matching = filter (\t -> E.trEvent t == E.OnStandingChange "empire") trs
+                r1 <- expectTrue "compiled OnStandingChange trigger exists" (not (null matching))
+                let warns = filter (\w -> ciCode w `elem` ["UnknownFaction", "UnknownFactionLevel", "UnknownYamlKey"]) (crWarnings cr)
+                r2 <- expectTrue "zero warnings on valid YAML on_standing_change" (null warns)
+                pure (r1 && r2)
+
+-- | G9c: on_standing_change static validation for unknown faction and unknown level.
+testStandingChangeValidation :: IO Bool
+testStandingChangeValidation = do
+    let fac = AFaction "empire" "Imperium" 0
+            [ AFactionLevel (-50) "feindlich"
+            , AFactionLevel 0 "neutral"
+            , AFactionLevel 50 "freundlich"
+            ]
+        mkRule fid toLvl = ATrigger
+            { atId = "t_standing"
+            , atOn = "standing_change " ++ fid
+            , atWhen = case toLvl of
+                Just lvl -> Just (E.VarIs ("standing_name." ++ fid) lvl)
+                Nothing  -> Nothing
+            , atEffects = [AOMessage "Wechsel!"]
+            , atOnce = False
+            , atCooldown = 0
+            , atWeight = 1
+            , atRequires = []
+            , atChainsTo = []
+            }
+        advClean = (minAdventure (minRoom "loc_0"))
+            { advFactions = [fac]
+            , advTriggers = [mkRule "empire" (Just "freundlich")]
+            }
+        advUnknownFac = (minAdventure (minRoom "loc_0"))
+            { advFactions = [fac]
+            , advTriggers = [mkRule "unknown_fac" (Just "freundlich")]
+            }
+        advUnknownLevel = (minAdventure (minRoom "loc_0"))
+            { advFactions = [fac]
+            , advTriggers = [mkRule "empire" (Just "alliiert")]
+            }
+
+    -- 1. Valid faction and level -> no UnknownFaction or UnknownFactionLevel warnings
+    r1 <- case compileAdventure advClean of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w `elem` ["UnknownFaction", "UnknownFactionLevel"]) (crWarnings cr)
+            expectTrue "clean standing change produces zero faction warnings" (null warns)
+
+    -- 2. Unknown faction -> UnknownFaction warning
+    r2 <- case compileAdventure advUnknownFac of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "UnknownFaction") (crWarnings cr)
+            expectTrue "unknown faction produces UnknownFaction warning" (not (null warns))
+
+    -- 3. Unknown level -> UnknownFactionLevel warning
+    r3 <- case compileAdventure advUnknownLevel of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "UnknownFactionLevel") (crWarnings cr)
+            expectTrue "unknown level produces UnknownFactionLevel warning" (not (null warns))
+
+    pure (r1 && r2 && r3)
 
 -- ---------------------------------------------------------------------------
 -- K3: event chains (authoring side)

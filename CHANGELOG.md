@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Stufenwechsel-Trigger: on_standing_change (G9c)
+
+- **Die Lücke geschlossen:**
+  - Bisher mussten Autoren Stufenwechsel pollen (z. B. `on: turn` mit `standing: { at_least: 50 }`). Das verbrauchte Trigger-Budget in jedem Zug und war fehleranfällig.
+  - Neu: `OnStandingChange FactionID` reagiert ereignisgesteuert direkt und genau einmal bei Schwellenüberschreitung.
+- **YAML-Form:**
+  - Mapping-Form: `on_standing_change: { faction: <id>, to: <stufenname> }` (wobei `to` optional ist).
+  - String-Form: `on: standing_change <faction>`.
+  - Kann unter `rules:` oder `triggers:` verwendet werden.
+- **Semantik (echter Stufenwechsel, keine reine Wertänderung):**
+  - Feuert bei **jedem echten Stufenwechsel** (Schwellenüberschreitung mit Stufenänderung).
+  - Wertänderungen innerhalb derselben Stufe (z. B. 40 -> 45 innerhalb „neutral") feuern **nicht**.
+  - Gleicher Wert erneut setzen (z. B. 20 -> 20) feuert **nicht** (symmetrisch zu `OnStateChange`).
+  - Rückwechsel über Schwellen (z. B. 20 -> 0) feuern wie erwartet.
+  - Ohne `to` feuert der Trigger bei jedem Stufenwechsel der Faktion.
+  - Der Hook in `Effects.hs` fängt alle Schreibwege auf `faction.<id>` ab (`set_var`, `add_var`, `compute_var`, `standing: {add/set}` sowie Dialog-Effekte).
+  - Der alte Stufenname wird dynamisch vor der Änderung berechnet (`lookupStandingName`). **Kein neues SaveState-Feld**, keine Migration, bestehende Saves bleiben 100 % kompatibel.
+  - Rekursionsschutz: Triggereffekte, die dieselbe Faktion verändern, sind durch `maxOutcomeDepth = 20` gegen Endlosschleifen geschützt und erzeugen eine defensive Engine-Diagnose.
+- **Ehrliche Compile-Warnungen:**
+  - Da Faktionen und deren Stufennamen zur Compile-Zeit statisch bekannt sind, validiert der Compiler ehrlich:
+    - Unbekannte Faktion -> Compile-Warnung `UnknownFaction`.
+    - Unbekannte Stufe in `to` -> Compile-Warnung `UnknownFactionLevel`.
+  - Beide Warnungen sind `ciWarning`s (die Welt läuft weiter, kein stiller Ausfall).
+- **Byte-Vertrag gemessen:**
+  - 134/134 Artefakte über alle 67 Abenteuer und Fixtures 100 % byte-identisch gegen `cc76b33` (0 Abweichungen).
+- **Tests & Qualität:**
+  - 8 neue Engine-Tests in `test/Tests.hs` (Schwellenüberschreitung 0 -> 20, Innerhalb-Stufe 40 -> 45 feuert nicht, Identischer Wert 20 -> 20 feuert nicht, Rückwechsel 20 -> 0, Ohne-to-Modus, set_var-Schreibweg, fremde Variable ignoriert, Rekursions-Tiefenschutz). Engine-Tests: 536 (vorher 528).
+  - 2 neue Worldbuilder-Tests in `worldbuilder/test/Tests.hs` (YAML-Parsing und Trigger-Registrierung, statische Validierung für UnknownFaction und UnknownFactionLevel). Worldbuilder-Tests: 284 (vorher 282).
+  - CI grün, 0 Compiler-Warnungen.
+
 ### Faktions-Stufen auswerten: standing_name (G9a)
 
 - **Die Lücke geschlossen:**

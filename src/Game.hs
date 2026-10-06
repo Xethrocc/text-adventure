@@ -1535,10 +1535,13 @@ evalPredicate (CompareVar name op n) st =
 -- which would otherwise be write-only) and seeded by `initial:` /
 -- `initial_variables:`. The authored `set_var` outcome takes integers only
 -- (`AOSetVar String Int`), so it cannot produce a text value.
-evalPredicate (VarIs name expected) st =
-    case getVariable name st of
-        Just (VVText v) -> v == expected
-        _               -> False
+evalPredicate (VarIs name expected) st
+    | Just facId <- stripPrefix "standing_name." name <|> stripPrefix "standing_name:" name =
+        lookupStandingName (trimStr facId) st == expected
+    | otherwise =
+        case getVariable name st of
+            Just (VVText v) -> v == expected
+            _               -> False
 -- W1: knowledge is a VarMap entry `known.<actor>.<fact>` with value 1;
 --   parameters/locals of an active procedure shadow it like any variable.
 evalPredicate (Knows actor fact) st =
