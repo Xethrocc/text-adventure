@@ -142,6 +142,8 @@ module Types.Core
     , GamePolicy (..)
     , defaultGamePolicy
     , RecipeKey (..)
+    , recipeResult
+    , recipeIngredientsList
     , GameWorld (..)
     , itemInteractionsToJSON
     , parseItemInteractions
@@ -2217,9 +2219,19 @@ instance FromJSON ProgressionDef
 --    dynamic variables ({ingredient1..N}) and ordered effects (consume) are
 --    deterministic.
 data RecipeKey
-    = RecipePair String String
-    | RecipeIngredients (Maybe String) [String]
+    = RecipePair (Maybe ItemID) String String
+    | RecipeIngredients (Maybe String) (Maybe ItemID) [String]
     deriving (Show, Eq, Ord)
+
+-- | Optional target item produced by a recipe (K11b).
+recipeResult :: RecipeKey -> Maybe ItemID
+recipeResult (RecipePair mRes _ _)         = mRes
+recipeResult (RecipeIngredients _ mRes _)  = mRes
+
+-- | Ingredients of a recipe in declaration order (K11b).
+recipeIngredientsList :: RecipeKey -> [ItemID]
+recipeIngredientsList (RecipePair _ i1 i2)         = [i1, i2]
+recipeIngredientsList (RecipeIngredients _ _ ings) = ings
 
 -- | Static world definition containing blueprint/map data
 data GameWorld = GameWorld
@@ -2410,11 +2422,13 @@ itemInteractionsToJSON :: Map.Map RecipeKey Effect -> Value
 itemInteractionsToJSON m =
     toJSON [ encodeEntry k e | (k, e) <- Map.toList m ]
   where
-    encodeEntry (RecipePair a b) e =
-        object [ "a" .= a, "b" .= b, "effect" .= e ]
-    encodeEntry (RecipeIngredients mId ings) e =
+    encodeEntry (RecipePair mRes a b) e =
+        object $ [ "a" .= a, "b" .= b, "effect" .= e ]
+               ++ [ "result" .= r | Just r <- [mRes] ]
+    encodeEntry (RecipeIngredients mId mRes ings) e =
         object $ [ "ingredients" .= ings, "effect" .= e ]
                ++ [ "id" .= i | Just i <- [mId] ]
+               ++ [ "result" .= r | Just r <- [mRes] ]
 
 parseItemInteractions :: Value -> Parser (Map.Map RecipeKey Effect)
 parseItemInteractions v =
@@ -2423,17 +2437,18 @@ parseItemInteractions v =
     <|> legacy
   where
     entry = withObject "item interaction entry" $ \o -> do
+        mRes  <- o .:? "result"
         mIngs <- o .:? "ingredients"
         case mIngs of
             Just ings -> do
                 mId <- o .:? "id"
                 e   <- o .: "effect"
-                pure (RecipeIngredients mId ings, e)
+                pure (RecipeIngredients mId mRes ings, e)
             Nothing -> do
                 a <- o .: "a"
                 b <- o .: "b"
                 e <- o .: "effect"
-                pure (RecipePair a b, e)
+                pure (RecipePair mRes a b, e)
     -- Legacy form: `"a|b"` string keys.
     legacy = do
         m <- parseJSON v :: Parser (Map.Map String Effect)
@@ -2441,7 +2456,7 @@ parseItemInteractions v =
             Right kvs -> pure (Map.fromList kvs)
             Left err  -> fail err
     parseKey (k, e) = case break (== '|') k of
-        (a, '|':b) -> Right (RecipePair a b, e)
+        (a, '|':b) -> Right (RecipePair Nothing a b, e)
         _          -> Left ("Bad item interaction key: " ++ k)
 
 -- | Encode item-on-NPC outcomes as objects (B9).

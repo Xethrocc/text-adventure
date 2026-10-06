@@ -244,6 +244,7 @@ catalogEntries =
     , ("use.unreachable",     "You can't reach '{entity}' from here.")
     , ("use.ok",              "You use the {item}. {msg}")
     , ("use.nothing",         "Nothing happens.")
+    , ("craft.no_recipe",     "You don't know a recipe for {target}.")
     -- -- search / reveal ----------------------------------------------------
     , ("search.void",          "You're in a void. There's nothing to search.")
     , ("search.nothing_item",  "You find nothing special about the {item}.")

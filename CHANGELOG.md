@@ -2,6 +2,44 @@
 
 ## Unreleased
 
+### Rezept-Alias: craft <Ergebnis> und result: (K11b)
+
+- **Das Problem & die Design-Entscheidung:**
+  - Bisher steckte das Rezept-Ergebnis nur in den Effekten (`give:`, `create_item:`, etc.), potentiell beliebig verschachtelt. Ein Parser-Kommando `craft <Ergebnis>` konnte kein Rezept zuverlässig finden.
+  - Lösung: Ein explizites, optionales Feld `result: <itemid>` in Item-Interaktionen (`interactions.item`).
+  - **Sichtbarkeitsregel:** Ohne `result:` ist ein Rezept für `craft` unsichtbar, funktioniert aber weiterhin über `use X on Y`. Kein fragiles Effekt-Scanning.
+- **Engine-Verb `craft`:**
+  - Neues Verb `craft <Ergebnis>` (`CraftCmd String`).
+  - Keine Synonyme (`make`, `brew`) — Vokabular bleibt Autoren-Sache.
+  - Das Ziel ist der Ergebnis-Name, nicht die Zutat.
+- **Such- und Ausführungslogik (`craftRecipe`):**
+  - Ziel auflösen gegen Item-IDs, Namen und Keywords (lose Übereinstimmung wie sonst).
+  - Alle Rezepte mit passendem `result:` prüfen:
+    1. Paar-Rezept: `item1`/`item2` beide erreichbar (Raum, getragen oder ausgerüstet) -> ausführen. Bindung von `{item1}` und `{item2}` in Deklarationsreihenfolge (`item1` = erstgenanntes Item, `item2` = zweitgenanntes Item).
+    2. Multi-Zutaten-Rezept: `ingredients ⊆ reachable` -> ausführen (`bindIngredientVars`).
+    3. Rezept bekannt, Zutaten fehlen -> bestehende Meldung `use.not_carried` ("You need to be carrying '{item}' to use it."), nicht `craft.no_recipe`.
+    4. Kein passendes Rezept -> `craft.no_recipe` ("You don't know a recipe for {target}." / "Du kennst kein Rezept für {target}.").
+  - `craft` führt bestehende Rezept-Outcomes aus: `consume:` greift automatisch.
+- **Keine Zustandsänderung:**
+  - Kein neues `SaveState`-Feld, kein neuer Effekt, kein neues Event.
+- **Compile-Validierung:**
+  - `result:` wird statisch gegen bekannte Items geprüft: Warnung `UnknownRecipeResult`, falls das Ziel-Item nicht deklariert ist.
+- **Meldungskatalog:**
+  - Neuer Schlüssel `craft.no_recipe` in `src/Messages.hs` und deutsches Sprachpaket `lang/de.json` / `src/Messages/LangDe.hs`.
+- **Byte-Vertrag gemessen:**
+  - 134/134 Artefakte über alle 67 Abenteuer und Fixtures 100 % byte-identisch gegen `6815668` (0 Abweichungen).
+- **Tests & Qualität:**
+  - 7 neue Unit-Tests in `test/Tests.hs`:
+    - Erfolg Paar-Rezept (`craft mana_potion` bindet `item1`/`item2`).
+    - Erfolg Multi-Zutaten (`craft storm_potion` bindet `ingredient1..N`).
+    - Fehlende Zutat meldet `use.not_carried` statt `craft.no_recipe`.
+    - Rezept ohne `result:` für `craft` unsichtbar, aber per `use` nutzbar.
+    - Unbekanntes Ergebnis liefert `craft.no_recipe`.
+    - Consume-Verhalten bei Folgeversuch (fehlende Zutat statt Erfolg/no_recipe).
+    - Regressionstest für `use Mana Leaf on Kettle` verhält sich byte-identisch.
+  - 1 neuer Test in `worldbuilder/test/Tests.hs` (`testCraftingRecipeResultValidation` für `UnknownRecipeResult`).
+  - CI grün, 0 Compiler-Warnungen.
+
 ### Stufenwechsel-Trigger: on_standing_change (G9c)
 
 - **Die Lücke geschlossen:**

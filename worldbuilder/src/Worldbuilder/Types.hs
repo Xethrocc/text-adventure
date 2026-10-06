@@ -1317,6 +1317,7 @@ data AItemInteraction = AItemInteraction
     , aiiItem1       :: String
     , aiiItem2       :: String
     , aiiIngredients :: [String]
+    , aiiResult      :: Maybe String
     , aiiEffects     :: [AActionOutcome]
     } deriving (Show, Eq, Generic)
 
@@ -1339,18 +1340,19 @@ instance FromJSON AEntityInteraction where
 
 instance FromJSON AItemInteraction where
     parseJSON = withObject "AItemInteraction" (\o -> do
-        mId   <- o .:? "id"
-        mI1   <- o .:? "item1"
-        mI2   <- o .:? "item2"
-        mIngs <- o .:? "ingredients"
-        effs  <- o .:? "effects" .!= []
+        mId     <- o .:? "id"
+        mI1     <- o .:? "item1"
+        mI2     <- o .:? "item2"
+        mIngs   <- o .:? "ingredients"
+        mResult <- o .:? "result"
+        effs    <- o .:? "effects" .!= []
         case (mI1, mI2, mIngs) of
             (Just _, _, Just _) -> fail "ItemInteractionConflict: both item1/item2 and ingredients specified"
             (_, Just _, Just _) -> fail "ItemInteractionConflict: both item1/item2 and ingredients specified"
             (Just i1, Just i2, Nothing) ->
-                pure $ AItemInteraction mId i1 i2 [] effs
+                pure $ AItemInteraction mId i1 i2 [] mResult effs
             (Nothing, Nothing, Just ings) ->
-                pure $ AItemInteraction mId "" "" ings effs
+                pure $ AItemInteraction mId "" "" ings mResult effs
             (Just _, Nothing, Nothing) ->
                 fail "AItemInteraction requires both item1 and item2"
             (Nothing, Just _, Nothing) ->
@@ -2066,7 +2068,7 @@ knownKeys EntCombatScreen = Set.fromList
 knownKeys EntInteractions = Set.fromList
     [ "entity", "item", "npc" ]
 knownKeys EntItemInteraction = Set.fromList
-    [ "id", "item1", "item2", "ingredients", "effects" ]
+    [ "id", "item1", "item2", "ingredients", "result", "effects" ]
 knownKeys EntProgression = Set.fromList
     [ "levels" ]
 knownKeys EntLevel = Set.fromList

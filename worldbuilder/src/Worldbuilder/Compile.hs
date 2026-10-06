@@ -886,6 +886,7 @@ compileAdventure adv =
                                 ++ checkDeadExits adv ++ checkUnreachableRooms adv
                                 ++ checkQuestProgress adv
                 standingChangeWarns = checkStandingChangeTriggers (advFactions adv) (advTriggers adv)
+                recipeResultWarns = checkRecipeResults adv
                 allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ darkRoomWarns
                           ++ chapterWarns
                           ++ deviceWarns
@@ -894,6 +895,7 @@ compileAdventure adv =
                           ++ langWarns
                           ++ gramWarns
                           ++ standingChangeWarns
+                          ++ recipeResultWarns
             in Right (CompileResult gwResolved startSave allWarns)
   where
     -- Every locked exit starts locked in entityStates
@@ -3196,8 +3198,8 @@ compileInteractions (Just ix) = (entityMap, itemMap, npcMap)
 
 compileRecipeKey :: AItemInteraction -> E.RecipeKey
 compileRecipeKey i
-    | not (null (aiiIngredients i)) = E.RecipeIngredients (aiiId i) (aiiIngredients i)
-    | otherwise                     = E.RecipePair (aiiItem1 i) (aiiItem2 i)
+    | not (null (aiiIngredients i)) = E.RecipeIngredients (aiiId i) (aiiResult i) (aiiIngredients i)
+    | otherwise                     = E.RecipePair (aiiResult i) (aiiItem1 i) (aiiItem2 i)
 
 -- ---------------------------------------------------------------------------
 -- Verb maps (strict — unknown verb = compile error, custom verbs resolved)
@@ -4313,6 +4315,30 @@ checkItemInteractionConflicts adv =
             , not (null (aiiIngredients i))
             ]
   where
+    ixLabel i = case aiiId i of
+        Just ident -> "." ++ ident
+        Nothing
+            | not (null (aiiItem1 i)) -> "[" ++ aiiItem1 i ++ "," ++ aiiItem2 i ++ "]"
+            | not (null (aiiIngredients i)) -> "[" ++ intercalate "," (aiiIngredients i) ++ "]"
+            | otherwise -> ""
+
+-- | K11b: recipe results must reference known items (UnknownRecipeResult warning).
+checkRecipeResults :: Adventure -> [CompileIssue]
+checkRecipeResults adv =
+    case advInteractions adv of
+        Nothing -> []
+        Just ai -> concatMap checkOne (aiItem ai)
+  where
+    knownItems = Set.fromList (map aiId (advItems adv))
+    checkOne i = case aiiResult i of
+        Nothing -> []
+        Just res
+            | res `Set.notMember` knownItems ->
+                let path = "interactions.item" ++ ixLabel i ++ ".result"
+                in [ ciWarning path "UnknownRecipeResult"
+                        ("recipe result references unknown item '" ++ res ++ "'") ]
+            | otherwise -> []
+
     ixLabel i = case aiiId i of
         Just ident -> "." ++ ident
         Nothing

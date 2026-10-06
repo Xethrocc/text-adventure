@@ -2133,7 +2133,7 @@ testItemInteractionCompiles :: IO Bool
 testItemInteractionCompiles = do
     let ix = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] [AOMessage "paste made"] ]
+            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] Nothing [AOMessage "paste made"] ]
             , aiNpc = [] }
         adv = (minAdventure (minRoom "loc_0")) { advInteractions = Just ix }
     case compileAdventure adv of
@@ -2141,7 +2141,7 @@ testItemInteractionCompiles = do
             putStrLn $ "  compile errors: " ++ show errs
             pure False
         Right cr -> expectTrue "item-on-item interaction present"
-            (Map.member (E.RecipePair "herb" "mortar") (E.itemInteractions (crWorld cr)))
+            (Map.member (E.RecipePair Nothing "herb" "mortar") (E.itemInteractions (crWorld cr)))
 
 -- | Phase 6: entity interaction (use item on target) compiles to unlock state.
 testEntityInteractionCompiles :: IO Bool
@@ -4325,6 +4325,8 @@ tests =
     , ("crafting: hard error when item1/item2 and ingredients conflict (K11c)", testIngredientsConflictRejected)
     , ("crafting: ingredients in knownKeys and typo warns (K11c)", testIngredientsKnownKeysAndTypoWarns)
     , ("crafting: dynamic item refs {ingredient1..N} validated statically (K11c)", testIngredientsDynamicRefValidation)
+    -- K11b: recipe result validation
+    , ("crafting: result references known/unknown item (K11b)", testCraftingRecipeResultValidation)
     -- K15: Weltobjekte sind endlich (repeatable: true, Default einmal)
     , ("repeatable: YAML parsing and knownKeys clean (K15)", testRepeatableYamlAndKnownKeysClean)
     , ("repeatable: compile of repeatable items and containers (K15)", testRepeatableCompilation)
@@ -8282,7 +8284,7 @@ testCraftingCompileValidForm = do
     let r0 = minRoom "loc_0"
         ix = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "herb" "mortar" []
+            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] Nothing
                             [ AOConsumeItem "{item1}"
                             , AOConsumeItem "{item2}"
                             , AOMessage "You grind herb in mortar."
@@ -8311,7 +8313,7 @@ testCraftingUnboundRefRejected = do
         -- 1. Unbound {item9} in interactions: item:
         ixBad = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "herb" "mortar" []
+            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] Nothing
                             [ AOConsumeItem "{item9}" ]
                        ]
             , aiNpc = []
@@ -8459,7 +8461,7 @@ testIngredientsCompileValidForm = do
             Right cr -> do
                 let warns = crWarnings cr
                     w = crWorld cr
-                    mRx = Map.lookup (E.RecipeIngredients (Just "trank_rezept") ["kessel", "blatt_a", "blatt_b"]) (E.itemInteractions w)
+                    mRx = Map.lookup (E.RecipeIngredients (Just "trank_rezept") Nothing ["kessel", "blatt_a", "blatt_b"]) (E.itemInteractions w)
                     valErrs = validateWorld w
                 r1 <- expectTrue "compiles with zero warnings" (null warns)
                 r2 <- expectTrue "recipe present in itemInteractions" (isJust mRx)
@@ -8546,7 +8548,7 @@ testIngredientsDynamicRefValidation = do
         -- 1. Valid: {ingredient1..3} for 3-ingredient recipe
         ixGood = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"]
+            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"] Nothing
                             [ AOConsumeItem "{ingredient1}"
                             , AOConsumeItem "{ingredient2}"
                             , AOConsumeItem "{ingredient3}"
@@ -8570,7 +8572,7 @@ testIngredientsDynamicRefValidation = do
     -- 2. Invalid: {ingredient4} in 3-ingredient recipe
     let ixBad4 = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"]
+            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"] Nothing
                             [ AOConsumeItem "{ingredient4}" ]
                        ]
             , aiNpc = []
@@ -8584,7 +8586,7 @@ testIngredientsDynamicRefValidation = do
     -- 3. Invalid: {item1} in ingredients recipe
     let ixBadItem1 = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"]
+            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"] Nothing
                             [ AOConsumeItem "{item1}" ]
                        ]
             , aiNpc = []
@@ -8598,7 +8600,7 @@ testIngredientsDynamicRefValidation = do
     -- 4. Invalid: {ingredient1} in pair recipe
     let ixBadIngInPair = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "kessel" "blatt_a" []
+            , aiItem = [ AItemInteraction Nothing "kessel" "blatt_a" [] Nothing
                             [ AOConsumeItem "{ingredient1}" ]
                        ]
             , aiNpc = []
@@ -8610,6 +8612,70 @@ testIngredientsDynamicRefValidation = do
         Right _ -> expectTrue "{ingredient1} in pair recipe must fail" False
 
     pure (r1 && r2 && r3 && r4)
+
+-- | K11b: recipe result references known or unknown items.
+testCraftingRecipeResultValidation :: IO Bool
+testCraftingRecipeResultValidation = do
+    let r0 = minRoom "loc_0"
+        ixGood = AInteractions
+            { aiEntity = []
+            , aiItem = [ AItemInteraction Nothing "mana_leaf" "kettle" [] (Just "mana_potion")
+                            [ AOConsumeItem "{item1}" ]
+                       ]
+            , aiNpc = []
+            }
+        advGood = (minAdventure r0)
+            { advItems = [ (minItem "mana_leaf") { aiLocation = "loc_0" }
+                         , (minItem "kettle") { aiLocation = "loc_0" }
+                         , (minItem "mana_potion") { aiLocation = "loc_0" }
+                         ]
+            , advInteractions = Just ixGood
+            }
+    -- 1. Known result emits no UnknownRecipeResult warnings
+    r1 <- case compileAdventure advGood of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error in good: " ++ issuesText errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "UnknownRecipeResult") (crWarnings cr)
+            expectTrue "known result emits no UnknownRecipeResult warnings" (null warns)
+
+    -- 2. Unknown result emits UnknownRecipeResult warning
+    let ixBad = AInteractions
+            { aiEntity = []
+            , aiItem = [ AItemInteraction Nothing "mana_leaf" "kettle" [] (Just "hexenwerk")
+                            [ AOConsumeItem "{item1}" ]
+                       ]
+            , aiNpc = []
+            }
+        advBad = advGood { advInteractions = Just ixBad }
+    r2 <- case compileAdventure advBad of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error in bad: " ++ issuesText errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "UnknownRecipeResult") (crWarnings cr)
+            expectTrue "unknown result emits UnknownRecipeResult warning"
+                (any (\w -> "hexenwerk" `isInfixOf` ciMessage w) warns)
+
+    -- 3. Nothing result emits no UnknownRecipeResult warnings
+    let ixNone = AInteractions
+            { aiEntity = []
+            , aiItem = [ AItemInteraction Nothing "mana_leaf" "kettle" [] Nothing
+                            [ AOConsumeItem "{item1}" ]
+                       ]
+            , aiNpc = []
+            }
+        advNone = advGood { advInteractions = Just ixNone }
+    r3 <- case compileAdventure advNone of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error in none: " ++ issuesText errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "UnknownRecipeResult") (crWarnings cr)
+            expectTrue "omitted result emits no UnknownRecipeResult warnings" (null warns)
+
+    pure (r1 && r2 && r3)
 
 main :: IO ()
 main = do

@@ -549,6 +549,7 @@ commandVerbName cmd = case cmd of
     DeckCmd             -> "deck"
     DiscardCmd          -> "discard"
     EndTurnCmd          -> "end_turn"
+    CraftCmd _          -> "craft"
     _             -> "unknown"
 
 -- | Mapping applied to every player-facing line at the I/O boundary is now

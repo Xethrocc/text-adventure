@@ -4777,7 +4777,7 @@ testCompoundKeyRoundTrip = do
                 (item0 { itemVerbMap = Map.fromList [((PhaseAfter, VCustom "buy", "intact:v2"), SendMessage "a")] })
                 (itemDefs gw0)
             , entityInteractions = Map.fromList [(("a|b", "c"), ("unlocked", "msg"))]
-            , itemInteractions   = Map.fromList [(RecipePair "x:y" "z|w", SendMessage "b")] }
+            , itemInteractions   = Map.fromList [(RecipePair Nothing "x:y" "z|w", SendMessage "b")] }
     r1 <- expectEqual (Just gw) (Aeson.decode (Aeson.encode gw))
     -- legacy form of the verb map: "VTake:intact"
     let legacyVerbValue = Aeson.toJSON (Map.fromList [("VTake:intact", SendMessage "x")] :: Map.Map String Effect)
@@ -5762,6 +5762,7 @@ expectedConsumesTurn cmd = case cmd of
     DeckCmd            -> False
     DiscardCmd         -> False
     EndTurnCmd         -> True
+    CraftCmd _         -> True
     Unknown _          -> False
 
 -- | One sample per `Command` constructor.
@@ -5773,7 +5774,7 @@ allCommandSamples =
     , JournalCmd, Undo, EnterVehicleCmd "v", ExitVehicleCmd, DriveToCmd "s"
     , WaitCmd, RefuelCmd "v", RepairCmd "v", Save "s", Load "s", ListSaves
     , Restart, Help, Quit, ActionWithArgs (VCustom "action") ["a"]
-    , PlayCardCmd 1 Nothing, HandCmd, DeckCmd, DiscardCmd, EndTurnCmd, Unknown "z" ]
+    , PlayCardCmd 1 Nothing, HandCmd, DeckCmd, DiscardCmd, EndTurnCmd, CraftCmd "potion", Unknown "z" ]
 
 -- | L13: the verdict table must match `consumesTurn` for every constructor, and
 --   the sample count pins the list so a forgotten sample is noticed.
@@ -5782,7 +5783,7 @@ testConsumesTurnCompleteness = do
     let st0 = initSampleGame
     r1 <- expectTrue "consumesTurn matches the documented verdict everywhere"
         (all (\c -> consumesTurn c == expectedConsumesTurn c) allCommandSamples)
-    r2 <- expectEqual 35 (length allCommandSamples)
+    r2 <- expectEqual 36 (length allCommandSamples)
     r3 <- expectTrue "an invalid dialogue choice is a typo, not a turn"
               (not (consumesTurnIn st0 (ChooseCmd 99)))
     r4 <- expectTrue "a valid dialogue choice consumes the turn"
@@ -9897,7 +9898,7 @@ testItemOnItemBindsVars = do
         w = (world sample)
             { itemDefs = Map.insert "herb" (invItem "herb")
                        $ Map.insert "mortar" (invItem "mortar") (itemDefs (world sample))
-            , itemInteractions = Map.singleton (RecipePair "herb" "mortar") (SendMessage "Crafted!")
+            , itemInteractions = Map.singleton (RecipePair Nothing "herb" "mortar") (SendMessage "Crafted!")
             }
         st0 = sample
             { world = w
@@ -9925,7 +9926,7 @@ testItemOnItemConsumeDynamicResolvesOrder = do
         w = (world sample)
             { itemDefs = Map.insert "herb" (invItem "herb")
                        $ Map.insert "mortar" (invItem "mortar") (itemDefs (world sample))
-            , itemInteractions = Map.singleton (RecipePair "herb" "mortar") (MoveEntity "{item1}" Removed)
+            , itemInteractions = Map.singleton (RecipePair Nothing "herb" "mortar") (MoveEntity "{item1}" Removed)
             }
         -- Both carried by player
         st0 = sample
@@ -9967,7 +9968,7 @@ testIngredientsRecipeFiresWithUseXOnY = do
                        $ Map.insert "blatt_a" (invItem "blatt_a")
                        $ Map.insert "blatt_b" (invItem "blatt_b") (itemDefs (world sample))
             , itemInteractions = Map.singleton
-                (RecipeIngredients (Just "sturmtrank") ["kessel", "blatt_a", "blatt_b"])
+                (RecipeIngredients (Just "sturmtrank") Nothing ["kessel", "blatt_a", "blatt_b"])
                 (Sequence [ MoveEntity "{ingredient1}" Removed
                           , MoveEntity "{ingredient2}" Removed
                           , MoveEntity "{ingredient3}" Removed
@@ -10005,7 +10006,7 @@ testIngredientsRecipeFailsWhenIngredientMissing = do
                        $ Map.insert "blatt_a" (invItem "blatt_a")
                        $ Map.insert "blatt_b" (invItem "blatt_b") (itemDefs (world sample))
             , itemInteractions = Map.singleton
-                (RecipeIngredients (Just "sturmtrank") ["kessel", "blatt_a", "blatt_b"])
+                (RecipeIngredients (Just "sturmtrank") Nothing ["kessel", "blatt_a", "blatt_b"])
                 (Sequence [ MoveEntity "{ingredient1}" Removed
                           , MoveEntity "{ingredient2}" Removed
                           , MoveEntity "{ingredient3}" Removed
@@ -10042,7 +10043,7 @@ testIngredientsRecipeDoesNotFireWhenCommandNamesNoRecipeItem = do
                        $ Map.insert "messer" (invItem "messer")
                        $ Map.insert "apfel" (invItem "apfel") (itemDefs (world sample))
             , itemInteractions = Map.singleton
-                (RecipeIngredients (Just "sturmtrank") ["kessel", "blatt_a", "blatt_b"])
+                (RecipeIngredients (Just "sturmtrank") Nothing ["kessel", "blatt_a", "blatt_b"])
                 (SendMessage "Der Trank ist gebraut!")
             }
         -- All 3 recipe ingredients are carried in inventory!
@@ -10063,6 +10064,213 @@ testIngredientsRecipeDoesNotFireWhenCommandNamesNoRecipeItem = do
     r1 <- expectTrue "potion message NOT emitted" (not ("Der Trank ist gebraut!" `isInfixOf` msg))
     r2 <- expectEqual Nothing (getVariable "ingredient1" st1)
     pure (r1 && r2)
+
+-- ---------------------------------------------------------------------------
+-- K11b: craft <Ergebnis> (Rezept-Alias)
+-- ---------------------------------------------------------------------------
+
+-- | 1. Erfolg (Paar): craft mana_potion mit mana_leaf + kettle erreichbar
+--   -> Rezept-Outcome läuft, item1 und item2 sind korrekt gebunden.
+testCraftPairSuccess :: IO Bool
+testCraftPairSuccess = do
+    let sample = initSampleGame
+        w = (world sample)
+            { itemDefs = Map.insert "mana_leaf" (invItem "mana_leaf")
+                       $ Map.insert "kettle" (invItem "kettle")
+                       $ Map.insert "mana_potion" (invItem "mana_potion") (itemDefs (world sample))
+            , itemInteractions = Map.singleton
+                (RecipePair (Just "mana_potion") "mana_leaf" "kettle")
+                (Sequence [ MoveEntity "{item1}" Removed
+                          , SendMessage "Du hast einen Manatrank gebraut!"
+                          ])
+            }
+        st0 = sample
+            { world = w
+            , save = (save sample)
+                { itemStates = Map.insert "mana_leaf" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ Map.insert "kettle" (ItemState (InRoom (currentRoom (save sample))) "normal" Map.empty False)
+                             $ itemStates (save sample)
+                }
+            }
+    let (st1, msg) = executeCommand (parseCommand "craft mana_potion") st0
+        locOf iId st = fmap itemLocation (Map.lookup iId (itemStates (save st)))
+    r1 <- expectTrue "potion crafted message emitted" ("Du hast einen Manatrank gebraut!" `isInfixOf` msg)
+    r2 <- expectEqual (Just Removed) (locOf "mana_leaf" st1)
+    r3 <- expectEqual (Just (InRoom (currentRoom (save sample)))) (locOf "kettle" st1)
+    r4 <- expectEqual (Just (VVText "mana_leaf")) (getVariable "item1" st1)
+    r5 <- expectEqual (Just (VVText "kettle")) (getVariable "item2" st1)
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | 2. Erfolg (Multi): craft storm_potion mit ingredients-Liste
+--   -> bindIngredientVars korrekt.
+testCraftMultiSuccess :: IO Bool
+testCraftMultiSuccess = do
+    let sample = initSampleGame
+        w = (world sample)
+            { itemDefs = Map.insert "kettle" (invItem "kettle")
+                       $ Map.insert "leaf_a" (invItem "leaf_a")
+                       $ Map.insert "leaf_b" (invItem "leaf_b")
+                       $ Map.insert "storm_potion" (invItem "storm_potion") (itemDefs (world sample))
+            , itemInteractions = Map.singleton
+                (RecipeIngredients (Just "storm_potion") (Just "storm_potion") ["kettle", "leaf_a", "leaf_b"])
+                (Sequence [ MoveEntity "{ingredient2}" Removed
+                          , MoveEntity "{ingredient3}" Removed
+                          , SendMessage "Sturmtrank gebraut!"
+                          ])
+            }
+        st0 = sample
+            { world = w
+            , save = (save sample)
+                { itemStates = Map.insert "kettle" (ItemState (InRoom (currentRoom (save sample))) "normal" Map.empty False)
+                             $ Map.insert "leaf_a" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ Map.insert "leaf_b" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ itemStates (save sample)
+                }
+            }
+    let (st1, msg) = executeCommand (parseCommand "craft storm_potion") st0
+        locOf iId st = fmap itemLocation (Map.lookup iId (itemStates (save st)))
+    r1 <- expectTrue "potion message emitted" ("Sturmtrank gebraut!" `isInfixOf` msg)
+    r2 <- expectEqual (Just Removed) (locOf "leaf_a" st1)
+    r3 <- expectEqual (Just Removed) (locOf "leaf_b" st1)
+    r4 <- expectEqual (Just (InRoom (currentRoom (save sample)))) (locOf "kettle" st1)
+    r5 <- expectEqual (Just (VVText "kettle")) (getVariable "ingredient1" st1)
+    r6 <- expectEqual (Just (VVText "leaf_a")) (getVariable "ingredient2" st1)
+    r7 <- expectEqual (Just (VVText "leaf_b")) (getVariable "ingredient3" st1)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | 3. Fehlende Zutat: Rezept bekannt, Zutat fehlt
+--   -> bestehende Fehlmeldung ("You need to be carrying ..."), NICHT craft.no_recipe.
+testCraftMissingIngredient :: IO Bool
+testCraftMissingIngredient = do
+    let sample = initSampleGame
+        w = (world sample)
+            { itemDefs = Map.insert "mana_leaf" (invItem "mana_leaf")
+                       $ Map.insert "kettle" (invItem "kettle")
+                       $ Map.insert "mana_potion" (invItem "mana_potion") (itemDefs (world sample))
+            , itemInteractions = Map.singleton
+                (RecipePair (Just "mana_potion") "mana_leaf" "kettle")
+                (SendMessage "Du hast einen Manatrank gebraut!")
+            }
+        -- kettle in room, mana_leaf in another room (not reachable)
+        st0 = sample
+            { world = w
+            , save = (save sample)
+                { itemStates = Map.insert "kettle" (ItemState (InRoom (currentRoom (save sample))) "normal" Map.empty False)
+                             $ Map.insert "mana_leaf" (ItemState (InRoom "other_room") "normal" Map.empty False)
+                             $ itemStates (save sample)
+                }
+            }
+    let (_, msg) = executeCommand (parseCommand "craft mana_potion") st0
+    r1 <- expectTrue "emits missing ingredient message (use.not_carried)"
+        ("carrying 'mana_leaf'" `isInfixOf` msg || "carrying" `isInfixOf` msg)
+    r2 <- expectTrue "does NOT emit craft.no_recipe"
+        (not ("don't know a recipe" `isInfixOf` msg) && not ("Du kennst kein Rezept" `isInfixOf` msg))
+    pure (r1 && r2)
+
+-- | 4. Rezept OHNE result:: craft findet es NICHT (craft.no_recipe),
+--   aber use X on Y funktioniert weiterhin.
+testCraftRecipeWithoutResultInvisible :: IO Bool
+testCraftRecipeWithoutResultInvisible = do
+    let sample = initSampleGame
+        w = (world sample)
+            { itemDefs = Map.insert "herb" (invItem "herb")
+                       $ Map.insert "mortar" (invItem "mortar") (itemDefs (world sample))
+            , itemInteractions = Map.singleton (RecipePair Nothing "herb" "mortar") (SendMessage "Gestoßen!")
+            }
+        st0 = sample
+            { world = w
+            , save = (save sample)
+                { itemStates = Map.insert "herb" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ Map.insert "mortar" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ itemStates (save sample)
+                }
+            }
+    -- craft finds nothing
+    let (_, msgCraft) = executeCommand (parseCommand "craft herb") st0
+    r1 <- expectTrue "craft reports craft.no_recipe"
+        ("don't know a recipe for" `isInfixOf` msgCraft || "Du kennst kein Rezept" `isInfixOf` msgCraft)
+    -- use X on Y works normally
+    let (_, msgUse) = executeCommand (parseCommand "use herb on mortar") st0
+    r2 <- expectTrue "use herb on mortar still executes outcome" ("Gestoßen!" `isInfixOf` msgUse)
+    pure (r1 && r2)
+
+-- | 5. Unbekanntes Ergebnis: craft hexenwerk -> craft.no_recipe.
+testCraftUnknownResult :: IO Bool
+testCraftUnknownResult = do
+    let sample = initSampleGame
+        (_, msg) = executeCommand (parseCommand "craft hexenwerk") sample
+    expectTrue "craft hexenwerk emits craft.no_recipe"
+        ("don't know a recipe for hexenwerk" `isInfixOf` msg || "Du kennst kein Rezept für hexenwerk" `isInfixOf` msg)
+
+-- | 6. Consume: nach craft ist die Zutat verbraucht;
+--   zweiter Versuch -> fehlende Zutat (nicht Erfolg, nicht no_recipe).
+testCraftConsumeAndSecondAttempt :: IO Bool
+testCraftConsumeAndSecondAttempt = do
+    let sample = initSampleGame
+        w = (world sample)
+            { itemDefs = Map.insert "mana_leaf" (invItem "mana_leaf")
+                       $ Map.insert "kettle" (invItem "kettle")
+                       $ Map.insert "mana_potion" (invItem "mana_potion") (itemDefs (world sample))
+            , itemInteractions = Map.singleton
+                (RecipePair (Just "mana_potion") "mana_leaf" "kettle")
+                (Sequence [ MoveEntity "{item1}" Removed
+                          , SendMessage "Erfolg!"
+                          ])
+            }
+        st0 = sample
+            { world = w
+            , save = (save sample)
+                { itemStates = Map.insert "mana_leaf" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ Map.insert "kettle" (ItemState (InRoom (currentRoom (save sample))) "normal" Map.empty False)
+                             $ itemStates (save sample)
+                }
+            }
+    -- Attempt 1: success
+    let (st1, msg1) = executeCommand (parseCommand "craft mana_potion") st0
+    r1 <- expectTrue "first attempt succeeds" ("Erfolg!" `isInfixOf` msg1)
+    -- Attempt 2: missing ingredient (mana_leaf was consumed!)
+    let (_, msg2) = executeCommand (parseCommand "craft mana_potion") st1
+    r2 <- expectTrue "second attempt emits missing ingredient"
+        ("carrying 'mana_leaf'" `isInfixOf` msg2 || "carrying" `isInfixOf` msg2)
+    r3 <- expectTrue "second attempt is NOT success" (not ("Erfolg!" `isInfixOf` msg2))
+    r4 <- expectTrue "second attempt is NOT no_recipe"
+        (not ("don't know a recipe" `isInfixOf` msg2) && not ("Du kennst kein Rezept" `isInfixOf` msg2))
+    pure (r1 && r2 && r3 && r4)
+
+-- | 7. REGRESSION: use Mana Leaf on Kettle verhält sich byte-identisch
+--   (gleiches Outcome, gleiche Bindung, gleicher Consume wie ohne result:).
+testCraftUseOnRegression :: IO Bool
+testCraftUseOnRegression = do
+    let sample = initSampleGame
+        mkWorld mRes = (world sample)
+            { itemDefs = Map.insert "mana_leaf" (invItem "mana_leaf")
+                       $ Map.insert "kettle" (invItem "kettle") (itemDefs (world sample))
+            , itemInteractions = Map.singleton
+                (RecipePair mRes "mana_leaf" "kettle")
+                (Sequence [ MoveEntity "{item1}" Removed
+                          , SendMessage "Gebraut!"
+                          ])
+            }
+        mkSt mRes = sample
+            { world = mkWorld mRes
+            , save = (save sample)
+                { itemStates = Map.insert "mana_leaf" (ItemState (CarriedBy ActorPlayer) "normal" Map.empty False)
+                             $ Map.insert "kettle" (ItemState (InRoom (currentRoom (save sample))) "normal" Map.empty False)
+                             $ itemStates (save sample)
+                }
+            }
+        -- With result:
+        stWithRes = mkSt (Just "mana_potion")
+        (st1, msg1) = executeCommand (parseCommand "use mana_leaf on kettle") stWithRes
+        -- Without result:
+        stWithoutRes = mkSt Nothing
+        (st2, msg2) = executeCommand (parseCommand "use mana_leaf on kettle") stWithoutRes
+
+    r1 <- expectEqual msg2 msg1
+    r2 <- expectEqual (getVariable "item1" st2) (getVariable "item1" st1)
+    r3 <- expectEqual (getVariable "item2" st2) (getVariable "item2" st1)
+    r4 <- expectEqual (hasItem "mana_leaf" st2) (hasItem "mana_leaf" st1)
+    pure (r1 && r2 && r3 && r4)
 
 -- ---------------------------------------------------------------------------
 -- K15.0: Ort-Regel: consume:/Verbrauch nur auf Erreichbares
@@ -11582,6 +11790,14 @@ main = do
         , runTest "crafting: ingredients recipe fires when all reachable and binds {ingredient1..N} (K11c.1)" testIngredientsRecipeFiresWithUseXOnY
         , runTest "crafting: ingredients recipe fails when ingredient missing (K11c.2)" testIngredientsRecipeFailsWhenIngredientMissing
         , runTest "crafting: ingredients recipe does not fire when command mentions no recipe item (K11c.3)" testIngredientsRecipeDoesNotFireWhenCommandNamesNoRecipeItem
+        -- K11b: craft <Ergebnis> (Rezept-Alias)
+        , runTest "crafting: pair recipe craft succeeds and binds item1/item2 (K11b.1)" testCraftPairSuccess
+        , runTest "crafting: multi recipe craft succeeds and binds ingredient1..N (K11b.2)" testCraftMultiSuccess
+        , runTest "crafting: missing ingredient reports carrying error, not no_recipe (K11b.3)" testCraftMissingIngredient
+        , runTest "crafting: recipe without result is invisible to craft but works with use (K11b.4)" testCraftRecipeWithoutResultInvisible
+        , runTest "crafting: unknown result reports no_recipe (K11b.5)" testCraftUnknownResult
+        , runTest "crafting: consumed ingredients cause subsequent craft to fail with missing error (K11b.6)" testCraftConsumeAndSecondAttempt
+        , runTest "crafting: use on behaves byte-identically with or without result (K11b.7)" testCraftUseOnRegression
         -- K15: Weltobjekte sind endlich (take_once), Ort-Regel
         , runTest "consume on item in container is refused (K15.0)" testConsumeItemInContainerRefused
         , runTest "consume on item on NPC is refused (K15.0)" testConsumeItemOnNPCRefused
@@ -11883,7 +12099,7 @@ testStandingChangeWithoutToFiresAnyChange = do
         st0 = setVariable "faction.empire" (VVInt 0) (initSampleGame { world = w })
         (st1, out1) = applyOutcome (ModifyValue (VRVariable "faction.empire") 20) "" st0
         (st2, out2) = applyOutcome (ModifyValue (VRVariable "faction.empire") 80) "" st1
-        (st3, out3) = applyOutcome (ModifyValue (VRVariable "faction.empire") 5) "" st2
+        (_, out3)   = applyOutcome (ModifyValue (VRVariable "faction.empire") 5) "" st2
     r1 <- expectTrue "0 -> 20 feuert" (isInfixOf "Stufenwechsel bemerkt!" out1)
     r2 <- expectTrue "20 -> 100 feuert" (isInfixOf "Stufenwechsel bemerkt!" out2)
     r3 <- expectTrue "100 -> 105 feuert NICHT" (not (isInfixOf "Stufenwechsel bemerkt!" out3))
@@ -11901,7 +12117,7 @@ testStandingChangeSetVarFires = do
         w = sampleG9cWorld { triggerDefs = [trig] }
         st0 = setVariable "faction.empire" (VVInt 0) (initSampleGame { world = w })
         (st1, out1) = applyOutcome (SetValue (VRVariable "faction.empire") (EVInt 25)) "" st0
-        (st2, out2) = applyOutcome (SetValue (VRVariable "faction.empire") (EVInt 30)) "" st1
+        (_, out2)   = applyOutcome (SetValue (VRVariable "faction.empire") (EVInt 30)) "" st1
     r1 <- expectTrue "set_var über Schwelle feuert" (isInfixOf "Schwelle überschritten" out1)
     r2 <- expectTrue "set_var innerhalb Stufe feuert NICHT" (not (isInfixOf "Schwelle überschritten" out2))
     pure (and [r1, r2])
@@ -11916,7 +12132,7 @@ testStandingChangeUnrelatedVarDoesNotFire = do
         w = sampleG9cWorld { triggerDefs = [trig] }
         st0 = setVariable "faction.empire" (VVInt 0) (initSampleGame { world = w })
         (st1, out1) = applyOutcome (SetValue (VRVariable "gold") (EVInt 100)) "" st0
-        (st2, out2) = applyOutcome (ModifyValue (VRVariable "gold") 50) "" st1
+        (_, out2)   = applyOutcome (ModifyValue (VRVariable "gold") 50) "" st1
     r1 <- expectTrue "fremde Variable feuert keinen Standing-Trigger"
         (not (isInfixOf "FEHLER" out1) && not (isInfixOf "FEHLER" out2))
     pure r1

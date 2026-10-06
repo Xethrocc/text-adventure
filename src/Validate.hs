@@ -269,8 +269,8 @@ checkMissingItemsInDefs gw =
             ++ concatMap recipeItemIds (Map.keys (itemInteractions gw))
     in [MissingItem iId | iId <- nub allRefs, not (Set.member iId itemRefs), not (Set.member iId npcRefs)]
   where
-    recipeItemIds (RecipePair i1 i2) = [i1, i2]
-    recipeItemIds (RecipeIngredients _ ings) = ings
+    recipeItemIds (RecipePair _ i1 i2)         = [i1, i2]
+    recipeItemIds (RecipeIngredients _ _ ings) = ings
 
 checkMissingNPCsInDefs :: GameWorld -> [ValidationError]
 checkMissingNPCsInDefs gw =

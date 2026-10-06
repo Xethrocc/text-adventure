@@ -45,6 +45,7 @@ module Parser
     , executeAttack
     , interactItem
     , bindCommandVars
+    , craftRecipe
       -- * Messages, darkness and help
     , defaultDarkMessage
     , isCurrentRoomDark
@@ -87,6 +88,7 @@ data Command
     | UnequipCmd String
     | UnequipAllCmd
     | StatsCmd
+    | CraftCmd String            -- ^ K11b: `craft <result>` (recipe alias)
     | SearchCmd (Maybe String)   -- ^ `search` or `search <target>`
     | WatchCmd (Maybe String)    -- ^ `watch [target]`: play animation frames (Phase D)
     | MapCmd                    -- ^ `map`/`legend`: art with numbered hotspots (Phase E)
@@ -441,6 +443,10 @@ parseSimpleCommandWith env defs tokens input = case tokens of
     "ability" : abParts | not (null abParts) ->
         parseAbilityCmd env abParts
     "use"   : useParts -> parseUse env useParts input
+    -- K11b: `craft <result>`
+    ["craft"]              -> CraftCmd ""
+    "craft" : targetParts | not (null targetParts) ->
+        CraftCmd (unwords (safeStripStopWords targetParts))
     -- Generic verb-noun parsing: resolve against registry (core + custom)
     v : targetParts | not (null targetParts) -> case parseVerbWith defs v of
         Just verb ->
@@ -682,6 +688,7 @@ extractCommandArgs cmd = case cmd of
     DeckCmd               -> ("deck", "", [])
     DiscardCmd            -> ("discard", "", [])
     EndTurnCmd            -> ("end_turn", "", [])
+    CraftCmd s            -> ("craft", s, words s)
     CompoundCommand _     -> ("compound", "", [])
     Unknown s             -> ("unknown", s, words s)
 
@@ -1263,6 +1270,9 @@ dispatchCommandEv (PutInCmd x y) state =
                         ( relocateItem iId (InContainer cid) state
                         , evMsg "container.put"
                             ([ ("item", x), ("name", containerName cid state) ] ++ grammarArgs False "item" (grammarOfItem iId state) ++ grammarArgs True "name" (grammarOfItem cid state)) )
+
+dispatchCommandEv (CraftCmd targetStr) state =
+    craftRecipe targetStr state
 
 dispatchCommandEv (Interact verb targetStr) state
     | not (null targetStr), VCustom vn <- verb
@@ -2043,6 +2053,29 @@ searchRoom state = case getCurrentRoom state of
             full = joinAllEv (discoveredMsgs ++ [hookMsg])
         in (stateFinal, if null (renderEvents full) then evMsg "search.nothing" [] else full)
 
+-- | Bind {item1} and {item2} variables for recipe outcomes (K11a).
+bindItemVars :: ItemID -> ItemID -> GameState -> GameState
+bindItemVars i1 i2 st =
+    let vm = variables (save st)
+        vm' = Map.insert "item1" (VVText i1) (Map.insert "item2" (VVText i2) vm)
+    in st { save = (save st) { variables = vm' } }
+
+-- | Bind {ingredient1..N} variables for multi-ingredient recipe outcomes (K11c).
+bindIngredientVars :: [ItemID] -> GameState -> GameState
+bindIngredientVars ings st =
+    let vm = variables (save st)
+        bindings = [ ("ingredient" ++ show idx, VVText ing)
+                   | (idx, ing) <- zip ([1..] :: [Int]) ings ]
+        vm' = foldr (uncurry Map.insert) vm bindings
+    in st { save = (save st) { variables = vm' } }
+
+-- | Reachable items: in room + carried + equipped (K11c, K11b).
+reachableItemIds :: GameState -> Set.Set ItemID
+reachableItemIds st = Set.fromList $ map itemId $
+    getItemsInLocation (InRoom (currentRoom (save st))) st
+    ++ getItemsInLocation (CarriedBy ActorPlayer) st
+    ++ getItemsInLocation (EquippedBy ActorPlayer) st
+
 -- | Item-on-item interaction (crafting).
 --   Returns Nothing if no interaction is defined, so callers can keep their
 --   own "nothing here" message.
@@ -2054,37 +2087,35 @@ tryItemOnItem usedId targetStr state =
             let targetId = itemId target
                 interactions = itemInteractions (world state)
                 -- 1. Pair recipes (K11a: {item1}/{item2} unchanged)
-                key    = RecipePair usedId targetId
-                altKey = RecipePair targetId usedId
-            in case Map.lookup key interactions of
-                Just outcome ->
+                pairCandidates =
+                    [ (outcome, False)
+                    | (RecipePair _ i1 i2, outcome) <- Map.toList interactions
+                    , i1 == usedId && i2 == targetId
+                    ] ++
+                    [ (outcome, True)
+                    | (RecipePair _ i1 i2, outcome) <- Map.toList interactions
+                    , i1 == targetId && i2 == usedId
+                    ]
+            in case pairCandidates of
+                ((outcome, False) : _) ->
                     let state' = bindItemVars usedId targetId state
                     in Just (applyOutcomeEv outcome targetId state')
-                Nothing -> case Map.lookup altKey interactions of
-                    Just outcome ->
-                        let state' = bindItemVars targetId usedId state
-                        in Just (applyOutcomeEv outcome targetId state')
-                    Nothing ->
-                        -- 2. Multi-ingredient recipes (K11c: {ingredient1..N})
-                        -- Match rule:
-                        --   Rezept R feuert, wenn  R ⊆ erreichbare Items  UND
-                        --                   der Befehl mindestens EINEN Zutaten von R nennt
-                        matchMultiIngredient targetId state interactions
+                ((outcome, True) : _) ->
+                    let state' = bindItemVars targetId usedId state
+                    in Just (applyOutcomeEv outcome targetId state')
+                [] ->
+                    -- 2. Multi-ingredient recipes (K11c: {ingredient1..N})
+                    -- Match rule:
+                    --   Rezept R feuert, wenn  R ⊆ erreichbare Items  UND
+                    --                   der Befehl mindestens EINEN Zutaten von R nennt
+                    matchMultiIngredient targetId state interactions
   where
-    bindItemVars i1 i2 st =
-        let vm = variables (save st)
-            vm' = Map.insert "item1" (VVText i1) (Map.insert "item2" (VVText i2) vm)
-        in st { save = (save st) { variables = vm' } }
-
     matchMultiIngredient tId st interactions =
-        let reachable = Set.fromList $ map itemId $
-                getItemsInLocation (InRoom (currentRoom (save st))) st
-                ++ getItemsInLocation (CarriedBy ActorPlayer) st
-                ++ getItemsInLocation (EquippedBy ActorPlayer) st
+        let reachable = reachableItemIds st
             cmdItems = Set.fromList [usedId, tId]
             candidates =
                 [ (ings, outcome)
-                | (RecipeIngredients _ ings, outcome) <- Map.toList interactions
+                | (RecipeIngredients _ _ ings, outcome) <- Map.toList interactions
                 , let rSet = Set.fromList ings
                 , rSet `Set.isSubsetOf` reachable
                 , not (Set.null (rSet `Set.intersection` cmdItems))
@@ -2095,12 +2126,58 @@ tryItemOnItem usedId targetStr state =
                 in Just (applyOutcomeEv outcome tId st')
             [] -> Nothing
 
-    bindIngredientVars ings st =
-        let vm = variables (save st)
-            bindings = [ ("ingredient" ++ show idx, VVText ing)
-                       | (idx, ing) <- zip ([1..] :: [Int]) ings ]
-            vm' = foldr (uncurry Map.insert) vm bindings
-        in st { save = (save st) { variables = vm' } }
+-- | K11b: `craft <result>` recipe alias lookup (§3.3).
+craftRecipe :: String -> GameState -> CommandResultEv
+craftRecipe targetStr state
+    | null (words targetStr) =
+        (state, evMsg "craft.no_recipe" [("target", targetStr)])
+    | otherwise =
+        let mTargetId = resolveRecipeTarget targetStr state
+            interactions = itemInteractions (world state)
+            reachable = reachableItemIds state
+        in case mTargetId of
+            Nothing ->
+                (state, evMsg "craft.no_recipe" [("target", targetStr)])
+            Just resId ->
+                let candidates =
+                        [ (k, out)
+                        | (k, out) <- Map.toList interactions
+                        , recipeResult k == Just resId
+                        ]
+                in case candidates of
+                    [] ->
+                        (state, evMsg "craft.no_recipe" [("target", targetStr)])
+                    _  ->
+                        let isReachable (RecipePair _ i1 i2)          = i1 `Set.member` reachable && i2 `Set.member` reachable
+                            isReachable (RecipeIngredients _ _ ings) = Set.fromList ings `Set.isSubsetOf` reachable
+                            executable = [ (k, out) | (k, out) <- candidates, isReachable k ]
+                        in case executable of
+                            ((RecipePair _ i1 i2, outcome) : _) ->
+                                let state' = bindItemVars i1 i2 state
+                                in applyOutcomeEv outcome resId state'
+                            ((RecipeIngredients _ _ ings, outcome) : _) ->
+                                let state' = bindIngredientVars ings state
+                                in applyOutcomeEv outcome resId state'
+                            _ ->
+                                -- Recipe known, but ingredients not reachable
+                                let (firstKey, _) = head candidates
+                                    missing = filter (`Set.notMember` reachable) (recipeIngredientsList firstKey)
+                                    missingId = case missing of
+                                        (m : _) -> m
+                                        []      -> ""
+                                    itemText = case Map.lookup missingId (itemDefs (world state)) of
+                                        Just item | not (null (itemName item)) -> itemName item
+                                        _                                      -> missingId
+                                in (state, evMsg "use.not_carried" [("item", itemText)])
+  where
+
+    resolveRecipeTarget t st =
+        case find (matchesItemTarget t) (Map.elems (itemDefs (world st))) of
+            Just item -> Just (itemId item)
+            Nothing   ->
+                let norm = normalizeText t
+                in find (\r -> normalizeText r == norm)
+                        (catMaybes [ recipeResult k | k <- Map.keys (itemInteractions (world st)) ])
 
 -- | Dialogue: use the tree if present, otherwise fall back to the legacy single line
 talkTo :: NPCDef -> Maybe NPCState -> GameState -> (GameState, [OutputEvent])

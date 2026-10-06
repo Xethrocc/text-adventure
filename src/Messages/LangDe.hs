@@ -1,4 +1,4 @@
--- | Generated from lang/de.json (sha256: 4f4a14a3c7ed92c23dbec32846822d1efc0c3a43197ffa97d9b905fc36b0708d) by scripts/gen-lang-pack.py.
+-- | Generated from lang/de.json (sha256: 105304783a014f5abbcf4b420b4a3e71ee2073e12fae1bebfbe16e8decf833a1) by scripts/gen-lang-pack.py.
 --   DO NOT EDIT by hand - rerun the generator after changing the JSON.
 --
 --   Language-pack data (Phase 4.3): message templates keyed like the
@@ -72,6 +72,7 @@ langDe =
       , ("use.unreachable", "Du kommst von hier nicht an '{entity}' heran.")
       , ("use.ok", "Du benutzt {article_acc} {item}. {msg}")
       , ("use.nothing", "Es passiert nichts.")
+      , ("craft.no_recipe", "Du kennst kein Rezept für {target}.")
       , ("search.void", "Du befindest dich im Nichts. Hier gibt es nichts zu durchsuchen.")
       , ("search.nothing_item", "An {article_dat} {item} findest du nichts Besonderes.")
       , ("search.nothing_npc", "An {npc_article_dat} {npc} findest du nichts.")

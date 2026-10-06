@@ -1471,6 +1471,64 @@ interactions:
   in `effects:` notiert werden. Wiederverwendbare Werkzeuge (wie Kessel oder Kolben)
   bleiben erhalten, wenn kein `consume:` für sie deklariert ist.
 
+### Rezept-Alias: `craft <Ergebnis>` und `result:` (K11b)
+
+Mit `craft <Ergebnis>` können Spieler Rezepte direkt über ihr Zielprodukt ausführen,
+statt die einzelnen Zutaten manuell über `use X on Y` zu kombinieren.
+
+```yaml
+interactions:
+  item:
+    # 1. Paar-Rezept mit Ergebnis-Deklaration:
+    - item1: mana_leaf
+      item2: kettle
+      result: mana_potion
+      effects:
+        - consume: "{item1}"
+        - msg: "You brew the mana leaf in the bubbling kettle, producing a glowing mana potion!"
+
+    # 2. Multi-Zutaten-Rezept mit Ergebnis-Deklaration:
+    - id: sturmtrank_rezept
+      ingredients: [kessel, mana_feuer, mana_wasser]
+      result: sturmtrank
+      effects:
+        - consume: "{ingredient2}"
+        - consume: "{ingredient3}"
+        - msg: "Der Sturm tobt im Kessel."
+```
+
+- **Neues Feld `result: <itemid>`:**
+  Ein optionales Feld in `interactions.item` (sowohl für Paar- als auch Zutaten-Rezepte).
+  Gibt die ID des hergestellten Gegenstands an.
+- **Sichtbarkeitsregel für `craft`:**
+  Nur Rezepte mit gesetztem `result:` sind für den Befehl `craft` auffindbar.
+  Rezepte **ohne** `result:` bleiben für `craft` unsichtbar, funktionieren
+  jedoch weiterhin unverändert über `use X on Y`.
+- **Das Verb `craft`:**
+  Neues Engine-Verb `craft <Ziel>`. Es gibt bewusst keine Synonyme (`make`, `brew`),
+  um Autoren- und Vokabularhoheit zu wahren.
+- **Such- und Ausführungslogik (`craftRecipe`):**
+  1. Der Zielbegriff wird gegen Item-IDs, -Namen und -Keywords aufgelöst (lose Übereinstimmung).
+  2. Alle Rezepte mit passendem `result:` werden geprüft:
+     - **Paar-Rezept:** Beide Items (`item1` und `item2`) sind erreichbar (im Raum, getragen oder ausgerüstet) ->
+       Rezept-Effekte werden ausgeführt; Bindung von `{item1}` und `{item2}` erfolgt in der Reihenfolge
+       der Deklaration (`item1` = erstgenanntes Item, `item2` = zweitgenanntes Item).
+     - **Multi-Zutaten-Rezept:** Alle in `ingredients:` gelisteten Items sind erreichbar ->
+       Rezept-Effekte werden ausgeführt; Bindung von `{ingredient1..N}` erfolgt positional.
+  3. **Rezept bekannt, aber Zutat fehlt:** Sind die Zutaten nicht vollständig erreichbar,
+     wird die bestehende Meldung `use.not_carried` ("You need to be carrying '{item}' to use it.")
+     ausgegeben (keine stille Verweigerung und kein `craft.no_recipe`).
+  4. **Kein Rezept gefunden:** Existiert kein Rezept mit passendem `result:`, meldet die Engine
+     `craft.no_recipe` ("You don't know a recipe for {target}." / "Du kennst kein Rezept für {target}.").
+- **Automatischer Verbrauch (`consume`):**
+  `craft` führt die regulären Rezept-Outcomes aus — deklarierte `consume:`-Effekte
+  greifen automatisch. Wurde eine Zutat verbraucht, schlägt ein Folgeversuch mit der
+  Meldung über die fehlende Zutat fehl.
+- **Compiler-Validierung (`UnknownRecipeResult`):**
+  Der Worldbuilder prüft deklarierte `result:`-Werte statisch gegen alle bekannten Items
+  des Abenteuers. Verweist `result:` auf ein unbekanntes Item, wird die Warnung
+  `UnknownRecipeResult` erzeugt.
+
 **Reihenfolge von `use <item> on <npc>`:** Ohne passenden `npc:`-Eintrag greift
 weiter der **Angriffs-Fallback** — `use` auf eine lebende Figur ist ein
 Angriff. Ein Eintrag unterbricht das: die Effektliste laeuft, der Angriff
@@ -3373,5 +3431,6 @@ Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity =
 | `QuestNeverStarted` | Nichts startet diese Quest: kein `start_quest:`-Effekt, kein `on_complete:` darauf (auch nicht indirekt über eine Kette). | `start_quest:`-Effekt ergänzen, die Quest per `on_complete:` an eine erreichbare Vorquest hängen oder sie entfernen. |
 | `QuestNeverProgressed` | Die Quest lässt sich starten, wird aber nie fortgeschrieben — kein `advance_quest:`, kein `complete_quest:`. Stufe 0 bleibt für immer stehen, `reward:` und `on_complete:` feuern nie. | `advance_quest:`- oder `complete_quest:`-Effekt ergänzen (`advance_quest:` auf der letzten Stufe schließt die Quest ab) oder die Quest auf eine Stufe kürzen. |
 | `UnknownMsgKey` | Ein `messages:`-Schluessel ist kein Engine-Katalogschluessel — der Override bleibt wirkungslos. | Schluessel aus `docs/message-catalog.md` verwenden oder den Eintrag entfernen. |
+| `UnknownRecipeResult` | Ein Rezept deklariert ein `result:`, dessen Item-ID im Abenteuer nicht existiert. | Item in `items:` deklarieren oder Tippfehler im `result:`-Feld beheben. |
 
 
