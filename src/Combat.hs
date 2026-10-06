@@ -15,6 +15,8 @@ module Combat
     , resolveCombat
     , resolveCombatState
     , resolveCombatEv
+    , tacticalAbility
+    , tacticalAbilityIn
     , shipAbsorb
     , shipAbsorbEv
     , targetShipSystems
@@ -255,7 +257,14 @@ tacticalFlee tc target st =
             , [evMsg "combat.flee_denied" [("target", targetLabel target)]])
 
 tacticalAbility :: TacticalCombat -> CombatTarget -> String -> GameState -> ([Effect], [[OutputEvent]])
-tacticalAbility tc target abId st =
+tacticalAbility tc target abId st = tacticalAbilityIn tc target abId True st
+
+-- | K16a: `inCombat` kommt vom Aufrufer, NICHT aus dem Zustand — denn
+--   `combat.engaged` wird erst durch die Ausführung dieser Funktion gesetzt
+--   (`tacticalStateEffects`), also wäre `isCombatEngaged st` hier immer falsch,
+--   selbst im laufenden Kampf. Die Meldungsform muss daher der Aufrufer kennen.
+tacticalAbilityIn :: TacticalCombat -> CombatTarget -> String -> Bool -> GameState -> ([Effect], [[OutputEvent]])
+tacticalAbilityIn tc target abId inCombat st =
     case Map.lookup abId (abilities (world st)) of
         Nothing -> ([], [evMsg "combat.ability_unknown" [("id", abId)]])
         Just pa ->
@@ -282,9 +291,16 @@ tacticalAbility tc target abId st =
                                if paCooldown pa > 0
                                then [ ApplyCondition ("cooldown_" ++ abId) (paCooldown pa) Nothing Nothing False ]
                                else []
-                       in ( tacticalStateEffects tc target round' "ability" abilityMark st
-                              ++ costEffects ++ cooldownEffects ++ paEffects pa
-                          , [evMsg "combat.ability_use" [("round", show round'), ("ability", paName pa)]])
+                           stateEffects =
+                               if inCombat
+                               then tacticalStateEffects tc target round' "ability" abilityMark st
+                               else []
+                       in ( stateEffects ++ costEffects ++ cooldownEffects ++ paEffects pa
+                          , if inCombat
+                            then [evMsg "combat.ability_use"
+                                     [("round", show round'), ("ability", paName pa)]]
+                            else [evMsg "ability.use"
+                                     [("ability", paName pa)]])
 
 -- | Tactical: one player action per round, enemy reacts via `on: turn`.
 --   The resolver:

@@ -1,4 +1,4 @@
--- | Generated from lang/de.json (sha256: 0902d96fd91074dc88da56e9912918428c1d17c9cab7c85d84e1d7b853cf2f72) by scripts/gen-lang-pack.py.
+-- | Generated from lang/de.json (sha256: 4f4a14a3c7ed92c23dbec32846822d1efc0c3a43197ffa97d9b905fc36b0708d) by scripts/gen-lang-pack.py.
 --   DO NOT EDIT by hand - rerun the generator after changing the JSON.
 --
 --   Language-pack data (Phase 4.3): message templates keyed like the
@@ -150,6 +150,7 @@ langDe =
       , ("combat.ability_cooldown", "Die Fähigkeit lädt noch auf.")
       , ("combat.not_enough_resources", "Nicht genug Ressourcen.")
       , ("combat.ability_use", "Runde {round}: Du benutzt {ability}!")
+      , ("ability.use", "Du benutzt {ability}!")
       , ("combat.attack_kill", "Runde {round}: Du greifst {target} an und tötest es!")
       , ("combat.attack_hit", "Runde {round}: Du triffst {target} für {dmg}.")
       , ("combat.ship_destroyed", "{target} ist bereits zerstört.")

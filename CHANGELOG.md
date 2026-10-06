@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Fähigkeiten außerhalb des Kampfes auslösen (K16a)
+
+- **Die Regel:** *Eine Fähigkeit braucht einen Kampf nur, wenn ihr Effekt einen Kampf braucht.* Nicht die Fähigkeit selbst.
+- **Ehrliche Dokumentation — Echte Verhaltensänderung:**
+  - Bisher war `use-ability <id>` in `interactNotFound` an `CombatTactical _ <- combatProfile (world state)` gekoppelt. Ein Abenteuer mit `profile: classic` oder `narrative` konnte Fähigkeiten überhaupt nicht auslösen.
+  - Ab K16a ist `use-ability` ein allgemeiner Weltbefehl: Fähigkeiten können außerhalb des Kampfes sowie in allen Profilen (`tactical`, `classic`, `narrative`, `off`) ausgelöst werden.
+- **Die stille Kante (Item-Präemption):**
+  - `use-ability <id>` greift vor der allgemeinen Item-Auflösung in `dispatchCommandEv`. Wenn ein Item `sturm` und eine Fähigkeit `sturm` existieren, greift die Fähigkeit und das Item wird nicht fälschlich angesprochen.
+- **Außerhalb des Kampfes:**
+  - `tacticalStateEffects` entfällt, wenn kein Kampf läuft (`not (isCombatEngaged st)`): `combat.round`, `combat.engaged` und `combat.action` werden **nicht** gesetzt.
+  - `cost_var`, `cost`, `cooldown` und `effects:` (inklusive `{consume: ...}`) laufen unverändert.
+  - Im taktischen Kampf bleibt das Verhalten 100% unverändert (Regressionstest).
+- **Gemessener Byte-Vertrag:**
+  - `use-ability` kommt repo-weit in genau einer Datei vor (`examples/modules/combat-tactical.yaml`), die von keinem Abenteuer eingebunden wird (0 Treffer).
+  - 0 Abweichungen über alle 70 Abenteuer und Fixtures gegen b7ea257.
+- **Tests & Qualität:**
+  - 4 neue Engine-Tests: Auslösung außerhalb des Kampfes, Item-Präemption (Stille Kante), Cooldown-Gating außerhalb des Kampfes, taktischer Kampf Regressionstest.
+  - Engine-Tests: 513 (vorher 509). CI grün, 0 Warnungen.
+
 ### Multi-Zutaten-Rezepte: ingredients: in interactions.item (K11c)
 
 - **Unabhängiger Byte-Nachweis:** Von **134** Artefakten (67 Abenteuer und

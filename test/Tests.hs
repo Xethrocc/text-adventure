@@ -7008,6 +7008,114 @@ testAbilityCooldown = do
 
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11)
 
+-- | Phase K16a: Player ability triggered outside of combat.
+--   Deducts cost_var, sets cooldown condition, executes effects,
+--   and crucially does NOT set combat.round, combat.engaged, or combat.action.
+testAbilityOutsideCombat :: IO Bool
+testAbilityOutsideCombat = do
+    let heal = PlayerAbility "heal" "Heal" "player.mana" 10 2
+            [ ModifyValue (VRVariable "player.hp") 15
+            , SetValue (VRVariable "heal_invoked") (EVInt 1) ]
+        worldT = (world initSampleGame)
+            { combatProfile = CombatClassic Nothing
+            , abilities = Map.singleton "heal" heal }
+        stBase = initSampleGame { world = worldT, save = (save initSampleGame) { currentRoom = "armory" } }
+        st0 = setVariable "player.mana" (VVInt 20) stBase
+
+    -- Initial state: no combat running
+    r0 <- expectEqual False (isCombatEngaged st0)
+
+    -- Trigger ability outside of combat
+    let (st1, msg1) = executeCommand (Interact (VCustom "use-ability") "heal") st0
+
+    r1 <- expectTrue "message names ability" (isInfixOf "You use Heal!" msg1)
+    r2 <- expectEqual (Just (VVInt 10)) (getVariable "player.mana" st1)
+    r3 <- expectEqual (Just (VVInt 1)) (getVariable "heal_invoked" st1)
+    r4 <- expectTrue "cooldown condition applied" (hasCondition "cooldown_heal" st1)
+    r5 <- expectEqual Nothing (getVariable combatRoundKey st1)
+    r6 <- expectEqual Nothing (getVariable combatEngagedKey st1)
+    r7 <- expectEqual Nothing (getVariable combatActionKey st1)
+    r8 <- expectEqual False (isCombatEngaged st1)
+
+    pure (r0 && r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- | Phase K16a (The Silent Edge): `use-ability <id>` must win over an item with the same name.
+--   When an item "sturm" exists in the room/inventory and an ability "sturm" exists,
+--   the ability must be executed rather than the item.
+testAbilityPreemptsItem :: IO Bool
+testAbilityPreemptsItem = do
+    let itemSturm = invItem "sturm"
+        abSturm = PlayerAbility "sturm" "Sturm" "player.mana" 5 1
+            [ SetValue (VRVariable "sturm_effect_ran") (EVInt 1) ]
+        worldT = (world initSampleGame)
+            { abilities = Map.singleton "sturm" abSturm
+            , itemDefs = Map.insert "sturm" itemSturm (itemDefs (world initSampleGame)) }
+        stBase = initSampleGame
+            { world = worldT
+            , save = (save initSampleGame)
+                { currentRoom = "armory"
+                , itemStates = Map.insert "sturm"
+                    (ItemState (CarriedBy ActorPlayer) "intact" Map.empty True)
+                    (itemStates (save initSampleGame)) } }
+        st0 = setVariable "player.mana" (VVInt 10) stBase
+
+    -- Player carries the item "sturm" and triggers ability "sturm"
+    let (st1, msg1) = executeCommand (Interact (VCustom "use-ability") "sturm") st0
+
+    r1 <- expectTrue "ability used, not item" (isInfixOf "You use Sturm!" msg1)
+    r2 <- expectTrue "does not refuse item interaction" (not (isInfixOf "can't do that" msg1))
+    r3 <- expectEqual (Just (VVInt 5)) (getVariable "player.mana" st1)
+    r4 <- expectEqual (Just (VVInt 1)) (getVariable "sturm_effect_ran" st1)
+
+    pure (r1 && r2 && r3 && r4)
+
+-- | Phase K16a: Ability cooldown gates second use outside of combat as well.
+testAbilityCooldownOutsideCombat :: IO Bool
+testAbilityCooldownOutsideCombat = do
+    let blast = PlayerAbility "blast" "Arcane Blast" "player.mana" 5 3
+            [ SetValue (VRVariable "blast_hits") (EVInt 1) ]
+        worldT = (world initSampleGame)
+            { abilities = Map.singleton "blast" blast }
+        stBase = initSampleGame { world = worldT, save = (save initSampleGame) { currentRoom = "armory" } }
+        st0 = setVariable "player.mana" (VVInt 20) stBase
+
+    -- First use: succeeds
+    let (st1, msg1) = executeCommand (Interact (VCustom "use-ability") "blast") st0
+    r1 <- expectTrue "first use succeeds" (isInfixOf "You use Arcane Blast!" msg1)
+    r2 <- expectEqual (Just (VVInt 15)) (getVariable "player.mana" st1)
+    r3 <- expectTrue "cooldown condition active" (hasCondition "cooldown_blast" st1)
+
+    -- Immediate second use: blocked by cooldown
+    let (st2, msg2) = executeCommand (Interact (VCustom "use-ability") "blast") st1
+    r4 <- expectTrue "blocked by cooldown" (isInfixOf "Ability is on cooldown" msg2)
+    r5 <- expectEqual (Just (VVInt 15)) (getVariable "player.mana" st2)
+    r6 <- expectEqual Nothing (getVariable combatRoundKey st2)
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | Phase K16a: In tactical combat, abilities behave unchanged (regression test).
+testAbilityTacticalCombatRegression :: IO Bool
+testAbilityTacticalCombatRegression = do
+    let fireball = PlayerAbility "fireball" "Fireball" "player.mana" 10 0
+            [ModifyValue (VRActorProp (ActorNPC "goblin") PHealth) (-15)]
+        tactical = CombatTactical (TacticalCombat PlayerFirst True 100 "speed")
+        worldT = (world initSampleGame)
+            { combatProfile = tactical
+            , abilities = Map.singleton "fireball" fireball }
+        stBase = initSampleGame { world = worldT, save = (save initSampleGame) { currentRoom = "hallway" } }
+        stEngaged = setCombatEngaged True (setVariable "player.mana" (VVInt 20) stBase)
+
+    let (st1, msg1) = executeCommand (Interact (VCustom "use-ability") "fireball") stEngaged
+    r1 <- expectTrue "success message names ability" (isInfixOf "You use Fireball!" msg1)
+    r2 <- expectEqual (Just (VVInt 10)) (getVariable "player.mana" st1)
+    r3 <- expectEqual 1 (combatRound st1)
+    r4 <- expectEqual (Just (VVText "ability")) (getVariable combatActionKey st1)
+    r5 <- expectEqual (Just (VVText "fireball")) (getVariable combatAbilityKey st1)
+    let goblinHp = (Map.lookup "goblin" (npcStates (save st1))) >>= npcHealth
+    r6 <- expectEqual (Just 15) goblinHp
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
 -- | Phase 7f-3 A3: BySpeed initiative populating VarMap
 testBySpeedInitiative :: IO Bool
 testBySpeedInitiative = do
@@ -10963,6 +11071,10 @@ main = do
         , runTest "tactical profile JSON round-trip (7f-3 A2)" testCombatTacticalRoundTrip
         , runTest "tactical abilities resource cost (7f-3 A3)" testAbilityCost
         , runTest "tactical abilities cooldown gating (7f-3 A3)" testAbilityCooldown
+        , runTest "player ability outside combat (K16a)" testAbilityOutsideCombat
+        , runTest "player ability preempts same-named item (K16a)" testAbilityPreemptsItem
+        , runTest "player ability cooldown outside combat (K16a)" testAbilityCooldownOutsideCombat
+        , runTest "player ability tactical combat regression (K16a)" testAbilityTacticalCombatRegression
         , runTest "tactical BySpeed initiative (7f-3 A3)" testBySpeedInitiative
         -- Phase 7f-3 / 7h-2 V1: ValueRef ADT & Legacy JSON
         , runTest "ValueRef JSON round-trip (V1)" testValueRefRoundTrip

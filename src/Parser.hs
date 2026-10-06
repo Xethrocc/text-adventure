@@ -61,7 +61,7 @@ import Vehicles
 import Effects
 import Quests
 import Cards
-import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombatEv, targetShipSystems)
+import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombatEv, targetShipSystems, tacticalAbilityIn)
 import Control.Applicative ((<|>))
 import Data.Char (toLower, isDigit)
 import Data.List (find, intercalate, nub, foldl', dropWhileEnd, isPrefixOf, isSuffixOf)
@@ -1243,9 +1243,13 @@ dispatchCommandEv (PutInCmd x y) state =
                         , evMsg "container.put"
                             ([ ("item", x), ("name", containerName cid state) ] ++ grammarArgs False "item" (grammarOfItem iId state) ++ grammarArgs True "name" (grammarOfItem cid state)) )
 
-dispatchCommandEv (Interact verb targetStr) state =
-    let stateWithVars = bindCommandVars (Interact verb targetStr) state
-    in case resolveInteractTarget verb targetStr stateWithVars of
+dispatchCommandEv (Interact verb targetStr) state
+    | not (null targetStr), VCustom vn <- verb
+    , vn `elem` ["use-ability", "ability"]
+    = executeTacticalAction (CAAbility targetStr) (bindCommandVars (Interact verb targetStr) state)
+    | otherwise =
+        let stateWithVars = bindCommandVars (Interact verb targetStr) state
+        in case resolveInteractTarget verb targetStr stateWithVars of
         ITItem item mSt
             | isDarkRestricted verb
             , Just room <- getCurrentRoom stateWithVars
@@ -1795,10 +1799,9 @@ interactBare verb state
 -- | Fallback interaction when target was not found.
 interactNotFound :: Verb -> String -> GameState -> (GameState, [OutputEvent])
 interactNotFound verb targetStr state
-    -- Phase 7f-3, A3: `use-ability <id>` during a tactical fight
+    -- Phase 7f-3, A3 / K16a: `use-ability <id>`
     | not (null targetStr), VCustom vn <- verb
     , vn `elem` ["use-ability", "ability"]
-    , CombatTactical _ <- combatProfile (world state)
     = executeTacticalAction (CAAbility targetStr) state
     | hasOnCommandTrigger verb state = (state, [])
     | verb == VAttack, Just res <- tryAttackVehicle targetStr state = res
@@ -2238,7 +2241,28 @@ tacticalVerbAction _        = Nothing
 --   room (the same heuristic as `attack <target>`), or against a ship at
 --   the current stop. Used for bare verbs like `defend` and `flee` that
 --   have no explicit target.
+--   Phase K16a: outside of combat, abilities run through tacticalAbility
+--   directly without requiring an NPC or tactical profile.
 executeTacticalAction :: CombatAction -> GameState -> (GameState, [OutputEvent])
+executeTacticalAction (CAAbility abId) state
+    | not (isCombatEngaged state)
+    , null [ npc | npc <- getNPCsInRoom (currentRoom (save state)) state
+                 , let ns = Map.lookup (npcId npc) (npcStates (save state))
+                 , maybe True (\s -> npcStatus s /= "dead") ns ]
+      -- K16a: Weltfall NUR wenn kein lebender NPC im Raum steht. Ein Kampf
+      -- beginnt nicht erst mit `attack` — `use-ability` gegen einen Anwesenden
+      -- ist eine Kampf-Action, auch wenn `combat.engaged` noch nicht gesetzt ist.
+      -- Die Bedingung war vorher `not (isCombatEngaged state)` allein, was
+      -- `use-ability` im laufenden Kampf in den Weltfall schickte.
+    =
+        let dummyTc = case combatProfile (world state) of
+                CombatTactical tc -> tc
+                _                 -> TacticalCombat PlayerFirst False 0 ""
+            dummyTarget = TargetNPC "" ""
+            (effects, msgs) = tacticalAbilityIn dummyTc dummyTarget abId False state
+            (st', effectMsg) = applyOutcomes effects "" state
+            body = combineMsgsEv (msgs ++ [effectMsg])
+        in if null (renderEvents body) then (st', []) else (st', body)
 executeTacticalAction action state =
     let roomNPCs = getNPCsInRoom (currentRoom (save state)) state
         livingNPCs = [ npc | npc <- roomNPCs

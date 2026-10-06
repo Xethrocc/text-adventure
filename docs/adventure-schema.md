@@ -1783,9 +1783,10 @@ an Bord eines Schiffs mit Systemen `ShipActor <ship>` (Module 7h).
 
 ---
 
-## Abilities: Spieler-Fähigkeiten (Phase 7f-3)
+## Abilities: Spieler-Fähigkeiten (Phase 7f-3 / K16a)
 
-Im taktischen Kampf (`profile: tactical`) kann der Spieler spezielle Fähigkeiten einsetzen:
+Fähigkeiten (`abilities:`) sind ein allgemeiner Weltbefehl, kein reines Kampf-Feature:
+*Ein Effekt braucht einen Kampf, nicht die Fähigkeit.*
 
 ```yaml
 abilities:
@@ -1794,15 +1795,17 @@ abilities:
     cost_var: stamina         # Ressourcen-Variable in der VarMap
     cost: 15                  # Benötigte Mindestmenge
     cooldown: 2               # Runden Abklingzeit
-    effect:
+    effects:
       - { damage_npc: { npc: gladiator, amount: 20 } }
       - { msg: "Dein wuchtiger Hieb trifft den Champion!" }
 ```
 
-In-game Aufruf: `use-ability power_strike` oder `ability power_strike`. Bei
-Erfolg wird `cost` von `cost_var` abgezogen, der Cooldown gesetzt und die
-Effektliste ausgeführt. Fehlen Ressourcen oder ist der Cooldown aktiv, wird die
-Aktion abgelehnt.
+In-game Aufruf: `use-ability <id>` oder `ability <id>` (auch `use ability <id>`).
+
+**Verhaltensänderung (K16a):**
+- **Weltweit & profilunabhängig:** Vorher war `use-ability` an `profile: tactical` gebunden und funktionierte in `classic`- oder `narrative`-Welten gar nicht. Nun kann `use-ability` auch außerhalb des Kampfes und in jedem Profil (`classic`, `narrative`, `tactical`) ausgelöst werden.
+- **Außerhalb des Kampfes:** `cost_var`, `cost`, `cooldown` und `effects:` laufen unverändert ab (inklusive `{consume: ...}`). Es werden jedoch **keine** Kampfvariablen gesetzt (`combat.round`, `combat.engaged` und `combat.action` entfallen).
+- **Vorrang vor Items:** `use-ability` greift vor der Item-Auflösung. Existiert ein Item und eine Fähigkeit mit gleichem Namen, gewinnt stets die Fähigkeit.
 
 Der Cooldown wird als **Condition** `cooldown_<abilityId>` geführt (also
 `cooldown_power_strike`, mit `cooldown:` als Turn-Zahl). Das Präfix `cooldown_`

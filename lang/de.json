@@ -135,6 +135,7 @@
     "combat.ability_cooldown": "Die Fähigkeit lädt noch auf.",
     "combat.not_enough_resources": "Nicht genug Ressourcen.",
     "combat.ability_use": "Runde {round}: Du benutzt {ability}!",
+    "ability.use": "Du benutzt {ability}!",
     "combat.attack_kill": "Runde {round}: Du greifst {target} an und tötest es!",
     "combat.attack_hit": "Runde {round}: Du triffst {target} für {dmg}.",
     "combat.ship_destroyed": "{target} ist bereits zerstört.",

@@ -333,6 +333,7 @@ catalogEntries =
     , ("combat.ability_cooldown", "Ability is on cooldown.")
     , ("combat.not_enough_resources", "Not enough resources.")
     , ("combat.ability_use",     "Round {round}: You use {ability}!")
+    , ("ability.use",            "You use {ability}!")
     , ("combat.attack_kill",     "Round {round}: You attack the {target} and kill it!")
     , ("combat.attack_hit",      "Round {round}: You hit the {target} for {dmg}.")
     , ("combat.ship_destroyed",  "The {target} is already destroyed.")
