@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Fähigkeiten im klassischen und narrativen Kampf (K16b)
+
+- **Fähigkeiten in allen Kampfprofilen:**
+  - Nach der Freischaltung außerhalb des Kampfes (K16a) sind Fähigkeiten (`use-ability <id>`) nun in `classic` und `narrative` vollwertig integriert.
+  - Verwendet die generische Kosten-/Cooldown-/Effektlogik `tacticalAbilityIn` ohne Duplizierung.
+- **Entscheidung 1 — Classic (Rundenverbrauch & Rache-Schlag):**
+  - Eine Fähigkeit verbraucht konsistent eine Kampfrunde (`combat.round` inkrementiert, Meldung `combat.ability_use`: `"Round {round}: You use {ability}!"`).
+  - Der Gegner kontert mit demselben regulären Rache-Schlag wie bei `CAAttack`. Nur der Spieler-Aktionsblock wird ersetzt; Ally-, Ship- und Retaliation-Logik bleiben geteilt und identisch.
+  - *Begründung:* Ohne Rundenverbrauch wäre eine Fähigkeit im klassischen Kampf ein Cheat (beliebig viele Fähigkeiten vor dem Gegnerschlag).
+- **Entscheidung 2 — Narrative (Vorbereitung & Wurf):**
+  - Der narrative Kampf hat keine Runden (`combat.round` wird **nicht** gesetzt, Meldung `ability.use`: `"You use {ability}!"` ohne Round-Präfix).
+  - Die Fähigkeit läuft als **Vorbereitung** vor dem Wurf ab (`tacticalAbilityIn` mit `inCombat=False`). Danach erfolgt der reguläre vergleichende Wurf (`effectiveAttack >= defense + difficulty`).
+  - Wenn die Fähigkeit Boni auf `player.attack` / `bonus.attack` gewährt, zählt der Bonus direkt für die Sieg-/Niederlage-Entscheidung.
+  - *Begründung:* Der narrative Kampf hat keine Rundenstruktur; Vorbereitung ist die einzig konsistente Semantik.
+- **Gating & Fehlerbehandlung:**
+  - Schlägt eine Fähigkeit fehl (unbekannte ID, Cooldown aktiv, unzureichende Ressourcen), wird die Aktion abgebrochen: keine Runde wird verbraucht, kein Rache-Schlag erfolgt und im narrativen Kampf wird kein Wurf ausgelöst.
+- **Byte-Vertrag gemessen:**
+  - 134/134 Artefakte über alle 67 Abenteuer und Fixtures byte-identisch gegen `cdf9636`.
+- **Tests & Qualität:**
+  - 2 neue Engine-Tests in `test/Tests.hs`: Classic-Rundenverbrauch mit Rache-Schlag-Vergleich gegen `CAAttack`, Narrative-Vorbereitung mit Bonus-Auswirkung und Ausschluss von `combat.round`.
+  - Regressionstests: Taktischer Kampf (`combat-tactical.in`) unverändert mit `"Round 1: You use Mächtiger Hieb!"`, K16a-Weltfall unverändert.
+  - Engine-Tests: 515 (vorher 513). CI grün, 0 Compiler-Warnungen.
+
 ### Fähigkeiten außerhalb des Kampfes auslösen (K16a)
 
 - **Die Regel:** *Eine Fähigkeit braucht einen Kampf nur, wenn ihr Effekt einen Kampf braucht.* Nicht die Fähigkeit selbst.

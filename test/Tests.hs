@@ -10858,6 +10858,9 @@ main = do
         , runTest "P0-2 death event message survives (player kill)" testCombatDeathMessagePlayerKill
         , runTest "P0-2 death event message survives trailing effect" testCombatDeathMessageAfterTrailingEffect
         , runTest "P0-2 death event message survives with ship" testCombatDeathMessageWithShip
+        -- K16b: Fähigkeiten im klassischen und narrativen Kampf
+        , runTest "K16b.1 classic: ability runs effects, consumes round, NPC strikes back" testCombatClassicAbility
+        , runTest "K16b.2 narrative: ability as preparation, then throw, bonus counts" testCombatNarrativeAbility
         -- Phase 7h: ship systems
         , runTest "ship fires its weapons and spends power" testShipFiresAndSpendsPower
         , runTest "ship without power does not fire" testShipWithoutPowerDoesNotFire
@@ -11344,3 +11347,77 @@ main = do
         , runTest "world item is finite by default; status does not empty it (K15.1)" testItemDepletedAfterTake
         ]
     when (not (and results)) exitFailure
+
+-- | K16b.1: Classic — CAAbility runs ability effects, consumes the round,
+--   and the NPC strikes back (same Rache-Schlag as CAAttack).
+testCombatClassicAbility :: IO Bool
+testCombatClassicAbility = do
+    let target = TargetNPC "goblin" "goblin"
+        st0 = initSampleGame
+        ability = PlayerAbility "feuerschlag" "Feuerschlag" "player.stamina" 8 2
+            [ ModifyValue (VRActorProp (ActorNPC "goblin") PHealth) (-12) ]
+        st0' = st0 { world = (world st0) { abilities = Map.insert "feuerschlag" ability (abilities (world st0)) }
+                   , save = (save st0) { variables = Map.insert "player.stamina" (VVInt 20) (variables (save st0)) }
+                   }
+        (effs, msgs) = resolveCombat (CombatClassic Nothing) [PlayerActor] target (CAAbility "feuerschlag") st0'
+        (effsAttack, _) = resolveCombat (CombatClassic Nothing) [PlayerActor] target CAAttack st0'
+        goblinDmg e = case e of ModifyValue (VRActorProp (ActorNPC "goblin") PHealth) d -> d; _ -> 0
+        playerDmg e = case e of ModifyValue VRPlayerHealth d -> d; _ -> 0
+        isSetRound e = case e of SetValue (VRVariable k) (EVInt _) -> k == combatRoundKey; _ -> False
+    r1 <- expectTrue "CAAbility: ability effect runs (goblin takes damage)"
+              (any ((< 0) . goblinDmg) effs)
+    r2 <- expectTrue "CAAbility: NPC strikes back (player takes damage)"
+              (any ((< 0) . playerDmg) effs)
+    r3 <- expectTrue "CAAbility: NPC strikes back same as CAAttack"
+              (filter ((< 0) . playerDmg) effs == filter ((< 0) . playerDmg) effsAttack)
+    r4 <- expectTrue "CAAbility: combat.ability_use message shown"
+              (any (\m -> "Runde" `isInfixOf` m || "Round" `isInfixOf` m) msgs)
+    r5 <- expectTrue "CAAbility: round is consumed (combat.round is set)"
+              (any isSetRound effs)
+    -- Failure case: not enough stamina -> no round consumed, no retaliation
+    let stNoStamina = st0' { save = (save st0') { variables = Map.insert "player.stamina" (VVInt 2) (variables (save st0')) } }
+        (effsFail, msgsFail) = resolveCombat (CombatClassic Nothing) [PlayerActor] target (CAAbility "feuerschlag") stNoStamina
+    r6 <- expectTrue "CAAbility fail: no effects executed"
+              (null effsFail)
+    r7 <- expectTrue "CAAbility fail: error message shown"
+              (any (\m -> "Not enough resources" `isInfixOf` m || "Ressourcen" `isInfixOf` m) msgsFail)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | K16b.2: Narrative — CAAbility runs effects first (Vorbereitung),
+--   then the throw. If the ability raises player.attack, the bonus counts.
+--   combat.round is NOT set in Narrative combat.
+testCombatNarrativeAbility :: IO Bool
+testCombatNarrativeAbility = do
+    let target = TargetNPC "goblin" "goblin"
+        st0 = initSampleGame
+        ability = PlayerAbility "segnen" "Segnen" "" 0 0
+            [ ModifyValue (VRVariable "bonus.attack") 5 ]
+        st0' = st0 { world = (world st0) { abilities = Map.insert "segnen" ability (abilities (world st0)) }
+                   , save = (save st0) { variables = Map.insert "bonus.attack" (VVInt 0) (variables (save st0)) }
+                   }
+        -- Without ability: should lose
+        (_, msgsLose) = resolveCombat (CombatNarrative (NarrativeCombat 9 noopEffect noopEffect)) [PlayerActor] target CAAttack st0'
+        -- With ability: should win (bonus.attack 10+5=15 >= defense 2+diff 9=11)
+        (effs, msgs) = resolveCombat (CombatNarrative (NarrativeCombat 9 noopEffect noopEffect)) [PlayerActor] target (CAAbility "segnen") st0'
+        isSetRound e = case e of SetValue (VRVariable k) (EVInt _) -> k == combatRoundKey; _ -> False
+    r1 <- expectTrue "narrative without ability: player loses"
+              (any ("lose" `isInfixOf`) msgsLose)
+    r2 <- expectTrue "narrative with ability: player wins"
+              (any ("win" `isInfixOf`) msgs)
+    r3 <- expectTrue "narrative with ability: ability effects run"
+              (any isModifyPlayerAttack effs)
+    r4 <- expectTrue "narrative with ability: combat.win, not combat.lose"
+              (any ("win" `isInfixOf`) msgs && not (any ("lose" `isInfixOf`) msgs))
+    r5 <- expectTrue "narrative with ability: combat.round is NOT set"
+              (not (any isSetRound effs))
+    r6 <- expectTrue "narrative with ability: ability.use without Round shown"
+              (any (\m -> ("use Segnen" `isInfixOf` m || "benutzt Segnen" `isInfixOf` m) && not ("Round" `isInfixOf` m || "Runde" `isInfixOf` m)) msgs)
+    -- Failure case: unknown ability does not trigger narrative throw
+    let (_, msgsUnknown) = resolveCombat (CombatNarrative (NarrativeCombat 9 noopEffect noopEffect)) [PlayerActor] target (CAAbility "unknown_spell") st0'
+    r7 <- expectTrue "narrative unknown ability: no win or lose"
+              (not (any (\m -> "win" `isInfixOf` m || "lose" `isInfixOf` m) msgsUnknown))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+  where
+    isModifyPlayerAttack e = case e of
+        ModifyValue (VRVariable "bonus.attack") d -> d > 0
+        _ -> False

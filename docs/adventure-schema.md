@@ -1802,9 +1802,20 @@ abilities:
 
 In-game Aufruf: `use-ability <id>` oder `ability <id>` (auch `use ability <id>`).
 
-**Verhaltensänderung (K16a):**
-- **Weltweit & profilunabhängig:** Vorher war `use-ability` an `profile: tactical` gebunden und funktionierte in `classic`- oder `narrative`-Welten gar nicht. Nun kann `use-ability` auch außerhalb des Kampfes und in jedem Profil (`classic`, `narrative`, `tactical`) ausgelöst werden.
-- **Außerhalb des Kampfes:** `cost_var`, `cost`, `cooldown` und `effects:` laufen unverändert ab (inklusive `{consume: ...}`). Es werden jedoch **keine** Kampfvariablen gesetzt (`combat.round`, `combat.engaged` und `combat.action` entfallen).
+**Verhaltensänderung (K16a / K16b):**
+- **Weltweit & profilunabhängig (K16a):** Vorher war `use-ability` an `profile: tactical` gebunden und funktionierte in `classic`- oder `narrative`-Welten gar nicht. Nun kann `use-ability` auch außerhalb des Kampfes und in jedem Profil (`classic`, `narrative`, `tactical`) ausgelöst werden.
+- **Außerhalb des Kampfes (K16a):** `cost_var`, `cost`, `cooldown` und `effects:` laufen unverändert ab (inklusive `{consume: ...}`). Es werden jedoch **keine** Kampfvariablen gesetzt (`combat.round`, `combat.engaged` und `combat.action` entfallen).
+- **Im klassischen und narrativen Kampf (K16b):** Fähigkeiten können in allen Kampfprofilen eingesetzt werden, angepasst an deren jeweilige Struktur:
+
+### Kampf-Semantik von Fähigkeiten pro Profil (K16b)
+
+| Profil | Struktur | Semantik von `use-ability` | Meldung | Begründung |
+|---|---|---|---|---|
+| **Off** | Angriff verweigert | Welt-Fähigkeit (K16a) | `You use {ability}!` | Kein Kampf aktiv; Angriffe werden verweigert, Fähigkeiten wirken wie in der Welt. |
+| **Narrative** | Ein vergleichender Wurf | **Vorbereitung**, danach Wurf | `You use {ability}!` | Der narrative Kampf hat keine Runden. Die Fähigkeit läuft als Vorbereitung vor dem Wurf ab; Boni (z. B. auf `bonus.attack`) zählen direkt für den anschließenden Wurf. `combat.round` wird nicht gesetzt. |
+| **Classic** | Mehrründiger Schlagabtausch | **Aktion (1 Runde)**, Gegner kontert | `Round {round}: You use {ability}!` | Eine Fähigkeit verbraucht eine volle Runde; der Gegner führt seinen regulären Rache-Schlag aus. Ohne Rundenverbrauch wäre das Auslösen ein Cheat (beliebig viele Fähigkeiten vor dem Gegnerschlag). |
+| **Tactical** | Rundenbasiert (`on: turn`) | **Aktion (1 Runde)**, Gegner reagiert | `Round {round}: You use {ability}!` | Spieler-Aktion: setzt `combat.round`, `combat.action: ability`, Gegner reagiert über `on: turn`-Trigger. |
+
 - **Vorrang vor Items:** `use-ability` greift vor der Item-Auflösung. Existiert ein Item und eine Fähigkeit mit gleichem Namen, gewinnt stets die Fähigkeit.
 
 Der Cooldown wird als **Condition** `cooldown_<abilityId>` geführt (also
