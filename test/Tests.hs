@@ -7396,6 +7396,7 @@ testValueRefRoundTrip = do
             , VRActorProp (ActorEntity "gate") PState
             , VRActorProp (ActorShip "kestrel") PHealth
             , VRPlayerHealth
+            , VRStandingName "empire"
             ]
         check v = Aeson.decode (Aeson.encode v) == Just v
     expectTrue "all ValueRef constructors round-trip cleanly via JSON" (all check samples)
@@ -11591,6 +11592,12 @@ main = do
         , runTest "container without repeatable disappears after take (K15.1)" testContainerFiniteWithoutRepeatable
         , runTest "item missing from itemStates defaults to visible (K15.1)" testItemMissingFromItemStatesDefaultsToVisible
         , runTest "world item is finite by default; status does not empty it (K15.1)" testItemDepletedAfterTake
+        -- G9a: standing_name Faction Level Evaluation
+        , runTest "standing_name returns current level name (G9a)" testStandingNameCurrentLevel
+        , runTest "standing_name threshold boundary: 50 -> 50, 49 -> 0 (G9a)" testStandingNameThresholdBoundary
+        , runTest "standing_name faction with no levels returns empty string (G9a)" testStandingNameNoLevels
+        , runTest "standing_name unknown faction returns empty string (G9a)" testStandingNameUnknownFaction
+        , runTest "standing_name unknown typo returns empty string, no error or lockup (G9a)" testStandingNameNegativeUnknown
         ]
     when (not (and results)) exitFailure
 
@@ -11667,3 +11674,113 @@ testCombatNarrativeAbility = do
     isModifyPlayerAttack e = case e of
         ModifyValue (VRVariable "bonus.attack") d -> d > 0
         _ -> False
+
+-- ---------------------------------------------------------------------------
+-- Phase G9a: standing_name (Faktions-Stufen)
+-- ---------------------------------------------------------------------------
+
+-- | Phase G9a: standing_name shows current level name.
+testStandingNameCurrentLevel :: IO Bool
+testStandingNameCurrentLevel = do
+    let empireLevels =
+            [ FactionLevel (-50) "feindlich"
+            , FactionLevel 0     "neutral"
+            , FactionLevel 50    "freundlich"
+            ]
+        facWorld = (world initSampleGame)
+            { factions = Map.singleton "empire" empireLevels }
+        st = setVariable "faction.empire" (VVInt 50) (initSampleGame { world = facWorld })
+    -- Direct lookup
+    r1 <- expectEqual "freundlich" (lookupStandingName "empire" st)
+    -- Placeholder format: standing_name: empire
+    let msg1 = formatWithVars "Ruf: {standing_name: empire}" st
+    r2 <- expectEqual "Ruf: freundlich" msg1
+    -- Placeholder format: standing_name.empire
+    let msg2 = formatWithVars "Ruf: {standing_name.empire}" st
+    r3 <- expectEqual "Ruf: freundlich" msg2
+    -- VRStandingName ValueRef resolution
+    r4 <- expectEqual 0 (resolveValueRef (VRStandingName "empire") st)
+    pure (and [r1, r2, r3, r4])
+
+-- | Phase G9a: Grenzwert — threshold boundary.
+--   at = 50 -> "freundlich" (level at 50)
+--   at = 49 -> "neutral" (level at 0)
+--   Tests >= vs > boundary logic and extreme values.
+testStandingNameThresholdBoundary :: IO Bool
+testStandingNameThresholdBoundary = do
+    let empireLevels =
+            [ FactionLevel (-50) "feindlich"
+            , FactionLevel 0     "neutral"
+            , FactionLevel 50    "freundlich"
+            ]
+        facWorld = (world initSampleGame)
+            { factions = Map.singleton "empire" empireLevels }
+        mkSt val = setVariable "faction.empire" (VVInt val) (initSampleGame { world = facWorld })
+
+    -- Exactly on upper threshold at=50 -> "freundlich"
+    r1 <- expectEqual "freundlich" (lookupStandingName "empire" (mkSt 50))
+    -- Just below upper threshold at=49 -> "neutral" (the at=0 level)
+    r2 <- expectEqual "neutral" (lookupStandingName "empire" (mkSt 49))
+    -- Above upper threshold at=100 -> "freundlich"
+    r3 <- expectEqual "freundlich" (lookupStandingName "empire" (mkSt 100))
+    -- Exactly on middle threshold at=0 -> "neutral"
+    r4 <- expectEqual "neutral" (lookupStandingName "empire" (mkSt 0))
+    -- Just below middle threshold at=-1 -> "feindlich"
+    r5 <- expectEqual "feindlich" (lookupStandingName "empire" (mkSt (-1)))
+    -- Exactly on lower threshold at=-50 -> "feindlich"
+    r6 <- expectEqual "feindlich" (lookupStandingName "empire" (mkSt (-50)))
+    -- Below lowest threshold at=-100 -> lowest level ("feindlich")
+    r7 <- expectEqual "feindlich" (lookupStandingName "empire" (mkSt (-100)))
+
+    -- Formatted check around the critical 49 vs 50 threshold
+    let text49 = formatWithVars "Status: {standing_name: empire}" (mkSt 49)
+    let text50 = formatWithVars "Status: {standing_name: empire}" (mkSt 50)
+    r8 <- expectEqual "Status: neutral" text49
+    r9 <- expectEqual "Status: freundlich" text50
+
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9])
+
+-- | Phase G9a: Faction with no levels returns empty string.
+testStandingNameNoLevels :: IO Bool
+testStandingNameNoLevels = do
+    let facWorld = (world initSampleGame)
+            { factions = Map.singleton "empty_fac" [] }
+        st = setVariable "faction.empty_fac" (VVInt 10) (initSampleGame { world = facWorld })
+    r1 <- expectEqual "" (lookupStandingName "empty_fac" st)
+    let rendered = formatWithVars "Status: [{standing_name: empty_fac}]" st
+    r2 <- expectEqual "Status: []" rendered
+    pure (r1 && r2)
+
+-- | Phase G9a: Unknown faction returns empty string.
+testStandingNameUnknownFaction :: IO Bool
+testStandingNameUnknownFaction = do
+    let st = initSampleGame
+    r1 <- expectEqual "" (lookupStandingName "unknown_faction" st)
+    let rendered = formatWithVars "Status: [{standing_name: unknown_faction}]" st
+    r2 <- expectEqual "Status: []" rendered
+    pure (r1 && r2)
+
+-- | Phase G9a: Negativtest — typo in faction name resolves to empty string,
+--   no compile error, no runtime error, no dead end (analogous to K16c
+--   testAbilityWorldTargetNegativeUnknown).
+testStandingNameNegativeUnknown :: IO Bool
+testStandingNameNegativeUnknown = do
+    let empireLevels = [ FactionLevel 0 "neutral" ]
+        facWorld = (world initSampleGame)
+            { factions = Map.singleton "empire" empireLevels }
+        st0 = setVariable "faction.empire" (VVInt 10) (initSampleGame { world = facWorld })
+
+    -- Typo in faction id via standing_name:
+    let rendered1 = formatWithVars "Stand: [{standing_name: schreibfehler}]" st0
+    r1 <- expectEqual "Stand: []" rendered1
+
+    -- Typo in faction id via standing_name.
+    let rendered2 = formatWithVars "Stand: [{standing_name.schreibfehler}]" st0
+    r2 <- expectEqual "Stand: []" rendered2
+
+    -- Typo with whitespace
+    let rendered3 = formatWithVars "Stand: [{standing_name:   schreibfehler   }]" st0
+    r3 <- expectEqual "Stand: []" rendered3
+
+    pure (and [r1, r2, r3])
+

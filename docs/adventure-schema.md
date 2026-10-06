@@ -1507,6 +1507,29 @@ Jede Faktion erzeugt die Variable `faction.<id>` (int) mit dem Startwert
   `at_most`, `equals`) — einsetzbar überall dort, wo Prädikate stehen
   (`when:`, `visible_when:`, `if:`).
 
+### Auswertung von Faktions-Stufen (`standing_name` — Phase G9a)
+
+In Texten (Raumbeschreibungen, Dialogen, Meldungen) kann die aktuelle Stufe einer Faktion über Platzhalter ausgegeben werden:
+
+```yaml
+- { msg: "Die Wache mustert dich. Verhältnis zur Stadtwache: {standing_name: watch}." }
+```
+
+Alternativ wird auch die Punkt-Syntax `{standing_name.<faction>}` unterstützt (z. B. `{standing_name.watch}`).
+
+- **Auswertungsregel:**
+  Ermittelt die **höchste** Stufe der Faktion, deren `at`-Schwelle kleiner oder gleich dem aktuellen Standing-Wert (`faction.<id>`) ist (`at <= wert`).
+- **Grenzfälle:**
+  - **Wert unter kleinstem `at`:** Liegt der aktuelle Wert unter allen deklarierten Schwellen, gilt die **niedrigste** Stufe (die Stufe mit dem kleinsten `at`).
+  - **Keine Stufen deklariert:** Liefert `""` (leeren String, kein Fehler).
+  - **Unbekannte Faktion:** Liefert `""` (leeren String, kein Fehler).
+  - **Stufe mit leerem Namen:** Liefert `""`.
+- **Ehrlichkeit (wie K16c):**
+  `standing_name` wird **nicht zur Compile-Zeit geprüft**. Wer `{standing_name: schreibfehler}` schreibt, erhält zur Laufzeit den leeren String `""` (kein Compile-Fehler, keine Warnung, kein Absturz).
+  *Begründung:* Der tatsächliche Beziehungsname hängt dynamisch am Spielstand (dem aktuellen `faction.<id>`-Wert) und nicht am statischen YAML — ein statischer Compile-Fehler wäre eine Lüge.
+- **Keine neue Variable:**
+  `standing_name` ist keine eigene Variable in der `VarMap` und verändert `SaveState` nicht. Der Wert wird bei jeder Textausgabe wie `dice.highest` (K1) oder `set_completion` (K15) rein dynamisch berechnet.
+
 **Fehler:** doppelte Faktions-IDs; `faction.X` als gewöhnliche Variable
 deklariert; Referenz auf nicht deklarierte Faktion (wenn das `factions:`-Segment
 existiert).

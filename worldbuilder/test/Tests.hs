@@ -81,6 +81,7 @@ minWorld = E.GameWorld
     , progressionDef = Nothing
     , worldLanguage = Nothing
     , worldMessages = Map.empty
+    , factions = Map.empty
     }
 
 -- | Helper: a minimal valid SaveState referencing room_0
@@ -4307,6 +4308,8 @@ tests =
     -- K12: dynamic variable names
     , ("dynamic var names: {var: ..._{cmd.arg1}} emits zero UnknownPlaceholder warnings (K12)", testDynamicVarPlaceholderNoWarning)
     , ("dynamic var names: normal unknown placeholder still emits warning (K12)", testNormalUnknownPlaceholderStillWarns)
+    -- G9a: standing_name
+    , ("standing_name: compiles factions and emits zero UnknownPlaceholder warnings (G9a)", testStandingNameCompilationAndPlaceholderNoWarning)
     -- K7+K4: variable cycles (refill_per_turn, reset_on, on_overflow)
     , ("variable cycles: sugar triggers compiled in correct order; clean without cycle fields (K7.1/K7.2)", testVarCyclesSugarTriggers)
     , ("variable cycles: YAML parsing and knownKeys clean (K7/K4)", testVarCyclesYamlParsingAndKnownKeys)
@@ -7898,6 +7901,29 @@ testNormalUnknownPlaceholderStillWarns = do
         Right cr -> do
             let warns = filter (\w -> ciCode w == "UnknownPlaceholder") (crWarnings cr)
             expectEqual 2 (length warns)
+
+-- | G9a: standing_name placeholders produce NO UnknownPlaceholder warnings,
+--   and faction levels are compiled into GameWorld.factions.
+testStandingNameCompilationAndPlaceholderNoWarning :: IO Bool
+testStandingNameCompilationAndPlaceholderNoWarning = do
+    let r0 = (minRoom "loc_0")
+            { arTexts = ACondText "Ruf: {standing_name: schreibfehler} / {standing_name.empire}." [] }
+        fac = AFaction "empire" "Imperium" 10
+                [ AFactionLevel (-50) "feindlich"
+                , AFactionLevel 0 "neutral"
+                , AFactionLevel 50 "freundlich"
+                ]
+        adv = (minAdventure r0) { advFactions = [fac] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ show errs
+            pure False
+        Right cr -> do
+            let warns = filter (\w -> ciCode w == "UnknownPlaceholder") (crWarnings cr)
+            r1 <- expectTrue "standing_name placeholders produce zero UnknownPlaceholder warnings" (null warns)
+            let gw = crWorld cr
+            r2 <- expectEqual (Map.singleton "empire" [E.FactionLevel (-50) "feindlich", E.FactionLevel 0 "neutral", E.FactionLevel 50 "freundlich"]) (E.factions gw)
+            pure (r1 && r2)
 
 -- ---------------------------------------------------------------------------
 -- K3: event chains (authoring side)

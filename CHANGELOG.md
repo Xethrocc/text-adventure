@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Faktions-Stufen auswerten: standing_name (G9a)
+
+- **Die Lücke geschlossen:**
+  - Bisher wurden `afLevels` im Compiler validiert (`DuplicateFactionLevel`, `BadFactionLevel`), aber nie in die Runtime übertragen. Texte konnten nur Zahlen zeigen (`faction.<id>`), nicht aber Beziehungsstufen wie „neutral" oder „freundlich".
+- **Runtime-Modell:**
+  - `GameWorld` erhält `factions :: Map FactionID [FactionLevel]`.
+  - `FactionLevel` kapselt `{ flAt :: Int, flName :: String }`.
+  - Wenn keine Faktionen deklariert sind (`Map.null`), wird das Feld in `world.json` ausgelassen.
+  - `SaveState` bleibt unverändert; keine neue Variable in `VarMap`.
+- **ValueRef & Platzhalter: `{standing_name: <faction>}` / `{standing_name.<faction>}`:**
+  - Wird wie `dice.highest` (K1) oder `set_completion` (K15) bei der Textformatierung **dynamisch berechnet**, nicht gespeichert.
+  - **Auswertungsregel:** Ermittelt die **höchste** Stufe, deren `at <= aktueller Wert` (`faction.<id>`).
+  - **Grenzfälle:**
+    - Wert unter kleinstem `at` -> niedrigste deklarierte Stufe.
+    - Keine Stufen deklariert -> `""` (leer, kein Fehler).
+    - Unbekannte Faktion -> `""` (leer, kein Fehler).
+    - Stufe ohne Namen -> `""`.
+- **Ehrlichkeit (wie K16c):**
+  - `standing_name` wird **nicht zur Compile-Zeit geprüft**. Wer `{standing_name: schreibfehler}` schreibt, erhält zur Laufzeit den leeren String `""` (kein Compile-Fehler, keine Warnung, kein Absturz).
+  - *Begründung:* Der Beziehungsname hängt am dynamischen Spielstand, nicht am statischen YAML — ein Compile-Fehler wäre eine Lüge.
+- **Byte-Vertrag gemessen:**
+  - 131/134 Artefakte über 67 Abenteuer und Fixtures 100% byte-identisch gegen `1c88cf2`.
+  - `save.json`: 67/67 (100%) byte-identisch.
+  - `world.json`: 64/64 (100%) aller Abenteuer ohne Faktionen byte-identisch.
+  - Genau 3 Abenteuer deklarieren Faktionen (`examples/modules/combo.yaml`, `examples/modules/factions.yaml`, `examples/modules/trade.yaml`): hier erscheint legitim das neu kompilierte `factions`-Mapping in `world.json`; alle anderen Schlüssel bleiben 100% identisch.
+- **Tests & Qualität:**
+  - 5 neue Engine-Tests in `test/Tests.hs` (Namensanzeige, Grenzwert-Beweis 50 vs. 49, leere Stufen, unbekannte Faktion, Negativtest auf Schreibfehler). Engine-Tests: 528 (vorher 523).
+  - 1 neuer Worldbuilder-Test in `worldbuilder/test/Tests.hs` (Kompilierung von `AFactionLevel` in `GameWorld.factions` und 0 `UnknownPlaceholder`-Warnungen). Worldbuilder-Tests: 282 (vorher 281).
+  - CI grün, 0 Compiler-Warnungen.
+
 ### Welt-Ziele für Fähigkeiten: use-ability <id> auf <ziel> (K16c)
 
 - **Das Kern-Muster:** *Fähigkeit auf Ziel -> Zustandsänderung am Ziel.*

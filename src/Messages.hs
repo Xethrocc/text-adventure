@@ -38,6 +38,7 @@ module Messages
     , splitIfPipes
     , matchBrace
     , evMsg
+    , trimStr
     , grammarArgs
     , grammarArgKeys
     , isGrammarArgKey
@@ -752,7 +753,10 @@ findCondOperator str = search (0 :: Int) [] str
 resolveOperand :: String -> (String -> Maybe String) -> Either String String
 resolveOperand tok env =
     let clean = stripQuotes tok
-    in case env clean of
+        lookupName = if "standing_name:" `isPrefixOf` clean
+                     then "standing_name." ++ trimStr (drop 14 clean)
+                     else clean
+    in case env lookupName of
         Just v
             | "<error:" `isPrefixOf` v -> Left v
             | otherwise -> Right v
@@ -900,18 +904,24 @@ formatStringWith ('{':cs) env =
                         in handleExpr exprBody env ++ formatStringWith rest env
                     else
                         let strippedInside = trimStr inside
-                            (isExplicitVar, clean) = if "var:" `isPrefixOf` strippedInside
-                                                    then (True, dropWhile isSpace (drop 4 strippedInside))
-                                                    else (False, inside)
+                            (isStanding, isExplicitVar, clean) =
+                                if "standing_name:" `isPrefixOf` strippedInside
+                                then (True, False, "standing_name." ++ dropWhile isSpace (drop 14 strippedInside))
+                                else if "standing_name." `isPrefixOf` strippedInside
+                                then (True, False, strippedInside)
+                                else if "var:" `isPrefixOf` strippedInside
+                                then (False, True, dropWhile isSpace (drop 4 strippedInside))
+                                else (False, False, inside)
                             (varName, modif) = case break (== ':') clean of
-                                (name, ':':m) -> (if isExplicitVar then trimStr name else name, m)
-                                (name, _)     -> (if isExplicitVar then trimStr name else name, "")
+                                (name, ':':m) -> (if isExplicitVar || isStanding then trimStr name else name, m)
+                                (name, _)     -> (if isExplicitVar || isStanding then trimStr name else name, "")
                         in case env varName of
                             Just val
                                 | "<error:" `isPrefixOf` val -> val ++ formatStringWith rest env
                                 | otherwise                  -> applyVarModifier val modif ++ formatStringWith rest env
                             Nothing
                                 | isExplicitVar -> applyVarModifier "0" modif ++ formatStringWith rest env
+                                | isStanding    -> applyVarModifier "" modif ++ formatStringWith rest env
                                 | otherwise     -> '{' : inside ++ "}" ++ formatStringWith rest env
         Nothing -> '{' : formatStringWith cs env
 formatStringWith (c:cs) env = c : formatStringWith cs env

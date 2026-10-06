@@ -13,6 +13,7 @@ module Types.Core
     , SkillID
     , FlagID
     , FactionID
+    , FactionLevel (..)
     , CardID
     , ClipID
       -- * Command results
@@ -212,6 +213,24 @@ type SkillID   = String
 type FlagID    = String
 type FactionID = String
 type CardID    = String
+
+-- | A named standing threshold for a faction (Phase 7a / G9a).
+--   At `flAt` points the relation is called `flName`.
+data FactionLevel = FactionLevel
+    { flAt   :: Int
+    , flName :: String
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON FactionLevel where
+    toJSON (FactionLevel atVal nameVal) = object
+        [ "at"   .= atVal
+        , "name" .= nameVal
+        ]
+
+instance FromJSON FactionLevel where
+    parseJSON = withObject "FactionLevel" $ \o -> FactionLevel
+        <$> o .: "at"
+        <*> o .: "name"
 
 -- ---------------------------------------------------------------------------
 -- | Combined result of executing a command
@@ -529,6 +548,7 @@ data ValueRef
     | VRConditionTurns String          -- ^ remaining turns of an active condition/timer (Phase 2.1)
     | VRDistance ActorRef DistanceTarget -- ^ pursuit (Tür IV): hop distance, -1 = unreachable
     | VRCount CountSpec                 -- ^ B2: count query (items/npcs in a room or carried)
+    | VRStandingName FactionID         -- ^ standing level name of a faction (Phase G9a)
     deriving (Show, Eq, Generic)
 
 instance ToJSON ValueRef where
@@ -540,6 +560,7 @@ instance ToJSON ValueRef where
     toJSON (VRConditionTurns c) = object [ "tag" .= ("VRConditionTurns" :: T.Text), "contents" .= c ]
     toJSON (VRDistance a t)     = object [ "tag" .= ("VRDistance" :: T.Text), "contents" .= [toJSON a, toJSON t] ]
     toJSON (VRCount cs)         = object [ "tag" .= ("VRCount" :: T.Text), "contents" .= cs ]
+    toJSON (VRStandingName f)   = object [ "tag" .= ("VRStandingName" :: T.Text), "contents" .= f ]
 
 instance FromJSON ValueRef where
     parseJSON (Number n) = pure (VRVariable (show (round n :: Int)))
@@ -547,6 +568,8 @@ instance FromJSON ValueRef where
         | Just rest <- stripPrefix "condition_turns." str = pure (VRConditionTurns rest)
         | Just rest <- stripPrefix "distance." str         = pure (parseDistanceRef rest)
         | Just rest <- stripPrefix "count." str            = pure (parseCountRef rest)
+        | Just rest <- stripPrefix "standing_name." str    = pure (VRStandingName rest)
+        | Just rest <- stripPrefix "standing_name:" str    = pure (VRStandingName (dropWhile isSpace rest))
         | Just n <- (readMaybe str :: Maybe Int)           = pure (VRVariable (show n))
         | otherwise                                        = pure (VRVariable str)
       where
@@ -574,6 +597,7 @@ instance FromJSON ValueRef where
                         [aVal, tVal] -> VRDistance <$> parseJSON aVal <*> parseJSON tVal
                         _            -> fail "VRDistance: expected [seeker, target]"
                 "VRCount"          -> VRCount <$> o .: "contents"
+                "VRStandingName"   -> VRStandingName <$> o .: "contents"
                 "VRProperty"       -> do
                     contents <- o .: "contents"
                     case contents of
@@ -588,6 +612,7 @@ instance FromJSON ValueRef where
         <|> (VRConditionTurns <$> o .: "condition_turns")
         <|> (VRFlag <$> o .: "flag")
         <|> (VRVariable <$> o .: "var")
+        <|> (VRStandingName <$> o .: "standing_name")
         <|> (pure VRPlayerHealth <* (guard =<< (o .: "player_health" <|> o .: "player_hp")))
     parseJSON _ = fail "Expected object, number or string for ValueRef"
 
@@ -2223,6 +2248,7 @@ data GameWorld = GameWorld
     , progressionDef     :: Maybe ProgressionDef                     -- ^ Player progression (W2); Nothing omitted from world.json
     , worldLanguage      :: Maybe String                             -- ^ `language:` (4.3): language pack code ("de" …); Nothing = plain English default
     , worldMessages      :: Map.Map String String                    -- ^ `messages:` (4.3): per-adventure catalog overrides (non-empty values only); empty map omitted from world.json
+    , factions           :: Map.Map FactionID [FactionLevel]         -- ^ Faction standing levels (G9a); empty map is omitted from world.json
     } deriving (Show, Eq)
 
 -- | A cutscene clip (Phase H/H4): a frame sequence played once at its own
@@ -2264,7 +2290,7 @@ instance ToJSON GameWorld where
         , "abilities"          .= abilities gw
         ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair ++ sandboxPair
           ++ procPair ++ factPair ++ statementPair ++ combinePair ++ chapterPair ++ devicePair ++ containerPair ++ progPair
-          ++ langPair ++ msgPair ++ npcInteractionPair
+          ++ langPair ++ msgPair ++ npcInteractionPair ++ factionPair
       where
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
@@ -2297,6 +2323,9 @@ instance ToJSON GameWorld where
         npcInteractionPair =
             [ "npcInteractions" .= npcInteractionsToJSON (npcInteractions gw)
             | not (Map.null (npcInteractions gw)) ]
+        -- Phase G9a: omitted when empty so world.json of every adventure without
+        -- factions stays bit-identical.
+        factionPair = [ "factions" .= factions gw | not (Map.null (factions gw)) ]
         endArt = Map.filter (not . isEmptyAscii) (worldEndArt gw)
         titleArt = worldTitleArt gw
 
@@ -2366,6 +2395,7 @@ instance FromJSON GameWorld where
         <*> o .:? "progressionDef" .!= Nothing
         <*> o .:? "language" .!= Nothing
         <*> o .:? "messages" .!= Map.empty
+        <*> o .:? "factions" .!= Map.empty
 
 -- | Encode item-on-item outcomes as objects (P2-9, K11c).
 --   Pair recipes emit historical {"a": ..., "b": ..., "effect": ...} objects.

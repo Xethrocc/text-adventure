@@ -113,6 +113,7 @@ module Game
     , resolveValueRef
     , formatWithVars
     , lookupVarForFormat
+    , lookupStandingName
     , setPlayerHP
     , updatePlayerHealth
     , addDiagnostic
@@ -166,8 +167,8 @@ module Game
 
 import Types
 import Pursuit (bfsDistances, stepToward, stepAway)
-import Messages (formatStringWith, renderMsg, renderMsgFor)
-import Data.List (find, foldl', isPrefixOf, nub, stripPrefix)
+import Messages (formatStringWith, renderMsg, renderMsgFor, trimStr)
+import Data.List (find, foldl', isPrefixOf, nub, stripPrefix, sortOn)
 import Data.Bits (shiftR)
 import Data.Char (toLower, isDigit, isSpace)
 import Data.Maybe (listToMaybe, fromMaybe, isJust)
@@ -177,6 +178,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Sequence as Seq
 import qualified Data.Foldable as Foldable
+import Text.Read (readMaybe)
 
 -- | Default empty game world
 emptyGameWorld :: GameWorld
@@ -211,6 +213,7 @@ emptyGameWorld = GameWorld
     , progressionDef     = Nothing
     , worldLanguage      = Nothing
     , worldMessages      = Map.empty
+    , factions           = Map.empty
     }
 
 -- | Default empty game state
@@ -1615,6 +1618,7 @@ resolveValueRef (VRActorProp (ActorShip vId) PHealth) st =
 resolveValueRef (VRActorProp _ _) _ = 0
 resolveValueRef VRPlayerHealth st =
     playerHealth (player (save st))
+resolveValueRef (VRStandingName _) _ = 0
 
 -- | Compare two Int values using the comparator. Returns Nothing on invalid op
 --   (same behaviour as False for unknown variables).
@@ -1675,6 +1679,11 @@ lookupVarForFormat st rawName =
     in lookupResolved name
   where
     lookupResolved name
+        -- Phase G9a: standing_name wird berechnet, nicht gespeichert (K1/K15).
+        -- Ehrlichkeit wie K16c: nicht zur Compile-Zeit geprueft; bei unbekannter
+        -- Faktion oder ohne Stufen wird ehrlich "" geliefert.
+        | Just facId <- stripPrefix "standing_name." name <|> stripPrefix "standing_name:" name =
+            Just (lookupStandingName (trimStr facId) st)
         | Just val <- getVariable name st =
             Just (varToString val)
         | '{' `elem` name = Nothing
@@ -1729,6 +1738,38 @@ lookupVarForFormat st rawName =
         | name `elem` Map.keys (varDefs (world st)) =
             Just "0"
         | otherwise = Nothing
+
+-- | Phase G9a: Auswertung von Faction-Levels (standing_name).
+--   Liefert den Namen der aktuellen Stufe fuer die angegebene Faktion.
+--   Regel: Die HOECHSTE Stufe, deren at <= aktueller Wert.
+--   Grenzfaelle:
+--     - keine Stufen            -> "" (leer, kein Fehler)
+--     - unbekannte Faktion      -> "" (leer, kein Fehler)
+--     - Wert unter kleinstem at -> die niedrigste Stufe
+--     - kein passender Name     -> ""
+lookupStandingName :: FactionID -> GameState -> String
+lookupStandingName fid st =
+    case Map.lookup fid (factions (world st)) of
+        Nothing     -> ""
+        Just []     -> ""
+        Just levels ->
+            let currentVal = getStandingVal fid st
+                sorted = sortOn flAt levels
+                matching = filter (\l -> flAt l <= currentVal) sorted
+            in case matching of
+                (_:_) -> flName (last matching)
+                []    -> flName (head sorted)
+
+getStandingVal :: FactionID -> GameState -> Int
+getStandingVal fid st =
+    case getVariable ("faction." ++ fid) st of
+        Just (VVInt v)  -> v
+        Just (VVText s) -> fromMaybe 0 (readMaybe s)
+        _               -> case Map.lookup ("faction." ++ fid) (varDefs (world st)) of
+            Just vd -> case vdVarInitial vd of
+                VVInt v -> v
+                _       -> 0
+            Nothing -> 0
 
 -- ---------------------------------------------------------------------------
 -- Conditional text (Phase 3g)

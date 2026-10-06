@@ -48,7 +48,7 @@ import Worldbuilder.QuestCheck (QuestDiagnostic (..), questDiagnostics)
 import Types hiding
     ( itemDefs, itemStates, npcDefs, npcStates, questDefs
     , vehicleDefs, vehicleStates, entityInteractions, itemInteractions
-    , varDefs, triggerDefs, rooms, stText )
+    , varDefs, triggerDefs, rooms, stText, factions )
 import qualified Types as E
 import qualified Messages as Msg
 import qualified Data.Map.Strict as Map
@@ -586,7 +586,7 @@ compileAdventure adv =
         (varErrs, varDefs, varInitials) = compileVariables (advVariables adv)
         (trigErrs, triggerDefs) = compileTriggers (advTriggers adv) (advNPCs adv) (advVariables adv)
         (encErrs, encounterDefs) = compileEncounterTables (advEncounterTables adv)
-        (facErrs, factionDefs, factionInitials) = compileFactions (advFactions adv)
+        (facErrs, factionDefs, factionInitials, compiledFactions) = compileFactions (advFactions adv)
         (facConflictErrs, facVarDefs, facVarInitials) =
             mergeFactionVars varDefs varInitials factionDefs factionInitials
         (envErrs, envTriggerDefs, envVarDefs, envVarInitials) =
@@ -759,6 +759,7 @@ compileAdventure adv =
                 , E.progressionDef = compiledProgression
                 , E.worldLanguage = advLanguage adv
                 , E.worldMessages = advMessages adv
+                , E.factions = compiledFactions
                 }
         npcIds = Set.fromList (map anId (advNPCs adv))
         gwResolved = resolveWorldEffects npcIds gw
@@ -1296,19 +1297,19 @@ compileVarInitial av vt = case (vt, avbInitial av) of
 
 -- | Compile `factions:` into VarDefs + initial VarMap values. Each faction
 --   becomes the variable `faction.<id>` (int, initial standing).
-compileFactions :: [AFaction] -> ([CompileIssue], Map.Map String E.VarDef, Map.Map String E.VariableValue)
-compileFactions factions =
+compileFactions :: [AFaction] -> ([CompileIssue], Map.Map String E.VarDef, Map.Map String E.VariableValue, Map.Map E.FactionID [E.FactionLevel])
+compileFactions facs =
     let dupErrs =
             [ ciError ("factions." ++ fid) "DuplicateFaction"
                 ("faction '" ++ fid ++ "' is declared more than once")
-            | (fid, others) <- collisions [(afId f, afId f) | f <- factions]
+            | (fid, others) <- collisions [(afId f, afId f) | f <- facs]
             , not (null others) ]
         defs = Map.fromList
             [ ("faction." ++ afId f, E.VarDef ("faction." ++ afId f) (E.VTInt Nothing Nothing) (E.VVInt (afInitial f)) [])
-            | f <- factions ]
+            | f <- facs ]
         initials = Map.fromList
             [ ("faction." ++ afId f, E.VVInt (afInitial f))
-            | f <- factions ]
+            | f <- facs ]
         -- P2-18: `levels:` were pure authoring decoration — nothing validated or
         -- displayed them. Check that a threshold is named at most once and that
         -- every name is non-empty. Ascending order is deliberately NOT required:
@@ -1317,15 +1318,18 @@ compileFactions factions =
         levelErrs =
             [ ciError ("factions." ++ afId f ++ ".levels") "DuplicateFactionLevel"
                 ("threshold " ++ show at ++ " is named more than once")
-            | f <- factions
+            | f <- facs
             , at <- duplicates (map aflAt (afLevels f)) ]
             ++
             [ ciError ("factions." ++ afId f ++ ".levels") "BadFactionLevel"
                 ("level at " ++ show (aflAt l) ++ " needs a non-empty name")
-            | f <- factions, l <- afLevels f, null (aflName l) ]
+            | f <- facs, l <- afLevels f, null (aflName l) ]
         duplicates xs =
             [ x | (x, n) <- Map.toList (Map.fromListWith (+) [(x, 1 :: Int) | x <- xs]), n > 1 ]
-    in (dupErrs ++ levelErrs, defs, initials)
+        compiled = Map.fromList
+            [ (afId f, [ E.FactionLevel (aflAt l) (aflName l) | l <- afLevels f ])
+            | f <- facs ]
+    in (dupErrs ++ levelErrs, defs, initials, compiled)
 
 -- | Merge faction vars into the declared variables, rejecting name clashes
 --   (an author must not declare `faction.X` as a plain variable).
@@ -2738,10 +2742,10 @@ checkAmbientRates gw =
 --   declared faction. Only runs when the `factions:` segment is present
 --   (default-invariant: without it, `faction.*` strings are plain variables).
 checkStandingRefs :: [AFaction] -> E.GameWorld -> [CompileIssue]
-checkStandingRefs factions gw
-    | null factions = []
+checkStandingRefs facs gw
+    | null facs = []
     | otherwise =
-        let declared = Set.fromList (map afId factions)
+        let declared = Set.fromList (map afId facs)
             refs = nub (collectFactionRefs gw)
         in [ ciError "factions" "UnknownFaction"
                 ("faction '" ++ fid ++ "' is referenced but not declared in 'factions:'")
@@ -4529,6 +4533,12 @@ checkUnknownPlaceholders adv varDefs =
         | "condition_turns." `isPrefixOf` name = True
         | "known." `isPrefixOf` name = True
         | "statement." `isPrefixOf` name = True
+        -- G9a: {standing_name: <faction>} / {standing_name.<faction>} wird bewusst
+        -- NICHT zur Compile-Zeit geprueft (Ehrlichkeit wie K16c {cmd.target}):
+        -- der Wert haengt am Spielstand (dynamische Standing-Stufe), nicht am YAML.
+        -- Ein Compile-Fehler waere eine Luege; zur Laufzeit liefert ein Schreibfehler
+        -- ehrlich den leeren String ("").
+        | name == "standing_name" || "standing_name." `isPrefixOf` name = True
         | name `elem` ["x", "y", "z", "item1", "item2"] || isIngredientPlaceholder name = True
         | hasDynamicCmd name = True
         | otherwise = False
