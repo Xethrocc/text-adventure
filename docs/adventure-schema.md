@@ -448,7 +448,7 @@ description:
 | `{ msg: "Text", then: [...], else: [...] }` | Sequence [SendMessage, Conditional...] |
 | `{ standing: { faction: id, add: N } }` | ModifyValue (VRVariable "faction.id") +N — Module 7a |
 | `{ standing: { faction: id, set: N } }` | SetValue (VRVariable "faction.id") N — Module 7a |
-| `{ set_state: entity, to: state }` | SetValue (VRProperty entity "state") — setzt den Status von Items/Toren (`ActorEntity`, z. B. `locked_by`-Tore öffnen) oder NPCs (`ActorNPC`, setzt `npcStatus` und feuert `OnStateChange`). Unbekannte Ziele erzeugen den Compile-Fehler `UnknownStateTarget`. |
+| `{ set_state: entity, to: state }` | SetValue (VRProperty entity "state") — setzt den Status von Items/Toren (`ActorEntity`, z. B. `locked_by`-Tore öffnen) oder NPCs (`ActorNPC`, setzt `npcStatus` und feuert `OnStateChange`). Unterstützt dynamische Ziele wie `{cmd.target}` über `resolveVarName`. Literale unbekannte Ziele erzeugen den Compile-Fehler `UnknownStateTarget`; dynamische Ziele werden bewusst **nicht** zur Compile-Zeit geprüft, sondern zur Laufzeit aufgelöst (unbekannte Laufzeit-Ziele scheitern nicht still, sondern melden `target.not_seen` und ein Diagnose-Event). |
 | `{ damage_npc: { npc: id, amount: N } }` | ModifyValue (VRProperty id "hp") −N — Module 7g |
 | `{ narrative: ["Zeile 1", "Zeile 2"], then: [...] }` | Narrative — interaktive, seitenweise Ausgabe (`[Press Enter to continue]`); `then` sind Folge-Effekte nach der letzten Zeile |
 | `{ condition: { name: id, turns: N, tick: [...], end: [...], hidden: bool } }` | ApplyCondition — timed condition/status effect (`tick` each turn, `end` upon expiration, optional `hidden: true` suppresses status/HUD display) |
@@ -1801,6 +1801,27 @@ abilities:
 ```
 
 In-game Aufruf: `use-ability <id>` oder `ability <id>` (auch `use ability <id>`).
+Mit Ziel (K16c): `use-ability <id> auf <ziel>` (Deutsch) bzw. `use-ability <id> on <ziel>` (Englisch).
+
+**Welt-Ziele für Fähigkeiten (K16c):**
+- **Syntax & Trennung:** `auf` bzw. `on` trennt die Fähigkeits-ID und das Ziel. `use-ability feuerschlag auf ueberwucherte_steintafel` setzt `abId = "feuerschlag"` und bindet `{cmd.target}` an `"ueberwucherte_steintafel"`.
+- **Rückwärtskompatibilität:** `use-ability <id>` ohne Ziel bleibt 100% unverändert: `abId = "<id>"`, `{cmd.target}` bleibt leer (`""`).
+- **Kern-Muster:** *Fähigkeit auf Ziel -> Zustandsänderung am Ziel*:
+  ```yaml
+  abilities:
+    feuerschlag:
+      name: "Feuerschlag"
+      cost_var: "player.mana"
+      cost: 8
+      effects:
+        - { msg: "Die Flammen verbrennen das Gestrüpp!" }
+        - { set_state: "{cmd.target}", to: freigelegt }
+  ```
+- **Validierungs-Semantik (Compile vs. Laufzeit):**
+  - Literale Ziele in `set_state: <entity>, to: <state>` werden weiterhin streng zur Compile-Zeit auf Existenz geprüft (`UnknownStateTarget`).
+  - Dynamische Ziele wie `{cmd.target}` werden **bewusst nicht** zur Compile-Zeit geprüft (gleiche Ehrlichkeit wie `{item1}` in K11c).
+  - Zur Laufzeit löst `set_state` das Ziel über `resolveVarName` auf. Ist das Ziel zur Laufzeit unbekannt, scheitert der Effekt nicht still, sondern gibt eine Spielermeldung aus (`target.not_seen`: `You don't see '<ziel>' here.`) und erzeugt einen Diagnose-Eintrag.
+- **Stille Kante (Item-Präemption):** `use-ability` (sowohl mit als auch ohne Ziel) greift vor der allgemeinen Item-Auflösung in `dispatchCommandEv`. Wenn ein Item gleichen Namens existiert, greift stets die Fähigkeit.
 
 **Verhaltensänderung (K16a / K16b):**
 - **Weltweit & profilunabhängig (K16a):** Vorher war `use-ability` an `profile: tactical` gebunden und funktionierte in `classic`- oder `narrative`-Welten gar nicht. Nun kann `use-ability` auch außerhalb des Kampfes und in jedem Profil (`classic`, `narrative`, `tactical`) ausgelöst werden.

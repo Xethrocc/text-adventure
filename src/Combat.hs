@@ -604,8 +604,6 @@ resolveClassicShipRetaliation actors _vid disp targetHullAfter playerEffects msg
                        , evMsg "combat.strikes_back_kill" [("target", disp)] : allMsgs )
                   else ( withRetaliation
                        , allMsgs )
-  where
-    cannotAttack = [evMsg "attack.cant_target" [("target", disp)]]
 
 -- ---------------------------------------------------------------------------
 -- Combat screen (classic profile)

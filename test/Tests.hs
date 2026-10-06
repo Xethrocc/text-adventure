@@ -7116,6 +7116,245 @@ testAbilityTacticalCombatRegression = do
 
     pure (r1 && r2 && r3 && r4 && r5 && r6)
 
+-- | Phase K16c: Parser separates `use-ability <id> auf <ziel>` into ability ID and target.
+--   When no target is given, preserves backwards compatibility (`use-ability <id>`).
+testAbilityParserTargetSeparation :: IO Bool
+testAbilityParserTargetSeparation = do
+    -- 1. Separator "auf"
+    let cmd1 = parseCommand "use-ability feuerschlag auf ueberwucherte_steintafel"
+    r1 <- expectEqual (InteractWith (VCustom "use-ability") "feuerschlag" "ueberwucherte_steintafel") cmd1
+
+    let cmd2 = parseCommand "use ability feuerschlag auf zugewachsenes_tor"
+    r2 <- expectEqual (InteractWith (VCustom "use-ability") "feuerschlag" "zugewachsenes_tor") cmd2
+
+    let cmd3 = parseCommand "ability alte_sprache auf antiker_text"
+    r3 <- expectEqual (InteractWith (VCustom "use-ability") "alte_sprache" "antiker_text") cmd3
+
+    -- 2. Separator "on" (English alias)
+    let cmd4 = parseCommand "use-ability feuerschlag on overgrown_tablet"
+    r4 <- expectEqual (InteractWith (VCustom "use-ability") "feuerschlag" "overgrown_tablet") cmd4
+
+    -- 3. Backwards compatibility: without target
+    let cmd5 = parseCommand "use-ability feuerschlag"
+    r5 <- expectEqual (Interact (VCustom "use-ability") "feuerschlag") cmd5
+
+    let cmd6 = parseCommand "use ability feuerschlag"
+    r6 <- expectEqual (Interact (VCustom "use-ability") "feuerschlag") cmd6
+
+    let cmd7 = parseCommand "ability feuerschlag"
+    r7 <- expectEqual (Interact (VCustom "use-ability") "feuerschlag") cmd7
+
+    -- 4. Target variable binding:
+    -- Without target: cmd.target remains empty ("")
+    let st0 = initSampleGame
+        stNoTarget = bindCommandVars (Interact (VCustom "use-ability") "feuerschlag") st0
+    r8 <- expectEqual (Just (VVText "")) (getVariable "cmd.target" stNoTarget)
+
+    -- With target: cmd.target bound to target
+    let stWithTarget = bindCommandVars (InteractWith (VCustom "use-ability") "feuerschlag" "ueberwucherte_steintafel") st0
+    r9 <- expectEqual (Just (VVText "ueberwucherte_steintafel")) (getVariable "cmd.target" stWithTarget)
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9)
+
+-- | Phase K16c: Fantasy example 1 — `use-ability feuerschlag auf ueberwucherte_steintafel`
+--   burns plants, sets entity state to "freigelegt", and makes the inscription visible.
+testAbilityWorldTargetSteintafel :: IO Bool
+testAbilityWorldTargetSteintafel = do
+    let tabletItem = (invItem "ueberwucherte_steintafel")
+            { itemName = "Überwucherte Steintafel"
+            , itemDescription = CondText "Eine von dichtem Gestrüpp überwucherte Steintafel."
+                [ TextVariant (EntityHasState "ueberwucherte_steintafel" "freigelegt")
+                              "Eine uralte Steintafel. Das Gestrüpp ist verbrannt; die eingemeißelte Inschrift lautet: 'Nur wer das Licht entzündet, öffnet die Pforte.'" ]
+            }
+        feuerschlag = PlayerAbility "feuerschlag" "Feuerschlag" "player.mana" 8 0
+            [ SendMessage "Die Flammen schlagen auf und verbrennen das Gestrüpp! Die Inschrift auf der Steintafel wird sichtbar."
+            , SetValue (VRActorProp (ActorEntity "{cmd.target}") PState) (EVString "freigelegt")
+            ]
+        worldT = (world initSampleGame)
+            { abilities = Map.singleton "feuerschlag" feuerschlag
+            , itemDefs = Map.insert "ueberwucherte_steintafel" tabletItem (itemDefs (world initSampleGame))
+            }
+        stBase = initSampleGame
+            { world = worldT
+            , save = (save initSampleGame)
+                { currentRoom = "armory"
+                , itemStates = Map.insert "ueberwucherte_steintafel"
+                    (ItemState (InRoom "armory") "intact" Map.empty True)
+                    (itemStates (save initSampleGame))
+                }
+            }
+        st0 = setVariable "player.mana" (VVInt 20) stBase
+
+    -- Initial state: inscription is not visible
+    let (_, lookBefore) = executeCommand (Interact VLookAt "ueberwucherte_steintafel") st0
+    r0 <- expectTrue "before: overgrown tablet" (isInfixOf "überwucherte Steintafel" lookBefore)
+
+    -- Command: use-ability feuerschlag auf ueberwucherte_steintafel
+    let (st1, msg1) = executeCommand (parseCommand "use-ability feuerschlag auf ueberwucherte_steintafel") st0
+    r1 <- expectTrue "flames message shown" (isInfixOf "Die Flammen schlagen auf" msg1)
+    r2 <- expectEqual (Just (VVInt 12)) (getVariable "player.mana" st1)
+    r3 <- expectEqual (Just "freigelegt") (getEntityState "ueberwucherte_steintafel" st1)
+
+    -- Inscription is now visible on examination
+    let (_, lookAfter) = executeCommand (Interact VLookAt "ueberwucherte_steintafel") st1
+    r4 <- expectTrue "after: inscription visible" (isInfixOf "Inschrift" lookAfter && isInfixOf "Nur wer das Licht entzündet" lookAfter)
+
+    pure (r0 && r1 && r2 && r3 && r4)
+
+-- | Phase K16c: Fantasy example 2 — `use-ability feuerschlag auf zugewachsenes_tor`
+--   burns the growth blocking the gate, unlocks the passage, and allows the player
+--   to enter the new room.
+testAbilityWorldTargetZugewachsenesTor :: IO Bool
+testAbilityWorldTargetZugewachsenesTor = do
+    let hallway = fromMaybe (error "no hallway") (Map.lookup "hallway" (rooms (world initSampleGame)))
+        hallwayWithLockedExit = hallway { roomConnections = Map.insert North (Locked "armory" "zugewachsenes_tor") (roomConnections hallway) }
+        feuerschlag = PlayerAbility "feuerschlag" "Feuerschlag" "player.mana" 8 0
+            [ SendMessage "Feuer schlägt in das Dickicht! Das zugewachsene Tor verbrennt zu Asche; der Weg ist frei."
+            , SetValue (VRActorProp (ActorEntity "{cmd.target}") PState) (EVString "unlocked")
+            ]
+        worldT = (world initSampleGame)
+            { abilities = Map.singleton "feuerschlag" feuerschlag
+            , rooms = Map.insert "hallway" hallwayWithLockedExit (rooms (world initSampleGame))
+            }
+        stBase = initSampleGame
+            { world = worldT
+            , save = (save initSampleGame)
+                { currentRoom = "hallway"
+                , entityStates = Map.singleton "zugewachsenes_tor" "locked"
+                }
+            }
+        st0 = setVariable "player.mana" (VVInt 20) stBase
+
+    -- 1. Try to go north before: blocked by locked door
+    let (stBlocked, msgBlocked) = executeCommand (Go North) st0
+    r0 <- expectEqual "hallway" (currentRoom (save stBlocked))
+    r1 <- expectTrue "door is locked" (isInfixOf "locked" msgBlocked || isInfixOf "verschlossen" msgBlocked)
+
+    -- 2. Use ability on the gate: unlocks it
+    let (st1, msg1) = executeCommand (parseCommand "use-ability feuerschlag auf zugewachsenes_tor") st0
+    r2 <- expectTrue "burn message shown" (isInfixOf "zugewachsene Tor verbrennt zu Asche" msg1)
+    r3 <- expectEqual (Just "unlocked") (getEntityState "zugewachsenes_tor" st1)
+    r4 <- expectEqual (Just (VVInt 12)) (getVariable "player.mana" st1)
+
+    -- 3. Walk through the newly opened exit into the armory room
+    let (st2, msg2) = executeCommand (Go North) st1
+    r5 <- expectEqual "armory" (currentRoom (save st2))
+    r6 <- expectTrue "move successful" (isInfixOf "You move" msg2 || isInfixOf "North" msg2)
+
+    pure (r0 && r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | Phase K16c: Puzzle example 3 — `use-ability alte_sprache auf antiker_text`
+--   translates the ancient glyphs, sets entity state to "lesbar", making the text readable.
+testAbilityWorldTargetAntikerText :: IO Bool
+testAbilityWorldTargetAntikerText = do
+    let textItem = (invItem "antiker_text")
+            { itemName = "Antiker Text"
+            , itemDescription = CondText "Ein Pergament mit unverständlichen Glyphen der Vorzeit."
+                [ TextVariant (EntityHasState "antiker_text" "lesbar")
+                              "Ein Pergament mit lesbarem Text: 'Die Sternenpforte öffnet sich im Zenit.'" ]
+            }
+        alteSprache = PlayerAbility "alte_sprache" "Alte Sprache" "player.mana" 5 0
+            [ SendMessage "Die fremdartigen Zeichen ordnen sich vor deinen Augen. Der Text wird lesbar!"
+            , SetValue (VRActorProp (ActorEntity "{cmd.target}") PState) (EVString "lesbar")
+            ]
+        worldT = (world initSampleGame)
+            { abilities = Map.singleton "alte_sprache" alteSprache
+            , itemDefs = Map.insert "antiker_text" textItem (itemDefs (world initSampleGame))
+            }
+        stBase = initSampleGame
+            { world = worldT
+            , save = (save initSampleGame)
+                { currentRoom = "armory"
+                , itemStates = Map.insert "antiker_text"
+                    (ItemState (CarriedBy ActorPlayer) "intact" Map.empty True)
+                    (itemStates (save initSampleGame))
+                }
+            }
+        st0 = setVariable "player.mana" (VVInt 10) stBase
+
+    -- Look at text before: unreadable glyphs
+    let (_, lookBefore) = executeCommand (Interact VLookAt "antiker_text") st0
+    r0 <- expectTrue "before: unreadable glyphs" (isInfixOf "unverständlichen Glyphen" lookBefore)
+
+    -- Command: use-ability alte_sprache auf antiker_text
+    let (st1, msg1) = executeCommand (parseCommand "use-ability alte_sprache auf antiker_text") st0
+    r1 <- expectTrue "translation message shown" (isInfixOf "Text wird lesbar" msg1)
+    r2 <- expectEqual (Just (VVInt 5)) (getVariable "player.mana" st1)
+    r3 <- expectEqual (Just "lesbar") (getEntityState "antiker_text" st1)
+
+    -- Look at text after: readable text about the star gate
+    let (_, lookAfter) = executeCommand (Interact VLookAt "antiker_text") st1
+    r4 <- expectTrue "after: translated text" (isInfixOf "Sternenpforte öffnet sich" lookAfter)
+
+    pure (r0 && r1 && r2 && r3 && r4)
+
+-- | Phase K16c: Negativtest — `use-ability feuerschlag auf unbekanntes_ding`
+--   must report an error (target.not_seen / diagnostic), NOT fail silently.
+testAbilityWorldTargetNegativeUnknown :: IO Bool
+testAbilityWorldTargetNegativeUnknown = do
+    let feuerschlag = PlayerAbility "feuerschlag" "Feuerschlag" "player.mana" 8 0
+            [ SendMessage "Die Flammen schlagen auf."
+            , SetValue (VRActorProp (ActorEntity "{cmd.target}") PState) (EVString "freigelegt")
+            ]
+        worldT = (world initSampleGame)
+            { abilities = Map.singleton "feuerschlag" feuerschlag }
+        stBase = initSampleGame { world = worldT, save = (save initSampleGame) { currentRoom = "armory" } }
+        st0 = setVariable "player.mana" (VVInt 20) stBase
+
+    -- Execute with unknown target
+    let (st1, msg1) = executeCommand (parseCommand "use-ability feuerschlag auf unbekanntes_ding") st0
+
+    -- Must report that the target is not seen (not silent failure)
+    r1 <- expectTrue "reports target not seen"
+              (isInfixOf "You don't see 'unbekanntes_ding' here" msg1
+               || isInfixOf "Du siehst 'unbekanntes_ding' hier nicht" msg1
+               || isInfixOf "unbekanntes_ding" msg1)
+    -- State was NOT modified in entityStates
+    r2 <- expectEqual Nothing (getEntityState "unbekanntes_ding" st1)
+    -- Diagnostic was recorded
+    r3 <- expectTrue "diagnostic emitted for unknown entity"
+              (any ("unknown entity 'unbekanntes_ding'" `isInfixOf`) (diagnostics st1))
+
+    pure (r1 && r2 && r3)
+
+-- | Phase K16c: Regression — item and ability with same name ("sturm"),
+--   targeting another entity "tor" with `use-ability sturm auf tor`.
+--   The ability executes, NOT the item, and {cmd.target} is bound to "tor".
+testAbilityPreemptsItemWithTargetRegression :: IO Bool
+testAbilityPreemptsItemWithTargetRegression = do
+    let itemSturm = invItem "sturm"
+        abSturm = PlayerAbility "sturm" "Sturm" "player.mana" 5 1
+            [ SetValue (VRVariable "sturm_target_{cmd.target}") (EVInt 1)
+            , SetValue (VRActorProp (ActorEntity "{cmd.target}") PState) (EVString "destroyed")
+            ]
+        torItem = invItem "tor"
+        worldT = (world initSampleGame)
+            { abilities = Map.singleton "sturm" abSturm
+            , itemDefs = Map.insert "sturm" itemSturm
+                       $ Map.insert "tor" torItem (itemDefs (world initSampleGame))
+            }
+        stBase = initSampleGame
+            { world = worldT
+            , save = (save initSampleGame)
+                { currentRoom = "armory"
+                , itemStates = Map.insert "sturm"
+                    (ItemState (CarriedBy ActorPlayer) "intact" Map.empty True)
+                    $ Map.insert "tor"
+                    (ItemState (InRoom "armory") "intact" Map.empty True)
+                    (itemStates (save initSampleGame))
+                }
+            }
+        st0 = setVariable "player.mana" (VVInt 10) stBase
+
+    let (st1, msg1) = executeCommand (parseCommand "use-ability sturm auf tor") st0
+    r1 <- expectTrue "ability executed, not item" (isInfixOf "You use Sturm!" msg1)
+    r2 <- expectEqual (Just (VVText "tor")) (getVariable "cmd.target" st1)
+    r2b <- expectEqual (Just (VVInt 1)) (getVariable "sturm_target_tor" st1)
+    r3 <- expectEqual (Just "destroyed") (getEntityState "tor" st1)
+    r4 <- expectEqual (Just (VVInt 5)) (getVariable "player.mana" st1)
+
+    pure (r1 && r2 && r2b && r3 && r4)
+
 -- | Phase 7f-3 A3: BySpeed initiative populating VarMap
 testBySpeedInitiative :: IO Bool
 testBySpeedInitiative = do
@@ -11078,6 +11317,13 @@ main = do
         , runTest "player ability preempts same-named item (K16a)" testAbilityPreemptsItem
         , runTest "player ability cooldown outside combat (K16a)" testAbilityCooldownOutsideCombat
         , runTest "player ability tactical combat regression (K16a)" testAbilityTacticalCombatRegression
+        -- K16c: Welt-Ziele für Fähigkeiten (`use-ability <id> auf <ziel>`)
+        , runTest "ability parser separates id and target (K16c)" testAbilityParserTargetSeparation
+        , runTest "ability target steintafel makes inscription visible (K16c)" testAbilityWorldTargetSteintafel
+        , runTest "ability target zugewachsenes tor unlocks passage (K16c)" testAbilityWorldTargetZugewachsenesTor
+        , runTest "ability target antiker text makes text readable (K16c)" testAbilityWorldTargetAntikerText
+        , runTest "ability unknown target reports error, not silent (K16c)" testAbilityWorldTargetNegativeUnknown
+        , runTest "ability with target preempts same-named item (K16c)" testAbilityPreemptsItemWithTargetRegression
         , runTest "tactical BySpeed initiative (7f-3 A3)" testBySpeedInitiative
         -- Phase 7f-3 / 7h-2 V1: ValueRef ADT & Legacy JSON
         , runTest "ValueRef JSON round-trip (V1)" testValueRefRoundTrip

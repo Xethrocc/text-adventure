@@ -435,11 +435,11 @@ parseSimpleCommandWith env defs tokens input = case tokens of
     ["defend"]             -> Interact (VCustom "defend") ""
     ["flee"]               -> Interact (VCustom "flee") ""
     "use-ability" : abParts | not (null abParts) ->
-        Interact (VCustom "use-ability") (unwords (safeStripStopWords abParts))
+        parseAbilityCmd env abParts
     "use" : "ability" : abParts | not (null abParts) ->
-        Interact (VCustom "use-ability") (unwords (safeStripStopWords abParts))
+        parseAbilityCmd env abParts
     "ability" : abParts | not (null abParts) ->
-        Interact (VCustom "use-ability") (unwords (safeStripStopWords abParts))
+        parseAbilityCmd env abParts
     "use"   : useParts -> parseUse env useParts input
     -- Generic verb-noun parsing: resolve against registry (core + custom)
     v : targetParts | not (null targetParts) -> case parseVerbWith defs v of
@@ -470,6 +470,21 @@ parseUse env useParts input =
         (itemParts, []) | not (null itemParts) ->
             Interact VUse (unwords (safeStripStopWords itemParts))
         _ -> Unknown input
+
+-- | Phase K16c: Parse an ability invocation with optional world target
+--   (@use-ability <id> auf <ziel>@). @auf@ and language-pack aliases for @on@
+--   serve as the separator between ability ID and target.
+--   When no target is given, preserves backwards compatibility (@use-ability <id>@).
+parseAbilityCmd :: AliasEnv -> [String] -> Command
+parseAbilityCmd env abParts =
+    case splitPrep ("auf" : prepsOf env "on") abParts of
+        Just (idParts, targetParts) ->
+            InteractWith (VCustom "use-ability")
+                (unwords (safeStripStopWords idParts))
+                (unwords (safeStripStopWords targetParts))
+        Nothing ->
+            Interact (VCustom "use-ability")
+                (unwords (safeStripStopWords abParts))
 
 
 -- | Rogue Phase 3: locked doors reachable from the current room — via the
@@ -526,10 +541,16 @@ resolveCmdTarget cmd st = case cmd of
         case getExitInDirection dir st of
             Just exit -> (exitRoomID exit, "room")
             Nothing   -> (map toLower (show dir), "none")
-    Interact verb target ->
-        resolveTargetToPair verb target st
-    InteractWith verb target _ ->
-        resolveTargetToPair verb target st
+    Interact verb target
+        | VCustom vn <- verb, vn `elem` ["use-ability", "ability"] ->
+            ("", "none")
+        | otherwise ->
+            resolveTargetToPair verb target st
+    InteractWith verb abId target
+        | VCustom vn <- verb, vn `elem` ["use-ability", "ability"] ->
+            resolveTargetToPair (VCustom "use-ability") target st
+        | otherwise ->
+            resolveTargetToPair verb abId st
     ActionWithArgs verb args ->
         if null args
         then ("", "none")
@@ -1302,6 +1323,12 @@ dispatchCommandEv (Interact verb targetStr) state
                 (stateWithVars, darkRoomEv room)
             | otherwise ->
                 interactAmbiguous ids stateWithVars
+
+-- Phase 7f-3, A3 / K16c: `use-ability <id> auf <ziel>`
+dispatchCommandEv (InteractWith verb abId targetStr) state
+    | not (null abId), VCustom vn <- verb
+    , vn `elem` ["use-ability", "ability"]
+    = executeTacticalAction (CAAbility abId) (bindCommandVars (InteractWith verb abId targetStr) state)
 
 dispatchCommandEv (InteractWith VUseOn itemStr entityStr) state =
     let itemTarget = normalizeText itemStr

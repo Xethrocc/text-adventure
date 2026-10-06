@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Welt-Ziele für Fähigkeiten: use-ability <id> auf <ziel> (K16c)
+
+- **Das Kern-Muster:** *Fähigkeit auf Ziel -> Zustandsänderung am Ziel.*
+  - Verwendet die bestehende Vokabel `set_state: entity, to: state` mit dynamischer Zielauflösung `{set_state: "{cmd.target}", to: <state>}`.
+  - Kein neuer Effekt (kein `set_state_dynamic`), kein neues Verb, kein neues SaveState-Feld.
+- **Parser-Trennung:**
+  - `use-ability <id> auf <ziel>` (Deutsch) und `use-ability <id> on <ziel>` (Englisch) trennt die Fähigkeits-ID und das Ziel sauber an `auf`/`on`.
+  - Liefert `InteractWith (VCustom "use-ability") <id> <ziel>`.
+  - Rückwärtskompatibilität: `use-ability <id>` ohne Ziel liefert wie bisher `Interact (VCustom "use-ability") <id>`, `cmd.target` wird zu `""` gebunden.
+- **Laufzeit-Auflösung & Diagnose:**
+  - `AOSetEntityState` bzw. `SetValue (VRActorProp (ActorEntity eIdRaw) PState)` löst dynamische Ziele zur Laufzeit über den bewährten K12-Mechanismus `resolveVarName` auf.
+  - Compile-Prüfung: Literale Ziele werden wie bisher strikt auf Existenz geprüft (`UnknownStateTarget`). Dynamische Ziele (`'{' `elem` target`) werden bewusst **nicht** zur Compile-Zeit geprüft (gleiche Ehrlichkeit wie `{item1}` in K11c).
+  - Negativfall: Ist das Ziel zur Laufzeit unbekannt, scheitert der Effekt nicht still, sondern meldet `target.not_seen` (`You don't see '<ziel>' here.`) und erzeugt einen Diagnose-Eintrag `[engine] set_state: unknown entity '<ziel>'`.
+- **Stille Kante (Item-Präemption):**
+  - `use-ability` (auch mit Ziel) greift vor der allgemeinen Item-Auflösung in `dispatchCommandEv`. Wenn ein Item denselben Namen wie die Fähigkeit trägt, gewinnt stets die Fähigkeit.
+- **Die drei Verifikationsbeispiele:**
+  1. *Fantasy (Steintafel):* `use-ability feuerschlag auf ueberwucherte_steintafel` -> Flammen verbrennen das Gestrüpp, Inschrift wird sichtbar.
+  2. *Fantasy (Tor):* `use-ability feuerschlag auf zugewachsenes_tor` -> Tor wird entriegelt (`unlocked`), Weg in den nächsten Raum wird frei.
+  3. *Puzzle (Text):* `use-ability alte_sprache auf antiker_text` -> Text wird lesbar (`lesbar`), Glyphen werden übersetzt.
+- **Byte-Vertrag gemessen:**
+  - 134/134 Artefakte über alle 67 Abenteuer und Fixtures (demo, thefog, 10 genres, 15 modules, 40 fixtures) byte-identisch gegen `a3f2321`.
+- **Tests & Qualität:**
+  - 6 neue Engine-Tests in `test/Tests.hs` (Parser-Trennung, 3 Welt-Ziel-Beispiele, Negativtest auf unbekanntes Ziel, Stille-Kante-Regression). Engine-Tests: 521 (vorher 515).
+  - 1 neuer Worldbuilder-Test in `worldbuilder/test/Tests.hs` (dynamisches `set_state` kompiliert fehlerfrei, Literale weiterhin geprüft). Worldbuilder-Tests: 281 (vorher 280).
+  - CI grün, 0 Compiler-Warnungen.
+
 ### Fähigkeiten im klassischen und narrativen Kampf (K16b)
 
 - **Fähigkeiten in allen Kampfprofilen:**

@@ -718,10 +718,17 @@ applySetValueWithDepth depth (VRVariable name) val state =
            let (stFin, ofMsgs, _) = applyOutcomeWith (depth + 1) 0 (Sequence overflowEffs) "" state'
            in (stFin, ofMsgs)
        else (state', [])
-applySetValueWithDepth _ (VRActorProp (ActorEntity eId) PState) val state =
-    setEntityStateWithEvents eId (effectValueToString val) state
-applySetValueWithDepth _ (VRActorProp (ActorNPC nid) PState) val state =
-    setNpcStatusWithEvents nid (effectValueToString val) state
+applySetValueWithDepth _ (VRActorProp (ActorEntity eIdRaw) PState) val state =
+    let eId = resolveVarName eIdRaw state
+    in if Map.member eId (npcStates (save state))
+       then setNpcStatusWithEvents eId (effectValueToString val) state
+       else if isKnownEntity eId state
+            then setEntityStateWithEvents eId (effectValueToString val) state
+            else ( addDiagnostic ("[engine] set_state: unknown entity '" ++ eId ++ "'") state
+                 , evMsg "target.not_seen" [("target", eId)] )
+applySetValueWithDepth _ (VRActorProp (ActorNPC nidRaw) PState) val state =
+    let nid = resolveVarName nidRaw state
+    in setNpcStatusWithEvents nid (effectValueToString val) state
 applySetValueWithDepth _ (VRActorProp ActorPlayer PRoom) val state =
     (fst (transitionToRoom (effectValueToString val) (clearActiveDialogue state)), [])
 applySetValueWithDepth _ (VRActorProp (ActorRoom rId) PVisited) val state =

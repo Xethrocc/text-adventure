@@ -3840,15 +3840,23 @@ checkChainTargets triggers npcs =
 
 -- | K2: Every `set_state` target must resolve to a known NPC, item, device,
 --   container, vehicle, or exit lock (static or dynamic).
+--
+-- K16c: Dynamic targets containing placeholders (e.g. `{cmd.target}`, `{item1}`)
+-- are skipped at compile time and resolved at runtime via `resolveVarName`.
+-- This is a deliberate design decision (analogous to `{item1}` in K11c):
+-- runtime command variables cannot be statically known during compilation.
+-- Literal targets continue to be strictly validated with UnknownStateTarget.
 checkStateTargetRefs :: Adventure -> Map.Map String E.Room -> [CompileIssue]
 checkStateTargetRefs adv rooms =
     [ ciError (path ++ ".set_state") "UnknownStateTarget"
         ("set_state targets unknown entity or NPC '" ++ target ++ "'")
     | (path, outs) <- outcomeSurfaces adv
     , AOSetEntityState target _ <- deepOutcomes outs
+    , not (isDynamicTarget target)
     , target `Set.notMember` validTargets
     ]
   where
+    isDynamicTarget t = '{' `elem` t
     validTargets = Set.unions
         [ Set.fromList (map anId (advNPCs adv))
         , Set.fromList (map aiId (advItems adv))

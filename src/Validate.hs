@@ -444,8 +444,12 @@ idsFromOutcomeEntity outcome = case outcome of
     _                                   -> []
   where
     actorEntity ActorPlayer       = ["player"]
-    actorEntity (ActorNPC nId)    = [nId]
-    actorEntity (ActorEntity eId) = [eId]
+    actorEntity (ActorNPC nId)
+        | '{' `elem` nId          = []
+        | otherwise               = [nId]
+    actorEntity (ActorEntity eId)
+        | '{' `elem` eId          = []
+        | otherwise               = [eId]
     actorEntity _                 = []
 
 idsFromOutcomeQuest :: Effect -> [String]
@@ -504,8 +508,12 @@ idsFromPredicateEntity p = case p of
     _                 -> []
   where
     actorEntity ActorPlayer       = ["player"]
-    actorEntity (ActorNPC nId)    = [nId]
-    actorEntity (ActorEntity eId) = [eId]
+    actorEntity (ActorNPC nId)
+        | '{' `elem` nId          = []
+        | otherwise               = [nId]
+    actorEntity (ActorEntity eId)
+        | '{' `elem` eId          = []
+        | otherwise               = [eId]
     actorEntity _                 = []
 
     actorFromRef (VRActorProp actor _) = actorEntity actor

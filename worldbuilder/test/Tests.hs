@@ -2341,6 +2341,23 @@ testSetStateUnknownTargetFails = do
         Left errs -> expectContains "UnknownStateTarget" (issuesText errs)
         Right _   -> expectTrue "expected UnknownStateTarget error" False
 
+-- | K16c: `set_state` targeting a dynamic entity (e.g. "{cmd.target}") compiles
+--   without UnknownStateTarget; literals continue to be verified.
+testSetStateDynamicTargetCompiles :: IO Bool
+testSetStateDynamicTargetCompiles = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advTriggers = [ ATrigger "reveal" "turn" Nothing
+                                [ AOSetEntityState "{cmd.target}" "freigelegt" ] False 0 1 [] [] ] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let tr = head (E.triggerDefs (crWorld cr))
+            expectTrue "set_state dynamic compiles to SetValue (VRActorProp (ActorEntity {cmd.target}) PState)"
+                (E.SetValue (E.VRActorProp (E.ActorEntity "{cmd.target}") E.PState) (E.EVString "freigelegt")
+                    `elem` E.trEffects tr)
+
 -- | K2: `set_state` targeting an item compiles to ActorEntity.
 testSetStateItemCompiles :: IO Bool
 testSetStateItemCompiles = do
@@ -4039,6 +4056,7 @@ tests =
     , ("standing add/set outcome compiles to faction var", testStandingOutcomeCompiles)
     , ("set_state outcome compiles to entity state effect", testSetEntityStateCompiles)
     , ("set_state with unknown target fails UnknownStateTarget (K2)", testSetStateUnknownTargetFails)
+    , ("set_state dynamic target compiles without error (K16c)", testSetStateDynamicTargetCompiles)
     , ("set_state with item compiles to ActorEntity (K2)", testSetStateItemCompiles)
     , ("set_state with NPC compiles to ActorNPC (K2)", testSetStateNpcCompiles)
     , ("state.<npc> is author-writable with no protection error (K2)", testStateNpcWritableNoProtectionError)

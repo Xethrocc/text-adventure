@@ -94,6 +94,7 @@ module Game
     , resolveActorNpcId
     , getEntityState
     , setEntityState
+    , isKnownEntity
       -- * Flags, variables, conditions and predicates
     , getFlag
     , setFlag
@@ -1018,6 +1019,26 @@ getEntityState entity state = Map.lookup entity (entityStates (save state))
 -- | Set entity state
 setEntityState :: String -> String -> GameState -> GameState
 setEntityState entity val state = state { save = (save state) { entityStates = Map.insert entity val (entityStates (save state)) } }
+
+-- | Check if an entity ID is known in the game world or state:
+--   items, NPCs, devices, vehicles, entity states (containers, initialized entities),
+--   room exit locks (static or dynamic), or state-change triggers.
+isKnownEntity :: String -> GameState -> Bool
+isKnownEntity eId st =
+    not (null eId)
+    && ( Map.member eId (itemDefs (world st))
+       || Map.member eId (npcDefs (world st))
+       || Map.member eId (npcStates (save st))
+       || Map.member eId (deviceDefs (world st))
+       || Map.member eId (vehicleDefs (world st))
+       || Map.member eId (entityStates (save st))
+       || any hasExitLock (Map.elems (rooms (world st)))
+       || any hasTriggerTarget (triggerDefs (world st)) )
+  where
+    hasExitLock r = any (\conn -> case conn of { Locked _ lk -> lk == eId; _ -> False }) (Map.elems (roomConnections r))
+    hasTriggerTarget tr = case trEvent tr of
+        OnStateChange tid -> tid == eId
+        _                 -> False
 
 -- ---------------------------------------------------------------------------
 -- Player
