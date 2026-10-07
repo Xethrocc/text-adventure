@@ -1529,6 +1529,102 @@ interactions:
   des Abenteuers. Verweist `result:` auf ein unbekanntes Item, wird die Warnung
   `UnknownRecipeResult` erzeugt.
 
+### Rezeptwissen: `id:`, `requires_learning:`, `learn_recipe:` (K11d)
+
+Rezepte können **gelernt**, **angesehen** und **unterschieden** werden. Das
+Wissenssystem ist die Rezept-Darstellung des K9-Musters (`learn:` /
+`known.<actor>.<fact>`) — ohne Actor-Schicht, denn Rezeptwissen ist
+Spielerwissen.
+
+```yaml
+interactions:
+  item:
+    - id: heiltrank_rezept          # stabile Referenz (freie Zeichenkette)
+      requires_learning: true       # die Sperre: erst nach dem Lernen ausführbar
+      item1: kraut
+      item2: kessel
+      result: heiltrank
+      effects:
+        - msg: "Du braust einen Heiltrank."
+        - consume: kraut
+        - give: heiltrank
+
+items:
+  - id: rezeptbuch
+    name: Rezeptbuch
+    location: werkstatt
+    on_take:
+      - msg: "Du studierst das Rezeptbuch."   # eigene Meldung ZUERST …
+      - learn_recipe: heiltrank_rezept        # … dann der Lern-Effekt
+
+rules:
+  - id: rezept_gelernt              # Story-Freischalt-Stelle (Zugang, Ruf, …)
+    on: learn_recipe heiltrank_rezept
+    effects:
+      - msg: "Das Geheimnis des Heiltranks ist deins."
+```
+
+- **Zwei neue Felder** an `interactions.item` — für **beide** Rezeptarten
+  (`item1`/`item2` und `ingredients:`):
+  - `id: <string>` — stabile Referenz für `learn_recipe:`, `known_recipe.<id>`,
+    `on: learn_recipe <id>` und die Validierung. **Kein Format-Zwang** (auch
+    Groß-/Kleinschreibung bleibt erhalten).
+  - `requires_learning: true` — die **Sperre** (Default `false`). Gesperrt sind
+    `craft` **und** `use X on Y`; ohne gelerntes Rezept wird nichts ausgeführt.
+    Rezepte ohne Flag bleiben unverändert nutzbar.
+- **Bekannt = ohne Flag oder gelernt.** Nur das Flag sperrt; die Rezeptliste
+  (Lernen, Buch, Zähler) braucht nur eine `id:`. Ein ungesperrtes `id:`-Rezept
+  lässt sich ins Rezeptbuch lernen, ohne gesperrt zu sein.
+- **Wissensspeicher:** `known_recipe.<id>` = 1 in der vorhandenen VarMap —
+  **kein neues Save-Feld**, Speicherung/Undo/Serialisierung laufen mit.
+  Lernen ist **idempotent** (Set-Semantik): ein zweites Lernen ändert nichts
+  und meldet nichts.
+- **Effekt `learn_recipe: <id>`** — nur statische IDs (keine dynamischen
+  Referenzen, K16c-Ehrlichkeit). Beim **ersten** Lernen: die Meldung
+  `recipes.learn.default` („You learn a recipe: {recipe}." / „Du lernst ein
+  Rezept: {recipe}.") und der Trigger `OnLearnRecipe`. `{recipe}` ist der
+  Ergebnis-Itemname (falls `result:` gesetzt), sonst die Rezept-ID. Eigene
+  Meldungen: `msg:` **vor** den `learn_recipe`-Effekt stellen.
+- **Trigger `on: learn_recipe <id>`** — feuert genau einmal, in
+  Lernreihenfolge. Das ist die Story-Freischalt-Stelle (Zugänge, Reputation,
+  NPC-Reaktionen); Story-Gates über `on: learn_recipe <id>` + `set_flag`.
+- **Befehl `recipes`** (keine Synonyme): Kopfzeile „Recipes: {known} / {total}"
+  (Gesamt = alle `id:`-Rezepte), darunter die **bekannten** Rezepte als
+  „Ergebnisname — Zutatennamen" (ohne `result:` erscheint die Rezept-ID als
+  Name). Unbekannte Rezepte erscheinen nie einzeln — nur der Zähler verrät,
+  dass es mehr gibt. Ohne bekannte Rezepte: `recipes.empty`.
+- **Zwei Meldungen statt einer:**
+  - **A** — es gibt ein Rezept, der Spieler kennt es nicht → `craft.no_recipe`
+    („You don't know a recipe for {target}.") — eine Aussage über den **Spieler**.
+  - **B** — kein Rezept produziert das Ziel → `craft.no_product` („There is no
+    recipe that produces {target}." / „Es gibt kein Rezept, das {target}
+    herstellt.") — eine Aussage über die **Welt**, bewusst eng („dieses"):
+    spätere Rezepte alter Spielstände bleiben möglich.
+- **Gate-Reihenfolge `craft`:** (1) kein passendes `result:` → `craft.no_product`,
+  (2) Rezepte vorhanden, aber keines bekannt → `craft.no_recipe`, (3) nur
+  bekannte Kandidaten ausführen (der erste erreichbare gewinnt), (4) bekannt,
+  aber Zutaten fehlen → `use.not_carried` aus dem besten **bekannten**
+  Kandidaten. Die Zutatenmeldung verrät nie Inhalte eines unbekannten Rezepts
+  (Informationsleck); bei mehreren Varianten gilt das identisch für Ausführung
+  und Meldung.
+- **`use X on Y` ohne Bypass:** Reihenfolge unverändert (Paar- vor
+  Multi-Zutaten-Rezepten), aber nur bekannte Kandidaten. Trifft ein passendes
+  Rezept auf keinen bekannten Kandidaten, meldet die Engine
+  `use.no_known_recipe` („You don't know a recipe with {item1} and {item2}." /
+  „Du kennst kein Rezept mit {item1} und {item2}.") statt des stillen
+  Durchfalls. Ohne jedes passende Rezept bleibt alles unverändert.
+- **Checks (harte Diagnosen):** `RecipeLearningWithoutId`
+  (`requires_learning: true` ohne `id:`), `DuplicateRecipeId` (doppelte `id:`),
+  `UnknownRecipeId` (`learn_recipe:` oder `on: learn_recipe <id>` ohne
+  deklarierte `id:`), `KnownRecipeVariableClash` (`known_recipe.` gehört der
+  Engine). Zusätzlich die Warnung `UnreachableTrigger`, wenn kein Effekt ein
+  `on: learn_recipe <id>` je lehrt.
+- **Serialisierung:** `id` und `requires_learning: true` werden nur bei
+  Belegung geschrieben — bestehende Welten serialisieren byte-identisch.
+  Rezepte **ohne** `id:` sind weder lernbar noch gezählt (Legacy-Pfad).
+
+Vollstaendiges Beispiel: `examples/fixtures/rezeptwissen.yaml`.
+
 **Reihenfolge von `use <item> on <npc>`:** Ohne passenden `npc:`-Eintrag greift
 weiter der **Angriffs-Fallback** — `use` auf eine lebende Figur ist ein
 Angriff. Ein Eintrag unterbricht das: die Effektliste laeuft, der Angriff
@@ -3469,5 +3565,6 @@ Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity =
 | `QuestNeverProgressed` | Die Quest lässt sich starten, wird aber nie fortgeschrieben — kein `advance_quest:`, kein `complete_quest:`. Stufe 0 bleibt für immer stehen, `reward:` und `on_complete:` feuern nie. | `advance_quest:`- oder `complete_quest:`-Effekt ergänzen (`advance_quest:` auf der letzten Stufe schließt die Quest ab) oder die Quest auf eine Stufe kürzen. |
 | `UnknownMsgKey` | Ein `messages:`-Schluessel ist kein Engine-Katalogschluessel — der Override bleibt wirkungslos. | Schluessel aus `docs/message-catalog.md` verwenden oder den Eintrag entfernen. |
 | `UnknownRecipeResult` | Ein Rezept deklariert ein `result:`, dessen Item-ID im Abenteuer nicht existiert. | Item in `items:` deklarieren oder Tippfehler im `result:`-Feld beheben. |
+| `UnreachableTrigger` (Fall `learn_recipe`) | Eine Regel hört auf `on: learn_recipe <id>`, aber kein `learn_recipe:`-Effekt lehrt dieses Rezept je. | `learn_recipe: <id>` an einer erreichbaren Stelle ergänzen, die `id:` korrigieren oder die Regel entfernen. |
 
 

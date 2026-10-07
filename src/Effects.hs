@@ -502,6 +502,27 @@ applyOutcomeWith depth salt outcome targetId state
             Nothing -> Nothing
         snd3 (_, f, _) = f
 
+    -- K11d: recipe knowledge is the closed VarMap namespace `known_recipe.<id>`
+    --   (player-global, no actor layer — recipe knowledge is player knowledge;
+    --   an actor variant for NPC teachers would be K11e). `LearnRecipe` is
+    --   idempotent (Set semantics): on the FIRST learning the message
+    --   `recipes.learn.default` ({recipe} = result item name, or the recipe id
+    --   when the recipe has no `result:`), then the `OnLearnRecipe` trigger
+    --   fires exactly once, in learning order. Author messages belong in front
+    --   of the effect (`msg:` before `learn_recipe:`) — there is no per-recipe
+    --   learn_msg in this stage.
+    LearnRecipe rId ->
+        if getVariable ("known_recipe." ++ rId) state == Just (VVInt 1)
+        then (state, [], salt)
+        else
+            let st1 = setVariableChecked ("known_recipe." ++ rId) (VVInt 1) state
+                name = case find (\k -> recipeId k == Just rId)
+                                 (Map.keys (itemInteractions (world st1))) of
+                    Just k  -> recipeDisplayName k st1
+                    Nothing -> rId
+                (st2, trigMsgs) = fireTriggersWithDepth (depth + 1) (OnLearnRecipe rId) st1
+            in (st2, joinEv (evMsg "recipes.learn.default" [("recipe", name)]) trigMsgs, salt)
+
     -- W1 (Befehl `notizen`, generierter Trigger bei `journal: notes`): render
     --   the notes book — learned, non-silent player facts in **declaration
     --   order** (ungrouped first, then tags in first-occurrence order). NPC

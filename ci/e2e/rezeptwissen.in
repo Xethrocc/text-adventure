@@ -1,0 +1,16 @@
+recipes
+craft zaubertrank
+craft heiltrank
+east
+take kraut
+take kessel
+take salz
+take kristall
+use kraut on kessel
+use salz on kristall
+west
+take rezeptbuch
+use rezeptbuch on salz
+recipes
+craft heiltrank
+quit

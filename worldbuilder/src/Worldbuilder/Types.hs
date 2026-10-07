@@ -1318,6 +1318,7 @@ data AItemInteraction = AItemInteraction
     , aiiItem2       :: String
     , aiiIngredients :: [String]
     , aiiResult      :: Maybe String
+    , aiiRequiresLearning :: Bool   -- ^ K11d: must be learned (`learn_recipe:`) before use
     , aiiEffects     :: [AActionOutcome]
     } deriving (Show, Eq, Generic)
 
@@ -1345,14 +1346,15 @@ instance FromJSON AItemInteraction where
         mI2     <- o .:? "item2"
         mIngs   <- o .:? "ingredients"
         mResult <- o .:? "result"
+        reqLrn  <- o .:? "requires_learning" .!= False
         effs    <- o .:? "effects" .!= []
         case (mI1, mI2, mIngs) of
             (Just _, _, Just _) -> fail "ItemInteractionConflict: both item1/item2 and ingredients specified"
             (_, Just _, Just _) -> fail "ItemInteractionConflict: both item1/item2 and ingredients specified"
             (Just i1, Just i2, Nothing) ->
-                pure $ AItemInteraction mId i1 i2 [] mResult effs
+                pure $ AItemInteraction mId i1 i2 [] mResult reqLrn effs
             (Nothing, Nothing, Just ings) ->
-                pure $ AItemInteraction mId "" "" ings mResult effs
+                pure $ AItemInteraction mId "" "" ings mResult reqLrn effs
             (Just _, Nothing, Nothing) ->
                 fail "AItemInteraction requires both item1 and item2"
             (Nothing, Just _, Nothing) ->
@@ -1621,6 +1623,7 @@ data AActionOutcome
     | AOBlock (Maybe String) Bool      -- ^ block: "msg" or block: { msg: "...", turn: true } (Phase 2.2)
     | AOCallProc String [E.EffectValue] -- ^ call: <name> or call: {proc: <name>, args: [...]} (Phase 2.5)
     | AOLearn String String            -- ^ learn: <fact> or learn: {fact, actor} (W1; actor defaults to player)
+    | AOLearnRecipe String             -- ^ K11d: learn_recipe: <id> (static recipe id only, no dynamic form)
     | AONextChapter                    -- ^ next_chapter (W3)
     | AOGotoChapter String             -- ^ goto_chapter: <id> (W3)
     | AOStepToward String E.DistanceTarget (Maybe String)
@@ -1701,6 +1704,10 @@ instance FromJSON AActionOutcome where
                     String f  -> pure (AOForget (T.unpack f) "player")
                     Object fo -> AOForget <$> fo .: "fact" <*> fo .:? "actor" .!= "player"
                     _         -> fail "forget must be a fact id or {fact, actor}")
+        <|> (do lr <- o .: "learn_recipe"
+                case lr of
+                    String r  -> pure (AOLearnRecipe (T.unpack r))
+                    _         -> fail "learn_recipe must be a recipe id")
         <|> (AONextChapter <$ (o .: "next_chapter" :: Parser Bool))
         <|> (AOGotoChapter <$> o .: "goto_chapter")
         <|> (do stv <- o .: "step_toward"
@@ -2068,7 +2075,7 @@ knownKeys EntCombatScreen = Set.fromList
 knownKeys EntInteractions = Set.fromList
     [ "entity", "item", "npc" ]
 knownKeys EntItemInteraction = Set.fromList
-    [ "id", "item1", "item2", "ingredients", "result", "effects" ]
+    [ "id", "item1", "item2", "ingredients", "result", "effects", "requires_learning" ]
 knownKeys EntProgression = Set.fromList
     [ "levels" ]
 knownKeys EntLevel = Set.fromList

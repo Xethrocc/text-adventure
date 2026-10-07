@@ -109,9 +109,10 @@ defaultSaveState gw = SaveState
 -- | Preferred starting room: "start" if it exists, else the first room by key order
 startRoomId :: GameWorld -> RoomID
 startRoomId gw
+    | Just rid <- startRoom gw = rid
     | Map.member "start" (rooms gw) = "start"
-    | Map.null (rooms gw)           = "start"
-    | otherwise                     = fst (Map.findMin (rooms gw))
+    | Map.null (rooms gw) = "start"
+    | otherwise = fst (Map.findMin (rooms gw))
 
 -- | Every locked exit in the world starts out locked
 initialEntityStates :: GameWorld -> Map.Map String String

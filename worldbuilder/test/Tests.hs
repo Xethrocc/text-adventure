@@ -79,6 +79,7 @@ minWorld = E.GameWorld
     , chapterDefs = []
     , deviceDefs = Map.empty, containerDefs = Map.empty
     , progressionDef = Nothing
+    , startRoom = Nothing
     , worldLanguage = Nothing
     , worldMessages = Map.empty
     , factions = Map.empty
@@ -2133,7 +2134,7 @@ testItemInteractionCompiles :: IO Bool
 testItemInteractionCompiles = do
     let ix = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] Nothing [AOMessage "paste made"] ]
+            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] Nothing False [AOMessage "paste made"] ]
             , aiNpc = [] }
         adv = (minAdventure (minRoom "loc_0")) { advInteractions = Just ix }
     case compileAdventure adv of
@@ -2141,7 +2142,7 @@ testItemInteractionCompiles = do
             putStrLn $ "  compile errors: " ++ show errs
             pure False
         Right cr -> expectTrue "item-on-item interaction present"
-            (Map.member (E.RecipePair Nothing "herb" "mortar") (E.itemInteractions (crWorld cr)))
+            (Map.member (E.RecipePair Nothing False Nothing "herb" "mortar") (E.itemInteractions (crWorld cr)))
 
 -- | Phase 6: entity interaction (use item on target) compiles to unlock state.
 testEntityInteractionCompiles :: IO Bool
@@ -4327,6 +4328,11 @@ tests =
     , ("crafting: dynamic item refs {ingredient1..N} validated statically (K11c)", testIngredientsDynamicRefValidation)
     -- K11b: recipe result validation
     , ("crafting: result references known/unknown item (K11b)", testCraftingRecipeResultValidation)
+    -- K11d: Rezeptwissen (id:/requires_learning:, learn_recipe:, on: learn_recipe)
+    , ("recipes: id/requires_learning compile and trigger keeps case (K11d)", testRecipeLearningCompiles)
+    , ("recipes: lock without id, duplicate ids and unknown refs fail (K11d)", testRecipeLearningDiagnostics)
+    , ("recipes: requires_learning is a known key; known_recipe. is reserved (K11d)", testRecipeLearningKnownKeysAndNamespace)
+    , ("recipes: untaught learn_recipe rule warns, taught stays silent (K11d)", testRecipeLearningUntaughtTrigger)
     -- K15: Weltobjekte sind endlich (repeatable: true, Default einmal)
     , ("repeatable: YAML parsing and knownKeys clean (K15)", testRepeatableYamlAndKnownKeysClean)
     , ("repeatable: compile of repeatable items and containers (K15)", testRepeatableCompilation)
@@ -8284,7 +8290,7 @@ testCraftingCompileValidForm = do
     let r0 = minRoom "loc_0"
         ix = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] Nothing
+            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] Nothing False
                             [ AOConsumeItem "{item1}"
                             , AOConsumeItem "{item2}"
                             , AOMessage "You grind herb in mortar."
@@ -8313,7 +8319,7 @@ testCraftingUnboundRefRejected = do
         -- 1. Unbound {item9} in interactions: item:
         ixBad = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] Nothing
+            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] Nothing False
                             [ AOConsumeItem "{item9}" ]
                        ]
             , aiNpc = []
@@ -8461,7 +8467,7 @@ testIngredientsCompileValidForm = do
             Right cr -> do
                 let warns = crWarnings cr
                     w = crWorld cr
-                    mRx = Map.lookup (E.RecipeIngredients (Just "trank_rezept") Nothing ["kessel", "blatt_a", "blatt_b"]) (E.itemInteractions w)
+                    mRx = Map.lookup (E.RecipeIngredients (Just "trank_rezept") False Nothing ["kessel", "blatt_a", "blatt_b"]) (E.itemInteractions w)
                     valErrs = validateWorld w
                 r1 <- expectTrue "compiles with zero warnings" (null warns)
                 r2 <- expectTrue "recipe present in itemInteractions" (isJust mRx)
@@ -8548,7 +8554,7 @@ testIngredientsDynamicRefValidation = do
         -- 1. Valid: {ingredient1..3} for 3-ingredient recipe
         ixGood = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"] Nothing
+            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"] Nothing False
                             [ AOConsumeItem "{ingredient1}"
                             , AOConsumeItem "{ingredient2}"
                             , AOConsumeItem "{ingredient3}"
@@ -8572,7 +8578,7 @@ testIngredientsDynamicRefValidation = do
     -- 2. Invalid: {ingredient4} in 3-ingredient recipe
     let ixBad4 = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"] Nothing
+            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"] Nothing False
                             [ AOConsumeItem "{ingredient4}" ]
                        ]
             , aiNpc = []
@@ -8586,7 +8592,7 @@ testIngredientsDynamicRefValidation = do
     -- 3. Invalid: {item1} in ingredients recipe
     let ixBadItem1 = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"] Nothing
+            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"] Nothing False
                             [ AOConsumeItem "{item1}" ]
                        ]
             , aiNpc = []
@@ -8600,7 +8606,7 @@ testIngredientsDynamicRefValidation = do
     -- 4. Invalid: {ingredient1} in pair recipe
     let ixBadIngInPair = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "kessel" "blatt_a" [] Nothing
+            , aiItem = [ AItemInteraction Nothing "kessel" "blatt_a" [] Nothing False
                             [ AOConsumeItem "{ingredient1}" ]
                        ]
             , aiNpc = []
@@ -8619,7 +8625,7 @@ testCraftingRecipeResultValidation = do
     let r0 = minRoom "loc_0"
         ixGood = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "mana_leaf" "kettle" [] (Just "mana_potion")
+            , aiItem = [ AItemInteraction Nothing "mana_leaf" "kettle" [] (Just "mana_potion") False
                             [ AOConsumeItem "{item1}" ]
                        ]
             , aiNpc = []
@@ -8643,7 +8649,7 @@ testCraftingRecipeResultValidation = do
     -- 2. Unknown result emits UnknownRecipeResult warning
     let ixBad = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "mana_leaf" "kettle" [] (Just "hexenwerk")
+            , aiItem = [ AItemInteraction Nothing "mana_leaf" "kettle" [] (Just "hexenwerk") False
                             [ AOConsumeItem "{item1}" ]
                        ]
             , aiNpc = []
@@ -8661,7 +8667,7 @@ testCraftingRecipeResultValidation = do
     -- 3. Nothing result emits no UnknownRecipeResult warnings
     let ixNone = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "mana_leaf" "kettle" [] Nothing
+            , aiItem = [ AItemInteraction Nothing "mana_leaf" "kettle" [] Nothing False
                             [ AOConsumeItem "{item1}" ]
                        ]
             , aiNpc = []
@@ -8676,6 +8682,205 @@ testCraftingRecipeResultValidation = do
             expectTrue "omitted result emits no UnknownRecipeResult warnings" (null warns)
 
     pure (r1 && r2 && r3)
+
+-- ---------------------------------------------------------------------------
+-- K11d: Rezeptwissen — id:/requires_learning:, learn_recipe:, on: learn_recipe
+-- ---------------------------------------------------------------------------
+
+-- | K11d: decode + compile a YAML adventure in one step.
+k11dCompile :: String -> Either String (Either [CompileIssue] CompileResult)
+k11dCompile yaml = case decode1 (BLC.pack yaml) of
+    Left err  -> Left (show err)
+    Right adv -> Right (compileAdventure (adv :: Adventure))
+
+-- | K11d: minimal adventure YAML — four items plus the given
+--   `interactions: item:` entries (already-indented line blocks) and the given
+--   trailing rule lines.
+k11dYaml :: [[String]] -> [String] -> String
+k11dYaml ixEntries ruleLines = unlines $
+    [ "name: Rezeptwissen"
+    , "start_room: loc_0"
+    , "rooms:"
+    , "  - id: loc_0"
+    , "    name: Start"
+    , "    desc: A test room."
+    , "items:"
+    , "  - id: kraut"
+    , "    name: Kraut"
+    , "    location: loc_0"
+    , "  - id: kessel"
+    , "    name: Kessel"
+    , "    location: loc_0"
+    , "  - id: buch"
+    , "    name: Buch"
+    , "    location: loc_0"
+    , "  - id: trank"
+    , "    name: Trank"
+    , "    location: loc_0"
+    , "interactions:"
+    , "  item:"
+    ] ++ concat ixEntries ++ ruleLines
+
+-- | K11d: `id:`/`requires_learning:` compile for both recipe shapes;
+--   `learn_recipe:` becomes 'E.LearnRecipe' and `on: learn_recipe <id>` becomes
+--   'E.OnLearnRecipe' — with the authored case preserved (ids are free
+--   strings).
+testRecipeLearningCompiles :: IO Bool
+testRecipeLearningCompiles = do
+    let yaml = k11dYaml
+            [ [ "    - id: TrankRezept"
+              , "      requires_learning: true"
+              , "      item1: kraut"
+              , "      item2: kessel"
+              , "      result: trank"
+              , "      effects:"
+              , "        - msg: \"Trank gebraut.\"" ]
+            , [ "    - id: sturm_rezept"
+              , "      ingredients: [kraut, kessel]"
+              , "      effects:"
+              , "        - msg: \"Sturm.\"" ]
+            , [ "    - id: lehrer"
+              , "      item1: buch"
+              , "      item2: kessel"
+              , "      effects:"
+              , "        - learn_recipe: TrankRezept" ]
+            ]
+            [ "rules:"
+            , "  - id: tor_auf"
+            , "    on: learn_recipe TrankRezept"
+            , "    effects:"
+            , "      - msg: \"Das Tor geht auf!\"" ]
+    case k11dCompile yaml of
+        Left err -> do putStrLn ("  yaml decode failed: " ++ err); pure False
+        Right (Left errs) -> do
+            putStrLn ("  unexpected compile error: " ++ issuesText errs)
+            pure False
+        Right (Right cr) -> do
+            let w = crWorld cr
+            r1 <- expectTrue "locked pair recipe with id compiles"
+                (Map.member (E.RecipePair (Just "TrankRezept") True (Just "trank") "kraut" "kessel")
+                            (E.itemInteractions w))
+            r2 <- expectTrue "id without lock compiles for ingredients recipes"
+                (Map.member (E.RecipeIngredients (Just "sturm_rezept") False Nothing ["kraut", "kessel"])
+                            (E.itemInteractions w))
+            r3 <- expectTrue "learn_recipe compiles to LearnRecipe"
+                (Map.lookup (E.RecipePair (Just "lehrer") False Nothing "buch" "kessel") (E.itemInteractions w)
+                    == Just (E.LearnRecipe "TrankRezept"))
+            r4 <- expectTrue "on: learn_recipe keeps the authored case"
+                (any (\t -> E.trEvent t == E.OnLearnRecipe "TrankRezept") (E.triggerDefs w))
+            r5 <- expectTrue ("compiles with zero warnings: " ++ show (map ciCode (crWarnings cr)))
+                (null (crWarnings cr))
+            pure (r1 && r2 && r3 && r4 && r5)
+
+-- | K11d: the four hard diagnostics — lock without id, duplicate ids, and
+--   `learn_recipe:`/`on: learn_recipe` pointing at undeclared ids.
+testRecipeLearningDiagnostics :: IO Bool
+testRecipeLearningDiagnostics = do
+    let expectCode code yaml = case k11dCompile yaml of
+            Left err -> do putStrLn ("  yaml decode failed: " ++ err); pure False
+            Right (Left errs) ->
+                expectTrue (code ++ " reported: " ++ issuesText errs)
+                    (any (\i -> ciCode i == code) errs)
+            Right (Right _) -> expectTrue (code ++ " must fail the compile") False
+        msgOnly msg = ["      effects:", "        - msg: \"" ++ msg ++ "\""]
+        lockedNoId =
+            [ "    - item1: kraut"
+            , "      item2: kessel"
+            , "      requires_learning: true" ] ++ msgOnly "x"
+        dupA =
+            [ "    - id: dup"
+            , "      item1: kraut"
+            , "      item2: kessel" ] ++ msgOnly "a"
+        dupB =
+            [ "    - id: dup"
+            , "      item1: kessel"
+            , "      item2: kraut" ] ++ msgOnly "b"
+        unknownEffect =
+            [ "    - id: lehrer"
+            , "      item1: buch"
+            , "      item2: kessel"
+            , "      effects:"
+            , "        - learn_recipe: fehlt" ]
+        unknownTriggerRules =
+            [ "rules:"
+            , "  - id: tor_auf"
+            , "    on: learn_recipe fehlt"
+            , "    effects:"
+            , "      - msg: \"x\"" ]
+    r1 <- expectCode "RecipeLearningWithoutId" (k11dYaml [lockedNoId] [])
+    r2 <- expectCode "DuplicateRecipeId" (k11dYaml [dupA, dupB] [])
+    r3 <- expectCode "UnknownRecipeId" (k11dYaml [unknownEffect] [])
+    r4 <- expectCode "UnknownRecipeId" (k11dYaml [] unknownTriggerRules)
+    pure (r1 && r2 && r3 && r4)
+
+-- | K11d: `requires_learning` is a known YAML key (a typo warns), and
+--   `known_recipe.` is the engine's namespace — an author variable there is a
+--   hard clash, exactly like `known.`/`statement.`.
+testRecipeLearningKnownKeysAndNamespace :: IO Bool
+testRecipeLearningKnownKeysAndNamespace = do
+    r1 <- expectTrue "requires_learning in knownKeys EntItemInteraction"
+        ("requires_learning" `Set.member` knownKeys EntItemInteraction)
+    let typoYaml = k11dYaml
+            [ [ "    - item1: kraut"
+              , "      item2: kessel"
+              , "      requires_learnings: true" ]
+              ++ ["      effects:", "        - msg: \"x\""] ] []
+    r2 <- case k11dCompile typoYaml of
+        Left err -> do putStrLn ("  yaml decode failed: " ++ err); pure False
+        Right (Left errs) -> do
+            putStrLn ("  unexpected compile error: " ++ issuesText errs)
+            pure False
+        Right (Right cr) ->
+            expectTrue "typo requires_learnings triggers UnknownYamlKey"
+                (any (\w -> ciCode w == "UnknownYamlKey" && "requires_learnings" `isInfixOf` ciMessage w)
+                     (crWarnings cr))
+    let varAdv = (minAdventure (minRoom "loc_0"))
+            { advVariables = [AVariable "known_recipe.trank" "int" Nothing Nothing Nothing 0 Nothing []] }
+    r3 <- case compileAdventure varAdv of
+        Left errs -> expectTrue "known_recipe.* in variables is KnownRecipeVariableClash"
+            (any (\i -> ciCode i == "KnownRecipeVariableClash") errs)
+        Right _ -> expectTrue "known_recipe.* in variables must fail" False
+    pure (r1 && r2 && r3)
+
+-- | K11d: a rule on `learn_recipe <id>` that no effect ever teaches is dead
+--   content (warning), while a taught one stays silent.
+testRecipeLearningUntaughtTrigger :: IO Bool
+testRecipeLearningUntaughtTrigger = do
+    let ruleLines =
+            [ "rules:"
+            , "  - id: tor_auf"
+            , "    on: learn_recipe trank_rezept"
+            , "    effects:"
+            , "      - msg: \"x\"" ]
+        recipe =
+            [ "    - id: trank_rezept"
+            , "      item1: kraut"
+            , "      item2: kessel" ]
+            ++ ["      effects:", "        - msg: \"x\""]
+    r1 <- case k11dCompile (k11dYaml [recipe] ruleLines) of
+        Left err -> do putStrLn ("  yaml decode failed: " ++ err); pure False
+        Right (Left errs) -> do
+            putStrLn ("  unexpected compile error: " ++ issuesText errs)
+            pure False
+        Right (Right cr) ->
+            expectTrue "untaught learn_recipe rule warns as unreachable"
+                (any (\w -> ciCode w == "UnreachableTrigger"
+                            && "no effect ever learns recipe 'trank_rezept'" `isInfixOf` ciMessage w)
+                     (crWarnings cr))
+    let taught =
+            [ "    - id: lehrer"
+            , "      item1: buch"
+            , "      item2: kessel"
+            , "      effects:"
+            , "        - learn_recipe: trank_rezept" ]
+    r2 <- case k11dCompile (k11dYaml [recipe, taught] ruleLines) of
+        Left err -> do putStrLn ("  yaml decode failed: " ++ err); pure False
+        Right (Left errs) -> do
+            putStrLn ("  unexpected compile error: " ++ issuesText errs)
+            pure False
+        Right (Right cr) ->
+            expectEqual [] [ w | w <- crWarnings cr, ciCode w == "UnreachableTrigger" ]
+    pure (r1 && r2)
 
 main :: IO ()
 main = do

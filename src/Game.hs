@@ -49,6 +49,9 @@ module Game
     , npcAliases
     , matchesItemTarget
     , lookupItem
+      -- * Recipe knowledge (K11d)
+    , recipeKnown
+    , recipeDisplayName
     , relocateItem
     , normalizeText
       -- * Inventory and equipment
@@ -211,6 +214,7 @@ emptyGameWorld = GameWorld
     , deviceDefs         = Map.empty
     , containerDefs      = Map.empty
     , progressionDef     = Nothing
+        , startRoom          = Nothing
     , worldLanguage      = Nothing
     , worldMessages      = Map.empty
     , factions           = Map.empty
@@ -873,6 +877,32 @@ discoverItem iId state = state
 -- | Look up the ItemDef for an item
 lookupItem :: ItemID -> GameState -> Maybe ItemDef
 lookupItem iId state = Map.lookup iId (itemDefs (world state))
+
+-- ---------------------------------------------------------------------------
+-- K11d: recipe knowledge (VarMap namespace `known_recipe.<id>`)
+-- ---------------------------------------------------------------------------
+
+-- | K11d: a recipe is known when it carries no `requires_learning:` flag or
+--   when the player has learned it (@known_recipe.<id>@ == 1). Only the flag
+--   locks — a recipe without it is usable exactly as before. A locked recipe
+--   without an `id:` can never be learned (the worldbuilder rejects that shape
+--   as `RecipeLearningWithoutId`), so it stays unknown for good.
+recipeKnown :: RecipeKey -> GameState -> Bool
+recipeKnown k st
+    | not (recipeRequiresLearning k) = True
+    | otherwise = case recipeId k of
+        Nothing  -> False
+        Just rid -> getVariable ("known_recipe." ++ rid) st == Just (VVInt 1)
+
+-- | K11d: display text of a recipe — the produced item's name when the recipe
+--   has a `result:`, otherwise its `id:` (the @{recipe}@ of
+--   `recipes.learn.default` and the name column of the `recipes` listing).
+recipeDisplayName :: RecipeKey -> GameState -> String
+recipeDisplayName k st = case recipeResult k of
+    Just resId -> case lookupItem resId st of
+        Just item | not (null (itemName item)) -> itemName item
+        _                                      -> resId
+    Nothing -> fromMaybe "" (recipeId k)
 
 -- | Items (definitions) at a typed location, **including hidden ones** — the
 --   raw location view for state queries (B9: worn-equipment bonuses, `count:`).

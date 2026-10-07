@@ -40,6 +40,7 @@ module Worldbuilder.Compile
     , checkRollDice
     , checkDarkRoomDeadEnds
     , checkDeviceRefs
+    , checkRecipeLearning
     ) where
 
 import Worldbuilder.Types
@@ -445,6 +446,7 @@ checkUnreachableTriggers a =
     items = Set.fromList (map aiId (advItems a))
     chapters = Set.fromList (map achId (advChapters a))
     raised = Set.fromList ([n | AORaiseEvent n <- outs] ++ [map toLower target | t <- advTriggers a, target <- atChainsTo t])
+    taughtRecipes = Set.fromList [ r | AOLearnRecipe r <- outs ]
     roomReason r
         | Set.member r rooms = Nothing
         | otherwise          = Just ("no room '" ++ r ++ "' is declared")
@@ -466,6 +468,9 @@ checkUnreachableTriggers a =
         Right (E.OnChapter c)
             | not (Set.member c chapters) ->
                 Just ("no chapter '" ++ c ++ "' is declared")
+        Right (E.OnLearnRecipe r)
+            | not (Set.member r taughtRecipes) ->
+                Just ("no effect ever learns recipe '" ++ r ++ "'")
         Right (E.OnLevelUp _) | isNothing (advProgression a) ->
             Just "the adventure declares no 'progression:' section, so nobody ever levels up"
         Right _ -> Nothing
@@ -758,6 +763,9 @@ compileAdventure adv =
                 , E.deviceDefs = compiledDevices
                 , E.containerDefs = compiledContainers
                 , E.progressionDef = compiledProgression
+                , E.startRoom = case advStartRoom adv of
+                      "" -> Nothing  -- leerer Default (.!= "") -> Fallback-Kette in startRoomId
+                      r  -> Just r
                 , E.worldLanguage = advLanguage adv
                 , E.worldMessages = advMessages adv
                 , E.factions = compiledFactions
@@ -782,6 +790,7 @@ compileAdventure adv =
         npcIxErrs = checkNpcInteractionRefs adv
         dynamicItemErrs = checkDynamicItemRefs adv
         itemConflictErrs = checkItemInteractionConflicts adv
+        recipeLearningErrs = checkRecipeLearning adv
         questRefErrs = checkQuestRefs adv
         mapOverlapErrs = checkMapPositions adv
         reservedVarErrs = checkReservedVarWrites adv
@@ -830,6 +839,7 @@ compileAdventure adv =
                     ++ npcIxErrs
                     ++ dynamicItemErrs
                     ++ itemConflictErrs
+                    ++ recipeLearningErrs
                     ++ questRefErrs
                     ++ mapOverlapErrs
                     ++ reservedVarErrs
@@ -2109,6 +2119,11 @@ checkKnownVarReserved varDefs =
          ++ "the engine owns the learned-fact state (W1)")
     | name <- Map.keys varDefs, "known." `isPrefixOf` name ]
     ++
+    [ ciError ("variables." ++ name) "KnownRecipeVariableClash"
+        ("'" ++ name ++ "' is in the reserved 'known_recipe.' namespace; "
+         ++ "the engine owns the learned-recipe state (K11d)")
+    | name <- Map.keys varDefs, "known_recipe." `isPrefixOf` name ]
+    ++
     [ ciError ("variables." ++ name) "StatementVariableClash"
         ("'" ++ name ++ "' is in the reserved 'statement.' namespace; "
          ++ "the engine owns the statement metadata variables (K9)")
@@ -3198,8 +3213,8 @@ compileInteractions (Just ix) = (entityMap, itemMap, npcMap)
 
 compileRecipeKey :: AItemInteraction -> E.RecipeKey
 compileRecipeKey i
-    | not (null (aiiIngredients i)) = E.RecipeIngredients (aiiId i) (aiiResult i) (aiiIngredients i)
-    | otherwise                     = E.RecipePair (aiiResult i) (aiiItem1 i) (aiiItem2 i)
+    | not (null (aiiIngredients i)) = E.RecipeIngredients (aiiId i) (aiiRequiresLearning i) (aiiResult i) (aiiIngredients i)
+    | otherwise                     = E.RecipePair (aiiId i) (aiiRequiresLearning i) (aiiResult i) (aiiItem1 i) (aiiItem2 i)
 
 -- ---------------------------------------------------------------------------
 -- Verb maps (strict — unknown verb = compile error, custom verbs resolved)
@@ -3390,6 +3405,7 @@ compileAActionOutcome ao = case ao of
     AOComputeVar name expr -> E.ComputeValue (E.VRVariable name) expr
     AOCallProc name args -> E.CallProc name args
     AOLearn f a -> E.Learn (compileActorRef a) f
+    AOLearnRecipe r -> E.LearnRecipe r
     AONextChapter -> E.NextChapter
     AOGotoChapter t -> E.GotoChapter t
     AOStepToward seeker target mMsg ->
@@ -3937,10 +3953,15 @@ checkStopCostItems vehicles gw =
 -- | Parse the `on` string into an EventType.
 --   Supported: "enter <room>", "leave <room>", "look <room>", "search <room>",
 --   "take <item>", "drop <item>", "use <item>", "state <entity>", "custom <name>",
---   "command <verb>", "before <verb>", "turn".
+--   "command <verb>", "before <verb>", "turn", "learn_recipe <id>" (K11d).
 compileAtOn :: String -> Either String E.EventType
-compileAtOn s =
-    case words (map toLower s) of
+compileAtOn s
+    -- K11d: recipe ids are free strings ("kein Format-Zwang"), so this event
+    -- keeps the authored case; everything below is lowercased as always.
+    | ("learn_recipe" : rParts@(_ : _)) <- words s
+    = Right (E.OnLearnRecipe (unwords rParts))
+    | otherwise
+    = case words (map toLower s) of
         ["turn"]                     -> Right E.OnTurn
         ["combat_start"]             -> Right E.OnCombatStart
         ["combat", "start"]          -> Right E.OnCombatStart
@@ -4302,25 +4323,28 @@ checkDynamicItemRefs adv = itemIxIssues ++ otherIssues
         , AOConsumeItem ref <- deepOutcomes outs
         , '{' `elem` ref ]
 
+-- | Diagnostic path label of an `interactions.item` entry: its `id:`, else its
+--   ingredient shape (`[a,b]`), else nothing.
+recipeIxLabel :: AItemInteraction -> String
+recipeIxLabel i = case aiiId i of
+    Just ident -> "." ++ ident
+    Nothing
+        | not (null (aiiItem1 i)) -> "[" ++ aiiItem1 i ++ "," ++ aiiItem2 i ++ "]"
+        | not (null (aiiIngredients i)) -> "[" ++ intercalate "," (aiiIngredients i) ++ "]"
+        | otherwise -> ""
+
 -- | K11c: Item interactions cannot specify both item1/item2 and ingredients.
 checkItemInteractionConflicts :: Adventure -> [CompileIssue]
 checkItemInteractionConflicts adv =
     case advInteractions adv of
         Nothing -> []
         Just ai ->
-            [ ciError ("interactions.item" ++ ixLabel i) "ItemInteractionConflict"
+            [ ciError ("interactions.item" ++ recipeIxLabel i) "ItemInteractionConflict"
                 "item interaction cannot specify both item1/item2 and ingredients"
             | i <- aiItem ai
             , (not (null (aiiItem1 i)) || not (null (aiiItem2 i)))
             , not (null (aiiIngredients i))
             ]
-  where
-    ixLabel i = case aiiId i of
-        Just ident -> "." ++ ident
-        Nothing
-            | not (null (aiiItem1 i)) -> "[" ++ aiiItem1 i ++ "," ++ aiiItem2 i ++ "]"
-            | not (null (aiiIngredients i)) -> "[" ++ intercalate "," (aiiIngredients i) ++ "]"
-            | otherwise -> ""
 
 -- | K11b: recipe results must reference known items (UnknownRecipeResult warning).
 checkRecipeResults :: Adventure -> [CompileIssue]
@@ -4334,17 +4358,53 @@ checkRecipeResults adv =
         Nothing -> []
         Just res
             | res `Set.notMember` knownItems ->
-                let path = "interactions.item" ++ ixLabel i ++ ".result"
+                let path = "interactions.item" ++ recipeIxLabel i ++ ".result"
                 in [ ciWarning path "UnknownRecipeResult"
                         ("recipe result references unknown item '" ++ res ++ "'") ]
             | otherwise -> []
 
-    ixLabel i = case aiiId i of
-        Just ident -> "." ++ ident
-        Nothing
-            | not (null (aiiItem1 i)) -> "[" ++ aiiItem1 i ++ "," ++ aiiItem2 i ++ "]"
-            | not (null (aiiIngredients i)) -> "[" ++ intercalate "," (aiiIngredients i) ++ "]"
-            | otherwise -> ""
+-- | K11d: recipe ids are stable references, so they are validated statically
+--   at load time (K16c honesty applies to dynamic references only):
+--   * 'RecipeLearningWithoutId' — `requires_learning: true` without an `id:`
+--     (the lock could never be addressed),
+--   * 'DuplicateRecipeId' — two recipes share an `id:`,
+--   * 'UnknownRecipeId' — `learn_recipe:` or `on: learn_recipe <id>` points at
+--     an id no `interactions.item` entry declares.
+checkRecipeLearning :: Adventure -> [CompileIssue]
+checkRecipeLearning adv =
+    learningWithoutIdErrs ++ duplicateIdErrs ++ learnRefErrs ++ triggerRefErrs
+  where
+    items = maybe [] aiItem (advInteractions adv)
+    ids = [ rid | i <- items, Just rid <- [aiiId i] ]
+    idSet = Set.fromList ids
+    duplicated = Set.fromList [ rid | rid <- ids, length (filter (== rid) ids) > 1 ]
+    duplicateIdErrs =
+        [ ciError ("interactions.item" ++ recipeIxLabel i) "DuplicateRecipeId"
+            ("recipe id '" ++ rid ++ "' is declared more than once")
+        | i <- items, Just rid <- [aiiId i], rid `Set.member` duplicated ]
+    learningWithoutIdErrs =
+        [ ciError ("interactions.item" ++ recipeIxLabel i) "RecipeLearningWithoutId"
+            "requires_learning: true on a recipe without 'id:' - the lock can never be addressed"
+        | i <- items, aiiRequiresLearning i, isNothing (aiiId i) ]
+    learnRefErrs =
+        [ ciError path "UnknownRecipeId"
+            ("learn_recipe references undeclared recipe id '" ++ r ++ "'")
+        | (path, r) <- nub (concatMap learnRecipeRefsIn (allAOutcomes adv))
+        , r `Set.notMember` idSet ]
+    triggerRefErrs =
+        [ ciError ("rules." ++ atId t) "UnknownRecipeId"
+            ("rule listens on 'learn_recipe " ++ r
+             ++ "', which is not a declared recipe id")
+        | t <- advTriggers adv
+        , Right (E.OnLearnRecipe r) <- [compileAtOn (atOn t)]
+        , r `Set.notMember` idSet ]
+    learnRecipeRefsIn ao = case ao of
+        AOLearnRecipe r            -> [("outcomes.learn_recipe", r)]
+        AOConditional _ ts es      -> concatMap learnRecipeRefsIn ts ++ concatMap learnRecipeRefsIn es
+        AONarrative _ follow       -> concatMap learnRecipeRefsIn follow
+        AORandomChoice _ cs        -> concatMap (concatMap learnRecipeRefsIn . snd) cs
+        AOApplyCondition _ _ t e _ -> concatMap learnRecipeRefsIn t ++ concatMap learnRecipeRefsIn e
+        _                          -> []
 
 -- | 4.6: two authored map positions on the same cell of the same floor. A hard
 --   error like every other duplicate in the schema (cf. `DuplicateDirection`):
@@ -4601,6 +4661,7 @@ checkUnknownPlaceholders adv varDefs =
         | "flag:" `isPrefixOf` name = True
         | "condition_turns." `isPrefixOf` name = True
         | "known." `isPrefixOf` name = True
+        | "known_recipe." `isPrefixOf` name = True
         | "statement." `isPrefixOf` name = True
         -- G9a: {standing_name: <faction>} / {standing_name.<faction>} wird bewusst
         -- NICHT zur Compile-Zeit geprueft (Ehrlichkeit wie K16c {cmd.target}):

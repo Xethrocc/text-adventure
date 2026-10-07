@@ -142,6 +142,8 @@ module Types.Core
     , GamePolicy (..)
     , defaultGamePolicy
     , RecipeKey (..)
+    , recipeId
+    , recipeRequiresLearning
     , recipeResult
     , recipeIngredientsList
     , GameWorld (..)
@@ -1059,6 +1061,7 @@ data Effect
     | Block (Maybe String) Bool                   -- ^ Phase 2.2: veto command execution (optional message, consumesTurn)
     | CallProc String [EffectValue]               -- ^ Phase 2.5: run procedure `name` with literal args (D2)
     | Learn ActorRef String                       -- ^ W1: actor learns a fact (idempotent, fires OnLearn)
+    | LearnRecipe String                          -- ^ K11d: player learns a recipe (idempotent, fires OnLearnRecipe)
     | Forget ActorRef String                      -- ^ W1: actor forgets a fact (explicit only, never automatic)
     | ShowNotes                                   -- ^ W1: render the player's notes book
     | NextChapter                                  -- ^ W3: to the next chapter (declaration order)
@@ -1993,6 +1996,7 @@ data EventType
     | OnCommand String                 -- ^ verb name (e.g. "activate")
     | OnBefore String                  -- ^ verb name before execution (Phase 2.2)
     | OnLearn String                   -- ^ W1: fired once per newly learned fact, in learning order
+    | OnLearnRecipe String             -- ^ K11d: fired once per newly learned recipe, in learning order
     | OnChapter String                 -- ^ W3: fired when entering chapter <id>
     | OnLevelUp Int                    -- ^ W2: fired when player reaches level <n>
     | OnCombatStart                    -- ^ K7/K4: fired once when combat starts (combat.engaged == 0)
@@ -2218,20 +2222,42 @@ instance FromJSON ProgressionDef
 --    inclusion as a set, the authored list order is preserved so that
 --    dynamic variables ({ingredient1..N}) and ordered effects (consume) are
 --    deterministic.
+--
+-- K11d adds a leading (id, requires_learning) pair to BOTH constructors:
+--   * `id` is the stable reference for `learn_recipe:`, `known_recipe.<id>`,
+--     `on: learn_recipe <id>` triggers and the worldbuilder validation.
+--   * `requires_learning: true` locks the recipe behind learning (only this
+--     flag locks; a recipe without it stays usable as before).
+--   Both fields are written to world.json only when set, so existing worlds
+--   stay byte-identical (the K11c pattern). Because they are part of the key,
+--   two recipes with equal ingredients but different ids no longer collide in
+--   the map — that is the "several variants of one product" case.
 data RecipeKey
-    = RecipePair (Maybe ItemID) String String
-    | RecipeIngredients (Maybe String) (Maybe ItemID) [String]
+    = RecipePair (Maybe String) Bool (Maybe ItemID) String String
+      -- ^ id (K11d), requires_learning (K11d), result (K11b), item1, item2 (K11a)
+    | RecipeIngredients (Maybe String) Bool (Maybe ItemID) [String]
+      -- ^ id (K11c/K11d), requires_learning (K11d), result (K11b), ingredients (K11c)
     deriving (Show, Eq, Ord)
+
+-- | Optional stable recipe id (K11d).
+recipeId :: RecipeKey -> Maybe String
+recipeId (RecipePair mId _ _ _ _)      = mId
+recipeId (RecipeIngredients mId _ _ _) = mId
+
+-- | K11d: is this recipe locked behind `learn_recipe`?
+recipeRequiresLearning :: RecipeKey -> Bool
+recipeRequiresLearning (RecipePair _ req _ _ _)      = req
+recipeRequiresLearning (RecipeIngredients _ req _ _) = req
 
 -- | Optional target item produced by a recipe (K11b).
 recipeResult :: RecipeKey -> Maybe ItemID
-recipeResult (RecipePair mRes _ _)         = mRes
-recipeResult (RecipeIngredients _ mRes _)  = mRes
+recipeResult (RecipePair _ _ mRes _ _)      = mRes
+recipeResult (RecipeIngredients _ _ mRes _) = mRes
 
 -- | Ingredients of a recipe in declaration order (K11b).
 recipeIngredientsList :: RecipeKey -> [ItemID]
-recipeIngredientsList (RecipePair _ i1 i2)         = [i1, i2]
-recipeIngredientsList (RecipeIngredients _ _ ings) = ings
+recipeIngredientsList (RecipePair _ _ _ i1 i2)       = [i1, i2]
+recipeIngredientsList (RecipeIngredients _ _ _ ings) = ings
 
 -- | Static world definition containing blueprint/map data
 data GameWorld = GameWorld
@@ -2263,6 +2289,7 @@ data GameWorld = GameWorld
     , deviceDefs         :: Map.Map DeviceID DeviceDef               -- ^ Interactive devices/fixtures (W4); empty map is omitted
     , containerDefs      :: Map.Map EntityID ContainerDef            -- ^ Stationary containers (4.4); empty map is omitted
     , progressionDef     :: Maybe ProgressionDef                     -- ^ Player progression (W2); Nothing omitted from world.json
+    , startRoom          :: Maybe RoomID                             -- ^ Start room compiled from YAML `start_room:`; Nothing = arbitrary fallback
     , worldLanguage      :: Maybe String                             -- ^ `language:` (4.3): language pack code ("de" …); Nothing = plain English default
     , worldMessages      :: Map.Map String String                    -- ^ `messages:` (4.3): per-adventure catalog overrides (non-empty values only); empty map omitted from world.json
     , factions           :: Map.Map FactionID [FactionLevel]         -- ^ Faction standing levels (G9a); empty map is omitted from world.json
@@ -2307,7 +2334,7 @@ instance ToJSON GameWorld where
         , "abilities"          .= abilities gw
         ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair ++ sandboxPair
           ++ procPair ++ factPair ++ statementPair ++ combinePair ++ chapterPair ++ devicePair ++ containerPair ++ progPair
-          ++ langPair ++ msgPair ++ npcInteractionPair ++ factionPair
+          ++ startRoomPair ++ langPair ++ msgPair ++ npcInteractionPair ++ factionPair
       where
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
@@ -2329,6 +2356,7 @@ instance ToJSON GameWorld where
         devicePair = [ "deviceDefs" .= deviceDefs gw | not (Map.null (deviceDefs gw)) ]
         containerPair = [ "containerDefs" .= containerDefs gw | not (Map.null (containerDefs gw)) ]
         progPair = [ "progressionDef" .= p | Just p <- [progressionDef gw] ]
+        startRoomPair = [ "startRoom" .= rid | Just rid <- [startRoom gw] ]
         -- Phase 4.3 (D4): language + message overrides only when set, so every
         -- existing world.json stays bit-identical (same contract as procDefs).
         langPair = [ "language" .= l | Just l <- [worldLanguage gw] ]
@@ -2410,6 +2438,7 @@ instance FromJSON GameWorld where
         <*> o .:? "deviceDefs" .!= Map.empty
         <*> o .:? "containerDefs" .!= Map.empty
         <*> o .:? "progressionDef" .!= Nothing
+        <*> o .:? "startRoom" .!= Nothing
         <*> o .:? "language" .!= Nothing
         <*> o .:? "messages" .!= Map.empty
         <*> o .:? "factions" .!= Map.empty
@@ -2417,18 +2446,23 @@ instance FromJSON GameWorld where
 -- | Encode item-on-item outcomes as objects (P2-9, K11c).
 --   Pair recipes emit historical {"a": ..., "b": ..., "effect": ...} objects.
 --   Multi-ingredient recipes emit {"ingredients": [...], "effect": ...} objects,
---   with optional "id".
+--   with optional "id".  K11d: "id" (both shapes) and "requires_learning: true"
+--   are written only when set — existing worlds stay byte-identical, and the
+--   historical field order is untouched (new fields append at the end).
 itemInteractionsToJSON :: Map.Map RecipeKey Effect -> Value
 itemInteractionsToJSON m =
     toJSON [ encodeEntry k e | (k, e) <- Map.toList m ]
   where
-    encodeEntry (RecipePair mRes a b) e =
+    encodeEntry (RecipePair mId req mRes a b) e =
         object $ [ "a" .= a, "b" .= b, "effect" .= e ]
                ++ [ "result" .= r | Just r <- [mRes] ]
-    encodeEntry (RecipeIngredients mId mRes ings) e =
+               ++ [ "id" .= i | Just i <- [mId] ]
+               ++ [ "requires_learning" .= True | req ]
+    encodeEntry (RecipeIngredients mId req mRes ings) e =
         object $ [ "ingredients" .= ings, "effect" .= e ]
                ++ [ "id" .= i | Just i <- [mId] ]
                ++ [ "result" .= r | Just r <- [mRes] ]
+               ++ [ "requires_learning" .= True | req ]
 
 parseItemInteractions :: Value -> Parser (Map.Map RecipeKey Effect)
 parseItemInteractions v =
@@ -2438,17 +2472,18 @@ parseItemInteractions v =
   where
     entry = withObject "item interaction entry" $ \o -> do
         mRes  <- o .:? "result"
+        mId   <- o .:? "id"
+        req   <- o .:? "requires_learning" .!= False
         mIngs <- o .:? "ingredients"
         case mIngs of
             Just ings -> do
-                mId <- o .:? "id"
-                e   <- o .: "effect"
-                pure (RecipeIngredients mId mRes ings, e)
+                e <- o .: "effect"
+                pure (RecipeIngredients mId req mRes ings, e)
             Nothing -> do
                 a <- o .: "a"
                 b <- o .: "b"
                 e <- o .: "effect"
-                pure (RecipePair mRes a b, e)
+                pure (RecipePair mId req mRes a b, e)
     -- Legacy form: `"a|b"` string keys.
     legacy = do
         m <- parseJSON v :: Parser (Map.Map String Effect)
@@ -2456,7 +2491,7 @@ parseItemInteractions v =
             Right kvs -> pure (Map.fromList kvs)
             Left err  -> fail err
     parseKey (k, e) = case break (== '|') k of
-        (a, '|':b) -> Right (RecipePair Nothing a b, e)
+        (a, '|':b) -> Right (RecipePair Nothing False Nothing a b, e)
         _          -> Left ("Bad item interaction key: " ++ k)
 
 -- | Encode item-on-NPC outcomes as objects (B9).

@@ -1,0 +1,149 @@
+# K11d — Rezeptwissen: Rezepte lernen, sehen, unterscheiden.
+#
+# Drei Rezepte zeigen die drei Wissenszustaende:
+#   * `heiltrank_rezept`  — id + requires_learning: erst nach dem Lernen nutzbar
+#                           (Lehrer: das Rezeptbuch beim Nehmen)
+#   * `segen_rezept`      — id ohne Flag: ins Rezeptbuch lernbar, aber immer
+#                           ausfuehrbar (das §7.1-Versprechen)
+#   * ohne id (legacy)    — weder lernbar noch gezaehlt, unveraendert nutzbar
+name: Rezeptwissen Fixture
+start_room: werkstatt
+
+rooms:
+  - id: werkstatt
+    name: Werkstatt
+    desc: Die Werkstatt des Alchemisten. Ein altes Rezeptbuch liegt auf dem Tisch.
+    exits:
+      east: labor
+      north: lager
+
+  - id: labor
+    name: Labor
+    desc: Das Labor mit Kessel, Kraut, Salz und Kristall auf dem Arbeitstisch.
+    exits:
+      west: werkstatt
+
+  - id: lager
+    name: Lager
+    desc: Das Lager mit den fertigen Traenken.
+    exits:
+      south: werkstatt
+
+items:
+  - id: rezeptbuch
+    name: Rezeptbuch
+    desc: Ein altes Buch voller Rezepte.
+    location: werkstatt
+    keys: [rezeptbuch, buch]
+    # Der Lehrer: beim Nehmen faellt der Inhalt — zuerst die eigene Meldung,
+    # dann der learn_recipe-Effekt (K11d: msg: vor den Effekt stellen).
+    on_take:
+      - msg: "Du studierst das Rezeptbuch."
+      - learn_recipe: heiltrank_rezept
+
+  - id: kraut
+    name: Kraut
+    desc: Ein duftendes Heilkraut.
+    location: labor
+    keys: [kraut, heilkraut]
+
+  - id: kessel
+    name: Kessel
+    desc: Ein eiserner Kessel.
+    location: labor
+    keys: [kessel]
+
+  - id: salz
+    name: Salz
+    desc: Eine Prise alchemistisches Salz.
+    location: labor
+    keys: [salz]
+
+  - id: kristall
+    name: Kristall
+    desc: Ein klarer Kristall.
+    location: labor
+    keys: [kristall]
+
+  # Die Ergebnis-Items liegen im Lager — craft bringt sie in die Hand.
+  - id: heiltrank
+    name: Heiltrank
+    desc: Ein wirksamer Heiltrank.
+    location: lager
+    keys: [heiltrank, trank]
+
+  - id: segenstrank
+    name: Segenstrank
+    desc: Ein seltener Segenstrank.
+    location: lager
+    keys: [segenstrank]
+
+interactions:
+  item:
+    # Gesperrt: ohne gelerntes Rezept melden craft/use "You don't know a
+    # recipe for …" — nicht die Zutaten (kein Informationsleck).
+    - id: heiltrank_rezept
+      requires_learning: true
+      item1: kraut
+      item2: kessel
+      result: heiltrank
+      effects:
+        - msg: "Du braust einen Heiltrank."
+        - consume: kraut
+        - give: heiltrank
+
+    # Ungesperrt mit id: lernbar (Zaehler), aber ohne Sperre sofort nutzbar.
+    - id: segen_rezept
+      ingredients: [salz, kristall]
+      result: segenstrank
+      effects:
+        - msg: "Du mischst einen Segenstrank."
+        - consume: kristall
+        - give: segenstrank
+
+    # Legacy ohne id: unveraendert nutzbar, aber weder lernbar noch gezaehlt.
+    - item1: rezeptbuch
+      item2: salz
+      effects:
+        - msg: "Ein altes Lesezeichen faellt heraus."
+
+rules:
+  # Story-Freischalt-Stelle: genau einmal beim ersten Lernen.
+  - id: rezept_gelernt
+    on: learn_recipe heiltrank_rezept
+    effects:
+      - msg: "Das Geheimnis des Heiltranks ist deins."
+
+tests:
+  - name: "Rezeptbuch lehrt das gesperrte Rezept; craft/use unterscheiden A und B"
+    input:
+      - recipes
+      - craft zaubertrank
+      - craft heiltrank
+      - east
+      - take kraut
+      - take kessel
+      - take salz
+      - take kristall
+      - use kraut on kessel
+      - use salz on kristall
+      - west
+      - take rezeptbuch
+      - use rezeptbuch on salz
+      - recipes
+      - craft heiltrank
+      - quit
+    expect:
+      - "Recipes: 1 / 2"
+      - "Segenstrank — Salz, Kristall"
+      - "There is no recipe that produces zaubertrank."
+      - "You don't know a recipe for heiltrank."
+      - "You don't know a recipe with Kraut and Kessel."
+      - "Du mischst einen Segenstrank."
+      - "Du studierst das Rezeptbuch."
+      - "You learn a recipe: Heiltrank."
+      - "Das Geheimnis des Heiltranks ist deins."
+      - "Ein altes Lesezeichen faellt heraus."
+      - "Recipes: 2 / 2"
+      - "Heiltrank — Kraut, Kessel"
+      - "Du braust einen Heiltrank."

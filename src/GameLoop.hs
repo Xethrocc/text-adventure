@@ -100,6 +100,7 @@ consumesTurn cmd = case cmd of
     Look           -> False
     Inventory      -> False
     StatsCmd       -> False
+    RecipesCmd     -> False   -- K11d: listing the recipe book is a read, like inventory
     JournalCmd     -> False
     Help           -> False
     Quit           -> False

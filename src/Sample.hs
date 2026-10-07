@@ -427,6 +427,7 @@ initSampleGame = GameState
         , deviceDefs = Map.empty,
             containerDefs = Map.empty
         , progressionDef = Nothing
+        , startRoom          = Nothing
         , worldLanguage = Nothing
         , worldMessages = Map.empty
         , factions = Map.empty

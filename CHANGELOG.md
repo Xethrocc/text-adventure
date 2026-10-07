@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Rezeptwissen: Rezepte lernen, sehen, unterscheiden (K11d)
+
+- **Das Problem & die Design-Entscheidung:**
+  - `craft.no_recipe` vertrat seit K11b beide Fälle: „kein Rezept produziert X" und „ein Rezept produziert X, aber du kennst es nicht". Die Formulierung „du kennst keins" (K11b) legte die Unterscheidung an, aber das Wissen selbst existierte nicht.
+  - Lösung: **Wissen in der VarMap** (`known_recipe.<id>` = 1), nach dem K9-Muster — **kein neues `SaveState`-Feld** (Regel 6 bleibt intakt).
+- **Stabile Rezept-IDs:**
+  - `RecipeKey` erweitert: optionales `id:` plus `requires_learning: true` (auch für Paar-Rezepte — zwei Rezepte mit gleichen Zutaten kollidieren in der Map nicht mehr).
+  - Rezepte ohne `id:` verhalten sich unverändert (nie wissensgesperrt), byte-identisch zum vorherigen Verhalten.
+- **Lernen und Anzeigen:**
+  - Neuer Effekt `learn_recipe: <id>` (idempotent, K9-Semantik).
+  - Neuer Befehl `recipes`: Header mit bekannt/gesamt, darunter die **bekannten** Rezepte als „Ergebnisname — Zutaten". Unbekannte Rezepte erscheinen nie namentlich — nur der Zähler zeigt, dass es mehr gibt. Kein bekanntes Rezept: `recipes.empty`.
+  - `recipes` zählt als Lesebefehl (`consumesTurn = False`, wie `inventory`).
+- **Wissenssperre (A/B-Unterscheidung, Meldungen):**
+  - **B** (kein Rezept produziert X): neuer Key `craft.no_product` — „There is no recipe that produces {target}." Bewusst schmal formuliert („dieses"), damit ein Autor später Rezepte ergänzen kann, ohne dass alte Spielstände anders antworten.
+  - **A** (Rezepte existieren, keines bekannt): `craft.no_recipe` bleibt — „You don't know a recipe for {target}."
+  - Bekannt, Zutaten fehlen: bestehende `use.not_carried`-Meldung, **aus dem besten bekannten Kandidaten** (nie `head candidates` über alle Kandidaten — das würde Rezept-Inhalte von Rezepten zitieren, die der Spieler nie gelernt hat; Review-Befund 2).
+  - `use X on Y` prüft die Sperre ebenfalls (kein Bypass): neue Meldung `use.no_known_recipe` — „You don't know a recipe with {item1} and {item2}."
+- **Compile-Validierung:**
+  - `start_room:` wird in `GameWorld.startRoom` sichtbar (**Byte-Vertragsänderung, bewusst, gemessen**): alle 67 gelieferten Abenteuer/Fixtures bekommen `"startRoom":"<id>"` in der `world.json` (alle hatten `start_room:` in der YAML, nutzten es aber bisher nur zur Laufzeit). **Jedes `save.json` bleibt byte-identisch** — der Start-Raum stand schon als `currentRoom` im Save. Leerer Default (`""`, z. B. via Include-Pfad) schreibt `Nothing` und fällt auf die Fallback-Kette zurück.
+  - Diese Abweichung schließt die ältere „byte-identisch"-Zusage für die Artefakte formal; sie ist die einzige und vollständig gemessene (67/67 nur `startRoom`, nichts sonst).
+- **Tests:** 551 Engine (+28), 289 Worldbuilder (+5). Neue Fixture `examples/fixtures/rezeptwissen.yaml` mit E2E (`ci/e2e/rezeptwissen.in/.expect`).
+
 ### Rezept-Alias: craft <Ergebnis> und result: (K11b)
 
 - **Das Problem & die Design-Entscheidung:**
