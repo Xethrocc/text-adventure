@@ -12,6 +12,7 @@ module GameLoop
   , sideEvents
   , initSampleGame
   , commandEvents
+  , commandVerbName
   , consumesTurn
   , consumesTurnIn
   , handleGameOver
@@ -527,50 +528,15 @@ resolvedItemId verb t before after =
             _              -> Nothing
 
 -- | Extract a canonical verb name for OnCommand triggers.
+--
+--   Delegates to 'extractCommandArgs' so that `cmd.verb`, `on: before <verb>`
+--   and `on: command <verb>` can never disagree about a command's name (past
+--   bug: `board boat` raised `OnCommand "board"` but `OnBefore "enter"`, so a
+--   boat `before`-rule could never veto).
 commandVerbName :: Command -> String
-commandVerbName cmd = case cmd of
-    Go _          -> "go"
-    Look          -> "look"
-    Inventory     -> "inventory"
-    StatsCmd      -> "stats"
-    JournalCmd    -> "journal"
-    SearchCmd _   -> "search"
-    WatchCmd _    -> "watch"
-    MapCmd        -> "map"
-    TakeAll       -> "take"
-    TakeAllFromCmd _ -> "take"
-    DropAll       -> "drop"
-    EquipCmd _    -> "equip"
-    UnequipCmd _  -> "unequip"
-    UnequipAllCmd -> "unequip"
-    Interact v _        -> verbCanonicalName v
-    InteractWith v _ _  -> verbCanonicalName v
-    ActionWithArgs v _  -> verbCanonicalName v
-    PlayCardCmd _ _     -> "play"
-    HandCmd             -> "hand"
-    DeckCmd             -> "deck"
-    DiscardCmd          -> "discard"
-    EndTurnCmd          -> "end_turn"
-    CraftCmd _          -> "craft"
-    ScoreCmd            -> "score"
-    GiveCmd _ _         -> "give"
-    PutInCmd _ _        -> "put"
-    TakeFromCmd _ _     -> "take"
-    OpenCmd _           -> "open"
-    CloseCmd _          -> "close"
-    LockCmd _           -> "lock"
-    UnlockCmd _         -> "unlock"
-    AskCmd _ _          -> "ask"
-    TellCmd _ _         -> "tell"
-    RecipesCmd          -> "recipes"
-    EnterVehicleCmd _   -> "board"
-    ExitVehicleCmd      -> "exit"
-    DriveToCmd _        -> "drive"
-    WaitCmd             -> "wait"
-    RefuelCmd _         -> "refuel"
-    RepairCmd _         -> "repair"
-    ChooseCmd _         -> "choose"
-    _             -> "unknown"
+commandVerbName cmd =
+    let (vName, _, _) = extractCommandArgs cmd
+    in vName
 
 -- | Mapping applied to every player-facing line at the I/O boundary is now
 --   part of 'Frontend' ('Frontend.OutputFilter'); the pure core never inspects

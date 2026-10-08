@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Verbnamen vereinheitlicht (Bugfix, Zork-Port Stufe B)
+
+- **`on: before <verb>` feuerte für `board`/`enter` nie:** `checkBeforeVeto` (`Parser.hs`)
+  bezog den Verbnamen aus `extractCommandArgs`, das `EnterVehicleCmd` als `"enter"`
+  beschriftete — während `commandVerbName` (Quelle von `on: command`) `"board"`
+  meldete. Eine Boot-Regel `on: before board` konnte den `enter`-Veto-Pfad damit nie
+  erreichen, `on: before enter` wiederum scheiterte am Compile-Fehler
+  `UnknownCommandVerb` (der Name stand in keiner der beiden Listen).
+- **Eine Quelle für den kanonischen Verbnamen:** `commandVerbName` delegiert jetzt auf
+  `extractCommandArgs`; `cmd.verb`, `on: before` und `on: command` können sich nicht
+  mehr widersprechen. `EnterVehicleCmd` heißt kanonisch `"board"` (Alias-Eingabe
+  `enter boat` zählt dazu).
+- **`coreCommandVerbs` war lückenhaft:** die Liste (Pflicht-Nachfolger von
+  `checkCommandVerbRefs`) kannte `board`, `exit`, `drive`, `wait`, `refuel`, `repair`,
+  `choose`, `give`, `put`, `open`, `close`, `lock`, `unlock`, `ask`, `tell`, `map`,
+  `watch`, `play`, `hand`, `deck`, `discard`, `end_turn`, `search`, `save`, `load`,
+  `saves`, `restart`, `undo`, `compound` nicht, obwohl `commandVerbName` sie ausgibt
+  und `board`/`enter`/`exit`/`drive`/`wait`/`refuel`/`repair` für Autoren sogar als
+  `ReservedVerbName` gesperrt sind. Diese Namen waren damit weder als Core noch als
+  Custom-Verb referenzierbar.
+- **Nebenbei präziser:** `Save`/`Load`/`ListSaves`/`Help`/`Quit`/`Restart`/`Undo`/
+  `CompoundCommand` lieferten bisher über `commandVerbName` den Fallback `"unknown"`
+  und tragen jetzt ihren echten Namen — `on: command unknown` fängt nur noch
+  Parser-Fehler ab.
+- **Regressionstest** `coreCommandVerbs covers every commandVerbName`: probed ein
+  `Command` je Konstruktorzweig und verlangt zusätzlich
+  `commandVerbName == extractCommandArgs`.
+
 ### Trigger-Korrektur (Bugfix, Zork-Port Stufe A)
 
 - **`on: command <verb>` für eingebaute Kommando-Konstruktoren:** `commandVerbName`

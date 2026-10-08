@@ -951,7 +951,7 @@ variables:
 
 ### Punkte-/Score-System und Ranglisten (K17)
 
-Für klassische Interactive-Fiction-Geschichten (wie Zork I) existiert ein freier Punktezähler mit optionaler Rangliste. Score ist **kein eigener Engine-Block** — das Sammeln von Punkten bleibt Autorenarbeit über reguläre Trigger-Effekte (`add_var` bei `on: take`, `on: learn_recipe`, `on: npc_death`, `on: enter/visit` etc.).
+Für klassische Interactive-Fiction-Geschichten (wie Zork I) existiert ein freier Punktezähler mit optionaler Rangliste. Score ist **kein eigener Engine-Block** — das Sammeln von Punkten bleibt Autorenarbeit über reguläre Trigger-Effekte (`add_var` bei `on: take <item>`, `on: enter <room>`, `on: learn_recipe <id>`, `on: state <entity>` etc.).
 
 Die Engine liefert die Auswertung und Anzeige über den Befehl `score` sowie die TUI-Statuszeile:
 
@@ -1264,6 +1264,25 @@ Events: `enter room`, `leave room`, `look room`, `search room`, `take item`, `dr
 ### Command Veto and `before <verb>` Rules (Phase 2.2)
 
 Rules can intercept player commands before they are executed using `on: before <verb>` (e.g. `before take`, `before go`, `before use`, or custom verbs):
+
+> **Erlaubte Verbnamen für `on: command <verb>` und `on: before <verb>`:** ein
+> Name aus der Kern-Befehlsliste oder ein unter `verbs:` deklarierter
+> Custom-Verb. Unbekannte Namen sind ein harter Compile-Fehler
+> (`UnknownCommandVerb`) — sonst würde die Regel still nie feuern.
+>
+> Der Name ist **kanonisch** und deckt Alias-Eingaben ab: `board boat` und
+> `enter boat` lösen beide `board` aus (nicht `enter`), `get`/`grab` lösen
+> `take` aus, `look at` → `examine`. `on: command` (nach der Ausführung) und
+> `on: before` (Veto davor) verwenden denselben Namen, ebenso `cmd.verb`.
+>
+> Kern-Befehlsnamen: `go`, `look`, `examine`, `take`, `drop`, `put`, `give`,
+> `use`, `talk`, `attack`, `search`, `inventory`, `open`, `close`, `lock`,
+> `unlock`, `ask`, `tell`, `equip`, `unequip`, `craft`, `recipes`, `score`,
+> `stats`, `journal`, `map`, `watch`, `board`, `exit`, `drive`, `wait`,
+> `refuel`, `repair`, `choose`, `play`, `hand`, `deck`, `discard`, `end_turn`,
+> `save`, `load`, `saves`, `restart`, `undo`, `help`, `quit`, `compound`. Der
+> Parser-Fallback ist `unknown`. (`read` ist ein eingebautes Item-Verb — es wird
+> über `verb_map: read:` am Item abgefangen, nicht über `on: command read`.)
 
 ```yaml
 rules:

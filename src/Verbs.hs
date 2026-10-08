@@ -86,11 +86,27 @@ verbCanonicalName v = case v of
     VUnknown   -> "unknown"
 
 -- | Every name `GameLoop.commandVerbName` can emit for a built-in command.
---   An `on: command <name>` rule must use one of these (or a declared custom
---   verb) or it can never fire.
+--   An `on: command <name>` / `on: before <name>` rule must use one of these
+--   (or a declared custom verb) or it can never fire.
+--
+--   Keep in sync with `GameLoop.commandVerbName`: `testCommandVerbNameCoreCoverage`
+--   samples one `Command` per constructor branch and fails when the emitted name
+--   is missing here. Two past bugs of exactly this shape (Zork port):
+--   `GiveCmd`/`PutInCmd` fell through to `"unknown"`, and `board` was absent from
+--   this list although `EnterVehicleCmd` emits it and `board`/`enter` are
+--   `ReservedVerbName` for authors.
 coreCommandVerbs :: [String]
-coreCommandVerbs =
-    nub (map verbCanonicalName
-            [ VGo, VLook, VLookAt, VTake, VDrop, VInventory
-            , VUse, VUseOn, VTalk, VAttack, VSearch, VHelp, VQuit ])
-    ++ [ "stats", "journal", "equip", "unequip", "craft", "recipes", "score" ]
+coreCommandVerbs = nub $
+    map verbCanonicalName
+        [ VGo, VLook, VLookAt, VTake, VDrop, VInventory
+        , VUse, VUseOn, VTalk, VAttack, VSearch, VHelp, VQuit, VUnknown
+        ]
+    ++
+    -- names `commandVerbName` derives from the `Command` constructor itself
+    [ "stats", "journal", "search", "watch", "map", "take", "drop"
+    , "equip", "unequip", "craft", "recipes", "score", "play", "hand"
+    , "deck", "discard", "end_turn", "give", "put", "open", "close"
+    , "lock", "unlock", "ask", "tell", "board", "exit", "drive", "wait"
+    , "refuel", "repair", "choose", "go", "look", "inventory"
+    , "save", "load", "saves", "restart", "undo", "compound"
+    ]

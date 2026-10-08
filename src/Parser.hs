@@ -45,6 +45,7 @@ module Parser
     , executeAttack
     , interactItem
     , bindCommandVars
+    , extractCommandArgs
     , craftRecipe
     , listRecipes
     , showScore
@@ -646,6 +647,12 @@ bindCommandVars cmd st =
         _         -> VVText s
 
 -- | Extract canonical verb name, raw argument string, and token list from a command.
+--
+--   The first component is *the* canonical verb name of a command: it feeds both
+--   `cmd.verb` and the `OnBefore` veto lookup, while `GameLoop.commandVerbName`
+--   derives the `OnCommand` name from this very function. Keep the two in step —
+--   a split here made `on: before board` silently never fire for `board boat`
+--   (it looked up `enter`) while `on: command board` did (Zork boat mechanic).
 extractCommandArgs :: Command -> (String, String, [String])
 extractCommandArgs cmd = case cmd of
     ActionWithArgs v args -> (verbCanonicalName v, unwords args, args)
@@ -681,7 +688,7 @@ extractCommandArgs cmd = case cmd of
     Quit                  -> ("quit", "", [])
     Restart               -> ("restart", "", [])
     Undo                  -> ("undo", "", [])
-    EnterVehicleCmd s     -> ("enter", s, words s)
+    EnterVehicleCmd s     -> ("board", s, words s)
     ExitVehicleCmd        -> ("exit", "", [])
     DriveToCmd s          -> ("drive", s, words s)
     WaitCmd               -> ("wait", "", [])

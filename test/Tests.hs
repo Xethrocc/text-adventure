@@ -24,7 +24,7 @@ import Cards
 import GameLoop (LoopState (..), initLoopState, PendingDisambiguation (..),
                  applyLoopCommand, applyLoopCommandEv,
                  sideEvents, bumpMetaRuns, reseedRng,
-                 commandEvents, consumesTurn, consumesTurnIn, runGameWithFrontend,
+                 commandEvents, commandVerbName, consumesTurn, consumesTurnIn, runGameWithFrontend,
                  handleGameOver, saveBlockedMessage, loadBlockedMessage, deathMenuText,
                  SessionRequest (..), SessionState (..),
                  transitionSave, transitionLoad, transitionLoadSuccess,
@@ -37,12 +37,12 @@ import Messages (renderMsg, formatStringWith, catalogEntries, defaultCatalog,
                 translateTerms, renderMsgFor,
                 effectiveCatalog, langPacks, knownLanguages, LangPack (..),
                 grammarArgs, templateGrammarKeys, isGrammarArgKey)
-import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, parseCommandFor, helpText, bindCommandVars,
+import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, parseCommandFor, helpText, bindCommandVars, extractCommandArgs,
                InteractTarget (..), resolveInteractTarget,
                TargetResolution (..), resolveTarget, preferInventoryTarget,
                defaultDarkMessage,
                pattern TargetItem, pattern TargetVehicle, pattern TargetAmbiguous, pattern TargetNotFound, pattern TargetBare)
-import Verbs (verbAliasMap)
+import Verbs (verbAliasMap, coreCommandVerbs)
 import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombat, resolveCombatState, shipAbsorb)
 import Validate (ValidationError (..), validateWorld, validateWorldWithFlags, validateGameState, idsFromOutcomeRoom)
 import Sample (initSampleGame)
@@ -5181,6 +5181,54 @@ testCommandEventsTable = do
     r9 <- expectEqual [OnCommand "give", OnTurn] (evs (GiveCmd "axe" "troll"))
     r10 <- expectEqual [OnCommand "put", OnTurn] (evs (PutInCmd "sword" "chest"))
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10)
+
+-- | Zork-Port Stufe B: `Verbs.coreCommandVerbs` must cover every name
+--   `commandVerbName` can emit, otherwise `on: command board` /
+--   `on: before board` is rejected with `UnknownCommandVerb` even though the
+--   runtime raises exactly that event (Zork boat mechanic).
+--   Samples one `Command` per constructor branch of `commandVerbName`; the
+--   `Verb`-carrying constructors are sampled with every core `Verb`.
+testCommandVerbNameCoreCoverage :: IO Bool
+testCommandVerbNameCoreCoverage = do
+    let coreVerbs =
+            [ VGo, VLook, VLookAt, VTake, VDrop, VInventory
+            , VUse, VUseOn, VTalk, VAttack, VSearch, VHelp, VQuit, VUnknown
+            ]
+        samples =
+            [ Go North, Look, Inventory, StatsCmd, JournalCmd
+            , SearchCmd Nothing, SearchCmd (Just "chest")
+            , WatchCmd Nothing, WatchCmd (Just "intro")
+            , MapCmd, TakeAll, TakeAllFromCmd "chest", DropAll
+            , EquipCmd "sword", UnequipCmd "sword", UnequipAllCmd
+            , PlayCardCmd 1 Nothing, PlayCardCmd 1 (Just "troll")
+            , HandCmd, DeckCmd, DiscardCmd, EndTurnCmd
+            , CraftCmd "torch", RecipesCmd, ScoreCmd
+            , GiveCmd "axe" "troll", PutInCmd "sword" "chest"
+            , TakeFromCmd "key" "chest", OpenCmd "chest", CloseCmd "chest"
+            , LockCmd "chest", UnlockCmd "chest"
+            , AskCmd "troll" "rumor", TellCmd "troll" "secret"
+            , EnterVehicleCmd "boat", ExitVehicleCmd, DriveToCmd "harbor"
+            , WaitCmd, RefuelCmd "boat", RepairCmd "boat", ChooseCmd 1
+            , Save "s", Load "s", ListSaves, Restart, Help, Quit
+            , Undo, Unknown "xyzzy", CompoundCommand [Look]
+            ]
+            ++ [Interact v "target" | v <- coreVerbs]
+            ++ [InteractWith VUseOn "key" "door"]
+            ++ [ActionWithArgs VGo ["north"]]
+        bad = [ n | c <- samples
+                  , let n = commandVerbName c
+                  , n `notElem` coreCommandVerbs ]
+        -- `commandVerbName` must stay the same name `cmd.verb`/`on: before` use
+        -- (a split here made `on: before board` fire under `enter` only)
+        diverging = [ (commandVerbName c, n)
+                    | c <- samples
+                    , let (n, _, _) = extractCommandArgs c
+                    , commandVerbName c /= n ]
+    r1 <- expectTrue ("coreCommandVerbs covers every commandVerbName, missing: " ++ show bad)
+                     (null bad)
+    r2 <- expectTrue ("commandVerbName and extractCommandArgs must agree, got: " ++ show diverging)
+                     (null diverging)
+    pure (r1 && r2)
 
 -- | L5: through the loop, an `on: enter` rule must fire before the `on: turn`
 --   rule of the same command (the event order, not the rule order).
@@ -11682,6 +11730,7 @@ main = do
         , runTest "combat screen: authored art/scene/footer" testCombatScreenAuthored
         , runTest "combat screen: wiring + no-screen invariant" testCombatScreenWiring
         , runTest "commandEvents table per command (L5)" testCommandEventsTable
+        , runTest "coreCommandVerbs covers every commandVerbName (Zork Stufe B)" testCommandVerbNameCoreCoverage
         , runTest "enter event precedes turn event (L5)" testEnterFiresBeforeTurnThroughLoop
         , runTest "consumesTurn complete for every Command (L13)" testConsumesTurnCompleteness
         , runTest "SaveLoad round-trip + legacy + checksum (L2)" testSaveLoadRoundTrip
