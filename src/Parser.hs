@@ -724,13 +724,13 @@ extractCommandArgs cmd = case cmd of
 --   or Right (state, messages) to proceed.
 checkBeforeVeto :: Command -> GameState -> Either (GameState, [OutputEvent], Bool) (GameState, [OutputEvent])
 checkBeforeVeto cmd st =
-    let stClean = st { lastVeto = Nothing }
+    let stClean = setVariable "cmd.succeeded" (VVBool False) (st { lastVeto = Nothing })
         stWithVars = bindCommandVars cmd stClean
         (vName, _, _) = extractCommandArgs cmd
         (stAfterBefore, beforeMsgs) = fireTriggers (OnBefore vName) stWithVars
     in case lastVeto stAfterBefore of
         Just consumesTurn ->
-            Left (stAfterBefore { lastVeto = Nothing }, beforeMsgs, consumesTurn)
+            Left (commandFailed (stAfterBefore { lastVeto = Nothing }), beforeMsgs, consumesTurn)
         Nothing ->
             Right (stAfterBefore, beforeMsgs)
 
@@ -854,8 +854,70 @@ takeItemFromNpc it npc state
                             ++ grammarArgs False "npc" (npcGrammar npc)) )
 
 dispatchCommandEv :: Command -> GameState -> CommandResultEv
+dispatchCommandEv cmd state =
+    let (st, evs) = dispatchCommandCoreEv cmd (setVariable "cmd.succeeded" (VVBool True) state)
+        succeeded = getVariable "cmd.succeeded" st /= Just (VVBool False)
+                    && lastVeto st == Nothing
+                    && not (any commandFailureEvent evs)
+    in (setVariable "cmd.succeeded" (VVBool succeeded) st, evs)
 
-dispatchCommandEv (Go dir) state
+-- | Compatibility adapter for the legacy pair-returning action handlers.
+-- Only stable catalog keys are inspected, never localized text or state deltas.
+-- Raw/authored refusals must set the explicit failure bit at their source.
+commandFailureEvent :: OutputEvent -> Bool
+commandFailureEvent (EvDisambiguate _) = True
+commandFailureEvent (EvMessage payload) = maybe False (`Set.member` failureKeys) (mpKey payload)
+  where
+    failureKeys = Set.fromList
+        [ "attack.cant_here", "attack.cant_target", "attack.none_here"
+        , "card.cost_insufficient", "card.invalid_number", "card.no_deck"
+        , "card.no_deck_play", "card.no_deck_endturn", "card.no_enemies"
+        , "card.no_match", "card.specify_target", "card.unknown", "choice.invalid"
+        , "chapter.no_next", "chapter.refuse_back", "chapter.unknown"
+        , "combat.ability_cooldown", "combat.ability_unknown", "combat.flee_denied"
+        , "combat.not_engaged", "combat.not_enough_resources", "combat.not_yet"
+        , "consume.not_reachable"
+        , "container.already_closed", "container.already_open", "container.full"
+        , "container.is_closed", "container.is_locked", "container.move_refused"
+        , "container.no_item", "container.not_a_container", "container.not_locked"
+        , "craft.no_product", "craft.no_recipe", "dark.default"
+        , "dialog.no_npc", "dialog.no_topic", "dialogue.none_active"
+        , "dialogue.nothing_more", "dialogue.nothing_to_say"
+        , "dialogue.partner_gone", "disambiguate.prompt", "drop.nothing"
+        , "enter.not_seen", "equip.nothing", "inventory.full", "item.cant_do"
+        , "look.void", "map.void", "move.blocked", "move.door_locked", "move.no_exit"
+        , "npc.already_dead", "npc.cant_do", "npc.dead_silent", "npc.no_item"
+        , "parse.unknown", "quest.cannot_start", "quest.not_active"
+        , "refuel.no_vehicle", "refuel.not_needed"
+        , "repair.nothing_broken", "search.void", "take.already", "take.none_here"
+        , "take.not_portable", "target.not_carried", "target.not_seen"
+        , "undo.disabled", "undo.nothing"
+        , "unequip.not_equipped", "use.no_known_recipe", "use.not_carried"
+        , "use.nothing", "use.unreachable", "vehicle.not_in", "watch.void"
+        ]
+commandFailureEvent _ = False
+
+-- | Preserve a veto's failure status even when verb_map clears lastVeto.
+applyCommandOutcomeEv :: Effect -> ItemID -> GameState -> CommandResultEv
+applyCommandOutcomeEv outcome targetId state =
+    let (st, evs) = applyOutcomeEv outcome targetId state
+    in (case lastVeto st of
+            Just _ -> setVariable "cmd.succeeded" (VVBool False) st
+            Nothing -> st, evs)
+
+-- | A refusal whose message is raw prose (and therefore has no catalog key).
+commandFailed :: GameState -> GameState
+commandFailed = setVariable "cmd.succeeded" (VVBool False)
+
+-- | A batch succeeds only when every attempted member succeeds.
+retainCommandFailure :: GameState -> GameState -> GameState
+retainCommandFailure before after
+    | getVariable "cmd.succeeded" before == Just (VVBool False) = commandFailed after
+    | otherwise = after
+
+dispatchCommandCoreEv :: Command -> GameState -> CommandResultEv
+
+dispatchCommandCoreEv (Go dir) state
     | canMove dir state = case getExitInDirection dir state of
         Just (Open destinationRoom) ->
             let (st', hookMsg) = transitionToRoom destinationRoom (clearActiveDialogue state)
@@ -874,16 +936,16 @@ dispatchCommandEv (Go dir) state
                 in (st', fullMsg)
             | otherwise ->
                 case maybeMsg of
-                    Just msg -> (state, evRaw (formatWithVars msg state))
+                    Just msg -> (commandFailed state, evRaw (formatWithVars msg state))
                     Nothing  -> (state, evMsg "move.blocked" [])
         Nothing -> (state, evMsg "move.no_exit" [])
     | otherwise = (state, evMsg "move.blocked" [])
 
-dispatchCommandEv Look state = case getCurrentRoom state of
+dispatchCommandCoreEv Look state = case getCurrentRoom state of
     Nothing -> (state, evMsg "look.void" [])
     Just room
         | isDark room state ->
-            (state, darkRoomEv room)
+            (commandFailed state, darkRoomEv room)
         | otherwise ->
             let vIdOverride = case currentVehicle (save state) of
                     Just vId -> Map.lookup (currentRoom (save state))
@@ -942,13 +1004,13 @@ dispatchCommandEv Look state = case getCurrentRoom state of
                           maybe [] evRaw vehicleMsg ]
             in (state', full)
 
-dispatchCommandEv Inventory state =
+dispatchCommandCoreEv Inventory state =
     let invItems = getItemsInLocation (CarriedBy ActorPlayer) state
     in if null invItems
        then (state, evMsg "inv.empty" [])
        else (state, evMsg "inv.header" [("items", intercalate ", " (map itemName invItems))])
 
-dispatchCommandEv StatsCmd state =
+dispatchCommandCoreEv StatsCmd state =
     let p = player (save state)
         condList = filter (not . condHidden) (Map.elems (conditions (save state)))
         skillList = Map.toList (playerSkills p)
@@ -993,20 +1055,20 @@ dispatchCommandEv StatsCmd state =
             ]
     in (state, msg)
 
-dispatchCommandEv JournalCmd state = (state, journalTextEv state)
-dispatchCommandEv Undo state = (state, evMsg "undo.nothing" [])
+dispatchCommandCoreEv JournalCmd state = (state, journalTextEv state)
+dispatchCommandCoreEv Undo state = (state, evMsg "undo.nothing" [])
 
 -- Card & Deck commands (Phase 2B)
-dispatchCommandEv (PlayCardCmd idx target) state = playCard idx target state
-dispatchCommandEv HandCmd state = showHand state
-dispatchCommandEv DeckCmd state = showDeck state
-dispatchCommandEv DiscardCmd state = showDiscard state
-dispatchCommandEv EndTurnCmd state = endTurn state
+dispatchCommandCoreEv (PlayCardCmd idx target) state = playCard idx target state
+dispatchCommandCoreEv HandCmd state = showHand state
+dispatchCommandCoreEv DeckCmd state = showDeck state
+dispatchCommandCoreEv DiscardCmd state = showDiscard state
+dispatchCommandCoreEv EndTurnCmd state = endTurn state
 
-dispatchCommandEv (AskCmd who what) state = talkTopic who what state
-dispatchCommandEv (TellCmd who what) state = talkTopic who what state
+dispatchCommandCoreEv (AskCmd who what) state = talkTopic who what state
+dispatchCommandCoreEv (TellCmd who what) state = talkTopic who what state
 
-dispatchCommandEv (ChooseCmd idx) state =
+dispatchCommandCoreEv (ChooseCmd idx) state =
     case activeDialogue (save state) of
         Nothing -> (state, evMsg "dialogue.none_active" [])
         Just nId -> case Map.lookup nId (npcDefs (world state)) of
@@ -1027,7 +1089,7 @@ dispatchCommandEv (ChooseCmd idx) state =
                                    else
                                        let choice = choices !! (idx - 1)
                                            outcome = dcOutcome choice
-                                           (stateAfterOutcome, outcomeMsg) = applyOutcomeEv outcome nId state
+                                           (stateAfterOutcome, outcomeMsg) = applyCommandOutcomeEv outcome nId state
                                        in case dcNextNode choice of
                                            Nothing ->
                                                -- Dialogue ends
@@ -1045,14 +1107,14 @@ dispatchCommandEv (ChooseCmd idx) state =
                                                              else outcomeMsg ++ nl2 ++ nextDialogue
                                                in (stateFinal, fullMsg)
 
-dispatchCommandEv (EquipCmd targetStr) state =
+dispatchCommandCoreEv (EquipCmd targetStr) state =
     let stateWithVars = bindCommandVars (EquipCmd targetStr) state
     in case resolveTarget (VCustom "equip") targetStr stateWithVars of
         TargetItem iid ->
             case Map.lookup iid (itemDefs (world stateWithVars)) of
                 Just item ->
                     case equipItem iid stateWithVars of
-                        Left err     -> (stateWithVars, evRaw err)
+                        Left err     -> (commandFailed stateWithVars, evRaw err)
                         Right state' -> (state', evMsg "equip.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
                 Nothing -> (stateWithVars, evMsg "target.not_carried" [("target", targetStr)])
         TargetAmbiguous ids ->
@@ -1062,14 +1124,14 @@ dispatchCommandEv (EquipCmd targetStr) state =
                     case Map.lookup singleEquippable (itemDefs (world stateWithVars)) of
                         Just item ->
                             case equipItem singleEquippable stateWithVars of
-                                Left err     -> (stateWithVars, evRaw err)
+                                Left err     -> (commandFailed stateWithVars, evRaw err)
                                 Right state' -> (state', evMsg "equip.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
                         Nothing -> interactAmbiguous ids stateWithVars
                 (e1:e2:es) -> interactAmbiguous (e1:e2:es) stateWithVars
                 []         -> interactAmbiguous ids stateWithVars
         _                   -> (stateWithVars, evMsg "target.not_carried" [("target", targetStr)])
 
-dispatchCommandEv (UnequipCmd targetStr) state =
+dispatchCommandCoreEv (UnequipCmd targetStr) state =
     let stateWithVars = bindCommandVars (UnequipCmd targetStr) state
     in case resolveTarget (VCustom "unequip") targetStr stateWithVars of
         TargetItem iid ->
@@ -1089,11 +1151,11 @@ dispatchCommandEv (UnequipCmd targetStr) state =
                 []               -> interactAmbiguous ids stateWithVars
         _                   -> (stateWithVars, evMsg "target.not_carried" [("target", targetStr)])
 
-dispatchCommandEv UnequipAllCmd state
+dispatchCommandCoreEv UnequipAllCmd state
     | Map.null (equipment (save state)) = (state, evMsg "equip.nothing" [])
     | otherwise = (state { save = (save state) { equipment = Map.empty } }, evMsg "unequip.all" [])
 
-dispatchCommandEv TakeAll state = case getCurrentRoom state of
+dispatchCommandCoreEv TakeAll state = case getCurrentRoom state of
     Nothing -> (state, evMsg "take.none_here" [])
     Just room ->
         let inRoom = getItemsInLocation (InRoom (currentRoom (save state))) state
@@ -1105,30 +1167,30 @@ dispatchCommandEv TakeAll state = case getCurrentRoom state of
                         else evMsg "take.none_here" [])
            else let (finalState, msgs) = foldl' (\(s, ms) item ->
                             let (s', m) = executeCommandEv (Interact VTake (itemId item)) s
-                            in (s', ms ++ [m])) (state, []) roomItems
+                            in (retainCommandFailure s s', ms ++ [m])) (state, []) roomItems
                     in (finalState, evIntercalate msgs)
 
-dispatchCommandEv DropAll state =
+dispatchCommandCoreEv DropAll state =
     let invItems = getItemsInLocation (CarriedBy ActorPlayer) state
     in if null invItems
        then (state, evMsg "drop.nothing" [])
        else let (finalState, msgs) = foldl' (\(s, ms) item ->
                     let (s', m) = executeCommandEv (Interact VDrop (itemId item)) s
-                    in (s', ms ++ [m])) (state, []) invItems
+                    in (retainCommandFailure s s', ms ++ [m])) (state, []) invItems
             in (finalState, evIntercalate msgs)
 
-dispatchCommandEv (CompoundCommand cmds) state =
+dispatchCommandCoreEv (CompoundCommand cmds) state =
     foldl' (\(s, msgs) cmd ->
         let (s', msg) = executeCommandEv cmd s
-        in (s', joinEv msgs msg)
+        in (retainCommandFailure s s', joinEv msgs msg)
     ) (state, []) cmds
 
-dispatchCommandEv (SearchCmd maybeTarget) state = case getCurrentRoom state of
+dispatchCommandCoreEv (SearchCmd maybeTarget) state = case getCurrentRoom state of
     Nothing -> (state, evMsg "search.void" [])
     Just room
         | isDark room state
         , not (maybe False (targetIsFeelable state) maybeTarget) ->
-            (state, darkRoomEv room)
+            (commandFailed state, darkRoomEv room)
         | otherwise ->
             case maybeTarget of
                 Nothing -> searchRoom state
@@ -1150,10 +1212,10 @@ dispatchCommandEv (SearchCmd maybeTarget) state = case getCurrentRoom state of
                                     (\st -> (st, evMsg "search.nothing_npc" ([("npc", npcName npc)] ++ grammarArgs True "npc" (npcGrammar npc)))) state
                             Nothing -> (state, evMsg "target.not_seen" [("target", targetStr)])
 
-dispatchCommandEv (WatchCmd maybeTarget) state = case getCurrentRoom state of
+dispatchCommandCoreEv (WatchCmd maybeTarget) state = case getCurrentRoom state of
     Nothing -> (state, evMsg "watch.void" [])
     Just room
-        | isDark room state -> (state, darkRoomEv room)
+        | isDark room state -> (commandFailed state, darkRoomEv room)
         | otherwise -> case maybeTarget of
             Nothing -> watchArt (roomAscii room) "the room"
             Just targetStr ->
@@ -1172,10 +1234,10 @@ dispatchCommandEv (WatchCmd maybeTarget) state = case getCurrentRoom state of
             (state { pendingAnimation = Just (frames, micros) },
              evMsg "watch.start" [("label", label)])
 
-dispatchCommandEv MapCmd state = case getCurrentRoom state of
+dispatchCommandCoreEv MapCmd state = case getCurrentRoom state of
     Nothing -> (state, evMsg "map.void" [])
     Just room
-        | isDark room state -> (state, darkRoomEv room)
+        | isDark room state -> (commandFailed state, darkRoomEv room)
         | otherwise ->
             let art = roomAscii room
                 spots = aaHotspots art
@@ -1193,12 +1255,12 @@ dispatchCommandEv MapCmd state = case getCurrentRoom state of
                                   ++ nl2 ++ evRaw "Legend:\n" ++ unlinesEv legendLines
                    in (state, mapFrags)
 
-dispatchCommandEv (ActionWithArgs verb args) state =
+dispatchCommandCoreEv (ActionWithArgs verb args) state =
     let stateWithVars = bindCommandVars (ActionWithArgs verb args) state
     in dispatchCommandEv (Interact verb (unwords args)) stateWithVars
 
 -- | 4.4: container verbs — open / close / lock / unlock.
-dispatchCommandEv (OpenCmd t) state =
+dispatchCommandCoreEv (OpenCmd t) state =
     case findContainerRef t state of
         Nothing -> (state, evMsg "container.not_a_container" [("target", t)])
         Just cid ->
@@ -1216,14 +1278,14 @@ dispatchCommandEv (OpenCmd t) state =
                 currentStatus = maybe "intact" itemStatus itemSt
                 insteadM = Map.lookup (PhaseInstead, VCustom "open", currentStatus) itemVM
             in case insteadM of
-                Just outcome -> applyOutcomeEv outcome cid state
+                Just outcome -> applyCommandOutcomeEv outcome cid state
                 Nothing -> case containerStateOf cid state of
                     "locked" -> (state, evMsg "container.is_locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
                     "open"   -> (state, evMsg "container.already_open" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
                     _        -> (setEntityState cid "open" state
                                 , evMsg "container.opened" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
 
-dispatchCommandEv (CloseCmd t) state =
+dispatchCommandCoreEv (CloseCmd t) state =
     case findContainerRef t state of
         Nothing -> (state, evMsg "container.not_a_container" [("target", t)])
         Just cid -> case containerStateOf cid state of
@@ -1232,7 +1294,7 @@ dispatchCommandEv (CloseCmd t) state =
             _        -> (setEntityState cid "closed" state
                         , evMsg "container.closed" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
 
-dispatchCommandEv (LockCmd t) state =
+dispatchCommandCoreEv (LockCmd t) state =
     case findContainerRef t state of
         Nothing -> (state, evMsg "container.not_a_container" [("target", t)])
         Just cid -> case containerStateOf cid state of
@@ -1240,7 +1302,7 @@ dispatchCommandEv (LockCmd t) state =
             _        -> (setEntityState cid "locked" state
                         , evMsg "container.locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
 
-dispatchCommandEv (UnlockCmd t) state =
+dispatchCommandCoreEv (UnlockCmd t) state =
     case findContainerRef t state of
         Nothing -> (state, evMsg "container.not_a_container" [("target", t)])
         Just cid -> case containerStateOf cid state of
@@ -1250,7 +1312,7 @@ dispatchCommandEv (UnlockCmd t) state =
 
 -- | 4.4: `take X from Y` — one item out of an open container (the item is
 --   looked up inside Y, so a closed container reports "closed", not "missing").
-dispatchCommandEv (TakeFromCmd x y) state =
+dispatchCommandCoreEv (TakeFromCmd x y) state =
     case findContainerRef y state of
         Nothing -> case findNpcTarget y state of
             -- B7: not a container — maybe an NPC carries the item.
@@ -1280,7 +1342,7 @@ dispatchCommandEv (TakeFromCmd x y) state =
 --   per-item effect loop (never an author-supplied effect list), one
 --   `npc.took_from` line per item, so no new message key. Items the NPC has
 --   equipped stay on it — they are deliberately not part of what is in its hands.
-dispatchCommandEv (TakeAllFromCmd y) state =
+dispatchCommandCoreEv (TakeAllFromCmd y) state =
     case findNpcTarget y state of
         Nothing -> (state, evMsg "container.not_a_container" [("target", y)])
         Just npc ->
@@ -1295,7 +1357,7 @@ dispatchCommandEv (TakeAllFromCmd y) state =
 
 -- | B7: `give X to Y` — hand a carried item to an NPC (who then carries it;
 --   `take X from <npc>` retrieves it).
-dispatchCommandEv (GiveCmd x y) state =
+dispatchCommandCoreEv (GiveCmd x y) state =
     case findNpcTarget y state of
         Nothing -> (state, evMsg "target.not_seen" [("target", y)])
         Just npc ->
@@ -1307,7 +1369,7 @@ dispatchCommandEv (GiveCmd x y) state =
                     , evMsg "npc.gave_to" ([("item", itemName it), ("npc", npcName npc)] ++ grammarArgs True "item" (itemGrammar it) ++ grammarArgs False "npc" (npcGrammar npc)) )
 
 -- | 4.4: `put X in Y` — one item into an open container (capacity checked).
-dispatchCommandEv (PutInCmd x y) state =
+dispatchCommandCoreEv (PutInCmd x y) state =
     case findContainerRef y state of
         Nothing -> (state, evMsg "container.not_a_container" [("target", y)])
         Just cid
@@ -1325,16 +1387,16 @@ dispatchCommandEv (PutInCmd x y) state =
                         , evMsg "container.put"
                             ([ ("item", x), ("name", containerName cid state) ] ++ grammarArgs False "item" (grammarOfItem iId state) ++ grammarArgs True "name" (grammarOfItem cid state)) )
 
-dispatchCommandEv (CraftCmd targetStr) state =
+dispatchCommandCoreEv (CraftCmd targetStr) state =
     craftRecipe targetStr state
 
-dispatchCommandEv RecipesCmd state =
+dispatchCommandCoreEv RecipesCmd state =
     listRecipes state
 
-dispatchCommandEv ScoreCmd state =
+dispatchCommandCoreEv ScoreCmd state =
     showScore state
 
-dispatchCommandEv (Interact verb targetStr) state
+dispatchCommandCoreEv (Interact verb targetStr) state
     | not (null targetStr), VCustom vn <- verb
     , vn `elem` ["use-ability", "ability"]
     = executeTacticalAction (CAAbility targetStr) (bindCommandVars (Interact verb targetStr) state)
@@ -1347,42 +1409,42 @@ dispatchCommandEv (Interact verb targetStr) state
             , isDark room stateWithVars
             , not (hasItem (itemId item) stateWithVars)
             , not (itemIsFeelable item) ->
-                (stateWithVars, darkRoomEv room)
+                (commandFailed stateWithVars, darkRoomEv room)
             | otherwise ->
                 interactItem verb item mSt targetStr stateWithVars
         ITNpc npc mSt
             | isDarkRestricted verb
             , Just room <- getCurrentRoom stateWithVars
             , isDark room stateWithVars ->
-                (stateWithVars, darkRoomEv room)
+                (commandFailed stateWithVars, darkRoomEv room)
             | otherwise ->
                 interactNpc verb npc mSt targetStr stateWithVars
         ITVehicle veh
             | isDarkRestricted verb
             , Just room <- getCurrentRoom stateWithVars
             , isDark room stateWithVars ->
-                (stateWithVars, darkRoomEv room)
+                (commandFailed stateWithVars, darkRoomEv room)
             | otherwise ->
                 interactVehicle verb veh targetStr stateWithVars
         ITDevice dev
             | isDarkRestricted verb
             , Just room <- getCurrentRoom stateWithVars
             , isDark room stateWithVars ->
-                (stateWithVars, darkRoomEv room)
+                (commandFailed stateWithVars, darkRoomEv room)
             | otherwise ->
                 interactDevice verb dev targetStr stateWithVars
         ITBareVerb
             | isDarkRestricted verb
             , Just room <- getCurrentRoom stateWithVars
             , isDark room stateWithVars ->
-                (stateWithVars, darkRoomEv room)
+                (commandFailed stateWithVars, darkRoomEv room)
             | otherwise ->
                 interactBare verb stateWithVars
         ITNotFound str
             | isDarkRestricted verb
             , Just room <- getCurrentRoom stateWithVars
             , isDark room stateWithVars ->
-                (stateWithVars, darkRoomEv room)
+                (commandFailed stateWithVars, darkRoomEv room)
             | otherwise ->
                 interactNotFound verb str stateWithVars
         ITAmbiguous ids
@@ -1390,17 +1452,17 @@ dispatchCommandEv (Interact verb targetStr) state
             , Just room <- getCurrentRoom stateWithVars
             , isDark room stateWithVars
             , not (all (itemReachableInDark stateWithVars) ids) ->
-                (stateWithVars, darkRoomEv room)
+                (commandFailed stateWithVars, darkRoomEv room)
             | otherwise ->
                 interactAmbiguous ids stateWithVars
 
 -- Phase 7f-3, A3 / K16c: `use-ability <id> auf <ziel>`
-dispatchCommandEv (InteractWith verb abId targetStr) state
+dispatchCommandCoreEv (InteractWith verb abId targetStr) state
     | not (null abId), VCustom vn <- verb
     , vn `elem` ["use-ability", "ability"]
     = executeTacticalAction (CAAbility abId) (bindCommandVars (InteractWith verb abId targetStr) state)
 
-dispatchCommandEv (InteractWith VUseOn itemStr entityStr) state =
+dispatchCommandCoreEv (InteractWith VUseOn itemStr entityStr) state =
     let itemTarget = normalizeText itemStr
         entityTarget = normalizeText entityStr
         inventoryItems = getItemsInLocation (CarriedBy ActorPlayer) state
@@ -1417,7 +1479,7 @@ dispatchCommandEv (InteractWith VUseOn itemStr entityStr) state =
             , isDark room state
             , not entityInInventory
             , not entityIsFeelable ->
-                (state, darkRoomEv room)
+                (commandFailed state, darkRoomEv room)
             | otherwise ->
                 if entityTarget `elem` reachableEntityAliases state
             then
@@ -1462,7 +1524,7 @@ dispatchCommandEv (InteractWith VUseOn itemStr entityStr) state =
         in case find (\n -> any (`elem` targetKeys) (npcId n : npcAliases n)) roomNPCs of
             Nothing -> Nothing
             Just npc -> case Map.lookup (usedId, npcId npc) (npcInteractions (world st)) of
-                Just outcome -> Just (applyOutcomeEv outcome (npcId npc) st)
+                Just outcome -> Just (applyCommandOutcomeEv outcome (npcId npc) st)
                 Nothing      -> Nothing
     -- Vehicle refuelling: `use <fuel item> on <vehicle>` adds the item's
     -- "fuel" prop value (default 1) to the vehicle's tank, consuming the item.
@@ -1483,49 +1545,49 @@ dispatchCommandEv (InteractWith VUseOn itemStr entityStr) state =
             Just v -> Just (vehicleId v)
             Nothing -> Nothing
 
-dispatchCommandEv (InteractWith _ _ _) state = (state, evMsg "use.nothing" [])
+dispatchCommandCoreEv (InteractWith _ _ _) state = (state, evMsg "use.nothing" [])
 
-dispatchCommandEv Restart state = (state, [])
-dispatchCommandEv ListSaves state = (state, [])
+dispatchCommandCoreEv Restart state = (state, [])
+dispatchCommandCoreEv ListSaves state = (commandFailed state, [])
 
-dispatchCommandEv Help state = (state, evMsg "help.text" [])
-dispatchCommandEv Quit state = (endGame (Custom "quit") state, evMsg "quit.bye" [])
-dispatchCommandEv (Unknown cmd) state = (state, evMsg "parse.unknown" [("input", cmd)])
-dispatchCommandEv (Save _) state = (state, [])
-dispatchCommandEv (Load _) state = (state, [])
+dispatchCommandCoreEv Help state = (state, evMsg "help.text" [])
+dispatchCommandCoreEv Quit state = (endGame (Custom "quit") state, evMsg "quit.bye" [])
+dispatchCommandCoreEv (Unknown cmd) state = (state, evMsg "parse.unknown" [("input", cmd)])
+dispatchCommandCoreEv (Save _) state = (commandFailed state, [])
+dispatchCommandCoreEv (Load _) state = (commandFailed state, [])
 
 
 -- ---------------------------------------------------------------------
 -- Vehicles (Phase 3)
 -- ---------------------------------------------------------------------
 
-dispatchCommandEv (EnterVehicleCmd targetStr) state =
+dispatchCommandCoreEv (EnterVehicleCmd targetStr) state =
     case findVehicle targetStr state of
         Nothing -> (state, evMsg "enter.not_seen" [("target", targetStr)])
         Just v -> case enterVehicle (vehicleId v) state of
-            Left err -> (state, evRaw err)
+            Left err -> (commandFailed state, evRaw err)
             Right (st', msg) -> (st', msg)
 
-dispatchCommandEv ExitVehicleCmd state =
+dispatchCommandCoreEv ExitVehicleCmd state =
     case exitVehicle state of
-        Left err -> (state, evRaw err)
+        Left err -> (commandFailed state, evRaw err)
         Right (st', msg) -> (st', msg)
 
-dispatchCommandEv (DriveToCmd targetStr) state =
+dispatchCommandCoreEv (DriveToCmd targetStr) state =
     case currentVehicle (save state) of
         Nothing -> (state, evMsg "vehicle.not_in" [])
         Just vId -> case driveVehicle vId targetStr state of
-            Left err -> (state, evRaw err)
+            Left err -> (commandFailed state, evRaw err)
             Right (st', msg) -> (st', msg)
 
-dispatchCommandEv WaitCmd state =
+dispatchCommandCoreEv WaitCmd state =
     case advanceVehicleRoute state of
-        Left err -> (state, evRaw err)
+        Left err -> (commandFailed state, evRaw err)
         Right (st', msg) -> (st', msg)
 
 -- | Refuel: `refuel` or `refuel <vehicle>`. Actual fuelling happens via
 --   `use <fuel item> on <vehicle>`; plain `refuel` reports the status.
-dispatchCommandEv (RefuelCmd targetStr) state =
+dispatchCommandCoreEv (RefuelCmd targetStr) state =
     let v = if null targetStr
             then currentVehicle (save state) >>= \vId -> lookupVehicle vId state
             else findVehicle targetStr state
@@ -1544,7 +1606,7 @@ dispatchCommandEv (RefuelCmd targetStr) state =
 
 -- | Repair: `repair <condition>` clears a matching vehicle condition on the
 --   current vehicle.
-dispatchCommandEv (RepairCmd targetStr) state =
+dispatchCommandCoreEv (RepairCmd targetStr) state =
     case currentVehicle (save state) of
         Nothing -> (state, evMsg "vehicle.not_in" [])
         Just vId ->
@@ -1777,24 +1839,24 @@ resolveInteractTarget verb targetStr state = case resolveTarget verb targetStr s
 --   standard action), 'PhaseBefore' (runs first; a `block:` effect inside
 --   vetoes the standard action, like an `on: before` rule), 'PhaseAfter'
 --   (historical entries). Without a matching entry the standard action runs.
---   The veto leaves no trace beyond its messages: turn bookkeeping is driven
+--   A veto records cmd.succeeded = false; turn bookkeeping is driven
 --   by the command shape ('consumesTurnIn'), like any failed attempt.
 runVerbMapEntry :: Map.Map (VerbPhase, Verb, String) Effect -> Verb -> String -> ItemID
                 -> (GameState -> (GameState, [OutputEvent]))
                 -> GameState -> (GameState, [OutputEvent])
 runVerbMapEntry vm verb currentStatus targetId standard state =
     case entry PhaseInstead of
-        Just outcome -> applyOutcomeEv outcome targetId state
+        Just outcome -> applyCommandOutcomeEv outcome targetId state
         Nothing -> case entry PhaseBefore of
             Just outcome ->
-                let (st1, msgs) = applyOutcomeEv outcome targetId state
+                let (st1, msgs) = applyCommandOutcomeEv outcome targetId state
                 in case lastVeto st1 of
                     Just _  -> (st1 { lastVeto = Nothing }, msgs)
                     Nothing ->
                         let (st2, msgs2) = standard st1
                         in (st2, joinEv msgs msgs2)
             Nothing -> case entry PhaseAfter of
-                Just outcome -> applyOutcomeEv outcome targetId state
+                Just outcome -> applyCommandOutcomeEv outcome targetId state
                 Nothing      -> standard state
   where
     -- OPEN-09: `read` is an alias for `examine` on verb_map keys in every
@@ -1822,7 +1884,7 @@ interactItem verb item maybeItemState targetStr state =
         beforeM  = entry PhaseBefore
         legacyM  = entry PhaseAfter
         runBeforeThen outcome cont st =
-            let (st1, msgs) = applyOutcomeEv outcome iId st
+            let (st1, msgs) = applyCommandOutcomeEv outcome iId st
             in case lastVeto st1 of
                 Just _  -> (st1 { lastVeto = Nothing }, msgs)
                 Nothing ->
@@ -1836,7 +1898,7 @@ interactItem verb item maybeItemState targetStr state =
             else case if verb == VAttack then tryAttackVehicle targetStr st else Nothing of
                 Just res -> res
                 Nothing
-                    | hasOnCommandTrigger verb st -> (st, [])
+                    | hasOnCommandTrigger verb st -> ruleHandledVerb verb st
                     | otherwise -> (st, evMsg "item.cant_do" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
     in case verb of
         -- Taking: enforce portability, then pick up AND run on_take.
@@ -1845,7 +1907,7 @@ interactItem verb item maybeItemState targetStr state =
                 (state, evMsg "take.already" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
             | otherwise ->
                 case itemPortable item of
-                    False -> (state, fromMaybe (evMsg "take.not_portable" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
+                    False -> (commandFailed state, fromMaybe (evMsg "take.not_portable" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
                                              (fmap evRaw (itemTakeFailure item)))
                     True
                         | inventoryFull state ->
@@ -1855,12 +1917,12 @@ interactItem verb item maybeItemState targetStr state =
                                     (pickupItem iId st, joinEv msgs (evMsg "take.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item))))
                             in case (insteadM, beforeM, legacyM) of
                                 -- instead: the entry IS the take.
-                                (Just outcome, _, _) -> applyOutcomeEv outcome iId state
+                                (Just outcome, _, _) -> applyCommandOutcomeEv outcome iId state
                                 -- before: run first, veto or continue into the pickup.
                                 (Nothing, Just outcome, _) -> runBeforeThen outcome (\st -> pickup st []) state
                                 -- Historical behaviour (PhaseAfter): pickup AND entry.
                                 (Nothing, Nothing, Just outcome) ->
-                                    let (st', extra) = applyOutcomeEv outcome iId state
+                                    let (st', extra) = applyCommandOutcomeEv outcome iId state
                                         takeMsg = evMsg "take.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item))
                                     in (pickupItem iId st', joinEv takeMsg extra)
                                 _ -> (pickupItem iId state, evMsg "take.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
@@ -1887,7 +1949,7 @@ interactNpc verb npc maybeNpcState targetStr state =
             then ( st
                  , joinEv (lookWithArtEv (npcAscii npc) st (resolveCondText (npcDescription npc) st))
                           (joinEv (npcCarriedEv nId st) (npcWornEv nId st)) )
-            else if hasOnCommandTrigger verb st then (st, [])
+            else if hasOnCommandTrigger verb st then ruleHandledVerb verb st
             else (st, evMsg "npc.cant_do" [("npc", npcName npc)])
     in runVerbMapEntry (npcVerbMap npc) verb currentStatus nId standard state
 
@@ -1908,10 +1970,20 @@ npcWornEv nId state =
         []     -> []
         items  -> evMsg "npc.wears" [("items", intercalate ", " (map itemName items))]
 
+-- | The rule-driven acceptance path: an `on: command <verb>` rule answers a
+--   verb the engine has no standard action for. Custom verbs count as accepted
+--   (the rule IS the command); core verbs stay failed attempts (OPEN-01: a
+--   `take` that takes nothing is never a success) — such a rule can still
+--   overwrite `cmd.succeeded` itself via `set_var`.
+ruleHandledVerb :: Verb -> GameState -> (GameState, [OutputEvent])
+ruleHandledVerb verb st = case verb of
+    VCustom _ -> (st, [])
+    _         -> (commandFailed st, [])
+
 -- | Execute interaction on a vehicle.
 interactVehicle :: Verb -> VehicleDef -> String -> GameState -> (GameState, [OutputEvent])
 interactVehicle verb _veh targetStr state
-    | hasOnCommandTrigger verb state = (state, [])
+    | hasOnCommandTrigger verb state = ruleHandledVerb verb state
     | verb == VAttack, Just res <- tryAttackVehicle targetStr state = res
     | otherwise = (state, evMsg "target.not_seen" [("target", targetStr)])
 
@@ -1933,7 +2005,7 @@ interactDevice verb dev _targetStr state
                 []    -> []
             descEv = evRaw baseDesc
         in (state, joinEv descEv mountedEv)
-    | hasOnCommandTrigger verb state = (state, [])
+    | hasOnCommandTrigger verb state = ruleHandledVerb verb state
     | otherwise = (state, evMsg "item.cant_do" [("item", devName dev)])
 
 -- | Execute a bare interaction command without a target string.
@@ -1949,7 +2021,7 @@ interactBare verb state
     | VCustom vn <- verb
     , vn `elem` ["defend", "flee"]
     = (state, evMsg "combat.not_engaged" [])
-    | otherwise = (state, [])   -- bare verb (e.g. custom command); triggers carry the message
+    | otherwise = ruleHandledVerb verb state   -- bare verb; triggers carry the message
 
 -- | Fallback interaction when target was not found.
 interactNotFound :: Verb -> String -> GameState -> (GameState, [OutputEvent])
@@ -1958,7 +2030,7 @@ interactNotFound verb targetStr state
     | not (null targetStr), VCustom vn <- verb
     , vn `elem` ["use-ability", "ability"]
     = executeTacticalAction (CAAbility targetStr) state
-    | hasOnCommandTrigger verb state = (state, [])
+    | hasOnCommandTrigger verb state = ruleHandledVerb verb state
     | verb == VAttack, Just res <- tryAttackVehicle targetStr state = res
     | otherwise = (state, evMsg "target.not_seen" [("target", targetStr)])
 
@@ -2150,7 +2222,7 @@ combatArtMsg nId st = case Map.lookup nId (npcDefs (world st)) of
 -- | `search` — reveal hidden items and run the room's search outcome
 searchRoom :: GameState -> (GameState, [OutputEvent])
 searchRoom state = case getCurrentRoom state of
-    Just room | isDark room state -> (state, darkRoomEv room)
+    Just room | isDark room state -> (commandFailed state, darkRoomEv room)
     _ ->
         let rId = currentRoom (save state)
             -- hidden items currently in this room
@@ -2169,7 +2241,7 @@ searchRoom state = case getCurrentRoom state of
             (stateFinal, hookMsg) =
                 case lookupRoom rId state >>= roomSearchOutcome of
                     Nothing -> (stateAfterReveal, [])
-                    Just outcome -> applyOutcomeEv outcome "" stateAfterReveal
+                    Just outcome -> applyCommandOutcomeEv outcome "" stateAfterReveal
             full = joinAllEv (discoveredMsgs ++ [hookMsg])
         in (stateFinal, if null (renderEvents full) then evMsg "search.nothing" [] else full)
 
@@ -2240,13 +2312,13 @@ tryItemOnItem usedId targetStr state =
             in case (knownPairs, knownMultis) of
                 ((_, outcome, False) : _, _) ->
                     let state' = bindItemVars usedId targetId state
-                    in Just (applyOutcomeEv outcome targetId state')
+                    in Just (applyCommandOutcomeEv outcome targetId state')
                 ((_, outcome, True) : _, _) ->
                     let state' = bindItemVars targetId usedId state
-                    in Just (applyOutcomeEv outcome targetId state')
+                    in Just (applyCommandOutcomeEv outcome targetId state')
                 ([], (_, ings, outcome) : _) ->
                     let state' = bindIngredientVars ings state
-                    in Just (applyOutcomeEv outcome targetId state')
+                    in Just (applyCommandOutcomeEv outcome targetId state')
                 ([], [])
                     | null pairCandidates && null multiCandidates -> Nothing
                     | otherwise ->
@@ -2300,10 +2372,10 @@ craftRecipe targetStr state
                         case [ (k, out) | (k, out) <- known, isReachable k ] of
                             ((RecipePair _ _ _ i1 i2, outcome) : _) ->
                                 let state' = bindItemVars i1 i2 state
-                                in applyOutcomeEv outcome resId state'
+                                in applyCommandOutcomeEv outcome resId state'
                             ((RecipeIngredients _ _ _ ings, outcome) : _) ->
                                 let state' = bindIngredientVars ings state
-                                in applyOutcomeEv outcome resId state'
+                                in applyCommandOutcomeEv outcome resId state'
                             [] ->
                                 -- known recipes, but not one is executable:
                                 -- quote the first KNOWN candidate's missing item
