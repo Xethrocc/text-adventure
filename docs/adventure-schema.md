@@ -1058,6 +1058,16 @@ automatisch temporäre Variablen in den Spielzustand:
 - `cmd.count`: Anzahl der übergebenen Argumente (als `VTInt`).
 - `cmd.raw_args`: Der gesamte unzerlegte Rest-String nach dem Verb.
 
+Für Custom-Verben mit `verb_map` wird bei `X with Y` oder `X to Y` nur
+**X** als primäres Ziel aufgelöst; die vollständige Wortgruppe bleibt erhalten
+(z. B. `rub old book with silver cloth` → Ziel `old book`). `cmd.target` und
+`cmd.target_kind` beziehen sich auf dieses Ziel, auch in `on: before`-Regeln.
+`cmd.argN`, `cmd.count` und `cmd.raw_args` bleiben unverändert: hier sind die
+Token `old`, `book`, `with`, `silver`, `cloth` und `cmd.count = 5`.
+Ohne Präposition wird weiterhin die gesamte Wortgruppe als Ziel verwendet.
+Das Werkzeug bzw. der Empfänger **Y** wird nicht automatisch geprüft oder
+verbraucht; entsprechende Bedingungen und Effekte deklariert der Autor.
+
 ### Text-Interpolation (`{var:name}` / `{name}`)
 
 Texte in Dialogen, Raumbeschreibungen, Ereignismeldungen (`msg`/`text`) und
@@ -1275,14 +1285,22 @@ Rules can intercept player commands before they are executed using `on: before <
 > `take` aus, `look at` → `examine`. `on: command` (nach der Ausführung) und
 > `on: before` (Veto davor) verwenden denselben Namen, ebenso `cmd.verb`.
 >
-> Kern-Befehlsnamen: `go`, `look`, `examine`, `take`, `drop`, `put`, `give`,
+> Kern-Befehlsnamen: `go`, `look`, `examine`, `read`, `take`, `drop`, `put`, `give`,
 > `use`, `talk`, `attack`, `search`, `inventory`, `open`, `close`, `lock`,
 > `unlock`, `ask`, `tell`, `equip`, `unequip`, `craft`, `recipes`, `score`,
 > `stats`, `journal`, `map`, `watch`, `board`, `exit`, `drive`, `wait`,
 > `refuel`, `repair`, `choose`, `play`, `hand`, `deck`, `discard`, `end_turn`,
 > `save`, `load`, `saves`, `restart`, `undo`, `help`, `quit`, `compound`. Der
-> Parser-Fallback ist `unknown`. (`read` ist ein eingebautes Item-Verb — es wird
-> über `verb_map: read:` am Item abgefangen, nicht über `on: command read`.)
+> Parser-Fallback ist `unknown`.
+>
+> `read X` verwendet für `cmd.verb`, `on: before read` und `on: command read`
+> konsistent **`read`**, nicht `examine`. `on: before read` kann das Lesen mit
+> `block:` verhindern. Ohne eigenen Handler entspricht Lesen dem Untersuchen.
+> Bestehende `verb_map: read:`-Einträge bleiben kompatibel: `read` ist dort
+> weiterhin ein Alias für `examine` (auch bei `before:` / `instead:`), beide
+> Schlüssel bezeichnen denselben Handler. `inspect` / `look at` lösen weiterhin
+> `examine` aus. `read` bleibt als Kern-Befehl für eigene `verbs:`-Deklarationen
+> reserviert.
 
 ```yaml
 rules:

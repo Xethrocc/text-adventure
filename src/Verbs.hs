@@ -6,6 +6,9 @@ module Verbs
     , verbAliasMap
     , resolveVerb
     , verbCanonicalName
+    , isReadVerb
+    , isExamineLike
+    , verbMapLookupKeys
     , coreCommandVerbs
     ) where
 
@@ -85,6 +88,27 @@ verbCanonicalName v = case v of
     VQuit      -> "quit"
     VUnknown   -> "unknown"
 
+-- | OPEN-09: `read` is its own canonical command name (`cmd.verb` = `read`,
+--   `on: before read` / `on: command read` fire for it), even though its
+--   interaction semantics stay those of `examine`.
+isReadVerb :: Verb -> Bool
+isReadVerb (VCustom n) = map toLower n == "read"
+isReadVerb _           = False
+
+-- | OPEN-09: does this verb show descriptions like `examine`? Reading without
+--   a handler of its own is examining (`look at`) under a different name.
+isExamineLike :: Verb -> Bool
+isExamineLike v = v == VLookAt || isReadVerb v
+
+-- | OPEN-09: the `verb_map` lookup keys of a verb. `read` is an alias for
+--   `examine` on verb_map keys (`read,intact` compiles to the `examine` key —
+--   both keys designate the same handler), so a `read` interaction also
+--   checks the `examine` entries.
+verbMapLookupKeys :: Verb -> [Verb]
+verbMapLookupKeys v
+    | isReadVerb v = [v, VLookAt]
+    | otherwise    = [v]
+
 -- | Every name `GameLoop.commandVerbName` can emit for a built-in command.
 --   An `on: command <name>` / `on: before <name>` rule must use one of these
 --   (or a declared custom verb) or it can never fire.
@@ -103,10 +127,11 @@ coreCommandVerbs = nub $
         ]
     ++
     -- names `commandVerbName` derives from the `Command` constructor itself
+    -- (`read` arrives as `Interact (VCustom "read")`, OPEN-09)
     [ "stats", "journal", "search", "watch", "map", "take", "drop"
     , "equip", "unequip", "craft", "recipes", "score", "play", "hand"
     , "deck", "discard", "end_turn", "give", "put", "open", "close"
     , "lock", "unlock", "ask", "tell", "board", "exit", "drive", "wait"
     , "refuel", "repair", "choose", "go", "look", "inventory"
-    , "save", "load", "saves", "restart", "undo", "compound"
+    , "save", "load", "saves", "restart", "undo", "compound", "read"
     ]

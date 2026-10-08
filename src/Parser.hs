@@ -70,9 +70,9 @@ import Control.Applicative ((<|>))
 import Data.Char (toLower, isDigit)
 import Data.List (find, intercalate, nub, foldl', dropWhileEnd, isPrefixOf, isSuffixOf)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe, isJust, catMaybes)
+import Data.Maybe (fromMaybe, isJust, catMaybes, listToMaybe)
 import qualified Data.Set as Set
-import Verbs (resolveVerb, verbCanonicalName)
+import Verbs (resolveVerb, verbCanonicalName, isReadVerb, isExamineLike, verbMapLookupKeys)
 
 -- | Parsed command structure
 data Command
@@ -457,15 +457,16 @@ parseSimpleCommandWith env defs tokens input = case tokens of
     ["recipes"]            -> RecipesCmd
     -- Generic verb-noun parsing: resolve against registry (core + custom)
     v : targetParts | not (null targetParts) -> case parseVerbWith defs v of
-        Just verb ->
-            let cleanParts = safeStripStopWords targetParts
-            in case (isCustomVerb verb, cleanParts) of
+        Just rawVerb ->
+            let verb = verbForInputWord v rawVerb
+                cleanParts = safeStripStopWords targetParts
+            in case (isCustomVerb verb && not (isReadVerb verb), cleanParts) of
                 (True, [single]) -> Interact verb single
                 (True, parts)    -> ActionWithArgs verb parts
                 (False, _)       -> Interact verb (unwords cleanParts)
         Nothing   -> Unknown input
     -- Bare custom verb with no object (e.g. "align", "pray", "accuse")
-    [v] | Just verb <- parseVerbWith defs v -> Interact verb ""
+    [v] | Just rawVerb <- parseVerbWith defs v -> Interact (verbForInputWord v rawVerb) ""
     _ -> Unknown input
 
 
@@ -542,6 +543,16 @@ isCustomVerb :: Verb -> Bool
 isCustomVerb (VCustom _) = True
 isCustomVerb _           = False
 
+-- | OPEN-09: the verb of a parsed input word. The `examine` alias `read` gets
+--   its own canonical verb ('VCustom' "read") so `cmd.verb`, `on: before read`
+--   and `on: command read` all meet on `read` — while it keeps the core-verb
+--   command shape (one `Interact` target phrase) and the examine semantics
+--   ('Verbs.isExamineLike').
+verbForInputWord :: String -> Verb -> Verb
+verbForInputWord w verb
+    | w == "read", verb == VLookAt = VCustom "read"
+    | otherwise = verb
+
 -- | Check if the world defines an OnCommand trigger for this verb.
 hasOnCommandTrigger :: Verb -> GameState -> Bool
 hasOnCommandTrigger verb state =
@@ -612,7 +623,7 @@ resolveCmdTarget cmd st = case cmd of
             ResolvedVehicle vid -> (vid, "vehicle")
             ResolvedDevice did  -> (did, "device")
             Ambiguous _         -> (tgt, "ambiguous")
-            NotFound _          -> (tgt, "none")
+            NotFound missing    -> (missing, "none")
             BareVerb            -> ("", "none")
 
 -- | Bind command arguments to cmd.* variables in GameState before trigger execution.
@@ -770,19 +781,30 @@ containerName cid state =
 
 -- | 4.4: resolve a container target — an item with `capacity` (portable) or
 --   a `containers:` entry (stationary).
+--   OPEN-08 (P-02): a prepositional target (`open egg with knife`) falls back
+--   to its primary noun phrase, so the container (and its `verb_map` hook) is
+--   found under `X with Y` / `X to Y` too.
 findContainerRef :: String -> GameState -> Maybe String
 findContainerRef targetStr state =
-    case [ itemId i | i <- scopeItems, matchesItemTarget targetStr i ] of
-        (iId : _) -> Just iId
-        [] ->
-            let ents = [ conId c
-                       | c <- Map.elems (containerDefs (world state))
-                       , conLocation c == currentRoom (save state)
-                       , conName c == targetStr || conId c == targetStr ]
-            in case ents of
-                (eId : _) -> Just eId
-                []        -> Nothing
+    case lookupRef targetStr of
+        Just cid -> Just cid
+        Nothing
+            | primary <- primaryTargetPhrase (namesAnyEntity state) targetStr
+            , primary /= targetStr
+            -> lookupRef primary
+            | otherwise -> Nothing
   where
+    lookupRef t =
+        case [ itemId i | i <- scopeItems, matchesItemTarget t i ] of
+            (iId : _) -> Just iId
+            [] ->
+                let ents = [ conId c
+                           | c <- Map.elems (containerDefs (world state))
+                           , conLocation c == currentRoom (save state)
+                           , conName c == t || conId c == t ]
+                in case ents of
+                    (eId : _) -> Just eId
+                    []        -> Nothing
     scopeItems = visibleItemsAt (InRoom (currentRoom (save state))) state
                 ++ getItemsInLocation (CarriedBy ActorPlayer) state
 
@@ -1617,6 +1639,46 @@ preferInventoryTarget verb = case verbCanonicalName verb of
     "remove"  -> True
     _         -> False
 
+-- | OPEN-08 (P-02): the prepositions that separate a primary noun phrase from
+--   its tool or recipient (`X with Y`, `X to Y` — the normal form of tool
+--   verbs).
+targetPrepWords :: [String]
+targetPrepWords = ["with", "to"]
+
+-- | OPEN-08 (P-02): does this phrase name a defined entity (id, name or
+--   keyword/alias of any item, NPC, vehicle, device or container)? Used only
+--   to cut prepositional targets at the primary noun phrase — whether the
+--   entity is actually reachable is decided by 'resolveTarget' itself.
+namesAnyEntity :: GameState -> String -> Bool
+namesAnyEntity st phrase =
+    let gw = world st
+    in any (matchesItemTarget phrase) (Map.elems (itemDefs gw))
+    || any (matchesNPCTarget phrase) (Map.elems (npcDefs gw))
+    || any (matchesVehicleTarget phrase) (Map.elems (vehicleDefs gw))
+    || any (matchesDeviceTarget phrase) (Map.elems (deviceDefs gw))
+    || any (\c -> conId c == phrase || conName c == phrase) (Map.elems (containerDefs gw))
+
+-- | OPEN-08 (P-02): the primary noun phrase of a (possibly prepositional)
+--   target string: `rub healing potion with silver spoon` → `healing potion`,
+--   `open egg with knife` → `egg`. The words in front of the first
+--   'targetPrepWords' preposition are matched against entity names
+--   word-prefix-wise (longest first), so multiword names resolve as one
+--   target. Without a preposition — or when no prefix names an entity — the
+--   phrase before the preposition is kept (or the full string when there is
+--   no preposition at all). The tool/recipient after the preposition is not
+--   checked or consumed; authors declare the matching conditions and effects.
+primaryTargetPhrase :: (String -> Bool) -> String -> String
+primaryTargetPhrase namesEntity targetStr =
+    case break (`elem` targetPrepWords) (words targetStr) of
+        (nounWords@(_ : _), _ : _) ->
+            let longestMatch = listToMaybe
+                    [ phrase
+                    | n <- [length nounWords, length nounWords - 1 .. 1]
+                    , let phrase = unwords (take n nounWords)
+                    , namesEntity phrase ]
+            in fromMaybe (unwords nounWords) longestMatch
+        _ -> targetStr
+
 -- | Central target resolution (Phase 0.1, Phase 0.2).
 --   Resolves an interaction verb's target string against reachable entities
 --   with verb-dependent search order (Phase 0.2, Bug B2):
@@ -1631,7 +1693,18 @@ resolveTarget verb targetStr state
     | Just chosen <- chosenTarget state = chosenResolution chosen state
     | null (words targetStr) = BareVerb
     | otherwise =
-        let resolved = resolveHotspotTarget targetStr state
+        -- OPEN-08 (P-02): prepositional commands (`X with Y` / `X to Y`) name
+        -- their target in X alone — when the full phrase resolves to nothing,
+        -- the primary noun phrase gets its own chance.
+        case resolvePhrase targetStr of
+            NotFound _
+                | primary <- primaryTargetPhrase (namesAnyEntity state) targetStr
+                , primary /= targetStr
+                -> resolvePhrase primary
+            outcome -> outcome
+  where
+    resolvePhrase phrase =
+        let resolved = resolveHotspotTarget phrase state
             roomItems = visibleItemsAt (InRoom (currentRoom (save state))) state
             invItems  = getItemsInLocation (CarriedBy ActorPlayer) state
             roomNPCs  = getNPCsInRoom (currentRoom (save state)) state
@@ -1642,7 +1715,7 @@ resolveTarget verb targetStr state
             matchingInvItems  = filter (matchesItemTarget resolved) invItems
             matchingNPCs      = filter (matchesNPCTarget resolved) roomNPCs
             matchingVehicles  = if verb == VAttack
-                                then filter (\v -> matchesVehicleTarget resolved v || matchesVehicleTarget targetStr v)
+                                then filter (\v -> matchesVehicleTarget resolved v || matchesVehicleTarget phrase v)
                                             (Map.elems (vehicleDefs (world state)))
                                 else []
             matchingDevices   = filter (matchesDeviceTarget resolved) roomDevices
@@ -1651,7 +1724,7 @@ resolveTarget verb targetStr state
             invCandidateIds  = nub (map itemId matchingInvItems)
 
             (primaryCandidates, secondaryCandidates) =
-                if preferInventoryTarget verb || (isCurrentRoomDark state && verbCanonicalName verb == "examine")
+                if preferInventoryTarget verb || (isCurrentRoomDark state && isExamineLike verb)
                 then (invCandidateIds, roomCandidateIds)
                 else (roomCandidateIds, invCandidateIds)
 
@@ -1663,7 +1736,7 @@ resolveTarget verb targetStr state
             allNpcIds = map npcId matchingNPCs
             allDevIds = map devId matchingDevices
         in case allCandidates of
-            [] -> NotFound targetStr
+            [] -> NotFound phrase
             [singleId]
                 | singleId `elem` allVehIds -> ResolvedVehicle singleId
                 | singleId `elem` allNpcIds -> ResolvedNPC singleId
@@ -1710,9 +1783,9 @@ runVerbMapEntry :: Map.Map (VerbPhase, Verb, String) Effect -> Verb -> String ->
                 -> (GameState -> (GameState, [OutputEvent]))
                 -> GameState -> (GameState, [OutputEvent])
 runVerbMapEntry vm verb currentStatus targetId standard state =
-    case Map.lookup (PhaseInstead, verb, currentStatus) vm of
+    case entry PhaseInstead of
         Just outcome -> applyOutcomeEv outcome targetId state
-        Nothing -> case Map.lookup (PhaseBefore, verb, currentStatus) vm of
+        Nothing -> case entry PhaseBefore of
             Just outcome ->
                 let (st1, msgs) = applyOutcomeEv outcome targetId state
                 in case lastVeto st1 of
@@ -1720,9 +1793,16 @@ runVerbMapEntry vm verb currentStatus targetId standard state =
                     Nothing ->
                         let (st2, msgs2) = standard st1
                         in (st2, joinEv msgs msgs2)
-            Nothing -> case Map.lookup (PhaseAfter, verb, currentStatus) vm of
+            Nothing -> case entry PhaseAfter of
                 Just outcome -> applyOutcomeEv outcome targetId state
                 Nothing      -> standard state
+  where
+    -- OPEN-09: `read` is an alias for `examine` on verb_map keys in every
+    -- phase — a `read` lookup also checks the `examine` entries.
+    entry ph = listToMaybe
+        [ outcome
+        | key <- verbMapLookupKeys verb
+        , Just outcome <- [Map.lookup (ph, key, currentStatus) vm] ]
 
 -- | Execute interaction on an item.
 --   Phase 4.2: the standard guards (`take.already`, `take.not_portable`,
@@ -1751,7 +1831,7 @@ interactItem verb item maybeItemState targetStr state =
         standard st =
             if verb == VDrop && hasItem iId st
             then (dropItem iId st, evMsg "drop.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
-            else if verb == VLookAt
+            else if isExamineLike verb
             then (st, lookWithArtEv (itemAscii item) st (resolveCondText (itemDescription item) st))
             else case if verb == VAttack then tryAttackVehicle targetStr st else Nothing of
                 Just res -> res
@@ -1803,7 +1883,7 @@ interactNpc verb npc maybeNpcState targetStr state =
             then (st, evMsg "npc.dead_silent" [("npc", npcName npc)])
             else if verb == VTalk then talkTo npc maybeNpcState st
             else if verb == VAttack then executeAttack npc maybeNpcState targetStr st
-            else if verb == VLookAt
+            else if isExamineLike verb
             then ( st
                  , joinEv (lookWithArtEv (npcAscii npc) st (resolveCondText (npcDescription npc) st))
                           (joinEv (npcCarriedEv nId st) (npcWornEv nId st)) )
@@ -1838,7 +1918,7 @@ interactVehicle verb _veh targetStr state
 -- | W4: Execute interaction on a device / fixture.
 interactDevice :: Verb -> DeviceDef -> String -> GameState -> (GameState, [OutputEvent])
 interactDevice verb dev _targetStr state
-    | verb == VLookAt =
+    | isExamineLike verb =
         let baseDesc = case devDescription dev of
                 Just d  -> d
                 Nothing -> devName dev
@@ -2029,6 +2109,7 @@ isDarkRestricted :: Verb -> Bool
 isDarkRestricted v = case verbCanonicalName v of
     "take"    -> True
     "examine" -> True
+    "read"    -> True
     "search"  -> True
     "use"     -> True
     _         -> False
