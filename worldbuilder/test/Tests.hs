@@ -2784,6 +2784,44 @@ testKnownCommandVerbCompiles = do
             putStrLn $ "  unexpected errors: " ++ issuesText errs
             pure False
 
+-- | OPEN-08/09: compilation accepts prepositional custom handlers and read
+--   events, retaining read/examine verb_map compatibility and reservation.
+testReadAndCustomVerbCompilation :: IO Bool
+testReadAndCustomVerbCompilation = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advVerbs = [AVerb "rub" []]
+            , advItems = [(minItem "book") { aiName = "old book", aiVerbMap = Map.fromList
+                [("read,intact", [AOMessage "legacy read"])
+                ,("rub,intact", [AOMessage "MAP:{cmd.raw_args}:{cmd.target}:{cmd.arg1}:{cmd.arg2}:{cmd.arg3}:{cmd.arg4}:{cmd.count}"])] }]
+            , advTriggers =
+                [ ATrigger "read_before" "before read" Nothing [AOMessage "before"] False 0 1 [] []
+                , ATrigger "read_after" "command read" Nothing [AOMessage "after"] False 0 1 [] []
+                , ATrigger "rub_after" "command rub" Nothing [AOMessage "rub"] False 0 1 [] [] ] }
+    compiled <- case compileAdventure adv of
+        Left errs -> do
+            putStrLn ("  unexpected errors: " ++ issuesText errs)
+            pure False
+        Right cr -> do
+            let def = Map.lookup "book" (E.itemDefs (crWorld cr))
+                keys = maybe [] (Map.keys . E.itemVerbMap) def
+                events = map E.trEvent (E.triggerDefs (crWorld cr))
+            r1 <- expectTrue "read map key remains examine" ((E.PhaseAfter, E.VLookAt, "intact") `elem` keys)
+            r2 <- expectTrue "custom map key stays custom" ((E.PhaseAfter, E.VCustom "rub", "intact") `elem` keys)
+            r3 <- expectTrue "read before/command events compile"
+                (E.OnBefore "read" `elem` events && E.OnCommand "read" `elem` events)
+            r4 <- expectEqual Nothing (executeContentTest
+                (AContentTest "read and prepositional rub"
+                    ["read old book", "rub old book with cloth", "rub old book to cloth"]
+                    ["before", "legacy read", "after"
+                    , "MAP:old book with cloth:book:old:book:with:cloth:4"
+                    , "MAP:old book to cloth:book:old:book:to:cloth:4"])
+                (crWorld cr) (crSave cr))
+            pure (and [r1, r2, r3, r4])
+    reserved <- case compileAdventure (adv { advVerbs = [AVerb "read" []] }) of
+        Left errs -> expectContains "ReservedVerbName" (issuesText errs)
+        Right _ -> expectTrue "read remains reserved" False
+    pure (compiled && reserved)
+
 -- | Any `faction.<id>` reference (standing outcome / predicate) must point at a
 --   declared faction once the `factions:` segment is present.
 testUnknownFactionFails :: IO Bool
@@ -4068,6 +4106,7 @@ tests =
     , ("genre verb (swim/game) is declarable (P1-13)", testGenreVerbDeclarable)
     , ("unknown command verb is a compile error (P1-14)", testUnknownCommandVerbFails)
     , ("known command verb compiles (P1-14)", testKnownCommandVerbCompiles)
+    , ("read events and custom verb maps compile compatibly (OPEN-08/09)", testReadAndCustomVerbCompilation)
     , ("standing reference to unknown faction fails", testUnknownFactionFails)
     , ("factions fixture compiles + validates", testFactionsFixtureCompiles)
     , ("trade fixture compiles + validates", testTradeFixtureCompiles)

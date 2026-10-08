@@ -11144,6 +11144,79 @@ testVerbMapLegacyNonTakeReplaces = do
     r3 <- expectEqual (Just (CarriedBy ActorPlayer)) (potionLoc (lsCurrent ls1))
     pure (r1 && r2 && r3)
 
+-- | OPEN-08: custom commands resolve the whole primary noun phrase while
+--   every phase retains the original positional arguments and raw string.
+testCustomVerbPrimaryTarget :: IO Bool
+testCustomVerbPrimaryTarget = do
+    let verb = VCustom "rub"
+        message = "{cmd.verb}|{cmd.arg1}|{cmd.arg2}|{cmd.arg3}|{cmd.arg4}|{cmd.arg5}|{cmd.count}|{cmd.raw_args}|{cmd.target}|{cmd.target_kind}"
+        game phase =
+            let st = withPotionVerbMap (Map.singleton (phase, verb, "intact") (SendMessage ("MAP:" ++ message)))
+            in st { world = (world st)
+                        { verbDefs = Map.singleton "rub" (VerbDef "rub" [])
+                        , triggerDefs =
+                            [TriggerDef "before_rub" (OnBefore "rub") Nothing
+                                [SendMessage ("BEFORE:" ++ message)] False 0 1 [] []
+                            , TriggerDef "after_rub" (OnCommand "rub") Nothing
+                                [SendMessage ("AFTER:" ++ message)] False 0 1 [] []] } }
+        check phase prep = do
+            let st = game phase
+                input = "rub healing potion " ++ prep ++ " silver spoon"
+                cmd = parseCommandFor (world st) input
+                (_, output) = applyLoopCommand cmd (initLoopState st)
+                expected = "rub|healing|potion|" ++ prep ++ "|silver|spoon|5|healing potion "
+                    ++ prep ++ " silver spoon|potion_healing|item"
+            r1 <- expectEqual (ActionWithArgs verb ["healing", "potion", prep, "silver", "spoon"]) cmd
+            r2 <- expectTrue "verb_map resolves multiword primary target" (("MAP:" ++ expected) `isInfixOf` output)
+            r3 <- expectTrue "before rule retains args and resolves target" (("BEFORE:" ++ expected) `isInfixOf` output)
+            r4 <- expectTrue "command rule retains args and resolves target" (("AFTER:" ++ expected) `isInfixOf` output)
+            pure (and [r1, r2, r3, r4])
+    results <- mapM (uncurry check)
+        [(phase, prep) | phase <- [PhaseBefore, PhaseInstead, PhaseAfter], prep <- ["with", "to"]]
+    let st = game PhaseAfter
+        (_, plainOutput) = applyLoopCommand (parseCommandFor (world st) "rub healing potion") (initLoopState st)
+    plain <- expectTrue "multiword target without preposition still resolves" ("potion_healing|item" `isInfixOf` plainOutput)
+    let npcGame = initSampleGame { world = (world initSampleGame)
+            { verbDefs = Map.singleton "rub" (VerbDef "rub" [])
+            , npcDefs = Map.adjust (\npc -> npc { npcVerbMap = Map.singleton
+                    (PhaseAfter, verb, "alive") (SendMessage "NPC:{cmd.target}:{cmd.raw_args}") })
+                "oldman" (npcDefs (world initSampleGame)) } }
+        (_, npcOutput) = applyLoopCommand (parseCommandFor (world npcGame) "rub old man with cloth") (initLoopState npcGame)
+        (_, directOutput) = applyLoopCommand (Interact verb "healing potion to silver spoon") (initLoopState st)
+    npc <- expectTrue "NPC multiword target resolves" ("NPC:oldman:old man with cloth" `isInfixOf` npcOutput)
+    direct <- expectTrue "Interact retains the same full argument binding"
+        ("MAP:rub|healing|potion|to|silver|spoon|5|healing potion to silver spoon|potion_healing|item" `isInfixOf` directOutput)
+    pure (and results && plain && npc && direct)
+
+-- | OPEN-09: read has a canonical event distinct from examine, while legacy
+--   examine/read verb_map entries still handle the actual interaction.
+testReadCommandEvents :: IO Bool
+testReadCommandEvents = do
+    let legacy = withPotionVerbMap (Map.singleton (PhaseAfter, VLookAt, "intact")
+                    (SendMessage "LEGACY:{cmd.verb}:{cmd.target}"))
+        st = legacy { world = (world legacy) { triggerDefs =
+            [ TriggerDef "before_read" (OnBefore "read") Nothing
+                [SendMessage "BEFORE:{cmd.verb}:{cmd.target}"] False 0 1 [] []
+            , TriggerDef "after_read" (OnCommand "read") Nothing
+                [SendMessage "AFTER:{cmd.verb}:{cmd.target}"] False 0 1 [] []
+            , TriggerDef "examine_only" (OnCommand "examine") Nothing
+                [SendMessage "EXAMINE_ONLY"] False 0 1 [] [] ] } }
+        cmd = parseCommandFor (world st) "read healing potion"
+        (_, output) = applyLoopCommand cmd (initLoopState st)
+        veto = st { world = (world st) { triggerDefs =
+            [TriggerDef "veto_read" (OnBefore "read") Nothing
+                [Block (Just "READ_BLOCKED") False] False 0 1 [] []] } }
+        (_, blocked) = applyLoopCommand cmd (initLoopState veto)
+        (_, examined) = applyLoopCommand (parseCommandFor (world st) "inspect healing potion") (initLoopState st)
+    r1 <- expectEqual (Interact (VCustom "read") "healing potion") cmd
+    r2 <- expectEqual "read" (commandVerbName cmd)
+    r3 <- expectTrue "read phases and legacy handler share canonical read and target"
+        (all (`isInfixOf` output) ["BEFORE:read:potion_healing", "LEGACY:read:potion_healing", "AFTER:read:potion_healing"])
+    r4 <- expectTrue "read does not emit examine" (not ("EXAMINE_ONLY" `isInfixOf` output))
+    r5 <- expectTrue "before read can veto legacy handler" ("READ_BLOCKED" `isInfixOf` blocked && not ("LEGACY:" `isInfixOf` blocked))
+    r6 <- expectTrue "inspect remains examine" ("EXAMINE_ONLY" `isInfixOf` examined && "LEGACY:examine:" `isInfixOf` examined)
+    pure (and [r1, r2, r3, r4, r5, r6])
+
 -- | Phase 4.2: phase JSON. Legacy entries encode WITHOUT a `phase` field
 --   (byte contract for every pre-4.2 world.json), before:/instead: entries
 --   carry one, and all three round-trip.
@@ -12025,6 +12098,8 @@ main = do
         , runTest "verb_map: legacy non-take entries frozen (4.2)" testVerbMapLegacyNonTakeReplaces
         , runTest "verb_map: phase JSON encoding (4.2)" testVerbMapPhaseJson
         , runTest "verb_map: NPC phases (4.2)" testVerbMapPhasesOnNpc
+        , runTest "custom verb_map resolves prepositional primary targets (OPEN-08)" testCustomVerbPrimaryTarget
+        , runTest "read command events preserve examine verb_map aliases (OPEN-09)" testReadCommandEvents
         -- Phase 4.3: language packs (D4)
         , runTest "lang pack: catalog layering and fallback (4.3)" testLangPackCatalogLayers
         , runTest "lang pack: template keys are catalog keys (4.3)" testLangPackKeysAreKnown
