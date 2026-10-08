@@ -506,17 +506,19 @@ data AExitRef = AExitRef
     { aeTarget :: String
     , aeLocked :: Maybe String
     , aeWhen   :: Maybe E.Predicate
+    , aeBlocked :: Bool
     , aeMsg    :: Maybe String
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AExitRef where
     -- Plain string "hallway" -> Open "hallway"
-    parseJSON (String s) = pure (AExitRef (T.unpack s) Nothing Nothing Nothing)
+    parseJSON (String s) = pure (AExitRef (T.unpack s) Nothing Nothing False Nothing)
     -- Object { to: ..., locked_by: ..., when: ..., msg/message: ... }
     parseJSON v = withObject "AExitRef" (\o -> AExitRef
         <$> o .:  "to"
         <*> o .:? "locked_by"
         <*> o .:? "when"
+        <*> o .:? "blocked" .!= False
         <*> (o .:? "msg" <|> o .:? "message")) v
 
 -- ---------------------------------------------------------------------------
@@ -604,6 +606,7 @@ data AItem = AItem
     , aiState      :: String
     , aiEquipSlot  :: Maybe String
     , aiEquipEffects :: [String]       -- "attack+3", "defense+2", "maxhp+10"
+    , aiSearchable :: Bool
     , aiHidden     :: Bool
     , aiDiscover   :: Maybe String
     , aiProps      :: Map.Map String Int
@@ -630,6 +633,7 @@ instance FromJSON AItem where
         <*> o .:? "state"     .!= "intact"
         <*> o .:? "slot"
         <*> o .:? "effects"   .!= []
+        <*> o .:? "searchable" .!= True
         <*> o .:? "hidden"    .!= False
         <*> o .:? "discover"
         <*> o .:? "props"     .!= Map.empty
@@ -1656,6 +1660,7 @@ data AActionOutcome
     | AOMount String String            -- ^ mount: { item: <item>, to: <device> } (W4)
     | AOUnmount String                 -- ^ unmount: <item> (W4)
     | AOGainXp Int                     -- ^ gain_xp: <amount> (W2)
+    | AOPlace String E.Location        -- ^ place: {item, in|in_container}
     | AOForget String String           -- ^ forget: <fact> - same shapes (W1)
     deriving (Show, Eq, Generic)
 
@@ -1682,6 +1687,21 @@ parseRandomChoiceValue v =
         cs <- obj .: "choices"
         pure (AORandomChoice streamName cs))
 
+-- | Exactly one destination is required; nowhere is only an initial location
+--   (and a `move_all` target), never a `place:` destination.
+parsePlace :: Object -> Parser AActionOutcome
+parsePlace o = do
+    p <- o .: "place"
+    iid <- p .: "item"
+    room <- p .:? "in"
+    container <- p .:? "in_container"
+    case (room, container) of
+        (Just "nowhere", Nothing) ->
+            fail "place: 'in: nowhere' is not a placement target (use move_all with to: {in: nowhere})"
+        (Just r, Nothing) -> pure (AOPlace iid (E.InRoom r))
+        (Nothing, Just c) -> pure (AOPlace iid (E.InContainer c))
+        _ -> fail "place requires exactly one of in or in_container"
+
 instance FromJSON AActionOutcome where
     parseJSON (String s)
         | s == "discard_hand" = pure AODiscardHand
@@ -1690,7 +1710,8 @@ instance FromJSON AActionOutcome where
     parseJSON v = withObject "AActionOutcome" (\o ->
             -- NOTE: game_end must be tried before msg: an object may carry both
             -- "game_end" and a "msg" for the end screen.
-            (AOGameEnd <$> o .: "game_end" <*> o .:? "msg")
+            parsePlace o
+        <|> (AOGameEnd <$> o .: "game_end" <*> o .:? "msg")
         <|> (do cp <- o .: "call"
                 case cp of
                     String s  -> pure (AOCallProc (T.unpack s) [])
@@ -2020,10 +2041,10 @@ knownKeys EntRoom = Set.fromList
     , "on_enter", "on_look", "on_exit", "search", "ascii", "intro", "floor", "map"
     ]
 knownKeys EntExitRef = Set.fromList
-    [ "to", "locked_by", "when", "msg", "message" ]
+    [ "to", "locked_by", "when", "blocked", "msg", "message" ]
 knownKeys EntItem = Set.fromList
     [ "id", "name", "desc", "description", "ascii", "keys", "tags"
-    , "location", "state", "slot", "effects", "hidden", "discover"
+    , "location", "state", "slot", "effects", "hidden", "searchable", "discover"
     , "props", "on_take", "verb_map", "portable", "take_failure", "in_container"
     , "capacity", "carried_by", "article", "gender", "repeatable"
     ]

@@ -3697,7 +3697,7 @@ testTakeEventOnlyOnSuccess = do
     let base = initSampleGame
         nonPortable = ItemDef "statue" "statue" (plainText "A heavy stone statue.")
                           ["statue"] Set.empty Nothing [] False Nothing False
-                          (Just "The statue will not budge.") Map.empty Nothing emptyAscii emptyGrammar False Nothing
+                          (Just "The statue will not budge.") Map.empty Nothing emptyAscii emptyGrammar False True Nothing
         st0 = base { world = (world base)
                          { itemDefs = Map.insert "statue" nonPortable (itemDefs (world base)) }
                    , save  = (save base)
@@ -3918,7 +3918,7 @@ testOnUseTriggerMultiWordAlias = do
         w = (world sample)
             { itemDefs = Map.insert "oil_can"
                 (ItemDef "oil_can" "oil can" (plainText "A dented oil can.") ["oil", "can"]
-                         Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing)
+                         Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing)
                 (itemDefs (world sample))
             , triggerDefs =
                 [ TriggerDef "light_lantern" (OnUse "oil_can") Nothing
@@ -3949,7 +3949,7 @@ testTakeWithOnTakePicksUp = do
             { itemDefs = Map.insert "token"
                 (ItemDef "token" "token" (plainText "A token.") ["token"] Set.empty
                          Nothing [] False Nothing True Nothing
-                         (Map.singleton (PhaseAfter, VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))) Nothing emptyAscii emptyGrammar False Nothing)
+                         (Map.singleton (PhaseAfter, VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))) Nothing emptyAscii emptyGrammar False True Nothing)
                 (itemDefs (world sample)) }
         here = currentRoom (save sample)
         st = sample { world = w
@@ -3970,7 +3970,7 @@ testTakeNonPortableFails = do
             { itemDefs = Map.insert "statue"
                 (ItemDef "statue" "statue" (plainText "A statue.") ["statue"] Set.empty
                          Nothing [] False Nothing False (Just "Too heavy to lift.")
-                         Map.empty Nothing emptyAscii emptyGrammar False Nothing)
+                         Map.empty Nothing emptyAscii emptyGrammar False True Nothing)
                 (itemDefs (world sample)) }
         here = currentRoom (save sample)
         st = sample { world = w
@@ -3988,7 +3988,7 @@ testTakeNonPortableFails = do
 -- Helper: an equippable item placed in the player's inventory.
 invItem :: String -> ItemDef
 invItem iid = ItemDef iid iid (plainText "x") [iid] Set.empty
-    (Just Weapon) [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing
+    (Just Weapon) [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing
 
 -- | Equipped items are always also carried.
 testEquippedImpliesCarried :: IO Bool
@@ -4578,7 +4578,7 @@ tradeWorld stock credits =
                 (ItemDef "rope" "rope" (plainText "A coil of rope.")
                     ["rope"] Set.empty Nothing [] False Nothing True Nothing
                     (Map.singleton (PhaseAfter, VCustom "buy", "intact") buyEff
-                        `Map.union` Map.singleton (PhaseAfter, VCustom "sell", "intact") sellEff) Nothing emptyAscii emptyGrammar False Nothing)
+                        `Map.union` Map.singleton (PhaseAfter, VCustom "sell", "intact") sellEff) Nothing emptyAscii emptyGrammar False True Nothing)
             , verbDefs = Map.singleton "buy" (VerbDef "buy" ["purchase"])
                 `Map.union` Map.singleton "sell" (VerbDef "sell" ["pawn"])
             }
@@ -4752,7 +4752,7 @@ testVisitedAcceptsBool = do
 testItemWithoutStateIsReported :: IO Bool
 testItemWithoutStateIsReported = do
     let lamp = ItemDef "lamp" "lamp" (plainText "A brass lamp.") ["lamp"] Set.empty
-                    Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing
+                    Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing
         gw = (world initSampleGame)
                 { itemDefs = Map.insert "lamp" lamp (itemDefs (world initSampleGame)) }
     r1 <- expectTrue "MissingItemState is reported"
@@ -6540,7 +6540,7 @@ mkTestRoom rId name = Room rId name (plainText name) Map.empty Set.empty Nothing
 --   helper without devices.
 mkTestItem :: String -> String -> ItemDef
 mkTestItem i n =
-    ItemDef i n (plainText n) [i] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing
+    ItemDef i n (plainText n) [i] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing
 
 mstate :: [Room] -> [(ItemDef, Location)] -> GameState
 mstate rms its =
@@ -6622,9 +6622,9 @@ dstate rms its devs =
 testActorHasPredicate :: IO Bool
 testActorHasPredicate = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing
-        it2 = ItemDef "schluessel" "Schlüssel" (plainText "Ein Schlüssel.") ["schluessel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing
-        it3 = ItemDef "kristall" "Kristall" (plainText "Ein Kristall.") ["kristall"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing
+        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing
+        it2 = ItemDef "schluessel" "Schlüssel" (plainText "Ein Schlüssel.") ["schluessel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing
+        it3 = ItemDef "kristall" "Kristall" (plainText "Ein Kristall.") ["kristall"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing
         dev1 = DeviceDef "halterung" "Halterung" ["halterung"] "krypta" (Just "Eine Halterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [ (it1, InRoom "krypta")
                           , (it2, CarriedBy (ActorNPC "guard"))
@@ -6640,7 +6640,7 @@ testActorHasPredicate = do
 testMountAndUnmountEffects :: IO Bool
 testMountAndUnmountEffects = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing
+        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing
         dev1 = DeviceDef "halterung" "Halterung" ["halterung"] "krypta" (Just "Eine Halterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [(it1, InRoom "krypta")] [dev1]
     let (st1, _, _) = applyOutcomeWith 0 0 (Mount "fackel" (ActorEntity "halterung")) "" st0
@@ -6654,7 +6654,7 @@ testMountAndUnmountEffects = do
 testDeviceInteractionExamine :: IO Bool
 testDeviceInteractionExamine = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "brennende Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False Nothing
+        it1 = ItemDef "fackel" "brennende Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing
         dev1 = DeviceDef "halterung" "Fackelhalterung" ["halterung"] "krypta" (Just "Eine Wandhalterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [(it1, CarriedBy (ActorEntity "halterung"))] [dev1]
         cmd = parseCommandWith Map.empty "examine halterung"
@@ -8594,6 +8594,7 @@ mkTestKey iid name = ItemDef
     , itemCapacity = Nothing, itemAscii = emptyAscii
     , itemGrammar = emptyGrammar
     , itemRepeatable = False
+    , itemSearchable = True
     , itemHomeLocation = Nothing
     }
 
@@ -8841,6 +8842,7 @@ mkTestEquip iid name slot = ItemDef
     , itemCapacity = Nothing, itemAscii = emptyAscii
     , itemGrammar = emptyGrammar
     , itemRepeatable = False
+    , itemSearchable = True
     , itemHomeLocation = Nothing
     }
 
@@ -10652,7 +10654,8 @@ testRoomItemFiniteDefault = do
 --   zweiten Betreten da, selbst wenn es genommen oder verbraucht wurde.
 testRoomItemRepeatablePresentOnReentry :: IO Bool
 testRoomItemRepeatablePresentOnReentry = do
-    let repItem = (mkTestItem "moerser" "Moerser") { itemRepeatable = True, itemHomeLocation = Just "start" }
+    let repItem = (mkTestItem "moerser" "Moerser")
+            { itemRepeatable = True, itemHomeLocation = Just "start" }
         w = (world initSampleGame)
             { itemDefs = Map.insert "moerser" repItem (itemDefs (world initSampleGame)) }
         st0 = initSampleGame
@@ -12123,6 +12126,15 @@ main = do
         , runTest "score command does not consume a turn (K17)" testScoreConsumesTurn
         , runTest "score command without score variable prints helpful hint (K17)" testScoreNoScore
         , runTest "score ranking selection, max formatting, and empty rankings (K17)" testScoreRankingSelection
+        -- OPEN-03..07 (Z-04, Z-05, E-02, W-02, Z-03)
+        , runTest "search: searchable:false hidden items stay undiscovered (Z-04)" testSearchSkipsUnsearchableItem
+        , runTest "searchable JSON: default omitted, false encoded, legacy decodes (Z-04)" testSearchableJsonDefaultOmitted
+        , runTest "location nowhere: dormant item enters play via give/place/move_all (Z-05)" testDormantItemLifecycle
+        , runTest "dormant set excludes Removed tombstones (Z-05/FIX-02)" testDormantSetExcludesRemoved
+        , runTest "place: relocates one item with inventory bookkeeping (E-02)" testPlaceItemBookkeeping
+        , runTest "place: reference, cycle, capacity and destination checks (E-02)" testPlaceItemValidation
+        , runTest "blocked exit form yields the normal blocked message (W-02)" testBlockedExitForm
+        , runTest "container membership predicate in: {container, item} (Z-03)" testContainerHasPredicate
         ]
     when (not (and results)) exitFailure
 
@@ -12604,5 +12616,193 @@ testScoreRankingSelection = do
     r12 <- expectTrue "score below lowest threshold has no Rank line" (not (isInfixOf "Rank:" outHighRank))
 
     pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12])
+
+-- ---------------------------------------------------------------------------
+-- OPEN-03..07 (Z-04, Z-05, E-02, W-02, Z-03)
+-- ---------------------------------------------------------------------------
+
+-- | OPEN-03 (Z-04): `hidden: true` + `searchable: false` — `search` deckt das
+--   Item nicht auf; ohne `searchable: false` bleibt der alte Such-Fund.
+testSearchSkipsUnsearchableItem :: IO Bool
+testSearchSkipsUnsearchableItem = do
+    let unsearchable = (mkTestItem "brief" "Brief") { itemHidden = True, itemSearchable = False }
+        searchable   = (mkTestItem "fund" "Fund")   { itemHidden = True }
+        stBoth = mstate [mkTestRoom "halle" "Halle"]
+                [(unsearchable, InRoom "halle"), (searchable, InRoom "halle")]
+        stOnly = mstate [mkTestRoom "halle" "Halle"] [(unsearchable, InRoom "halle")]
+        disc i st = itemDiscovered <$> Map.lookup i (itemStates (save st))
+        (st1, out) = executeCommand (parseCommand "search") stBoth
+        (_, outOnly) = executeCommand (parseCommand "search") stOnly
+    r1 <- expectEqual (Just False) (disc "brief" st1)
+    r2 <- expectEqual (Just True) (disc "fund" st1)
+    r3 <- expectTrue "unsearchable item never named" (not ("brief" `isInfixOf` out))
+    r4 <- expectEqual (renderMsg "search.nothing" []) outOnly
+    pure (r1 && r2 && r3 && r4)
+
+-- | OPEN-03 (Z-04): `itemSearchable` bleibt im world.json byte-kompatibel —
+--   der Default True wird weggelassen, nur False wird kodiert; altes JSON
+--   ohne den Schluessel dekodiert als True.
+testSearchableJsonDefaultOmitted :: IO Bool
+testSearchableJsonDefaultOmitted = do
+    let plain = mkTestItem "x" "X"
+        encTrue = BLC.unpack (Aeson.encode plain)
+        encFalse = Aeson.encode (plain { itemSearchable = False })
+    r1 <- expectTrue "default True is omitted from JSON" (not ("itemSearchable" `isInfixOf` encTrue))
+    r2 <- expectTrue "false is encoded" ("\"itemSearchable\":false" `isInfixOf` BLC.unpack encFalse)
+    r3 <- case Aeson.decode encFalse :: Maybe ItemDef of
+        Just d  -> expectEqual False (itemSearchable d)
+        Nothing -> expectTrue "decode ItemDef with itemSearchable failed" False
+    r4 <- case Aeson.decode (Aeson.encode plain) :: Maybe ItemDef of
+        Just d  -> expectEqual True (itemSearchable d)
+        Nothing -> expectTrue "decode legacy ItemDef failed" False
+    pure (r1 && r2 && r3 && r4)
+
+-- | OPEN-04 (Z-05): `location: nowhere` — das Item existiert, aber noch nicht
+--   in der Welt. `give:`, `place:` und `move_all` (in: nowhere) bringen es
+--   hinein; `to: {in: nowhere}` nimmt es wieder heraus (ohne Tombstone).
+testDormantItemLifecycle :: IO Bool
+testDormantItemLifecycle = do
+    let amulett = mkTestItem "amulett" "Amulett"
+        st0 = mstate [mkTestRoom "halle" "Halle", mkTestRoom "keller" "Keller"] [(amulett, Dormant)]
+        itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+    r1 <- expectEqual (Just Dormant) (itemLoc "amulett" st0)
+    r2 <- expectTrue "dormant item appears in no room"
+            (null (getItemsInLocation (InRoom "halle") st0)
+                && null (getItemsInLocation (InRoom "keller") st0))
+    let (st1, _, _) = applyOutcomeWith 0 0 (MoveEntity "amulett" (CarriedBy ActorPlayer)) "" st0
+    r3 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "amulett" st1)
+    let (st2, _, _) = applyOutcomeWith 0 0 (PlaceItem "amulett" (InRoom "keller")) "" st0
+    r4 <- expectEqual (Just (InRoom "keller")) (itemLoc "amulett" st2)
+    let (st3, _, _) = applyOutcomeWith 0 0
+            (MoveAll (CountSpec CountItems (CountInRoom "nowhere") Nothing) (CountInRoom "halle")) "" st0
+    r5 <- expectEqual (Just (InRoom "halle")) (itemLoc "amulett" st3)
+    let (st4, _, _) = applyOutcomeWith 0 0
+            (MoveAll (CountSpec CountItems (CountInRoom "halle") Nothing) (CountInRoom "nowhere")) "" st3
+    r6 <- expectEqual (Just Dormant) (itemLoc "amulett" st4)
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | OPEN-04 (Z-05) / FIX-02: `in: nowhere` waehlt nur dormante Items — ein
+--   konsumiertes `Removed`-Item wird nie wieder auferstehen (auch `give:`
+--   und `place:` nicht).
+testDormantSetExcludesRemoved :: IO Bool
+testDormantSetExcludesRemoved = do
+    let glocke = mkTestItem "glocke" "Glocke"
+        asche  = mkTestItem "asche" "Asche"
+        st0 = mstate [mkTestRoom "halle" "Halle"] [(glocke, Dormant), (asche, Removed)]
+        itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+        (st1, _, _) = applyOutcomeWith 0 0
+            (MoveAll (CountSpec CountItems (CountInRoom "nowhere") Nothing) (CountInRoom "halle")) "" st0
+    r1 <- expectEqual (Just (InRoom "halle")) (itemLoc "glocke" st1)
+    r2 <- expectEqual (Just Removed) (itemLoc "asche" st1)
+    let (st2, _, _) = applyOutcomeWith 0 0 (MoveEntity "asche" (CarriedBy ActorPlayer)) "" st0
+    r3 <- expectEqual (Just Removed) (itemLoc "asche" st2)
+    r4 <- case placeItem "asche" (InRoom "halle") st0 of
+        Right stP -> expectEqual (Just Removed) (itemLoc "asche" stP)
+        Left err  -> expectTrue ("place on a removed item must not fail: " ++ err) False
+    pure (r1 && r2 && r3 && r4)
+
+-- | OPEN-05 (E-02): `place:` bewegt genau ein Item — mit Inventar-Buchhaltung
+--   (syncInventory) und Kapazitaets-Pruefung inkl. verstecktem Inhalt.
+testPlaceItemBookkeeping :: IO Bool
+testPlaceItemBookkeeping = do
+    let glocke = mkTestItem "glocke" "Glocke"
+        amulett = (mkTestItem "amulett" "Amulett") { itemHidden = True }
+        kiste = (mkTestItem "kiste" "Kiste") { itemCapacity = Just 1 }
+        stBase = mstate [mkTestRoom "halle" "Halle"]
+                [(glocke, CarriedBy ActorPlayer), (amulett, InRoom "halle"), (kiste, InRoom "halle")]
+        st0 = stBase { save = (save stBase) { inventory = ["glocke"] } }
+        itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+    r1 <- expectEqual ["glocke"] (inventory (save st0))
+    r2 <- case placeItem "amulett" (InContainer "kiste") st0 of
+        Left err -> expectTrue ("unexpected: " ++ err) False
+        Right stP -> do
+            a <- expectEqual (Just (InContainer "kiste")) (itemLoc "amulett" stP)
+            -- Inventar-Buchhaltung: ein getragenes, platziertes Item verschwindet
+            -- aus `inventory` (syncInventory).
+            b <- case placeItem "glocke" (InRoom "halle") stP of
+                Left err2 -> expectTrue ("unexpected: " ++ err2) False
+                Right stQ -> do
+                    b1 <- expectEqual (Just (InRoom "halle")) (itemLoc "glocke" stQ)
+                    b2 <- expectTrue "inventory bookkeeping drops the placed item"
+                            (null (inventory (save stQ)))
+                    pure (b1 && b2)
+            -- Kapazitaet: der versteckte Inhalt belegt den einzigen Slot.
+            c <- case placeItem "glocke" (InContainer "kiste") stP of
+                Left err3 -> expectEqual "place: container full" err3
+                Right _   -> expectTrue "hidden contents count against capacity" False
+            pure (a && b && c)
+    pure (r1 && r2)
+
+-- | Helfer: erwartet einen place:-Fehler mit exakter Meldung.
+expectPlaceError :: String -> Either String GameState -> IO Bool
+expectPlaceError msg (Left err) = expectEqual msg err
+expectPlaceError msg (Right _) =
+    expectTrue ("expected error '" ++ msg ++ "' but placement succeeded") False
+
+-- | OPEN-05 (E-02): Referenz-, Zyklus- und Ziel-Pruefungen von `place:`.
+testPlaceItemValidation :: IO Bool
+testPlaceItemValidation = do
+    let glocke = mkTestItem "glocke" "Glocke"
+        kiste = (mkTestItem "kiste" "Kiste") { itemCapacity = Just 2 }
+        truhe = mkTestItem "truhe" "Truhe"
+        st0 = mstate [mkTestRoom "halle" "Halle"]
+                [(glocke, InContainer "kiste"), (kiste, InRoom "halle"), (truhe, InRoom "halle")]
+        itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+    r1 <- expectPlaceError "place: unknown item" (placeItem "ruine" (InRoom "halle") st0)
+    r2 <- expectPlaceError "place: unknown room" (placeItem "glocke" (InRoom "dach") st0)
+    r3 <- expectPlaceError "place: unknown container" (placeItem "glocke" (InContainer "bank") st0)
+    -- glocke steckt in kiste: kiste in glocke wuerde einen Zyklus erzeugen
+    r4 <- expectPlaceError "place: container cycle" (placeItem "kiste" (InContainer "glocke") st0)
+    r5 <- expectPlaceError "place: destination must be a room or container"
+            (placeItem "glocke" (CarriedBy ActorPlayer) st0)
+    -- Plain-Item-Container (thefog-chest ohne capacity) darf aufnehmen
+    r6 <- case placeItem "glocke" (InContainer "truhe") st0 of
+        Left err  -> expectTrue ("unexpected: " ++ err) False
+        Right stP -> expectEqual (Just (InContainer "truhe")) (itemLoc "glocke" stP)
+    -- Container ausserhalb der Welt (Removed): Platzierung wird abgelehnt
+    let stRem = mstate [mkTestRoom "halle" "Halle"]
+                [(glocke, InContainer "kiste"), (kiste, Removed), (truhe, InRoom "halle")]
+    r7 <- expectPlaceError "place: container is out of play"
+            (placeItem "truhe" (InContainer "glocke") stRem)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | OPEN-06 (W-02): die kompilierte blocked:-Form (`Guarded (PNot PTrue)`)
+--   produziert die normale blocked-Meldung (eigene oder `move.blocked`).
+testBlockedExitForm :: IO Bool
+testBlockedExitForm = do
+    let st0 = initSampleGame
+        withBlocked msg st = case Map.lookup "start" (rooms (world st)) of
+            Nothing -> st
+            Just startDef ->
+                let blocked = Guarded "hallway" (PNot PTrue) msg
+                    startDef' = startDef
+                        { roomConnections = Map.insert North blocked (roomConnections startDef) }
+                in st { world = (world st) { rooms = Map.insert "start" startDef' (rooms (world st)) } }
+        (stNamed, outNamed) = executeCommand (Go North) (withBlocked (Just "Der Weg ist versperrt.") st0)
+        (stDefault, outDefault) = executeCommand (Go North) (withBlocked Nothing st0)
+    r1 <- expectEqual "Der Weg ist versperrt." outNamed
+    r2 <- expectEqual "start" (currentRoom (save stNamed))
+    r3 <- expectEqual (renderMsg "move.blocked" []) outDefault
+    r4 <- expectEqual "start" (currentRoom (save stDefault))
+    pure (r1 && r2 && r3 && r4)
+
+-- | OPEN-07 (Z-03): Prädikat `in: {container: X, item: Y}` — direkte
+--   Container-Mitgliedschaft, auch fuer versteckte Inhalte.
+testContainerHasPredicate :: IO Bool
+testContainerHasPredicate = do
+    let amulett = (mkTestItem "amulett" "Amulett") { itemHidden = True }
+        kiste = (mkTestItem "kiste" "Kiste") { itemCapacity = Just 2 }
+        st0 = mstate [mkTestRoom "halle" "Halle"] [(kiste, InRoom "halle"), (amulett, InContainer "kiste")]
+        p = ContainerHas "kiste" "amulett"
+    r1 <- expectTrue "direct membership holds (hidden content counts)" (evalPredicate p st0)
+    let (st1, _, _) = applyOutcomeWith 0 0 (MoveEntity "amulett" (CarriedBy ActorPlayer)) "" st0
+    r2 <- expectTrue "taken item is no member" (not (evalPredicate p st1))
+    r3 <- expectTrue "wrong container is false" (not (evalPredicate (ContainerHas "halle" "amulett") st0))
+    r4 <- expectTrue "unknown item is false" (not (evalPredicate (ContainerHas "kiste" "kiste") st0))
+    r5 <- expectEqual (Just p) (Aeson.decode (Aeson.encode p) :: Maybe Predicate)
+    r6 <- case Aeson.eitherDecode (BLC.pack "{\"in\":{\"container\":\"kiste\",\"item\":\"amulett\"}}") of
+        Right q  -> expectEqual p (q :: Predicate)
+        Left err -> expectTrue ("predicate decode failed: " ++ err) False
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
 
 

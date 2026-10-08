@@ -52,6 +52,7 @@ module Game
       -- * Recipe knowledge (K11d)
     , recipeKnown
     , recipeDisplayName
+    , placeItem
     , relocateItem
     , normalizeText
       -- * Inventory and equipment
@@ -530,6 +531,7 @@ containerChainOpen cid state = go (0 :: Int) cid
         | otherwise = case Map.lookup c (itemStates (save state)) of
             Just is -> case itemLocation is of
                 InContainer c2 -> containerStateOf c2 state == "open" && go (n + 1) c2
+                Dormant        -> False
                 Removed        -> False
                 _              -> True
             Nothing -> Map.member c (containerDefs (world state))
@@ -651,11 +653,26 @@ countItemMembers cs st = case csWhat cs of
     _          -> []
   where
     itemsAt = case csWhere cs of
+        -- `in: nowhere` selects the dormant items (`location: nowhere`, OPEN-04):
+        -- the author-facing holding pen for "not yet in the world".  Removed
+        -- tombstones are deliberately members of no set (FIX-02: consume_all
+        -- and give: must not resurrect).
+        CountInRoom "nowhere" -> dormantItems st
         CountInRoom r      -> itemsAtLoc (InRoom r) st
         CountCarriedBy a   -> itemsAtLoc (CarriedBy a) st ++ itemsAtLoc (EquippedBy a) st
     tagged i = case csTag cs of
         Nothing -> True
         Just t  -> Set.member t (itemTags i)
+
+-- | B2/OPEN-04: dormant items (`location: nowhere`) — the raw view including
+--   hidden ones, matching 'itemsAtLoc'.
+dormantItems :: GameState -> [ItemDef]
+dormantItems st =
+    [ def
+    | (iId, is) <- Map.toList (itemStates (save st))
+    , itemLocation is == Dormant
+    , Just def <- [Map.lookup iId (itemDefs (world st))]
+    ]
 
 -- | B2/B3: the NPC members of a count set (empty for item sets). The
 --   `alive_npcs` variant filters to living NPCs.
@@ -835,6 +852,53 @@ consumeItem iId state =
     if isReachableForConsume iId state
     then relocateItem iId Removed state
     else state
+
+-- | Author-driven placement (OPEN-05) ignores portability, visibility and
+--   container locks, but checks references, direct capacity (including hidden
+--   contents) and cycles.  Any existing item or `containers:` entry can hold
+--   contents (the same contract as `in_container:` and `put X in Y`);
+--   `capacity:` limits, no capacity means unlimited.
+--   Removed items remain tombstones through 'relocateItem'; dormant items may
+--   enter play.
+placeItem :: ItemID -> Location -> GameState -> Either String GameState
+placeItem iid loc st
+    | not (Map.member iid (itemDefs (world st)))
+      || not (Map.member iid (itemStates (save st))) = Left "place: unknown item"
+    | otherwise = case loc of
+        InRoom rid
+            | isJust (lookupRoom rid st) ->
+                Right (relocateItem iid (InRoom (canonicalRoomId (world st) rid)) st)
+            | otherwise -> Left "place: unknown room"
+        InContainer cid
+            | not (isContainerHolder cid st) -> Left "place: unknown container"
+            | otherwise -> case chainProblem Set.empty cid of
+                Just problem -> Left ("place: " ++ problem)
+                Nothing
+                    | maybe False (occupied >=) (containerCapacityOf cid st) ->
+                        Left "place: container full"
+                    | otherwise -> Right (relocateItem iid (InContainer cid) st)
+          where
+            occupied = length [ () | (other, is) <- Map.toList (itemStates (save st))
+                                   , other /= iid, itemLocation is == InContainer cid ]
+        _ -> Left "place: destination must be a room or container"
+  where
+    -- Walk the enclosing chain of the target container: the placed item must
+    -- not end up inside itself (cycle) and the chain must still be in play.
+    chainProblem seen cid
+        | cid == iid || Set.member cid seen = Just "container cycle"
+        | otherwise = case Map.lookup cid (itemStates (save st)) of
+            Just is -> case itemLocation is of
+                InContainer parent -> chainProblem (Set.insert cid seen) parent
+                Removed            -> Just "container is out of play"
+                _                  -> Nothing
+            Nothing -> Nothing
+
+-- | Can this id hold contents? Any existing item or `containers:` entry can
+--   (matching `put X in Y` and `in_container:`); `capacity:` limits, no
+--   capacity means unlimited.
+isContainerHolder :: String -> GameState -> Bool
+isContainerHolder cid state =
+    isJust (lookupItem cid state) || Map.member cid (containerDefs (world state))
 
 -- | Central relocation: move an item to a new location and keep inventory
 --   and equipment consistent.  If the item was equipped it is unequipped
@@ -1495,6 +1559,11 @@ evalPredicate (PNot p) st = not (evalPredicate p st)
 evalPredicate (PAll ps) st = all (\p -> evalPredicate p st) ps
 evalPredicate (PAny ps) st = any (\p -> evalPredicate p st) ps
 evalPredicate (PlayerHas iId) st = hasItem iId st
+evalPredicate (ContainerHas cid iid) st =
+    -- Direct membership only (Z-03): the container may be any item or
+    -- `containers:` entry, hidden contents and closed/locked containers count.
+    maybe False ((== InContainer cid) . itemLocation)
+        (Map.lookup iid (itemStates (save st)))
 evalPredicate (ActorHas actor iId) st = actorHasItem actor iId st
 -- B2: tag-based item queries (the generalisation of playerHasTaggedItem).
 --   Same member set as the count family (hidden items included).

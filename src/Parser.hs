@@ -2078,6 +2078,7 @@ searchRoom state = case getCurrentRoom state of
                      , itemLocation st == InRoom rId
                      , Just def <- [Map.lookup iId (itemDefs (world state))]
                      , itemHidden def
+                     , itemSearchable def
                      , not (itemDiscovered st)
                      ]
             stateAfterReveal = foldr discoverItem state hidden

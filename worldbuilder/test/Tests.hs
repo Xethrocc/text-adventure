@@ -1319,7 +1319,7 @@ testSetExitCompiles = do
                     [ AOSetExit "loc_0" "east" "loc_b" Nothing
                     , AOSetExit "loc_0" "west" "loc_b" (Just "seal")
                     , AORemoveExit "loc_0" "north" ] }
-                , (minRoom "loc_b") { arExits = Map.fromList [("west", AExitRef "loc_0" Nothing Nothing Nothing)] }
+                , (minRoom "loc_b") { arExits = Map.fromList [("west", AExitRef "loc_0" Nothing Nothing False Nothing)] }
                 ] }
     r1 <- case compileAdventure advOk of
             Left errs -> expectTrue ("set_exit compiles, got: " ++ show errs) False
@@ -1367,16 +1367,16 @@ testSetExitCompiles = do
 testAllDirectionsCompile :: IO Bool
 testAllDirectionsCompile = do
     let exits = Map.fromList
-            [ ("north", AExitRef "loc_a" Nothing Nothing Nothing)
-            , ("south", AExitRef "loc_a" Nothing Nothing Nothing)
-            , ("east", AExitRef "loc_a" Nothing Nothing Nothing)
-            , ("west", AExitRef "loc_a" Nothing Nothing Nothing)
-            , ("up", AExitRef "loc_a" Nothing Nothing Nothing)
-            , ("down", AExitRef "loc_a" Nothing Nothing Nothing)
-            , ("northeast", AExitRef "loc_a" Nothing Nothing Nothing)
-            , ("northwest", AExitRef "loc_a" Nothing Nothing Nothing)
-            , ("southeast", AExitRef "loc_a" Nothing Nothing Nothing)
-            , ("southwest", AExitRef "loc_a" Nothing Nothing Nothing)
+            [ ("north", AExitRef "loc_a" Nothing Nothing False Nothing)
+            , ("south", AExitRef "loc_a" Nothing Nothing False Nothing)
+            , ("east", AExitRef "loc_a" Nothing Nothing False Nothing)
+            , ("west", AExitRef "loc_a" Nothing Nothing False Nothing)
+            , ("up", AExitRef "loc_a" Nothing Nothing False Nothing)
+            , ("down", AExitRef "loc_a" Nothing Nothing False Nothing)
+            , ("northeast", AExitRef "loc_a" Nothing Nothing False Nothing)
+            , ("northwest", AExitRef "loc_a" Nothing Nothing False Nothing)
+            , ("southeast", AExitRef "loc_a" Nothing Nothing False Nothing)
+            , ("southwest", AExitRef "loc_a" Nothing Nothing False Nothing)
             ]
         room = (minRoom "loc_0") { arExits = exits }
         adv = minAdventure room
@@ -1393,10 +1393,10 @@ testAllDirectionsCompile = do
 testDirectionAliases :: IO Bool
 testDirectionAliases = do
     let exits = Map.fromList
-            [ ("ne", AExitRef "loc_a" Nothing Nothing Nothing)
-            , ("nw", AExitRef "loc_a" Nothing Nothing Nothing)
-            , ("se", AExitRef "loc_a" Nothing Nothing Nothing)
-            , ("sw", AExitRef "loc_a" Nothing Nothing Nothing)
+            [ ("ne", AExitRef "loc_a" Nothing Nothing False Nothing)
+            , ("nw", AExitRef "loc_a" Nothing Nothing False Nothing)
+            , ("se", AExitRef "loc_a" Nothing Nothing False Nothing)
+            , ("sw", AExitRef "loc_a" Nothing Nothing False Nothing)
             ]
         room = (minRoom "loc_0") { arExits = exits }
     case compileAdventure (minAdventure room) of
@@ -1409,7 +1409,7 @@ testDirectionAliases = do
 
 testUnknownDirectionFails :: IO Bool
 testUnknownDirectionFails = do
-    let exits = Map.fromList [("noth", AExitRef "loc_a" Nothing Nothing Nothing)]
+    let exits = Map.fromList [("noth", AExitRef "loc_a" Nothing Nothing False Nothing)]
         room = (minRoom "loc_0") { arExits = exits }
     case compileAdventure (minAdventure room) of
         Left errs -> do
@@ -1434,6 +1434,7 @@ minItem iid = AItem
     , aiState = "intact"
     , aiEquipSlot = Nothing
     , aiEquipEffects = []
+    , aiSearchable = True
     , aiHidden = False
     , aiDiscover = Nothing
     , aiProps = Map.empty
@@ -1616,8 +1617,8 @@ testDialogueChoiceStringNoQuotes = do
 testDuplicateDirectionFails :: IO Bool
 testDuplicateDirectionFails = do
     let exits = Map.fromList
-            [ ("se", AExitRef "loc_a" Nothing Nothing Nothing)
-            , ("southeast", AExitRef "loc_b" Nothing Nothing Nothing)
+            [ ("se", AExitRef "loc_a" Nothing Nothing False Nothing)
+            , ("southeast", AExitRef "loc_b" Nothing Nothing False Nothing)
             ]
         room = (minRoom "loc_0") { arExits = exits }
     case compileAdventure (minAdventure room) of
@@ -1648,7 +1649,7 @@ testDuplicateVerbKeyFails = do
 -- | Der Compile-Fehler trägt den exakten YAML-Pfad (rooms.<id>.exits.<dir>)
 testIssuePathPointsAtField :: IO Bool
 testIssuePathPointsAtField = do
-    let exits = Map.fromList [("noth", AExitRef "loc_a" Nothing Nothing Nothing)]
+    let exits = Map.fromList [("noth", AExitRef "loc_a" Nothing Nothing False Nothing)]
         room = (minRoom "loc_0") { arExits = exits }
     case compileAdventure (minAdventure room) of
         Left [issue] -> do
@@ -4340,6 +4341,13 @@ tests =
     , ("score: score_rankings sort ascending at compile time (K17)", testScoreRankingsSortedAscending)
     , ("score: score_rankings on non-score variable emits warning (K17)", testScoreRankingsOnNonScoreVarWarning)
     , ("score: duplicate score ranking threshold emits warning (K17)", testDuplicateScoreRankingThresholdWarning)
+    -- OPEN-03..07 (Z-04, Z-05, E-02, W-02, Z-03)
+    , ("searchable: false compiles, defaults True, knownKeys clean (Z-04)", testSearchableYamlAndKnownKeys)
+    , ("location: nowhere compiles dormant and keeps move_all working (Z-05)", testNowhereLocationCompilesDormant)
+    , ("place: outcome parses in/in_container and rejects bad shapes (E-02)", testPlaceOutcomeParsing)
+    , ("place: compiles and engine validation catches bad refs (E-02)", testPlaceCompilesAndValidates)
+    , ("blocked: true compiles clean with no DeadExit (W-02)", testBlockedExitCompilesClean)
+    , ("in: {container, item} predicate compiles and validates (Z-03)", testContainerHasPredicateCompiles)
     ]
 
 -- ---------------------------------------------------------------------------
@@ -6430,9 +6438,9 @@ testWarningDarkRoomDeadEnd = do
     let rLitStart = minRoom "loc_0"
         rDarkEast = (minRoom "loc_1")
             { arTags = ["dark"]
-            , arExits = Map.fromList [("west", AExitRef "loc_0" Nothing Nothing Nothing)] }
+            , arExits = Map.fromList [("west", AExitRef "loc_0" Nothing Nothing False Nothing)] }
         rLitStart' = rLitStart
-            { arExits = Map.fromList [("east", AExitRef "loc_1" Nothing Nothing Nothing)] }
+            { arExits = Map.fromList [("east", AExitRef "loc_1" Nothing Nothing False Nothing)] }
         torch = (minItem "torch") { aiLocation = "loc_0", aiTags = ["lightsource"] }
         gem = (minItem "gem") { aiLocation = "loc_1" }
         advWithTorch = (minAdventure rLitStart')
@@ -6577,6 +6585,7 @@ minItemKey iid = AItem
     , aiState = "intact"
     , aiEquipSlot = Nothing
     , aiEquipEffects = []
+    , aiSearchable = True
     , aiHidden = False
     , aiDiscover = Nothing
     , aiProps = Map.empty
@@ -7558,7 +7567,7 @@ testUnsatisfiableConditions = do
 testDeadExits :: IO Bool
 testDeadExits = do
     let roomB = minRoom "b"
-        exitTo tgt lock whenP = AExitRef tgt lock whenP Nothing
+        exitTo tgt lock whenP = AExitRef tgt lock whenP False Nothing
         wolf = (minNpcKey "wolf") { anLocation = "a" }
         kiste = (minItem "kiste") { aiCapacity = Just 3, aiLocation = "a" }
         hebel = (minItem "hebel")
@@ -7599,12 +7608,12 @@ testUnreachableRooms :: IO Bool
 testUnreachableRooms = do
     let roomC = minRoom "c"
         roomB = minRoom "b"
-        roomBtoC = (minRoom "b") { arExits = Map.singleton "north" (AExitRef "c" Nothing Nothing Nothing) }
-        isolatedA = (minRoom "a") { arExits = Map.singleton "north" (AExitRef "b" Nothing Nothing Nothing) }
+        roomBtoC = (minRoom "b") { arExits = Map.singleton "north" (AExitRef "c" Nothing Nothing False Nothing) }
+        isolatedA = (minRoom "a") { arExits = Map.singleton "north" (AExitRef "b" Nothing Nothing False Nothing) }
         linkedA = (minRoom "a")
             { arExits = Map.fromList
-                [ ("north", AExitRef "b" Nothing Nothing Nothing)
-                , ("east", AExitRef "c" Nothing Nothing Nothing) ] }
+                [ ("north", AExitRef "b" Nothing Nothing False Nothing)
+                , ("east", AExitRef "c" Nothing Nothing False Nothing) ] }
         viaEffectA = isolatedA { arOnEnter = Just [AORoomTransition "c"] }
         viaSetExitA = isolatedA { arOnEnter = Just [AOSetExit "a" "up" "c" Nothing] }
         codesOf code cr = [ ciPath i | i <- crWarnings cr, ciCode i == code ]
@@ -8945,6 +8954,307 @@ testDuplicateScoreRankingThresholdWarning = do
             let warns = crWarnings cr
             expectTrue "DuplicateScoreRankingThreshold warning emitted"
                 (any (\w -> ciCode w == "DuplicateScoreRankingThreshold") warns)
+
+-- ---------------------------------------------------------------------------
+-- OPEN-03..07 (Z-04, Z-05, E-02, W-02, Z-03)
+-- ---------------------------------------------------------------------------
+
+-- | Helfer: YAML dekodieren und kompilieren, Fehler werden gemeldet.
+compileYamlForTest :: String -> (CompileResult -> IO Bool) -> IO Bool
+compileYamlForTest txt k = case decode1 (BLC.pack txt) of
+    Left err -> do
+        putStrLn $ "  yaml decode failed: " ++ show err
+        pure False
+    Right (adv :: Adventure) -> case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  unexpected compile error: " ++ issuesText errs
+            pure False
+        Right cr -> k cr
+
+-- | OPEN-03 (Z-04): `searchable: false` kompiliert nach `itemSearchable False`,
+--   der Default True bleibt und ist ein bekannter Item-Schluessel.
+testSearchableYamlAndKnownKeys :: IO Bool
+testSearchableYamlAndKnownKeys = do
+    let yaml = unlines
+            [ "name: Searchable Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: A test room."
+            , "items:"
+            , "  - id: brief"
+            , "    name: Brief"
+            , "    location: loc_0"
+            , "    hidden: true"
+            , "    searchable: false"
+            , "  - id: fund"
+            , "    name: Fund"
+            , "    location: loc_0"
+            , "    hidden: true"
+            ]
+    r1 <- compileYamlForTest yaml $ \cr -> do
+        a <- expectTrue ("compiles with zero warnings, got: " ++ show (crWarnings cr))
+                (null (crWarnings cr))
+        let mBrief = Map.lookup "brief" (E.itemDefs (crWorld cr))
+            mFund = Map.lookup "fund" (E.itemDefs (crWorld cr))
+        b <- expectEqual (Just False) (E.itemSearchable <$> mBrief)
+        c <- expectEqual (Just True) (E.itemSearchable <$> mFund)
+        pure (a && b && c)
+    r2 <- expectTrue "searchable in knownKeys EntItem"
+            ("searchable" `Set.member` knownKeys EntItem)
+    pure (r1 && r2)
+
+-- | OPEN-04 (Z-05): `location: nowhere` kompiliert nach `Dormant` (kein
+--   `Removed`-Tombstone), bleibt aber per `move_all: {in: nowhere}` erreichbar.
+--   `nowhere`-Items spielen bei KeywordCollision nicht mit und haben kein
+--   repeatable-Home.
+testNowhereLocationCompilesDormant :: IO Bool
+testNowhereLocationCompilesDormant = do
+    let yaml = unlines
+            [ "name: Nowhere Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: A test room."
+            , "items:"
+            , "  - id: amulett"
+            , "    name: Amulett"
+            , "    keys: [amulett]"
+            , "    location: nowhere"
+            , "  - id: attrappe"
+            , "    name: Attrappe"
+            , "    keys: [amulett]"
+            , "    location: loc_0"
+            , "  - id: moerser"
+            , "    name: Moerser"
+            , "    location: nowhere"
+            , "    repeatable: true"
+            , "rules:"
+            , "  - id: heben"
+            , "    on: turn"
+            , "    effects:"
+            , "      - move_all: {what: items, in: nowhere, to: {in: loc_0}}"
+            ]
+    compileYamlForTest yaml $ \cr -> do
+        r1 <- expectEqual (Just E.Dormant)
+                (E.itemLocation <$> Map.lookup "amulett" (E.itemStates (crSave cr)))
+        r2 <- expectEqual (Just Nothing)
+                (E.itemHomeLocation <$> Map.lookup "moerser" (E.itemDefs (crWorld cr)))
+        -- das nowhere-Item kollidiert nicht mit dem Raum-Item gleichen Keys
+        r3 <- expectTrue ("zero warnings, got: " ++ show (crWarnings cr))
+                (null (crWarnings cr))
+        r4 <- case find ((== "heben") . trId) (E.triggerDefs (crWorld cr)) of
+            Nothing -> expectTrue "rule 'heben' missing" False
+            Just t -> expectEqual
+                [E.MoveAll (E.CountSpec E.CountItems (E.CountInRoom "nowhere") Nothing) (E.CountInRoom "loc_0")]
+                (trEffects t)
+        pure (r1 && r2 && r3 && r4)
+
+-- | OPEN-05 (E-02): `place:`-Outcome-Formen — genau ein Ziel (in XOR
+--   in_container), `in: nowhere` wird mit Hinweis abgelehnt.
+testPlaceOutcomeParsing :: IO Bool
+testPlaceOutcomeParsing = do
+    let dec s = Aeson.eitherDecode (BLC.pack s) :: Either String AActionOutcome
+        expectFailure s = case dec s of
+            Left _  -> pure True
+            Right o -> expectTrue ("expected parse failure, got " ++ show o) False
+    r1 <- expectEqual (Right (AOPlace "glocke" (E.InRoom "halle")))
+            (dec "{\"place\":{\"item\":\"glocke\",\"in\":\"halle\"}}")
+    r2 <- expectEqual (Right (AOPlace "glocke" (E.InContainer "kiste")))
+            (dec "{\"place\":{\"item\":\"glocke\",\"in_container\":\"kiste\"}}")
+    r3 <- expectFailure "{\"place\":{\"item\":\"glocke\",\"in\":\"halle\",\"in_container\":\"kiste\"}}"
+    r4 <- expectFailure "{\"place\":{\"item\":\"glocke\"}}"
+    r5 <- expectFailure "{\"place\":{\"item\":\"glocke\",\"in\":\"nowhere\"}}"
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | OPEN-05 (E-02): `place:` kompiliert zum Engine-`PlaceItem`; die Engine-
+--   Validierung meldet unbekannte Items/Raeume/Container.
+testPlaceCompilesAndValidates :: IO Bool
+testPlaceCompilesAndValidates = do
+    let yaml = unlines
+            [ "name: Place Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: A test room."
+            , "    exits:"
+            , "      east: loc_1"
+            , "    on_enter:"
+            , "      - place: {item: glocke, in: loc_1}"
+            , "      - place: {item: amulett, in_container: kiste}"
+            , "  - id: loc_1"
+            , "    name: Ziel"
+            , "    desc: Another room."
+            , "    exits:"
+            , "      west: loc_0"
+            , "items:"
+            , "  - id: glocke"
+            , "    name: Glocke"
+            , "    location: nowhere"
+            , "  - id: amulett"
+            , "    name: Amulett"
+            , "    location: nowhere"
+            , "  - id: kiste"
+            , "    name: Kiste"
+            , "    location: loc_0"
+            , "    capacity: 2"
+            ]
+        badYaml = unlines
+            [ "name: Place Bad Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: A test room."
+            , "    on_enter:"
+            , "      - place: {item: ruine, in: dachboden}"
+            , "      - place: {item: kiste, in_container: bank}"
+            , "items:"
+            , "  - id: kiste"
+            , "    name: Kiste"
+            , "    location: loc_0"
+            , "    capacity: 2"
+            ]
+    r1 <- compileYamlForTest yaml $ \cr -> case E.roomOnEnter =<< Map.lookup "loc_0" (E.rooms (crWorld cr)) of
+        Nothing -> expectTrue "on_enter effects missing" False
+        Just effs -> do
+            let flattened = case effs of
+                    E.Sequence es -> es
+                    e             -> [e]
+            a <- expectEqual
+                    [ E.PlaceItem "glocke" (E.InRoom "loc_1")
+                    , E.PlaceItem "amulett" (E.InContainer "kiste") ] flattened
+            let errs = validateWorld (crWorld cr) ++ validateGameState (crWorld cr) (crSave cr)
+            b <- expectTrue ("world must validate clean, got: " ++ show errs) (null errs)
+            pure (a && b)
+    r2 <- compileYamlForTest badYaml $ \cr -> do
+        let errs = validateWorld (crWorld cr)
+        a <- expectTrue ("MissingItem ruine, got: " ++ show errs) (MissingItem "ruine" `elem` errs)
+        b <- expectTrue ("MissingRoom dachboden, got: " ++ show errs) (MissingRoom "dachboden" `elem` errs)
+        c <- expectTrue ("InvalidContainer bank, got: " ++ show errs)
+                (InvalidContainer "kiste" "bank" `elem` errs)
+        pure (a && b && c)
+    pure (r1 && r2)
+
+-- | OPEN-06 (W-02): `blocked: true` kompiliert zur blocked-Form
+--   (`Guarded (PNot PTrue)`) mit eigener Meldung und erzeugt keinen
+--   DeadExit — im Gegensatz zum alten `when: {not: {true: true}}`-Muster.
+testBlockedExitCompilesClean :: IO Bool
+testBlockedExitCompilesClean = do
+    let yaml = unlines
+            [ "name: Blocked Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: A test room."
+            , "    exits:"
+            , "      north:"
+            , "        to: loc_1"
+            , "        blocked: true"
+            , "        msg: \"Der Weg ist versperrt.\""
+            , "  - id: loc_1"
+            , "    name: Ziel"
+            , "    desc: Another room."
+            , "    exits:"
+            , "      south: loc_0"
+            ]
+        oldExit = AExitRef "loc_1" Nothing (Just (E.PNot E.PTrue)) False Nothing
+        roomA = (minRoom "loc_0") { arExits = Map.singleton "north" oldExit }
+        oldAdv = (minAdventure roomA) { advRooms = [roomA, minRoom "loc_1"] }
+    r1 <- case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml decode failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> do
+            -- die YAML-Form liegt als blocked: true an
+            a <- expectEqual (Just True)
+                    (find ((== "loc_0") . arId) (advRooms adv)
+                        >>= \r -> aeBlocked <$> Map.lookup "north" (arExits r))
+            b <- compileYamlForTest yaml $ \cr -> do
+                b1 <- expectTrue ("zero warnings, got: " ++ show (crWarnings cr))
+                        (null (crWarnings cr))
+                b2 <- case Map.lookup "loc_0" (E.rooms (crWorld cr)) of
+                    Nothing -> expectTrue "room loc_0 missing" False
+                    Just rm -> expectTrue "compiled exit is the blocked form"
+                            (E.Guarded "loc_1" (E.PNot E.PTrue) (Just "Der Weg ist versperrt.")
+                                `elem` Map.elems (E.roomConnections rm))
+                pure (b1 && b2)
+            pure (a && b)
+    r2 <- expectTrue "blocked is a known exit key" ("blocked" `Set.member` knownKeys EntExitRef)
+    -- Kontrolle: das alte Muster `when: {not: {true: true}}` warnt weiterhin
+    r3 <- case compileAdventure oldAdv of
+        Left errs -> expectTrue ("compile: " ++ issuesText errs) False
+        Right crOld ->
+            expectEqual ["rooms.loc_0.exits.north"]
+                [ ciPath i | i <- crWarnings crOld, ciCode i == "DeadExit" ]
+    pure (r1 && r2 && r3)
+
+-- | OPEN-07 (Z-03): `when: {in: {container: X, item: Y}}` kompiliert zum
+--   `ContainerHas`-Prädikat; Tippfehler in Item/Container meldet die Engine-
+--   Validierung.
+testContainerHasPredicateCompiles :: IO Bool
+testContainerHasPredicateCompiles = do
+    let yaml = unlines
+            [ "name: In-Predicate Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: A test room."
+            , "items:"
+            , "  - id: kiste"
+            , "    name: Kiste"
+            , "    location: loc_0"
+            , "    capacity: 2"
+            , "  - id: amulett"
+            , "    name: Amulett"
+            , "    location: loc_0"
+            , "    in_container: kiste"
+            , "rules:"
+            , "  - id: pruefung"
+            , "    on: turn"
+            , "    when:"
+            , "      in:"
+            , "        container: kiste"
+            , "        item: amulett"
+            , "    effects:"
+            , "      - msg: \"Ja\""
+            ]
+        badYaml = unlines
+            [ "name: In-Predicate Bad Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: A test room."
+            , "rules:"
+            , "  - id: pruefung"
+            , "    on: turn"
+            , "    when:"
+            , "      in:"
+            , "        container: bank"
+            , "        item: ruine"
+            , "    effects:"
+            , "      - msg: \"Ja\""
+            ]
+    r1 <- compileYamlForTest yaml $ \cr -> do
+        a <- case find ((== "pruefung") . trId) (E.triggerDefs (crWorld cr)) of
+            Nothing -> expectTrue "rule 'pruefung' missing" False
+            Just t  -> expectEqual (Just (E.ContainerHas "kiste" "amulett")) (trCondition t)
+        let errs = validateWorld (crWorld cr)
+        b <- expectTrue ("world must validate clean, got: " ++ show errs) (null errs)
+        pure (a && b)
+    r2 <- compileYamlForTest badYaml $ \cr -> do
+        let errs = validateWorld (crWorld cr)
+        a <- expectTrue ("InvalidContainer ruine bank, got: " ++ show errs)
+                (InvalidContainer "ruine" "bank" `elem` errs)
+        b <- expectTrue ("MissingItem ruine, got: " ++ show errs) (MissingItem "ruine" `elem` errs)
+        pure (a && b)
+    pure (r1 && r2)
 
 main :: IO ()
 main = do

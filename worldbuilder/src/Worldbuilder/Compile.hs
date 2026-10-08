@@ -506,6 +506,7 @@ checkDeadExits a = concatMap deadFor (advRooms a)
         [ ciWarning ("rooms." ++ arId r ++ ".exits." ++ dir) "DeadExit" msg
         | (dir, ex) <- Map.toList (arExits r)
         , msg <- exitReason ex ]
+    exitReason ex | aeBlocked ex = []
     exitReason ex = case aeWhen ex of
         Just g | TruthFalse reason <- evalTruth flagSet g ->
             ["its guard can never hold: " ++ reason]
@@ -1230,6 +1231,7 @@ compileRoom r =
        else Left allErrs
   where
     compileExitInner :: AExitRef -> E.Exit
+    compileExitInner ref | aeBlocked ref = E.Guarded (aeTarget ref) (E.PNot E.PTrue) (aeMsg ref)
     compileExitInner ref = case aeWhen ref of
         Just p  -> E.Guarded (aeTarget ref) p (aeMsg ref)
         Nothing -> case aeLocked ref of
@@ -3008,6 +3010,7 @@ compileItemDefSafe registry i =
                 , E.itemTags = Set.fromList (aiTags i)
                 , E.itemEquipSlot = slot
                 , E.itemEquipEffects = effects
+                , E.itemSearchable = aiSearchable i
                 , E.itemHidden = aiHidden i
                 , E.itemDiscoverText = aiDiscover i
                 , E.itemPortable = fromMaybe True (aiPortable i)
@@ -3016,7 +3019,9 @@ compileItemDefSafe registry i =
                 , E.itemCapacity = aiCapacity i
                 , E.itemGrammar = aiGrammar i
                 , E.itemRepeatable = fromMaybe False (aiRepeatable i)
-                , E.itemHomeLocation = if null (aiLocation i) then Nothing else Just (aiLocation i)
+                -- `location: nowhere` (OPEN-04) is a holding pen, not a room —
+                -- it must never be a repeatable home.
+                , E.itemHomeLocation = if aiLocation i `elem` ["", "nowhere"] then Nothing else Just (aiLocation i)
                 })
 
 compileItemStates :: [AItem] -> ([CompileIssue], Map.Map String E.ItemState)
@@ -3036,7 +3041,8 @@ compileItemStateSafe i
             Just cid -> E.InContainer cid
             Nothing  -> case aiCarriedBy i of
                 Just a  -> E.CarriedBy (compileActorRef a)
-                Nothing -> E.InRoom (aiLocation i)
+                Nothing | aiLocation i == "nowhere" -> E.Dormant
+                        | otherwise -> E.InRoom (aiLocation i)
         , E.itemStatus = aiState i
         , E.itemProps = aiProps i
         , E.itemDiscovered = not (aiHidden i)
@@ -3411,6 +3417,7 @@ compileAActionOutcome ao = case ao of
     AOMessage s -> E.SendMessage s
     AOHealPlayer n -> E.ModifyValue E.VRPlayerHealth n
     AODamagePlayer n -> E.ModifyValue E.VRPlayerHealth (-n)
+    AOPlace i loc -> E.PlaceItem i loc
     AOGiveItem i -> E.MoveEntity i (E.CarriedBy E.ActorPlayer)
     AOGiveTo i tgt -> E.MoveEntity i (E.CarriedBy (compileActorRef tgt))
     -- B9: NPC equipment. The engine keeps the slot in the item's own
@@ -4499,7 +4506,7 @@ checkKeywordCollisions adv =
     let roomItems =
             [ (aiLocation i, "item '" ++ aiId i ++ "'", kw)
             | i <- advItems adv
-            , aiLocation i /= "inventory"
+            , aiLocation i `notElem` ["inventory", "nowhere"]
             , isNothing (aiInContainer i)
             , isNothing (aiCarriedBy i)
             , kw <- nub (map (map toLower . trimSpaces) (aiKeywords i))
