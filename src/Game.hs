@@ -841,7 +841,12 @@ consumeItem iId state =
 --   automatically (dropping/consuming a worn item must not keep its bonuses),
 --   and health is clamped to the new effective max afterwards.
 relocateItem :: ItemID -> Location -> GameState -> GameState
-relocateItem iId newLoc state =
+relocateItem iId newLoc state
+    -- A removed item stays removed: consuming an item already consumed (e.g.
+    -- retried use, or a trigger firing on an already-dead id) must not
+    -- resurrect it.  No other relocation target is a legal resurrect path.
+    | currentLoc == Just Removed = state
+    | otherwise =
     let saveState = save state
         updatedSave = saveState
             { itemStates = Map.adjust (\s -> s { itemLocation = newLoc }) iId (itemStates saveState)
@@ -849,6 +854,8 @@ relocateItem iId newLoc state =
             }
         st' = state { save = syncInventory updatedSave }
     in clampHealthToMax st'
+  where
+    currentLoc = itemLocation <$> Map.lookup iId (itemStates (save state))
 
 -- | Clamp current health to effective max health (e.g. after losing a maxhp bonus)
 clampHealthToMax :: GameState -> GameState
