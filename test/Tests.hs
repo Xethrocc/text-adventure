@@ -5175,7 +5175,12 @@ testCommandEventsTable = do
               (commandEvents (Interact VTake "sword") stHolding stHolding)
     -- informational commands raise no turn event
     r8 <- expectEqual [OnCommand "stats"] (evs StatsCmd)
-    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+    -- built-in command constructors carry their verb name into the trigger:
+    -- GiveCmd/PutInCmd used to fall through to "unknown", so an
+    -- `on: command give` rule could never fire (Zork-Port troll mechanic)
+    r9 <- expectEqual [OnCommand "give", OnTurn] (evs (GiveCmd "axe" "troll"))
+    r10 <- expectEqual [OnCommand "put", OnTurn] (evs (PutInCmd "sword" "chest"))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10)
 
 -- | L5: through the loop, an `on: enter` rule must fire before the `on: turn`
 --   rule of the same command (the event order, not the rule order).

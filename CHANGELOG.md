@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Trigger-Korrektur (Bugfix, Zork-Port Stufe A)
+
+- **`on: command <verb>` für eingebaute Kommando-Konstruktoren:** `commandVerbName`
+  (`GameLoop.hs`) kannte `GiveCmd`, `PutInCmd`, `TakeFromCmd`, `OpenCmd`, `CloseCmd`,
+  `LockCmd`, `UnlockCmd`, `AskCmd`, `TellCmd`, `RecipesCmd`, `EnterVehicleCmd`,
+  `ExitVehicleCmd`, `DriveToCmd`, `WaitCmd`, `RefuelCmd`, `RepairCmd` und `ChooseCmd`
+  nicht und warf sie auf den Fallback `"unknown"` — Regeln wie `on: command give`
+  konnten dadurch nie feuern (betroffen u.a. `give`, `put`, `open`, `close`, `lock`,
+  `unlock`, `ask`, `tell`). Alle Konstruktoren tragen jetzt ihren Spielerverb-Namen
+  (`on: command give` feuert seitdem wie dokumentiert).
+
 ### Punkte-/Score-System (K17)
 
 - **Prinzip & Design-Entscheidung:**
