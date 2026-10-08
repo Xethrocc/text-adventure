@@ -1058,7 +1058,10 @@ getEntityState entity state = Map.lookup entity (entityStates (save state))
 
 -- | Set entity state
 setEntityState :: String -> String -> GameState -> GameState
-setEntityState entity val state = state { save = (save state) { entityStates = Map.insert entity val (entityStates (save state)) } }
+setEntityState entity val state = state { save = (save state)
+    { entityStates = Map.insert entity val (entityStates (save state))
+    , itemStates = Map.adjust (\is -> is { itemStatus = val }) entity (itemStates (save state))
+    } }
 
 -- | Check if an entity ID is known in the game world or state:
 --   items, NPCs, devices, vehicles, entity states (containers, initialized entities),
@@ -1510,18 +1513,14 @@ evalPredicate (HasCondition cn) st = hasCondition cn st
 -- ("intact"/…). Reading only `entityStates` made `{state: <npc>, is: alive}` —
 -- which `starship.yaml` and `combo.yaml` both use — always false.
 evalPredicate (EntityHasState entity expected) st =
-    getEntityState entity st == Just expected
-        || npcStateMatches
-        || itemStateMatches
-        || cardStateMatches
-        || varTextMatches
-  where
-    npcStateMatches = case Map.lookup entity (npcStates (save st)) of
+    case Map.lookup entity (npcStates (save st)) of
         Just ns -> npcStatus ns == expected
-        Nothing -> False
-    itemStateMatches = case Map.lookup entity (itemStates (save st)) of
-        Just is -> itemStatus is == expected
-        Nothing -> False
+        Nothing -> case Map.lookup entity (itemStates (save st)) of
+            Just is -> itemStatus is == expected
+            Nothing -> case getEntityState entity st of
+                Just status -> status == expected
+                Nothing -> cardStateMatches || varTextMatches
+  where
     cardStateMatches = case deckState (save st) of
         Just ds -> case expected of
             "hand"        -> entity `elem` hand ds
@@ -1554,6 +1553,7 @@ evalPredicate (Location actor rId) st = case actor of
 evalPredicate (CompareVar name op n) st =
     case getVariable name st of
         Just (VVInt v) -> fromMaybe False (compareValues op v n)
+        Just (VVBool b) -> fromMaybe False (compareValues op (if b then 1 else 0) n)
         Just (VVText s)
             | s == "true"  -> fromMaybe False (compareValues op 1 n)
             | s == "false" -> fromMaybe False (compareValues op 0 n)
@@ -1578,6 +1578,7 @@ evalPredicate (VarIs name expected) st
     | otherwise =
         case getVariable name st of
             Just (VVText v) -> v == expected
+            Just (VVBool b) -> (if b then "true" else "false") == expected
             _               -> False
 -- W1: knowledge is a VarMap entry `known.<actor>.<fact>` with value 1;
 --   parameters/locals of an active procedure shadow it like any variable.
@@ -1602,6 +1603,7 @@ resolveValueRef (VRConditionTurns cName) st =
 resolveValueRef (VRVariable name) st =
     case getVariable name st of
         Just (VVInt n)  -> n
+        Just (VVBool b) -> if b then 1 else 0
         Just (VVText s)
             | s == "true"  -> 1
             | s == "false" -> 0

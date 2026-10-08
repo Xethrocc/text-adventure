@@ -237,6 +237,8 @@ applyLoopCommandCore Restart loopState =
 
 
 applyLoopCommandCore Help loopState = (loopState, evMsg "help.text" [])
+-- Meta commands run without the trigger pipeline: cmd.* (including
+-- cmd.succeeded) stays as the last gameplay command left it.
 applyLoopCommandCore (Save _) loopState = (loopState, [])
 applyLoopCommandCore (Load _) loopState = (loopState, [])
 applyLoopCommandCore ListSaves loopState = (loopState, [])

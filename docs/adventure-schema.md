@@ -448,7 +448,7 @@ description:
 | `{ msg: "Text", then: [...], else: [...] }` | Sequence [SendMessage, Conditional...] |
 | `{ standing: { faction: id, add: N } }` | ModifyValue (VRVariable "faction.id") +N — Module 7a |
 | `{ standing: { faction: id, set: N } }` | SetValue (VRVariable "faction.id") N — Module 7a |
-| `{ set_state: entity, to: state }` | SetValue (VRProperty entity "state") — setzt den Status von Items/Toren (`ActorEntity`, z. B. `locked_by`-Tore öffnen) oder NPCs (`ActorNPC`, setzt `npcStatus` und feuert `OnStateChange`). Unterstützt dynamische Ziele wie `{cmd.target}` über `resolveVarName`. Literale unbekannte Ziele erzeugen den Compile-Fehler `UnknownStateTarget`; dynamische Ziele werden bewusst **nicht** zur Compile-Zeit geprüft, sondern zur Laufzeit aufgelöst (unbekannte Laufzeit-Ziele scheitern nicht still, sondern melden `target.not_seen` und ein Diagnose-Event). |
+| `{ set_state: entity, to: state }` | SetValue (VRProperty entity "state") — setzt den Status von Items/Toren (`ActorEntity`, z. B. `locked_by`-Tore öffnen) oder NPCs (`ActorNPC`, setzt `npcStatus` und feuert `OnStateChange`). Bei Items/Toren werden `entityStates` und `itemStates.itemStatus` synchron geschrieben (Details siehe *Item-Status-Synchronisation*). Unterstützt dynamische Ziele wie `{cmd.target}` über `resolveVarName`. Literale unbekannte Ziele erzeugen den Compile-Fehler `UnknownStateTarget`; dynamische Ziele werden bewusst **nicht** zur Compile-Zeit geprüft, sondern zur Laufzeit aufgelöst (unbekannte Laufzeit-Ziele scheitern nicht still, sondern melden `target.not_seen` und ein Diagnose-Event). |
 | `{ damage_npc: { npc: id, amount: N } }` | ModifyValue (VRProperty id "hp") −N — Module 7g |
 | `{ narrative: ["Zeile 1", "Zeile 2"], then: [...] }` | Narrative — interaktive, seitenweise Ausgabe (`[Press Enter to continue]`); `then` sind Folge-Effekte nach der letzten Zeile |
 | `{ condition: { name: id, turns: N, tick: [...], end: [...], hidden: bool } }` | ApplyCondition — timed condition/status effect (`tick` each turn, `end` upon expiration, optional `hidden: true` suppresses status/HUD display) |
@@ -466,6 +466,33 @@ description:
 Flags sind für Prädikate faktisch boolesch: `has_flag` prüft, ob ein Flag gesetzt
 ist (`"true"`). Ein Vergleich gegen einen *anderen* String-Wert ist über Flags
 nicht ausdrückbar — dafür gibt es Text-Variablen.
+
+### Item-Status-Synchronisation (OPEN-02 / Z-01)
+
+Ein Entity hat **genau einen** Status. `set_state: entity, to: state` schreibt
+ihn bei Items und Toren (Entity-Ziele) gleichzeitig in beide Speicher:
+`entityStates` (Container-/Tör-Logik) **und** `itemStates.itemStatus` (der
+`verb_map`-State-Suffix-Lookup). Dasselbe gilt für `set_state_all` und für die
+Container-Verben `open`/`close`/`lock`/`unlock`. Damit sehen
+`verb_map`-Dispatch (`take,broken:` …), Prädikate (`{state: X, is: Y}`) und die
+Container-Zustände (`open`/`closed`/`locked`) nie widersprüchliche Werte mehr
+(schließt `Z-01`).
+
+- **Wiederholte Writes** auf denselben Wert sind No-Ops (kein zweites
+  `state entity`-Ereignis), synchronisieren bei (alten) uneinheitlichen
+  Speicherständen aber nach.
+- **NPCs sind ausgenommen:** `set_state` auf einen NPC setzt `npcStatus`
+  (`alive`/`dead`/…) und feuert `state <npc>` — sonst ändert sich nichts.
+- **Reihenfolge bei widersprüchlichen Alt-Belegungen** (Saves aus
+  Engine-Versionen ohne Synchronisation): NPC-Status → Item-Status →
+  Entity-State. Ein nur in `entityStates` stehender Alt-Wert gilt bei Items als
+  veraltet und wird von `{state: X, is: Y}` **nicht** mehr gesehen.
+- **Container-Zustände bleiben konsistent:** `open`/`close`/`lock`/`unlock` und
+  `set_state` auf `open`/`closed`/`locked` lesen und schreiben denselben
+  Entity-Status; bei Item-Containern wird damit auch der `verb_map`-State-Suffix
+  umgeschaltet (der Start-Status `intact` weicht beim ersten Container-Verben
+  `open`/`closed`/`locked`). Reine Tör-/Lock-Entities ohne Item-Definition
+  (`locked_by:`) leben weiter ausschließlich in `entityStates`.
 
 **Benannte Zufallsströme (B8):** `random:` zieht standardmäßig aus dem
 unbenannten Default-Strom — die alte Listenform bleibt unverändert (byte-identisch),
@@ -1057,6 +1084,8 @@ automatisch temporäre Variablen in den Spielzustand:
   als ganzzahlige `VTInt` typisiert, Wörter als `VTText`.
 - `cmd.count`: Anzahl der übergebenen Argumente (als `VTInt`).
 - `cmd.raw_args`: Der gesamte unzerlegte Rest-String nach dem Verb.
+- `cmd.succeeded`: Ergebnis des Kommandos (`"true"`/`"false"`) — siehe Abschnitt
+  *Command-Ergebnis: `cmd.succeeded`*.
 
 ### Text-Interpolation (`{var:name}` / `{name}`)
 
@@ -1308,6 +1337,9 @@ Before a command is executed, the engine automatically extracts arguments and re
 - `cmd.raw_args` — The unparsed arguments string following the verb.
 - `cmd.count` — The number of argument tokens (integer).
 - `cmd.arg1..N` — Individual argument tokens (integer if numeric, otherwise text).
+- `cmd.succeeded` — The command result as a boolean value (`"true"`/`"false"`);
+  `on: command` rules can branch on it (full semantics in the German section
+  *Command-Ergebnis: `cmd.succeeded`*).
 
 When a verb's target matches several entities, the engine asks `Which do you mean: [1] …, [2] …?`
 and binds `cmd.target_kind = "ambiguous"` with the raw input as `cmd.target`. The player answers with
@@ -1327,6 +1359,82 @@ entity ID. The question and the answer cost no turn of their own.
         msg: "The jammed lever resists your pull, wasting precious time!"
         turn: true
   ```
+
+### Command-Ergebnis: `cmd.succeeded` (OPEN-01 / R-02)
+
+Jedes Kommando zeichnet sein Ergebnis in der Variable `cmd.succeeded`
+(`"true"`/`"false"`) auf — ein **Aktionsergebnis**, keine Textableitung: die
+Engine bewertet niemals Meldungstexte, sondern zeichnet Erfolg/Scheitern an der
+Quelle ein (nur stabile Meldungs-*Keys* ohne Autorentext dienen als Kompatibilitäts-
+Erkennung für alte Paar-Rückgaben). `on: command <verb>`-Regeln, die auch bei
+Fehlversuchen feuern (`R-02`), können sich damit auf das Ergebnis der Standard-
+aktion verlassen, ohne eigene Guards:
+
+```yaml
+rules:
+  - id: krone_genommen
+    on: command take
+    when:
+      all:
+        - var: cmd.succeeded
+          is: "true"
+        - var: cmd.target
+          is: "royal_crown"
+    effects:
+      - msg: "The crown is yours — the guards have noticed."
+```
+
+**`true` — die Aktion ist gelungen:**
+
+- erfolgreiche Standard-Aktionen (`take` hebt auf, `open` öffnet, `give` übergibt, …)
+- eigene `verb_map`-Handler (`before:`/`instead:`/historisch) ohne `block:` —
+  auch wenn ihre Meldungen nach Fehlschlag klingen
+- rein regelgetriebene Custom-Verben (z. B. `chant`, `kaufe 50 land`), die eine
+  `on: command`-Regel beantwortet („akzeptiert" — die Regel kann das Ergebnis
+  selbst verwerfen, s. u.)
+
+**`false` — der Versuch ist gescheitert:**
+
+- fehlgeschlagene `give`/`put`/`open`/`take`-Versuche: kein solches Ziel
+  (`take missing` — **auch** wenn eine `on: command take`-Regel existiert),
+  Ziel nicht erreichbar (`target.not_carried`, `use.unreachable`), bereits
+  getragen (`take.already`), nicht tragbar (`take.not_portable` — auch bei
+  einer Autoren-Meldung via `take_failure:`, die wie Erfolg klingt),
+  verriegelt/geschlossen (`container.is_locked`, `container.is_closed`),
+  voll (`container.full`, `inventory.full`)
+- Regel-Vetos: `block:` in `on: before`-Regeln und in `verb_map`-Phasen
+  (die Aktion läuft dann nicht bzw. bricht ab). Ein `block:` in
+  `on: command`-Regeln läuft *nach* Abschluss der Aktion und ändert das
+  aufgezeichnete Ergebnis nicht mehr.
+- Dunkelheits-Verweigerungen (`look`, `search`, `take`, `map`, `watch` im
+  dunklen Raum ohne Lichtquelle)
+- eine offene Rückfrage („Which do you mean?") — das Kommando ist noch nicht
+  ausgeführt; die Auflösung zeichnet dann ihr eigenes Ergebnis auf
+- Kern-Verben, für die weder Standard-Aktion noch Handler zuständig waren
+  (`kick sword`, `take lever`, …)
+
+**Sammelkommandos sind Konjunktionen:** `take sword and lamp`, `take all` und
+`drop all` versuchen **jeden** Teil (ein früherer Fehlschlag hält spätere Teile
+nicht an). `cmd.succeeded` ist `true` nur, wenn **alle** Teile gelungen sind;
+schon ein Fehlschlag macht das ganze Kommando zum Fehlschlag.
+
+**Zustandswechsel verwirren das Ergebnis nicht:** `set_state` mitten im
+Kommando (z. B. in einem `verb_map`-Handler) ändert `cmd.succeeded` nicht —
+beschrieben wird die Aktion, nicht der Zustandswechsel (`on: state entity`
+sieht den neuen Status).
+
+**Metakommandos:** `undo`, `help`, `save`, `load`, `saves`, `restart` laufen
+ohne Trigger-Pipeline und lassen `cmd.*` unverändert (der Wert des letzten
+Spiel-Kommandos bleibt stehen; `undo` stellt den exakten alten Zustand wieder
+her). Über Regeln ist das Ergebnis eines Metakommandos nicht beobachtbar.
+
+**Sichtbarkeit und Überschreibung:** `on: before`-Regeln sehen
+`cmd.succeeded = false` (die Aktion läuft noch — „pending"), `on: command`-
+Regeln das endgültige Ergebnis. Eine regelgetriebene Aktion kann das Ergebnis
+mit `set_var: {var: cmd.succeeded, value: "false"}` (oder `"true"`) verwerfen,
+bevor spätere Regeln es lesen. Auswertung überall dort, wo Prädikate stehen:
+`{ var: cmd.succeeded, is: "true" }`, `compare_var` (bool zählt als 0/1) und
+`{cmd.succeeded}` in Texten (`1`/`0`).
 
 ### Veto Stufe 2: `before:` / `instead:` in `verb_map` (Phase 4.2)
 
@@ -1357,7 +1465,9 @@ items:
 Regeln und Feinheiten:
 
 - **State-Suffix** wie gehabt: `verb` oder `verb,state` (Default `intact`) — das Präfix steht davor,
-  also `before:use,primed:`. Der Vollständigkeit halber: `on_take:` ist der historische
+  also `before:use,primed:`. Der Status ist der synchronisierte Entity-Status
+  (OPEN-02): `set_state`-Writes und Container-Verben schalten den Lookup sofort
+  um. Der Vollständigkeit halber: `on_take:` ist der historische
   `take`-Eintrag (`PhaseAfter`) und läuft mit `instead:take` **nicht** mit.
 - **Lookup-Reihenfolge** pro `(verb, state)`-Paar: `instead:` → `before:` → alter Eintrag →
   Standardaktion. Ein `(verb, state)`-Paar darf nur in **einer** Phase belegt sein

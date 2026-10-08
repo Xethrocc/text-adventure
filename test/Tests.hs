@@ -37,7 +37,7 @@ import Messages (renderMsg, formatStringWith, catalogEntries, defaultCatalog,
                 translateTerms, renderMsgFor,
                 effectiveCatalog, langPacks, knownLanguages, LangPack (..),
                 grammarArgs, templateGrammarKeys, isGrammarArgKey)
-import Parser (Command (..), executeCommand, parseCommand, parseCommandWith, parseCommandFor, helpText, bindCommandVars, extractCommandArgs,
+import Parser (Command (..), executeCommand, executeCommandEv, parseCommand, parseCommandWith, parseCommandFor, helpText, bindCommandVars, extractCommandArgs,
                InteractTarget (..), resolveInteractTarget,
                TargetResolution (..), resolveTarget, preferInventoryTarget,
                defaultDarkMessage,
@@ -6843,6 +6843,184 @@ testEquipmentSummaryText = do
 --   `itemStates` — die Bedingung war für beide unerreichbar, obwohl
 --   `starship.yaml` und `combo.yaml` sie genau so verwenden (und damit ihren
 --   Verlust- bzw. Kampfpfad stillschweigend unmöglich machten).
+-- | OPEN-01: status is an action result, not a mutation/prose heuristic.
+testCommandSucceeded :: IO Bool
+testCommandSucceeded = do
+    let base = initSampleGame
+        hall = base { save = (save base) { currentRoom = "hallway" } }
+        carried = pickupItem "sword_rusty" hall
+        container = base { world = (world base) { itemDefs =
+            Map.adjust (\i -> i { itemCapacity = Just 2 }) "sword_rusty" (itemDefs (world base)) } }
+        openBox = setEntityState "sword_rusty" "open" container
+        withPotion = pickupItem "potion_healing" openBox
+        cases =
+            [ ("missing take", Interact VTake "missing", base, False)
+            , ("successful take", Interact VTake "sword", base, True)
+            , ("already held take", Interact VTake "sword", pickupItem "sword_rusty" base, False)
+            , ("missing recipient", GiveCmd "sword" "missing", carried, False)
+            , ("give without item", GiveCmd "sword" "goblin", hall, False)
+            , ("successful give", GiveCmd "sword" "goblin", carried, True)
+            , ("missing container", PutInCmd "potion" "missing", withPotion, False)
+            , ("put out of scope item", PutInCmd "hay" "sword", openBox, False)
+            , ("closed put", PutInCmd "potion" "sword", setEntityState "sword_rusty" "closed" withPotion, False)
+            , ("successful put", PutInCmd "potion" "sword", withPotion, True)
+            , ("locked open", OpenCmd "sword", setEntityState "sword_rusty" "locked" container, False)
+            , ("already open", OpenCmd "sword", openBox, False)
+            , ("successful open", OpenCmd "sword", setEntityState "sword_rusty" "closed" container, True)
+            , ("open no such target", OpenCmd "missing", base, False)
+            , ("look needs no mutation", Look, base, True)
+            , ("look in the dark is refused", Look, hall, False)
+            ]
+    results <- mapM (\(label, cmd, st, expected) -> do
+        let (ls, _) = applyLoopCommandEv cmd (initLoopState st)
+            final = lsCurrent ls
+        a <- expectEqual (Just (VVBool expected)) (getVariable "cmd.succeeded" final)
+        b <- expectTrue label (evalPredicate (VarIs "cmd.succeeded" (if expected then "true" else "false")) final)
+        c <- expectTrue "bool numeric predicate" (evalPredicate (CompareVar "cmd.succeeded" CEq (if expected then 1 else 0)) final)
+        pure (a && b && c)) cases
+    -- An authored portable-failure message can look exactly like success.
+    let prose = base { world = (world base) { itemDefs =
+            Map.adjust (\i -> i { itemPortable = False, itemTakeFailure = Just "You take the rusty sword." })
+                "sword_rusty" (itemDefs (world base)) } }
+        (failed, _) = executeCommandEv (Interact VTake "sword") prose
+    raw <- expectEqual (Just (VVBool False)) (getVariable "cmd.succeeded" failed)
+    pure (and (raw : results))
+
+-- | OPEN-01: before is pending/false; command rules observe the completed bit.
+testCommandSucceededRules :: IO Bool
+testCommandSucceededRules = do
+    let mark flag = SetValue (VRFlag flag) (EVString "true")
+        before = TriggerDef "before" (OnBefore "take") (Just (VarIs "cmd.succeeded" "false"))
+            [mark "pending"] False 0 1 [] []
+        after = TriggerDef "after" (OnCommand "take") (Just (VarIs "cmd.succeeded" "true"))
+            [mark "completed"] False 0 1 [] []
+        base = initSampleGame
+        st = setVariable "cmd.succeeded" (VVBool True) (base { world = (world base) { triggerDefs = [before, after] } })
+        run cmd state = lsCurrent (fst (applyLoopCommandEv cmd (initLoopState state)))
+        good = run (Interact VTake "sword") st
+        bad = run (Interact VTake "missing") st
+        veto = before { trId = "veto", trCondition = Nothing,
+            trEffects = [mark "mutated", Block (Just "Done!") False] }
+        blocked = run (Interact VTake "sword") (st { world = (world st) { triggerDefs = [veto, after] } })
+        custom = TriggerDef "custom" (OnCommand "chant") (Just (VarIs "cmd.succeeded" "true"))
+            [mark "custom-accepted"] False 0 1 [] []
+        customSt = run (Interact (VCustom "chant") "") (base { world = (world base) { triggerDefs = [custom] } })
+    a <- expectTrue "before sees false, after sees true" (hasFlag "pending" good && hasFlag "completed" good)
+    b <- expectTrue "failed action still runs before, but not success rule" (hasFlag "pending" bad && not (hasFlag "completed" bad))
+    c <- expectTrue "veto can mutate yet remains failure" (hasFlag "mutated" blocked && getVariable "cmd.succeeded" blocked == Just (VVBool False))
+    d <- expectTrue "custom handler is accepted before command rules run" (hasFlag "custom-accepted" customSt)
+    phases <- mapM (\(phase, outcome, expected) -> do
+        let game = withPotionVerbMap (Map.singleton (phase, VTake, "intact") outcome)
+            final = run (Interact VTake "potion") game
+        expectEqual (Just (VVBool expected)) (getVariable "cmd.succeeded" final))
+        [ (PhaseInstead, SendMessage "You cannot take it (but the handler ran).", True)
+        , (PhaseAfter, SendMessage "Done.", True)
+        , (PhaseBefore, SendMessage "Ready.", True)
+        , (PhaseBefore, Sequence [mark "changed", Block Nothing False], False)
+        , (PhaseInstead, Block Nothing False, False)
+        ]
+    pure (and ([a, b, c, d] ++ phases))
+
+-- | OPEN-01: compound and batch commands are conjunctions — every part is
+--   attempted, the result is true only when every part succeeded. Meta
+--   commands, disambiguation and mid-command state churn have defined
+--   results of their own.
+testCommandSucceededCompound :: IO Bool
+testCommandSucceededCompound = do
+    let base = initSampleGame
+        takeIt i = Interact VTake i
+        bit st = getVariable "cmd.succeeded" st
+        run cmd st = lsCurrent (fst (applyLoopCommandEv cmd (initLoopState st)))
+    ok <- expectTrue "compound of two successful takes"
+        (bit (run (CompoundCommand [takeIt "sword", takeIt "potion"]) base) == Just (VVBool True))
+    let mixed = run (CompoundCommand [takeIt "missing", takeIt "potion"]) base
+    mixedR <- expectTrue "compound is conjunctive, later parts still run"
+        (bit mixed == Just (VVBool False) && hasItem "potion_healing" mixed)
+    let twice = run (CompoundCommand [takeIt "sword", takeIt "sword"]) base
+    twiceR <- expectTrue "compound repeats count as failures too"
+        (bit twice == Just (VVBool False) && hasItem "sword_rusty" twice)
+    allOk <- expectTrue "take all succeeds when every item does"
+        (bit (run TakeAll base) == Just (VVBool True))
+    let stubborn = base { world = (world base) { itemDefs = Map.adjust
+            (\i -> i { itemPortable = False }) "sword_rusty" (itemDefs (world base)) } }
+        mixedAll = run TakeAll stubborn
+    allMixedR <- expectTrue "take all fails when one member fails, rest taken"
+        (bit mixedAll == Just (VVBool False) && hasItem "potion_healing" mixedAll
+            && not (hasItem "sword_rusty" mixedAll))
+    let noneLeft = run TakeAll (run TakeAll base)
+    noneR <- expectTrue "take all without takeable items fails"
+        (bit noneLeft == Just (VVBool False))
+    dropEmpty <- expectTrue "drop all without inventory fails"
+        (bit (run DropAll base) == Just (VVBool False))
+    dropOk <- expectTrue "drop all succeeds when everything is dropped"
+        (bit (run DropAll (run TakeAll base)) == Just (VVBool True))
+    -- A set_state mid-command must not confuse the result (OPEN-01 note).
+    let churnVm = Map.singleton (PhaseInstead, VCustom "wind", "intact")
+            (Sequence
+                [ SetValue (VRActorProp (ActorEntity "potion_healing") PState) (EVString "spent")
+                , SendMessage "You stir the potion." ])
+        churn = run (Interact (VCustom "wind") "potion") (withPotionVerbMap churnVm)
+    churnR <- expectTrue "set_state mid-command keeps a successful result"
+        (bit churn == Just (VVBool True)
+            && (itemStatus <$> Map.lookup "potion_healing" (itemStates (save churn))) == Just "spent"
+            && getEntityState "potion_healing" churn == Just "spent")
+    -- An open disambiguation question is not a result yet.
+    let twin = (mkTestKey "potion_cyan" "cyan potion") { itemKeywords = ["potion"] }
+        amb = base
+            { world = (world base) { itemDefs = Map.insert "potion_cyan" twin (itemDefs (world base)) }
+            , save = (save base) { itemStates = Map.insert "potion_cyan"
+                (ItemState (InRoom "start") "intact" Map.empty False) (itemStates (save base)) }
+            }
+        (lsAmb, evsAmb) = applyLoopCommandEv (takeIt "potion") (initLoopState amb)
+    ambR <- expectTrue "disambiguation prompt is not a success"
+        (bit (lsCurrent lsAmb) == Just (VVBool False)
+            && not (null [() | EvDisambiguate _ <- evsAmb]))
+    pure (and [ ok, mixedR, twiceR, allOk, allMixedR, noneR, dropEmpty, dropOk
+              , churnR, ambR ])
+
+-- | OPEN-02: suffix dispatch, repeated writes, bulk writes and containers
+-- share the same item status; old layered values cannot satisfy predicates.
+testSetStateSynchronizesItems :: IO Bool
+testSetStateSynchronizesItems = do
+    let vm = Map.fromList
+            [ ((PhaseAfter, VCustom "wind", "broken"), SendMessage "broken handler")
+            , ((PhaseAfter, VCustom "wind", "repaired"), SendMessage "repaired handler") ]
+        base = withPotionVerbMap vm
+        change status st = setEnt "potion_healing" status st
+        setEnt e status st = fst (applyOutcomeEv
+            (SetValue (VRActorProp (ActorEntity e) PState) (EVString status)) "" st)
+        broken = change "broken" base
+        repaired = change "repaired" broken
+        repeated = change "repaired" repaired
+        dispatch st = renderEvents (snd (executeCommandEv (Interact (VCustom "wind") "potion") st))
+        consistent status old st = getEntityState "potion_healing" st == Just status
+            && (itemStatus <$> Map.lookup "potion_healing" (itemStates (save st))) == Just status
+            && evalPredicate (EntityHasState "potion_healing" status) st
+            && not (evalPredicate (EntityHasState "potion_healing" old) st)
+        stale = repaired { save = (save repaired) { entityStates = Map.insert "potion_healing" "broken" (entityStates (save repaired)) } }
+        box = base { world = (world base) { itemDefs = Map.adjust
+            (\i -> i { itemCapacity = Just 2 }) "potion_healing" (itemDefs (world base)) } }
+        locked = change "locked" box
+        closed = fst (executeCommandEv (UnlockCmd "potion") locked)
+        opened = fst (executeCommandEv (OpenCmd "potion") closed)
+    a <- expectTrue "set_state broken selects state suffix" (consistent "broken" "intact" broken && "broken handler" `isInfixOf` dispatch broken)
+    b <- expectTrue "repeated state changes replace both layers" (consistent "repaired" "broken" repeated && "repaired handler" `isInfixOf` dispatch repeated)
+    c <- expectTrue "stale legacy generic value is not a second state" (not (evalPredicate (EntityHasState "potion_healing" "broken") stale))
+    d <- expectTrue "container verbs and predicates agree" (consistent "open" "locked" opened && containerStateOf "potion_healing" opened == "open")
+    let bulk = fst (applyOutcomeEv (SetStateAll (CountSpec CountItems (CountInRoom "start") Nothing) "bulk") "" repaired)
+    e <- expectTrue "bulk state changes update both layers" (consistent "bulk" "repaired" bulk)
+    let gate = setEnt "treasure_door" "unlocked" base
+    g <- expectTrue "non-item gates keep entityStates semantics"
+        (getEntityState "treasure_door" gate == Just "unlocked"
+            && evalPredicate (EntityHasState "treasure_door" "unlocked") gate
+            && not (Map.member "treasure_door" (itemStates (save gate))))
+    let sleepy = setEnt "goblin" "asleep" base
+    n <- expectTrue "NPC status semantics are unchanged"
+        ((npcStatus <$> Map.lookup "goblin" (npcStates (save sleepy))) == Just "asleep"
+            && getEntityState "goblin" sleepy == Nothing
+            && evalPredicate (EntityHasState "goblin" "asleep") sleepy)
+    pure (and [a, b, c, d, e, g, n])
+
 testEntityStatePredicateCoversAllKinds :: IO Bool
 testEntityStatePredicateCoversAllKinds = do
     let st0 = initSampleGame
@@ -11794,6 +11972,10 @@ main = do
         -- Review L1 / L8 leftovers
         , runTest "World loaders and their error branches (L1)" testWorldLoadersAndErrors
         , runTest "equipmentSummary text (L8)" testEquipmentSummaryText
+        , runTest "cmd.succeeded action outcomes (OPEN-01)" testCommandSucceeded
+        , runTest "cmd.succeeded rules and verb_map (OPEN-01)" testCommandSucceededRules
+        , runTest "cmd.succeeded compounds and batches (OPEN-01)" testCommandSucceededCompound
+        , runTest "set_state synchronizes item states (OPEN-02)" testSetStateSynchronizesItems
         , runTest "state: predicate covers NPC/item/lock states" testEntityStatePredicateCoversAllKinds
         , runTest "combat round state lives in the VarMap (7f-3 A1)" testCombatRoundStateVars
         , runTest "text predicate `{ var: X, is: Y }` (F1/F2)" testVarIsPredicate

@@ -1028,7 +1028,7 @@ killNPCWithMsg targetNpcId state =
 -- | Set an entity's state and fire its `OnStateChange` event.
 setEntityStateWithEvents :: String -> String -> GameState -> (GameState, [OutputEvent])
 setEntityStateWithEvents eId val state
-    | getEntityState eId state == Just val = (state, [])
+    | evalPredicate (EntityHasState eId val) state = (setEntityState eId val state, [])
     | otherwise = fireTriggers (OnStateChange eId) (setEntityState eId val state)
 
 -- | Set an NPC's status and fire its `OnStateChange` event (K2).
@@ -1113,10 +1113,7 @@ setItemDiscovered i state =
 
 -- | B3: set an item's status.
 setItemStatus :: ItemID -> String -> GameState -> GameState
-setItemStatus i newStatus state =
-    state { save = (save state)
-        { itemStates = Map.adjust (\is -> is { itemStatus = newStatus }) i
-                        (itemStates (save state)) } }
+setItemStatus = setEntityState
 
 -- | B3: set an NPC's location.
 setNpcLoc :: NPCID -> Location -> GameState -> GameState
