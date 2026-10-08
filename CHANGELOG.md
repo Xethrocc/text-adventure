@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Punkte-/Score-System (K17)
+
+- **Prinzip & Design-Entscheidung:**
+  - Score ist **kein neuer Engine-Block**: Punkte sammeln bleibt Autorenarbeit über normale Trigger-Effekte (`add_var` bei `on: take`, `on: learn_recipe`, `on: npc_death`, `on: enter` etc.).
+  - `score` bleibt ein normales `variables:`-Item (`type: int`, optional `max:`, optional `score_rankings:`).
+  - **Kein neues `SaveState`-Feld** (Regel 6 bleibt intakt): der Score-Wert lebt in der bestehenden `VarMap`, die Rangliste in den statischen Weltdaten (`VarDef.vdScoreRankings`).
+- **Neues VarDef-Feld `score_rankings`:**
+  - `data ScoreRanking = ScoreRanking { srAt :: Int, srTitle :: String }`.
+  - Optional an der Variablendefinition (`score_rankings:` als Liste von `{at: Int, title: String}`).
+- **Befehl `score`:**
+  - `ScoreCmd` in `Parser.hs`, `consumesTurn = False` (Lesebefehl analog zu `inventory` und `recipes`).
+  - Zeigt `Score: N/max` bzw. `Score: N` an.
+  - Mit `score_rankings` wird der Titel für den höchsten Schwellenwert mit `at <= score` in einer Folgezeile (`Rank: <title>`) ausgegeben.
+  - Fehlt die Variable `score`, gibt der Befehl die hilfreiche Meldung `score.no_score` aus.
+- **TUI-Statuszeilen-Konvention:**
+  - Existiert eine Variable namens `score`, wird ` | Score: N` an den Raumtitel des Status-Panels angehängt (`[Status] West of House | Score: N`).
+  - `score` wird aus den HUD-Gauges (`numericBars`) und der Key-Value-Statustabelle (`statsTable`) herausgefiltert, um redundante Doppelanzeigen zu vermeiden.
+- **Meldungskatalog & Lokalisierung:**
+  - Neue Meldungen `score.show` und `score.no_score` in `src/Messages.hs`, `src/Messages/LangDe.hs`, `lang/de.json`, `docs/message-catalog.md`.
+- **Compile-Validierung:**
+  - `score_rankings` nur auf Variable namens `score` erlaubt (Warnung `ScoreRankingsOnNonScoreVar`).
+  - Schwellenwerte (`at`) müssen eindeutig sein (Warnung `DuplicateScoreRankingThreshold`).
+  - Automatisches Sortieren nach `at` aufsteigend beim Compile.
+- **Byte-Vertrag:**
+  - `vdScoreRankings` wird bei leerer Liste (`[]`) in `ToJSON VarDef` weggelassen. Bestehende 68 Artefakt-Paare bleiben 100 % byte-identisch.
+- **Tests & Qualität:**
+  - Unit-Tests: Parser, `consumesTurn = False`, Rangauswahl, `score.no_score`-Fall in `test/Tests.hs`; Sortierung und Warnungen in `worldbuilder/test/Tests.hs`; TUI-Score-Statuszeile in `text-adventure-tui/test/Tests.hs`.
+  - Fixture: `examples/fixtures/score.yaml` (Zork-artig: 2 Schätze per Trigger, 1 Rezept-Lern-Punkt, Rangliste, autorengeprüfte Tests).
+  - E2E: `ci/e2e/score.in` / `ci/e2e/score.expect` in `scripts/ci.sh` eingehängt.
+
 ### Rezeptwissen: Rezepte lernen, sehen, unterscheiden (K11d)
 
 - **Das Problem & die Design-Entscheidung:**

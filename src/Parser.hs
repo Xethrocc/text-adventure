@@ -47,6 +47,7 @@ module Parser
     , bindCommandVars
     , craftRecipe
     , listRecipes
+    , showScore
       -- * Messages, darkness and help
     , defaultDarkMessage
     , isCurrentRoomDark
@@ -91,6 +92,7 @@ data Command
     | StatsCmd
     | CraftCmd String            -- ^ K11b: `craft <result>` (recipe alias)
     | RecipesCmd                 -- ^ K11d: `recipes` (the player's recipe book)
+    | ScoreCmd                   -- ^ K17: `score` (show points and ranking)
     | SearchCmd (Maybe String)   -- ^ `search` or `search <target>`
     | WatchCmd (Maybe String)    -- ^ `watch [target]`: play animation frames (Phase D)
     | MapCmd                    -- ^ `map`/`legend`: art with numbered hotspots (Phase E)
@@ -327,6 +329,7 @@ parseSimpleCommandWith env defs tokens input = case tokens of
     ["inv"]                -> Inventory
     ["i"]                  -> Inventory
     ["stats"]              -> StatsCmd
+    ["score"]              -> ScoreCmd
     ["journal"]            -> JournalCmd
     ["quests"]             -> JournalCmd
     ["undo"]               -> Undo
@@ -694,6 +697,7 @@ extractCommandArgs cmd = case cmd of
     EndTurnCmd            -> ("end_turn", "", [])
     CraftCmd s            -> ("craft", s, words s)
     RecipesCmd            -> ("recipes", "", [])
+    ScoreCmd              -> ("score", "", [])
     CompoundCommand _     -> ("compound", "", [])
     Unknown s             -> ("unknown", s, words s)
 
@@ -1297,6 +1301,9 @@ dispatchCommandEv (CraftCmd targetStr) state =
 
 dispatchCommandEv RecipesCmd state =
     listRecipes state
+
+dispatchCommandEv ScoreCmd state =
+    showScore state
 
 dispatchCommandEv (Interact verb targetStr) state
     | not (null targetStr), VCustom vn <- verb
@@ -2252,6 +2259,35 @@ listRecipes state =
             [ ("name", recipeDisplayName k state)
             , ("ingredients", intercalate ", " [ itemLabel iId state | iId <- recipeIngredientsList k ]) ]
     in (state, joinEv header body)
+
+-- | K17: Display player score, maximum (if declared), and score ranking title.
+showScore :: GameState -> CommandResultEv
+showScore state = case getVariable "score" state of
+    Nothing -> (state, evMsg "score.no_score" [])
+    Just v  ->
+        let scoreInt = case v of
+                VVInt n -> n
+                _       -> 0
+            mVDef = Map.lookup "score" (varDefs (world state))
+            mMax = case mVDef of
+                Just vd -> case vdVarType vd of
+                    VTInt _ (Just hi) -> Just hi
+                    _                 -> Nothing
+                Nothing -> Nothing
+            scoreStr = case mMax of
+                Just m  -> show scoreInt ++ "/" ++ show m
+                Nothing -> show scoreInt
+            rankings = maybe [] vdScoreRankings mVDef
+            mRankTitle = case filter (\r -> srAt r <= scoreInt) rankings of
+                [] -> Nothing
+                rs -> Just (srTitle (last rs))
+            args = [ ("score", scoreStr)
+                   , ("score_num", show scoreInt)
+                   , ("max", maybe "" show mMax)
+                   , ("rank", fromMaybe "" mRankTitle)
+                   , ("rank_part", maybe "" (\t -> "\nRank: " ++ t) mRankTitle)
+                   ]
+        in (state, evMsg "score.show" args)
 
 -- | Display text of an item id: the item's name, or the raw id when the world
 --   has no such item (defensive — the worldbuilder warns about dangling refs).

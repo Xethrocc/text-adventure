@@ -1621,7 +1621,7 @@ testSessionTransitionRestart :: IO Bool
 testSessionTransitionRestart = do
     let metaSt = initSampleGame
             { world = (world initSampleGame)
-                { varDefs = Map.singleton "meta.runs" (VarDef "Runs" (VTInt Nothing Nothing) (VVInt 0) []) }
+                { varDefs = Map.singleton "meta.runs" (VarDef "Runs" (VTInt Nothing Nothing) (VVInt 0) [] []) }
             , save = (save initSampleGame)
                 { rngState = 1234
                 , variables = Map.singleton "meta.runs" (VVInt 3) }
@@ -2191,7 +2191,7 @@ testDefaultSaveStateFieldsInitialised = do
     let base = initSampleGame
         w = (world base)
             { varDefs = Map.fromList
-                [ ("quest_stage", VarDef "quest_stage" (VTInt Nothing Nothing) (VVInt 3) []) ]
+                [ ("quest_stage", VarDef "quest_stage" (VTInt Nothing Nothing) (VVInt 3) [] []) ]
             , triggerDefs =
                 [ TriggerDef "welcome" (OnEnter "start") Nothing
                     [ SendMessage "Willkommen zurück." ] False 0 1 [] [] ]
@@ -2498,7 +2498,7 @@ testMetaRunsCounter :: IO Bool
 testMetaRunsCounter = do
     -- a meta adventure: declares meta.souls, counter carried from the disk map
     let metaWorld = (world initSampleGame)
-            { varDefs = Map.fromList [("meta.souls", VarDef "meta.souls" (VTInt Nothing Nothing) (VVInt 0) [])] }
+            { varDefs = Map.fromList [("meta.souls", VarDef "meta.souls" (VTInt Nothing Nothing) (VVInt 0) [] [])] }
         pristine = initSampleGame
             { world = metaWorld
             , save = (save initSampleGame)
@@ -4633,7 +4633,7 @@ testVTIntBoundsEnforcedOnSet :: IO Bool
 testVTIntBoundsEnforcedOnSet = do
     let w = (world initSampleGame)
             { varDefs = Map.insert "score"
-                (VarDef "score" (VTInt (Just 0) (Just 10)) (VVInt 5) [])
+                (VarDef "score" (VTInt (Just 0) (Just 10)) (VVInt 5) [] [])
                 (varDefs (world initSampleGame)) }
         base = initSampleGame { world = w }
         (over, _)  = applyOutcome (SetValue (VRVariable "score") (EVInt 15)) "" base
@@ -4647,7 +4647,7 @@ testVTIntBoundsEnforcedOnModify :: IO Bool
 testVTIntBoundsEnforcedOnModify = do
     let w = (world initSampleGame)
             { varDefs = Map.insert "score"
-                (VarDef "score" (VTInt (Just 0) (Just 10)) (VVInt 8) [])
+                (VarDef "score" (VTInt (Just 0) (Just 10)) (VVInt 8) [] [])
                 (varDefs (world initSampleGame)) }
         base = initSampleGame
             { world = w
@@ -5764,6 +5764,7 @@ expectedConsumesTurn cmd = case cmd of
     EndTurnCmd         -> True
     CraftCmd _         -> True
     RecipesCmd         -> False  -- K11d: listing the recipe book is a read, like inventory
+    ScoreCmd           -> False  -- K17: reading score is a read, like inventory/recipes
     Unknown _          -> False
 
 -- | One sample per `Command` constructor.
@@ -5776,7 +5777,7 @@ allCommandSamples =
     , WaitCmd, RefuelCmd "v", RepairCmd "v", Save "s", Load "s", ListSaves
     , Restart, Help, Quit, ActionWithArgs (VCustom "action") ["a"]
     , PlayCardCmd 1 Nothing, HandCmd, DeckCmd, DiscardCmd, EndTurnCmd, CraftCmd "potion"
-    , RecipesCmd, Unknown "z" ]
+    , RecipesCmd, ScoreCmd, Unknown "z" ]
 
 -- | L13: the verdict table must match `consumesTurn` for every constructor, and
 --   the sample count pins the list so a forgotten sample is noticed.
@@ -5785,7 +5786,7 @@ testConsumesTurnCompleteness = do
     let st0 = initSampleGame
     r1 <- expectTrue "consumesTurn matches the documented verdict everywhere"
         (all (\c -> consumesTurn c == expectedConsumesTurn c) allCommandSamples)
-    r2 <- expectEqual 37 (length allCommandSamples)
+    r2 <- expectEqual 38 (length allCommandSamples)
     r3 <- expectTrue "an invalid dialogue choice is a typo, not a turn"
               (not (consumesTurnIn st0 (ChooseCmd 99)))
     r4 <- expectTrue "a valid dialogue choice consumes the turn"
@@ -10699,7 +10700,7 @@ testItemDepletedAfterTake = do
 testVariableRefillPerTurn :: IO Bool
 testVariableRefillPerTurn = do
     let w = (world initSampleGame)
-            { varDefs = Map.insert "ap" (VarDef "ap" (VTInt (Just 0) (Just 10)) (VVInt 2) []) (varDefs (world initSampleGame))
+            { varDefs = Map.insert "ap" (VarDef "ap" (VTInt (Just 0) (Just 10)) (VVInt 2) [] []) (varDefs (world initSampleGame))
             , triggerDefs = [TriggerDef "var.ap.refill" OnTurn Nothing [ModifyValue (VRVariable "ap") 2] False 0 1 [] []]
             }
         st0 = initSampleGame { world = w, save = (save initSampleGame) { variables = Map.singleton "ap" (VVInt 2) } }
@@ -10713,7 +10714,7 @@ testVariableRefillPerTurn = do
 testVariableResetOnTurn :: IO Bool
 testVariableResetOnTurn = do
     let w = (world initSampleGame)
-            { varDefs = Map.insert "ap" (VarDef "ap" (VTInt (Just 0) (Just 10)) (VVInt 10) []) (varDefs (world initSampleGame))
+            { varDefs = Map.insert "ap" (VarDef "ap" (VTInt (Just 0) (Just 10)) (VVInt 10) [] []) (varDefs (world initSampleGame))
             , triggerDefs = [TriggerDef "var.ap.reset" OnTurn Nothing [SetValue (VRVariable "ap") (EVInt 10)] False 0 1 [] []]
             }
         st0 = initSampleGame { world = w, save = (save initSampleGame) { variables = Map.singleton "ap" (VVInt 3) } }
@@ -10730,7 +10731,7 @@ testVariableResetBeforeRefillOrder :: IO Bool
 testVariableResetBeforeRefillOrder = do
     let overflowEff = [SetValue (VRFlag "overflow_fired") (EVString "true")]
         w = (world initSampleGame)
-            { varDefs = Map.insert "energy" (VarDef "energy" (VTInt (Just 0) (Just 10)) (VVInt 10) overflowEff) (varDefs (world initSampleGame))
+            { varDefs = Map.insert "energy" (VarDef "energy" (VTInt (Just 0) (Just 10)) (VVInt 10) overflowEff []) (varDefs (world initSampleGame))
             , triggerDefs =
                 [ TriggerDef "var.energy.reset" OnTurn Nothing [SetValue (VRVariable "energy") (EVInt 10)] False 0 1 [] []
                 , TriggerDef "var.energy.refill" OnTurn Nothing [ModifyValue (VRVariable "energy") 2] False 0 1 [] []
@@ -10747,7 +10748,7 @@ testVariableResetBeforeRefillOrder = do
 testVariableResetOnCombatStart :: IO Bool
 testVariableResetOnCombatStart = do
     let w = (world initSampleGame)
-            { varDefs = Map.insert "stamina" (VarDef "stamina" (VTInt (Just 0) (Just 10)) (VVInt 10) []) (varDefs (world initSampleGame))
+            { varDefs = Map.insert "stamina" (VarDef "stamina" (VTInt (Just 0) (Just 10)) (VVInt 10) [] []) (varDefs (world initSampleGame))
             , triggerDefs = [TriggerDef "var.stamina.combatreset" OnCombatStart Nothing [SetValue (VRVariable "stamina") (EVInt 10)] False 0 1 [] []]
             }
         st0 = initSampleGame
@@ -10783,7 +10784,7 @@ testVariableResetOnCombatStart = do
 testCombatStartExactlyOnceThreeAttacksAllProfiles :: IO Bool
 testCombatStartExactlyOnceThreeAttacksAllProfiles = do
     let trig = TriggerDef "start.cnt" OnCombatStart Nothing [ModifyValue (VRVariable "combat_cnt") 1] False 0 1 [] []
-        vd = VarDef "combat_cnt" (VTInt (Just 0) (Just 100)) (VVInt 0) []
+        vd = VarDef "combat_cnt" (VTInt (Just 0) (Just 100)) (VVInt 0) [] []
         wBase = (world initSampleGame)
             { varDefs = Map.insert "combat_cnt" vd (varDefs (world initSampleGame))
             , triggerDefs = trig : triggerDefs (world initSampleGame)
@@ -10834,7 +10835,7 @@ testCombatStartExactlyOnceThreeAttacksAllProfiles = do
 testCombatStartOnceRule :: IO Bool
 testCombatStartOnceRule = do
     let trig = TriggerDef "start.once" OnCombatStart Nothing [ModifyValue (VRVariable "once_hits") 1] True 0 1 [] []
-        vd = VarDef "once_hits" (VTInt (Just 0) (Just 100)) (VVInt 0) []
+        vd = VarDef "once_hits" (VTInt (Just 0) (Just 100)) (VVInt 0) [] []
         orc = (maybe (error "no goblin") id (Map.lookup "goblin" (npcDefs (world initSampleGame))))
             { npcId = "orc", npcName = "Orc", npcKeywords = ["orc"] }
         wBase = (world initSampleGame)
@@ -10868,8 +10869,8 @@ testCombatStartChainsToState :: IO Bool
 testCombatStartChainsToState = do
     let trig1 = TriggerDef "start.c1" OnCombatStart Nothing [SetValue (VRVariable "c1_var") (EVInt 42)] False 0 1 [] ["chain_step2"]
         trig2 = TriggerDef "start.c2" (OnCustomEvent "chain_step2") Nothing [SetValue (VRVariable "c2_var") (EVInt 99)] False 0 1 [] []
-        vd1 = VarDef "c1_var" (VTInt (Just 0) (Just 100)) (VVInt 0) []
-        vd2 = VarDef "c2_var" (VTInt (Just 0) (Just 100)) (VVInt 0) []
+        vd1 = VarDef "c1_var" (VTInt (Just 0) (Just 100)) (VVInt 0) [] []
+        vd2 = VarDef "c2_var" (VTInt (Just 0) (Just 100)) (VVInt 0) [] []
         wBase = (world initSampleGame)
             { varDefs = Map.insert "c1_var" vd1 $ Map.insert "c2_var" vd2 (varDefs (world initSampleGame))
             , triggerDefs = trig1 : trig2 : triggerDefs (world initSampleGame)
@@ -10893,7 +10894,7 @@ testCombatStartEffectsRunExactlyOnce = do
                 [ ModifyValue (VRVariable "counter") 7
                 , SendMessage "BATTLE_HORN_BLOWS"
                 ] False 0 1 [] []
-        vd = VarDef "counter" (VTInt (Just 0) (Just 100)) (VVInt 10) []
+        vd = VarDef "counter" (VTInt (Just 0) (Just 100)) (VVInt 10) [] []
         wBase = (world initSampleGame)
             { varDefs = Map.insert "counter" vd (varDefs (world initSampleGame))
             , triggerDefs = trig : triggerDefs (world initSampleGame)
@@ -10919,7 +10920,7 @@ testCombatStartRandomChoiceDeterministic :: IO Bool
 testCombatStartRandomChoiceDeterministic = do
     let cands = [(1, SetValue (VRVariable "rng_choice") (EVInt 111)), (1, SetValue (VRVariable "rng_choice") (EVInt 222))]
         trig = TriggerDef "start.rng" OnCombatStart Nothing [RandomChoice cands] False 0 1 [] []
-        vd = VarDef "rng_choice" (VTInt (Just 0) (Just 1000)) (VVInt 0) []
+        vd = VarDef "rng_choice" (VTInt (Just 0) (Just 1000)) (VVInt 0) [] []
         wBase = (world initSampleGame)
             { varDefs = Map.insert "rng_choice" vd (varDefs (world initSampleGame))
             , triggerDefs = trig : triggerDefs (world initSampleGame)
@@ -10947,7 +10948,7 @@ testVariableOnOverflowGenuine :: IO Bool
 testVariableOnOverflowGenuine = do
     let overflowEff = [SetValue (VRFlag "overflow_hit") (EVString "yes")]
         w = (world initSampleGame)
-            { varDefs = Map.insert "shield" (VarDef "shield" (VTInt (Just 0) (Just 100)) (VVInt 80) overflowEff) (varDefs (world initSampleGame))
+            { varDefs = Map.insert "shield" (VarDef "shield" (VTInt (Just 0) (Just 100)) (VVInt 80) overflowEff []) (varDefs (world initSampleGame))
             }
         st0 = initSampleGame
             { world = w
@@ -10977,7 +10978,7 @@ testVariableOnOverflowGenuine = do
     -- 5. Recursion protection: on_overflow that attempts to modify the same variable again terminates safely
     let loopEff = [ModifyValue (VRVariable "loopvar") 5]
         wLoop = (world initSampleGame)
-            { varDefs = Map.insert "loopvar" (VarDef "loopvar" (VTInt (Just 0) (Just 10)) (VVInt 10) loopEff) (varDefs (world initSampleGame))
+            { varDefs = Map.insert "loopvar" (VarDef "loopvar" (VTInt (Just 0) (Just 10)) (VVInt 10) loopEff []) (varDefs (world initSampleGame))
             }
         stLoop0 = initSampleGame
             { world = wLoop
@@ -12063,6 +12064,11 @@ main = do
         , runTest "non-faction variable write does not fire standing trigger (G9c)" testStandingChangeUnrelatedVarDoesNotFire
         , runTest "standing change recursion depth protection stops loop with diagnostic (G9c)" testStandingChangeRecursionProtection
         , runTest "consequence chain: tier -> custom event -> chained event, once holds (G9)" testStandingChangeChainE2E
+        -- K17: Punkte-/Score-System
+        , runTest "score command parser accepts 'score' and rejects arguments (K17)" testScoreCommandParse
+        , runTest "score command does not consume a turn (K17)" testScoreConsumesTurn
+        , runTest "score command without score variable prints helpful hint (K17)" testScoreNoScore
+        , runTest "score ranking selection, max formatting, and empty rankings (K17)" testScoreRankingSelection
         ]
     when (not (and results)) exitFailure
 
@@ -12440,5 +12446,109 @@ testStandingChangeRecursionProtection = do
     r1 <- expectTrue "Tiefenschutz hat angeschlagen und Diagnose erzeugt"
         (any (\d -> isInfixOf "depth exceeded" d || isInfixOf "nesting exceeded" d) diags)
     pure r1
+
+-- ---------------------------------------------------------------------------
+-- K17: Punkte-/Score-System
+-- ---------------------------------------------------------------------------
+
+-- | K17.1: Parser erkennt 'score' (case-insensitive) als ScoreCmd; Argumente werden abgewiesen.
+testScoreCommandParse :: IO Bool
+testScoreCommandParse = do
+    let p1 = parseCommand "score"
+        p2 = parseCommand "SCORE"
+        p3 = parseCommand "Score"
+        p4 = parseCommand "score now"
+    r1 <- expectEqual ScoreCmd p1
+    r2 <- expectEqual ScoreCmd p2
+    r3 <- expectEqual ScoreCmd p3
+    r4 <- case p4 of
+        Unknown _ -> pure True
+        _         -> expectTrue "score with arguments rejected as Unknown" False
+    pure (r1 && r2 && r3 && r4)
+
+-- | K17.2: ScoreCmd verbraucht keine Spielrunde (consumesTurn = False).
+testScoreConsumesTurn :: IO Bool
+testScoreConsumesTurn = do
+    r1 <- expectEqual False (consumesTurn ScoreCmd)
+    r2 <- expectEqual False (consumesTurnIn initSampleGame ScoreCmd)
+    pure (r1 && r2)
+
+-- | K17.3: Fehlt die Variable 'score', gibt der Befehl die hilfreiche Hinweis-Meldung aus.
+testScoreNoScore :: IO Bool
+testScoreNoScore = do
+    let st0 = initSampleGame
+        (st1, out) = executeCommand ScoreCmd st0
+    r1 <- expectTrue "score.no_score rendered when score variable missing"
+            (isInfixOf "does not use a score" out)
+    r2 <- expectEqual (turnCount (save st0)) (turnCount (save st1))
+    pure (r1 && r2)
+
+-- | K17.4: Rangwahl wählt den höchsten Rang mit at <= score, formatiert max und beachtet fehlenden Rang.
+testScoreRankingSelection :: IO Bool
+testScoreRankingSelection = do
+    let rankings =
+            [ ScoreRanking 0 "Beginner"
+            , ScoreRanking 100 "Novice"
+            , ScoreRanking 200 "Journeyman"
+            , ScoreRanking 330 "Master"
+            ]
+        vdWithMax = VarDef "score" (VTInt (Just 0) (Just 350)) (VVInt 0) [] rankings
+        wWithMax = (world initSampleGame)
+            { varDefs = Map.insert "score" vdWithMax (varDefs (world initSampleGame)) }
+        mkState s = (initSampleGame { world = wWithMax })
+            { save = (save initSampleGame) { variables = Map.singleton "score" (VVInt s) } }
+
+    -- 1. Score 0: Beginner
+    let (_, out0) = executeCommand ScoreCmd (mkState 0)
+    r1 <- expectTrue "score 0 has Score: 0/350" (isInfixOf "Score: 0/350" out0)
+    r2 <- expectTrue "score 0 has Rank: Beginner" (isInfixOf "Rank: Beginner" out0)
+
+    -- 2. Score 50: Beginner (between 0 and 100)
+    let (_, out50) = executeCommand ScoreCmd (mkState 50)
+    r3 <- expectTrue "score 50 has Score: 50/350" (isInfixOf "Score: 50/350" out50)
+    r4 <- expectTrue "score 50 has Rank: Beginner" (isInfixOf "Rank: Beginner" out50)
+
+    -- 3. Score 100: Novice
+    let (_, out100) = executeCommand ScoreCmd (mkState 100)
+    r5 <- expectTrue "score 100 has Rank: Novice" (isInfixOf "Rank: Novice" out100)
+
+    -- 4. Score 250: Journeyman
+    let (_, out250) = executeCommand ScoreCmd (mkState 250)
+    r6 <- expectTrue "score 250 has Rank: Journeyman" (isInfixOf "Rank: Journeyman" out250)
+
+    -- 5. Score 350: Master
+    let (_, out350) = executeCommand ScoreCmd (mkState 350)
+    r7 <- expectTrue "score 350 has Score: 350/350" (isInfixOf "Score: 350/350" out350)
+    r8 <- expectTrue "score 350 has Rank: Master" (isInfixOf "Rank: Master" out350)
+
+    -- 6. Ohne max (VTInt Nothing Nothing): "Score: 42", nicht "Score: 42/"
+    let vdNoMax = VarDef "score" (VTInt Nothing Nothing) (VVInt 42) [] rankings
+        wNoMax = (world initSampleGame)
+            { varDefs = Map.insert "score" vdNoMax (varDefs (world initSampleGame)) }
+        stNoMax = (initSampleGame { world = wNoMax })
+            { save = (save initSampleGame) { variables = Map.singleton "score" (VVInt 42) } }
+        (_, outNoMax) = executeCommand ScoreCmd stNoMax
+    r9 <- expectTrue "score without max renders Score: 42" (isInfixOf "Score: 42" outNoMax && not (isInfixOf "Score: 42/" outNoMax))
+
+    -- 7. Ohne score_rankings: nur die Zahl, keine Rangzeile
+    let vdNoRank = VarDef "score" (VTInt (Just 0) (Just 100)) (VVInt 50) [] []
+        wNoRank = (world initSampleGame)
+            { varDefs = Map.insert "score" vdNoRank (varDefs (world initSampleGame)) }
+        stNoRank = (initSampleGame { world = wNoRank })
+            { save = (save initSampleGame) { variables = Map.singleton "score" (VVInt 50) } }
+        (_, outNoRank) = executeCommand ScoreCmd stNoRank
+    r10 <- expectTrue "score without rankings has Score: 50/100" (isInfixOf "Score: 50/100" outNoRank)
+    r11 <- expectTrue "score without rankings has no Rank line" (not (isInfixOf "Rank:" outNoRank))
+
+    -- 8. Score unterhalb des niedrigsten Rangs (Schwellen ab 10, Score ist 5): kein Rang
+    let vdHighRank = VarDef "score" (VTInt (Just 0) (Just 100)) (VVInt 5) [] [ScoreRanking 10 "Novice"]
+        wHighRank = (world initSampleGame)
+            { varDefs = Map.insert "score" vdHighRank (varDefs (world initSampleGame)) }
+        stHighRank = (initSampleGame { world = wHighRank })
+            { save = (save initSampleGame) { variables = Map.singleton "score" (VVInt 5) } }
+        (_, outHighRank) = executeCommand ScoreCmd stHighRank
+    r12 <- expectTrue "score below lowest threshold has no Rank line" (not (isInfixOf "Rank:" outHighRank))
+
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12])
 
 

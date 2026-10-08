@@ -53,8 +53,8 @@ In-game saves are written to `saves/<slot>.json`. The directory can be
 redirected with `--saves-dir DIR` or the `TA_SAVES_DIR` environment variable
 (the flag wins) — used by tests and CI for hermetic runs.
 
-Whole pipeline — build, all six test suites, validation of 26 shipped
-adventures, 49 scripted playthroughs (36 happy paths + 13 non-victory runs), authored
+Whole pipeline — build, all six test suites, validation of 27 shipped
+adventures, 66 scripted playthroughs (53 happy paths + 13 non-victory runs), authored
 tests (`worldbuilder test`), the content fuzzer (`worldbuilder fuzz`, seeded
 reproducible runs for crashes, non-terminating steps and frozen loops), the
 export-bundle check and the worldgen and run-regeneration checks:
@@ -169,8 +169,8 @@ no own state file. Their state lives in the existing `VarMap`
 
 ```bash
 cabal build all
-cabal test all --test-show-details=direct    # 551 engine tests, 289 worldbuilder tests, 20 TUI tests, plus the img2ascii/text2ascii tool suites
-bash scripts/ci.sh                           # build + tests + validation + 52 E2E playthroughs
+cabal test all --test-show-details=direct    # 555 engine tests, 292 worldbuilder tests, 21 TUI tests, plus the img2ascii/text2ascii tool suites
+bash scripts/ci.sh                           # build + tests + validation + 53 E2E playthroughs
 cabal run worldbuilder -- check examples/thefog.yaml   # content statistics
 cabal run worldbuilder -- map examples/thefog.yaml     # project view: rooms, edges, quests, issues
 cabal run worldbuilder -- map-set examples/thefog.yaml tor 3 1   # pin a room's map position

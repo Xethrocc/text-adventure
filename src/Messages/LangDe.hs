@@ -1,4 +1,4 @@
--- | Generated from lang/de.json (sha256: ebf42cd06a9fe3cc6b65cd21f165ffc12ac9391ae24c091089f088357cdf52c5) by scripts/gen-lang-pack.py.
+-- | Generated from lang/de.json (sha256: b1ac05e1296252535b64092710498fde1a88e5c2235a0df1aa000fe2215cb2d9) by scripts/gen-lang-pack.py.
 --   DO NOT EDIT by hand - rerun the generator after changing the JSON.
 --
 --   Language-pack data (Phase 4.3): message templates keyed like the
@@ -192,6 +192,8 @@ langDe =
       , ("recipes.header", "Rezepte: {known} / {total}")
       , ("recipes.entry", "{name} — {ingredients}")
       , ("recipes.empty", "Du kennst keine Rezepte.")
+      , ("score.show", "Punktestand: {score}{if rank|\nRang: {rank}}")
+      , ("score.no_score", "Dieses Abenteuer verwendet kein Punktesystem. Autoren: Deklariere eine 'score'-Variable (und optional 'score_rankings') und vergib Punkte über Trigger.")
       , ("notes.header", "Deine Notizen:")
       , ("notes.empty", "Deine Notizen sind leer.")
       , ("chapter.no_next", "Es gibt kein nächstes Kapitel.")

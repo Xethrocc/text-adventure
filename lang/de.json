@@ -177,6 +177,8 @@
     "recipes.header": "Rezepte: {known} / {total}",
     "recipes.entry": "{name} — {ingredients}",
     "recipes.empty": "Du kennst keine Rezepte.",
+    "score.show": "Punktestand: {score}{if rank|\nRang: {rank}}",
+    "score.no_score": "Dieses Abenteuer verwendet kein Punktesystem. Autoren: Deklariere eine 'score'-Variable (und optional 'score_rankings') und vergib Punkte über Trigger.",
     "notes.header": "Deine Notizen:",
     "notes.empty": "Deine Notizen sind leer.",
     "chapter.no_next": "Es gibt kein nächstes Kapitel.",

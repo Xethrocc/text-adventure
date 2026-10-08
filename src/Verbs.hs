@@ -93,4 +93,4 @@ coreCommandVerbs =
     nub (map verbCanonicalName
             [ VGo, VLook, VLookAt, VTake, VDrop, VInventory
             , VUse, VUseOn, VTalk, VAttack, VSearch, VHelp, VQuit ])
-    ++ [ "stats", "journal", "equip", "unequip", "craft", "recipes" ]
+    ++ [ "stats", "journal", "equip", "unequip", "craft", "recipes", "score" ]

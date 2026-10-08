@@ -442,8 +442,12 @@ drawTui st =
             in [ withBorderStyle unicode $
                  borderWithLabel (str label) $
                    vBox (map str (mgFog g)) ]
+    scorePart = case hvScore (tsHud st) of
+        Just s  | null hudRoom -> "Score: " ++ show s
+                | otherwise    -> " | Score: " ++ show s
+        Nothing -> ""
     statsWidget = [ withBorderStyle unicode $
-                    borderWithLabel (str (" [Status] " ++ hudRoom ++ " ")) $
+                    borderWithLabel (str (" [Status] " ++ hudRoom ++ scorePart ++ (if null hudRoom && null scorePart then "" else " "))) $
                       vBox (map str (statsLines (tsHud st))) ]
     combatWidget = case hvCombat (tsHud st) of
         []   -> []

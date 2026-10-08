@@ -55,7 +55,7 @@ import qualified Messages as Msg
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Char (toLower, isDigit, isSpace)
-import Data.List (nub, stripPrefix, isPrefixOf, isInfixOf, minimumBy, intercalate, sortOn, find)
+import Data.List (nub, stripPrefix, isPrefixOf, isInfixOf, minimumBy, intercalate, sortOn, find, (\\))
 import Data.Ord (comparing)
 import Data.Maybe (mapMaybe, fromMaybe, catMaybes, isNothing, isJust)
 import Data.Either (partitionEithers)
@@ -589,7 +589,9 @@ compileAdventure adv =
         (vehicleErrs, vehicleDefs, vehicleStates) = compileVehicles (advVehicles adv)
         (entityInteractions, itemInteractions, npcIx) = compileInteractions (advInteractions adv)
         
-        (varErrs, varDefs, varInitials) = compileVariables (advVariables adv)
+        (varIssues, varDefs, varInitials) = compileVariables (advVariables adv)
+        varErrs = [ i | i <- varIssues, ciSeverity i == SError ]
+        varWarns = [ i | i <- varIssues, ciSeverity i == SWarning ]
         (trigErrs, triggerDefs) = compileTriggers (advTriggers adv) (advNPCs adv) (advVariables adv)
         (encErrs, encounterDefs) = compileEncounterTables (advEncounterTables adv)
         (facErrs, factionDefs, factionInitials, compiledFactions) = compileFactions (advFactions adv)
@@ -898,6 +900,7 @@ compileAdventure adv =
                 standingChangeWarns = checkStandingChangeTriggers (advFactions adv) (advTriggers adv)
                 recipeResultWarns = checkRecipeResults adv
                 allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ darkRoomWarns
+                          ++ varWarns
                           ++ chapterWarns
                           ++ deviceWarns
                           ++ gainXpWarns
@@ -954,7 +957,7 @@ checkUnknownYamlKeys (Aeson.Object topObj) =
             ++ checkListOrMap "cards" EntCard (KM.lookup "cards" topObj) noNested
             ++ checkListOrMap "sandbox_zones" EntSandboxZone (KM.lookup "sandbox_zones" topObj) checkZoneNested
             ++ checkListOrMap "vehicles" EntVehicle (KM.lookup "vehicles" topObj) noNested
-            ++ checkListOrMap "variables" EntVariable (KM.lookup "variables" topObj) noNested
+            ++ checkListOrMap "variables" EntVariable (KM.lookup "variables" topObj) checkVarNested
             ++ checkListOrMap "verbs" EntVerb (KM.lookup "verbs" topObj) noNested
             ++ checkListOrMap "factions" EntFaction (KM.lookup "factions" topObj) noNested
             ++ checkListOrMap "encounter_tables" EntEncounterTable (KM.lookup "encounter_tables" topObj) noNested
@@ -1009,6 +1012,16 @@ checkRuleNested path o =
         Just (Aeson.Object so) -> checkKeys (path ++ ".on_standing_change") EntStandingChange (KM.keys so)
         _                      -> []
 
+checkVarNested :: String -> Aeson.Object -> [CompileIssue]
+checkVarNested path o =
+    case KM.lookup "score_rankings" o of
+        Just (Aeson.Array arr) ->
+            concat [ case item of
+                        Aeson.Object ro -> checkKeys (path ++ ".score_rankings[" ++ show i ++ "]") EntScoreRanking (KM.keys ro)
+                        _               -> []
+                   | (i, item) <- zip [0 :: Int ..] (Foldable.toList arr) ]
+        _ -> []
+
 checkListOrMap :: String
                -> EntityType
                -> Maybe Aeson.Value
@@ -1040,11 +1053,13 @@ extractEntityId o =
         Just (Aeson.String s) -> T.unpack s
         _ -> case KM.lookup "name" o of
             Just (Aeson.String s) -> T.unpack s
-            _ -> case KM.lookup "on_standing_change" o of
-                Just (Aeson.Object so) -> case KM.lookup "faction" so of
-                    Just (Aeson.String s) -> "on_standing_change." ++ T.unpack s
-                    _                     -> "?"
-                _ -> "?"
+            _ -> case KM.lookup "var" o of
+                Just (Aeson.String s) -> T.unpack s
+                _ -> case KM.lookup "on_standing_change" o of
+                    Just (Aeson.Object so) -> case KM.lookup "faction" so of
+                        Just (Aeson.String s) -> "on_standing_change." ++ T.unpack s
+                        _                     -> "?"
+                    _ -> "?"
 
 checkRoomNested :: String -> Aeson.Object -> [CompileIssue]
 checkRoomNested roomPath o =
@@ -1251,12 +1266,12 @@ reservedVerbWords =
 compileVariables :: [AVariable] -> ([CompileIssue], Map.Map String E.VarDef, Map.Map String E.VariableValue)
 compileVariables vars =
     let results = map compileVar vars
-        errors = concat [e | Left e <- results]
-        defs = Map.fromList [(avbVarName av, d) | Right (av, d, _) <- results]
-        initials = Map.fromList [(avbVarName av, v) | Right (av, _, v) <- results]
-    in (errors, defs, initials)
+        issues = concatMap fst results
+        defs = Map.fromList [(avbVarName av, d) | (_, Just (av, d, _)) <- results]
+        initials = Map.fromList [(avbVarName av, v) | (_, Just (av, _, v)) <- results]
+    in (issues, defs, initials)
 
-compileVar :: AVariable -> Either [CompileIssue] (AVariable, E.VarDef, E.VariableValue)
+compileVar :: AVariable -> ([CompileIssue], Maybe (AVariable, E.VarDef, E.VariableValue))
 compileVar av =
     let bp = "variables." ++ avbVarName av
         vtype = parseVarType (avbVarType av) (avbMin av) (avbMax av)
@@ -1279,15 +1294,30 @@ compileVar av =
             then [ciError (bp ++ ".refill_per_turn") "NegativeRefill"
                     ("variable '" ++ avbVarName av ++ "' has negative refill_per_turn")]
             else []
+        scoreWarns =
+            let nonScoreWarn =
+                    if avbVarName av /= "score" && not (null (avbScoreRankings av))
+                    then [ciWarning (bp ++ ".score_rankings") "ScoreRankingsOnNonScoreVar"
+                            ("score_rankings declared on variable '" ++ avbVarName av ++ "', but only allowed on 'score'")]
+                    else []
+                atVals = map asrAt (avbScoreRankings av)
+                dupeAt = atVals \\ nub atVals
+                dupeWarn =
+                    [ ciWarning (bp ++ ".score_rankings") "DuplicateScoreRankingThreshold"
+                        ("duplicate at value in score_rankings: " ++ show d)
+                    | d <- nub dupeAt
+                    ]
+            in nonScoreWarn ++ dupeWarn
         valErrs = resetErr ++ overflowErr ++ refillErr
         overflowEffs = map compileAActionOutcome (avbOnOverflow av)
+        sortedRankings = sortOn E.srAt [ E.ScoreRanking (asrAt r) (asrTitle r) | r <- avbScoreRankings av ]
     in if not (null valErrs)
-       then Left valErrs
+       then (valErrs ++ scoreWarns, Nothing)
        else case vtype of
-           Left msg -> Left [ciError bp "InvalidVariableType" msg]
+           Left msg -> ([ciError bp "InvalidVariableType" msg] ++ scoreWarns, Nothing)
            Right vt -> case compileVarInitial av vt of
-               Left msg -> Left [ciError (bp ++ ".initial") "InvalidVariableInitial" msg]
-               Right vv -> Right (av, E.VarDef (avbVarName av) vt vv overflowEffs, vv)
+               Left msg -> ([ciError (bp ++ ".initial") "InvalidVariableInitial" msg] ++ scoreWarns, Nothing)
+               Right vv -> (scoreWarns, Just (av, E.VarDef (avbVarName av) vt vv overflowEffs sortedRankings, vv))
 
 parseVarType :: String -> Maybe Int -> Maybe Int -> Either String E.VariableType
 parseVarType "bool" _ _     = Right E.VTBool
@@ -1330,7 +1360,7 @@ compileFactions facs =
             | (fid, others) <- collisions [(afId f, afId f) | f <- facs]
             , not (null others) ]
         defs = Map.fromList
-            [ ("faction." ++ afId f, E.VarDef ("faction." ++ afId f) (E.VTInt Nothing Nothing) (E.VVInt (afInitial f)) [])
+            [ ("faction." ++ afId f, E.VarDef ("faction." ++ afId f) (E.VTInt Nothing Nothing) (E.VVInt (afInitial f)) [] [])
             | f <- facs ]
         initials = Map.fromList
             [ ("faction." ++ afId f, E.VVInt (afInitial f))
@@ -1405,7 +1435,7 @@ compileWeather (Just wd) =
             , wtTo t `notElem` states ]
         initIdx = stateIndex (weaInitial wd)
         varDefs = Map.singleton "env.weather"
-            (E.VarDef "env.weather" (E.VTInt Nothing Nothing) (E.VVInt initIdx) [])
+            (E.VarDef "env.weather" (E.VTInt Nothing Nothing) (E.VVInt initIdx) [] [])
         initials = Map.singleton "env.weather" (E.VVInt initIdx)
         transitions =
             [ E.TriggerDef ("environment.weather." ++ show i) E.OnTurn (wtWhen t)
@@ -1466,7 +1496,7 @@ compileStealth roomIds npcIds (Just st) =
         onMove = nsOnMove spec
         decay = nsDecay spec
         maxN = nsMax spec
-        varDefs = Map.singleton var (E.VarDef var (E.VTInt Nothing (Just maxN)) (E.VVInt 0) [])
+        varDefs = Map.singleton var (E.VarDef var (E.VTInt Nothing (Just maxN)) (E.VVInt 0) [] [])
         initials = Map.singleton var (E.VVInt 0)
         clampToMax = E.Conditional (E.CompareVar var E.CGte maxN)
                          (E.SetValue (E.VRVariable var) (E.EVInt maxN)) E.Noop
@@ -1545,9 +1575,9 @@ compilePatrol roomIds npcIds (Just p) =
         movedVar h = "patrol." ++ ahNPC h ++ ".moved"
         indexVar h = "patrol." ++ ahNPC h ++ ".index"
         varDefs = Map.union
-            (Map.fromList [ (movedVar h, E.VarDef (movedVar h) (E.VTInt Nothing Nothing) (E.VVInt 0) [])
+            (Map.fromList [ (movedVar h, E.VarDef (movedVar h) (E.VTInt Nothing Nothing) (E.VVInt 0) [] [])
                           | h <- walkers ])
-            (Map.fromList [ (indexVar h, E.VarDef (indexVar h) (E.VTInt Nothing Nothing) (E.VVInt (ahStartIndex h)) [])
+            (Map.fromList [ (indexVar h, E.VarDef (indexVar h) (E.VTInt Nothing Nothing) (E.VVInt (ahStartIndex h)) [] [])
                           | h <- walkers ])
         initials = Map.union
             (Map.fromList [ (movedVar h, E.VVInt 0) | h <- walkers ])
@@ -1640,7 +1670,7 @@ compileParty registry npcs =
     let parties = [(n, p) | n <- npcs, Just p <- [anParty n], aptCanJoin p]
         varName n = "party." ++ anId n
         varDefs = Map.fromList
-            [ (varName n, E.VarDef (varName n) (E.VTInt (Just 0) (Just 1)) (E.VVInt 0) [])
+            [ (varName n, E.VarDef (varName n) (E.VTInt (Just 0) (Just 1)) (E.VVInt 0) [] [])
             | (n, _) <- parties ]
         initials = Map.fromList [(varName n, E.VVInt 0) | (n, _) <- parties]
         toggle n p = E.Conditional (E.CompareVar (varName n) E.CGte 1)
@@ -1711,7 +1741,7 @@ compileShipSystems registry vehicles =
         entries = [ (v, name, spec)
                   | v <- vehicles, (name, spec) <- Map.toList (avSystems v) ]
         varDefs = Map.fromList
-            [ (sysVar v name, E.VarDef (sysVar v name) (E.VTInt (Just 0) (bound spec)) (E.VVInt (asInitial spec)) [])
+            [ (sysVar v name, E.VarDef (sysVar v name) (E.VTInt (Just 0) (bound spec)) (E.VVInt (asInitial spec)) [] [])
             | (v, name, spec) <- entries ]
         initials = Map.fromList
             [ (sysVar v name, E.VVInt (asInitial spec))
@@ -2545,11 +2575,11 @@ compileProgression (Just prog) =
         compiledLevels = zipWith compileLevel [1 :: Int ..] levels
         compiledProg = if null emptyErrs then Just (E.ProgressionDef compiledLevels) else Nothing
         progDefs = Map.fromList
-            [ ("xp.current",    E.VarDef "xp.current" (E.VTInt (Just 0) Nothing) (E.VVInt 0) [])
-            , ("level.current", E.VarDef "level.current" (E.VTInt (Just 1) Nothing) (E.VVInt 1) [])
-            , ("bonus.attack",  E.VarDef "bonus.attack" (E.VTInt Nothing Nothing) (E.VVInt 0) [])
-            , ("bonus.defense", E.VarDef "bonus.defense" (E.VTInt Nothing Nothing) (E.VVInt 0) [])
-            , ("bonus.hp",       E.VarDef "bonus.hp" (E.VTInt Nothing Nothing) (E.VVInt 0) [])
+            [ ("xp.current",    E.VarDef "xp.current" (E.VTInt (Just 0) Nothing) (E.VVInt 0) [] [])
+            , ("level.current", E.VarDef "level.current" (E.VTInt (Just 1) Nothing) (E.VVInt 1) [] [])
+            , ("bonus.attack",  E.VarDef "bonus.attack" (E.VTInt Nothing Nothing) (E.VVInt 0) [] [])
+            , ("bonus.defense", E.VarDef "bonus.defense" (E.VTInt Nothing Nothing) (E.VVInt 0) [] [])
+            , ("bonus.hp",       E.VarDef "bonus.hp" (E.VTInt Nothing Nothing) (E.VVInt 0) [] [])
             ]
         progInitials = Map.fromList
             [ ("xp.current",    E.VVInt 0)

@@ -78,6 +78,7 @@ data HudView = HudView
     , hvCombat     :: [String]      -- ^ combat panel lines (empty = no panel)
     , hvGameOver   :: Bool          -- ^ dim the panels on the end screen
     , hvStatsTable :: [(String, String)] -- ^ formatted Key-Value stats table (Phase 1D)
+    , hvScore      :: Maybe Int     -- ^ K17: current score if variable "score" exists
     } deriving (Show, Eq)
 
 -- | The full HUD for a state, filtered by an optional floor view.
@@ -93,6 +94,9 @@ buildHudWithFloor mFloor st = HudView
     , hvCombat     = combatLines st
     , hvGameOver   = gameOver (save st)
     , hvStatsTable = statsTable st
+    , hvScore      = case getVariable "score" st of
+                        Just (VVInt n) -> Just n
+                        _              -> Nothing
     }
   where
     here = currentRoom (save st)
@@ -135,14 +139,14 @@ mapGridWithFloor mFloor w h st
     targetRooms = case mFloor of
         Just fl -> Set.filter (\rm -> (roomFloor =<< lookupRoom rm st) == Just fl) visited
         Nothing -> visited
-    startRoom = if Set.member here targetRooms
-                then here
-                else case Set.toList targetRooms of
-                    (r : _) -> r
-                    []      -> here
+    anchorRoom = if Set.member here targetRooms
+                 then here
+                 else case Set.toList targetRooms of
+                     (r : _) -> r
+                     []      -> here
     stamped
         | Set.null targetRooms = Map.empty
-        | otherwise            = goAll targetRooms (Map.singleton startRoom (0, 0)) [startRoom]
+        | otherwise            = goAll targetRooms (Map.singleton anchorRoom (0, 0)) [anchorRoom]
       where
         goAll remaining stamps queue = case queue of
             (x:xs) ->
@@ -277,7 +281,7 @@ statsTable st =
     , not (isInternalVar k)
     ]
   where
-    isInternalVar k = "combat." `isPrefixOf` k || "cmd." `isPrefixOf` k
+    isInternalVar k = "combat." `isPrefixOf` k || "cmd." `isPrefixOf` k || k == "score"
     formatVal (VVInt n)  = show n
     formatVal (VVBool b) = if b then "ja" else "nein"
     formatVal (VVText s) = s
@@ -301,14 +305,15 @@ hpBar st = Bar "HP" (playerHealth p) (max 1 (playerMaxHealth p))
   where p = player (save st)
 
 -- | Declared numeric variables (mana, gold, ...) as secondary gauges. The
---   engine-reserved combat.* keys stay out; a gauge without a known ceiling
---   scales to double the current value so it never renders empty.
+--   engine-reserved combat.* keys and score (which lives in the status line)
+--   stay out; a gauge without a known ceiling scales to double the current
+--   value so it never renders empty.
 numericBars :: GameState -> [Bar]
 numericBars st =
     [ Bar (take 12 name) v (max 1 (if v <= 0 then 1 else v * 2))
     | (name, val) <- sortOn fst (Map.toList (variables (save st)))
     , Just v <- [varInt val]
-    , name `notElem` [combatRoundKey, combatActionKey] ]
+    , name `notElem` [combatRoundKey, combatActionKey, "score"] ]
   where varInt (VVInt n) = Just n
         varInt _         = Nothing
 

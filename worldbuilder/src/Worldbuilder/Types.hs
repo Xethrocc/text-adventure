@@ -977,6 +977,19 @@ instance FromJSON AVehicle where
 -- Variables (Phase 3b)
 -- ---------------------------------------------------------------------------
 
+-- | K17: Authored score ranking threshold and title.
+data AScoreRanking = AScoreRanking
+    { asrAt    :: Int
+    , asrTitle :: String
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AScoreRanking where
+    parseJSON = withObject "AScoreRanking" $ \o -> AScoreRanking
+        <$> o .: "at"
+        <*> o .: "title"
+
+instance ToJSON AScoreRanking
+
 -- | An adventure-declared variable in the YAML schema.
 data AVariable = AVariable
     { avbVarName       :: String
@@ -987,11 +1000,12 @@ data AVariable = AVariable
     , avbRefillPerTurn :: Int
     , avbResetOn       :: Maybe String
     , avbOnOverflow    :: [AActionOutcome]
+    , avbScoreRankings :: [AScoreRanking]
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AVariable where
     parseJSON = withObject "AVariable" $ \o -> AVariable
-        <$> o .:  "name"
+        <$> (o .: "name" <|> o .: "var")
         <*> o .:  "type"
         <*> o .:? "initial"
         <*> o .:? "min"
@@ -999,6 +1013,7 @@ instance FromJSON AVariable where
         <*> o .:? "refill_per_turn" .!= 0
         <*> o .:? "reset_on"
         <*> o .:? "on_overflow"     .!= []
+        <*> o .:? "score_rankings"  .!= []
 
 -- ---------------------------------------------------------------------------
 -- Factions (Phase 7a)
@@ -1983,6 +1998,7 @@ data EntityType
     | EntRollDice
     | EntStatement
     | EntStandingChange
+    | EntScoreRanking
     deriving (Show, Eq, Ord, Enum, Bounded)
 
 -- | Single source of truth for allowed YAML mapping keys per entity type,
@@ -2043,9 +2059,12 @@ knownKeys EntVehicle = Set.fromList
     , "stops", "keys", "fuel", "conditions", "start_stop", "systems", "stations"
     ]
 knownKeys EntVariable = Set.fromList
-    [ "name", "type", "initial", "min", "max"
+    [ "name", "var", "type", "initial", "min", "max"
     , "refill_per_turn", "reset_on", "on_overflow"
+    , "score_rankings"
     ]
+knownKeys EntScoreRanking = Set.fromList
+    [ "at", "title" ]
 knownKeys EntVerb = Set.fromList
     [ "name", "aliases" ]
 knownKeys EntFaction = Set.fromList

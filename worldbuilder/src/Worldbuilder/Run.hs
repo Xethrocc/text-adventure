@@ -134,7 +134,7 @@ prepareRun cfg = do
                                                     gwWithMeta = gw
                                                         { E.varDefs = if Map.member "meta.runs" (E.varDefs gw)
                                                                       then E.varDefs gw
-                                                                      else Map.insert "meta.runs" (E.VarDef "meta.runs" (E.VTInt Nothing Nothing) (E.VVInt 0) []) (E.varDefs gw)
+                                                                      else Map.insert "meta.runs" (E.VarDef "meta.runs" (E.VTInt Nothing Nothing) (E.VVInt 0) [] []) (E.varDefs gw)
                                                         }
                                                     saveInit = (crSave cr)
                                                         { E.rngState = deriveRuntimeSeed seed

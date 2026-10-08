@@ -1,0 +1,131 @@
+# K17 — Punkte-/Score-System Fixture (Zork-artig).
+#
+# Demonstriert:
+#   * Variable 'score' mit max: 350 und Rangliste 'score_rankings'
+#   * Punktevergabe über Triggers: 2 Schätze per 'on: take'
+#   * 1 Rezept-Lern-Punkt per 'on: learn_recipe'
+#   * Lesebefehl 'score' mit Rangauswertung und TUI-Statuszeile
+name: Score Fixture
+start_room: west_of_house
+
+rooms:
+  - id: west_of_house
+    name: West of House
+    desc: Du stehst auf der Westseite eines weißen Hauses.
+    exits:
+      east: cellar
+
+  - id: cellar
+    name: Cellar
+    desc: Ein feuchter Keller voller Schatten.
+    exits:
+      west: west_of_house
+
+items:
+  - id: chalice
+    name: Goldener Kelch
+    desc: Ein reich verzierter goldener Kelch.
+    location: west_of_house
+    keys: [chalice, kelch, goldener kelch]
+
+  - id: parchment
+    name: Altes Pergament
+    desc: Ein vergilbtes Pergament mit alchemistischer Rezeptur.
+    location: west_of_house
+    keys: [parchment, pergament, altes pergament]
+    on_take:
+      - msg: "Du entzifferst das alte Pergament."
+      - learn_recipe: elixier_rezept
+
+  - id: kraut
+    name: Heilkraut
+    desc: Ein wohlriechendes Kraut.
+    location: west_of_house
+    keys: [kraut, heilkraut]
+
+  - id: wasser
+    name: Quellwasser
+    desc: Klares Quellwasser in einer Phiole.
+    location: west_of_house
+    keys: [wasser, quellwasser]
+
+  - id: jeweled_egg
+    name: Juwelen-Ei
+    desc: Ein kostbares, mit Juwelen besetztes Ei.
+    location: cellar
+    keys: [ei, jeweled_egg, juwelen-ei]
+
+  - id: elixier
+    name: Elixier
+    desc: Ein magisches Elixier.
+    location: cellar
+    keys: [elixier]
+
+interactions:
+  item:
+    - id: elixier_rezept
+      requires_learning: true
+      item1: kraut
+      item2: wasser
+      result: elixier
+      effects:
+        - msg: "Du braust ein funkelndes Elixier."
+        - give: elixier
+
+variables:
+  - var: score
+    type: int
+    initial: 0
+    max: 350
+    score_rankings:
+      - {at: 0, title: Beginner}
+      - {at: 100, title: Novice}
+      - {at: 200, title: Journeyman}
+      - {at: 330, title: Master}
+
+rules:
+  - id: score_chalice
+    on: take chalice
+    once: true
+    effects:
+      - msg: "Ein funkelnder Schatz! (+100 Punkte)"
+      - add_var: { var: score, delta: 100 }
+
+  - id: score_recipe
+    on: learn_recipe elixier_rezept
+    once: true
+    effects:
+      - msg: "Verlorenes Wissen wiederentdeckt! (+50 Punkte)"
+      - add_var: { var: score, delta: 50 }
+
+  - id: score_egg
+    on: take jeweled_egg
+    once: true
+    effects:
+      - msg: "Das legendäre Juwelen-Ei geborgen! (+180 Punkte)"
+      - add_var: { var: score, delta: 180 }
+
+tests:
+  - name: "Zork-Punkte sammeln bis zum Meister-Rang"
+    input:
+      - score
+      - take chalice
+      - score
+      - take parchment
+      - score
+      - east
+      - take jeweled_egg
+      - score
+      - quit
+    expect:
+      - "Score: 0/350"
+      - "Rank: Beginner"
+      - "Ein funkelnder Schatz! (+100 Punkte)"
+      - "Score: 100/350"
+      - "Rank: Novice"
+      - "Du entzifferst das alte Pergament."
+      - "Verlorenes Wissen wiederentdeckt! (+50 Punkte)"
+      - "Score: 150/350"
+      - "Das legendäre Juwelen-Ei geborgen! (+180 Punkte)"
+      - "Score: 330/350"
+      - "Rank: Master"

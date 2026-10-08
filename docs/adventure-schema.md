@@ -949,6 +949,51 @@ variables:
 4. **Klammerung (`clampToVarDef`):**
    Die Wertebegrenzung über `min`/`max` (`clampToVarDef` in `src/Game.hs`) galt schon immer und bleibt eine reine Funktion. `on_overflow` hängt an den auflösenden Effekt-Einstiegspunkten (`applySetValue` und `modifyValueProp`) und ist über `applyOutcomeWith` gegen Endlosrekursion geschützt (Tiefenbegrenzung `maxOutcomeDepth`).
 
+### Punkte-/Score-System und Ranglisten (K17)
+
+Für klassische Interactive-Fiction-Geschichten (wie Zork I) existiert ein freier Punktezähler mit optionaler Rangliste. Score ist **kein eigener Engine-Block** — das Sammeln von Punkten bleibt Autorenarbeit über reguläre Trigger-Effekte (`add_var` bei `on: take`, `on: learn_recipe`, `on: npc_death`, `on: enter/visit` etc.).
+
+Die Engine liefert die Auswertung und Anzeige über den Befehl `score` sowie die TUI-Statuszeile:
+
+```yaml
+variables:
+  - var: score
+    type: int
+    initial: 0
+    max: 350
+    score_rankings:           # optional; Schwellen aufsteigend
+      - {at: 0, title: Beginner}
+      - {at: 100, title: Novice}
+      - {at: 200, title: Journeyman}
+      - {at: 330, title: Master}
+```
+
+| Feld | Typ | Default | Wirkung |
+|---|---|---|---|
+| `score_rankings` | [Objekt] | `[]` | Rangliste mit Schwellen `{at: Int, title: String}`. Nur auf der Variable namens `score` erlaubt. |
+
+#### Regeln und Semantik
+
+1. **Befehl `score`:**
+   - Ein Lesebefehl analog zu `inventory` oder `recipes` (`consumesTurn = False`, verbraucht keine Spielrunde).
+   - Ist die Variable `score` deklariert, zeigt der Befehl `Score: N/max` (bzw. `Score: N`, falls kein `max` deklariert ist) an.
+   - Ist zusätzlich `score_rankings` definiert, wird der Titel für den **höchsten Schwellenwert mit `at <= score`** in einer Folgezeile (`Rank: <title>`) ausgegeben. Liegt der Score unterhalb der kleinsten Schwelle oder ist keine Rangliste definiert, entfällt die Rangzeile.
+   - Ist die Variable `score` im Abenteuer **nicht** deklariert, gibt der Befehl die hilfreiche Meldung `score.no_score` aus (*„This story does not use a score. Authors: declare a `score` variable (and optionally `score_rankings`) and award points via triggers."*).
+
+2. **TUI-Statuszeilen-Konvention:**
+   - Existiert eine Variable mit dem Namen `score`, hängt die TUI-Statuszeile automatisch `| Score: N` an den Raumtitel des Status-Panels an (`[Status] West of House | Score: N`).
+   - `score` wird nicht als doppelter Ressourcenbalken in der HUD-Gauges-Liste oder in der Stats-Tabelle gerendert.
+
+3. **Compiler-Validierung:**
+   - `score_rankings` ist nur auf einer Variable mit dem Namen `score` sinnvoll; wird es auf einer anderen Variable deklariert, erzeugt der Compiler die Warnung `ScoreRankingsOnNonScoreVar`.
+   - Schwellenwerte (`at`) müssen eindeutig sein; Duplikate erzeugen die Warnung `DuplicateScoreRankingThreshold`.
+   - Der Compiler sortiert `score_rankings` automatisch aufsteigend nach `at`, sodass Autoren die Schwellen in beliebiger Reihenfolge angeben können.
+
+4. **Regel 6 (Zero-New-Fields-Vertrag / Byte-Vertrag):**
+   - Es gibt kein neues Feld in `SaveState`: der Score-Wert lebt als reguläre Ganzzahl in der bestehenden `VarMap` (`variables`).
+   - Die Rangliste ist statische Weltdaten in `VarDef`.
+   - In serialisierten Welten (`world.json`) wird das Feld `score_rankings` weggelassen, wenn die Liste leer ist — bestehende Abenteuer ohne Score-Rangliste bleiben 100 % byte-identisch.
+
 ### Variablen vergleichen (`compare_var`)
 
 `compare_var` vergleicht eine Variable mit einem **Literal** oder mit einer

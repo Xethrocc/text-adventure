@@ -101,6 +101,7 @@ consumesTurn cmd = case cmd of
     Inventory      -> False
     StatsCmd       -> False
     RecipesCmd     -> False   -- K11d: listing the recipe book is a read, like inventory
+    ScoreCmd       -> False   -- K17: reading current score and rank is a read, like inventory
     JournalCmd     -> False
     Help           -> False
     Quit           -> False
@@ -551,6 +552,7 @@ commandVerbName cmd = case cmd of
     DiscardCmd          -> "discard"
     EndTurnCmd          -> "end_turn"
     CraftCmd _          -> "craft"
+    ScoreCmd            -> "score"
     _             -> "unknown"
 
 -- | Mapping applied to every player-facing line at the I/O boundary is now

@@ -289,8 +289,28 @@ main = do
         , runTest "hud: multi-floor minimap isolates floors and tracks player" testHudMultiFloor
         , runTest "hud: deck combat panel lines (Phase 2C)" testHudDeckCombatLines
         , runTest "hud: sandbox minimap renders dynamic cells and stamps (Phase 3D)" testHudMapSandbox
+        , runTest "hud: score status line and exclusion from bars/table (K17)" testHudScoreStatusLine
         ]
     if and results then pure () else exitFailure
+
+-- | K17: Score in HUD view when variable "score" is present; absent otherwise.
+testHudScoreStatusLine :: IO Bool
+testHudScoreStatusLine = do
+    let stNoScore = hudState "start"
+        hudNoScore = buildHud stNoScore
+    r1 <- expectEqual "no score variable -> hvScore is Nothing" Nothing (hvScore hudNoScore)
+
+    let stWithScore = stNoScore
+            { save = (save stNoScore)
+                { variables = Map.singleton "score" (VVInt 42) }
+            }
+        hudWithScore = buildHud stWithScore
+    r2 <- expectEqual "score variable present -> hvScore is Just 42" (Just 42) (hvScore hudWithScore)
+    r3 <- expectTrue "score excluded from hvBars"
+            (not (any (\b -> barLabel b == "score") (hvBars hudWithScore)))
+    r4 <- expectTrue "score excluded from hvStatsTable"
+            (isNothing (lookup "score" (hvStatsTable hudWithScore)))
+    pure (r1 && r2 && r3 && r4)
 
 testPanelFrameCutscene :: IO Bool
 testPanelFrameCutscene = do

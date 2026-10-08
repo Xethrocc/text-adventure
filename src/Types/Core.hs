@@ -23,6 +23,9 @@ module Types.Core
     , VariableType (..)
     , VariableValue (..)
     , VarDef (..)
+    , ScoreRanking (..)
+    , varScoreRankings
+    , score_rankings
       -- * Basic enumerations
     , Direction (..)
     , Exit (..)
@@ -276,30 +279,58 @@ data VariableValue
 instance ToJSON VariableValue
 instance FromJSON VariableValue
 
--- | Static definition of an adventure-declared variable.
-data VarDef = VarDef
-    { vdVarName    :: String
-    , vdVarType    :: VariableType
-    , vdVarInitial :: VariableValue
-    , vdOnOverflow :: [Effect]
+-- | K17: Static score ranking threshold and title.
+data ScoreRanking = ScoreRanking
+    { srAt    :: Int
+    , srTitle :: String
     } deriving (Show, Eq, Generic)
 
--- | K7+K4: Hand-written ToJSON/FromJSON preserving the byte contract.
--- When 'vdOnOverflow' is empty (all existing adventures), the field is omitted,
--- keeping world.json encoding 100% byte-identical.
+instance ToJSON ScoreRanking where
+    toJSON sr = object
+        [ "at"    .= srAt sr
+        , "title" .= srTitle sr
+        ]
+
+instance FromJSON ScoreRanking where
+    parseJSON = withObject "ScoreRanking" $ \o -> ScoreRanking
+        <$> o .: "at"
+        <*> o .: "title"
+
+-- | Static definition of an adventure-declared variable.
+data VarDef = VarDef
+    { vdVarName       :: String
+    , vdVarType       :: VariableType
+    , vdVarInitial    :: VariableValue
+    , vdOnOverflow    :: [Effect]
+    , vdScoreRankings :: [ScoreRanking]
+    } deriving (Show, Eq, Generic)
+
+-- | K17: Accessor synonyms for VarDef score rankings.
+varScoreRankings :: VarDef -> [ScoreRanking]
+varScoreRankings = vdScoreRankings
+
+score_rankings :: VarDef -> [ScoreRanking]
+score_rankings = vdScoreRankings
+
+-- | K7+K4+K17: Hand-written ToJSON/FromJSON preserving the byte contract.
+-- When 'vdOnOverflow' is empty (all existing adventures) and 'vdScoreRankings'
+-- is empty, the fields are omitted, keeping world.json encoding 100% byte-identical.
 instance ToJSON VarDef where
     toJSON vd = object $
         [ "vdVarInitial" .= vdVarInitial vd
         , "vdVarName"    .= vdVarName vd
         , "vdVarType"    .= vdVarType vd
-        ] ++ [ "vdOnOverflow" .= vdOnOverflow vd | not (null (vdOnOverflow vd)) ]
+        ]
+        ++ [ "vdOnOverflow"    .= vdOnOverflow vd    | not (null (vdOnOverflow vd)) ]
+        ++ [ "vdScoreRankings" .= vdScoreRankings vd | not (null (vdScoreRankings vd)) ]
 
 instance FromJSON VarDef where
     parseJSON = withObject "VarDef" $ \o -> VarDef
         <$> o .:  "vdVarName"
         <*> o .:  "vdVarType"
         <*> o .:  "vdVarInitial"
-        <*> o .:? "vdOnOverflow" .!= []
+        <*> o .:? "vdOnOverflow"    .!= []
+        <*> (o .:? "vdScoreRankings" .!= [] <|> o .:? "score_rankings" .!= [])
 
 -- | Basic enumerations
 -- ---------------------------------------------------------------------------

@@ -378,6 +378,8 @@ catalogEntries =
     , ("recipes.header",          "Recipes: {known} / {total}")
     , ("recipes.entry",           "{name} — {ingredients}")
     , ("recipes.empty",           "You know no recipes.")
+    , ("score.show",              "Score: {score}{if rank|\nRank: {rank}}")
+    , ("score.no_score",          "This story does not use a score. Authors: declare a `score` variable (and optionally `score_rankings`) and award points via triggers.")
     , ("notes.header",            "Your notes:")
     , ("notes.empty",             "Your notes are empty.")
     , ("chapter.no_next",         "There is no next chapter.")

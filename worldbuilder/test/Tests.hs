@@ -584,12 +584,12 @@ testStatementChecks = withIncludeDir $ \dir -> do
             Left errs -> expectTrue ("learn of declared statement must succeed, got: " ++ issuesText errs) False
             Right _ -> expectTrue "learn of declared statement succeeds" True
     -- Reserved statement.* in variables:
-    r5 <- case compileAdventure (advWith [] [] [] [AVariable "statement.s1.truth" "text" Nothing Nothing Nothing 0 Nothing []]) of
+    r5 <- case compileAdventure (advWith [] [] [] [AVariable "statement.s1.truth" "text" Nothing Nothing Nothing 0 Nothing [] []]) of
             Left errs -> expectTrue "statement.* in variables: is StatementVariableClash"
                 (any (\i -> ciCode i == "StatementVariableClash") errs)
             Right _ -> expectTrue "statement.* in variables: must fail" False
     -- Reserved known.* in variables:
-    r6 <- case compileAdventure (advWith [] [] [] [AVariable "known.player.s1" "int" Nothing Nothing Nothing 0 Nothing []]) of
+    r6 <- case compileAdventure (advWith [] [] [] [AVariable "known.player.s1" "int" Nothing Nothing Nothing 0 Nothing [] []]) of
             Left errs -> expectTrue "known.* in variables: is KnownVariableClash"
                 (any (\i -> ciCode i == "KnownVariableClash") errs)
             Right _ -> expectTrue "known.* in variables: must fail" False
@@ -1019,7 +1019,7 @@ testProgressionChecks = do
 
     -- 5. Reserved variable clash in author variables -> ProgressionVariableClash error
     let clashAdv = (mkProg [ALevelDef (Just 1) 0 "Novize" Nothing []])
-            { advVariables = [ AVariable "xp.current" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] ] }
+            { advVariables = [ AVariable "xp.current" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] [] ] }
     r5 <- case compileAdventure clashAdv of
             Left errs -> expectTrue "declaring xp.current is ProgressionVariableClash"
                 (any (\i -> ciCode i == "ProgressionVariableClash") errs)
@@ -2287,7 +2287,7 @@ testFactionsSeedVariables = do
         Right cr -> do
             let defs = E.varDefs (crWorld cr)
                 vars = E.variables (crSave cr)
-            r1 <- expectEqual (Just (E.VarDef "faction.corp" (E.VTInt Nothing Nothing) (E.VVInt 0) []))
+            r1 <- expectEqual (Just (E.VarDef "faction.corp" (E.VTInt Nothing Nothing) (E.VVInt 0) [] []))
                       (Map.lookup "faction.corp" defs)
             r2 <- expectEqual (Just (E.VVInt 5)) (Map.lookup "faction.guild" vars)
             pure (r1 && r2)
@@ -2958,7 +2958,7 @@ testEnvironmentDrainCompiles = do
                 [ AOGameEnd "death" (Just "Du verhungerst.") ]
         adv = (minAdventure (minRoom "loc_0"))
             { advEnvironment = Just (AEnvironment Nothing [drain])
-            , advVariables = [ AVariable "hunger" "int" (Just (Aeson.Number 2)) Nothing Nothing 0 Nothing [] ] }
+            , advVariables = [ AVariable "hunger" "int" (Just (Aeson.Number 2)) Nothing Nothing 0 Nothing [] [] ] }
     case compileAdventure adv of
         Left errs -> do
             putStrLn $ "  compile errors: " ++ show errs
@@ -3087,7 +3087,7 @@ testStealthValidation = do
             Right _   -> expectTrue "expected UnknownObserverNPC" False
     let advClash = (minAdventure (minRoom "loc_0"))
             { advStealth = Just (AStealth (ANoiseSpec "noise" 2 (-1) 10) [])
-            , advVariables = [ AVariable "noise" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] ] }
+            , advVariables = [ AVariable "noise" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] [] ] }
     r2 <- case compileAdventure advClash of
             Left errs -> expectContains "StealthVariableClash" (issuesText errs)
             Right _   -> expectTrue "expected StealthVariableClash" False
@@ -3225,7 +3225,7 @@ testPatrolValidation = do
             Right _   -> expectTrue "expected UnknownPatrolRoom" False
     r4 <- case compileAdventure (base [ minRoom "loc_1" ] [ wolfNPC "loc_1" ])
                 { advPatrol = Just (APatrol [AHostile "wolf" ["loc_1"] 0 False Nothing []])
-                , advVariables = [ AVariable "patrol.wolf.moved" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] ] } of
+                , advVariables = [ AVariable "patrol.wolf.moved" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] [] ] } of
             Left errs -> expectContains "PatrolVariableClash" (issuesText errs)
             Right _   -> expectTrue "expected PatrolVariableClash" False
     pure (or [r1, r2, r3, r4] && and [r1, r2, r3, r4])
@@ -3462,7 +3462,7 @@ testPartyValidation = do
     let advClash = (minAdventure (minRoom "loc_0"))
             { advVerbs = [followVerb]
             , advNPCs = [partySquire (Just (AParty True "follow" True Nothing Nothing))]
-            , advVariables = [ AVariable "party.squire" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] ] }
+            , advVariables = [ AVariable "party.squire" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] [] ] }
     r4 <- case compileAdventure advClash of
             Left errs -> expectContains "PartyVariableClash" (issuesText errs)
             Right _   -> expectTrue "expected PartyVariableClash" False
@@ -3635,7 +3635,7 @@ testShipSystemsValidation = do
     -- the system variable is module-owned
     let advClash = (minAdventure (minRoom "loc_0"))
             { advVehicles = [minShip "kestrel"]
-            , advVariables = [AVariable "ship.kestrel.hull" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing []] }
+            , advVariables = [AVariable "ship.kestrel.hull" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] []] }
     r4 <- case compileAdventure advClash of
             Left errs -> expectContains "ShipVariableClash" (issuesText errs)
             Right _   -> expectTrue "expected ShipVariableClash" False
@@ -4336,6 +4336,10 @@ tests =
     -- K15: Weltobjekte sind endlich (repeatable: true, Default einmal)
     , ("repeatable: YAML parsing and knownKeys clean (K15)", testRepeatableYamlAndKnownKeysClean)
     , ("repeatable: compile of repeatable items and containers (K15)", testRepeatableCompilation)
+    -- K17: Punkte-/Score-System
+    , ("score: score_rankings sort ascending at compile time (K17)", testScoreRankingsSortedAscending)
+    , ("score: score_rankings on non-score variable emits warning (K17)", testScoreRankingsOnNonScoreVarWarning)
+    , ("score: duplicate score ranking threshold emits warning (K17)", testDuplicateScoreRankingThresholdWarning)
     ]
 
 -- ---------------------------------------------------------------------------
@@ -4542,7 +4546,7 @@ testMissingGrammarWarning = do
 testCombatVariableClash :: IO Bool
 testCombatVariableClash = do
     let withVar n = (minAdventure (minRoom "loc_0"))
-            { advVariables = [AVariable n "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing []] }
+            { advVariables = [AVariable n "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] []] }
     r1 <- case compileAdventure (withVar "combat.round") of
             Left errs -> expectContains "CombatVariableClash" (issuesText errs)
             Right _   -> expectTrue "expected CombatVariableClash for combat.round" False
@@ -4585,7 +4589,7 @@ testCooldownConditionClash = do
 testReservedVariablesUnified :: IO Bool
 testReservedVariablesUnified = do
     let withVar n = (minAdventure (minRoom "loc_0"))
-            { advVariables = [AVariable n "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing []] }
+            { advVariables = [AVariable n "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] []] }
         withWrite n = (minAdventure (minRoom "loc_0"))
             { advTriggers = [ATrigger "t" "turn" Nothing [AOSetVar n 1] False 0 1 [] []] }
 
@@ -6358,7 +6362,7 @@ testWarningUnknownPlaceholder = do
     -- Declared variables, modifiers ({gold:6}), and system variables emit zero warnings
     let r0Known = (minRoom "loc_0")
             { arTexts = ACondText "Gold: {gold:6}, HP: {player.hp}, Turns: {turn.count}, Arg: {cmd.arg1}." [] }
-        vGold = AVariable "gold" "int" (Just (Aeson.Number 50)) Nothing Nothing 0 Nothing []
+        vGold = AVariable "gold" "int" (Just (Aeson.Number 50)) Nothing Nothing 0 Nothing [] []
         advKnown = (minAdventure r0Known) { advVariables = [vGold] }
     r3 <- case compileAdventure advKnown of
         Left errs -> do
@@ -7787,7 +7791,8 @@ testRngVarWriteGuard = do
         textVarDecl = AVariable
             { avbVarName = "rng.d", avbVarType = "int", avbInitial = Nothing
             , avbMin = Nothing, avbMax = Nothing
-            , avbRefillPerTurn = 0, avbResetOn = Nothing, avbOnOverflow = [] }
+            , avbRefillPerTurn = 0, avbResetOn = Nothing, avbOnOverflow = []
+            , avbScoreRankings = [] }
         procWithRngParam = AProcDef
             { apId = "p", apParams = ["rng.p"], apEffects = [] }
         rawRandomVal = maybe (Aeson.object []) id (Aeson.decode (BLC.pack
@@ -8168,9 +8173,9 @@ testVerbMapPhaseClash = do
 --   Variables without cycle declarations generate 0 triggers.
 testVarCyclesSugarTriggers :: IO Bool
 testVarCyclesSugarTriggers = do
-    let vAp = AVariable "ap" "int" (Just (Aeson.Number 6)) (Just 0) (Just 6) 2 (Just "turn") []
-        vEnergy = AVariable "energy" "int" (Just (Aeson.Number 10)) (Just 0) (Just 10) 0 (Just "combat_start") []
-        vPlain = AVariable "plain" "int" (Just (Aeson.Number 5)) (Just 0) (Just 10) 0 Nothing []
+    let vAp = AVariable "ap" "int" (Just (Aeson.Number 6)) (Just 0) (Just 6) 2 (Just "turn") [] []
+        vEnergy = AVariable "energy" "int" (Just (Aeson.Number 10)) (Just 0) (Just 10) 0 (Just "combat_start") [] []
+        vPlain = AVariable "plain" "int" (Just (Aeson.Number 5)) (Just 0) (Just 10) 0 Nothing [] []
         advWithVars = (minAdventure (minRoom "loc_0")) { advVariables = [vAp, vEnergy, vPlain] }
     case compileAdventure advWithVars of
         Left errs -> do
@@ -8251,28 +8256,28 @@ testVarCyclesValidation = do
         compileWithVar v = compileAdventure ((minAdventure baseRoom) { advVariables = [v] })
 
     -- 1. reset_on without max -> ResetWithoutMax
-    let vNoMax = AVariable "v" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 (Just "turn") []
+    let vNoMax = AVariable "v" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 (Just "turn") [] []
     r1 <- expectTrue "reset_on without max is rejected"
             (case compileWithVar vNoMax of
                 Left errs -> any (\e -> ciCode e == "ResetWithoutMax") errs
                 Right _   -> False)
 
     -- 2. reset_on with unknown event -> InvalidResetOn
-    let vBadEvent = AVariable "v" "int" (Just (Aeson.Number 0)) Nothing (Just 10) 0 (Just "invalid_event") []
+    let vBadEvent = AVariable "v" "int" (Just (Aeson.Number 0)) Nothing (Just 10) 0 (Just "invalid_event") [] []
     r2 <- expectTrue "reset_on with invalid event is rejected"
             (case compileWithVar vBadEvent of
                 Left errs -> any (\e -> ciCode e == "InvalidResetOn") errs
                 Right _   -> False)
 
     -- 3. on_overflow without max -> OverflowWithoutMax
-    let vOverflowNoMax = AVariable "v" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [AOMessage "hi"]
+    let vOverflowNoMax = AVariable "v" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [AOMessage "hi"] []
     r3 <- expectTrue "on_overflow without max is rejected"
             (case compileWithVar vOverflowNoMax of
                 Left errs -> any (\e -> ciCode e == "OverflowWithoutMax") errs
                 Right _   -> False)
 
     -- 4. negative refill_per_turn -> NegativeRefill
-    let vNegRefill = AVariable "v" "int" (Just (Aeson.Number 0)) Nothing (Just 10) (-1) Nothing []
+    let vNegRefill = AVariable "v" "int" (Just (Aeson.Number 0)) Nothing (Just 10) (-1) Nothing [] []
     r4 <- expectTrue "negative refill_per_turn is rejected"
             (case compileWithVar vNegRefill of
                 Left errs -> any (\e -> ciCode e == "NegativeRefill") errs
@@ -8835,7 +8840,7 @@ testRecipeLearningKnownKeysAndNamespace = do
                 (any (\w -> ciCode w == "UnknownYamlKey" && "requires_learnings" `isInfixOf` ciMessage w)
                      (crWarnings cr))
     let varAdv = (minAdventure (minRoom "loc_0"))
-            { advVariables = [AVariable "known_recipe.trank" "int" Nothing Nothing Nothing 0 Nothing []] }
+            { advVariables = [AVariable "known_recipe.trank" "int" Nothing Nothing Nothing 0 Nothing [] []] }
     r3 <- case compileAdventure varAdv of
         Left errs -> expectTrue "known_recipe.* in variables is KnownRecipeVariableClash"
             (any (\i -> ciCode i == "KnownRecipeVariableClash") errs)
@@ -8881,6 +8886,65 @@ testRecipeLearningUntaughtTrigger = do
         Right (Right cr) ->
             expectEqual [] [ w | w <- crWarnings cr, ciCode w == "UnreachableTrigger" ]
     pure (r1 && r2)
+
+-- ---------------------------------------------------------------------------
+-- K17: Punkte-/Score-System
+-- ---------------------------------------------------------------------------
+
+-- | K17.1: score_rankings werden beim Compile aufsteigend nach Schwelle sortiert.
+testScoreRankingsSortedAscending :: IO Bool
+testScoreRankingsSortedAscending = do
+    let ranks = [ AScoreRanking 200 "Journeyman"
+                , AScoreRanking 0   "Beginner"
+                , AScoreRanking 330 "Master"
+                , AScoreRanking 100 "Novice"
+                ]
+        varScore = AVariable "score" "int" (Just (Aeson.Number 0)) (Just 0) (Just 350) 0 Nothing [] ranks
+        adv = (minAdventure (minRoom "loc_0")) { advVariables = [varScore] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn ("  unexpected compile errors: " ++ issuesText errs)
+            pure False
+        Right cr -> do
+            let mVd = Map.lookup "score" (E.varDefs (crWorld cr))
+                expected = [ E.ScoreRanking 0 "Beginner"
+                           , E.ScoreRanking 100 "Novice"
+                           , E.ScoreRanking 200 "Journeyman"
+                           , E.ScoreRanking 330 "Master"
+                           ]
+            expectEqual (Just expected) (E.vdScoreRankings <$> mVd)
+
+-- | K17.2: score_rankings auf Nicht-Score-Variablen erzeugen eine Warnung (ScoreRankingsOnNonScoreVar).
+testScoreRankingsOnNonScoreVarWarning :: IO Bool
+testScoreRankingsOnNonScoreVarWarning = do
+    let ranks = [ AScoreRanking 0 "Novice" ]
+        varGold = AVariable "gold" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] ranks
+        adv = (minAdventure (minRoom "loc_0")) { advVariables = [varGold] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn ("  unexpected compile errors: " ++ issuesText errs)
+            pure False
+        Right cr -> do
+            let warns = crWarnings cr
+            expectTrue "ScoreRankingsOnNonScoreVar warning emitted"
+                (any (\w -> ciCode w == "ScoreRankingsOnNonScoreVar") warns)
+
+-- | K17.3: Doppelte Schwellenwerte in score_rankings erzeugen eine Warnung (DuplicateScoreRankingThreshold).
+testDuplicateScoreRankingThresholdWarning :: IO Bool
+testDuplicateScoreRankingThresholdWarning = do
+    let ranks = [ AScoreRanking 100 "Novice"
+                , AScoreRanking 100 "Apprentice"
+                ]
+        varScore = AVariable "score" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] ranks
+        adv = (minAdventure (minRoom "loc_0")) { advVariables = [varScore] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn ("  unexpected compile errors: " ++ issuesText errs)
+            pure False
+        Right cr -> do
+            let warns = crWarnings cr
+            expectTrue "DuplicateScoreRankingThreshold warning emitted"
+                (any (\w -> ciCode w == "DuplicateScoreRankingThreshold") warns)
 
 main :: IO ()
 main = do
