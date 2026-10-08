@@ -345,6 +345,12 @@ applyOutcomeWith depth salt outcome targetId state
         let (state', m) = modifyValuePropWithDepth depth vr delta state
         in (state', m, salt)
 
+    PlaceItem iid loc ->
+        case placeItem iid loc state of
+            Left err -> (state, evRaw err, salt)
+            Right st' -> (st', [], salt)
+    MoveEntity _ Dormant ->
+        (state, evRaw "Dormant is only an initial item location.", salt)
     MoveEntity eid (InRoom room) ->
         let state' = moveEntityToRoom eid room state
         in (state', [], salt)
@@ -1092,8 +1098,12 @@ setSeekerRoom (ActorShip v) room state =
                         (vehicleStates (save state)) } }
 setSeekerRoom _ _ state = state
 
--- | B3: the Location a count where maps to.
+-- | B3: the Location a count where maps to. `in: nowhere` maps to the dormant
+--   holding pen (`location: nowhere`, OPEN-04), so `to: {in: nowhere}` takes an
+--   item out of the world while keeping it placeable later (unlike `consume:`,
+--   whose `Removed` tombstone is permanent).
 whereLocation :: CountWhere -> Location
+whereLocation (CountInRoom "nowhere") = Dormant
 whereLocation (CountInRoom r)    = InRoom r
 whereLocation (CountCarriedBy a) = CarriedBy a
 

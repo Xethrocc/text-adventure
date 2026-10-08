@@ -29,7 +29,7 @@ Das war's. Der Worldbuilder füllt den Rest mit Defaults.
 | `id` | String | **required** | Eindeutige ID, Referenzen in exits |
 | `name` | String | **required** | Anzeigename |
 | `description` | String / Object | `""` | Raumbeschreibung. String → `{default: ...}`; Object → `{default, variants}` (siehe CondText) |
-| `exits` | Object | `{}` | `{ richtung: zielraum }`, `{ richtung: { to: ziel, locked_by: entity } }`, or `{ richtung: { to: ziel, when: predicate, msg: failure_text } }` (Guarded Exit, Phase 2.2) |
+| `exits` | Object | `{}` | `{ richtung: zielraum }`, `{ richtung: { to: ziel, locked_by: entity } }`, `{ richtung: { to: ziel, when: predicate, msg: failure_text } }` (Guarded Exit, Phase 2.2) oder `{ richtung: { to: ziel, blocked: true, msg: failure_text } }` (blockierter Ausgang, W-02) |
 | `tags` | [String] | `[]` | `"dark"`, `"safe"`, `"vehicle"`, benutzbar in Predicates |
 | `light_flag` | String | — | Wenn gesetzt und `"true"`, wird ein `dark`-Raum erhellt |
 | `dark_msg` / `dark_message` | String | — | Eigene Meldung bei Dunkelheit (Default: `"It's pitch black. You can't see anything."`) |
@@ -94,6 +94,30 @@ rooms:
 - If `when:` evaluates to `false`, movement is blocked, the player stays in the current room, and the custom `msg` (or `message:`, or default `move.blocked`) is displayed.
 - The failure message supports `{placeholder}` variable interpolations.
 - In protocol snapshots, guarded exits are reported as locked (`locked: true`).
+
+### Blockierte Ausgänge (`blocked: true`, W-02)
+
+Absichtlich unpassierbare Ausgänge brauchen keinen unsinnigen Guard wie
+`when: {not: {true: true}}` mehr:
+
+```yaml
+rooms:
+  - id: halle
+    exits:
+      nord:
+        to: garten
+        blocked: true
+        msg: "Ein massives Gitter versperrt den Weg."
+```
+
+- `blocked: true` hält den Spieler an und zeigt die normale blocked-Meldung
+  (`msg:`/`message:` oder der Default `move.blocked`).
+- `worldbuilder validate` meldet **keinen** `DeadExit`-Warnhinweis: der Ausgang
+  ist absichtlich zu (das alte `when: {not: {true: true}}`-Muster warnt weiter).
+- Kombiniert mit `when:`/`locked_by:` gewinnt `blocked:` (der Ausgang ist zu).
+  Ein späterer `set_exit`-Effekt kann den Ausgang ersetzen (z.B. das Gitter
+  öffnen) — `blocked:` ersetzt nur die *Syntax* des Guards, nicht die
+  Dynamik von `set_exit`/`remove_exit`.
 
 ### Dunkelheit (`dark`, `light_flag`, `dark_msg`, `feelable`)
 
@@ -408,11 +432,12 @@ description:
 | `description` | String / Object | `""` | CondText (siehe Room) |
 | `keys` | [String] | `[]` | Aliase für Autovervollständigung |
 | `tags` | [String] | `[]` | `lightsource`, `feelable`, `weapon`, `vehicle`, … |
-| `location` | String | `"start"` | Start-Raum-ID |
+| `location` | String | `"start"` | Start-Raum-ID; `inventory` startet beim Spieler; `nowhere` (Z-05): das Item existiert, ist aber noch nicht in der Welt (Start-Ort `Dormant`, s.u.) |
 | `state` | String | `"intact"` | Start-Status |
 | `slot` | String | — | Ausruestungs-Slot: `weapon`, `body`, `accessory` (ohne `slot:` ist das Item nicht ausruestbar) |
 | `effects` | [String] | `[]` | Ausruestungs-Boni: `attack+5`, `defense+3`, `maxhp+20` |
-| `hidden` | Bool | `false` | Nur via `search` findbar |
+| `hidden` | Bool | `false` | Zunächst unsichtbar; `search` deckt es (mit `searchable: true`) auf |
+| `searchable` | Bool | `true` | Z-04: ob `search` das Item aufdecken darf. `hidden: true` + `searchable: false`: nur explizite Effekte (z.B. `reveal_all`) machen es sichtbar. Im `world.json` steht der Schlüssel nur bei `false` (Byte-Vertrag) |
 | `discover` | String | — | Text bei Entdeckung |
 | `props` | Object | `{}` | `{ uses: 3 }` — Integer-Eigenschaften |
 | `on_take` | [AActionOutcome] | — | Effekte beim Aufheben (wird in `verb_map` gemerged als historischer `take`-Eintrag) |
@@ -420,6 +445,35 @@ description:
 | `ascii` | String / Object | — | Zustandsabhängige ASCII-Kunst (CondText, siehe Room) |
 
 - **Validierungs-Warnung (`KeywordCollision`):** Teilen sich zwei Gegenstände oder ein Gegenstand und ein NPC im selben Raum dieselben Keywords (Namen, IDs oder `keys`-Aliase), meldet der Worldbuilder eine nicht-fatale Warnung (`KeywordCollision`). Dadurch wird frühzeitig auf mehrdeutige Spielerbefehle wie `take <name>` oder `examine <name>` hingewiesen.
+
+### Start-Ort `nowhere` (Z-05)
+
+`location: nowhere` beschreibt ein Item, das *existiert, aber noch nicht in der
+Welt liegt* (interner Start-Ort `Dormant`):
+
+```yaml
+items:
+  - id: glocke
+    name: Glocke
+    location: nowhere        # existiert, aber noch nicht in der Welt
+  - id: kohle
+    name: Kohle
+    location: nowhere
+    hidden: true
+    searchable: false        # search findet sie nie (Z-04)
+```
+
+- Das Item ist in keinem Raum sichtbar und über normale Spielbefehle nicht
+  erreichbar.
+- **Es kommt über Effekte hinein:** `give:`/`give: {item, to}`, `place:` (E-02)
+  oder `move_all: {what: items, in: nowhere, to: {in: <raum>}}`.
+- **`to: {in: nowhere}`** nimmt ein Item wieder aus der Welt, *ohne* es zu
+  konsumieren — im Gegensatz zu `consume:`, dessen `Removed`-Tombstone
+  dauerhaft ist und nie wieder aufersteht (FIX-02).
+- `nowhere`-Items spielen bei der `KeywordCollision`-Prüfung nicht mit und
+  sind nie das `repeatable`-Home eines Items.
+- `reveal_all: {what: items, in: nowhere, tag: <tag>}` deckt auch noch nicht
+  plazierte versteckte Items auf (die B2/B3-Mengen sehen `in: nowhere`).
 
 ---
 
@@ -433,6 +487,8 @@ description:
 | `{ give: item_id }` | MoveEntity to CarriedBy "player" (String-Form) |
 | `{ give: {item: id, to: actor} }` | MoveEntity to CarriedBy actor (B7: `"player"` oder NPC-ID) |
 | `{ consume: item_id }` | MoveEntity Removed (Ort-Regel K15.0: nur erreichbare Items im Inventar, ausgerüstet oder im Raum; geschützte Items in Containern oder bei NPCs werden mit `consume.not_reachable` verweigert; unterstützt dynamische Referenzen `"{item1}"` / `"{item2}"` in `interactions.item`) |
+| `{ place: {item: id, in: room_id} }` | PlaceItem (E-02) — setzt genau dieses Item in den Raum (auch aus `location: nowhere`). Prüft Item/Raum, Kapazität und Zyklen; Portabilität, Sichtbarkeit und Container-Schlösser werden bewusst ignoriert (Autoren-Setzung). Genau ein Ziel: `in:` **oder** `in_container:` |
+| `{ place: {item: id, in_container: cid} }` | PlaceItem (E-02) — setzt genau dieses Item in den Container (auch Plain-Items ohne `capacity:`, die dann unbegrenzt fassen) |
 | `{ set_flag: name, val: "true" }` | SetValue (VRFlag name) "true" |
 | `{ set_var: { var: name, value: N } }` | SetValue (VRVariable name) N — ganzzahlige Variable setzen |
 | `{ set_var: { var: name, value: "text" } }` | SetValue (VRVariable name) "text" — Textvariable setzen (K6; intern `AOSetTextVar`) |
@@ -3090,6 +3146,29 @@ beliebig tief (`look` zeigt den Inhalt offener Container).
 - Die Kapazität (`capacity:`) zählt die **direkt** enthaltenen Items (zählbasiert, kein
   Gewicht/Volumen).
 
+**Prädikat `in: {container: X, item: Y}` (Z-03):** prüft die **direkte**
+Container-Mitgliedschaft — unabhängig von Sichtbarkeit, `hidden:` und dem
+Zustand (`open`/`closed`/`locked`) des Containers. Damit ist „die Kohle ist in
+der Maschine“ ein echtes Prädikat (vorher musste ein Flag per `on: before put`
+mitgeschrieben werden):
+
+```yaml
+rules:
+  - id: maschine_laeuft
+    on: turn
+    when:
+      in: {container: maschine, item: kohle}
+    effects:
+      - msg: "Die Maschine brummt."
+```
+
+- `container:` ist eine Item-ID (auch ein Plain-Item ohne `capacity:`, z.B. die
+  `chest` aus `thefog.yaml`) oder eine `containers:`-ID.
+- Item- und Container-Tippfehler hängt `worldbuilder validate` als
+  `MissingItem` bzw. `InvalidContainer` aus.
+- `actor_has` (W4) sieht weiterhin nur `CarriedBy` — für „X ist in Y“ ist
+  `in:` zuständig.
+
 ## Weltobjekte und Endlichkeit: repeatable (K15)
 
 Weltobjekte (Items mit `location:`) und ortsfeste Container (`containers:`) sind standardmäßig **endlich** (Default `einmal`).
@@ -3261,6 +3340,8 @@ effects:
   - damage_all:   {what: alive_npcs, in: halle, amount: 5}      # Schaden an alle
   - move_all:     {what: items, in: halle, to: {in: keller}}    # alle bewegen
   - move_all:     {what: items, in: halle, to: {by: player}}    # alles einsammeln
+  - move_all:     {what: items, in: nowhere, to: {in: halle}}   # noch nicht in der Welt: jetzt erscheinen (Z-05)
+  - move_all:     {what: items, in: halle, tag: muenzen, to: {in: nowhere}}  # raus aus der Welt, wieder bringbar (Z-05)
   - reveal_all:   {what: items, in: halle}                      # alle versteckten aufdecken
   - consume_all:  {what: items, in: halle, tag: schwer}         # alle entfernen
   - set_state_all: {what: items, in: halle, tag: licht, state: brennend}
@@ -3280,6 +3361,11 @@ optionaler `tag:`) — Abfrage und Wirkung sprechen eine Sprache. Die Wirkung pr
 **Wichtig:** die Menge ist **jedes** Item am Ort — auch versteckte (sonst fände
 `reveal_all` seine Ziele nie). Die B2-Zählung zählt damit auch versteckte Items: sie ist
 eine Autoren-Abfrage, keine Sichtbarkeits-Abfrage.
+
+**`in: nowhere` (Z-05):** die Menge `in: nowhere` sind die dormanten Items
+(`location: nowhere`) — genau einmal, „noch nicht in der Welt“. `to: {in:
+nowhere}` nimmt ein Item aus der Welt, ohne es zu konsumieren. Konsumierte
+(`Removed`) Items sind in **keiner** Menge und kommen nie zurück (FIX-02).
 
 ## Mengen- und Tag-Abfragen (B2)
 

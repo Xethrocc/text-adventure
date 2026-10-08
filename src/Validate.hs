@@ -34,6 +34,7 @@ data ValidationError
     | EmptyQuestStages    QuestID                   -- ^ Quest has zero stages
     | UnknownQuestPrereq  QuestID FlagID            -- ^ Quest prereq flag is never set anywhere
     | MissingEntity      String String              -- ^ (entityId, typeContext) VRProperty ref not in itemDefs or npcDefs
+    | InvalidPlacement   ItemID String               -- ^ Invalid capacity, cycle or destination.
     | InvalidContainer   ItemID ItemID             -- ^ (itemId, missing container item id)
     deriving (Show, Eq)
 
@@ -69,6 +70,7 @@ validateWorldWithFlags gw initialFlags =
         , checkMissingEntitiesInDefs gw
         , checkMissingQuestsInDefs gw
         , checkMissingVehiclesInDefs gw
+        , checkPlacementRefs gw
         , checkFlags gw initialFlags
         ]
 
@@ -102,6 +104,7 @@ checkMissingRoomRefs gw =
 
 idsFromOutcomeRoom :: Effect -> [String]
 idsFromOutcomeRoom outcome = case outcome of
+    PlaceItem _ (InRoom r)                                     -> [r]
     MoveEntity _ (InRoom r)                                     -> [r]
     SetValue (VRActorProp ActorPlayer PRoom) (EVString r)       -> [r]
     -- Rogue Phase 3: `from` (and a `set_exit` target room) must exist.
@@ -266,9 +269,15 @@ checkMissingItemsInDefs gw =
         npcRefs = Set.fromList (Map.keys (npcDefs gw))
         allRefs =
             concatMap idsFromOutcomeItem (allOutcomes gw)
+            ++ concatMap predicateItems (allPredicates gw)
             ++ concatMap recipeItemIds (Map.keys (itemInteractions gw))
     in [MissingItem iId | iId <- nub allRefs, not (Set.member iId itemRefs), not (Set.member iId npcRefs)]
   where
+    predicateItems (ContainerHas _ i) = [i]
+    predicateItems (PNot p) = predicateItems p
+    predicateItems (PAll ps) = concatMap predicateItems ps
+    predicateItems (PAny ps) = concatMap predicateItems ps
+    predicateItems _ = []
     recipeItemIds (RecipePair _ _ _ i1 i2)       = [i1, i2]
     recipeItemIds (RecipeIngredients _ _ _ ings) = ings
 
@@ -403,6 +412,7 @@ isDynamicItemRef s =
 
 idsFromOutcomeItem :: Effect -> [String]
 idsFromOutcomeItem outcome = case outcome of
+    PlaceItem iId _               -> [iId]
     MoveEntity iId _
         | isDynamicItemRef iId -> []
         | otherwise            -> [iId]
@@ -462,6 +472,33 @@ idsFromOutcomeQuest outcome = case outcome of
     RandomChoiceOn _ os          -> concatMap (idsFromOutcomeQuest . snd) os
     Conditional _ t e            -> idsFromOutcomeQuest t ++ idsFromOutcomeQuest e
     _                            -> []
+
+-- | Container references in placement effects and direct membership predicates.
+checkPlacementRefs :: GameWorld -> [ValidationError]
+checkPlacementRefs gw = concatMap effectRefs (allOutcomes gw)
+    ++ concatMap predicateRefs (allPredicates gw)
+  where
+    -- Any existing item or `containers:` entry can hold contents (the same
+    -- contract as `in_container:` and `put X in Y`); `capacity:` limits.
+    validContainer c = Map.member c (containerDefs gw)
+        || Map.member c (itemDefs gw)
+    containerRef i c = [InvalidContainer i c | not (validContainer c)]
+    effectRefs (PlaceItem i (InContainer c)) = containerRef i c
+        ++ [InvalidPlacement i "self containment" | i == c]
+    effectRefs (PlaceItem _ (InRoom _)) = []
+    effectRefs (PlaceItem i _) = [InvalidPlacement i "expected room/container"]
+    effectRefs (Sequence es) = concatMap effectRefs es
+    effectRefs (Conditional p t e) = predicateRefs p ++ effectRefs t ++ effectRefs e
+    effectRefs (RandomChoice es) = concatMap (effectRefs . snd) es
+    effectRefs (RandomChoiceOn _ es) = concatMap (effectRefs . snd) es
+    effectRefs (Narrative _ e) = effectRefs e
+    effectRefs (ApplyCondition _ _ t e _) = concatMap effectRefs (catMaybes [t,e])
+    effectRefs _ = []
+    predicateRefs (ContainerHas c i) = containerRef i c
+    predicateRefs (PNot p) = predicateRefs p
+    predicateRefs (PAll ps) = concatMap predicateRefs ps
+    predicateRefs (PAny ps) = concatMap predicateRefs ps
+    predicateRefs _ = []
 
 -- | Vehicle IDs referenced via `ship.<id>.<system>` variables or `ActorShip` in an Effect.
 idsFromOutcomeVehicle :: Effect -> [String]
@@ -575,7 +612,28 @@ validateGameState gw st = concat
         [ InvalidContainer iId cid
         | (iId, is) <- Map.toList (itemStates st)
         , cid <- case itemLocation is of { InContainer c -> [c]; _ -> [] }
-        , cid `notElem` itemKeys ]
+        , not (validContainer cid) ]
+        ++ [ InvalidPlacement iid "container cycle"
+           | (iid, is) <- Map.toList (itemStates st)
+           , InContainer cid <- [itemLocation is]
+           , cyclic (Set.singleton iid) cid ]
+        ++ [ InvalidPlacement cid "container capacity exceeded"
+           | cid <- itemKeys ++ Map.keys (containerDefs gw)
+           , Just capacity <- [capacityOf cid]
+           , length [ () | is <- Map.elems (itemStates st), itemLocation is == InContainer cid ] > capacity ]
+      where
+        validContainer cid = Map.member cid (containerDefs gw)
+            || Map.member cid (itemDefs gw)
+        capacityOf cid = case Map.lookup cid (itemDefs gw) of
+            Just i -> itemCapacity i
+            Nothing -> Map.lookup cid (containerDefs gw) >>= (containerCapacity . conState)
+        cyclic seen cid
+            | Set.member cid seen = True
+            | otherwise = case Map.lookup cid (itemStates st) of
+                Just is -> case itemLocation is of
+                    InContainer parent -> cyclic (Set.insert cid seen) parent
+                    _ -> False
+                Nothing -> False
 
     checkNPCLocs =
         [ InvalidNPCLocation nId rId

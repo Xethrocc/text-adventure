@@ -886,6 +886,7 @@ data Predicate
     | VarIs String String               -- ^ text variable equals a literal (`{ var: X, is: Y }`)
     | HasCondition String               -- ^ active condition/timer on player (Phase 2.1)
     | Knows ActorRef String             -- ^ W1: actor knows this fact (VarMap `known.<actor>.<fact>`)
+    | ContainerHas EntityID ItemID     -- ^ Direct membership, independent of visibility/open state.
     | ActorHas ActorRef ItemID          -- ^ W4: does the actor (player, NPC, device) carry/hold this item?
     | HasTaggedItem ActorRef String     -- ^ B2: does the actor carry an item with this tag?
     | RoomHasTaggedItem RoomID String   -- ^ B2: does the room hold an item with this tag?
@@ -901,6 +902,7 @@ instance ToJSON Predicate where
         PAny qs            -> object [ "any"      .= qs ]
         Compare l op r     -> object [ "lhs" .= l, "op" .= op, "rhs" .= r ]
         PlayerHas i        -> object [ "has_item" .= i ]
+        ContainerHas c i   -> object [ "in" .= object [ "container" .= c, "item" .= i ] ]
         ActorHas a i       -> object [ "actor_has" .= actorId a, "item" .= i ]
         EntityHasState e s -> object [ "state"    .= e, "is" .= s ]
         HasFlag f          -> object [ "has_flag" .= f ]
@@ -954,6 +956,8 @@ instance FromJSON Predicate where
         <|> (PNot  <$> o .: "not")
         <|> (PTrue <$ (o .: "true" :: Parser Bool))
         <|> (PlayerHas <$> o .: "has_item")
+        <|> (do contents <- o .: "in"
+                ContainerHas <$> contents .: "container" <*> contents .: "item")
         <|> (ActorHas  <$> o .: "actor_has" <*> o .: "item")
         <|> (do ah <- o .: "actor_has"
                 ActorHas <$> ah .: "actor" <*> ah .: "item")
@@ -1066,6 +1070,7 @@ data Effect
     | RollDice Int Int String Int                -- ^ K1: roll dice pool (pool, die, stream, keep)
     | SetValue ValueRef EffectValue                     -- ^ Set any value (flag, variable, property)
     | ModifyValue ValueRef Int                    -- ^ Modify a numeric value (hp, skill, prop, etc.)
+    | PlaceItem ItemID Location                  -- ^ Checked single item placement (room/container only).
     | MoveEntity EntityID Location                -- ^ Move an entity to a location
     | SendMessage String                          -- ^ Show a message to the player
     | ApplyCondition String Int (Maybe Effect) (Maybe Effect) Bool -- ^ Name, turns, tick, end effects, hidden
@@ -1198,6 +1203,7 @@ data Location
     | CarriedBy ActorRef
     | InContainer EntityID
     | EquippedBy ActorRef
+    | Dormant              -- ^ Not yet in the world; unlike Removed, may be given/placed.
     | Removed
     deriving (Show, Eq, Generic)
 
@@ -1206,6 +1212,7 @@ instance ToJSON Location where
     toJSON (CarriedBy a)    = object [ "tag" .= ("CarriedBy" :: T.Text), "contents" .= toJSON a ]
     toJSON (InContainer c)  = object [ "tag" .= ("InContainer" :: T.Text), "contents" .= c ]
     toJSON (EquippedBy a)   = object [ "tag" .= ("EquippedBy" :: T.Text), "contents" .= toJSON a ]
+    toJSON Dormant          = object [ "tag" .= ("Dormant" :: T.Text) ]
     toJSON Removed          = object [ "tag" .= ("Removed" :: T.Text) ]
 
 instance FromJSON Location where
@@ -1221,6 +1228,7 @@ instance FromJSON Location where
             "EquippedBy"  -> do
                 c <- o .: "contents"
                 EquippedBy <$> parseJSON c
+            "Dormant"     -> pure Dormant
             "Removed"     -> pure Removed
             _             -> fail ("Unknown Location tag: " ++ T.unpack tag)) v
 
@@ -1590,6 +1598,7 @@ data ItemDef = ItemDef
         , itemAscii         :: AsciiArt              -- ^ Optional state-dependent, animated ASCII art
         , itemGrammar       :: Grammar               -- ^ 4.3.5: optional article/gender metadata (empty = none)
         , itemRepeatable    :: Bool                  -- ^ K15: repeatable/infinite world item or tool (default: False)
+        , itemSearchable    :: Bool                  -- ^ Search may discover this item (default True).
         , itemHomeLocation  :: Maybe RoomID          -- ^ K15: authored starting room for repeatable lookup/respawn
         } deriving (Show, Eq)
 
@@ -1610,6 +1619,7 @@ instance ToJSON ItemDef where
         ] ++ maybe [] (\c -> ["itemCapacity" .= c]) (itemCapacity def)
           ++ asciiPair "itemAscii" (itemAscii def)
           ++ grammarJSONFields (itemGrammar def)
+          ++ (if itemSearchable def then [] else ["itemSearchable" .= False])
           ++ (if itemRepeatable def then ["itemRepeatable" .= True] else [])
           ++ (if itemRepeatable def then maybe [] (\h -> ["itemHomeLocation" .= h]) (itemHomeLocation def) else [])
 
@@ -1631,6 +1641,7 @@ instance FromJSON ItemDef where
         <*> o .:? "itemAscii"        .!= emptyAscii
         <*> grammarFromJSONFields o
         <*> o .:? "itemRepeatable"   .!= False
+        <*> o .:? "itemSearchable"   .!= True
         <*> o .:? "itemHomeLocation" .!= Nothing
 
 -- | Dynamic item state

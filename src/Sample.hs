@@ -123,6 +123,7 @@ initSampleGame = GameState
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
                 , itemRepeatable = False
+                , itemSearchable = True
                 , itemHomeLocation = Nothing
                 })
             , ("key", ItemDef
@@ -144,6 +145,7 @@ initSampleGame = GameState
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
                 , itemRepeatable = False
+                , itemSearchable = True
                 , itemHomeLocation = Nothing
                 })
             , ("gold", ItemDef
@@ -162,6 +164,7 @@ initSampleGame = GameState
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
                 , itemRepeatable = False
+                , itemSearchable = True
                 , itemHomeLocation = Nothing
                 })
             , ("jewel", ItemDef
@@ -180,6 +183,7 @@ initSampleGame = GameState
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
                 , itemRepeatable = False
+                , itemSearchable = True
                 , itemHomeLocation = Nothing
                 })
             , ("potion_healing", ItemDef
@@ -202,6 +206,7 @@ initSampleGame = GameState
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
                 , itemRepeatable = False
+                , itemSearchable = True
                 , itemHomeLocation = Nothing
                 })
             -- Equipment examples
@@ -221,6 +226,7 @@ initSampleGame = GameState
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
                 , itemRepeatable = False
+                , itemSearchable = True
                 , itemHomeLocation = Nothing
                 })
             , ("leather_armor", ItemDef
@@ -239,6 +245,7 @@ initSampleGame = GameState
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
                 , itemRepeatable = False
+                , itemSearchable = True
                 , itemHomeLocation = Nothing
                 })
             , ("ring_vigor", ItemDef
@@ -257,6 +264,7 @@ initSampleGame = GameState
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
                 , itemRepeatable = False
+                , itemSearchable = True
                 , itemHomeLocation = Nothing
                 })
             -- Hidden item, found via `search`
@@ -276,6 +284,7 @@ initSampleGame = GameState
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
                 , itemRepeatable = False
+                , itemSearchable = True
                 , itemHomeLocation = Nothing
                 })
             -- Vehicle demo (Phase 3)
@@ -295,6 +304,7 @@ initSampleGame = GameState
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
                 , itemRepeatable = False
+                , itemSearchable = True
                 , itemHomeLocation = Nothing
                 })
             , ("hay", ItemDef
@@ -313,6 +323,7 @@ initSampleGame = GameState
                 , itemCapacity = Nothing, itemAscii = emptyAscii
                 , itemGrammar = emptyGrammar
                 , itemRepeatable = False
+                , itemSearchable = True
                 , itemHomeLocation = Nothing
                 })
             ]
