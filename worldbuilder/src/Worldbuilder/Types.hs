@@ -602,6 +602,7 @@ data AItem = AItem
     , aiAscii      :: AAscii
     , aiKeywords   :: [String]
     , aiTags       :: [String]
+    , aiTagsWhen   :: Map.Map String [String]  -- ^ `tags_when:` — tags that only apply while the item's state matches the key
     , aiLocation   :: String           -- room id or "inventory"
     , aiState      :: String
     , aiEquipSlot  :: Maybe String
@@ -629,6 +630,7 @@ instance FromJSON AItem where
         <*> o .:? "ascii"     .!= AAscii (ACondText "" []) [] 0 [] Nothing
         <*> o .:? "keys"      .!= []
         <*> o .:? "tags"      .!= []
+        <*> o .:? "tags_when" .!= Map.empty
         <*> o .:? "location"  .!= "start"
         <*> o .:? "state"     .!= "intact"
         <*> o .:? "slot"
@@ -2043,7 +2045,7 @@ knownKeys EntRoom = Set.fromList
 knownKeys EntExitRef = Set.fromList
     [ "to", "locked_by", "when", "blocked", "msg", "message" ]
 knownKeys EntItem = Set.fromList
-    [ "id", "name", "desc", "description", "ascii", "keys", "tags"
+    [ "id", "name", "desc", "description", "ascii", "keys", "tags", "tags_when"
     , "location", "state", "slot", "effects", "hidden", "searchable", "discover"
     , "props", "on_take", "verb_map", "portable", "take_failure", "in_container"
     , "capacity", "carried_by", "article", "gender", "repeatable"

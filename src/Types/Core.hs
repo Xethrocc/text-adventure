@@ -103,6 +103,8 @@ module Types.Core
       -- * Items
     , ItemDef (..)
     , ItemState (..)
+    , itemTagsWith
+    , itemTagsAnyState
       -- * Dialogue
     , DialogueChoice (..)
     , DialogueNode (..)
@@ -522,16 +524,19 @@ data CountWhat
 data CountWhere
     = CountInRoom RoomID
     | CountCarriedBy ActorRef
+    | CountInContainer ItemID   -- ^ every item directly inside this container
     deriving (Show, Eq, Generic)
 
 instance ToJSON CountWhere where
-    toJSON (CountInRoom r)    = object [ "in" .= r ]
-    toJSON (CountCarriedBy a) = object [ "by" .= actorId a ]
+    toJSON (CountInRoom r)       = object [ "in" .= r ]
+    toJSON (CountCarriedBy a)    = object [ "by" .= actorId a ]
+    toJSON (CountInContainer c)  = object [ "in_container" .= c ]
 
 instance FromJSON CountWhere where
     parseJSON = withObject "CountWhere" $ \o ->
             (CountInRoom <$> o .: "in")
         <|> (CountCarriedBy . parseActorString <$> o .: "by")
+        <|> (CountInContainer <$> o .: "in_container")
 
 -- | B2: a general count query — `count.<what>.<in|by>.<id>[.<tag>]` in the
 --   string form, `{count: {what: …, in|by: …, tag: …}}` as an object.
@@ -549,8 +554,9 @@ instance ToJSON CountSpec where
         whatName CountItems     = ("items" :: String)
         whatName CountNpcs      = "npcs"
         whatName CountAliveNpcs = "alive_npcs"
-        whereKey (CountInRoom r)    = ("in" :: Key) .= r
-        whereKey (CountCarriedBy a) = ("by" :: Key) .= actorId a
+        whereKey (CountInRoom r)       = ("in" :: Key) .= r
+        whereKey (CountCarriedBy a)    = ("by" :: Key) .= actorId a
+        whereKey (CountInContainer c)  = ("in_container" :: Key) .= c
 
 instance FromJSON CountSpec where
     parseJSON = withObject "CountSpec" $ \o -> do
@@ -563,6 +569,7 @@ instance FromJSON CountSpec where
                                   ++ "' (use items, npcs or alive_npcs)")
         wherePart <- (CountInRoom <$> o .: "in")
                   <|> (CountCarriedBy . parseActorString <$> o .: "by")
+                  <|> (CountInContainer <$> o .: "in_container")
         tag <- o .:? "tag"
         pure (CountSpec what wherePart tag)
 
@@ -694,8 +701,9 @@ parseCountRef rest = VRCount (CountSpec what wherePart tag)
         Just t  -> let (tg, rest') = splitOnce '.' t in (Just tg, rest')
     (qual, ident) = splitOnce '.' afterTag
     wherePart = case qual of
-        "by" -> CountCarriedBy (parseActorString ident)
-        _    -> CountInRoom ident
+        "by"           -> CountCarriedBy (parseActorString ident)
+        "in_container" -> CountInContainer ident
+        _              -> CountInRoom ident
 
 -- ---------------------------------------------------------------------------
 -- Arithmetic expressions for dynamic calculations (Phase 1A)
@@ -1600,6 +1608,7 @@ data ItemDef = ItemDef
         , itemRepeatable    :: Bool                  -- ^ K15: repeatable/infinite world item or tool (default: False)
         , itemSearchable    :: Bool                  -- ^ Search may discover this item (default True).
         , itemHomeLocation  :: Maybe RoomID          -- ^ K15: authored starting room for repeatable lookup/respawn
+        , itemTagsWhen      :: Map.Map String (Set.Set String) -- ^ tags that only apply while `itemStatus` matches the map key (`tags_when:`)
         } deriving (Show, Eq)
 
 instance ToJSON ItemDef where
@@ -1622,6 +1631,7 @@ instance ToJSON ItemDef where
           ++ (if itemSearchable def then [] else ["itemSearchable" .= False])
           ++ (if itemRepeatable def then ["itemRepeatable" .= True] else [])
           ++ (if itemRepeatable def then maybe [] (\h -> ["itemHomeLocation" .= h]) (itemHomeLocation def) else [])
+          ++ (if Map.null (itemTagsWhen def) then [] else ["itemTagsWhen" .= itemTagsWhen def])
 
 instance FromJSON ItemDef where
     parseJSON = withObject "ItemDef" $ \o -> ItemDef
@@ -1643,6 +1653,7 @@ instance FromJSON ItemDef where
         <*> o .:? "itemRepeatable"   .!= False
         <*> o .:? "itemSearchable"   .!= True
         <*> o .:? "itemHomeLocation" .!= Nothing
+        <*> o .:? "itemTagsWhen"     .!= Map.empty
 
 -- | Dynamic item state
 data ItemState = ItemState
@@ -1659,6 +1670,25 @@ instance FromJSON ItemState where
         <*> o .:  "itemStatus"
         <*> o .:? "itemProps"      .!= Map.empty
         <*> o .:? "itemDiscovered" .!= False
+
+-- ---------------------------------------------------------------------------
+-- State-conditional item tags (`tags_when:`)
+-- ---------------------------------------------------------------------------
+
+-- | Effective tags of an item: the static `tags` plus the `tags_when` entry
+--   for the item's current status (e.g. a candle carries "lightsource" only
+--   while its status is "lit"). Items without state fall back to the static
+--   tags.
+itemTagsWith :: ItemState -> ItemDef -> Set.Set String
+itemTagsWith is def =
+    itemTags def `Set.union` Map.findWithDefault Set.empty (itemStatus is) (itemTagsWhen def)
+
+-- | Every tag an item can carry in any state: static tags plus all `tags_when`
+--   entries. Used by authoring-time checks (validation) that ask whether an
+--   item can *ever* satisfy a tag (e.g. a reachable light source).
+itemTagsAnyState :: ItemDef -> Set.Set String
+itemTagsAnyState def =
+    itemTags def `Set.union` Set.unions (Map.elems (itemTagsWhen def))
 
 -- ---------------------------------------------------------------------------
 -- Dialogue

@@ -3697,7 +3697,7 @@ testTakeEventOnlyOnSuccess = do
     let base = initSampleGame
         nonPortable = ItemDef "statue" "statue" (plainText "A heavy stone statue.")
                           ["statue"] Set.empty Nothing [] False Nothing False
-                          (Just "The statue will not budge.") Map.empty Nothing emptyAscii emptyGrammar False True Nothing
+                          (Just "The statue will not budge.") Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
         st0 = base { world = (world base)
                          { itemDefs = Map.insert "statue" nonPortable (itemDefs (world base)) }
                    , save  = (save base)
@@ -3918,7 +3918,7 @@ testOnUseTriggerMultiWordAlias = do
         w = (world sample)
             { itemDefs = Map.insert "oil_can"
                 (ItemDef "oil_can" "oil can" (plainText "A dented oil can.") ["oil", "can"]
-                         Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing)
+                         Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty)
                 (itemDefs (world sample))
             , triggerDefs =
                 [ TriggerDef "light_lantern" (OnUse "oil_can") Nothing
@@ -3949,7 +3949,7 @@ testTakeWithOnTakePicksUp = do
             { itemDefs = Map.insert "token"
                 (ItemDef "token" "token" (plainText "A token.") ["token"] Set.empty
                          Nothing [] False Nothing True Nothing
-                         (Map.singleton (PhaseAfter, VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))) Nothing emptyAscii emptyGrammar False True Nothing)
+                         (Map.singleton (PhaseAfter, VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))) Nothing emptyAscii emptyGrammar False True Nothing Map.empty)
                 (itemDefs (world sample)) }
         here = currentRoom (save sample)
         st = sample { world = w
@@ -3970,7 +3970,7 @@ testTakeNonPortableFails = do
             { itemDefs = Map.insert "statue"
                 (ItemDef "statue" "statue" (plainText "A statue.") ["statue"] Set.empty
                          Nothing [] False Nothing False (Just "Too heavy to lift.")
-                         Map.empty Nothing emptyAscii emptyGrammar False True Nothing)
+                         Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty)
                 (itemDefs (world sample)) }
         here = currentRoom (save sample)
         st = sample { world = w
@@ -3988,7 +3988,7 @@ testTakeNonPortableFails = do
 -- Helper: an equippable item placed in the player's inventory.
 invItem :: String -> ItemDef
 invItem iid = ItemDef iid iid (plainText "x") [iid] Set.empty
-    (Just Weapon) [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing
+    (Just Weapon) [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
 
 -- | Equipped items are always also carried.
 testEquippedImpliesCarried :: IO Bool
@@ -4578,7 +4578,7 @@ tradeWorld stock credits =
                 (ItemDef "rope" "rope" (plainText "A coil of rope.")
                     ["rope"] Set.empty Nothing [] False Nothing True Nothing
                     (Map.singleton (PhaseAfter, VCustom "buy", "intact") buyEff
-                        `Map.union` Map.singleton (PhaseAfter, VCustom "sell", "intact") sellEff) Nothing emptyAscii emptyGrammar False True Nothing)
+                        `Map.union` Map.singleton (PhaseAfter, VCustom "sell", "intact") sellEff) Nothing emptyAscii emptyGrammar False True Nothing Map.empty)
             , verbDefs = Map.singleton "buy" (VerbDef "buy" ["purchase"])
                 `Map.union` Map.singleton "sell" (VerbDef "sell" ["pawn"])
             }
@@ -4752,7 +4752,7 @@ testVisitedAcceptsBool = do
 testItemWithoutStateIsReported :: IO Bool
 testItemWithoutStateIsReported = do
     let lamp = ItemDef "lamp" "lamp" (plainText "A brass lamp.") ["lamp"] Set.empty
-                    Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing
+                    Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
         gw = (world initSampleGame)
                 { itemDefs = Map.insert "lamp" lamp (itemDefs (world initSampleGame)) }
     r1 <- expectTrue "MissingItemState is reported"
@@ -6540,7 +6540,7 @@ mkTestRoom rId name = Room rId name (plainText name) Map.empty Set.empty Nothing
 --   helper without devices.
 mkTestItem :: String -> String -> ItemDef
 mkTestItem i n =
-    ItemDef i n (plainText n) [i] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing
+    ItemDef i n (plainText n) [i] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
 
 mstate :: [Room] -> [(ItemDef, Location)] -> GameState
 mstate rms its =
@@ -6622,9 +6622,9 @@ dstate rms its devs =
 testActorHasPredicate :: IO Bool
 testActorHasPredicate = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing
-        it2 = ItemDef "schluessel" "Schlüssel" (plainText "Ein Schlüssel.") ["schluessel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing
-        it3 = ItemDef "kristall" "Kristall" (plainText "Ein Kristall.") ["kristall"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing
+        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
+        it2 = ItemDef "schluessel" "Schlüssel" (plainText "Ein Schlüssel.") ["schluessel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
+        it3 = ItemDef "kristall" "Kristall" (plainText "Ein Kristall.") ["kristall"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
         dev1 = DeviceDef "halterung" "Halterung" ["halterung"] "krypta" (Just "Eine Halterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [ (it1, InRoom "krypta")
                           , (it2, CarriedBy (ActorNPC "guard"))
@@ -6640,7 +6640,7 @@ testActorHasPredicate = do
 testMountAndUnmountEffects :: IO Bool
 testMountAndUnmountEffects = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing
+        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
         dev1 = DeviceDef "halterung" "Halterung" ["halterung"] "krypta" (Just "Eine Halterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [(it1, InRoom "krypta")] [dev1]
     let (st1, _, _) = applyOutcomeWith 0 0 (Mount "fackel" (ActorEntity "halterung")) "" st0
@@ -6654,7 +6654,7 @@ testMountAndUnmountEffects = do
 testDeviceInteractionExamine :: IO Bool
 testDeviceInteractionExamine = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "brennende Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing
+        it1 = ItemDef "fackel" "brennende Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
         dev1 = DeviceDef "halterung" "Fackelhalterung" ["halterung"] "krypta" (Just "Eine Wandhalterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [(it1, CarriedBy (ActorEntity "halterung"))] [dev1]
         cmd = parseCommandWith Map.empty "examine halterung"
@@ -8774,6 +8774,7 @@ mkTestKey iid name = ItemDef
     , itemRepeatable = False
     , itemSearchable = True
     , itemHomeLocation = Nothing
+    , itemTagsWhen = Map.empty
     }
 
 -- | Phase 0.1: Test central resolveTarget for Item, NPC, Vehicle, Bare, NotFound, and Ambiguous
@@ -9022,6 +9023,7 @@ mkTestEquip iid name slot = ItemDef
     , itemRepeatable = False
     , itemSearchable = True
     , itemHomeLocation = Nothing
+    , itemTagsWhen = Map.empty
     }
 
 -- | Phase 0.2: Direct test of search order and preferInventoryTarget predicate
@@ -9770,6 +9772,114 @@ tokensHallwayState bothFeelable =
         ist2 = Map.insert "token_a" (ItemState (InRoom "hallway") "intact" Map.empty False) ist1
         sv = (save initSampleGame) { currentRoom = "hallway", itemStates = ist2 }
     in initSampleGame { world = gw', save = sv }
+
+
+-- ---------------------------------------------------------------------------
+-- Stufe E: state-conditional tags (`tags_when`)
+-- ---------------------------------------------------------------------------
+
+-- | Shared fixture: dark hallway with an untagged "key" on the floor and a
+--   carried "lamp_z" whose `tags_when` grants "lightsource" only while its
+--   status is "lit".
+tagsWhenLampState :: String -> GameState
+tagsWhenLampState lampStatus =
+    let gw = world initSampleGame
+        keyDef = itemDefs gw Map.! "key"
+        lampDef = keyDef
+            { itemId = "lamp_z"
+            , itemName = "brass lantern"
+            , itemKeywords = ["brass lantern", "lantern"]
+            , itemDescription = plainText "A brass lantern."
+            , itemTags = Set.empty
+            , itemTagsWhen = Map.singleton "lit" (Set.singleton "lightsource")
+            }
+        gw' = gw { itemDefs = Map.insert "lamp_z" lampDef (itemDefs gw) }
+        ist0 = itemStates (save initSampleGame)
+        ist1 = Map.insert "lamp_z" (ItemState (InRoom "hallway") lampStatus Map.empty False) ist0
+        sv = (save initSampleGame) { currentRoom = "hallway", itemStates = ist1 }
+    in pickupItem "lamp_z" (initSampleGame { world = gw', save = sv })
+
+-- | `tags_when`: the carried lantern lights the dark hallway only while its
+--   status is "lit" — off or burned out, the darkness restrictions return.
+--   A status change takes effect immediately (no reload needed).
+testTagsWhenLightsource :: IO Bool
+testTagsWhenLightsource = do
+    let setLamp lampStatus stg = stg { save = (save stg)
+            { itemStates = Map.adjust (\is -> is { itemStatus = lampStatus }) "lamp_z" (itemStates (save stg)) } }
+        stOff = tagsWhenLampState "off"
+        (stAfterDark, msgDark) = executeCommand (Interact VTake "key") stOff
+    r1 <- expectEqual defaultDarkMessage msgDark
+    r2 <- expectTrue "key not taken while the lantern is off" (not (hasItem "key" stAfterDark))
+    let stLit = tagsWhenLampState "lit"
+        (stAfterLit, msgLit) = executeCommand (Interact VTake "key") stLit
+    r3 <- expectTrue "key taken while the lantern burns" (hasItem "key" stAfterLit)
+    r4 <- expectTrue "take message is not the darkness refusal" (msgLit /= defaultDarkMessage)
+    let stOut = tagsWhenLampState "burned-out"
+        (stAfterOut, msgOut) = executeCommand (Interact VTake "key") stOut
+    r5 <- expectEqual defaultDarkMessage msgOut
+    r6 <- expectTrue "key not taken while the lantern is burned out" (not (hasItem "key" stAfterOut))
+    r7 <- expectTrue "status change flips the tag without reload"
+            (not (evalPredicate (HasTaggedItem ActorPlayer "lightsource") (setLamp "off" stLit))
+             && evalPredicate (HasTaggedItem ActorPlayer "lightsource") (setLamp "lit" stOff))
+    -- a lit lamp on the floor lights its room (original `LIT?`), an unlit one does not
+    let (stAfterFloor, _) = executeCommand (Interact VTake "key") (dropItem "lamp_z" stLit)
+    r8 <- expectTrue "a lit lamp on the floor lights the room" (hasItem "key" stAfterFloor)
+    let (stAfterFloorOut, msgFloorOut) = executeCommand (Interact VTake "key") (dropItem "lamp_z" stOff)
+    r9 <- expectEqual defaultDarkMessage msgFloorOut
+    r10 <- expectTrue "key not taken beside the unlit lamp" (not (hasItem "key" stAfterFloorOut))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10)
+
+-- | `tags_when` JSON: the map is omitted when empty (byte contract for
+--   existing adventures) and survives a round-trip when used.
+testTagsWhenJsonRoundTrip :: IO Bool
+testTagsWhenJsonRoundTrip = do
+    let bare = mkTestItem "kerze" "Kerze"
+        lit = bare { itemTagsWhen = Map.singleton "lit" (Set.singleton "lightsource") }
+        encBare = BLC.unpack (Aeson.encode bare)
+        encLit = Aeson.encode lit
+    r1 <- expectTrue "itemTagsWhen omitted when empty (byte contract)"
+            (not ("\"itemTagsWhen\"" `isInfixOf` encBare))
+    r2 <- expectTrue "itemTagsWhen serialized when used"
+            ("\"itemTagsWhen\"" `isInfixOf` BLC.unpack encLit)
+    r3 <- case Aeson.decode encLit :: Maybe ItemDef of
+        Just dec -> expectEqual (Map.singleton "lit" (Set.singleton "lightsource")) (itemTagsWhen dec)
+        Nothing  -> expectTrue "decode ItemDef with itemTagsWhen failed" False
+    pure (r1 && r2 && r3)
+
+-- | Stufe E: `consume` erreicht Items in (offenen) Containern, die der Spieler
+--   traegt — das Original akzeptiert "den Container halten" (V-EAT).
+--   Ohne erreichbaren Container wird das Verbrauchen verweigert.
+testConsumeFromCarriedContainer :: IO Bool
+testConsumeFromCarriedContainer = do
+    let room = mkTestRoom "kitchen" "Kitchen"
+        sack = (mkTestItem "sack" "Sack") { itemCapacity = Just 5 }
+        lunch = mkTestItem "lunch" "Lunch"
+        held = dstate [room] [ (sack, CarriedBy ActorPlayer), (lunch, InContainer "sack") ] []
+        (heldAfter, _, _) = applyOutcomeWith 0 0 (MoveEntity "lunch" Removed) "" held
+    r1 <- expectEqual (Just Removed) (itemLocation <$> Map.lookup "lunch" (itemStates (save heldAfter)))
+    let loose = dstate [room] [ (sack, CarriedBy ActorPlayer), (lunch, InContainer "sack") ] []
+        (closedSack, _, _) = applyOutcomeWith 0 0 (SetValue (legacyVRProperty "sack" "state") (EVString "closed")) "" loose
+        (looseAfter, _, _) = applyOutcomeWith 0 0 (MoveEntity "lunch" Removed) "" closedSack
+    r2 <- expectTrue "closed container: lunch survives"
+            ((itemLocation <$> Map.lookup "lunch" (itemStates (save looseAfter))) /= Just Removed)
+    pure (r1 && r2)
+
+-- | Stufe E: Mengen koennen Container-Inhalte ziehen (`in_container:`),
+--   z. B. `move_all: {what: items, in_container: flasche, to: {in: nowhere}}`.
+testCountInContainerSet :: IO Bool
+testCountInContainerSet = do
+    let room = mkTestRoom "kitchen" "Kitchen"
+        bottle = (mkTestItem "bottle" "Bottle") { itemCapacity = Just 4 }
+        gem = (mkTestItem "gem" "Gem") { itemTags = Set.singleton "juwel" }
+        other = (mkTestItem "other" "Other") { itemTags = Set.singleton "kram" }
+        st0 = dstate [room]
+                [ (bottle, CarriedBy ActorPlayer), (gem, InContainer "bottle"), (other, InContainer "bottle") ] []
+        cs = CountSpec CountItems (CountInContainer "bottle") (Just "juwel")
+    r1 <- expectEqual (1 :: Int) (length (countItemMembers cs st0))
+    let (st1, _, _) = applyOutcomeWith 0 0 (MoveAll cs (CountInRoom "nowhere")) "" st0
+    r2 <- expectEqual (Just Dormant) (itemLocation <$> Map.lookup "gem" (itemStates (save st1)))
+    r3 <- expectEqual (Just (InContainer "bottle")) (itemLocation <$> Map.lookup "other" (itemStates (save st1)))
+    pure (r1 && r2 && r3)
 
 
 -- ---------------------------------------------------------------------------
@@ -11770,6 +11880,11 @@ main = do
         , runTest "search in the dark: room and untagged blocked, feelable allowed (Phase 0.3)" testSearchFeelableTargetInDark
         , runTest "use on a feelable room entity in the dark (Phase 0.3)" testFeelableUseOnInDark
         , runTest "ambiguity in the dark needs all candidates reachable (Phase 0.3)" testFeelableAmbiguityInDark
+        -- Stufe E: state-conditional tags (`tags_when`)
+        , runTest "tags_when: a lantern lights the dark only while lit (Stufe E)" testTagsWhenLightsource
+        , runTest "tags_when JSON round-trip and omission when empty (Stufe E)" testTagsWhenJsonRoundTrip
+        , runTest "consume reaches items inside a carried container (Stufe E)" testConsumeFromCarriedContainer
+        , runTest "count/move sets see container contents via in_container (Stufe E)" testCountInContainerSet
         , runTest "parse look at multi-word target" testParseLookAtMultiWord
         , runTest "parse use-on multi-word target" testParseUseOnMultiWord
         , runTest "parse take multi-word target" testParseTakeMultiWord

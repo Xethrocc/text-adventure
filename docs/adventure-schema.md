@@ -122,8 +122,11 @@ rooms:
 ### Dunkelheit (`dark`, `light_flag`, `dark_msg`, `feelable`)
 
 Ein Raum mit dem Tag `"dark"` gilt als dunkel, solange der Spieler kein getragenes
-Item mit dem Tag `"lightsource"` besitzt und das im Raum konfigurierte `light_flag`
-nicht auf `"true"` gesetzt ist.
+Item mit dem Tag `"lightsource"` besitzt, im Raum kein solches Item liegt (Original
+`LIT?` — eine brennende Fackel am Boden erhellt ihren Raum) und das im Raum
+konfigurierte `light_flag` nicht auf `"true"` gesetzt ist. (Zustandsabhängige Tags
+via `tags_when` zählen mit ihrem aktuellen Status — eine ausgegangene Lampe
+leuchtet nicht mehr.)
 
 Im Dunkeln gilt:
 - `look` zeigt die Dunkelheitsmeldung (Standard: `"It's pitch black. You can't see anything."`
@@ -432,6 +435,7 @@ description:
 | `description` | String / Object | `""` | CondText (siehe Room) |
 | `keys` | [String] | `[]` | Aliase für Autovervollständigung |
 | `tags` | [String] | `[]` | `lightsource`, `feelable`, `weapon`, `vehicle`, … |
+| `tags_when` | Object | `{}` | `{ <zustand>: [tags] }` — Tags, die nur gelten, solange der Item-Status `<zustand>` ist (s.u.) |
 | `location` | String | `"start"` | Start-Raum-ID; `inventory` startet beim Spieler; `nowhere` (Z-05): das Item existiert, ist aber noch nicht in der Welt (Start-Ort `Dormant`, s.u.) |
 | `state` | String | `"intact"` | Start-Status |
 | `slot` | String | — | Ausruestungs-Slot: `weapon`, `body`, `accessory` (ohne `slot:` ist das Item nicht ausruestbar) |
@@ -474,6 +478,41 @@ items:
   sind nie das `repeatable`-Home eines Items.
 - `reveal_all: {what: items, in: nowhere, tag: <tag>}` deckt auch noch nicht
   plazierte versteckte Items auf (die B2/B3-Mengen sehen `in: nowhere`).
+
+### Zustandsabhängige Tags (`tags_when`)
+
+Tags sind normalerweise statisch. Mit `tags_when:` gelten zusätzliche Tags nur,
+solange der Item-Status (der mit `set_state:` geschrieben wird) zum Schlüssel
+passt — z. B. leuchtet eine Kerze nur, solange sie brennt:
+
+```yaml
+items:
+  - id: kerze
+    name: Kerze
+    state: unlit
+    tags_when:
+      lit: [lightsource]     # nur im Zustand `lit` ist die Kerze eine Lichtquelle
+  - id: lampe
+    name: Laternen
+    state: off
+    tags_when:
+      lit: [lightsource]
+```
+
+- **Effektive Tags** = `tags` ∪ `tags_when[<aktueller Status>]`. Ein
+  `set_state: {item: kerze, to: lit}` schaltet die Tags damit sofort um (kein
+  Neuladen nötig).
+- **Alles, was Tags prüft, sieht die effektiven Tags:** Dunkelheit
+  (`lightsource`), `feelable`, Tag-Prädikate (`actor_has_tag`,
+  `room.has_item_tag`), die Zählfamilie (`count.items.tag.…`) und
+  `reveal_all … tag:`.
+- **Validierung:** Die Autoren-Zeit-Prüfungen (z. B. `DarkRoomDeadEnd`) fragen,
+  ob ein Item den Tag in *irgendeinem* Zustand tragen kann — `tags_when`-Tags
+  zählen also als erreichbare Lichtquelle.
+- **Byte-Vertrag:** Im `world.json` steht `itemTagsWhen` nur, wenn es befüllt
+  ist — bestehende Abenteuer bleiben byte-identisch.
+- Nicht verwechseln mit `verb_map`-Zustandssuffixen (`wind,intact:`) — die
+  steuern *Verhalten*, `tags_when` steuert *Eigenschaften*.
 
 ---
 
@@ -3455,10 +3494,13 @@ effects:
   - reveal_all:   {what: items, in: halle}                      # alle versteckten aufdecken
   - consume_all:  {what: items, in: halle, tag: schwer}         # alle entfernen
   - set_state_all: {what: items, in: halle, tag: licht, state: brennend}
+  - move_all:     {what: items, in_container: flasche, tag: wasser, to: {in: nowhere}}
+                   # Container-Inhalt nehmen ("Flasche leertrinken"), ohne zu konsumieren
 ```
 
-Die **Zielmengen** sind dieselbe Sprache wie die B2-Abfragen (`what` × `in:`/`by:` ×
-optionaler `tag:`) — Abfrage und Wirkung sprechen eine Sprache. Die Wirkung pro Zielart:
+Die **Zielmengen** sind dieselbe Sprache wie die B2-Abfragen (`what` ×
+`in:`/`by:`/`in_container:` × optionaler `tag:`) — Abfrage und Wirkung sprechen
+eine Sprache. Die Wirkung pro Zielart:
 
 | Operation | Items | NPCs |
 |---|---|---|
@@ -3496,9 +3538,10 @@ when: { room: halle, has_item_tag: licht }             # liegt hier etwas mit Ta
 ```yaml
 when: { compare_var: {name: count.items.in.halle, op: gte, value: 2} }   # Anzahl ≥ n
 when: { compare_var: {name: count.alive_npcs.in.halle, op: eq, value: 0} }  # alle tot
-# String-Form: count.<was>.<in|by>.<id>[.<tag>]
+# String-Form: count.<was>.<in|by|in_container>.<id>[.<tag>]
 #   count.items.in.halle   count.npcs.in.halle   count.alive_npcs.in.halle
 #   count.items.by.player  count.items.tag.licht.in.halle
+#   count.items.in_container.flasche   count.items.tag.wasser.in_container.flasche
 when: { compare: { lhs: {count: {what: items, in: halle, tag: licht}}, op: gte, value: 1 } }
 ```
 

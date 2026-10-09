@@ -1104,8 +1104,9 @@ setSeekerRoom _ _ state = state
 --   whose `Removed` tombstone is permanent).
 whereLocation :: CountWhere -> Location
 whereLocation (CountInRoom "nowhere") = Dormant
-whereLocation (CountInRoom r)    = InRoom r
-whereLocation (CountCarriedBy a) = CarriedBy a
+whereLocation (CountInRoom r)       = InRoom r
+whereLocation (CountCarriedBy a)    = CarriedBy a
+whereLocation (CountInContainer c)  = InContainer c
 
 -- | B3: set an item's location directly.
 setItemLoc :: ItemID -> Location -> GameState -> GameState

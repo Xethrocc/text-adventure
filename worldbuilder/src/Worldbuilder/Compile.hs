@@ -2220,7 +2220,7 @@ checkDeviceRefs :: [ADeviceDef] -> Adventure -> ([CompileIssue], [CompileIssue])
 checkDeviceRefs devs adv =
     let roomIds = Set.fromList (map arId (advRooms adv))
         itemIds = Set.fromList (map aiId (advItems adv))
-        allTags = Set.fromList (concatMap aiTags (advItems adv))
+        allTags = Set.fromList (concatMap aiTagsAnyState (advItems adv))
         devIds = map adId devs
         dupIssues =
             [ ciError ("devices." ++ did) "DuplicateDevice"
@@ -3008,6 +3008,7 @@ compileItemDefSafe registry i =
                 , E.itemAscii = compileAscii (aiAscii i)
                 , E.itemKeywords = aiKeywords i
                 , E.itemTags = Set.fromList (aiTags i)
+                , E.itemTagsWhen = Map.map Set.fromList (aiTagsWhen i)
                 , E.itemEquipSlot = slot
                 , E.itemEquipEffects = effects
                 , E.itemSearchable = aiSearchable i
@@ -4853,6 +4854,11 @@ checkUnknownPlaceholders adv varDefs =
 
 -- | Phase 0.4: warn when a dark room contains items but has no light_flag,
 --   no feelable items, and no reachable lightsource (potential author dead-end).
+-- | Tags an item can carry in any state: `tags` plus every `tags_when` entry.
+--   Authoring-time checks ask whether an item can *ever* satisfy a tag.
+aiTagsAnyState :: AItem -> [String]
+aiTagsAnyState i = aiTags i ++ concat (Map.elems (aiTagsWhen i))
+
 checkDarkRoomDeadEnds :: Adventure -> [CompileIssue]
 checkDarkRoomDeadEnds adv =
     let rooms = advRooms adv
@@ -4862,18 +4868,18 @@ checkDarkRoomDeadEnds adv =
         reachable = Set.fromList (reachableRoomIds startRoomId rooms)
 
         carriedLightsource =
-            any (\i -> aiLocation i == "inventory" && "lightsource" `elem` aiTags i) items
+            any (\i -> aiLocation i == "inventory" && "lightsource" `elem` aiTagsAnyState i) items
 
         canPickUpLightsource item =
             case Map.lookup (aiLocation item) roomMap of
                 Nothing -> False
                 Just rm -> "dark" `notElem` arTags rm
-                           || "feelable" `elem` aiTags item
+                           || "feelable" `elem` aiTagsAnyState item
                            || maybe False (not . null) (arLightFlag rm)
 
         hasReachableLightsource =
             carriedLightsource ||
-            any (\i -> "lightsource" `elem` aiTags i
+            any (\i -> "lightsource" `elem` aiTagsAnyState i
                        && aiLocation i /= "inventory"
                        && isNothing (aiInContainer i)
                        && isNothing (aiCarriedBy i)
@@ -4885,7 +4891,7 @@ checkDarkRoomDeadEnds adv =
                 let rId = arId r
                     rItems = [ i | i <- items, aiLocation i == rId, isNothing (aiInContainer i), isNothing (aiCarriedBy i) ]
                     hasItems = not (null rItems)
-                    hasFeelable = any (\i -> "feelable" `elem` aiTags i) rItems
+                    hasFeelable = any (\i -> "feelable" `elem` aiTagsAnyState i) rItems
                     hasLightFlag = maybe False (not . null) (arLightFlag r)
                 in if hasItems && not hasFeelable && not hasLightFlag && not hasReachableLightsource
                    then [ ciWarning ("rooms." ++ rId) "DarkRoomDeadEnd"

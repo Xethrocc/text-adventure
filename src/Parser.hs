@@ -1160,7 +1160,7 @@ dispatchCommandCoreEv TakeAll state = case getCurrentRoom state of
     Just room ->
         let inRoom = getItemsInLocation (InRoom (currentRoom (save state))) state
             -- Phase 0.3 (B3): in the dark only feelable items can be picked up.
-            roomItems = if isDark room state then filter itemIsFeelable inRoom else inRoom
+            roomItems = if isDark room state then filter (itemIsFeelable state) inRoom else inRoom
         in if null roomItems
            then (state, if isDark room state
                         then darkRoomEv room
@@ -1408,7 +1408,7 @@ dispatchCommandCoreEv (Interact verb targetStr) state
             , Just room <- getCurrentRoom stateWithVars
             , isDark room stateWithVars
             , not (hasItem (itemId item) stateWithVars)
-            , not (itemIsFeelable item) ->
+            , not (itemIsFeelable stateWithVars item) ->
                 (commandFailed stateWithVars, darkRoomEv room)
             | otherwise ->
                 interactItem verb item mSt targetStr stateWithVars
@@ -1470,7 +1470,7 @@ dispatchCommandCoreEv (InteractWith VUseOn itemStr entityStr) state =
         maybeVehicle = findVehicle entityStr state
         entityInInventory = any (matchesItemTarget entityTarget) inventoryItems
         -- Phase 0.3 (B3): a feelable room entity stays usable in the dark.
-        entityIsFeelable = any (\i -> matchesItemTarget entityTarget i && itemIsFeelable i)
+        entityIsFeelable = any (\i -> matchesItemTarget entityTarget i && itemIsFeelable state i)
                                (getItemsInLocation (InRoom (currentRoom (save state))) state)
     in case maybeItem of
         Nothing -> (state, evMsg "use.not_carried" [("item", itemStr)])
@@ -1768,7 +1768,11 @@ resolveTarget verb targetStr state
     resolvePhrase phrase =
         let resolved = resolveHotspotTarget phrase state
             roomItems = visibleItemsAt (InRoom (currentRoom (save state))) state
-            invItems  = getItemsInLocation (CarriedBy ActorPlayer) state
+            -- Container contents of *carried* open containers count as
+            -- reachable targets too (original Zork: "You're not holding that"
+            -- is satisfied by holding the container) — `visibleItemsAt`
+            -- flattens the open-container chain.
+            invItems  = visibleItemsAt (CarriedBy ActorPlayer) state
             roomNPCs  = getNPCsInRoom (currentRoom (save state)) state
             roomDevices = filter (\d -> devLocation d == currentRoom (save state))
                                  (Map.elems (deviceDefs (world state)))
@@ -2131,17 +2135,24 @@ defaultDarkMessage :: String
 defaultDarkMessage = renderMsg "dark.default" []
 
 -- | Is the room dark?
---   A room tagged "dark" stays dark unless the player carries a light source
---   or the room's `lightFlag` has been switched on (e.g. by a `search` outcome).
+--   A room tagged "dark" stays dark unless the player carries a light source,
+--   the room itself holds one (original `LIT?`, gparser.zil:1333 — a burning
+--   torch on the ground lights its room), or the room's `lightFlag` has been
+--   switched on (e.g. by a `search` outcome). State-conditional tags
+--   (`tags_when`) count with their current status.
 isDark :: Room -> GameState -> Bool
 isDark room state =
     Set.member "dark" (roomTags room)
         && not (playerHasTaggedItem "lightsource" state)
+        && not roomHoldsLightsource
         && not litByFlag
   where
     litByFlag = case roomLightFlag room of
         Nothing  -> False
         Just flg -> getFlag flg state == Just "true"
+    roomHoldsLightsource =
+        any (\item -> Set.member "lightsource" (effectiveItemTags (itemId item) item state))
+            (countItemMembers (CountSpec CountItems (CountInRoom (roomId room)) Nothing) state)
 
 -- | Is the player's current room dark?
 isCurrentRoomDark :: GameState -> Bool
@@ -2189,19 +2200,20 @@ isDarkRestricted v = case verbCanonicalName v of
 -- | Phase 0.3 (B3): an item tagged @feelable@ can be found and handled by touch,
 --   so the darkness restriction does not apply to it. The author decides per item
 --   what is reachable in an unlit room — a torch, a key, a lever, anything.
-itemIsFeelable :: ItemDef -> Bool
-itemIsFeelable item = Set.member "feelable" (itemTags item)
+--   State-conditional tags (`tags_when`) count with their current status.
+itemIsFeelable :: GameState -> ItemDef -> Bool
+itemIsFeelable st item = Set.member "feelable" (effectiveItemTags (itemId item) item st)
 
 -- | Item is reachable in darkness: carried, or its definition is tagged @feelable@.
 itemReachableInDark :: GameState -> String -> Bool
 itemReachableInDark st iId =
     hasItem iId st
-        || maybe False itemIsFeelable (Map.lookup iId (itemDefs (world st)))
+        || maybe False (itemIsFeelable st) (Map.lookup iId (itemDefs (world st)))
 
 -- | Does the target string match a @feelable@ item in the current room?
 targetIsFeelable :: GameState -> String -> Bool
 targetIsFeelable st t =
-    any (\i -> matchesItemTarget t i && itemIsFeelable i)
+    any (\i -> matchesItemTarget t i && itemIsFeelable st i)
         (getItemsInLocation (InRoom (currentRoom (save st))) st)
 
 -- | Pick the room description: resolve CondText variants against game state.

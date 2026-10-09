@@ -42,6 +42,7 @@ module Game
     , hasItem
     , actorHasItem
     , playerHasTaggedItem
+    , effectiveItemTags
     , isLivingNPCInRoom
     , isDeadNPC
     , isPlayerDead
@@ -660,9 +661,10 @@ countItemMembers cs st = case csWhat cs of
         CountInRoom "nowhere" -> dormantItems st
         CountInRoom r      -> itemsAtLoc (InRoom r) st
         CountCarriedBy a   -> itemsAtLoc (CarriedBy a) st ++ itemsAtLoc (EquippedBy a) st
+        CountInContainer c -> itemsAtLoc (InContainer c) st
     tagged i = case csTag cs of
         Nothing -> True
-        Just t  -> Set.member t (itemTags i)
+        Just t  -> Set.member t (effectiveItemTags (itemId i) i st)
 
 -- | B2/OPEN-04: dormant items (`location: nowhere`) — the raw view including
 --   hidden ones, matching 'itemsAtLoc'.
@@ -687,6 +689,7 @@ countNpcMembers cs st = case csWhat cs of
                               | (nId, ns) <- Map.toList (npcStates (save st))
                               , npcLocation ns == InRoom r ]
         CountCarriedBy _   -> []
+        CountInContainer _ -> []
 
 -- | The room an actor currently occupies. 'Nothing' when the actor is not in
 --   a room (carried, removed, unknown).
@@ -843,6 +846,10 @@ isReachableForConsume iId state =
             InRoom _              -> True
             CarriedBy ActorPlayer -> True
             EquippedBy _          -> True
+            -- Original V-EAT: "You're not holding that" ist auch erfuellt,
+            -- wenn der Spieler den (offenen) Container haelt — z. B. das Essen
+            -- im Beutel. Die Kette der umgebenden Container muss offen sein.
+            InContainer c         -> containerChainOpen iId state && isReachableForConsume c state
             _                     -> False
         Nothing -> False
 
@@ -1324,10 +1331,20 @@ incrementTurnCount state = state
 -- Combat helpers
 -- ---------------------------------------------------------------------------
 
+-- | Effective tags of an item in the current game state: static tags plus the
+--   state-conditional `tags_when` tags of the item's current status (e.g. a
+--   candle is "lightsource" only while it burns).
+effectiveItemTags :: ItemID -> ItemDef -> GameState -> Set.Set String
+effectiveItemTags iId def state =
+    case Map.lookup iId (itemStates (save state)) of
+        Just is -> itemTagsWith is def
+        Nothing -> itemTags def
+
 -- | Does the player carry or wear an item with the given tag?
 playerHasTaggedItem :: String -> GameState -> Bool
 playerHasTaggedItem tag state =
-    any (\iId -> maybe False (Set.member tag . itemTags) (lookupItem iId state))
+    any (\iId -> maybe False (\def -> Set.member tag (effectiveItemTags iId def state))
+                  (lookupItem iId state))
         (inventory (save state) ++ Map.elems (equipment (save state)))
 
 -- | Check if a target string matches any living NPC in the room (for weapon routing)

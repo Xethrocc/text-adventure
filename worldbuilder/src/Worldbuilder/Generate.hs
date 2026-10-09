@@ -1301,6 +1301,7 @@ emitAdventure t plan seed =
                     , aiAscii = AAscii (ACondText "" []) [] 0 [] Nothing
                     , aiKeywords = [ent, "schloss"]
                     , aiTags = ["lock"]
+                    , aiTagsWhen = Map.empty
                     , aiLocation = prevRoomId
                     , aiState = "locked"
                     , aiEquipSlot = Nothing

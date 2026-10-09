@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### Zork Stufe E: Dunkelheit & Zielauflösung an das Original angeglichen
+
+Vier kleine, generische Engine-Anpassungen (jeweils mit Regressionstest):
+
+- **Dunkelheit sieht Raum-Lichtquellen (Original `LIT?`, gparser.zil:1333):** Ein
+  `dark`-Raum gilt auch dann als erhellt, wenn ein Item mit Tag `lightsource`
+  **im Raum liegt** (z. B. die brennende Fackel im Fackelraum) — nicht nur, wenn
+  der Spieler eine trägt.
+- **Zielauflösung durch getragene Container (P-Fix):** `drink water`, `eat lunch`
+  usw. finden Items in (offenen) Containern, die der Spieler trägt — das
+  Original akzeptiert „den Container halten“ (`visibleItemsAt` glättet die
+  Containerkette, wird jetzt auch fürs Inventar benutzt).
+- **`consume` erreicht Container-Inhalte:** `consume:` eines Items in einem
+  (offenen) getragenen Container wird nicht mehr mit `consume.not_reachable`
+  verweigert; geschlossene Containerketten schneiden weiter ab.
+- **Mengen kennen `in_container:` (B2-Sprache):** Zählfamilie (`count.…`) und
+  `move_all`/`consume_all`/`reveal_all`/`set_state_all` können Container-Inhalte
+  ziehen, z. B. `move_all: {what: items, in_container: flasche, tag: wasser,
+  to: {in: nowhere}}` (Form: `count.items.in_container.<id>`).
+
+### `tags_when` — zustandsabhängige Item-Tags (Stufe E Zork-Port)
+
+Neues Item-Feld `tags_when: {<zustand>: [tags]}`: Tags, die nur gelten, solange
+`itemStates.itemStatus` zum Schlüssel passt — gesteuert über das bestehende
+`set_state:`. Effektive Tags = `tags` ∪ `tags_when[<status>]`; geprüft in
+Dunkelheit (`lightsource`), `feelable`, Tag-Prädikaten, der Zählfamilie
+(`count.items.tag.…`) und `reveal_all … tag:`. Die Autoren-Zeit-Validierung
+(z. B. `DarkRoomDeadEnd`) sieht, ob ein Item den Tag in *irgendeinem* Zustand
+tragen kann. Motivation: „brennende Kerze ist Lichtquelle, ausgegangene nicht“
+(Dunkelheits-Semantik Original Zork I). Regressionstests:
+`tags_when: a lantern lights the dark only while lit` und der JSON-Round-Trip
+(`itemTagsWhen` wird bei leerem Map weggelassen — bestehende Abenteuer bleiben
+byte-identisch).
+
 ### OPEN-01..09: alle offenen Engine-Punkte umgesetzt (Zork-Befunde)
 
 Drei Blöcke (Commits `0f2f5b1`, `bc01829`, `5d7fecd`), jeweils mit Regressionstests;
