@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+### OPEN-01..09: alle offenen Engine-Punkte umgesetzt (Zork-Befunde)
+
+Drei Blöcke (Commits `0f2f5b1`, `bc01829`, `5d7fecd`), jeweils mit Regressionstests;
+Referenz ist `befunde-text-adventure-engine.md` §7.
+
+- **`cmd.succeeded` (OPEN-01):** boolesche Variable, die nach Ausführung angibt, ob das
+  Kommando gelungen ist — `false` bei give/put/open/take-Fehlern, `block:`-Vetos
+  (Regeln *und* `verb_map`-Phasen), Dunkel-Verweigerungen, Mehrdeutigkeiten;
+  `true` bei erfolgreichen Standard-Aktionen und regel-/handler-gesteuerten
+  Custom-Verben. Compound (`take x and y`) und `take all` sind eine Konjunktion
+  (alle Teile werden versucht, `true` nur wenn alle gelingen). `on: before` sieht
+  das Pending-Ergebnis, `on: command` das Endergebnis. Metakommandos (`undo`,
+  `help`, `save`, …) laufen ohne Trigger-Pipeline und setzen das Bit nicht.
+- **Item-Status-Synchronisation (OPEN-02):** `set_state`/`set_state_all` und die
+  Container-Verben schreiben jetzt `entityStates` **und** `itemStates.itemStatus`
+  synchron — Zustands-Suffixe in `verb_map` (`wind,broken:`) greifen wieder, und
+  `{state: X, is: Y}` liest eine definierte Schichtenfolge (NPC → Item →
+  Entity-State) statt eines ODR über alle Speicher. Schließt `Z-01`.
+- **`searchable: false` (OPEN-03):** Items mit `hidden: true` können vom `search`-
+  Befehl ausgenommen werden (Default `true`, im `world.json` bei Default weggelassen —
+  Byte-Kompatibilität). Schließt `Z-04`.
+- **`location: nowhere` (OPEN-04):** Start-Ort für „existiert, aber noch nicht in der
+  Welt“. Implementiert als **`Dormant`**-Ort, bewusst *nicht* als `Removed`-Tombstone
+  (FIX-02: `give:` darf konsumierte Items nicht wiederbeleben). Aktivierbar über
+  `give:`, `place:` und `move_all: {…, in: nowhere, …}`. Schließt `Z-05`.
+- **`place:` (OPEN-05):** neuer Einzel-Item-Effekt
+  `place: {item: X, in: <room>}` bzw. `{item: X, in_container: <container>}` mit
+  Inventar-/Ausrüstungs-Buchhaltung, Kapazitäts- und Zyklenprüfung. Schließt `E-02`.
+- **`blocked: true` (OPEN-06):** Ausgänge können direkt als blockiert deklariert
+  werden (eigene Meldung per `msg:`), ohne das `when: {not: {'true': true}}`-Muster —
+  die ~35 `DeadExit`-Warnungen entfallen für diese Ausgänge. Schließt `W-02`.
+- **`in: {container: X, item: Y}` (OPEN-07):** Prädikat für direkte
+  Container-Mitgliedschaft (auch versteckter Inhalt, geschlossene/verschlossene
+  Container). Schließt `Z-03`.
+- **`verb_map`-Zielaufflösung mit Präpositionen (OPEN-08):** `X with Y` / `X to Y`
+  lösen den *primären* Ziel-Nomenphrase-Ausdruck (auch mehrteilige Namen wie
+  `healing potion`) korrekt auf — in allen `verb_map`-Phasen, bei Items und NPCs;
+  `cmd.arg1..N`, `cmd.count`, `cmd.raw_args` behalten ihre Token-Semantik.
+  Schließt `P-02`.
+- **`read` als Trigger (OPEN-09):** `read` ist jetzt ein kanonischer Event
+  (`on: before read`, `on: command read`, `cmd.verb == "read"`), bleibt als
+  Custom-Verb reserviert und aliast in `verb_map`-Schlüsseln weiter auf `examine`
+  (alte `read,intact`-Einträge bleiben gültig). Schließt `R-06`.
+- **Tests:** 973 grüne Einzeltests (`text-adventure-tests` 570, `worldbuilder-tests`
+  299, übrige 204), `scripts/ci.sh` inkl. E2E-Playthroughs grün.
+
 ### Verbnamen vereinheitlicht (Bugfix, Zork-Port Stufe B)
 
 - **`on: before <verb>` feuerte für `board`/`enter` nie:** `checkBeforeVeto` (`Parser.hs`)
