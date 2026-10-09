@@ -943,17 +943,28 @@ roomViewEvents runHooks state = case getCurrentRoom state of
                            then evMsg "look.see_nothing" []
                            else evMsg "look.items" [("names", intercalate ", " (map itemName itemsInRoom))]
                 -- 4.4: open containers show their contents (recursively through
-                --   further open containers).
+                --   further open containers — the bottle on the table lists its
+                --   water too; cycles cannot happen but are guarded anyway).
                 openContainers =
-                    [ (itemId i, itemName i)
-                    | i <- itemsInRoom
-                    , isContainer (itemId i) state
-                    , containerStateOf (itemId i) state == "open" ]
-                    ++
-                    [ (conId c, conName c)
-                    | c <- Map.elems (containerDefs (world state))
-                    , conLocation c == currentRoom (save state)
-                    , containerStateOf (conId c) state == "open" ]
+                    concatMap (expandOpenContainer [])
+                    ( [ (itemId i, itemName i)
+                      | i <- itemsInRoom
+                      , isContainer (itemId i) state
+                      , containerStateOf (itemId i) state == "open" ]
+                      ++
+                      [ (conId c, conName c)
+                      | c <- Map.elems (containerDefs (world state))
+                      , conLocation c == currentRoom (save state)
+                      , containerStateOf (conId c) state == "open" ] )
+                expandOpenContainer seen (cid, cname)
+                    | cid `elem` seen = []
+                    | otherwise =
+                        (cid, cname)
+                        : concatMap (expandOpenContainer (cid : seen))
+                            [ (itemId i, itemName i)
+                            | i <- itemsInContainer cid state
+                            , isContainer (itemId i) state
+                            , containerStateOf (itemId i) state == "open" ]
                 containerDesc = concat
                     [ case itemsInContainer cid state of
                         [] -> evMsg "container.empty" ([("name", cname)] ++ grammarArgs True "name" (grammarOfItem cid state))
@@ -1173,7 +1184,9 @@ dispatchCommandCoreEv UnequipAllCmd state
 dispatchCommandCoreEv TakeAll state = case getCurrentRoom state of
     Nothing -> (state, evMsg "take.none_here" [])
     Just room ->
-        let inRoom = getItemsInLocation (InRoom (currentRoom (save state))) state
+        -- 4.4: `take all` reaches what `take <x>` reaches — the contents of
+        --   open containers too (the bottle on the table brings its water).
+        let inRoom = visibleItemsAt (InRoom (currentRoom (save state))) state
             -- Phase 0.3 (B3): in the dark only feelable items can be picked up.
             roomItems = if isDark room state then filter (itemIsFeelable state) inRoom else inRoom
         in if null roomItems

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Rekursive Container-Anzeige und `take all`-Scope (F4 Zork-Port)
+
+- **`look` listet verschachtelte offene Container:** die Inhaltszeilen laufen
+  rekursiv weiter („In kitchen table: glass bottle, brown sack.“ + „In glass
+  bottle: quantity of water.“) — vorher blieb alles unterhalb der ersten
+  Container-Ebene unsichtbar. Zyklenschutz per besuchter Kette.
+- **`take all` erreicht den Scope von `take <x>`:** auch Inhalte offener
+  Container werden aufgenommen (vorher nur direkte Raum-Items).
+- Zork-Port: der brown sack startet wie im Original geschlossen
+  (`state: closed`, kein `OPENBIT` im Original) — Knoblauch und Lunch bleiben
+  bis zum Öffnen verborgen.
+
 ### Item-Container: Startzustand aus `state:` (F3 Zork-Port)
 
 Items mit `capacity:` übernehmen `state: open|closed|locked` als initialen
