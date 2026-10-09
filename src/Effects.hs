@@ -508,26 +508,36 @@ applyOutcomeWith depth salt outcome targetId state
             Nothing -> Nothing
         snd3 (_, f, _) = f
 
-    -- K11d: recipe knowledge is the closed VarMap namespace `known_recipe.<id>`
-    --   (player-global, no actor layer — recipe knowledge is player knowledge;
-    --   an actor variant for NPC teachers would be K11e). `LearnRecipe` is
-    --   idempotent (Set semantics): on the FIRST learning the message
-    --   `recipes.learn.default` ({recipe} = result item name, or the recipe id
-    --   when the recipe has no `result:`), then the `OnLearnRecipe` trigger
-    --   fires exactly once, in learning order. Author messages belong in front
-    --   of the effect (`msg:` before `learn_recipe:`) — there is no per-recipe
-    --   learn_msg in this stage.
-    LearnRecipe rId ->
-        if getVariable ("known_recipe." ++ rId) state == Just (VVInt 1)
+    -- K11d/K11e: recipe knowledge is the closed VarMap namespace
+    --   `known_recipe.<id>` (player) / `known_recipe_by.<npc>.<id>` (K11e,
+    --   NPC teachers). `LearnRecipe` is idempotent (Set semantics): on the
+    --   PLAYER's first learning the message (the recipe's `learn_msg` when
+    --   set — `{recipe}` resolves to the result item name, or the recipe id
+    --   when the recipe has no `result:` — else the catalog default
+    --   `recipes.learn.default`), then the `OnLearnRecipe` trigger fires
+    --   exactly once, in learning order. NPC learning is silent bookkeeping:
+    --   no message and no trigger (K11e decision: `on: learn_recipe` stays
+    --   player-only). Rule-level author messages stay `msg:` in front of the
+    --   effect.
+    LearnRecipe actor rId ->
+        if getVariable (recipeKnowledgeKey actor rId) state == Just (VVInt 1)
         then (state, [], salt)
         else
-            let st1 = setVariableChecked ("known_recipe." ++ rId) (VVInt 1) state
-                name = case find (\k -> recipeId k == Just rId)
-                                 (Map.keys (itemInteractions (world st1))) of
-                    Just k  -> recipeDisplayName k st1
-                    Nothing -> rId
-                (st2, trigMsgs) = fireTriggersWithDepth (depth + 1) (OnLearnRecipe rId) st1
-            in (st2, joinEv (evMsg "recipes.learn.default" [("recipe", name)]) trigMsgs, salt)
+            let st1 = setVariableChecked (recipeKnowledgeKey actor rId) (VVInt 1) state
+                entry = find (\(k, _) -> recipeId k == Just rId)
+                             (Map.toList (itemInteractions (world st1)))
+            in case actor of
+                ActorPlayer ->
+                    let name = case entry of
+                            Just (k, _) -> recipeDisplayName k st1
+                            Nothing     -> rId
+                        learnEv = case entry of
+                            Just (_, re) | Just m <- recipeLearnMsg re ->
+                                evRaw (formatWithVarsPlus [("recipe", name)] m st1)
+                            _ -> evMsg "recipes.learn.default" [("recipe", name)]
+                        (st2, trigMsgs) = fireTriggersWithDepth (depth + 1) (OnLearnRecipe rId) st1
+                    in (st2, joinEv learnEv trigMsgs, salt)
+                _ -> (st1, [], salt)
 
     -- W1 (Befehl `notizen`, generierter Trigger bei `journal: notes`): render
     --   the notes book — learned, non-silent player facts in **declaration

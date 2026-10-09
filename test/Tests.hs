@@ -4777,7 +4777,7 @@ testCompoundKeyRoundTrip = do
                 (item0 { itemVerbMap = Map.fromList [((PhaseAfter, VCustom "buy", "intact:v2"), SendMessage "a")] })
                 (itemDefs gw0)
             , entityInteractions = Map.fromList [(("a|b", "c"), ("unlocked", "msg"))]
-            , itemInteractions   = Map.fromList [(RecipePair Nothing False Nothing "x:y" "z|w", SendMessage "b")] }
+            , itemInteractions   = recipeEntries [(RecipePair Nothing False Nothing "x:y" "z|w", SendMessage "b")] }
     r1 <- expectEqual (Just gw) (Aeson.decode (Aeson.encode gw))
     -- legacy form of the verb map: "VTake:intact"
     let legacyVerbValue = Aeson.toJSON (Map.fromList [("VTake:intact", SendMessage "x")] :: Map.Map String Effect)
@@ -10244,7 +10244,7 @@ testItemOnItemBindsVars = do
         w = (world sample)
             { itemDefs = Map.insert "herb" (invItem "herb")
                        $ Map.insert "mortar" (invItem "mortar") (itemDefs (world sample))
-            , itemInteractions = Map.singleton (RecipePair Nothing False Nothing "herb" "mortar") (SendMessage "Crafted!")
+            , itemInteractions = recipeEntry1 (RecipePair Nothing False Nothing "herb" "mortar") (SendMessage "Crafted!")
             }
         st0 = sample
             { world = w
@@ -10272,7 +10272,7 @@ testItemOnItemConsumeDynamicResolvesOrder = do
         w = (world sample)
             { itemDefs = Map.insert "herb" (invItem "herb")
                        $ Map.insert "mortar" (invItem "mortar") (itemDefs (world sample))
-            , itemInteractions = Map.singleton (RecipePair Nothing False Nothing "herb" "mortar") (MoveEntity "{item1}" Removed)
+            , itemInteractions = recipeEntry1 (RecipePair Nothing False Nothing "herb" "mortar") (MoveEntity "{item1}" Removed)
             }
         -- Both carried by player
         st0 = sample
@@ -10313,7 +10313,7 @@ testIngredientsRecipeFiresWithUseXOnY = do
             { itemDefs = Map.insert "kessel" (invItem "kessel")
                        $ Map.insert "blatt_a" (invItem "blatt_a")
                        $ Map.insert "blatt_b" (invItem "blatt_b") (itemDefs (world sample))
-            , itemInteractions = Map.singleton
+            , itemInteractions = recipeEntry1
                 (RecipeIngredients (Just "sturmtrank") False Nothing ["kessel", "blatt_a", "blatt_b"])
                 (Sequence [ MoveEntity "{ingredient1}" Removed
                           , MoveEntity "{ingredient2}" Removed
@@ -10351,7 +10351,7 @@ testIngredientsRecipeFailsWhenIngredientMissing = do
             { itemDefs = Map.insert "kessel" (invItem "kessel")
                        $ Map.insert "blatt_a" (invItem "blatt_a")
                        $ Map.insert "blatt_b" (invItem "blatt_b") (itemDefs (world sample))
-            , itemInteractions = Map.singleton
+            , itemInteractions = recipeEntry1
                 (RecipeIngredients (Just "sturmtrank") False Nothing ["kessel", "blatt_a", "blatt_b"])
                 (Sequence [ MoveEntity "{ingredient1}" Removed
                           , MoveEntity "{ingredient2}" Removed
@@ -10388,7 +10388,7 @@ testIngredientsRecipeDoesNotFireWhenCommandNamesNoRecipeItem = do
                        $ Map.insert "blatt_b" (invItem "blatt_b")
                        $ Map.insert "messer" (invItem "messer")
                        $ Map.insert "apfel" (invItem "apfel") (itemDefs (world sample))
-            , itemInteractions = Map.singleton
+            , itemInteractions = recipeEntry1
                 (RecipeIngredients (Just "sturmtrank") False Nothing ["kessel", "blatt_a", "blatt_b"])
                 (SendMessage "Der Trank ist gebraut!")
             }
@@ -10424,7 +10424,7 @@ testCraftPairSuccess = do
             { itemDefs = Map.insert "mana_leaf" (invItem "mana_leaf")
                        $ Map.insert "kettle" (invItem "kettle")
                        $ Map.insert "mana_potion" (invItem "mana_potion") (itemDefs (world sample))
-            , itemInteractions = Map.singleton
+            , itemInteractions = recipeEntry1
                 (RecipePair Nothing False (Just "mana_potion") "mana_leaf" "kettle")
                 (Sequence [ MoveEntity "{item1}" Removed
                           , SendMessage "Du hast einen Manatrank gebraut!"
@@ -10457,7 +10457,7 @@ testCraftMultiSuccess = do
                        $ Map.insert "leaf_a" (invItem "leaf_a")
                        $ Map.insert "leaf_b" (invItem "leaf_b")
                        $ Map.insert "storm_potion" (invItem "storm_potion") (itemDefs (world sample))
-            , itemInteractions = Map.singleton
+            , itemInteractions = recipeEntry1
                 (RecipeIngredients (Just "storm_potion") False (Just "storm_potion") ["kettle", "leaf_a", "leaf_b"])
                 (Sequence [ MoveEntity "{ingredient2}" Removed
                           , MoveEntity "{ingredient3}" Removed
@@ -10493,7 +10493,7 @@ testCraftMissingIngredient = do
             { itemDefs = Map.insert "mana_leaf" (invItem "mana_leaf")
                        $ Map.insert "kettle" (invItem "kettle")
                        $ Map.insert "mana_potion" (invItem "mana_potion") (itemDefs (world sample))
-            , itemInteractions = Map.singleton
+            , itemInteractions = recipeEntry1
                 (RecipePair Nothing False (Just "mana_potion") "mana_leaf" "kettle")
                 (SendMessage "Du hast einen Manatrank gebraut!")
             }
@@ -10521,7 +10521,7 @@ testCraftRecipeWithoutResultInvisible = do
         w = (world sample)
             { itemDefs = Map.insert "herb" (invItem "herb")
                        $ Map.insert "mortar" (invItem "mortar") (itemDefs (world sample))
-            , itemInteractions = Map.singleton (RecipePair Nothing False Nothing "herb" "mortar") (SendMessage "Gestoßen!")
+            , itemInteractions = recipeEntry1 (RecipePair Nothing False Nothing "herb" "mortar") (SendMessage "Gestoßen!")
             }
         st0 = sample
             { world = w
@@ -10558,7 +10558,7 @@ testCraftConsumeAndSecondAttempt = do
             { itemDefs = Map.insert "mana_leaf" (invItem "mana_leaf")
                        $ Map.insert "kettle" (invItem "kettle")
                        $ Map.insert "mana_potion" (invItem "mana_potion") (itemDefs (world sample))
-            , itemInteractions = Map.singleton
+            , itemInteractions = recipeEntry1
                 (RecipePair Nothing False (Just "mana_potion") "mana_leaf" "kettle")
                 (Sequence [ MoveEntity "{item1}" Removed
                           , SendMessage "Erfolg!"
@@ -10592,7 +10592,7 @@ testCraftUseOnRegression = do
         mkWorld mRes = (world sample)
             { itemDefs = Map.insert "mana_leaf" (invItem "mana_leaf")
                        $ Map.insert "kettle" (invItem "kettle") (itemDefs (world sample))
-            , itemInteractions = Map.singleton
+            , itemInteractions = recipeEntry1
                 (RecipePair Nothing False mRes "mana_leaf" "kettle")
                 (Sequence [ MoveEntity "{item1}" Removed
                           , SendMessage "Gebraut!"
@@ -10623,6 +10623,15 @@ testCraftUseOnRegression = do
 -- K11d: Rezeptwissen (Rezepte lernen, sehen, unterscheiden)
 -- ---------------------------------------------------------------------------
 
+-- | K11e: recipe maps built by tests from bare effects carry no learn
+--   message (the K11e `learn_msg` field defaults to Nothing).
+recipeEntries :: [(RecipeKey, Effect)] -> Map.Map RecipeKey RecipeEntry
+recipeEntries = Map.fromList . map (\(k, e) -> (k, RecipeEntry e Nothing))
+
+-- | K11e: single-entry variant of 'recipeEntries'.
+recipeEntry1 :: RecipeKey -> Effect -> Map.Map RecipeKey RecipeEntry
+recipeEntry1 k e = Map.singleton k (RecipeEntry e Nothing)
+
 -- | K11d: sample world with the given recipes. Every recipe item is declared
 --   (name = id); the ids in `carried` are in the player's inventory, the rest
 --   sits in "other_room" — out of reach, so "missing ingredient" is testable.
@@ -10634,7 +10643,7 @@ k11dGame recipes carried =
         allIds = Set.toList (Set.fromList (recipeIds ++ carried))
         w = (world sample)
             { itemDefs = foldr (\i -> Map.insert i (invItem i)) (itemDefs (world sample)) allIds
-            , itemInteractions = Map.fromList recipes
+            , itemInteractions = recipeEntries recipes
             }
         place iId st = st
             { itemStates = Map.insert iId
@@ -10657,14 +10666,14 @@ testLearnRecipeIdempotentAndTrigger = do
             , triggerDefs =
                 [ TriggerDef "on_learn" (OnLearnRecipe "trank_rezept") Nothing
                     [SendMessage "Das Tor geht auf!"] False 0 1 [] [] ] } }
-        (st1, evs1, _) = applyOutcomeWith 0 0 (LearnRecipe "trank_rezept") "" stN
+        (st1, evs1, _) = applyOutcomeWith 0 0 (LearnRecipe ActorPlayer "trank_rezept") "" stN
         out1 = renderEvents evs1
     r1 <- expectEqual (Just (VVInt 1)) (getVariable "known_recipe.trank_rezept" st1)
     r2 <- expectTrue ("learn message names the produced item: " ++ out1)
         ("You learn a recipe: Manatrank." `isInfixOf` out1)
     r3 <- expectTrue ("OnLearnRecipe fired: " ++ out1) ("Das Tor geht auf!" `isInfixOf` out1)
     -- idempotent: a second learn changes nothing and says nothing
-    let (st2, evs2, _) = applyOutcomeWith 0 0 (LearnRecipe "trank_rezept") "" st1
+    let (st2, evs2, _) = applyOutcomeWith 0 0 (LearnRecipe ActorPlayer "trank_rezept") "" st1
         out2 = renderEvents evs2
     r4 <- expectTrue ("second learn is silent: " ++ show out2) (null out2)
     r5 <- expectEqual (Just (VVInt 1)) (getVariable "known_recipe.trank_rezept" st2)
@@ -10675,7 +10684,7 @@ testLearnRecipeWithoutResultShowsId :: IO Bool
 testLearnRecipeWithoutResultShowsId = do
     let recipe = RecipePair (Just "stampfen") False Nothing "kraut" "moerser"
         st0 = k11dGame [(recipe, SendMessage "Gestoßen!")] ["kraut", "moerser"]
-        (_, evs, _) = applyOutcomeWith 0 0 (LearnRecipe "stampfen") "" st0
+        (_, evs, _) = applyOutcomeWith 0 0 (LearnRecipe ActorPlayer "stampfen") "" st0
         out = renderEvents evs
     expectTrue ("{recipe} falls back to the recipe id: " ++ out)
         ("You learn a recipe: stampfen." `isInfixOf` out)
@@ -10696,7 +10705,7 @@ testRecipesListingKnownAndTotal = do
     r4 <- expectTrue ("unknown recipe ingredients not leaked: " ++ out0) (not ("kraut_a" `isInfixOf` out0))
     r5 <- expectTrue ("legacy recipe (no id) is not counted: " ++ out0) (not ("/ 3" `isInfixOf` out0))
     -- learning the locked recipe reveals it and moves the counter
-    let (st1, _, _) = applyOutcomeWith 0 0 (LearnRecipe "geheim") "" st0
+    let (st1, _, _) = applyOutcomeWith 0 0 (LearnRecipe ActorPlayer "geheim") "" st0
         (_, out1) = executeCommand (parseCommand "recipes") st1
     r6 <- expectTrue ("counter after learning: " ++ out1) ("Recipes: 2 / 2" `isInfixOf` out1)
     r7 <- expectTrue ("learned recipe listed: " ++ out1) ("trank_a — kraut_a, kessel" `isInfixOf` out1)
@@ -10737,7 +10746,7 @@ testCraftMissingIngredientQuotesKnownVariant = do
         rB = RecipePair (Just "b") True (Just "trank") "kraut_b" "kessel"
         st0 = k11dGame [(rA, SendMessage "Braut A!"), (rB, SendMessage "Braut B!")]
                        ["kraut_a", "kessel"]   -- kraut_b is out of reach
-        (st1, _, _) = applyOutcomeWith 0 0 (LearnRecipe "b") "" st0
+        (st1, _, _) = applyOutcomeWith 0 0 (LearnRecipe ActorPlayer "b") "" st0
         (_, out) = executeCommand (parseCommand "craft trank") st1
     r1 <- expectTrue ("missing ingredient of the KNOWN variant: " ++ out)
         ("carrying 'kraut_b'" `isInfixOf` out)
@@ -10765,7 +10774,7 @@ testUseOnKnowledgeLock = do
     r1 <- expectTrue ("locked + unknown: use.no_known_recipe: " ++ out0)
         ("You don't know a recipe with kraut and moerser." `isInfixOf` out0)
     r2 <- expectTrue ("outcome did not run: " ++ out0) (not ("Gestoßen!" `isInfixOf` out0))
-    let (st1, _, _) = applyOutcomeWith 0 0 (LearnRecipe "stampfen") "" st0
+    let (st1, _, _) = applyOutcomeWith 0 0 (LearnRecipe ActorPlayer "stampfen") "" st0
         (_, out1) = executeCommand (parseCommand "use kraut on moerser") st1
     r3 <- expectTrue ("after learning it runs: " ++ out1) ("Gestoßen!" `isInfixOf` out1)
     let (_, out2) = executeCommand (parseCommand "use apfel on messer") st0
@@ -10779,7 +10788,7 @@ testRecipeKnowledgeSaveLoadUndo = do
     -- reading the book (an unlocked recipe) teaches the locked one
     let rBook   = RecipePair (Just "lesen") False Nothing "buch" "lampe"
         rLocked = RecipePair (Just "stampfen") True Nothing "kraut" "moerser"
-        st0 = k11dGame [ (rBook, Sequence [LearnRecipe "stampfen", SendMessage "Gelernt!"])
+        st0 = k11dGame [ (rBook, Sequence [LearnRecipe ActorPlayer "stampfen", SendMessage "Gelernt!"])
                        , (rLocked, SendMessage "Gestoßen!") ]
                        ["buch", "lampe", "kraut", "moerser"]
         (loop1, _) = applyLoopCommand (parseCommand "use buch on lampe") (initLoopState st0)
@@ -10807,8 +10816,8 @@ testRecipeKnowledgeSaveLoadUndo = do
 --   survive the world JSON round trip.
 testRecipeKeySerializationContract :: IO Bool
 testRecipeKeySerializationContract = do
-    let legacy = Map.fromList [(RecipePair Nothing False Nothing "herb" "mortar", SendMessage "x")] :: Map.Map RecipeKey Effect
-        locked = Map.fromList [(RecipePair (Just "stampfen") True (Just "trank") "herb" "mortar", SendMessage "x")] :: Map.Map RecipeKey Effect
+    let legacy = recipeEntries [(RecipePair Nothing False Nothing "herb" "mortar", SendMessage "x")]
+        locked = recipeEntries [(RecipePair (Just "stampfen") True (Just "trank") "herb" "mortar", SendMessage "x")]
         decodeEntries m = Aeson.decode (Aeson.encode (itemInteractionsToJSON m)) :: Maybe [Aeson.Value]
     r1 <- case decodeEntries legacy of
         Just [entry] -> expectEqual
@@ -10841,8 +10850,120 @@ testRecipeKeySerializationContract = do
         parsedLegacy = case Aeson.decode (BLC.pack legacyArr) :: Maybe Aeson.Value of
             Nothing -> Left "not JSON"
             Just v  -> AesonT.parseEither parseItemInteractions v
-    r4 <- expectEqual (Right (Map.fromList [(RecipePair Nothing False Nothing "herb" "mortar", Noop)]))
-                      (parsedLegacy :: Either String (Map.Map RecipeKey Effect))
+    r4 <- expectEqual (Right (recipeEntries [(RecipePair Nothing False Nothing "herb" "mortar", Noop)]))
+                      (parsedLegacy :: Either String (Map.Map RecipeKey RecipeEntry))
+    -- K11e byte contract: `learn_msg` is appended only when set
+    let withMsg = Map.singleton (RecipePair (Just "stampfen") False Nothing "herb" "mortar")
+                                (RecipeEntry (SendMessage "x") (Just "Du lernst es."))
+        withoutMsg = recipeEntries [(RecipePair (Just "stampfen") False Nothing "herb" "mortar", SendMessage "x")]
+    r5 <- case (decodeEntries withoutMsg, decodeEntries withMsg) of
+        (Just [e1], Just [e2]) -> do
+            r5a <- expectTrue "learn_msg omitted when unset" (not ("learn_msg" `isInfixOf` show e1))
+            r5b <- expectEqual
+                (Aeson.object [ AesonKey.fromString "a" .= ("herb" :: String)
+                             , AesonKey.fromString "b" .= ("mortar" :: String)
+                             , AesonKey.fromString "effect" .= SendMessage "x"
+                             , AesonKey.fromString "id" .= ("stampfen" :: String)
+                             , AesonKey.fromString "learn_msg" .= ("Du lernst es." :: String) ])
+                e2
+            pure (r5a && r5b)
+        other -> do putStrLn ("  unexpected learn_msg encoding: " ++ show other); pure False
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- ---------------------------------------------------------------------------
+-- K11e: Rezeptwissen mit Akteur (NPC-Lehrer), knows_recipe, learn_msg
+-- ---------------------------------------------------------------------------
+
+-- | K11e.1: `knows_recipe` (player form) reads `known_recipe.<id>` — false
+--   before learning, true after (the same namespace the craft gate uses).
+testKnowsRecipePredicatePlayer :: IO Bool
+testKnowsRecipePredicatePlayer = do
+    let recipe = RecipePair (Just "trank_rezept") True (Just "mana_trank") "kraut" "kessel"
+        st0 = k11dGame [(recipe, SendMessage "Gebraut!")] ["kraut", "kessel"]
+        gate = KnowsRecipe ActorPlayer "trank_rezept"
+    r1 <- expectTrue "unknown before learning" (not (evalPredicate gate st0))
+    let (st1, _, _) = applyOutcomeWith 0 0 (LearnRecipe ActorPlayer "trank_rezept") "" st0
+    r2 <- expectTrue "known after learning" (evalPredicate gate st1)
+    r3 <- expectEqual (Just (VVInt 1)) (getVariable "known_recipe.trank_rezept" st1)
+    pure (r1 && r2 && r3)
+
+-- | K11e.2: the actor form reads the closed NPC namespace
+--   `known_recipe_by.<npc>.<id>` — per actor and separate from the player's.
+testKnowsRecipePredicateActor :: IO Bool
+testKnowsRecipePredicateActor = do
+    let recipe = RecipePair (Just "stahl") False Nothing "erz" "schmiede"
+        st0 = k11dGame [(recipe, SendMessage "Gefertigt!")] ["erz", "schmiede"]
+        (st1, _, _) = applyOutcomeWith 0 0 (LearnRecipe (ActorNPC "schmied") "stahl") "" st0
+        smithGate = KnowsRecipe (ActorNPC "schmied") "stahl"
+        playerGate = KnowsRecipe ActorPlayer "stahl"
+    r1 <- expectTrue "the smith knows it" (evalPredicate smithGate st1)
+    r2 <- expectTrue "the player does not" (not (evalPredicate playerGate st1))
+    r3 <- expectEqual (Just (VVInt 1)) (getVariable "known_recipe_by.schmied.stahl" st1)
+    r4 <- expectEqual (Nothing :: Maybe VariableValue) (getVariable "known_recipe.stahl" st1)
+    let (st2, _, _) = applyOutcomeWith 0 0 (LearnRecipe ActorPlayer "stahl") "" st1
+    r5 <- expectTrue "player namespace is independent" (evalPredicate playerGate st2)
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | K11e.3: `learn_msg` overrides the catalog learn message and resolves
+--   `{recipe}` to the recipe display name.
+testLearnRecipeLearnMsgOverridesDefault :: IO Bool
+testLearnRecipeLearnMsgOverridesDefault = do
+    let key = RecipePair (Just "trank_rezept") True (Just "mana_trank") "kraut" "kessel"
+        st0 = k11dGame [(key, SendMessage "Gebraut!")] ["kraut", "kessel"]
+        stM = st0 { world = (world st0)
+            { itemDefs = Map.adjust (\it -> it { itemName = "Manatrank" }) "mana_trank"
+                        (itemDefs (world st0))
+            , itemInteractions = Map.adjust
+                (\re -> re { recipeLearnMsg = Just "Neu gelernt: {recipe}!" })
+                key (itemInteractions (world st0)) } }
+        (_, evs, _) = applyOutcomeWith 0 0 (LearnRecipe ActorPlayer "trank_rezept") "" stM
+        out = renderEvents evs
+    r1 <- expectTrue ("author message wins: " ++ out) ("Neu gelernt: Manatrank!" `isInfixOf` out)
+    r2 <- expectTrue ("catalog default not used: " ++ out) (not ("You learn a recipe:" `isInfixOf` out))
+    pure (r1 && r2)
+
+-- | K11e.4: NPC learning is silent bookkeeping — no message, no
+--   `OnLearnRecipe` trigger (the trigger stays player-only), idempotent.
+testLearnRecipeActorIsSilent :: IO Bool
+testLearnRecipeActorIsSilent = do
+    let recipe = RecipePair (Just "trank_rezept") True (Just "mana_trank") "kraut" "kessel"
+        st0 = k11dGame [(recipe, SendMessage "Gebraut!")] ["kraut", "kessel"]
+        stN = st0 { world = (world st0)
+            { triggerDefs =
+                [ TriggerDef "on_learn" (OnLearnRecipe "trank_rezept") Nothing
+                    [SendMessage "Das Tor geht auf!"] False 0 1 [] [] ] } }
+        (st1, evs1, _) = applyOutcomeWith 0 0 (LearnRecipe (ActorNPC "schmied") "trank_rezept") "" stN
+        out1 = renderEvents evs1
+    r1 <- expectTrue ("no message for NPC learning: " ++ show out1) (null out1)
+    r2 <- expectTrue ("trigger did not fire: " ++ show out1) (not ("Das Tor geht auf!" `isInfixOf` out1))
+    r3 <- expectEqual (Just (VVInt 1)) (getVariable "known_recipe_by.schmied.trank_rezept" st1)
+    let (st2, evs2, _) = applyOutcomeWith 0 0 (LearnRecipe (ActorNPC "schmied") "trank_rezept") "" st1
+    r4 <- expectTrue "idempotent for NPCs too" (null (renderEvents evs2))
+    pure (r1 && r2 && r3 && r4)
+
+-- | K11e.5 (byte contract): the player form of `LearnRecipe` encodes exactly
+--   like the pre-K11e single-argument shape; the actor form round-trips.
+testLearnRecipeJsonShapes :: IO Bool
+testLearnRecipeJsonShapes = do
+    let playerBs = BLC.unpack (Aeson.encode (LearnRecipe ActorPlayer "trank_rezept"))
+        actorBs  = BLC.unpack (Aeson.encode (LearnRecipe (ActorNPC "schmied") "trank"))
+    r1 <- expectEqual "{\"tag\":\"LearnRecipe\",\"contents\":\"trank_rezept\"}" playerBs
+    r2 <- expectEqual (Just (LearnRecipe ActorPlayer "trank_rezept"))
+                      (Aeson.decode (BLC.pack "{\"tag\":\"LearnRecipe\",\"contents\":\"trank_rezept\"}"))
+    r3 <- expectEqual (Just (LearnRecipe (ActorNPC "schmied") "trank"))
+                      (Aeson.decode (BLC.pack actorBs))
+    pure (r1 && r2 && r3)
+
+-- | K11e.6: `knows_recipe` predicate JSON round-trips (player and actor form,
+--   including the author shorthand strings).
+testKnowsRecipePredicateJsonRoundTrip :: IO Bool
+testKnowsRecipePredicateJsonRoundTrip = do
+    let p1 = KnowsRecipe ActorPlayer "trank"
+        p2 = KnowsRecipe (ActorNPC "schmied") "trank"
+    r1 <- expectEqual (Just p1) (Aeson.decode (Aeson.encode p1))
+    r2 <- expectEqual (Just p2) (Aeson.decode (Aeson.encode p2))
+    r3 <- expectEqual (Just p1) (Aeson.decode (BLC.pack "{\"knows_recipe\":\"trank\"}"))
+    r4 <- expectEqual (Just p2) (Aeson.decode (BLC.pack "{\"knows_recipe\":\"schmied\",\"id\":\"trank\"}"))
     pure (r1 && r2 && r3 && r4)
 
 -- ---------------------------------------------------------------------------
@@ -12467,6 +12588,12 @@ main = do
         , runTest "crafting: use X on Y honours the learning lock (K11d.7)" testUseOnKnowledgeLock
         , runTest "recipes: knowledge survives save/load and undo reverts it (K11d.8)" testRecipeKnowledgeSaveLoadUndo
         , runTest "recipes: id/requires_learning serialize only when set (K11d.9)" testRecipeKeySerializationContract
+        , runTest "recipes: knows_recipe reads player knowledge (K11e.1)" testKnowsRecipePredicatePlayer
+        , runTest "recipes: knows_recipe actor form reads known_recipe_by namespace (K11e.2)" testKnowsRecipePredicateActor
+        , runTest "recipes: learn_msg overrides the default and binds {recipe} (K11e.3)" testLearnRecipeLearnMsgOverridesDefault
+        , runTest "recipes: NPC learning is silent, no trigger, idempotent (K11e.4)" testLearnRecipeActorIsSilent
+        , runTest "recipes: LearnRecipe player JSON shape is pinned (K11e.5)" testLearnRecipeJsonShapes
+        , runTest "recipes: knows_recipe predicate JSON round-trips (K11e.6)" testKnowsRecipePredicateJsonRoundTrip
         -- K15: Weltobjekte sind endlich (take_once), Ort-Regel
         , runTest "consume on item in container is refused (K15.0)" testConsumeItemInContainerRefused
         , runTest "consume on item on NPC is refused (K15.0)" testConsumeItemOnNPCRefused

@@ -2,6 +2,43 @@
 
 ## Unreleased
 
+### Rezeptwissen mit Akteuren: `knows_recipe`, NPC-Lehrer, `learn_msg` (K11e)
+
+K11d hinterließ drei offene Teile — alle drei sind jetzt umgesetzt
+(Begleitplan `plan-k11d-rezeptwissen.md`, Abschnitte „kann als K11e folgen“):
+
+- **Prädikat `knows_recipe:`** — Story-Gates ohne `set_flag`-Umweg:
+  `knows_recipe: <id>` (Spieler) bzw. `{knows_recipe: <npc>, id: <id>}`
+  (Akteur). Liest dieselben Namensräume, die `learn_recipe:` schreibt.
+- **Actor-Variante `learn_recipe: {id: <id>, actor: <npc>}`** — NPC-Lehrer:
+  die Figur “kennt” das Rezept (Voraussetzung für Lehr-Regeln). NPC-Lernen
+  ist **stilles Buchhalten**: keine Meldung, kein Trigger —
+  `on: learn_recipe <id>` bleibt ein **Spieler**-Trigger (Nutzer-Entscheidung
+  2026-10-09).
+- **`learn_msg: <text>` am Rezept** — eigene Lern-Meldung pro Rezept
+  (Default `recipes.learn.default`), `{recipe}` löst zum Ergebnis-Itemnamen
+  bzw. zur Rezept-ID auf (wie im Default). `msg:` auf Regeln bleibt möglich.
+- **Namensraum-Entscheidung (Nutzer, 2026-10-09):** Spieler-Wissen bleibt
+  `known_recipe.<id>` (K11d, save-kompatibel); NPC-Wissen liegt im **eigenen,
+  geschlossenen** Namensraum `known_recipe_by.<npc>.<id>` (bewusst nicht im
+  K9-Raum `known.<actor>.<id>` — keine Kollision mit Fakten-IDs möglich).
+  Beide Präfixe sind engine-owned: Autoren-Variablen dort sind harte Fehler
+  (`KnownRecipeVariableClash`).
+- **Keine neuen SaveState-Felder, keine Migration:** Wissen bleibt VarMap,
+  `RecipeEntry`-Metadaten serialisieren nur bei Belegung.
+- **Ehrliche Compile-Diagnosen:** `RecipeLearnMsgWithoutId` (`learn_msg:` ohne
+  `id:`), `UnknownNpc` (Akteur in `learn_recipe: {id, actor}` /
+  `knows_recipe: {…, actor}` weder `player` noch deklarierte Figur),
+  `UnknownRecipeId` jetzt auch für `knows_recipe:`.
+- **Byte-Vertrag gemessen:** 136/136 Artefakte (world.json + save.json aller
+  68 kompilierbaren Abenteuer/Fixtures) 100 % byte-identisch gegen `eefa17b`.
+  Die Spieler-Form von `LearnRecipe` behält ihre historische JSON-Form
+  `{"tag": "LearnRecipe", "contents": "<id>"}` (per Test gepinnt).
+- **Tests & Qualität:** 6 neue Engine-Tests (`knows_recipe` Spieler/Akteur,
+  `learn_msg`-Override mit `{recipe}`, stilles NPC-Lernen + Trigger-Scope,
+  JSON-Formen, Prädikat-Round-Trip) und 2 neue Worldbuilder-Tests
+  (Kompilierung + Diagnosen). Engine-Tests: 580, Worldbuilder-Tests: 301.
+
 ### Container-Kommandos, Open-Reveal und Look-Inside (F5-Rest Zork-Port)
 
 - **`open`/`close`/`lock`/`unlock` laufen durch `verb_map`:** die vier

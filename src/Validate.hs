@@ -351,7 +351,7 @@ allOutcomes gw = concat
     [ concatMap (\r -> catMaybes [roomOnEnter r, roomOnLook r, roomOnExit r, roomSearchOutcome r])
         (Map.elems (rooms gw))
     , concatMap (\(_, o) -> [o]) (concatMap (Map.toList . itemVerbMap) (Map.elems (itemDefs gw)))
-    , Map.elems (itemInteractions gw)
+    , map recipeOutcome (Map.elems (itemInteractions gw))
     , concatMap (\(_, o) -> [o]) (concatMap (Map.toList . npcVerbMap) (Map.elems (npcDefs gw)))
     , catMaybes (map questReward (Map.elems (questDefs gw)))
     , concatMap (\(_, o) -> [o])

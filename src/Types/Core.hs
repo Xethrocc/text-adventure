@@ -151,6 +151,7 @@ module Types.Core
     , recipeRequiresLearning
     , recipeResult
     , recipeIngredientsList
+    , RecipeEntry (..)
     , GameWorld (..)
     , itemInteractionsToJSON
     , parseItemInteractions
@@ -894,6 +895,7 @@ data Predicate
     | VarIs String String               -- ^ text variable equals a literal (`{ var: X, is: Y }`)
     | HasCondition String               -- ^ active condition/timer on player (Phase 2.1)
     | Knows ActorRef String             -- ^ W1: actor knows this fact (VarMap `known.<actor>.<fact>`)
+    | KnowsRecipe ActorRef String       -- ^ K11e: actor knows this recipe (player: `known_recipe.<id>`, NPC: `known_recipe_by.<npc>.<id>`)
     | ContainerHas EntityID ItemID     -- ^ Direct membership, independent of visibility/open state.
     | ActorHas ActorRef ItemID          -- ^ W4: does the actor (player, NPC, device) carry/hold this item?
     | HasTaggedItem ActorRef String     -- ^ B2: does the actor carry an item with this tag?
@@ -921,6 +923,7 @@ instance ToJSON Predicate where
         VarIs n v          -> object [ "var" .= n, "is" .= v ]
         HasCondition c     -> object [ "has_condition" .= c ]
         Knows a f          -> object [ "knows" .= actorId a, "fact" .= f ]
+        KnowsRecipe a r    -> object [ "knows_recipe" .= actorId a, "id" .= r ]
         HasTaggedItem a t  -> object [ "actor_has_tag" .= object ["actor" .= actorId a, "tag" .= t ] ]
         RoomHasTaggedItem r t -> object [ "room" .= r, "has_item_tag" .= t ]
 
@@ -986,6 +989,22 @@ instance FromJSON Predicate where
                         String f  -> pure (Knows ActorPlayer (T.unpack f))
                         Object ko -> Knows <$> (ko .: "actor" <|> ko .: "knows") <*> ko .: "fact"
                         _         -> fail "Expected fact string or object for knows")
+        -- K11e: recipe knowledge — `knows_recipe: <id>` (player) or
+        -- `{knows_recipe: <actor>, id: <id>}` (mirrors the `knows` forms).
+        <|> (do k <- o .: "knows_recipe"
+                mRid  <- o .:? "id"
+                mActor <- o .:? "actor"
+                case (mRid, mActor) of
+                    (Just rid, _) -> do
+                        act <- parseJSON k
+                        pure (KnowsRecipe act rid)
+                    (Nothing, Just act) -> case k of
+                        String r -> pure (KnowsRecipe act (T.unpack r))
+                        _        -> fail "Expected recipe id string for knows_recipe"
+                    (Nothing, Nothing) -> case k of
+                        String r  -> pure (KnowsRecipe ActorPlayer (T.unpack r))
+                        Object ko -> KnowsRecipe <$> (ko .: "actor" <|> ko .: "knows_recipe") <*> ko .: "id"
+                        _         -> fail "Expected recipe id string or object for knows_recipe")
         <|> (EntityHasState <$> o .: "state" <*> o .: "is")
         -- Text comparison for variables holding text (`type: text`), e.g. the
         -- engine's own `combat.action`. Distinct from `state`/`is`, which tests
@@ -1105,7 +1124,7 @@ data Effect
     | Block (Maybe String) Bool                   -- ^ Phase 2.2: veto command execution (optional message, consumesTurn)
     | CallProc String [EffectValue]               -- ^ Phase 2.5: run procedure `name` with literal args (D2)
     | Learn ActorRef String                       -- ^ W1: actor learns a fact (idempotent, fires OnLearn)
-    | LearnRecipe String                          -- ^ K11d: player learns a recipe (idempotent, fires OnLearnRecipe)
+    | LearnRecipe ActorRef String                 -- ^ K11d/K11e: actor learns a recipe (idempotent; the player path fires OnLearnRecipe)
     | Forget ActorRef String                      -- ^ W1: actor forgets a fact (explicit only, never automatic)
     | ShowNotes                                   -- ^ W1: render the player's notes book
     | NextChapter                                  -- ^ W3: to the next chapter (declaration order)
@@ -1399,6 +1418,15 @@ instance ToJSON Effect where
             , "keep"   .= keep
             ]
         ]
+    -- K11d/K11e: the player form keeps the generic single-argument shape
+    --   {"tag": "LearnRecipe", "contents": "<id>"} byte for byte (worlds
+    --   written before K11e stay identical); the actor form (K11e, NPC
+    --   teachers) encodes an object contents with id and actor.
+    toJSON (LearnRecipe ActorPlayer rId) =
+        object [ "tag" .= ("LearnRecipe" :: String), "contents" .= rId ]
+    toJSON (LearnRecipe a rId) =
+        object [ "tag" .= ("LearnRecipe" :: String)
+               , "contents" .= object [ "id" .= rId, "actor" .= actorId a ] ]
     toJSON other = genericToJSON defaultOptions other
 
     toEncoding (RollDice pool die stream keep) = pairs
@@ -1409,10 +1437,15 @@ instance ToJSON Effect where
             , "keep"   .= keep
             ]
         )
+    toEncoding (LearnRecipe ActorPlayer rId) =
+        pairs ("tag" .= ("LearnRecipe" :: String) <> "contents" .= rId)
+    toEncoding (LearnRecipe a rId) =
+        pairs ("tag" .= ("LearnRecipe" :: String)
+            <> "contents" .= object [ "id" .= rId, "actor" .= actorId a ])
     toEncoding other = genericToEncoding defaultOptions other
 
 instance FromJSON Effect where
-    parseJSON v = parseRollDice v <|> genericParseJSON defaultOptions v <|> parseLegacyEffect v
+    parseJSON v = parseRollDice v <|> parseLearnRecipe v <|> genericParseJSON defaultOptions v <|> parseLegacyEffect v
       where
         parseRollDice = withObject "Effect" $ \o -> do
             rd <- o .: "roll_dice"
@@ -1422,6 +1455,22 @@ instance FromJSON Effect where
                 s <- ro .:? "stream" .!= ""
                 k <- ro .:? "keep" .!= p
                 pure (RollDice p d s k)
+        -- K11d/K11e: player form (contents = recipe id string, historical —
+        --   the generic decoder no longer fits once the constructor carries an
+        --   actor) and actor form (contents = {id, actor}).
+        parseLearnRecipe = withObject "Effect" $ \o -> do
+            tag <- o .: "tag" :: Parser T.Text
+            if tag == "LearnRecipe"
+                then do
+                    contents <- o .: "contents"
+                    case contents of
+                        String r  -> pure (LearnRecipe ActorPlayer (T.unpack r))
+                        Object co -> do
+                            rId <- co .: "id"
+                            a   <- co .:? "actor" .!= "player"
+                            pure (LearnRecipe (parseActorString a) rId)
+                        _ -> fail "LearnRecipe contents mismatch"
+                else fail "not a LearnRecipe effect"
         parseLegacyEffect = withObject "Effect" $ \o -> do
             tag <- o .: "tag" :: Parser T.Text
             case tag of
@@ -2331,13 +2380,25 @@ recipeIngredientsList :: RecipeKey -> [ItemID]
 recipeIngredientsList (RecipePair _ _ _ i1 i2)       = [i1, i2]
 recipeIngredientsList (RecipeIngredients _ _ _ ings) = ings
 
+-- | K11e: a recipe map value — the crafting outcome plus per-recipe
+--   presentation data. `recipeLearnMsg` overrides the `recipes.learn.default`
+--   catalog text when the player first learns this recipe; `{recipe}` in the
+--   text resolves to the recipe display name (the result item's name, or the
+--   recipe id when the recipe has no `result:`). Written to world.json only
+--   when set (the K11d pattern), so existing worlds stay byte-identical.
+data RecipeEntry = RecipeEntry
+    { recipeOutcome  :: Effect
+    , recipeLearnMsg :: Maybe String
+    }
+    deriving (Show, Eq, Generic)
+
 -- | Static world definition containing blueprint/map data
 data GameWorld = GameWorld
     { rooms              :: Map.Map RoomID Room
     , itemDefs           :: Map.Map ItemID ItemDef
     , npcDefs            :: Map.Map NPCID NPCDef
     , entityInteractions :: Map.Map (String, String) (String, String)
-    , itemInteractions   :: Map.Map RecipeKey Effect  -- ^ Recipe -> outcome
+    , itemInteractions   :: Map.Map RecipeKey RecipeEntry  -- ^ Recipe -> outcome + optional learn message (K11e)
     , npcInteractions    :: Map.Map (String, String) Effect  -- ^ (Item, NPC) -> outcome (B9); empty map is omitted
     , questDefs          :: Map.Map QuestID Quest                    -- ^ Static quest definitions
     , vehicleDefs        :: Map.Map VehicleID VehicleDef             -- ^ Static vehicle definitions (Phase 3)
@@ -2521,22 +2582,25 @@ instance FromJSON GameWorld where
 --   with optional "id".  K11d: "id" (both shapes) and "requires_learning: true"
 --   are written only when set — existing worlds stay byte-identical, and the
 --   historical field order is untouched (new fields append at the end).
-itemInteractionsToJSON :: Map.Map RecipeKey Effect -> Value
+--   K11e: "learn_msg" (the RecipeEntry's learn message) follows the same rule.
+itemInteractionsToJSON :: Map.Map RecipeKey RecipeEntry -> Value
 itemInteractionsToJSON m =
     toJSON [ encodeEntry k e | (k, e) <- Map.toList m ]
   where
     encodeEntry (RecipePair mId req mRes a b) e =
-        object $ [ "a" .= a, "b" .= b, "effect" .= e ]
+        object $ [ "a" .= a, "b" .= b, "effect" .= recipeOutcome e ]
                ++ [ "result" .= r | Just r <- [mRes] ]
                ++ [ "id" .= i | Just i <- [mId] ]
                ++ [ "requires_learning" .= True | req ]
+               ++ [ "learn_msg" .= t | Just t <- [recipeLearnMsg e] ]
     encodeEntry (RecipeIngredients mId req mRes ings) e =
-        object $ [ "ingredients" .= ings, "effect" .= e ]
+        object $ [ "ingredients" .= ings, "effect" .= recipeOutcome e ]
                ++ [ "id" .= i | Just i <- [mId] ]
                ++ [ "result" .= r | Just r <- [mRes] ]
                ++ [ "requires_learning" .= True | req ]
+               ++ [ "learn_msg" .= t | Just t <- [recipeLearnMsg e] ]
 
-parseItemInteractions :: Value -> Parser (Map.Map RecipeKey Effect)
+parseItemInteractions :: Value -> Parser (Map.Map RecipeKey RecipeEntry)
 parseItemInteractions v =
     (do xs <- parseJSON v :: Parser [Value]
         Map.fromList <$> mapM entry xs)
@@ -2546,16 +2610,17 @@ parseItemInteractions v =
         mRes  <- o .:? "result"
         mId   <- o .:? "id"
         req   <- o .:? "requires_learning" .!= False
+        mLearn <- o .:? "learn_msg"
         mIngs <- o .:? "ingredients"
         case mIngs of
             Just ings -> do
                 e <- o .: "effect"
-                pure (RecipeIngredients mId req mRes ings, e)
+                pure (RecipeIngredients mId req mRes ings, RecipeEntry e mLearn)
             Nothing -> do
                 a <- o .: "a"
                 b <- o .: "b"
                 e <- o .: "effect"
-                pure (RecipePair mId req mRes a b, e)
+                pure (RecipePair mId req mRes a b, RecipeEntry e mLearn)
     -- Legacy form: `"a|b"` string keys.
     legacy = do
         m <- parseJSON v :: Parser (Map.Map String Effect)
@@ -2563,7 +2628,7 @@ parseItemInteractions v =
             Right kvs -> pure (Map.fromList kvs)
             Left err  -> fail err
     parseKey (k, e) = case break (== '|') k of
-        (a, '|':b) -> Right (RecipePair Nothing False Nothing a b, e)
+        (a, '|':b) -> Right (RecipePair Nothing False Nothing a b, RecipeEntry e Nothing)
         _          -> Left ("Bad item interaction key: " ++ k)
 
 -- | Encode item-on-NPC outcomes as objects (B9).

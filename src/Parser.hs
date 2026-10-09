@@ -2416,13 +2416,13 @@ tryItemOnItem usedId targetStr state =
             in case (knownPairs, knownMultis) of
                 ((_, outcome, False) : _, _) ->
                     let state' = bindItemVars usedId targetId state
-                    in Just (applyCommandOutcomeEv outcome targetId state')
+                    in Just (applyCommandOutcomeEv (recipeOutcome outcome) targetId state')
                 ((_, outcome, True) : _, _) ->
                     let state' = bindItemVars targetId usedId state
-                    in Just (applyCommandOutcomeEv outcome targetId state')
+                    in Just (applyCommandOutcomeEv (recipeOutcome outcome) targetId state')
                 ([], (_, ings, outcome) : _) ->
                     let state' = bindIngredientVars ings state
-                    in Just (applyCommandOutcomeEv outcome targetId state')
+                    in Just (applyCommandOutcomeEv (recipeOutcome outcome) targetId state')
                 ([], [])
                     | null pairCandidates && null multiCandidates -> Nothing
                     | otherwise ->
@@ -2476,10 +2476,10 @@ craftRecipe targetStr state
                         case [ (k, out) | (k, out) <- known, isReachable k ] of
                             ((RecipePair _ _ _ i1 i2, outcome) : _) ->
                                 let state' = bindItemVars i1 i2 state
-                                in applyCommandOutcomeEv outcome resId state'
+                                in applyCommandOutcomeEv (recipeOutcome outcome) resId state'
                             ((RecipeIngredients _ _ _ ings, outcome) : _) ->
                                 let state' = bindIngredientVars ings state
-                                in applyCommandOutcomeEv outcome resId state'
+                                in applyCommandOutcomeEv (recipeOutcome outcome) resId state'
                             [] ->
                                 -- known recipes, but not one is executable:
                                 -- quote the first KNOWN candidate's missing item

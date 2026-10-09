@@ -119,7 +119,9 @@ module Game
     , evalPredicate
     , resolveValueRef
     , formatWithVars
+    , formatWithVarsPlus
     , lookupVarForFormat
+    , recipeKnowledgeKey
     , lookupStandingName
     , setPlayerHP
     , updatePlayerHealth
@@ -996,6 +998,22 @@ recipeDisplayName k st = case recipeResult k of
         _                                      -> resId
     Nothing -> fromMaybe "" (recipeId k)
 
+-- | K11e: the VarMap key holding an actor's recipe knowledge — the player's
+--   own namespace `known_recipe.<id>` (K11d, save-compatible, unchanged) and
+--   the closed NPC namespace `known_recipe_by.<npc>.<id>` (NPC teachers).
+--   Both are engine-owned (the worldbuilder rejects author declarations in
+--   either namespace).
+recipeKnowledgeKey :: ActorRef -> String -> String
+recipeKnowledgeKey ActorPlayer rId = "known_recipe." ++ rId
+recipeKnowledgeKey actor rId       = "known_recipe_by." ++ actorId actor ++ "." ++ rId
+
+-- | Like 'formatWithVars' with extra bindings that shadow the variable lookup
+--   (e.g. `{recipe}` in a recipe's `learn_msg`, which resolves to the recipe
+--   display name instead of a variable).
+formatWithVarsPlus :: [(String, String)] -> String -> GameState -> String
+formatWithVarsPlus extras str st =
+    formatStringWith str (\n -> lookup n extras <|> lookupVarForFormat st n)
+
 -- | Items (definitions) at a typed location, **including hidden ones** — the
 --   raw location view for state queries (B9: worn-equipment bonuses, `count:`).
 --   `getItemsInLocation` is the *visible* view (hidden items need discovery).
@@ -1689,6 +1707,10 @@ evalPredicate (VarIs name expected) st
 --   parameters/locals of an active procedure shadow it like any variable.
 evalPredicate (Knows actor fact) st =
     getVariable ("known." ++ actorId actor ++ "." ++ fact) st == Just (VVInt 1)
+-- K11e: recipe knowledge — `known_recipe.<id>` (player) /
+--   `known_recipe_by.<npc>.<id>` (NPC teachers), value 1 like the facts.
+evalPredicate (KnowsRecipe actor rId) st =
+    getVariable (recipeKnowledgeKey actor rId) st == Just (VVInt 1)
 evalPredicate (Compare lhs op rhs) st =
     let lval = resolveValueRef lhs st
         rval = resolveValueRef rhs st

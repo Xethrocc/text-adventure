@@ -1824,18 +1824,20 @@ interactions:
   des Abenteuers. Verweist `result:` auf ein unbekanntes Item, wird die Warnung
   `UnknownRecipeResult` erzeugt.
 
-### Rezeptwissen: `id:`, `requires_learning:`, `learn_recipe:` (K11d)
+### Rezeptwissen: `id:`, `requires_learning:`, `learn_recipe:`, `learn_msg:`, `knows_recipe:` (K11d/K11e)
 
 Rezepte können **gelernt**, **angesehen** und **unterschieden** werden. Das
 Wissenssystem ist die Rezept-Darstellung des K9-Musters (`learn:` /
-`known.<actor>.<fact>`) — ohne Actor-Schicht, denn Rezeptwissen ist
-Spielerwissen.
+`known.<actor>.<fact>`) — das Spielerwissen bleibt spieler-global (K11d);
+seit **K11e** gibt es zusätzlich die Actor-Schicht für **NPC-Lehrer**
+(`known_recipe_by.<npc>.<id>`).
 
 ```yaml
 interactions:
   item:
     - id: heiltrank_rezept          # stabile Referenz (freie Zeichenkette)
       requires_learning: true       # die Sperre: erst nach dem Lernen ausführbar
+      learn_msg: "Neu gelernt: {recipe}!"   # optional: eigene Lern-Meldung (K11e)
       item1: kraut
       item2: kessel
       result: heiltrank
@@ -1843,6 +1845,13 @@ interactions:
         - msg: "Du braust einen Heiltrank."
         - consume: kraut
         - give: heiltrank
+
+rules:
+  - id: schmied_kenntnis            # Gate ohne Umweg über set_flag (K11e)
+    on: turn
+    when: {knows_recipe: schmied, id: heiltrank_rezept}
+    effects:
+      - msg: "Der Schmied kennt das Rezept."
 
 items:
   - id: rezeptbuch
@@ -1859,30 +1868,43 @@ rules:
       - msg: "Das Geheimnis des Heiltranks ist deins."
 ```
 
-- **Zwei neue Felder** an `interactions.item` — für **beide** Rezeptarten
-  (`item1`/`item2` und `ingredients:`):
+- **Zwei Felder** an `interactions.item` (K11d) — für **beide** Rezeptarten
+  (`item1`/`item2` und `ingredients:`) — plus `learn_msg:` (K11e):
   - `id: <string>` — stabile Referenz für `learn_recipe:`, `known_recipe.<id>`,
     `on: learn_recipe <id>` und die Validierung. **Kein Format-Zwang** (auch
     Groß-/Kleinschreibung bleibt erhalten).
   - `requires_learning: true` — die **Sperre** (Default `false`). Gesperrt sind
     `craft` **und** `use X on Y`; ohne gelerntes Rezept wird nichts ausgeführt.
     Rezepte ohne Flag bleiben unverändert nutzbar.
+  - `learn_msg: <text>` — **K11e:** eigene Lern-Meldung für den Spieler
+    (Default `recipes.learn.default`); `{recipe}` löst wie dort zum
+    Ergebnis-Itemnamen bzw. zur Rezept-ID auf. Ohne `id:` harte Diagnose
+    `RecipeLearnMsgWithoutId` (nie zeigbar). `msg:` vor dem `learn_recipe`-
+    Effekt bleibt zusätzlich möglich (Regel-Ebene).
 - **Bekannt = ohne Flag oder gelernt.** Nur das Flag sperrt; die Rezeptliste
   (Lernen, Buch, Zähler) braucht nur eine `id:`. Ein ungesperrtes `id:`-Rezept
   lässt sich ins Rezeptbuch lernen, ohne gesperrt zu sein.
 - **Wissensspeicher:** `known_recipe.<id>` = 1 in der vorhandenen VarMap —
   **kein neues Save-Feld**, Speicherung/Undo/Serialisierung laufen mit.
   Lernen ist **idempotent** (Set-Semantik): ein zweites Lernen ändert nichts
-  und meldet nichts.
-- **Effekt `learn_recipe: <id>`** — nur statische IDs (keine dynamischen
-  Referenzen, K16c-Ehrlichkeit). Beim **ersten** Lernen: die Meldung
-  `recipes.learn.default` („You learn a recipe: {recipe}." / „Du lernst ein
-  Rezept: {recipe}.") und der Trigger `OnLearnRecipe`. `{recipe}` ist der
-  Ergebnis-Itemname (falls `result:` gesetzt), sonst die Rezept-ID. Eigene
-  Meldungen: `msg:` **vor** den `learn_recipe`-Effekt stellen.
+  und meldet nichts. Beide Namensräume (`known_recipe.` und `known_recipe_by.`)
+  gehören der Engine — Autoren-Variablen dort sind harte Fehler.
+- **Effekt `learn_recipe: <id>`** bzw. **`learn_recipe: {id: <id>, actor: <npc>}`**
+  (K11e) — nur statische IDs (keine dynamischen Referenzen, K16c-Ehrlichkeit).
+  Beim **ersten** Lernen des **Spielers**: die Meldung `recipes.learn.default`
+  bzw. die `learn_msg:` des Rezepts und der Trigger `OnLearnRecipe`. `{recipe}`
+  ist der Ergebnis-Itemname (falls `result:` gesetzt), sonst die Rezept-ID.
+  **NPC-Lernen (K11e)** schreibt den geschlossenen Namensraum
+  `known_recipe_by.<npc>.<id>` und ist **stilles Buchhalten**: keine Meldung,
+  kein Trigger — `on: learn_recipe <id>` bleibt ein **Spieler**-Trigger.
+- **Prädikat `knows_recipe:` (K11e)** — die Lese-Seite ohne `set_flag`-Umweg:
+  `knows_recipe: <id>` (Spieler) bzw. `{knows_recipe: <npc>, id: <id>}`
+  (Akteur). Typo-Akteure sind harte Fehler (`UnknownNpc`), unbekannte Rezept-IDs
+  ebenfalls (`UnknownRecipeId`).
 - **Trigger `on: learn_recipe <id>`** — feuert genau einmal, in
-  Lernreihenfolge. Das ist die Story-Freischalt-Stelle (Zugänge, Reputation,
-  NPC-Reaktionen); Story-Gates über `on: learn_recipe <id>` + `set_flag`.
+  Lernreihenfolge, **nur beim Lernen des Spielers** (K11e-Entscheidung). Das
+  ist die Story-Freischalt-Stelle (Zugänge, Reputation, NPC-Reaktionen);
+  Story-Gates auch direkt über `when: {knows_recipe: …}` (K11e).
 - **Befehl `recipes`** (keine Synonyme): Kopfzeile „Recipes: {known} / {total}"
   (Gesamt = alle `id:`-Rezepte), darunter die **bekannten** Rezepte als
   „Ergebnisname — Zutatennamen" (ohne `result:` erscheint die Rezept-ID als
@@ -1909,13 +1931,17 @@ rules:
   „Du kennst kein Rezept mit {item1} und {item2}.") statt des stillen
   Durchfalls. Ohne jedes passende Rezept bleibt alles unverändert.
 - **Checks (harte Diagnosen):** `RecipeLearningWithoutId`
-  (`requires_learning: true` ohne `id:`), `DuplicateRecipeId` (doppelte `id:`),
-  `UnknownRecipeId` (`learn_recipe:` oder `on: learn_recipe <id>` ohne
-  deklarierte `id:`), `KnownRecipeVariableClash` (`known_recipe.` gehört der
-  Engine). Zusätzlich die Warnung `UnreachableTrigger`, wenn kein Effekt ein
-  `on: learn_recipe <id>` je lehrt.
-- **Serialisierung:** `id` und `requires_learning: true` werden nur bei
-  Belegung geschrieben — bestehende Welten serialisieren byte-identisch.
+  (`requires_learning: true` ohne `id:`), `RecipeLearnMsgWithoutId` (`learn_msg:`
+  ohne `id:`), `DuplicateRecipeId` (doppelte `id:`),
+  `UnknownRecipeId` (`learn_recipe:`, `knows_recipe:` oder
+  `on: learn_recipe <id>` ohne deklarierte `id:`), `UnknownNpc` (Akteur in
+  `learn_recipe: {id, actor}` / `knows_recipe: {…, actor}` ist weder `player`
+  noch eine deklarierte Figur), `KnownRecipeVariableClash` (`known_recipe.` und
+  `known_recipe_by.` gehören der Engine). Zusätzlich die Warnung
+  `UnreachableTrigger`, wenn kein Effekt ein `on: learn_recipe <id>` je lehrt.
+- **Serialisierung:** `id`, `requires_learning: true` und `learn_msg:` werden
+  nur bei Belegung geschrieben — bestehende Welten serialisieren
+  byte-identisch (136/136 Artefakte gegen `eefa17b` gemessen).
   Rezepte **ohne** `id:` sind weder lernbar noch gezählt (Legacy-Pfad).
 
 Vollstaendiges Beispiel: `examples/fixtures/rezeptwissen.yaml`.

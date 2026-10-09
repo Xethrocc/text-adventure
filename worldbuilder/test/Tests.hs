@@ -2148,7 +2148,7 @@ testItemInteractionCompiles :: IO Bool
 testItemInteractionCompiles = do
     let ix = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] Nothing False [AOMessage "paste made"] ]
+            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] Nothing False Nothing [AOMessage "paste made"] ]
             , aiNpc = [] }
         adv = (minAdventure (minRoom "loc_0")) { advInteractions = Just ix }
     case compileAdventure adv of
@@ -4386,6 +4386,8 @@ tests =
     , ("recipes: lock without id, duplicate ids and unknown refs fail (K11d)", testRecipeLearningDiagnostics)
     , ("recipes: requires_learning is a known key; known_recipe. is reserved (K11d)", testRecipeLearningKnownKeysAndNamespace)
     , ("recipes: untaught learn_recipe rule warns, taught stays silent (K11d)", testRecipeLearningUntaughtTrigger)
+    , ("recipes: knows_recipe and learn_recipe actor form compile (K11e)", testRecipeK11eCompiles)
+    , ("recipes: K11e diagnostics for ids, actors, learn_msg, namespace (K11e)", testRecipeK11eDiagnostics)
     -- K15: Weltobjekte sind endlich (repeatable: true, Default einmal)
     , ("repeatable: YAML parsing and knownKeys clean (K15)", testRepeatableYamlAndKnownKeysClean)
     , ("repeatable: compile of repeatable items and containers (K15)", testRepeatableCompilation)
@@ -8357,7 +8359,7 @@ testCraftingCompileValidForm = do
     let r0 = minRoom "loc_0"
         ix = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] Nothing False
+            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] Nothing False Nothing
                             [ AOConsumeItem "{item1}"
                             , AOConsumeItem "{item2}"
                             , AOMessage "You grind herb in mortar."
@@ -8386,7 +8388,7 @@ testCraftingUnboundRefRejected = do
         -- 1. Unbound {item9} in interactions: item:
         ixBad = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] Nothing False
+            , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] Nothing False Nothing
                             [ AOConsumeItem "{item9}" ]
                        ]
             , aiNpc = []
@@ -8621,7 +8623,7 @@ testIngredientsDynamicRefValidation = do
         -- 1. Valid: {ingredient1..3} for 3-ingredient recipe
         ixGood = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"] Nothing False
+            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"] Nothing False Nothing
                             [ AOConsumeItem "{ingredient1}"
                             , AOConsumeItem "{ingredient2}"
                             , AOConsumeItem "{ingredient3}"
@@ -8645,7 +8647,7 @@ testIngredientsDynamicRefValidation = do
     -- 2. Invalid: {ingredient4} in 3-ingredient recipe
     let ixBad4 = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"] Nothing False
+            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"] Nothing False Nothing
                             [ AOConsumeItem "{ingredient4}" ]
                        ]
             , aiNpc = []
@@ -8659,7 +8661,7 @@ testIngredientsDynamicRefValidation = do
     -- 3. Invalid: {item1} in ingredients recipe
     let ixBadItem1 = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"] Nothing False
+            , aiItem = [ AItemInteraction Nothing "" "" ["kessel", "blatt_a", "blatt_b"] Nothing False Nothing
                             [ AOConsumeItem "{item1}" ]
                        ]
             , aiNpc = []
@@ -8673,7 +8675,7 @@ testIngredientsDynamicRefValidation = do
     -- 4. Invalid: {ingredient1} in pair recipe
     let ixBadIngInPair = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "kessel" "blatt_a" [] Nothing False
+            , aiItem = [ AItemInteraction Nothing "kessel" "blatt_a" [] Nothing False Nothing
                             [ AOConsumeItem "{ingredient1}" ]
                        ]
             , aiNpc = []
@@ -8692,7 +8694,7 @@ testCraftingRecipeResultValidation = do
     let r0 = minRoom "loc_0"
         ixGood = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "mana_leaf" "kettle" [] (Just "mana_potion") False
+            , aiItem = [ AItemInteraction Nothing "mana_leaf" "kettle" [] (Just "mana_potion") False Nothing
                             [ AOConsumeItem "{item1}" ]
                        ]
             , aiNpc = []
@@ -8716,7 +8718,7 @@ testCraftingRecipeResultValidation = do
     -- 2. Unknown result emits UnknownRecipeResult warning
     let ixBad = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "mana_leaf" "kettle" [] (Just "hexenwerk") False
+            , aiItem = [ AItemInteraction Nothing "mana_leaf" "kettle" [] (Just "hexenwerk") False Nothing
                             [ AOConsumeItem "{item1}" ]
                        ]
             , aiNpc = []
@@ -8734,7 +8736,7 @@ testCraftingRecipeResultValidation = do
     -- 3. Nothing result emits no UnknownRecipeResult warnings
     let ixNone = AInteractions
             { aiEntity = []
-            , aiItem = [ AItemInteraction Nothing "mana_leaf" "kettle" [] Nothing False
+            , aiItem = [ AItemInteraction Nothing "mana_leaf" "kettle" [] Nothing False Nothing
                             [ AOConsumeItem "{item1}" ]
                        ]
             , aiNpc = []
@@ -8832,7 +8834,7 @@ testRecipeLearningCompiles = do
                             (E.itemInteractions w))
             r3 <- expectTrue "learn_recipe compiles to LearnRecipe"
                 (Map.lookup (E.RecipePair (Just "lehrer") False Nothing "buch" "kessel") (E.itemInteractions w)
-                    == Just (E.LearnRecipe "TrankRezept"))
+                    == Just (E.RecipeEntry (E.LearnRecipe E.ActorPlayer "TrankRezept") Nothing))
             r4 <- expectTrue "on: learn_recipe keeps the authored case"
                 (any (\t -> E.trEvent t == E.OnLearnRecipe "TrankRezept") (E.triggerDefs w))
             r5 <- expectTrue ("compiles with zero warnings: " ++ show (map ciCode (crWarnings cr)))
@@ -8948,6 +8950,109 @@ testRecipeLearningUntaughtTrigger = do
         Right (Right cr) ->
             expectEqual [] [ w | w <- crWarnings cr, ciCode w == "UnreachableTrigger" ]
     pure (r1 && r2)
+
+-- ---------------------------------------------------------------------------
+-- K11e: knows_recipe, learn_recipe {id, actor}, learn_msg
+-- ---------------------------------------------------------------------------
+
+-- | K11e: `knows_recipe` (player and actor form) compiles to 'E.KnowsRecipe',
+--   `learn_recipe: {id, actor}` to 'E.LearnRecipe' with an actor, and
+--   `learn_msg:` lands in the recipe entry.
+testRecipeK11eCompiles :: IO Bool
+testRecipeK11eCompiles = do
+    let yaml = k11dYaml
+            [ [ "    - id: TrankRezept"
+              , "      item1: kraut"
+              , "      item2: kessel"
+              , "      learn_msg: \"Du lernst: {recipe}.\""
+              , "      effects:"
+              , "        - msg: \"Trank gebraut.\"" ]
+            , [ "    - id: lehrer"
+              , "      item1: buch"
+              , "      item2: kessel"
+              , "      effects:"
+              , "        - learn_recipe: {id: TrankRezept, actor: schmied}" ]
+            ]
+            [ "npcs:"
+            , "  - id: schmied"
+            , "    name: Schmied"
+            , "    location: loc_0"
+            , "rules:"
+            , "  - id: gate_p"
+            , "    on: turn"
+            , "    when: {knows_recipe: TrankRezept}"
+            , "    effects:"
+            , "      - msg: \"a\""
+            , "  - id: gate_a"
+            , "    on: turn"
+            , "    when: {knows_recipe: schmied, id: TrankRezept}"
+            , "    effects:"
+            , "      - msg: \"b\"" ]
+    case k11dCompile yaml of
+        Left err -> do putStrLn ("  yaml decode failed: " ++ err); pure False
+        Right (Left errs) -> do
+            putStrLn ("  unexpected compile error: " ++ issuesText errs)
+            pure False
+        Right (Right cr) -> do
+            let w = crWorld cr
+                mTrank = Map.lookup (E.RecipePair (Just "TrankRezept") False Nothing "kraut" "kessel") (E.itemInteractions w)
+                mLehrer = Map.lookup (E.RecipePair (Just "lehrer") False Nothing "buch" "kessel") (E.itemInteractions w)
+                conds = [ (E.trId t, E.trCondition t) | t <- E.triggerDefs w ]
+            r1 <- expectEqual (Just (Just "Du lernst: {recipe}.")) (E.recipeLearnMsg <$> mTrank)
+            r2 <- expectEqual (Just (E.LearnRecipe (E.ActorNPC "schmied") "TrankRezept")) (E.recipeOutcome <$> mLehrer)
+            r3 <- expectTrue "player form compiles"
+                (elem ("gate_p", Just (E.KnowsRecipe E.ActorPlayer "TrankRezept")) conds)
+            r4 <- expectTrue "actor form compiles"
+                (elem ("gate_a", Just (E.KnowsRecipe (E.ActorNPC "schmied") "TrankRezept")) conds)
+            r5 <- expectEqual [] (crWarnings cr)
+            pure (r1 && r2 && r3 && r4 && r5)
+
+-- | K11e diagnostics: `knows_recipe` at undeclared ids, actor refs that are
+--   neither 'player' nor an npc, `learn_msg` without `id:`, and the reserved
+--   `known_recipe_by.` namespace.
+testRecipeK11eDiagnostics :: IO Bool
+testRecipeK11eDiagnostics = do
+    let expectCode code yaml = case k11dCompile yaml of
+            Left err -> do putStrLn ("  yaml decode failed: " ++ err); pure False
+            Right (Left errs) ->
+                expectTrue (code ++ " reported: " ++ issuesText errs)
+                    (any (\i -> ciCode i == code) errs)
+            Right (Right _) -> expectTrue (code ++ " must fail the compile") False
+        badPred =
+            [ "rules:"
+            , "  - id: gate"
+            , "    on: turn"
+            , "    when: {knows_recipe: fehlt}"
+            , "    effects:"
+            , "      - msg: \"x\"" ]
+        badPredActor =
+            [ "rules:"
+            , "  - id: gate"
+            , "    on: turn"
+            , "    when: {knows_recipe: niemand, id: TrankRezept}"
+            , "    effects:"
+            , "      - msg: \"x\"" ]
+        badLearnActor =
+            [ "    - id: lehrer"
+            , "      item1: buch"
+            , "      item2: kessel"
+            , "      effects:"
+            , "        - learn_recipe: {id: TrankRezept, actor: niemand}" ]
+        msgNoId =
+            [ "    - item1: kraut"
+            , "      item2: kessel"
+            , "      learn_msg: \"x\"" ]
+    r1 <- expectCode "UnknownRecipeId" (k11dYaml [] badPred)
+    r2 <- expectCode "UnknownNpc" (k11dYaml [] badPredActor)
+    r3 <- expectCode "UnknownNpc" (k11dYaml [badLearnActor] [])
+    r4 <- expectCode "RecipeLearnMsgWithoutId" (k11dYaml [msgNoId] [])
+    let varAdv = (minAdventure (minRoom "loc_0"))
+            { advVariables = [AVariable "known_recipe_by.schmied.trank" "int" Nothing Nothing Nothing 0 Nothing [] []] }
+    r5 <- case compileAdventure varAdv of
+        Left errs -> expectTrue "known_recipe_by.* in variables is KnownRecipeVariableClash"
+            (any (\i -> ciCode i == "KnownRecipeVariableClash") errs)
+        Right _ -> expectTrue "known_recipe_by.* in variables must fail" False
+    pure (r1 && r2 && r3 && r4 && r5)
 
 -- ---------------------------------------------------------------------------
 -- K17: Punkte-/Score-System

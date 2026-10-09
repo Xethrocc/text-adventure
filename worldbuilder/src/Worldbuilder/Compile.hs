@@ -446,7 +446,7 @@ checkUnreachableTriggers a =
     items = Set.fromList (map aiId (advItems a))
     chapters = Set.fromList (map achId (advChapters a))
     raised = Set.fromList ([n | AORaiseEvent n <- outs] ++ [map toLower target | t <- advTriggers a, target <- atChainsTo t])
-    taughtRecipes = Set.fromList [ r | AOLearnRecipe r <- outs ]
+    taughtRecipes = Set.fromList [ r | AOLearnRecipe r _ <- outs ]
     roomReason r
         | Set.member r rooms = Nothing
         | otherwise          = Just ("no room '" ++ r ++ "' is declared")
@@ -803,7 +803,7 @@ compileAdventure adv =
         npcIxErrs = checkNpcInteractionRefs adv
         dynamicItemErrs = checkDynamicItemRefs adv
         itemConflictErrs = checkItemInteractionConflicts adv
-        recipeLearningErrs = checkRecipeLearning adv
+        recipeLearningErrs = checkRecipeLearning gwResolved adv
         questRefErrs = checkQuestRefs adv
         mapOverlapErrs = checkMapPositions adv
         reservedVarErrs = checkReservedVarWrites adv
@@ -2166,6 +2166,11 @@ checkKnownVarReserved varDefs =
          ++ "the engine owns the learned-recipe state (K11d)")
     | name <- Map.keys varDefs, "known_recipe." `isPrefixOf` name ]
     ++
+    [ ciError ("variables." ++ name) "KnownRecipeVariableClash"
+        ("'" ++ name ++ "' is in the reserved 'known_recipe_by.' namespace; "
+         ++ "the engine owns the learned-recipe state of NPCs (K11e)")
+    | name <- Map.keys varDefs, "known_recipe_by." `isPrefixOf` name ]
+    ++
     [ ciError ("variables." ++ name) "StatementVariableClash"
         ("'" ++ name ++ "' is in the reserved 'statement.' namespace; "
          ++ "the engine owns the statement metadata variables (K9)")
@@ -2850,7 +2855,7 @@ allWorldEffects gw = concat
     , concatMap trEffects (E.triggerDefs gw)
     , [ e | Just e <- map questReward (Map.elems (E.questDefs gw)) ]
     , concatMap (Map.elems . vehicleConditionEffects) (Map.elems (E.vehicleDefs gw))
-    , Map.elems (E.itemInteractions gw)
+    , map E.recipeOutcome (Map.elems (E.itemInteractions gw))
     , Map.elems (E.npcInteractions gw)
     , concatMap E.paEffects (Map.elems (E.abilities gw))
     , concatMap E.cardEffects (Map.elems (E.cardDefs gw))
@@ -3250,7 +3255,7 @@ compileVehicleState v = E.VehicleState
 
 compileInteractions :: Maybe AInteractions
                     -> ( Map.Map (String, String) (String, String)
-                       , Map.Map E.RecipeKey E.Effect
+                       , Map.Map E.RecipeKey E.RecipeEntry
                        , Map.Map (String, String) E.Effect
                        )
 compileInteractions Nothing = (Map.empty, Map.empty, Map.empty)
@@ -3260,7 +3265,7 @@ compileInteractions (Just ix) = (entityMap, itemMap, npcMap)
         [ ((aeiItem e, aeiTarget e), (aeiState e, fromMaybe "" (aeiMsg e)))
         | e <- aiEntity ix ]
     itemMap = Map.fromList
-        [ (compileRecipeKey i, compileOutcomes (aiiEffects i))
+        [ (compileRecipeKey i, E.RecipeEntry (compileOutcomes (aiiEffects i)) (aiiLearnMsg i))
         | i <- aiItem ix ]
     npcMap = Map.fromList
         [ ((aniItem n, aniTarget n), compileOutcomes (aniEffects n))
@@ -3380,7 +3385,7 @@ resolveWorldEffects npcIds gw
         { E.rooms = Map.map mapRoom (E.rooms gw)
         , E.itemDefs = Map.map mapItem (E.itemDefs gw)
         , E.npcDefs = Map.map mapNpc (E.npcDefs gw)
-        , E.itemInteractions = Map.map mapEff (E.itemInteractions gw)
+        , E.itemInteractions = Map.map (\re -> re { E.recipeOutcome = mapEff (E.recipeOutcome re) }) (E.itemInteractions gw)
         , E.npcInteractions = Map.map mapEff (E.npcInteractions gw)
         , E.questDefs = Map.map mapQuest (E.questDefs gw)
         , E.vehicleDefs = Map.map mapVehicle (E.vehicleDefs gw)
@@ -3461,7 +3466,7 @@ compileAActionOutcome ao = case ao of
     AOComputeVar name expr -> E.ComputeValue (E.VRVariable name) expr
     AOCallProc name args -> E.CallProc name args
     AOLearn f a -> E.Learn (compileActorRef a) f
-    AOLearnRecipe r -> E.LearnRecipe r
+    AOLearnRecipe r a -> E.LearnRecipe (compileActorRef a) r
     AONextChapter -> E.NextChapter
     AOGotoChapter t -> E.GotoChapter t
     AOStepToward seeker target mMsg ->
@@ -4424,11 +4429,19 @@ checkRecipeResults adv =
 --   * 'RecipeLearningWithoutId' — `requires_learning: true` without an `id:`
 --     (the lock could never be addressed),
 --   * 'DuplicateRecipeId' — two recipes share an `id:`,
---   * 'UnknownRecipeId' — `learn_recipe:` or `on: learn_recipe <id>` points at
---     an id no `interactions.item` entry declares.
-checkRecipeLearning :: Adventure -> [CompileIssue]
-checkRecipeLearning adv =
-    learningWithoutIdErrs ++ duplicateIdErrs ++ learnRefErrs ++ triggerRefErrs
+--   * 'UnknownRecipeId' — `learn_recipe:`, `knows_recipe:` or
+--     `on: learn_recipe <id>` points at an id no `interactions.item` entry
+--     declares.
+--   K11e adds:
+--   * 'RecipeLearnMsgWithoutId' — `learn_msg:` without an `id:` (learning
+--     addresses recipes by id, so the message could never be shown),
+--   * 'UnknownNpc' — a `learn_recipe: {id, actor}` or
+--     `knows_recipe: {id, actor}` actor is neither 'player' nor a declared npc
+--     (a typo would silently read/write a phantom knowledge namespace).
+checkRecipeLearning :: E.GameWorld -> Adventure -> [CompileIssue]
+checkRecipeLearning gw adv =
+    learningWithoutIdErrs ++ learnMsgWithoutIdErrs ++ duplicateIdErrs
+        ++ learnRefErrs ++ triggerRefErrs ++ predRefErrs ++ actorErrs
   where
     items = maybe [] aiItem (advInteractions adv)
     ids = [ rid | i <- items, Just rid <- [aiiId i] ]
@@ -4442,11 +4455,47 @@ checkRecipeLearning adv =
         [ ciError ("interactions.item" ++ recipeIxLabel i) "RecipeLearningWithoutId"
             "requires_learning: true on a recipe without 'id:' - the lock can never be addressed"
         | i <- items, aiiRequiresLearning i, isNothing (aiiId i) ]
+    learnMsgWithoutIdErrs =
+        [ ciError ("interactions.item" ++ recipeIxLabel i) "RecipeLearnMsgWithoutId"
+            "learn_msg: on a recipe without 'id:' - the message can never be shown"
+        | i <- items, isJust (aiiLearnMsg i), isNothing (aiiId i) ]
     learnRefErrs =
         [ ciError path "UnknownRecipeId"
             ("learn_recipe references undeclared recipe id '" ++ r ++ "'")
         | (path, r) <- nub (concatMap learnRecipeRefsIn (allAOutcomes adv))
         , r `Set.notMember` idSet ]
+    predRefErrs =
+        [ ciError "predicates.knows_recipe" "UnknownRecipeId"
+            ("'knows_recipe' references undeclared recipe id '" ++ r ++ "'")
+        | r <- nub (concatMap knowsRecipeIn allPreds), r `Set.notMember` idSet ]
+    npcIds = Set.fromList (map anId (advNPCs adv))
+    badActor a = a /= "player" && a `Set.notMember` npcIds
+    actorErrs =
+        [ ciError path "UnknownNpc"
+            ("recipe actor '" ++ a ++ "' is not 'player' or an existing npc id")
+        | (path, a) <- nub (concatMap learnActorRefsIn (allAOutcomes adv)
+                            ++ concatMap predActorRefsIn allPreds)
+        , badActor a ]
+    allPreds = allWorldPredicates gw
+    knowsRecipeIn p = case p of
+        E.KnowsRecipe _ r -> [r]
+        E.PNot q          -> knowsRecipeIn q
+        E.PAll qs         -> concatMap knowsRecipeIn qs
+        E.PAny qs         -> concatMap knowsRecipeIn qs
+        _                 -> []
+    predActorRefsIn p = case p of
+        E.KnowsRecipe a _ -> [("predicates.knows_recipe", E.actorId a)]
+        E.PNot q          -> predActorRefsIn q
+        E.PAll qs         -> concatMap predActorRefsIn qs
+        E.PAny qs         -> concatMap predActorRefsIn qs
+        _                 -> []
+    learnActorRefsIn ao = case ao of
+        AOLearnRecipe _ a            -> [("outcomes.learn_recipe", a)]
+        AOConditional _ ts es        -> concatMap learnActorRefsIn ts ++ concatMap learnActorRefsIn es
+        AONarrative _ follow         -> concatMap learnActorRefsIn follow
+        AORandomChoice _ cs          -> concatMap (concatMap learnActorRefsIn . snd) cs
+        AOApplyCondition _ _ t e _   -> concatMap learnActorRefsIn t ++ concatMap learnActorRefsIn e
+        _                            -> []
     triggerRefErrs =
         [ ciError ("rules." ++ atId t) "UnknownRecipeId"
             ("rule listens on 'learn_recipe " ++ r
@@ -4455,7 +4504,7 @@ checkRecipeLearning adv =
         , Right (E.OnLearnRecipe r) <- [compileAtOn (atOn t)]
         , r `Set.notMember` idSet ]
     learnRecipeRefsIn ao = case ao of
-        AOLearnRecipe r            -> [("outcomes.learn_recipe", r)]
+        AOLearnRecipe r _          -> [("outcomes.learn_recipe", r)]
         AOConditional _ ts es      -> concatMap learnRecipeRefsIn ts ++ concatMap learnRecipeRefsIn es
         AONarrative _ follow       -> concatMap learnRecipeRefsIn follow
         AORandomChoice _ cs        -> concatMap (concatMap learnRecipeRefsIn . snd) cs
@@ -4718,6 +4767,7 @@ checkUnknownPlaceholders adv varDefs =
         | "condition_turns." `isPrefixOf` name = True
         | "known." `isPrefixOf` name = True
         | "known_recipe." `isPrefixOf` name = True
+        | "known_recipe_by." `isPrefixOf` name = True
         | "statement." `isPrefixOf` name = True
         -- G9a: {standing_name: <faction>} / {standing_name.<faction>} wird bewusst
         -- NICHT zur Compile-Zeit geprueft (Ehrlichkeit wie K16c {cmd.target}):
