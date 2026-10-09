@@ -715,6 +715,16 @@ compileAdventure adv =
         compiledDevices = compileDevices (advDevices adv)
         (containerErrs, compiledContainers, containerInitials) =
             compileContainers allRooms (advContainers adv)
+        -- Item-Container (Items mit `capacity:`) starten offen, es sei denn
+        -- `state:` benennt einen Container-Zustand (open/closed/locked) — dann
+        -- ist das der Startzustand in den entityStates (z. B. die zu startende
+        -- Mailbox im Zork-Port). Kollisionen gewinnen die `containers:`-Seite.
+        itemContainerInitials =
+            [ (aiId i, st)
+            | i <- advItems adv
+            , isJust (aiCapacity i)
+            , Just st <- [containerStartState (aiState i)]
+            ]
         (deviceErrs, deviceWarns) = checkDeviceRefs (advDevices adv) adv
         (deviceTriggers, deviceVerbs) = compileDeviceTriggers (advDevices adv) (advItems adv)
         hasHolders = any (\d -> not (null (adFits d)) || isJust (adFitsTag d) || not (null (adOnInsert d)) || not (null (adOnRemove d))) (advDevices adv)
@@ -864,7 +874,7 @@ compileAdventure adv =
                         , E.inventory = []
                         , E.itemStates = itemStates
                         , E.npcStates = npcStates
-                        , E.entityStates = initialEntityStates allRooms containerInitials
+                        , E.entityStates = initialEntityStates allRooms (itemContainerInitials ++ containerInitials)
                         , E.flags = initialFlags
                         , E.turnCount = 0
                         , E.gameOver = False
@@ -2172,6 +2182,14 @@ compileDeviceActorRef s        = E.ActorEntity s
 -- | 4.4: stationary containers. The live state (open/locked) lives in
 --   entityStates ("open"/"closed"/"locked") — no new save field. Returns the
 --   defs, the initial states and the errors (duplicate id, missing room).
+-- | Map an item's initial `state:` to a container state, if it is one —
+--   item containers only; any other status (`intact`, custom states) keeps the
+--   documented default of starting open.
+containerStartState :: String -> Maybe String
+containerStartState s
+    | s `elem` ["open", "closed", "locked"] = Just s
+    | otherwise                            = Nothing
+
 compileContainers :: Map.Map String E.Room -> [AContainerDef]
                    -> ([CompileIssue], Map.Map String E.ContainerDef, [(String, String)])
 compileContainers allRooms cons = (errs, Map.fromList [ (acnId c, toDef c) | c <- cons ], initials)

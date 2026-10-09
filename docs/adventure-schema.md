@@ -3284,8 +3284,10 @@ beliebig tief (`look` zeigt den Inhalt offener Container).
 
 **Verträge:**
 
-- Item-Container starten **offen** (kein Entity-State); `containers:`-Einträge starten mit
-  `open:`/`locked:`. Alle Zustände sind jederzeit per `set_state:` setzbar.
+- Item-Container starten **offen** (kein Entity-State); ein `state:` mit
+  `open`/`closed`/`locked` setzt dagegen den Startzustand (z. B. eine zu startende
+  Mailbox). `containers:`-Einträge starten mit `open:`/`locked:`. Alle Zustände
+  sind jederzeit per `set_state:` setzbar.
 - **Key-Bindung ist Autoren-Vokabel:** `lock`/`unlock` wechseln nur den Zustand. Wer einen
   Schlüssel verlangt, sperrt per Regel (z.B. `on: "command unlock"` + `when: {not: {actor_has:
   {actor: player, item: schluessel}}}` + `block: "…"`).

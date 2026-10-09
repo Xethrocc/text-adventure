@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Item-Container: Startzustand aus `state:` (F3 Zork-Port)
+
+Items mit `capacity:` übernehmen `state: open|closed|locked` als initialen
+Container-Zustand in die `entityStates` (vorher: Item-Container starteten
+immer offen, nur `containers:`-Einträge konnten geschlossen starten). Andere
+Statuswerte (`intact`, Custom) bleiben beim Default „offen“; bei
+ID-Kollisionen gewinnt die `containers:`-Seite. Damit lässt sich die
+zugeschlossene Mailbox des Zork-Ports als ein einziges Item abbilden.
+
 ### FIX-07: Raumansicht nach Bewegung (Auto-Describe)
 
 Bisher zeigte die CLI nach `go <direction>` nur `You move {dir}.` — die

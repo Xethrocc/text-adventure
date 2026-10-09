@@ -1065,7 +1065,19 @@ testContainersCompile = do
             Left errs -> expectTrue "unknown room is MissingRoom"
                 (any (\i -> ciCode i == "MissingRoom") errs)
             Right _ -> expectTrue "unknown room must fail" False
-    pure (r1 && r2 && r3)
+    -- Item-Container (Items mit capacity:) uebernehmen open/closed/locked aus
+    -- `state:` als Startzustand; andere Statuswerte bleiben beim Default offen.
+    r4 <- case compileAdventure (advWithItem ((minItem "kiste") { aiCapacity = Just 3, aiState = "closed" })) of
+            Left errs -> expectTrue ("item container compiles, got: " ++ issuesText errs) False
+            Right cr -> do
+                a <- expectEqual (Just "closed") (Map.lookup "kiste" (E.entityStates (crSave cr)))
+                b <- expectEqual (Just "closed") (fmap E.itemStatus (Map.lookup "kiste" (E.itemStates (crSave cr))))
+                pure (a && b)
+    r5 <- case compileAdventure (advWithItem ((minItem "vase") { aiCapacity = Just 3 })) of
+            Left errs -> expectTrue ("plain item container compiles, got: " ++ issuesText errs) False
+            Right cr -> expectTrue "item containers without container state start open"
+                (Map.notMember "vase" (E.entityStates (crSave cr)))
+    pure (r1 && r2 && r3 && r4 && r5)
 
 -- | `set_inventory_limit:` compiles to the VarMap write.
 testSetInventoryLimitSugar :: IO Bool
