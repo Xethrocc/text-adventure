@@ -1956,6 +1956,31 @@ Compile-Fehler — ein Tippfehler im Item-Namen wuerde sonst still angreifen.
 
 Vollstaendiges Beispiel: `examples/fixtures/npc-interaktion.yaml`.
 
+**`use <item> on <vehicle>` (`interactions: vehicle:`, B9):** wie `npc:` liefert
+ein Eintrag eine freie Effektliste — zielend auf die **benannte** Fahrzeug-ID
+(bewusst strenger als der Betankungs-Fallback, der auch das aktuelle Fahrzeug
+akzeptiert). Ohne Eintrag greift unveraendert der **Betankungs-Fallback**
+(`fuel`-Prop, Tank); ein Eintrag unterbricht das: die Effektliste laeuft, das
+Fahrzeug wird nicht betankt. Beide Seiten muessen aufloesen:
+`UnknownVehicleInteractionItem` / `UnknownVehicle` sind harte Compile-Fehler.
+
+**`use <item> auf ein Ausgangs-Schloss` (`interactions: exit:`, B9):** Der
+adressierbare Name eines Ausgangs ist sein **Schloss-Entity** (`locked_by:` —
+z. B. `gatter`); der generische `door`-Alias loest ebenfalls dorthin auf. Ein
+Eintrag liefert eine freie Effektliste (das Item bleibt in der Hand, ausser ein
+Effekt bewegt es); ohne Eintrag greift unveraendert der `entity:`-Pfad
+(Statuswechsel + Meldung). **Ein (Item, Schloss)-Paar darf in genau einer
+Zielart stehen:** `entity:` und `exit:` beantworten dieselbe Eingabe, eine
+Doppelbelegung ist der harte Fehler `InteractionTargetClash` (bei handgebauten
+Welten gewinnt `entity:`, die Compile-Regel macht das fuer Autoren irrelevant).
+Beide Seiten muessen aufloesen: `UnknownExitInteractionItem` / `UnknownExit` —
+der Zielname muss ein statisches oder dynamisches Schloss-Entity sein (dynamische
+Namen mit Platzhaltern werden uebersprungen, K16c-Ehrlichkeit).
+
+Serialisierung der beiden neuen Karten: wie `npcInteractions` **nur bei
+Belegung** geschrieben — bestehende Welten serialisieren byte-identisch
+(136/136 Artefakte gegen `eefa17b` gemessen, K11e + B9 gemeinsam).
+
 ## Factions (Standing — Module 7a)
 
 ```yaml

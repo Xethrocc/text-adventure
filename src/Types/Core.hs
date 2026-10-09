@@ -157,6 +157,8 @@ module Types.Core
     , parseItemInteractions
     , npcInteractionsToJSON
     , parseNpcInteractions
+    , pairInteractionsToJSON
+    , parsePairInteractions
       -- * Save & Game State
     , SaveState (..)
     , exitOverridesToJSON
@@ -2400,6 +2402,8 @@ data GameWorld = GameWorld
     , entityInteractions :: Map.Map (String, String) (String, String)
     , itemInteractions   :: Map.Map RecipeKey RecipeEntry  -- ^ Recipe -> outcome + optional learn message (K11e)
     , npcInteractions    :: Map.Map (String, String) Effect  -- ^ (Item, NPC) -> outcome (B9); empty map is omitted
+    , vehicleInteractions :: Map.Map (String, String) Effect  -- ^ (Item, Vehicle) -> outcome (B9); empty map is omitted
+    , exitInteractions    :: Map.Map (String, String) Effect  -- ^ (Item, exit-lock entity) -> outcome (B9); empty map is omitted
     , questDefs          :: Map.Map QuestID Quest                    -- ^ Static quest definitions
     , vehicleDefs        :: Map.Map VehicleID VehicleDef             -- ^ Static vehicle definitions (Phase 3)
     , verbDefs           :: Map.Map String VerbDef                   -- ^ Adventure-declared verbs (Phase 3a)
@@ -2467,7 +2471,8 @@ instance ToJSON GameWorld where
         , "abilities"          .= abilities gw
         ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair ++ sandboxPair
           ++ procPair ++ factPair ++ statementPair ++ combinePair ++ chapterPair ++ devicePair ++ containerPair ++ progPair
-          ++ startRoomPair ++ langPair ++ msgPair ++ npcInteractionPair ++ factionPair
+          ++ startRoomPair ++ langPair ++ msgPair ++ npcInteractionPair
+          ++ vehicleInteractionPair ++ exitInteractionPair ++ factionPair
       where
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
@@ -2501,6 +2506,14 @@ instance ToJSON GameWorld where
         npcInteractionPair =
             [ "npcInteractions" .= npcInteractionsToJSON (npcInteractions gw)
             | not (Map.null (npcInteractions gw)) ]
+        -- B9 (Rest-Zielarten): vehicle/exit share the (item, target) -> outcome
+        -- shape; both fields are omitted when empty (same byte contract).
+        vehicleInteractionPair =
+            [ "vehicleInteractions" .= pairInteractionsToJSON (vehicleInteractions gw)
+            | not (Map.null (vehicleInteractions gw)) ]
+        exitInteractionPair =
+            [ "exitInteractions" .= pairInteractionsToJSON (exitInteractions gw)
+            | not (Map.null (exitInteractions gw)) ]
         -- Phase G9a: omitted when empty so world.json of every adventure without
         -- factions stays bit-identical.
         factionPair = [ "factions" .= factions gw | not (Map.null (factions gw)) ]
@@ -2549,6 +2562,8 @@ instance FromJSON GameWorld where
         <*> (o .: "entityInteractions" >>= tupleMapFromJSON)
         <*> (o .:? "itemInteractions" >>= maybe (pure Map.empty) parseItemInteractions)
         <*> (o .:? "npcInteractions" >>= maybe (pure Map.empty) parseNpcInteractions)
+        <*> (o .:? "vehicleInteractions" >>= maybe (pure Map.empty) parsePairInteractions)
+        <*> (o .:? "exitInteractions" >>= maybe (pure Map.empty) parsePairInteractions)
         <*> o .:? "questDefs" .!= Map.empty
         <*> o .:? "vehicleDefs" .!= Map.empty
         <*> o .:? "verbDefs" .!= Map.empty
@@ -2656,6 +2671,24 @@ parseNpcInteractions v =
     parseKey (k, e) = case break (== '|') k of
         (a, '|':b) -> Right ((a, b), e)
         _          -> Left ("Bad npc interaction key: " ++ k)
+
+-- | Encode (item, target) -> outcome maps as objects (B9: vehicle/exit — the
+--   same shape as `npcInteractions`, without its historical legacy form).
+pairInteractionsToJSON :: Map.Map (String, String) Effect -> Value
+pairInteractionsToJSON m =
+    toJSON [ object [ "a" .= a, "b" .= b, "effect" .= e ]
+           | ((a, b), e) <- Map.toList m ]
+
+parsePairInteractions :: Value -> Parser (Map.Map (String, String) Effect)
+parsePairInteractions v = do
+    xs <- parseJSON v :: Parser [Value]
+    Map.fromList <$> mapM entry xs
+  where
+    entry = withObject "pair interaction entry" $ \o -> do
+        a <- o .: "a"
+        b <- o .: "b"
+        e <- o .: "effect"
+        pure ((a, b), e)
 
 -- | Dynamic state of an active playthrough
 data SaveState = SaveState

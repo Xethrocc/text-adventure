@@ -10967,6 +10967,60 @@ testKnowsRecipePredicateJsonRoundTrip = do
     pure (r1 && r2 && r3 && r4)
 
 -- ---------------------------------------------------------------------------
+-- B9: interactions: vehicle: / exit: — Item auf Fahrzeug und auf Ausgangs-Schloss
+-- ---------------------------------------------------------------------------
+
+-- | B9.1: a declared `interactions: vehicle:` entry runs its free effect list
+--   and wins over the refuelling fallback (the same item would refuel).
+testItemOnVehicleInteraction :: IO Bool
+testItemOnVehicleInteraction = do
+    let withHay = pickupItem "hay" initSampleGame
+        st0 = withHay { world = (world withHay)
+            { vehicleInteractions = Map.singleton ("hay", "carriage")
+                (SendMessage "Der Kutscher winkt ab: Heu will die Kutsche nicht.") } }
+        (st, msg) = executeCommand (parseCommand "use hay on carriage") st0
+    r1 <- expectTrue ("declared effects run: " ++ msg) ("Der Kutscher winkt ab" `isInfixOf` msg)
+    r2 <- expectTrue ("refuelling fallback skipped: " ++ msg) (not ("fuelled" `isInfixOf` msg))
+    r3 <- expectEqual (vsFuel (getVehicleState "carriage" withHay)) (vsFuel (getVehicleState "carriage" st))
+    pure (r1 && r2 && r3)
+
+-- | B9.2: a declared `interactions: exit:` entry runs its free effect list on
+--   the exit lock; the `entity:` state path stays away (and is unchanged
+--   without an entry — see testUseDoorUnlocksTreasureDoor).
+testItemOnExitInteraction :: IO Bool
+testItemOnExitInteraction = do
+    let withKey = pickupItem "key" initSampleGame
+        -- the sample's `entity:` entries for the key are removed: authored
+        -- content cannot declare a pair in both kinds (InteractionTargetClash)
+        -- and `entity:` wins at runtime for hand-built worlds.
+        st0 = withKey { world = (world withKey)
+            { entityInteractions = Map.filterWithKey (\(i, _) _ -> i /= "key")
+                                        (entityInteractions (world withKey))
+            , exitInteractions = Map.singleton ("key", "treasure_door")
+                (SendMessage "Der Riegel springt auf — ohne den Schluessel zu drehen.") } }
+        (st, msg) = executeCommand (parseCommand "use brass key on door") st0
+    r1 <- expectTrue ("declared effects run: " ++ msg) ("Riegel springt auf" `isInfixOf` msg)
+    r2 <- expectTrue ("entity: path skipped: " ++ msg) (not ("into the door" `isInfixOf` msg))
+    r3 <- expectEqual (Just "locked") (getEntityState "treasure_door" st)
+    pure (r1 && r2 && r3)
+
+-- | B9.3 (byte contract): the vehicle/exit interaction maps serialize only
+--   when populated and round-trip.
+testPairInteractionsJsonContract :: IO Bool
+testPairInteractionsJsonContract = do
+    let w0 = world initSampleGame
+        w1 = w0 { vehicleInteractions = Map.singleton ("hay", "carriage") Noop
+                , exitInteractions = Map.singleton ("key", "treasure_door") Noop }
+        bs0 = BLC.unpack (Aeson.encode w0)
+        bs1 = Aeson.encode w1
+    r1 <- expectTrue "vehicleInteractions omitted when empty" (not ("vehicleInteractions" `isInfixOf` bs0))
+    r2 <- expectTrue "exitInteractions omitted when empty" (not ("exitInteractions" `isInfixOf` bs0))
+    r3 <- expectTrue "emitted when set"
+        ("vehicleInteractions" `isInfixOf` BLC.unpack bs1 && "exitInteractions" `isInfixOf` BLC.unpack bs1)
+    r4 <- expectEqual (Just w1) (Aeson.decode bs1)
+    pure (r1 && r2 && r3 && r4)
+
+-- ---------------------------------------------------------------------------
 -- K15.0: Ort-Regel: consume:/Verbrauch nur auf Erreichbares
 -- ---------------------------------------------------------------------------
 
@@ -12594,6 +12648,9 @@ main = do
         , runTest "recipes: NPC learning is silent, no trigger, idempotent (K11e.4)" testLearnRecipeActorIsSilent
         , runTest "recipes: LearnRecipe player JSON shape is pinned (K11e.5)" testLearnRecipeJsonShapes
         , runTest "recipes: knows_recipe predicate JSON round-trips (K11e.6)" testKnowsRecipePredicateJsonRoundTrip
+        , runTest "interactions: vehicle entry wins over the refuelling path (B9)" testItemOnVehicleInteraction
+        , runTest "interactions: exit entry runs effects on the exit lock (B9)" testItemOnExitInteraction
+        , runTest "interactions: vehicle/exit maps serialize only when set (B9)" testPairInteractionsJsonContract
         -- K15: Weltobjekte sind endlich (take_once), Ort-Regel
         , runTest "consume on item in container is refused (K15.0)" testConsumeItemInContainerRefused
         , runTest "consume on item on NPC is refused (K15.0)" testConsumeItemOnNPCRefused

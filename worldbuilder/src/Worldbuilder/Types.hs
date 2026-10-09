@@ -1321,7 +1321,9 @@ instance FromJSON AAbility where
 data AInteractions = AInteractions
     { aiEntity  :: [AEntityInteraction]
     , aiItem    :: [AItemInteraction]
-    , aiNpc     :: [ANPCInteraction]
+    , aiNpc     :: [APairInteraction]
+    , aiVehicle :: [APairInteraction]  -- ^ B9: `use <item> on <vehicle>` -> free effects
+    , aiExit    :: [APairInteraction]  -- ^ B9: `use <item> on <exit lock>` -> free effects
     } deriving (Show, Eq, Generic)
 
 -- | `use <item> on <target>` -> sets the target entity's state.
@@ -1344,14 +1346,15 @@ data AItemInteraction = AItemInteraction
     , aiiEffects     :: [AActionOutcome]
     } deriving (Show, Eq, Generic)
 
--- | B9: Item-on-NPC interaction: `use <item> on <npc>`. The target is an NPC
---   present in the room, the outcome is a free effect list (the item stays in
---   the player's hand unless an effect moves it). Without a matching entry the
---   engine's attack fallback applies, as before.
-data ANPCInteraction = ANPCInteraction
-    { aniItem    :: String
-    , aniTarget  :: String
-    , aniEffects :: [AActionOutcome]
+-- | B9: a `use <item> on <target>` interaction with a free effect list — the
+--   shared shape of the `npc:`, `vehicle:` and `exit:` target kinds (the item
+--   stays in the player's hand unless an effect moves it). Without a matching
+--   entry the engine's kind-specific fallback applies (attack / refuelling /
+--   the `entity:` state path).
+data APairInteraction = APairInteraction
+    { apiItem    :: String
+    , apiTarget  :: String
+    , apiEffects :: [AActionOutcome]
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AEntityInteraction where
@@ -1385,8 +1388,8 @@ instance FromJSON AItemInteraction where
             (Nothing, Nothing, Nothing) ->
                 fail "AItemInteraction requires either item1/item2 or ingredients")
 
-instance FromJSON ANPCInteraction where
-    parseJSON = withObject "ANPCInteraction" (\o -> ANPCInteraction
+instance FromJSON APairInteraction where
+    parseJSON = withObject "APairInteraction" (\o -> APairInteraction
         <$> o .:  "item"
         <*> o .:  "target"
         <*> o .:? "effects" .!= [])
@@ -1395,7 +1398,9 @@ instance FromJSON AInteractions where
     parseJSON = withObject "AInteractions" (\o -> AInteractions
         <$> o .:? "entity" .!= []
         <*> o .:? "item"   .!= []
-        <*> o .:? "npc"    .!= [])
+        <*> o .:? "npc"    .!= []
+        <*> o .:? "vehicle" .!= []
+        <*> o .:? "exit"    .!= [])
 
 -- ---------------------------------------------------------------------------
 -- Action outcomes (YAML-friendly — each has exactly one key)
@@ -2118,7 +2123,7 @@ knownKeys EntCombat = Set.fromList
 knownKeys EntCombatScreen = Set.fromList
     [ "art", "bar_width", "scene", "footer" ]
 knownKeys EntInteractions = Set.fromList
-    [ "entity", "item", "npc" ]
+    [ "entity", "item", "npc", "vehicle", "exit" ]
 knownKeys EntItemInteraction = Set.fromList
     [ "id", "item1", "item2", "ingredients", "result", "effects", "requires_learning", "learn_msg" ]
 knownKeys EntProgression = Set.fromList

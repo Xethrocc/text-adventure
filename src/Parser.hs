@@ -1551,6 +1551,8 @@ dispatchCommandCoreEv (InteractWith VUseOn itemStr entityStr) state =
                             state' = setEntityState resolvedEntity newState state
                         in (state', evRaw msg)
                     Nothing
+                        | Just result <- tryExitInteraction itemKeys entityKeys state ->
+                            result
                         | Just result <- tryItemOnNpc (itemId item) entityTarget state ->
                             result
                         | isLivingNPCInRoom entityTarget state ->
@@ -1558,7 +1560,9 @@ dispatchCommandCoreEv (InteractWith VUseOn itemStr entityStr) state =
                         | otherwise ->
                             case tryItemOnItem (itemId item) entityTarget state of
                                 Just result -> result
-                                Nothing -> tryRefuelByItem item state
+                                Nothing -> case tryItemOnVehicle (itemId item) state of
+                                    Just result -> result
+                                    Nothing -> tryRefuelByItem item state
             else
                 case tryItemOnNpc (itemId item) entityTarget state of
                     Just result -> result
@@ -1569,9 +1573,35 @@ dispatchCommandCoreEv (InteractWith VUseOn itemStr entityStr) state =
                                 Just result -> result
                                 Nothing ->
                                     case maybeVehicle of
-                                        Just _ -> tryRefuelByItem item state
+                                        Just _ -> case tryItemOnVehicle (itemId item) state of
+                                            Just result -> result
+                                            Nothing -> tryRefuelByItem item state
                                         Nothing -> (state, evMsg "use.unreachable" [("entity", entityStr)])
   where
+    -- B9: `use <item> on <exit lock>` with a declared `interactions: exit:`
+    -- entry (free effect list, like the npc: kind). The target is the exit's
+    -- lock entity (the addressable name of an exit). A (item, target) pair in
+    -- both `entity:` and `exit:` is a hard compile error
+    -- (`InteractionTargetClash`), so the lookup order is irrelevant for
+    -- authored content; `entity:` stays first for hand-edited worlds.
+    tryExitInteraction itemKeys' entityKeys' st =
+        let exitIx = exitInteractions (world st)
+            hit = find (`Map.member` exitIx) [ (iKey, eKey) | iKey <- itemKeys', eKey <- entityKeys' ]
+        in case hit of
+            Just k@(_, eKey) | Just outcome <- Map.lookup k exitIx ->
+                Just (applyCommandOutcomeEv outcome eKey st)
+            _ -> Nothing
+    -- B9: `use <item> on <vehicle>` with a declared `interactions: vehicle:`
+    -- entry — free effect list on the NAMED vehicle (deliberately stricter
+    -- than the refuelling fallback, which also accepts the current vehicle).
+    -- Without an entry the refuelling path is unchanged, like the npc: kind
+    -- falling back to the attack.
+    tryItemOnVehicle usedId st =
+        case findVehicle entityStr st of
+            Nothing -> Nothing
+            Just v -> case Map.lookup (usedId, vehicleId v) (vehicleInteractions (world st)) of
+                Just outcome -> Just (applyCommandOutcomeEv outcome (vehicleId v) st)
+                Nothing      -> Nothing
     -- B9: `use <item> on <npc>` with a declared `interactions: npc:` entry.
     -- The outcome is a free effect list applied to the player (the item stays
     -- in hand unless an effect moves it). Without an entry the engine's

@@ -305,7 +305,8 @@ outcomeSurfaces a =
     patrolOutcomes mPt = maybe [] (concatMap ahAttack . ptHostiles) mPt
     combatOutcomes mC = maybe [] (\c -> acOnWin c ++ acOnLose c) mC
     interactions = case advInteractions a of
-        Just ai -> concatMap aiiEffects (aiItem ai) ++ concatMap aniEffects (aiNpc ai)
+        Just ai -> concatMap aiiEffects (aiItem ai) ++ concatMap apiEffects (aiNpc ai)
+                    ++ concatMap apiEffects (aiVehicle ai) ++ concatMap apiEffects (aiExit ai)
         Nothing -> []
     deviceOutcomes d = adOnInsert d ++ adOnRemove d ++ concatMap snd (adOnFlip d)
 
@@ -588,7 +589,7 @@ compileAdventure adv =
         
         questDefs = compileQuests (advQuests adv)
         (vehicleErrs, vehicleDefs, vehicleStates) = compileVehicles (advVehicles adv)
-        (entityInteractions, itemInteractions, npcIx) = compileInteractions (advInteractions adv)
+        (entityInteractions, itemInteractions, npcIx, vehicleIx, exitIx) = compileInteractions (advInteractions adv)
         
         (varIssues, varDefs, varInitials) = compileVariables (advVariables adv)
         varErrs = [ i | i <- varIssues, ciSeverity i == SError ]
@@ -754,6 +755,8 @@ compileAdventure adv =
                 , E.entityInteractions = entityInteractions
                 , E.itemInteractions = itemInteractions
                 , E.npcInteractions = npcIx
+                , E.vehicleInteractions = vehicleIx
+                , E.exitInteractions = exitIx
                 , E.questDefs = questDefs
                 , E.vehicleDefs = vehicleDefs
                 , E.verbDefs = verbRegistryFull
@@ -801,6 +804,8 @@ compileAdventure adv =
         procCallErrs = checkProcRefs (advProcedures adv) adv
         possessionErrs = checkNpcPossessionRefs adv
         npcIxErrs = checkNpcInteractionRefs adv
+        pairIxErrs = checkPairInteractionRefs adv allRooms
+        exitClashErrs = checkExitInteractionClash adv
         dynamicItemErrs = checkDynamicItemRefs adv
         itemConflictErrs = checkItemInteractionConflicts adv
         recipeLearningErrs = checkRecipeLearning gwResolved adv
@@ -850,6 +855,8 @@ compileAdventure adv =
                     ++ progVarErrs
                     ++ possessionErrs
                     ++ npcIxErrs
+                    ++ pairIxErrs
+                    ++ exitClashErrs
                     ++ dynamicItemErrs
                     ++ itemConflictErrs
                     ++ recipeLearningErrs
@@ -3257,9 +3264,11 @@ compileInteractions :: Maybe AInteractions
                     -> ( Map.Map (String, String) (String, String)
                        , Map.Map E.RecipeKey E.RecipeEntry
                        , Map.Map (String, String) E.Effect
+                       , Map.Map (String, String) E.Effect
+                       , Map.Map (String, String) E.Effect
                        )
-compileInteractions Nothing = (Map.empty, Map.empty, Map.empty)
-compileInteractions (Just ix) = (entityMap, itemMap, npcMap)
+compileInteractions Nothing = (Map.empty, Map.empty, Map.empty, Map.empty, Map.empty)
+compileInteractions (Just ix) = (entityMap, itemMap, npcMap, vehicleMap, exitMap)
   where
     entityMap = Map.fromList
         [ ((aeiItem e, aeiTarget e), (aeiState e, fromMaybe "" (aeiMsg e)))
@@ -3268,8 +3277,14 @@ compileInteractions (Just ix) = (entityMap, itemMap, npcMap)
         [ (compileRecipeKey i, E.RecipeEntry (compileOutcomes (aiiEffects i)) (aiiLearnMsg i))
         | i <- aiItem ix ]
     npcMap = Map.fromList
-        [ ((aniItem n, aniTarget n), compileOutcomes (aniEffects n))
+        [ ((apiItem n, apiTarget n), compileOutcomes (apiEffects n))
         | n <- aiNpc ix ]
+    vehicleMap = Map.fromList
+        [ ((apiItem n, apiTarget n), compileOutcomes (apiEffects n))
+        | n <- aiVehicle ix ]
+    exitMap = Map.fromList
+        [ ((apiItem n, apiTarget n), compileOutcomes (apiEffects n))
+        | n <- aiExit ix ]
 
 compileRecipeKey :: AItemInteraction -> E.RecipeKey
 compileRecipeKey i
@@ -4325,13 +4340,69 @@ checkNpcInteractionRefs adv = concatMap entryGo (maybe [] aiNpc (advInteractions
     npcIds = Set.fromList (map anId (advNPCs adv))
     itemIds = Set.fromList (map aiId (advItems adv))
     entryGo n = concat
-        [ [ ciError ("interactions.npc[" ++ aniItem n ++ "]") "UnknownNpcInteractionItem"
-            ("npc interaction references unknown item '" ++ aniItem n ++ "'")
-        | aniItem n `Set.notMember` itemIds ]
-        , [ ciError ("interactions.npc[" ++ aniItem n ++ "]") "UnknownNpc"
-            ("npc interaction references unknown npc '" ++ aniTarget n ++ "'")
-        | aniTarget n `Set.notMember` npcIds ]
+        [ [ ciError ("interactions.npc[" ++ apiItem n ++ "]") "UnknownNpcInteractionItem"
+            ("npc interaction references unknown item '" ++ apiItem n ++ "'")
+        | apiItem n `Set.notMember` itemIds ]
+        , [ ciError ("interactions.npc[" ++ apiItem n ++ "]") "UnknownNpc"
+            ("npc interaction references unknown npc '" ++ apiTarget n ++ "'")
+        | apiTarget n `Set.notMember` npcIds ]
         ]
+
+-- | B9 (Rest-Zielarten): both halves of every `interactions: vehicle:` and
+--   `interactions: exit:` entry must resolve — a typo would silently fall
+--   through to the kind's fallback (refuelling / the `entity:` state path).
+--   Exit targets are the exit-lock entities (the addressable name of an exit,
+--   static or dynamic — dynamic ones contain placeholders and are skipped,
+--   K16c honesty).
+checkPairInteractionRefs :: Adventure -> Map.Map String E.Room -> [CompileIssue]
+checkPairInteractionRefs adv rooms = case advInteractions adv of
+    Nothing -> []
+    Just ix -> concatMap vehicleGo (aiVehicle ix) ++ concatMap exitGo (aiExit ix)
+  where
+    itemIds = Set.fromList (map aiId (advItems adv))
+    vehicleIds = Set.fromList (map avId (advVehicles adv))
+    exitLockIds = Set.union staticExitLocks dynamicExitLocks
+    staticExitLocks = Set.fromList
+        [ lockKey
+        | room <- Map.elems rooms
+        , E.Locked _ lockKey <- Map.elems (E.roomConnections room) ]
+    dynamicExitLocks = Set.fromList
+        [ lockKey
+        | AOSetExit _ _ _ (Just lockKey) <- allAOutcomes adv
+        , not ('{' `elem` lockKey) ]
+    vehicleGo n = concat
+        [ [ ciError ("interactions.vehicle[" ++ apiItem n ++ "]") "UnknownVehicleInteractionItem"
+            ("vehicle interaction references unknown item '" ++ apiItem n ++ "'")
+        | apiItem n `Set.notMember` itemIds ]
+        , [ ciError ("interactions.vehicle[" ++ apiItem n ++ "]") "UnknownVehicle"
+            ("vehicle interaction references unknown vehicle '" ++ apiTarget n ++ "'")
+        | apiTarget n `Set.notMember` vehicleIds ]
+        ]
+    exitGo n = concat
+        [ [ ciError ("interactions.exit[" ++ apiItem n ++ "]") "UnknownExitInteractionItem"
+            ("exit interaction references unknown item '" ++ apiItem n ++ "'")
+        | apiItem n `Set.notMember` itemIds ]
+        , [ ciError ("interactions.exit[" ++ apiItem n ++ "]") "UnknownExit"
+            ("exit interaction references unknown exit lock '" ++ apiTarget n ++ "'")
+        | not ('{' `elem` apiTarget n)
+        , apiTarget n `Set.notMember` exitLockIds ]
+        ]
+
+-- | B9: one (item, exit lock) pair may live in exactly one target kind —
+--   `entity:` (state + message) and `exit:` (free effects) both answer
+--   "use <item> on <lock>", so a pair declared in both is ambiguous (the
+--   hard-error contract of `ItemInteractionConflict`).
+checkExitInteractionClash :: Adventure -> [CompileIssue]
+checkExitInteractionClash adv = case advInteractions adv of
+    Nothing -> []
+    Just ix ->
+        [ ciError ("interactions.exit[" ++ apiItem n ++ "]") "InteractionTargetClash"
+            ("'" ++ apiItem n ++ "' on '" ++ apiTarget n
+             ++ "' is declared in both 'entity:' and 'exit:'")
+        | n <- aiExit ix
+        , (apiItem n, apiTarget n) `Set.member` entityPairs ]
+  where
+    entityPairs = Set.fromList [ (aeiItem e, aeiTarget e) | e <- maybe [] aiEntity (advInteractions adv) ]
 
 -- | K11a/K11c: dynamic item references in consume: must be bound.
 --   Inside 'interactions: item:':
@@ -4374,7 +4445,9 @@ checkDynamicItemRefs adv = itemIxIssues ++ otherIssues
         | (path, outs) <- outcomeSurfaces adv
         , path /= "interactions" ]
         ++ case advInteractions adv of
-            Just ai -> [ ("interactions.npc[" ++ aniItem n ++ "]", aniEffects n) | n <- aiNpc ai ]
+            Just ai -> [ ("interactions.npc[" ++ apiItem n ++ "]", apiEffects n) | n <- aiNpc ai ]
+                     ++ [ ("interactions.vehicle[" ++ apiItem n ++ "]", apiEffects n) | n <- aiVehicle ai ]
+                     ++ [ ("interactions.exit[" ++ apiItem n ++ "]", apiEffects n) | n <- aiExit ai ]
             Nothing -> []
 
     otherIssues =

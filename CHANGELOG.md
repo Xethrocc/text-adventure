@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### `interactions: vehicle:` / `interactions: exit:` — die letzten B9-Zielarten
+
+B9 (Item-auf-X) war bis auf zwei Zielarten vollstaendig. Beide sind jetzt da
+(Entscheidung 2026-10-09: „eigene Zielarten ausbauen", nicht festhalten):
+
+- **`interactions: vehicle: [{item, target, effects}]`** — `use <item> on
+  <vehicle>` laeuft eine freie Effektliste auf das **benannte** Fahrzeug
+  (strenger als der Betankungs-Fallback, der auch das aktuelle Fahrzeug
+  akzeptiert). **Ein Eintrag gewinnt vor dem Betankungs-Fallback** — das
+  Muster des `npc:`-Pfads (Eintrag vor Angriffs-Fallback).
+- **`interactions: exit: [{item, target, effects}]`** — `use <item> auf ein
+  Ausgangs-Schloss` (`locked_by:`-Entity, auch via `door`-Alias adressierbar)
+  laeuft eine freie Effektliste statt des `entity:`-Pfads (Statuswechsel +
+  Meldung). **Ein (Item, Schloss)-Paar darf in genau einer Zielart stehen** —
+  `entity:` und `exit:` beantworten dieselbe Eingabe, Doppelbelegung ist der
+  harte Fehler `InteractionTargetClash` (wie `ItemInteractionConflict`).
+- **Ehrliche Compile-Diagnosen:** `UnknownVehicleInteractionItem` /
+  `UnknownVehicle` und `UnknownExitInteractionItem` / `UnknownExit` (Ziel muss
+  ein statisches/dynamisches Schloss-Entity sein; dynamische Namen uebersprungen,
+  K16c-Ehrlichkeit).
+- **Serialisierung:** `vehicleInteractions`/`exitInteractions` wie
+  `npcInteractions` nur bei Belegung in world.json — **byte-identisch gegen
+  `eefa17b` gemessen** (136/136 Artefakte, gemeinsam mit K11e; "a"/"b"/"effect"-
+  Objektshape wie beim NPC-Pfad).
+- **Intern:** `ANPCInteraction` heisst jetzt `APairInteraction` (geteilte Form
+  der drei paarartigen Zielarten `npc:`/`vehicle:`/`exit:`).
+- **Tests & Qualitaet:** +3 Engine-Tests (Fahrzeug-Eintrag vor Betankung,
+  Exit-Eintrag statt `entity:`, JSON-Omission/Round-Trip) und +2
+  Worldbuilder-Tests (Kompilierung + Diagnosen inkl. Clash). Engine 583,
+  Worldbuilder 303.
+
 ### Rezeptwissen mit Akteuren: `knows_recipe`, NPC-Lehrer, `learn_msg` (K11e)
 
 K11d hinterließ drei offene Teile — alle drei sind jetzt umgesetzt

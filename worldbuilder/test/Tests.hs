@@ -58,6 +58,8 @@ minWorld = E.GameWorld
     , entityInteractions = Map.empty
     , itemInteractions = Map.empty
     , npcInteractions = Map.empty
+    , vehicleInteractions = Map.empty
+    , exitInteractions = Map.empty
     , questDefs = Map.empty
     , vehicleDefs = Map.empty
     , verbDefs = Map.empty
@@ -2149,7 +2151,7 @@ testItemInteractionCompiles = do
     let ix = AInteractions
             { aiEntity = []
             , aiItem = [ AItemInteraction Nothing "herb" "mortar" [] Nothing False Nothing [AOMessage "paste made"] ]
-            , aiNpc = [] }
+            , aiNpc = [], aiVehicle = [], aiExit = [] }
         adv = (minAdventure (minRoom "loc_0")) { advInteractions = Just ix }
     case compileAdventure adv of
         Left errs -> do
@@ -2164,7 +2166,7 @@ testEntityInteractionCompiles = do
     let ix = AInteractions
             { aiEntity = [ AEntityInteraction "key" "door" "unlocked" (Just "It opens.") ]
             , aiItem = []
-            , aiNpc = [] }
+            , aiNpc = [], aiVehicle = [], aiExit = [] }
         adv = (minAdventure (minRoom "loc_0")) { advInteractions = Just ix }
     case compileAdventure adv of
         Left errs -> do
@@ -4388,6 +4390,8 @@ tests =
     , ("recipes: untaught learn_recipe rule warns, taught stays silent (K11d)", testRecipeLearningUntaughtTrigger)
     , ("recipes: knows_recipe and learn_recipe actor form compile (K11e)", testRecipeK11eCompiles)
     , ("recipes: K11e diagnostics for ids, actors, learn_msg, namespace (K11e)", testRecipeK11eDiagnostics)
+    , ("interactions: vehicle:/exit: compile into pair maps (B9)", testPairInteractionCompiles)
+    , ("interactions: B9 diagnostics for items, targets and the entity/exit clash (B9)", testPairInteractionDiagnostics)
     -- K15: Weltobjekte sind endlich (repeatable: true, Default einmal)
     , ("repeatable: YAML parsing and knownKeys clean (K15)", testRepeatableYamlAndKnownKeysClean)
     , ("repeatable: compile of repeatable items and containers (K15)", testRepeatableCompilation)
@@ -6903,7 +6907,9 @@ testNpcInteractionCompiles = do
     let ix = AInteractions
             { aiEntity = []
             , aiItem = []
-            , aiNpc = [ ANPCInteraction "verband" "waechter" [AOMessage "Du verbindest den Waechter."] ] }
+            , aiNpc = [ APairInteraction "verband" "waechter" [AOMessage "Du verbindest den Waechter."] ]
+            , aiVehicle = []
+            , aiExit = [] }
         npc = (minNpcKey "waechter") { anLocation = "loc_0" }
         adv = (minAdventure (minRoom "loc_0"))
             { advNPCs = [npc]
@@ -6926,13 +6932,13 @@ testNpcInteractionRefsFail = do
     let npc = (minNpcKey "waechter") { anLocation = "loc_0" }
         withIx n adv = adv { advNPCs = [npc], advItems = [minItem "verband"]
                            , advInteractions = Just (AInteractions
-                                { aiEntity = [], aiItem = [], aiNpc = [n] }) }
+                                { aiEntity = [], aiItem = [], aiNpc = [n], aiVehicle = [], aiExit = [] }) }
         base = minAdventure (minRoom "loc_0")
-    r1 <- case compileAdventure (withIx (ANPCInteraction "verbandt" "waechter" []) base) of
+    r1 <- case compileAdventure (withIx (APairInteraction "verbandt" "waechter" []) base) of
         Left errs -> expectTrue ("unknown item: " ++ issuesText errs)
                         (any (\i -> ciCode i == "UnknownNpcInteractionItem") errs)
         Right _ -> expectTrue "expected a compile error (unknown item)" False
-    r2 <- case compileAdventure (withIx (ANPCInteraction "verband" "niemand" []) base) of
+    r2 <- case compileAdventure (withIx (APairInteraction "verband" "niemand" []) base) of
         Left errs -> expectTrue ("unknown npc: " ++ issuesText errs)
                         (any (\i -> ciCode i == "UnknownNpc") errs)
         Right _ -> expectTrue "expected a compile error (unknown npc)" False
@@ -8366,6 +8372,8 @@ testCraftingCompileValidForm = do
                             ]
                        ]
             , aiNpc = []
+            , aiVehicle = []
+            , aiExit = []
             }
         adv = (minAdventure r0)
             { advItems = [ (minItem "herb") { aiLocation = "loc_0" }
@@ -8392,6 +8400,8 @@ testCraftingUnboundRefRejected = do
                             [ AOConsumeItem "{item9}" ]
                        ]
             , aiNpc = []
+            , aiVehicle = []
+            , aiExit = []
             }
         advBadIx = (minAdventure r0)
             { advItems = [ (minItem "herb") { aiLocation = "loc_0" }
@@ -8630,6 +8640,8 @@ testIngredientsDynamicRefValidation = do
                             ]
                        ]
             , aiNpc = []
+            , aiVehicle = []
+            , aiExit = []
             }
         advGood = (minAdventure r0)
             { advItems = [ (minItem "kessel") { aiLocation = "loc_0" }
@@ -8651,6 +8663,8 @@ testIngredientsDynamicRefValidation = do
                             [ AOConsumeItem "{ingredient4}" ]
                        ]
             , aiNpc = []
+            , aiVehicle = []
+            , aiExit = []
             }
         advBad4 = advGood { advInteractions = Just ixBad4 }
     r2 <- case compileAdventure advBad4 of
@@ -8665,6 +8679,8 @@ testIngredientsDynamicRefValidation = do
                             [ AOConsumeItem "{item1}" ]
                        ]
             , aiNpc = []
+            , aiVehicle = []
+            , aiExit = []
             }
         advBadItem1 = advGood { advInteractions = Just ixBadItem1 }
     r3 <- case compileAdventure advBadItem1 of
@@ -8679,6 +8695,8 @@ testIngredientsDynamicRefValidation = do
                             [ AOConsumeItem "{ingredient1}" ]
                        ]
             , aiNpc = []
+            , aiVehicle = []
+            , aiExit = []
             }
         advBadIngInPair = advGood { advInteractions = Just ixBadIngInPair }
     r4 <- case compileAdventure advBadIngInPair of
@@ -8698,6 +8716,8 @@ testCraftingRecipeResultValidation = do
                             [ AOConsumeItem "{item1}" ]
                        ]
             , aiNpc = []
+            , aiVehicle = []
+            , aiExit = []
             }
         advGood = (minAdventure r0)
             { advItems = [ (minItem "mana_leaf") { aiLocation = "loc_0" }
@@ -8722,6 +8742,8 @@ testCraftingRecipeResultValidation = do
                             [ AOConsumeItem "{item1}" ]
                        ]
             , aiNpc = []
+            , aiVehicle = []
+            , aiExit = []
             }
         advBad = advGood { advInteractions = Just ixBad }
     r2 <- case compileAdventure advBad of
@@ -8740,6 +8762,8 @@ testCraftingRecipeResultValidation = do
                             [ AOConsumeItem "{item1}" ]
                        ]
             , aiNpc = []
+            , aiVehicle = []
+            , aiExit = []
             }
         advNone = advGood { advInteractions = Just ixNone }
     r3 <- case compileAdventure advNone of
@@ -9052,6 +9076,119 @@ testRecipeK11eDiagnostics = do
         Left errs -> expectTrue "known_recipe_by.* in variables is KnownRecipeVariableClash"
             (any (\i -> ciCode i == "KnownRecipeVariableClash") errs)
         Right _ -> expectTrue "known_recipe_by.* in variables must fail" False
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- ---------------------------------------------------------------------------
+-- B9: interactions: vehicle: / exit: (Rest-Zielarten)
+-- ---------------------------------------------------------------------------
+
+-- | B9: minimal adventure YAML — a locked exit (`locked_by: gatter`), a
+--   vehicle and two items, plus the given `interactions:` block lines.
+b9Yaml :: [String] -> String
+b9Yaml interactionLines = unlines $
+    [ "name: Paar-Zielarten"
+    , "start_room: halle"
+    , "rooms:"
+    , "  - id: halle"
+    , "    name: Halle"
+    , "    desc: Eine Halle."
+    , "    exits:"
+    , "      north: {to: schatzkammer, locked_by: gatter}"
+    , "  - id: schatzkammer"
+    , "    name: Schatzkammer"
+    , "    desc: Gold."
+    , "items:"
+    , "  - id: brecheisen"
+    , "    name: Brecheisen"
+    , "    location: halle"
+    , "  - id: kanister"
+    , "    name: Kanister"
+    , "    location: halle"
+    , "vehicles:"
+    , "  - id: karren"
+    , "    name: Karren"
+    , "    entry_room: halle"
+    , "interactions:" ]
+    ++ interactionLines
+
+-- | B9: the `vehicle:`/`exit:` lists compile into the engine's pair maps.
+testPairInteractionCompiles :: IO Bool
+testPairInteractionCompiles = do
+    let yaml = b9Yaml
+            [ "  vehicle:"
+            , "    - item: kanister"
+            , "      target: karren"
+            , "      effects:"
+            , "        - msg: \"Aufgetankt.\""
+            , "  exit:"
+            , "    - item: brecheisen"
+            , "      target: gatter"
+            , "      effects:"
+            , "        - msg: \"Hebel angesetzt.\""
+            , "        - { set_state: gatter, to: unlocked }" ]
+    case k11dCompile yaml of
+        Left err -> do putStrLn ("  yaml decode failed: " ++ err); pure False
+        Right (Left errs) -> do
+            putStrLn ("  unexpected compile error: " ++ issuesText errs)
+            pure False
+        Right (Right cr) -> do
+            let w = crWorld cr
+            r1 <- expectTrue "vehicle entry compiled"
+                (Map.member ("kanister", "karren") (E.vehicleInteractions w))
+            r2 <- expectTrue "exit entry compiled"
+                (Map.member ("brecheisen", "gatter") (E.exitInteractions w))
+            r3 <- expectEqual [] (crWarnings cr)
+            pure (r1 && r2 && r3)
+
+-- | B9 diagnostics: unknown items and targets in both kinds are hard errors,
+--   and one (item, exit lock) pair may live in exactly one target kind.
+testPairInteractionDiagnostics :: IO Bool
+testPairInteractionDiagnostics = do
+    let expectCode code yaml = case k11dCompile yaml of
+            Left err -> do putStrLn ("  yaml decode failed: " ++ err); pure False
+            Right (Left errs) ->
+                expectTrue (code ++ " reported: " ++ issuesText errs)
+                    (any (\i -> ciCode i == code) errs)
+            Right (Right _) -> expectTrue (code ++ " must fail the compile") False
+        badVehicleItem =
+            [ "  vehicle:"
+            , "    - item: rost"
+            , "      target: karren"
+            , "      effects:"
+            , "        - msg: \"x\"" ]
+        badVehicleTarget =
+            [ "  vehicle:"
+            , "    - item: kanister"
+            , "      target: dampflok"
+            , "      effects:"
+            , "        - msg: \"x\"" ]
+        badExitItem =
+            [ "  exit:"
+            , "    - item: rost"
+            , "      target: gatter"
+            , "      effects:"
+            , "        - msg: \"x\"" ]
+        badExitTarget =
+            [ "  exit:"
+            , "    - item: brecheisen"
+            , "      target: nicht_dabei"
+            , "      effects:"
+            , "        - msg: \"x\"" ]
+        clash =
+            [ "  entity:"
+            , "    - item: brecheisen"
+            , "      target: gatter"
+            , "      state: unlocked"
+            , "  exit:"
+            , "    - item: brecheisen"
+            , "      target: gatter"
+            , "      effects:"
+            , "        - msg: \"x\"" ]
+    r1 <- expectCode "UnknownVehicleInteractionItem" (b9Yaml badVehicleItem)
+    r2 <- expectCode "UnknownVehicle" (b9Yaml badVehicleTarget)
+    r3 <- expectCode "UnknownExitInteractionItem" (b9Yaml badExitItem)
+    r4 <- expectCode "UnknownExit" (b9Yaml badExitTarget)
+    r5 <- expectCode "InteractionTargetClash" (b9Yaml clash)
     pure (r1 && r2 && r3 && r4 && r5)
 
 -- ---------------------------------------------------------------------------

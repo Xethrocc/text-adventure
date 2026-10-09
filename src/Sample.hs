@@ -389,6 +389,8 @@ initSampleGame = GameState
             ]
         , itemInteractions = Map.empty
         , npcInteractions = Map.empty
+        , vehicleInteractions = Map.empty
+        , exitInteractions = Map.empty
         , questDefs = Map.fromList
             [ ("find_treasure", Quest
                 "find_treasure"
