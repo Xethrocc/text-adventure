@@ -2203,14 +2203,16 @@ rooms:
   - dark
 items:
 - id: mountain-range
+  tags:
+  - scenery
   name: mountain range
-  description: mountain range
+  description: There's nothing special about the mountain range.
   keys:
   - mountain-range
   location: mountains
 - id: water
   name: quantity of water
-  description: quantity of water
+  description: There's nothing special about the quantity of water.
   keys:
   - water
   - quantity
@@ -2229,8 +2231,10 @@ items:
     - move_all: {what: items, in_container: bottle, tag: wasser, to: {in: nowhere}}
     - move_all: {what: items, by: player, tag: wasser, to: {in: nowhere}}
 - id: ghosts
+  tags:
+  - scenery
   name: number of ghosts
-  description: number of ghosts
+  description: There's nothing special about the number of ghosts.
   keys:
   - ghosts
   location: entrance-to-hades
@@ -2273,7 +2277,7 @@ items:
     - msg: How can you drink that?
 - id: bat
   name: bat
-  description: bat
+  description: There's nothing special about the bat.
   keys:
   - bat
   location: bat-room
@@ -2284,14 +2288,18 @@ items:
   - bell
   location: north-temple
 - id: axe
+  tags:
+  - scenery
   name: bloody axe
   description: bloody axe
   keys:
   - axe
   location: troll-room
 - id: bolt
+  tags:
+  - scenery
   name: bolt
-  description: bolt
+  description: There's nothing special about the bolt.
   keys:
   - bolt
   location: dam-room
@@ -2327,20 +2335,31 @@ items:
         else:
         - msg: You need the wrench to turn the bolt.
 - id: bubble
+  tags:
+  - scenery
   name: green bubble
-  description: green bubble
+  description: There's nothing special about the green bubble.
   keys:
   - bubble
   location: dam-room
   portable: false
   take_failure: It is an integral part of the control panel. Enable the bolt with the yellow button in the maintenance room first.
 - id: altar
+  tags:
+  - scenery
   name: altar
-  description: altar
+  description:
+    default: The altar is closed.
+    variants:
+    - when:
+        state: altar
+        is: open
+      text: The altar is open.
   keys:
   - altar
   location: south-temple
   capacity: 50
+  state: open
 - id: book
   name: black book
   description: On the altar is a large black book, open to page 569.
@@ -2375,12 +2394,14 @@ items:
   portable: true
 - id: timbers
   name: broken timber
-  description: broken timber
+  description: There's nothing special about the broken timber.
   keys:
   - timbers
   location: timber-room
   portable: false
 - id: kitchen-table
+  tags:
+  - scenery
   name: kitchen table
   description: A table seems to have been used recently for the preparation of food.
   keys:
@@ -2390,6 +2411,8 @@ items:
   capacity: 50
   portable: false
 - id: attic-table
+  tags:
+  - scenery
   name: table
   description: A table sits in the corner of the attic.
   keys:
@@ -2409,14 +2432,16 @@ items:
   state: closed
 - id: tool-chest
   name: group of tool chests
-  description: group of tool chests
+  description: The chests are all empty.
   keys:
   - tool-chest
   location: maintenance-room
   capacity: 10000
 - id: yellow-button
+  tags:
+  - scenery
   name: yellow button
-  description: yellow button
+  description: There's nothing special about the yellow button.
   keys:
   - yellow-button
   location: maintenance-room
@@ -2431,8 +2456,10 @@ items:
       - set_flag: gate-flag
         val: 'true'
 - id: brown-button
+  tags:
+  - scenery
   name: brown button
-  description: brown button
+  description: There's nothing special about the brown button.
   keys:
   - brown-button
   location: maintenance-room
@@ -2447,8 +2474,10 @@ items:
       else:
       - msg: Click. The bolt is already locked.
 - id: red-button
+  tags:
+  - scenery
   name: red button
-  description: red button
+  description: There's nothing special about the red button.
   keys:
   - red-button
   location: maintenance-room
@@ -2465,8 +2494,10 @@ items:
       - set_flag: dam-room-lights-on
         val: 'true'
 - id: blue-button
+  tags:
+  - scenery
   name: blue button
-  description: blue button
+  description: There's nothing special about the blue button.
   keys:
   - blue-button
   location: maintenance-room
@@ -2474,13 +2505,24 @@ items:
     push:
     - msg: Click. It seems jammed — it needs the water leak to be fixed first.
 - id: trophy-case
+  tags:
+  - scenery
   name: trophy case
-  description: trophy case
+  description:
+    default: The trophy case is closed.
+    variants:
+    - when:
+        state: trophy-case
+        is: open
+      text: The trophy case is open.
   keys:
   - trophy-case
   location: living-room
   capacity: 10000
+  state: open
 - id: rug
+  tags:
+  - scenery
   name: carpet
   description: carpet
   keys:
@@ -2508,7 +2550,7 @@ items:
   location: treasure-room
 - id: garlic
   name: clove of garlic
-  description: clove of garlic
+  description: There's nothing special about the clove of garlic.
   keys:
   - garlic
   - clove
@@ -2528,21 +2570,32 @@ items:
   - trident
   location: atlantis-room
 - id: cyclops
+  tags:
+  - scenery
   name: cyclops
-  description: cyclops
+  description: There's nothing special about the cyclops.
   keys:
   - cyclops
   location: cyclops-room
 - id: dam
+  tags:
+  - scenery
   name: dam
-  description: dam
+  description: There's nothing special about the dam.
   keys:
   - dam
   location: dam-room
   capacity: 10000
 - id: trap-door
+  tags:
+  - scenery
   name: trap door
-  description: trap door
+  description:
+    default: The trap door is closed.
+    variants:
+    - when:
+        has_flag: trap-door-open
+      text: The trap door is open, but I can't tell what's beyond it.
   keys:
   - trap-door
   - trap
@@ -2565,20 +2618,26 @@ items:
         else:
         - msg: You can't see any trap door here.
 - id: front-door
+  tags:
+  - scenery
   name: door
-  description: door
+  description: The door is closed.
   keys:
   - front-door
   location: west-of-house
 - id: barrow-door
+  tags:
+  - scenery
   name: stone door
-  description: stone door
+  description: The stone door is open, but I can't tell what's beyond it.
   keys:
   - barrow-door
   location: stone-barrow
 - id: barrow
+  tags:
+  - scenery
   name: stone barrow
-  description: stone barrow
+  description: There's nothing special about the stone barrow.
   keys:
   - barrow
   location: stone-barrow
@@ -2613,6 +2672,8 @@ items:
   - jade
   location: bat-room
 - id: stiletto
+  tags:
+  - scenery
   name: vicious stiletto
   description: A vicious-looking stiletto lies here.
   keys:
@@ -2623,8 +2684,10 @@ items:
   slot: weapon
   effects: [attack+4]
 - id: large-bag
+  tags:
+  - scenery
   name: large bag
-  description: a large bag
+  description: There's nothing special about the large bag.
   keys:
   - bag
   - large-bag
@@ -2639,8 +2702,10 @@ items:
   in_container: attic-table
   portable: true
 - id: bones
+  tags:
+  - scenery
   name: skeleton
-  description: skeleton
+  description: There's nothing special about the skeleton.
   keys:
   - bones
   location: maze-5
@@ -2671,7 +2736,7 @@ items:
 - id: emerald
   name: large emerald
   tags: [schatz]
-  description: large emerald
+  description: There's nothing special about the large emerald.
   keys:
   - emerald
   in_container: buoy
@@ -2689,14 +2754,23 @@ items:
     read:
     - msg: "\"WELCOME TO ZORK!\n\nZORK is a game of adventure, danger, and low cunning. In it you will explore some of the most amazing territory ever seen by mortals. No computer should be without one!\""
 - id: leak
+  tags:
+  - scenery
   name: leak
-  description: leak
+  description: There's nothing special about the leak.
   keys:
   - leak
   location: maintenance-room
 - id: machine
+  tags:
+  - scenery
   name: machine
-  description: "This is a large machine (partially dismantled for repairs) which could be described as a cross between a machine press and a clothes dryer. There is a large lid which is currently closed."
+  description:
+    default: The machine is closed.
+    variants:
+    - when:
+        has_flag: machine-open
+      text: The machine is open.
   keys:
   - machine
   location: machine-room
@@ -2705,7 +2779,13 @@ items:
   take_failure: It is far too large to carry.
 - id: mailbox
   name: small mailbox
-  description: small mailbox
+  description:
+    default: The small mailbox is closed.
+    variants:
+    - when:
+        state: mailbox
+        is: open
+      text: The small mailbox is open.
   keys:
   - mailbox
   location: west-of-house
@@ -2723,9 +2803,11 @@ items:
   tags_when:
     lit: [lightsource]
 - id: mirror-2
+  tags:
+  - scenery
   name: mirror
   description:
-    default: mirror
+    default: There is an ugly person staring back at you.
     variants:
     - when:
         has_flag: mirror-mung
@@ -2754,9 +2836,11 @@ items:
       - set_flag: mirror-mung
         val: 'true'
 - id: mirror-1
+  tags:
+  - scenery
   name: mirror
   description:
-    default: mirror
+    default: There is an ugly person staring back at you.
     variants:
     - when:
         has_flag: mirror-mung
@@ -2870,12 +2954,22 @@ items:
   - pot-of-gold
   location: end-of-rainbow
 - id: prayer
+  tags:
+  - scenery
   name: prayer
-  description: prayer
+  description: >-
+    The prayer is inscribed in an ancient script, rarely used today.
+    It seems to be a philippic against small insects,
+    absent-mindedness, and the picking up and dropping of small
+    objects. The final verse consigns trespassers to the land of the
+    dead. All evidence indicates that the beliefs of the ancient
+    Zorkers were obscure.
   keys:
   - prayer
   location: north-temple
 - id: railing
+  tags:
+  - scenery
   name: wooden railing
   description: wooden railing
   keys:
@@ -2901,33 +2995,35 @@ items:
   - rusty-knife
   location: maze-5
 - id: sand
+  tags:
+  - scenery
   name: sand
-  description: sand
+  description: There's nothing special about the sand.
   keys:
   - sand
   location: sandy-cave
 - id: bracelet
   name: sapphire-encrusted bracelet
   tags: [schatz]
-  description: sapphire-encrusted bracelet
+  description: There's nothing special about the sapphire-encrusted bracelet.
   keys:
   - bracelet
   location: gas-room
 - id: screwdriver
   name: screwdriver
-  description: screwdriver
+  description: There's nothing special about the screwdriver.
   keys:
   - screwdriver
   location: maintenance-room
 - id: keys
   name: skeleton key
-  description: skeleton key
+  description: There's nothing special about the skeleton key.
   keys:
   - keys
   location: maze-5
 - id: shovel
   name: shovel
-  description: shovel
+  description: There's nothing special about the shovel.
   keys:
   - shovel
   location: sandy-beach
@@ -2946,20 +3042,22 @@ items:
 - id: coal
   name: small pile of coal
   tags: [kohle]
-  description: small pile of coal
+  description: There's nothing special about the small pile of coal.
   keys:
   - coal
   location: dead-end-5
 - id: scarab
   name: beautiful jeweled scarab
   tags: [schatz]
-  description: beautiful jeweled scarab
+  description: There's nothing special about the beautiful jeweled scarab.
   keys:
   - scarab
   location: nowhere
 - id: machine-switch
+  tags:
+  - scenery
   name: switch
-  description: switch
+  description: There's nothing special about the switch.
   keys:
   - machine-switch
   - switch
@@ -2967,8 +3065,12 @@ items:
   portable: false
   take_failure: It is an integral part of the machine.
 - id: wooden-door
+  tags:
+  - scenery
   name: wooden door
-  description: wooden door
+  description: >-
+    The engravings translate to "This space intentionally left
+    blank."
   keys:
   - wooden-door
   location: living-room
@@ -2986,12 +3088,21 @@ items:
   in_container: trophy-case
   portable: true
 - id: pedestal
+  tags:
+  - scenery
   name: pedestal
-  description: pedestal
+  description:
+    default: The pedestal is closed.
+    variants:
+    - when:
+        state: pedestal
+        is: open
+      text: The pedestal is open.
   keys:
   - pedestal
   location: torch-room
   capacity: 30
+  state: open
 - id: torch
   name: torch
   description: Sitting on the pedestal is a flaming torch, made of ivory.
@@ -3027,7 +3138,7 @@ items:
   portable: true
 - id: putty
   name: viscous material
-  description: viscous material
+  description: There's nothing special about the viscous material.
   keys:
   - putty
   in_container: tube
@@ -3046,13 +3157,15 @@ items:
   location: studio
 - id: wrench
   name: wrench
-  description: wrench
+  description: There's nothing special about the wrench.
   keys:
   - wrench
   location: maintenance-room
 - id: control-panel
+  tags:
+  - scenery
   name: control panel
-  description: control panel
+  description: There's nothing special about the control panel.
   keys:
   - control-panel
   location: dam-room
@@ -3199,7 +3312,7 @@ items:
 - id: bauble
   name: beautiful brass bauble
   tags: [schatz]
-  description: beautiful brass bauble
+  description: There's nothing special about the beautiful brass bauble.
   keys:
   - bauble
   location: nowhere
@@ -3208,6 +3321,8 @@ items:
 # --- Stufe E: Scenery (Original LOCAL-GLOBALS/NDESCBIT: chimney, slide, rainbow,
 # river, board, forest, tree) — je ein Item im charakteristischen Raum ---
 - id: chimney
+  tags:
+  - scenery
   name: chimney
   description: A small chimney leads up into the fireplace.
   keys:
@@ -3224,6 +3339,8 @@ items:
   location: slide-room
   portable: false
 - id: rainbow
+  tags:
+  - scenery
   name: rainbow
   description: The rainbow is solid enough to walk on.
   keys:
@@ -3231,8 +3348,10 @@ items:
   location: on-rainbow
   portable: false
 - id: river
+  tags:
+  - scenery
   name: river
-  description: The river flows swiftly past.
+  description: There's nothing special about the river.
   keys:
   - river
   - stream
@@ -3247,14 +3366,18 @@ items:
   location: white-cliffs-north
   portable: false
 - id: board
+  tags:
+  - scenery
   name: board
-  description: The windows are boarded up.
+  description: The boards are securely fastened.
   keys:
   - board
   - boards
   location: north-of-house
   portable: false
 - id: forest
+  tags:
+  - scenery
   name: forest
   description: The forest is dense and shadowy.
   keys:
@@ -3265,8 +3388,10 @@ items:
   location: forest-1
   portable: false
 - id: tree
+  tags:
+  - scenery
   name: tree
-  description: The tree is tall and strong.
+  description: There's nothing special about the tree.
   keys:
   - tree
   - branch
