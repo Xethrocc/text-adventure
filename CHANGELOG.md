@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### `scenery`-Tag (NDESCBIT) und stille Leercontainer (Zork-Port F5)
+
+- **Tag `scenery`:** Items mit diesem semantischen Tag bleiben ansprechbar,
+  erscheinen aber nicht in der „You see:"-Liste und werden von `take all`
+  übersprungen — das NDESCBIT des Original-ZIL (Kamin, Wald, Fluss, Damm …).
+- **Leere offene Container sind in der Raumansicht still** (vorher „X is
+  empty.“ auf jedem `look`).
+
 ### Rekursive Container-Anzeige und `take all`-Scope (F4 Zork-Port)
 
 - **`look` listet verschachtelte offene Container:** die Inhaltszeilen laufen

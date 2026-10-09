@@ -939,9 +939,12 @@ roomViewEvents runHooks state = case getCurrentRoom state of
                 npcsHere = getNPCsInRoom (currentRoom (save state)) state
                 livingHere = [ n | n <- npcsHere, not (isDeadNPC (npcId n) state) ]
                 corpsesHere = [ n | n <- npcsHere, isDeadNPC (npcId n) state ]
-                itemDesc = if null itemsInRoom
-                           then evMsg "look.see_nothing" []
-                           else evMsg "look.items" [("names", intercalate ", " (map itemName itemsInRoom))]
+                listedItems = filter (not . itemIsScenery state) itemsInRoom
+                itemDesc = if null listedItems
+                           then if null containerDesc
+                                then evMsg "look.see_nothing" []
+                                else []
+                           else evMsg "look.items" [("names", intercalate ", " (map itemName listedItems))]
                 -- 4.4: open containers show their contents (recursively through
                 --   further open containers — the bottle on the table lists its
                 --   water too; cycles cannot happen but are guarded anyway).
@@ -967,7 +970,7 @@ roomViewEvents runHooks state = case getCurrentRoom state of
                             , containerStateOf (itemId i) state == "open" ]
                 containerDesc = concat
                     [ case itemsInContainer cid state of
-                        [] -> evMsg "container.empty" ([("name", cname)] ++ grammarArgs True "name" (grammarOfItem cid state))
+                        [] -> []   -- empty open containers stay silent (original behaviour)
                         contents -> evMsg "container.contains"
                             ([("name", cname), ("items", intercalate ", " (map itemName contents))] ++ grammarArgs True "name" (grammarOfItem cid state))
                     | (cid, cname) <- openContainers ]
@@ -1186,7 +1189,9 @@ dispatchCommandCoreEv TakeAll state = case getCurrentRoom state of
     Just room ->
         -- 4.4: `take all` reaches what `take <x>` reaches — the contents of
         --   open containers too (the bottle on the table brings its water).
-        let inRoom = visibleItemsAt (InRoom (currentRoom (save state))) state
+        --   NDESCBIT scenery (`scenery` tag) is not part of "all".
+        let inRoom = filter (not . itemIsScenery state)
+                       (visibleItemsAt (InRoom (currentRoom (save state))) state)
             -- Phase 0.3 (B3): in the dark only feelable items can be picked up.
             roomItems = if isDark room state then filter (itemIsFeelable state) inRoom else inRoom
         in if null roomItems
@@ -2231,6 +2236,13 @@ isDarkRestricted v = case verbCanonicalName v of
 --   State-conditional tags (`tags_when`) count with their current status.
 itemIsFeelable :: GameState -> ItemDef -> Bool
 itemIsFeelable st item = Set.member "feelable" (effectiveItemTags (itemId item) item st)
+
+-- | NDESCBIT (original ZIL): scenery stays referable (`examine chimney`) but is
+--   never listed in the room view and skipped by `take all`. The semantic tag
+--   `scenery` opts an item out of the "You see:" line; state-conditional tags
+--   (`tags_when`) count with their current status.
+itemIsScenery :: GameState -> ItemDef -> Bool
+itemIsScenery st item = Set.member "scenery" (effectiveItemTags (itemId item) item st)
 
 -- | Item is reachable in darkness: carried, or its definition is tagged @feelable@.
 itemReachableInDark :: GameState -> String -> Bool
