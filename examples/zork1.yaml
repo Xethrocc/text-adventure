@@ -7,6 +7,20 @@ player:
 end_art:
   victory: "=========================================\n  YOU WIN\n=========================================\n  You have conquered the Great Underground Empire."
   death: "=========================================\n  YOU HAVE DIED\n=========================================\n  The dungeon keeps what it takes."
+# --- Stufe F: Originale Meldungen (V-OPEN/V-CLOSE/V-TAKE/V-DROP, gverbs.zil) ---
+# Die Engine-Stimme wird pro Abenteuer auf die Original-Antworten gestellt
+# (messages:-Override, Phase 4.3).
+messages:
+  container.opened: The {name} opens.
+  container.closed: Closed.
+  container.already_open: It is already open.
+  container.already_closed: It is already closed.
+  take.ok: Taken.
+  take.already: You already have that.
+  drop.ok: Dropped.
+  target.not_seen: You can't see any such thing.
+  move.no_exit: You can't go that way.
+  parse.unknown: I couldn't understand that sentence.
 variables:
 - name: score
   type: int
