@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Doku: `docs/tui.md` (TUI-Handbuch)
+
+- Neue Doku-Seite zur Brick-TUI: Start/Flags, Layout (HUD, Karte mit Ebenen,
+  Status/Kampf-Panels, Art-Panel), Tastenbelegung, TUI-Statuszeilen-Konvention,
+  `PanelState`-Semantik (Cutscene/Ambient, D11/D17/D21), Architektur
+  (`Frontend`-Record, Worker-Thread, `TuiShared`), Grenzen (Audio No-op,
+  unübersetzter Chrome), 21 TUI-Tests.
+- README verlinkt auf die Seite (Feature-Bullet + `docs/`-Zeile).
+- Keine Codeänderung; unverändert 583 Engine-Tests, 303 Worldbuilder-Tests, 21 TUI-Tests.
+
 ### `interactions: vehicle:` / `interactions: exit:` — die letzten B9-Zielarten
 
 B9 (Item-auf-X) war bis auf zwei Zielarten vollstaendig. Beide sind jetzt da

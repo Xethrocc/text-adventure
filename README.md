@@ -21,7 +21,7 @@ profiles and gameplay modules are all content.
 - Combat profiles `off` | `narrative` | `classic` | `tactical` (turn-based with initiative, flee, defend, and player abilities), resolved by a pure combat module that also drives companions and spaceship duels
 - **Rogue platform:** permadeath/ironman policies with savezones, persistent meta-progression (`meta.*` variables), dynamic exits (`set_exit`/`remove_exit`) — all backward compatible, opt-in per adventure
 - Deterministic RNG **in the save**, save/load (`saves/<slot>.json`), undo history, restart, tab completion
-- **Brick TUI** (`--tui`): scrollable history, tab completion, animated art panel, and a Roguelike dashboard — ASCII minimap of visited rooms (dynamic exits included), HP/variable gauges, status effects, equipment, and a combat panel that appears when a fight is engaged
+- **Brick TUI** (`--tui`): scrollable history, tab completion, animated art panel, and a Roguelike dashboard — ASCII minimap of visited rooms (dynamic exits included), HP/variable gauges, status effects, equipment, and a combat panel that appears when a fight is engaged — see `docs/tui.md`
 - Validation: `validateWorld` + `validateGameState` (used by the CLI and the tests)
 
 **Worldbuilder (`worldbuilder/`)**
@@ -98,7 +98,7 @@ inside the ZIP walks through it step by step.
 | `text2ascii/` | helper tool: text → banner art (block/slant/outline fonts) for title and end screens |
 | `examples/` | `thefog.yaml` (reference game), `demo.yaml`, `genres/` (6 genre fixtures), `modules/` (7a–7h fixtures + `combo.yaml` composition proof), `fixtures/` (small feature fixtures), `templates/` (dungeon template for the world generator) |
 | `ci/e2e/` | scripted playthroughs: `<name>.in` plus the expected marker in `<name>.expect` |
-| `docs/` | `adventure-schema.md`, `modules.md`, `genres.md`, `worldgen.md`, `thefog-playthrough.md` |
+| `docs/` | `adventure-schema.md`, `modules.md`, `genres.md`, `worldgen.md`, `tui.md`, `thefog-playthrough.md` |
 | `scripts/ci.sh` | the whole pipeline in one command |
 
 ## Authoring
