@@ -2406,6 +2406,7 @@ items:
   in_container: kitchen-table
   portable: true
   capacity: 9
+  state: closed
 - id: tool-chest
   name: group of tool chests
   description: group of tool chests
