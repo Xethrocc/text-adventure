@@ -201,7 +201,6 @@
     "container.put": "Du legst {item_article_acc} {item} in {name_article_acc} {name}.",
     "container.took_from": "Du nimmst {item_article_acc} {item} aus {name_article_dat} {name}.",
     "container.contains": "In {article_dat} {name}: {items}.",
-    "container.empty": "Leer: {article_nom} {name}.",
     "inventory.full": "Du trägst zu viel bei dir.",
     "chapter.unknown": "Dieses Kapitel gibt es nicht.",
     "proc.unknown": "Diese Prozedur existiert nicht.",

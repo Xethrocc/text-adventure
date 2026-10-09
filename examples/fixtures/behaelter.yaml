@@ -34,11 +34,11 @@ containers:
 
 tests:
   - name: "inhalt und nehmen"
-    input: [look, take amulett from truhe, look]
+    input: [look, take amulett from truhe, take amulett from truhe, look]
     expect:
       - "In Truhe: Amulett."
       - "You take amulett from Truhe."
-      - "Truhe is empty."
+      - "You find no amulett in Truhe."
   - name: "schliessen und sperren"
     input: [close truhe, take amulett from truhe, open truhe, lock truhe, open truhe]
     expect:

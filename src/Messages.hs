@@ -146,7 +146,7 @@ itemGrammarMsgKeys =
     , "item.cant_do", "search.nothing_item", "search.reveal"
     , "equip.ok", "unequip.ok", "unequip.not_equipped"
     , "npc.took_from", "npc.gave_to"
-    , "container.empty", "container.contains", "container.opened"
+    , "container.contains", "container.opened"
     , "container.closed", "container.locked", "container.unlocked"
     , "container.is_locked", "container.is_closed", "container.not_locked"
     , "container.already_open", "container.already_closed", "container.full"
@@ -402,7 +402,6 @@ catalogEntries =
     , ("container.put",           "You put {item} in {name}.")
     , ("container.took_from",     "You take {item} from {name}.")
     , ("container.contains",      "In {name}: {items}.")
-    , ("container.empty",         "{name} is empty.")
     , ("inventory.full",          "You are carrying too much.")
     , ("chapter.unknown",         "There is no such chapter.")
     , ("proc.unknown",            "That procedure does not exist.")

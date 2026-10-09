@@ -1,4 +1,4 @@
--- | Generated from lang/de.json (sha256: b1ac05e1296252535b64092710498fde1a88e5c2235a0df1aa000fe2215cb2d9) by scripts/gen-lang-pack.py.
+-- | Generated from lang/de.json (sha256: 1518c3466a2c920b2c530802e1551e2023ebb1babf9fb16ada4f7142fbd22e27) by scripts/gen-lang-pack.py.
 --   DO NOT EDIT by hand - rerun the generator after changing the JSON.
 --
 --   Language-pack data (Phase 4.3): message templates keyed like the
@@ -216,7 +216,6 @@ langDe =
       , ("container.put", "Du legst {item_article_acc} {item} in {name_article_acc} {name}.")
       , ("container.took_from", "Du nimmst {item_article_acc} {item} aus {name_article_dat} {name}.")
       , ("container.contains", "In {article_dat} {name}: {items}.")
-      , ("container.empty", "Leer: {article_nom} {name}.")
       , ("inventory.full", "Du trägst zu viel bei dir.")
       , ("chapter.unknown", "Dieses Kapitel gibt es nicht.")
       , ("proc.unknown", "Diese Prozedur existiert nicht.")
