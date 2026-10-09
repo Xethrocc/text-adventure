@@ -3359,6 +3359,8 @@ verbs:
 - name: fill
 - name: launch
 - name: land
+- name: in
+- name: out
 - name: deflate
 - name: shout
 - name: wave
@@ -4213,6 +4215,101 @@ rules:
                   val: 'false'
                 else:
                 - msg: You can't land here.
+
+# --- Stufe F: in/out (Original: IN/OUT-Richtungen, 1dungeon.zil) ---
+# Eine Regel mit if/else pro Befehl (R-01); `move:` zeigt den Zielraum (FIX-07).
+# Die ausgelagerten up/down-Aliasse (west-of-house `down` etc.) bleiben als
+# Komfort erhalten — die Original-Befehle `in`/`out` sind hier die treue Form.
+- id: cmd-in
+  on: command in
+  effects:
+  - if:
+      at: player
+      room: west-of-house
+    then:
+    - if:
+        has_flag: won
+      then:
+      - move: stone-barrow
+      else:
+      - msg: You can't go that way.
+    else:
+    - if:
+        at: player
+        room: east-of-house
+      then:
+      - if:
+          has_flag: kitchen-window-open
+        then:
+        - move: kitchen
+        else:
+        - msg: You can't go that way.
+      else:
+      - if:
+          at: player
+          room: strange-passage
+        then:
+        - move: cyclops-room
+        else:
+        - if:
+            at: player
+            room: entrance-to-hades
+          then:
+          - if:
+              has_flag: lld_flag
+            then:
+            - move: land-of-living-dead
+            else:
+            - msg: Some invisible force prevents you from passing through the gate.
+          else:
+          - if:
+              at: player
+              room: mine-entrance
+            then:
+            - move: squeeky-room
+            else:
+            - msg: You can't go that way.
+- id: cmd-out
+  on: command out
+  effects:
+  - if:
+      at: player
+      room: kitchen
+    then:
+    - if:
+        has_flag: kitchen-window-open
+      then:
+      - move: east-of-house
+      else:
+      - msg: You can't go that way.
+    else:
+    - if:
+        at: player
+        room: north-temple
+      then:
+      - move: torch-room
+      else:
+      - if:
+          at: player
+          room: land-of-living-dead
+        then:
+        - move: entrance-to-hades
+        else:
+        - if:
+            at: player
+            room: lower-shaft
+          then:
+          - if:
+              compare_var:
+                name: count.items.by.player
+                op: lte
+                value: 2
+            then:
+            - move: timber-room
+            else:
+            - msg: You cannot fit through this passage with that load.
+          else:
+          - msg: You can't go that way.
 
 # --- Stufe B: Entlüften (Original: V-DEFLATE/RBOAT-FUNCTION DEFLATE, 1actions.zil:2803) ---
 - id: boat-deflate-in-boat
