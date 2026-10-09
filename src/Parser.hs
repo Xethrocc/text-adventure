@@ -294,7 +294,9 @@ canonicalHead env ts = case best of
     pick Nothing x          = Just x
     pick (Just acc@(n, _)) x@(m, _) = Just (if m > n then x else acc)
 
--- | Canonical direction words ("north" … "nw") to directions.
+-- | Canonical direction words ("north" … "nw") to directions. The one-letter
+--   abbreviations n/s/e/w/u/d count (classic IF input, the original accepts
+--   them too).
 directionWord :: String -> Maybe Direction
 directionWord w = case w of
     "north"     -> Just North
@@ -303,6 +305,12 @@ directionWord w = case w of
     "west"      -> Just West
     "up"        -> Just Up
     "down"      -> Just Down
+    "n"         -> Just North
+    "s"         -> Just South
+    "e"         -> Just East
+    "w"         -> Just West
+    "u"         -> Just Up
+    "d"         -> Just Down
     "southeast" -> Just Southeast
     "se"        -> Just Southeast
     "southwest" -> Just Southwest

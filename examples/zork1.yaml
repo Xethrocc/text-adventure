@@ -778,6 +778,7 @@ rooms:
         has_flag: grate-open
   tags:
   - dark
+  light_flag: grate-open
 - id: maze-12
   name: Maze
   description: This is part of a maze of twisty little passages, all alike.
@@ -2563,7 +2564,7 @@ items:
   - trophy-case
   location: living-room
   capacity: 10000
-  state: open
+  state: closed
   portable: false
   take_failure: The trophy case is securely fastened to the wall.
 - id: rug
@@ -2840,6 +2841,8 @@ items:
   description: An old leather bag, bulging with coins, is here.
   keys:
   - bag-of-coins
+  - coins
+  - bag
   location: maze-5
 - id: lamp
   name: brass lantern
@@ -3396,21 +3399,136 @@ items:
   keys:
   - grating
   - grate
+  tags:
+  - scenery
   location: grating-clearing
   verb_map:
-    unlock:
-    - msg: You use the skeleton key and the grating clicks open.
-    - set_flag: grate-unlocked
-      val: 'true'
-    open:
+    instead:unlock:
+    - if:
+        all:
+        - at: player
+          room: grating-room
+        - actor_has:
+            actor: player
+            item: keys
+      then:
+      - msg: The grate is unlocked.
+      - set_flag: grate-unlocked
+        val: 'true'
+      else:
+      - if:
+          all:
+          - at: player
+            room: grating-clearing
+          - actor_has:
+              actor: player
+              item: keys
+        then:
+        - msg: You can't reach the lock from here.
+        else:
+        - msg: Can you unlock a grating with that?
+    instead:lock:
+    - if:
+        at: player
+        room: grating-room
+      then:
+      - msg: The grate is locked.
+      - set_flag: grate-unlocked
+        val: 'false'
+      else:
+      - msg: You can't lock it from this side.
+    instead:open:
     - if:
         has_flag: grate-unlocked
       then:
-      - msg: You push the grating up. It slides aside with a screech of metal on stone.
+      - if:
+          at: player
+          room: grating-clearing
+        then:
+        - msg: The grating opens.
+        else:
+        - msg: The grating opens to reveal trees above you.
       - set_flag: grate-open
         val: 'true'
       else:
-      - msg: The grating is locked. You need the skeleton key.
+      - msg: The grating is locked.
+    instead:close:
+    - if:
+        has_flag: grate-unlocked
+      then:
+      - msg: The grating is closed.
+      - set_flag: grate-open
+        val: 'false'
+      else:
+      - msg: The grating is locked.
+- id: grating-bottom
+  name: grating
+  description: A heavy iron grating is set into the ceiling.
+  keys:
+  - grating
+  - grate
+  tags:
+  - scenery
+  location: grating-room
+  verb_map:
+    instead:unlock:
+    - if:
+        all:
+        - at: player
+          room: grating-room
+        - actor_has:
+            actor: player
+            item: keys
+      then:
+      - msg: The grate is unlocked.
+      - set_flag: grate-unlocked
+        val: 'true'
+      else:
+      - if:
+          all:
+          - at: player
+            room: grating-clearing
+          - actor_has:
+              actor: player
+              item: keys
+        then:
+        - msg: You can't reach the lock from here.
+        else:
+        - msg: Can you unlock a grating with that?
+    instead:lock:
+    - if:
+        at: player
+        room: grating-room
+      then:
+      - msg: The grate is locked.
+      - set_flag: grate-unlocked
+        val: 'false'
+      else:
+      - msg: You can't lock it from this side.
+    instead:open:
+    - if:
+        has_flag: grate-unlocked
+      then:
+      - if:
+          at: player
+          room: grating-clearing
+        then:
+        - msg: The grating opens.
+        else:
+        - msg: The grating opens to reveal trees above you.
+      - set_flag: grate-open
+        val: 'true'
+      else:
+      - msg: The grating is locked.
+    instead:close:
+    - if:
+        has_flag: grate-unlocked
+      then:
+      - msg: The grating is closed.
+      - set_flag: grate-open
+        val: 'false'
+      else:
+      - msg: The grating is locked.
 - id: window
   name: kitchen window
   description: A small window which is slightly ajar, but not enough to allow entry.
@@ -3563,6 +3681,7 @@ verbs:
 - name: give
 - name: open
 - name: close
+- name: lock
 - name: unlock
 - name: push
 - name: pump
