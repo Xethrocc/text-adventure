@@ -10937,7 +10937,7 @@ testLearnRecipeActorIsSilent = do
     r1 <- expectTrue ("no message for NPC learning: " ++ show out1) (null out1)
     r2 <- expectTrue ("trigger did not fire: " ++ show out1) (not ("Das Tor geht auf!" `isInfixOf` out1))
     r3 <- expectEqual (Just (VVInt 1)) (getVariable "known_recipe_by.schmied.trank_rezept" st1)
-    let (st2, evs2, _) = applyOutcomeWith 0 0 (LearnRecipe (ActorNPC "schmied") "trank_rezept") "" st1
+    let (_, evs2, _) = applyOutcomeWith 0 0 (LearnRecipe (ActorNPC "schmied") "trank_rezept") "" st1
     r4 <- expectTrue "idempotent for NPCs too" (null (renderEvents evs2))
     pure (r1 && r2 && r3 && r4)
 
