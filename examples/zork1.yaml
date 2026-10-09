@@ -1,0 +1,5066 @@
+name: 'Zork I: The Great Underground Empire'
+start_room: west-of-house
+player:
+  max_hp: 30
+  attack: 10
+  defense: 3
+end_art:
+  victory: "=========================================\n  YOU WIN\n=========================================\n  You have conquered the Great Underground Empire."
+  death: "=========================================\n  YOU HAVE DIED\n=========================================\n  The dungeon keeps what it takes."
+variables:
+- name: score
+  type: int
+  initial: 0
+  max: 350
+  score_rankings:
+  - {at: 0, title: Beginner}
+  - {at: 26, title: Amateur Adventurer}
+  - {at: 51, title: Novice Adventurer}
+  - {at: 101, title: Junior Adventurer}
+  - {at: 201, title: Adventurer}
+  - {at: 301, title: Master}
+  - {at: 331, title: Wizard}
+  - {at: 350, title: Master Adventurer}
+- name: sword_glow
+  type: int
+  initial: 0
+- name: dig_count
+  type: int
+  initial: 0
+# --- Stufe E: Licht-Quellen (Original I-LANTERN/I-CANDLES/I-MATCH) ---
+# Lampen-Batterie: 385 Züge Brenndauer ab Entzünden (LAMP-TABLE 200/100/70/15);
+# pausiert im ausgeschalteten Zustand (Original DISABLE <INT I-LANTERN>).
+- name: lamp_battery
+  type: int
+  initial: 385
+# Kerzen: 75 Züge ab Entzünden (CANDLE-TABLE 40/20/10/5).
+- name: candles_battery
+  type: int
+  initial: 75
+# Streichholz: 2 Züge (I-MATCH).
+- name: match_battery
+  type: int
+  initial: 2
+# Streichhölzer im Matchbook (MATCH-COUNT 6).
+- name: match_count
+  type: int
+  initial: 6
+rooms:
+- id: west-of-house
+  name: West of House
+  description:
+    default: You are standing in an open field west of a white house, with a boarded front door. There is a small mailbox here.
+    variants:
+    - when:
+        has_flag: won
+      text: You are standing in an open field west of a white house, with a boarded front door. There is a small mailbox here. A secret path leads southwest into the forest.
+  exits:
+    north:
+      to: north-of-house
+    south:
+      to: south-of-house
+    ne:
+      to: north-of-house
+    se:
+      to: south-of-house
+    west:
+      to: forest-1
+    east:
+      to: west-of-house
+      blocked: true
+      msg: The door is boarded and you can't remove the boards
+    sw:
+      to: stone-barrow
+      when:
+        has_flag: won
+    down:
+      to: stone-barrow
+      when:
+        has_flag: won
+- id: stone-barrow
+  name: 'You are standing in front of a massive barrow of stone. In the east face
+
+    is a huge stone door which is open. You cannot see into the dark of the tomb.'
+  description: 'You are standing in front of a massive barrow of stone. In the east face
+
+    is a huge stone door which is open. You cannot see into the dark of the tomb.'
+  on_enter:
+  - if:
+      has_flag: won
+    then:
+    - msg: 'As you enter the barrow, the door closes inexorably behind you. Around you it is dark, but ahead is an enormous cavern, brightly lit. Through its center runs a wide stream. Spanning the stream is a small wooden footbridge, and beyond a path leads into a dark tunnel. Above the bridge, floating in the air, is a large sign. It reads:  All ye who stand before this bridge have completed a great and perilous adventure which has tested your wit and courage. You have mastered the first part of the ZORK trilogy.'
+    - game_end: victory
+  exits:
+    ne:
+      to: west-of-house
+- id: north-of-house
+  name: 'You are facing the north side of a white house. There is no door here,
+
+    and all the windows are boarded up. To the north a narrow path winds through
+
+    the trees.'
+  description: 'You are facing the north side of a white house. There is no door here,
+
+    and all the windows are boarded up. To the north a narrow path winds through
+
+    the trees.'
+  exits:
+    sw:
+      to: west-of-house
+    se:
+      to: east-of-house
+    west:
+      to: west-of-house
+    east:
+      to: east-of-house
+    north:
+      to: path
+    south:
+      to: north-of-house
+      blocked: true
+      msg: The windows are all boarded
+- id: south-of-house
+  name: 'You are facing the south side of a white house. There is no door here,
+
+    and all the windows are boarded.'
+  description: 'You are facing the south side of a white house. There is no door here,
+
+    and all the windows are boarded.'
+  exits:
+    west:
+      to: west-of-house
+    east:
+      to: east-of-house
+    ne:
+      to: east-of-house
+    nw:
+      to: west-of-house
+    south:
+      to: forest-3
+    north:
+      to: south-of-house
+      blocked: true
+      msg: The windows are all boarded
+- id: east-of-house
+  name: Behind House
+  description: Behind House
+  exits:
+    north:
+      to: north-of-house
+    south:
+      to: south-of-house
+    sw:
+      to: south-of-house
+    nw:
+      to: north-of-house
+    east:
+      to: clearing
+    west:
+      to: kitchen
+      when:
+        has_flag: kitchen-window-open
+    down:
+      to: kitchen
+      when:
+        has_flag: kitchen-window-open
+- id: forest-1
+  name: 'This is a forest, with trees in all directions. To the east,
+
+    there appears to be sunlight.'
+  description: 'This is a forest, with trees in all directions. To the east,
+
+    there appears to be sunlight.'
+  exits:
+    up:
+      to: forest-1
+      blocked: true
+      msg: There is no tree here suitable for climbing
+    north:
+      to: grating-clearing
+    east:
+      to: path
+    south:
+      to: forest-3
+    west:
+      to: forest-1
+      blocked: true
+      msg: You would need a machete to go further west
+- id: forest-2
+  name: This is a dimly lit forest, with large trees all around.
+  description: This is a dimly lit forest, with large trees all around.
+  exits:
+    up:
+      to: forest-2
+      blocked: true
+      msg: There is no tree here suitable for climbing
+    north:
+      to: forest-2
+      blocked: true
+      msg: The forest becomes impenetrable to the north
+    east:
+      to: mountains
+    south:
+      to: clearing
+    west:
+      to: path
+- id: mountains
+  name: The forest thins out, revealing impassable mountains.
+  description: The forest thins out, revealing impassable mountains.
+  exits:
+    up:
+      to: mountains
+      blocked: true
+      msg: The mountains are impassable
+    north:
+      to: forest-2
+    east:
+      to: mountains
+      blocked: true
+      msg: The mountains are impassable
+    south:
+      to: forest-2
+    west:
+      to: forest-2
+- id: forest-3
+  name: This is a dimly lit forest, with large trees all around.
+  description: This is a dimly lit forest, with large trees all around.
+  exits:
+    up:
+      to: forest-3
+      blocked: true
+      msg: There is no tree here suitable for climbing
+    north:
+      to: clearing
+    east:
+      to: forest-3
+      blocked: true
+      msg: The rank undergrowth prevents eastward movement
+    south:
+      to: forest-3
+      blocked: true
+      msg: Storm-tossed trees block your way
+    west:
+      to: forest-1
+    nw:
+      to: south-of-house
+- id: path
+  name: 'This is a path winding through a dimly lit forest. The path heads
+
+    north-south here. One particularly large tree with some low branches
+
+    stands at the edge of the path.'
+  description: 'This is a path winding through a dimly lit forest. The path heads
+
+    north-south here. One particularly large tree with some low branches
+
+    stands at the edge of the path.'
+  exits:
+    up:
+      to: up-a-tree
+    north:
+      to: grating-clearing
+    east:
+      to: forest-2
+    south:
+      to: north-of-house
+    west:
+      to: forest-1
+- id: up-a-tree
+  name: Up a Tree
+  description: Up a Tree
+  exits:
+    down:
+      to: path
+    up:
+      to: up-a-tree
+      blocked: true
+      msg: You cannot climb any higher
+- id: grating-clearing
+  name: Clearing
+  description: Clearing
+  exits:
+    north:
+      to: grating-clearing
+      blocked: true
+      msg: The forest becomes impenetrable to the north
+    east:
+      to: forest-2
+    west:
+      to: forest-1
+    south:
+      to: path
+    down:
+      to: grating-room
+      when:
+        has_flag: grate-open
+- id: clearing
+  name: 'You are in a small clearing in a well marked forest path that
+
+    extends to the east and west.'
+  description: 'You are in a small clearing in a well marked forest path that
+
+    extends to the east and west.'
+  exits:
+    up:
+      to: clearing
+      blocked: true
+      msg: There is no tree here suitable for climbing
+    east:
+      to: canyon-view
+    north:
+      to: forest-2
+    south:
+      to: forest-3
+    west:
+      to: east-of-house
+- id: kitchen
+  name: Kitchen
+  description: Kitchen
+  exits:
+    east:
+      to: east-of-house
+      when:
+        has_flag: kitchen-window-open
+    west:
+      to: living-room
+    up:
+      to: attic
+    down:
+      to: studio
+      blocked: true
+      msg: Only Santa Claus climbs down chimneys.
+- id: attic
+  name: This is the attic. The only exit is a stairway leading down.
+  description: This is the attic. The only exit is a stairway leading down.
+  exits:
+    down:
+      to: kitchen
+  tags:
+  - dark
+- id: living-room
+  name: Living Room
+  description: Living Room
+  exits:
+    east:
+      to: kitchen
+    west:
+      to: strange-passage
+      when:
+        has_flag: magic
+      msg: The door is nailed shut.
+    down:
+      to: cellar
+      when:
+        has_flag: trap-door-open
+      msg: You can't go that way.
+- id: cellar
+  name: Cellar
+  description: Cellar
+  exits:
+    north:
+      to: troll-room
+    south:
+      to: east-of-chasm
+    up:
+      to: living-room
+      when:
+        has_flag: trap-door-open
+    west:
+      to: cellar
+      blocked: true
+      msg: You try to ascend the ramp, but it is impossible, and you slide back down
+  tags:
+  - dark
+- id: troll-room
+  name: 'This is a small room with passages to the east and south and a
+
+    forbidding hole leading west. Bloodstains and deep scratches
+
+    (perhaps made by an axe) mar the walls.'
+  description: 'This is a small room with passages to the east and south and a
+
+    forbidding hole leading west. Bloodstains and deep scratches
+
+    (perhaps made by an axe) mar the walls.'
+  exits:
+    south:
+      to: cellar
+    east:
+      to: ew-passage
+      when:
+        has_flag: troll-defeated
+      msg: The troll fends you off with a menacing gesture.
+    west:
+      to: maze-1
+      when:
+        has_flag: troll-defeated
+      msg: The troll fends you off with a menacing gesture.
+  tags:
+  - dark
+- id: east-of-chasm
+  name: 'You are on the east edge of a chasm, the bottom of which cannot be
+
+    seen. A narrow passage goes north, and the path you are on continues
+
+    to the east.'
+  description: 'You are on the east edge of a chasm, the bottom of which cannot be
+
+    seen. A narrow passage goes north, and the path you are on continues
+
+    to the east.'
+  exits:
+    north:
+      to: cellar
+    east:
+      to: gallery
+    down:
+      to: east-of-chasm
+      blocked: true
+      msg: The chasm probably leads straight to the infernal regions
+  tags:
+  - dark
+- id: gallery
+  name: 'This is an art gallery. Most of the paintings have been stolen by
+
+    vandals with exceptional taste. The vandals left through either the
+
+    north or west exits.'
+  description: 'This is an art gallery. Most of the paintings have been stolen by
+
+    vandals with exceptional taste. The vandals left through either the
+
+    north or west exits.'
+  exits:
+    west:
+      to: east-of-chasm
+    north:
+      to: studio
+- id: studio
+  name: 'This appears to have been an artist''s studio. The walls and floors are
+
+    splattered with paints of 69 different colors. Strangely enough, nothing
+
+    of value is hanging here. At the south end of the room is an open door
+
+    (also covered with paint). A dark and narrow chimney leads up from a
+
+    fireplace; although you might be able to get up it, it seems unlikely
+
+    you could get back down.'
+  description: 'This appears to have been an artist''s studio. The walls and floors are
+
+    splattered with paints of 69 different colors. Strangely enough, nothing
+
+    of value is hanging here. At the south end of the room is an open door
+
+    (also covered with paint). A dark and narrow chimney leads up from a
+
+    fireplace; although you might be able to get up it, it seems unlikely
+
+    you could get back down.'
+  exits:
+    south:
+      to: gallery
+    up:
+      to: kitchen
+      when:
+        all:
+        - has_item: lamp
+        - compare_var:
+            name: count.items.by.player
+            op: lte
+            value: 2
+      msg: You can't get up there with what you're carrying.
+  tags:
+  - dark
+- id: maze-1
+  name: This is part of a maze of twisty little passages, all alike.
+  description: This is part of a maze of twisty little passages, all alike.
+  exits:
+    east:
+      to: troll-room
+    north:
+      to: maze-1
+    south:
+      to: maze-2
+    west:
+      to: maze-4
+  tags:
+  - dark
+- id: maze-2
+  name: This is part of a maze of twisty little passages, all alike.
+  description: This is part of a maze of twisty little passages, all alike.
+  exits:
+    south:
+      to: maze-1
+    down:
+      to: maze-4
+    east:
+      to: maze-3
+  tags:
+  - dark
+- id: maze-3
+  name: This is part of a maze of twisty little passages, all alike.
+  description: This is part of a maze of twisty little passages, all alike.
+  exits:
+    west:
+      to: maze-2
+    north:
+      to: maze-4
+    up:
+      to: maze-5
+  tags:
+  - dark
+- id: maze-4
+  name: This is part of a maze of twisty little passages, all alike.
+  description: This is part of a maze of twisty little passages, all alike.
+  exits:
+    west:
+      to: maze-3
+    north:
+      to: maze-1
+    east:
+      to: dead-end-1
+  tags:
+  - dark
+- id: dead-end-1
+  name: You have come to a dead end in the maze.
+  description: You have come to a dead end in the maze.
+  exits:
+    south:
+      to: maze-4
+  tags:
+  - dark
+- id: maze-5
+  name: 'This is part of a maze of twisty little passages, all alike.
+
+    A skeleton, probably the remains of a luckless adventurer, lies here.'
+  description: 'This is part of a maze of twisty little passages, all alike.
+
+    A skeleton, probably the remains of a luckless adventurer, lies here.'
+  exits:
+    east:
+      to: dead-end-2
+    north:
+      to: maze-3
+    sw:
+      to: maze-6
+  tags:
+  - dark
+- id: dead-end-2
+  name: You have come to a dead end in the maze.
+  description: You have come to a dead end in the maze.
+  exits:
+    west:
+      to: maze-5
+  tags:
+  - dark
+- id: maze-6
+  name: This is part of a maze of twisty little passages, all alike.
+  description: This is part of a maze of twisty little passages, all alike.
+  exits:
+    down:
+      to: maze-5
+    east:
+      to: maze-7
+    west:
+      to: maze-6
+    up:
+      to: maze-9
+  tags:
+  - dark
+- id: maze-7
+  name: This is part of a maze of twisty little passages, all alike.
+  description: This is part of a maze of twisty little passages, all alike.
+  exits:
+    up:
+      to: maze-14
+    west:
+      to: maze-6
+    down:
+      to: dead-end-1
+    east:
+      to: maze-8
+    south:
+      to: maze-15
+  tags:
+  - dark
+- id: maze-8
+  name: This is part of a maze of twisty little passages, all alike.
+  description: This is part of a maze of twisty little passages, all alike.
+  exits:
+    ne:
+      to: maze-7
+    west:
+      to: maze-8
+    se:
+      to: dead-end-3
+  tags:
+  - dark
+- id: dead-end-3
+  name: You have come to a dead end in the maze.
+  description: You have come to a dead end in the maze.
+  exits:
+    north:
+      to: maze-8
+  tags:
+  - dark
+- id: maze-9
+  name: This is part of a maze of twisty little passages, all alike.
+  description: This is part of a maze of twisty little passages, all alike.
+  exits:
+    north:
+      to: maze-6
+    down:
+      to: maze-11
+    east:
+      to: maze-10
+    south:
+      to: maze-13
+    west:
+      to: maze-12
+    nw:
+      to: maze-9
+  tags:
+  - dark
+- id: maze-10
+  name: This is part of a maze of twisty little passages, all alike.
+  description: This is part of a maze of twisty little passages, all alike.
+  exits:
+    east:
+      to: maze-9
+    west:
+      to: maze-13
+    up:
+      to: maze-11
+  tags:
+  - dark
+- id: maze-11
+  name: This is part of a maze of twisty little passages, all alike.
+  description: This is part of a maze of twisty little passages, all alike.
+  exits:
+    ne:
+      to: grating-room
+    down:
+      to: maze-10
+    nw:
+      to: maze-13
+    sw:
+      to: maze-12
+  tags:
+  - dark
+- id: grating-room
+  name: Grating Room
+  description: Grating Room
+  exits:
+    sw:
+      to: maze-11
+    up:
+      to: grating-clearing
+      when:
+        has_flag: grate-open
+  tags:
+  - dark
+- id: maze-12
+  name: This is part of a maze of twisty little passages, all alike.
+  description: This is part of a maze of twisty little passages, all alike.
+  exits:
+    down:
+      to: maze-5
+    sw:
+      to: maze-11
+    east:
+      to: maze-13
+    up:
+      to: maze-9
+    north:
+      to: dead-end-4
+  tags:
+  - dark
+- id: dead-end-4
+  name: You have come to a dead end in the maze.
+  description: You have come to a dead end in the maze.
+  exits:
+    south:
+      to: maze-12
+  tags:
+  - dark
+- id: maze-13
+  name: This is part of a maze of twisty little passages, all alike.
+  description: This is part of a maze of twisty little passages, all alike.
+  exits:
+    east:
+      to: maze-9
+    down:
+      to: maze-12
+    south:
+      to: maze-10
+    west:
+      to: maze-11
+  tags:
+  - dark
+- id: maze-14
+  name: This is part of a maze of twisty little passages, all alike.
+  description: This is part of a maze of twisty little passages, all alike.
+  exits:
+    west:
+      to: maze-15
+    nw:
+      to: maze-14
+    ne:
+      to: maze-7
+    south:
+      to: maze-7
+  tags:
+  - dark
+- id: maze-15
+  name: This is part of a maze of twisty little passages, all alike.
+  description: This is part of a maze of twisty little passages, all alike.
+  exits:
+    west:
+      to: maze-14
+    south:
+      to: maze-7
+    se:
+      to: cyclops-room
+  tags:
+  - dark
+- id: cyclops-room
+  name: Cyclops Room
+  description: Cyclops Room
+  exits:
+    nw:
+      to: maze-15
+    east:
+      to: strange-passage
+      when:
+        has_flag: magic
+      msg: The east wall is solid rock.
+    up:
+      to: treasure-room
+      when:
+        has_flag: cyclops_flag
+      msg: The cyclops doesn't look like he'll let you past.
+  tags:
+  - dark
+- id: strange-passage
+  name: 'This is a long passage. To the west is one entrance. On the
+
+    east there is an old wooden door, with a large opening in it (about
+
+    cyclops sized).'
+  description: 'This is a long passage. To the west is one entrance. On the
+
+    east there is an old wooden door, with a large opening in it (about
+
+    cyclops sized).'
+  exits:
+    west:
+      to: cyclops-room
+    down:
+      to: cyclops-room
+    east:
+      to: living-room
+  tags:
+  - dark
+- id: treasure-room
+  name: 'This is a large room, whose east wall is solid granite. A number
+
+    of discarded bags, which crumble at your touch, are scattered about
+
+    on the floor. There is an exit down a staircase.'
+  description: 'This is a large room, whose east wall is solid granite. A number
+
+    of discarded bags, which crumble at your touch, are scattered about
+
+    on the floor. There is an exit down a staircase.'
+  exits:
+    down:
+      to: cyclops-room
+- id: reservoir-south
+  name: Reservoir South
+  description: Reservoir South
+  exits:
+    se:
+      to: deep-canyon
+    sw:
+      to: chasm-room
+    east:
+      to: dam-room
+    west:
+      to: stream-view
+    north:
+      to: reservoir
+      when:
+        has_flag: low_tide
+      msg: You would drown.
+  tags:
+  - dark
+- id: reservoir
+  name: Reservoir
+  description: Reservoir
+  exits:
+    north:
+      to: reservoir-north
+    south:
+      to: reservoir-south
+    up:
+      to: in-stream
+    west:
+      to: in-stream
+    down:
+      to: river-1
+      when:
+        all:
+        - has_flag: low_tide
+        - has_flag: in-boat
+      msg: The sluice gates are closed. The dam blocks your way.
+  tags:
+  - dark
+- id: reservoir-north
+  name: Reservoir North
+  description: Reservoir North
+  exits:
+    north:
+      to: atlantis-room
+    south:
+      to: reservoir
+      when:
+        has_flag: low_tide
+      msg: You would drown.
+  tags:
+  - dark
+- id: stream-view
+  name: 'You are standing on a path beside a gently flowing stream. The path
+
+    follows the stream, which flows from west to east.'
+  description: 'You are standing on a path beside a gently flowing stream. The path
+
+    follows the stream, which flows from west to east.'
+  exits:
+    east:
+      to: reservoir-south
+    west:
+      to: stream-view
+      blocked: true
+      msg: The stream emerges from a spot too small for you to enter
+  tags:
+  - dark
+- id: in-stream
+  name: 'You are on the gently flowing stream. The upstream route is too narrow
+
+    to navigate, and the downstream route is invisible due to twisting
+
+    walls. There is a narrow beach to land on.'
+  description: 'You are on the gently flowing stream. The upstream route is too narrow
+
+    to navigate, and the downstream route is invisible due to twisting
+
+    walls. There is a narrow beach to land on.'
+  exits:
+    up:
+      to: in-stream
+      blocked: true
+      msg: The channel is too narrow
+    west:
+      to: in-stream
+      blocked: true
+      msg: The channel is too narrow
+    down:
+      to: reservoir
+    east:
+      to: reservoir
+  tags:
+  - dark
+- id: mirror-room-1
+  name: Mirror Room
+  description: Mirror Room
+  exits:
+    north:
+      to: cold-passage
+    west:
+      to: twisting-passage
+    east:
+      to: small-cave
+  tags:
+  - dark
+- id: mirror-room-2
+  name: Mirror Room
+  description: Mirror Room
+  exits:
+    west:
+      to: winding-passage
+    north:
+      to: narrow-passage
+    east:
+      to: tiny-cave
+- id: small-cave
+  name: 'This is a tiny cave with entrances west and north, and a staircase
+
+    leading down.'
+  description: 'This is a tiny cave with entrances west and north, and a staircase
+
+    leading down.'
+  exits:
+    north:
+      to: mirror-room-1
+    down:
+      to: atlantis-room
+    south:
+      to: atlantis-room
+    west:
+      to: twisting-passage
+  tags:
+  - dark
+- id: tiny-cave
+  name: 'This is a tiny cave with entrances west and north, and a dark,
+
+    forbidding staircase leading down.'
+  description: 'This is a tiny cave with entrances west and north, and a dark,
+
+    forbidding staircase leading down.'
+  exits:
+    north:
+      to: mirror-room-2
+    west:
+      to: winding-passage
+    down:
+      to: entrance-to-hades
+  tags:
+  - dark
+- id: cold-passage
+  name: 'This is a cold and damp corridor where a long east-west passageway
+
+    turns into a southward path.'
+  description: 'This is a cold and damp corridor where a long east-west passageway
+
+    turns into a southward path.'
+  exits:
+    south:
+      to: mirror-room-1
+    west:
+      to: slide-room
+  tags:
+  - dark
+- id: narrow-passage
+  name: 'This is a long and narrow corridor where a long north-south passageway
+
+    briefly narrows even further.'
+  description: 'This is a long and narrow corridor where a long north-south passageway
+
+    briefly narrows even further.'
+  exits:
+    north:
+      to: round-room
+    south:
+      to: mirror-room-2
+  tags:
+  - dark
+- id: winding-passage
+  name: 'This is a winding passage. It seems that there are only exits
+
+    on the east and north.'
+  description: 'This is a winding passage. It seems that there are only exits
+
+    on the east and north.'
+  exits:
+    north:
+      to: mirror-room-2
+    east:
+      to: tiny-cave
+  tags:
+  - dark
+- id: twisting-passage
+  name: 'This is a winding passage. It seems that there are only exits
+
+    on the east and north.'
+  description: 'This is a winding passage. It seems that there are only exits
+
+    on the east and north.'
+  exits:
+    north:
+      to: mirror-room-1
+    east:
+      to: small-cave
+  tags:
+  - dark
+- id: atlantis-room
+  name: 'This is an ancient room, long under water. There is an exit to
+
+    the south and a staircase leading up.'
+  description: 'This is an ancient room, long under water. There is an exit to
+
+    the south and a staircase leading up.'
+  exits:
+    up:
+      to: small-cave
+    south:
+      to: reservoir-north
+  tags:
+  - dark
+- id: ew-passage
+  name: 'This is a narrow east-west passageway. There is a narrow stairway
+
+    leading down at the north end of the room.'
+  description: 'This is a narrow east-west passageway. There is a narrow stairway
+
+    leading down at the north end of the room.'
+  exits:
+    east:
+      to: round-room
+    west:
+      to: troll-room
+    down:
+      to: chasm-room
+    north:
+      to: chasm-room
+  tags:
+  - dark
+- id: round-room
+  name: 'This is a circular stone room with passages in all directions. Several
+
+    of them have unfortunately been blocked by cave-ins.'
+  description: 'This is a circular stone room with passages in all directions. Several
+
+    of them have unfortunately been blocked by cave-ins.'
+  exits:
+    east:
+      to: loud-room
+    west:
+      to: ew-passage
+    north:
+      to: ns-passage
+    south:
+      to: narrow-passage
+    se:
+      to: engravings-cave
+  tags:
+  - dark
+- id: deep-canyon
+  name: Deep Canyon
+  description: Deep Canyon
+  exits:
+    nw:
+      to: reservoir-south
+    east:
+      to: dam-room
+    sw:
+      to: ns-passage
+    down:
+      to: loud-room
+  tags:
+  - dark
+- id: damp-cave
+  name: 'This cave has exits to the west and east, and narrows to a crack toward
+
+    the south. The earth is particularly damp here.'
+  description: 'This cave has exits to the west and east, and narrows to a crack toward
+
+    the south. The earth is particularly damp here.'
+  exits:
+    west:
+      to: loud-room
+    east:
+      to: white-cliffs-north
+    south:
+      to: damp-cave
+      blocked: true
+      msg: It is too narrow for most insects
+  tags:
+  - dark
+- id: loud-room
+  name: Loud Room
+  description: Loud Room
+  exits:
+    east:
+      to: damp-cave
+    west:
+      to: round-room
+    up:
+      to: deep-canyon
+  tags:
+  - dark
+- id: ns-passage
+  name: This is a high north-south passage, which forks to the northeast.
+  description: This is a high north-south passage, which forks to the northeast.
+  exits:
+    north:
+      to: chasm-room
+    ne:
+      to: deep-canyon
+    south:
+      to: round-room
+  tags:
+  - dark
+- id: chasm-room
+  name: 'A chasm runs southwest to northeast and the path follows it. You are
+
+    on the south side of the chasm, where a crack opens into a passage.'
+  description: 'A chasm runs southwest to northeast and the path follows it. You are
+
+    on the south side of the chasm, where a crack opens into a passage.'
+  exits:
+    ne:
+      to: reservoir-south
+    sw:
+      to: ew-passage
+    up:
+      to: ew-passage
+    south:
+      to: ns-passage
+    down:
+      to: chasm-room
+      blocked: true
+      msg: Are you out of your mind
+  tags:
+  - dark
+- id: entrance-to-hades
+  name: Entrance to Hades
+  description: Entrance to Hades
+  exits:
+    up:
+      to: tiny-cave
+    down:
+      to: land-of-living-dead
+      when:
+        has_flag: lld_flag
+      msg: Some invisible force prevents you from passing through the gate.
+    south:
+      to: land-of-living-dead
+      when:
+        has_flag: lld_flag
+      msg: Some invisible force prevents you from passing through the gate.
+- id: land-of-living-dead
+  name: 'You have entered the Land of the Living Dead. Thousands of lost souls
+
+    can be heard weeping and moaning. In the corner are stacked the remains
+
+    of dozens of previous adventurers less fortunate than yourself.
+
+    A passage exits to the north.'
+  description: 'You have entered the Land of the Living Dead. Thousands of lost souls
+
+    can be heard weeping and moaning. In the corner are stacked the remains
+
+    of dozens of previous adventurers less fortunate than yourself.
+
+    A passage exits to the north.'
+  exits:
+    up:
+      to: entrance-to-hades
+    north:
+      to: entrance-to-hades
+- id: engravings-cave
+  name: You have entered a low cave with passages leading northwest and east.
+  description: You have entered a low cave with passages leading northwest and east.
+  exits:
+    nw:
+      to: round-room
+    east:
+      to: dome-room
+  tags:
+  - dark
+- id: egypt-room
+  name: 'This is a room which looks like an Egyptian tomb. There is an
+
+    ascending staircase to the west.'
+  description: 'This is a room which looks like an Egyptian tomb. There is an
+
+    ascending staircase to the west.'
+  exits:
+    west:
+      to: north-temple
+    up:
+      to: north-temple
+  tags:
+  - dark
+- id: dome-room
+  name: Dome Room
+  description: Dome Room
+  exits:
+    west:
+      to: engravings-cave
+    down:
+      to: torch-room
+      when:
+        has_flag: dome_flag
+      msg: You cannot go down without fracturing many bones.
+  tags:
+  - dark
+- id: torch-room
+  name: Torch Room
+  description: Torch Room
+  exits:
+    up:
+      to: torch-room
+      blocked: true
+      msg: You cannot reach the rope
+    south:
+      to: north-temple
+    down:
+      to: north-temple
+  tags:
+  - dark
+- id: north-temple
+  name: 'This is the north end of a large temple. On the east wall is an
+
+    ancient inscription, probably a prayer in a long-forgotten language.
+
+    Below the prayer is a staircase leading down. The west wall is solid
+
+    granite. The exit to the north end of the room is through huge
+
+    marble pillars.'
+  description: 'This is the north end of a large temple. On the east wall is an
+
+    ancient inscription, probably a prayer in a long-forgotten language.
+
+    Below the prayer is a staircase leading down. The west wall is solid
+
+    granite. The exit to the north end of the room is through huge
+
+    marble pillars.'
+  exits:
+    down:
+      to: egypt-room
+    east:
+      to: egypt-room
+    north:
+      to: torch-room
+    up:
+      to: torch-room
+    south:
+      to: south-temple
+- id: south-temple
+  name: 'This is the south end of a large temple. In front of you is what
+
+    appears to be an altar. In one corner is a small hole in the floor
+
+    which leads into darkness. You probably could not get back up it.'
+  description: 'This is the south end of a large temple. In front of you is what
+
+    appears to be an altar. In one corner is a small hole in the floor
+
+    which leads into darkness. You probably could not get back up it.'
+  exits:
+    north:
+      to: north-temple
+    down:
+      to: tiny-cave
+      when:
+        not:
+          has_item: coffin
+      msg: You haven't a prayer of getting the coffin down there.
+- id: dam-room
+  name: Dam
+  description: Dam
+  exits:
+    south:
+      to: deep-canyon
+    down:
+      to: dam-base
+    east:
+      to: dam-base
+    north:
+      to: dam-lobby
+    west:
+      to: reservoir-south
+- id: dam-lobby
+  name: 'This room appears to have been the waiting room for groups touring
+
+    the dam. There are open doorways here to the north and east marked
+
+    \'
+  description: 'This room appears to have been the waiting room for groups touring
+
+    the dam. There are open doorways here to the north and east marked
+
+    \'
+  exits:
+    south:
+      to: dam-room
+    north:
+      to: maintenance-room
+    east:
+      to: maintenance-room
+- id: maintenance-room
+  name: 'This is what appears to have been the maintenance room for Flood
+
+    Control Dam #3. Apparently, this room has been ransacked recently, for
+
+    most of the valuable equipment is gone. On the wall in front of you is a
+
+    group of buttons colored blue, yellow, brown, and red. There are doorways to
+
+    the west and south.'
+  description: 'This is what appears to have been the maintenance room for Flood
+
+    Control Dam #3. Apparently, this room has been ransacked recently, for
+
+    most of the valuable equipment is gone. On the wall in front of you is a
+
+    group of buttons colored blue, yellow, brown, and red. There are doorways to
+
+    the west and south.'
+  exits:
+    south:
+      to: dam-lobby
+    west:
+      to: dam-lobby
+  tags:
+  - dark
+- id: dam-base
+  name: 'You are at the base of Flood Control Dam #3, which looms above you
+
+    and to the north. The river Frigid is flowing by here. Along the
+
+    river are the White Cliffs which seem to form giant walls stretching
+
+    from north to south along the shores of the river as it winds its
+
+    way downstream.'
+  description: 'You are at the base of Flood Control Dam #3, which looms above you
+
+    and to the north. The river Frigid is flowing by here. Along the
+
+    river are the White Cliffs which seem to form giant walls stretching
+
+    from north to south along the shores of the river as it winds its
+
+    way downstream.'
+  exits:
+    north:
+      to: dam-room
+    up:
+      to: dam-room
+- id: river-1
+  name: 'You are on the Frigid River in the vicinity of the Dam. The river
+
+    flows quietly here. There is a landing on the west shore.'
+  description: 'You are on the Frigid River in the vicinity of the Dam. The river
+
+    flows quietly here. There is a landing on the west shore.'
+  exits:
+    up:
+      to: river-1
+      blocked: true
+      msg: You cannot go upstream due to strong currents
+    west:
+      to: dam-base
+      when:
+        has_flag: in-boat
+      msg: You need the boat to reach the dam base from the river.
+    down:
+      to: river-2
+      when:
+        has_flag: in-boat
+      msg: The river is running too fast to enter from here.
+    east:
+      to: river-1
+      blocked: true
+      msg: The White Cliffs prevent your landing here
+- id: river-2
+  name: 'The river turns a corner here making it impossible to see the
+
+    Dam. The White Cliffs loom on the east bank and large rocks prevent
+
+    landing on the west.'
+  description: 'The river turns a corner here making it impossible to see the
+
+    Dam. The White Cliffs loom on the east bank and large rocks prevent
+
+    landing on the west.'
+  exits:
+    up:
+      to: river-2
+      blocked: true
+      msg: You cannot go upstream due to strong currents
+    down:
+      to: river-3
+      when:
+        has_flag: in-boat
+      msg: The river is running too fast.
+    east:
+      to: river-2
+      blocked: true
+      msg: The White Cliffs prevent your landing here
+    west:
+      to: river-2
+      blocked: true
+      msg: Just in time you steer away from the rocks
+  tags:
+  - dark
+- id: river-3
+  name: 'The river descends here into a valley. There is a narrow beach on the
+
+    west shore below the cliffs. In the distance a faint rumbling can be
+
+    heard.'
+  description: 'The river descends here into a valley. There is a narrow beach on the
+
+    west shore below the cliffs. In the distance a faint rumbling can be
+
+    heard.'
+  exits:
+    up:
+      to: river-3
+      blocked: true
+      msg: You cannot go upstream due to strong currents
+    down:
+      to: river-4
+      when:
+        has_flag: in-boat
+      msg: The river is running too fast.
+    west:
+      to: white-cliffs-north
+      when:
+        has_flag: in-boat
+      msg: You can only land here from your boat.
+  tags:
+  - dark
+- id: white-cliffs-north
+  name: 'You are on a narrow strip of beach which runs along the base of the
+
+    White Cliffs. There is a narrow path heading south along the Cliffs
+
+    and a tight passage leading west into the cliffs themselves.'
+  description: 'You are on a narrow strip of beach which runs along the base of the
+
+    White Cliffs. There is a narrow path heading south along the Cliffs
+
+    and a tight passage leading west into the cliffs themselves.'
+  exits:
+    south:
+      to: white-cliffs-south
+      when:
+        has_flag: deflate
+      msg: The path is too narrow.
+    west:
+      to: damp-cave
+      when:
+        has_flag: deflate
+      msg: The path is too narrow.
+  tags:
+  - dark
+- id: white-cliffs-south
+  name: 'You are on a rocky, narrow strip of beach beside the Cliffs. A
+
+    narrow path leads north along the shore.'
+  description: 'You are on a rocky, narrow strip of beach beside the Cliffs. A
+
+    narrow path leads north along the shore.'
+  exits:
+    north:
+      to: white-cliffs-north
+      when:
+        has_flag: deflate
+      msg: The path is too narrow.
+  tags:
+  - dark
+- id: river-4
+  name: 'The river is running faster here and the sound ahead appears to be
+
+    that of rushing water. On the east shore is a sandy beach. A small
+
+    area of beach can also be seen below the cliffs on the west shore.'
+  description: 'The river is running faster here and the sound ahead appears to be
+
+    that of rushing water. On the east shore is a sandy beach. A small
+
+    area of beach can also be seen below the cliffs on the west shore.'
+  exits:
+    up:
+      to: river-4
+      blocked: true
+      msg: You cannot go upstream due to strong currents
+    down:
+      to: river-5
+      when:
+        has_flag: in-boat
+      msg: The river is running too fast.
+    west:
+      to: white-cliffs-south
+      when:
+        has_flag: in-boat
+      msg: You can only land here from your boat.
+    east:
+      to: sandy-beach
+      when:
+        has_flag: in-boat
+      msg: You can only land here from your boat.
+  tags:
+  - dark
+- id: river-5
+  name: 'The sound of rushing water is nearly unbearable here. On the east
+
+    shore is a large landing area.'
+  description: 'The sound of rushing water is nearly unbearable here. On the east
+
+    shore is a large landing area.'
+  exits:
+    up:
+      to: river-5
+      blocked: true
+      msg: You cannot go upstream due to strong currents
+    east:
+      to: shore
+      when:
+        has_flag: in-boat
+      msg: You can only land here from your boat.
+- id: shore
+  name: 'You are on the east shore of the river. The water here seems somewhat
+
+    treacherous. A path travels from north to south here, the south end
+
+    quickly turning around a sharp corner.'
+  description: 'You are on the east shore of the river. The water here seems somewhat
+
+    treacherous. A path travels from north to south here, the south end
+
+    quickly turning around a sharp corner.'
+  exits:
+    north:
+      to: sandy-beach
+    south:
+      to: aragain-falls
+- id: sandy-beach
+  name: 'You are on a large sandy beach on the east shore of the river, which is
+
+    flowing quickly by. A path runs beside the river to the south here, and
+
+    a passage is partially buried in sand to the northeast.'
+  description: 'You are on a large sandy beach on the east shore of the river, which is
+
+    flowing quickly by. A path runs beside the river to the south here, and
+
+    a passage is partially buried in sand to the northeast.'
+  exits:
+    ne:
+      to: sandy-cave
+    south:
+      to: shore
+  tags:
+  - dark
+- id: sandy-cave
+  name: This is a sand-filled cave whose exit is to the southwest.
+  description: This is a sand-filled cave whose exit is to the southwest.
+  exits:
+    sw:
+      to: sandy-beach
+  tags:
+  - dark
+- id: aragain-falls
+  name: Aragain Falls
+  description: Aragain Falls
+  exits:
+    west:
+      to: on-rainbow
+      when:
+        has_flag: rainbow_flag
+    down:
+      to: aragain-falls
+      blocked: true
+      msg: It's a long way..
+    north:
+      to: shore
+    up:
+      to: on-rainbow
+      when:
+        has_flag: rainbow_flag
+- id: on-rainbow
+  name: 'You are on top of a rainbow (I bet you never thought you would walk
+
+    on a rainbow), with a magnificent view of the Falls. The rainbow
+
+    travels east-west here.'
+  description: 'You are on top of a rainbow (I bet you never thought you would walk
+
+    on a rainbow), with a magnificent view of the Falls. The rainbow
+
+    travels east-west here.'
+  exits:
+    west:
+      to: end-of-rainbow
+    east:
+      to: aragain-falls
+- id: end-of-rainbow
+  name: 'You are on a small, rocky beach on the continuation of the Frigid
+
+    River past the Falls. The beach is narrow due to the presence of the
+
+    White Cliffs. The river canyon opens here and sunlight shines in
+
+    from above. A rainbow crosses over the falls to the east and a narrow
+
+    path continues to the southwest.'
+  description: 'You are on a small, rocky beach on the continuation of the Frigid
+
+    River past the Falls. The beach is narrow due to the presence of the
+
+    White Cliffs. The river canyon opens here and sunlight shines in
+
+    from above. A rainbow crosses over the falls to the east and a narrow
+
+    path continues to the southwest.'
+  exits:
+    up:
+      to: on-rainbow
+      when:
+        has_flag: rainbow_flag
+    ne:
+      to: on-rainbow
+      when:
+        has_flag: rainbow_flag
+    east:
+      to: on-rainbow
+      when:
+        has_flag: rainbow_flag
+    sw:
+      to: canyon-bottom
+- id: canyon-bottom
+  name: 'You are beneath the walls of the river canyon which may be climbable
+
+    here. The lesser part of the runoff of Aragain Falls flows by below.
+
+    To the north is a narrow path.'
+  description: 'You are beneath the walls of the river canyon which may be climbable
+
+    here. The lesser part of the runoff of Aragain Falls flows by below.
+
+    To the north is a narrow path.'
+  exits:
+    up:
+      to: cliff-middle
+    north:
+      to: end-of-rainbow
+- id: cliff-middle
+  name: 'You are on a ledge about halfway up the wall of the river canyon.
+
+    You can see from here that the main flow from Aragain Falls twists
+
+    along a passage which it is impossible for you to enter. Below you is the
+
+    canyon bottom. Above you is more cliff, which appears
+
+    climbable.'
+  description: 'You are on a ledge about halfway up the wall of the river canyon.
+
+    You can see from here that the main flow from Aragain Falls twists
+
+    along a passage which it is impossible for you to enter. Below you is the
+
+    canyon bottom. Above you is more cliff, which appears
+
+    climbable.'
+  exits:
+    up:
+      to: canyon-view
+    down:
+      to: canyon-bottom
+- id: canyon-view
+  name: 'You are at the top of the Great Canyon on its west wall. From here
+
+    there is a marvelous view of the canyon and parts of the Frigid River
+
+    upstream. Across the canyon, the walls of the White Cliffs join the
+
+    mighty ramparts of the Flathead Mountains to the east. Following the
+
+    Canyon upstream to the north, Aragain Falls may be seen, complete with
+
+    rainbow. The mighty Frigid River flows out from a great dark cavern. To
+
+    the west and south can be seen an immense forest, stretching for miles
+
+    around. A path leads northwest. It is possible to climb down into
+
+    the canyon from here.'
+  description: 'You are at the top of the Great Canyon on its west wall. From here
+
+    there is a marvelous view of the canyon and parts of the Frigid River
+
+    upstream. Across the canyon, the walls of the White Cliffs join the
+
+    mighty ramparts of the Flathead Mountains to the east. Following the
+
+    Canyon upstream to the north, Aragain Falls may be seen, complete with
+
+    rainbow. The mighty Frigid River flows out from a great dark cavern. To
+
+    the west and south can be seen an immense forest, stretching for miles
+
+    around. A path leads northwest. It is possible to climb down into
+
+    the canyon from here.'
+  exits:
+    east:
+      to: cliff-middle
+    down:
+      to: cliff-middle
+    nw:
+      to: clearing
+    west:
+      to: forest-3
+    south:
+      to: canyon-view
+      blocked: true
+      msg: Storm-tossed trees block your way
+- id: mine-entrance
+  name: 'You are standing at the entrance of what might have been a coal mine.
+
+    The shaft enters the west wall, and there is another exit on the south
+
+    end of the room.'
+  description: 'You are standing at the entrance of what might have been a coal mine.
+
+    The shaft enters the west wall, and there is another exit on the south
+
+    end of the room.'
+  exits:
+    south:
+      to: slide-room
+    down:
+      to: squeeky-room
+    west:
+      to: squeeky-room
+  tags:
+  - dark
+- id: squeeky-room
+  name: 'You are in a small room. Strange squeaky sounds may be heard coming
+
+    from the passage at the north end. You may also escape to the east.'
+  description: 'You are in a small room. Strange squeaky sounds may be heard coming
+
+    from the passage at the north end. You may also escape to the east.'
+  exits:
+    north:
+      to: bat-room
+    east:
+      to: mine-entrance
+  tags:
+  - dark
+- id: bat-room
+  name: Bat Room
+  description: Bat Room
+  exits:
+    south:
+      to: squeeky-room
+    east:
+      to: shaft-room
+  tags:
+  - dark
+- id: shaft-room
+  name: 'This is a large room, in the middle of which is a small shaft
+
+    descending through the floor into darkness below. To the west and
+
+    the north are exits from this room. Constructed over the top of the
+
+    shaft is a metal framework to which a heavy iron chain is attached.'
+  description: 'This is a large room, in the middle of which is a small shaft
+
+    descending through the floor into darkness below. To the west and
+
+    the north are exits from this room. Constructed over the top of the
+
+    shaft is a metal framework to which a heavy iron chain is attached.'
+  exits:
+    down:
+      to: shaft-room
+      blocked: true
+      msg: You wouldn't fit and would die if you could
+    west:
+      to: bat-room
+    north:
+      to: smelly-room
+  tags:
+  - dark
+- id: smelly-room
+  name: 'This is a small nondescript room. However, from the direction
+
+    of a small descending staircase a foul odor can be detected. To the
+
+    south is a narrow tunnel.'
+  description: 'This is a small nondescript room. However, from the direction
+
+    of a small descending staircase a foul odor can be detected. To the
+
+    south is a narrow tunnel.'
+  exits:
+    down:
+      to: gas-room
+    south:
+      to: shaft-room
+  tags:
+  - dark
+- id: gas-room
+  name: 'This is a small room which smells strongly of coal gas. There is a
+
+    short climb up some stairs and a narrow tunnel leading east.'
+  description: 'This is a small room which smells strongly of coal gas. There is a
+
+    short climb up some stairs and a narrow tunnel leading east.'
+  exits:
+    up:
+      to: smelly-room
+    east:
+      to: mine-1
+  tags:
+  - dark
+- id: ladder-top
+  name: 'This is a very small room. In the corner is a rickety wooden
+
+    ladder, leading downward. It might be safe to descend. There is
+
+    also a staircase leading upward.'
+  description: 'This is a very small room. In the corner is a rickety wooden
+
+    ladder, leading downward. It might be safe to descend. There is
+
+    also a staircase leading upward.'
+  exits:
+    down:
+      to: ladder-bottom
+    up:
+      to: mine-4
+  tags:
+  - dark
+- id: ladder-bottom
+  name: 'This is a rather wide room. On one side is the bottom of a
+
+    narrow wooden ladder. To the west and the south are passages
+
+    leaving the room.'
+  description: 'This is a rather wide room. On one side is the bottom of a
+
+    narrow wooden ladder. To the west and the south are passages
+
+    leaving the room.'
+  exits:
+    south:
+      to: dead-end-5
+    west:
+      to: timber-room
+    up:
+      to: ladder-top
+  tags:
+  - dark
+- id: dead-end-5
+  name: You have come to a dead end in the mine.
+  description: You have come to a dead end in the mine.
+  exits:
+    north:
+      to: ladder-bottom
+  tags:
+  - dark
+- id: timber-room
+  name: 'This is a long and narrow passage, which is cluttered with broken
+
+    timbers. A wide passage comes from the east and turns at the
+
+    west end of the room into a very narrow passageway. From the west
+
+    comes a strong draft.'
+  description: 'This is a long and narrow passage, which is cluttered with broken
+
+    timbers. A wide passage comes from the east and turns at the
+
+    west end of the room into a very narrow passageway. From the west
+
+    comes a strong draft.'
+  exits:
+    east:
+      to: ladder-bottom
+    west:
+      to: lower-shaft
+      when:
+        compare_var:
+          name: count.items.by.player
+          op: lte
+          value: 2
+      msg: You cannot fit through this passage with that load.
+  tags:
+  - dark
+- id: lower-shaft
+  name: 'This is a small drafty room in which is the bottom of a long
+
+    shaft. To the south is a passageway and to the east a very narrow
+
+    passage. In the shaft can be seen a heavy iron chain.'
+  description: 'This is a small drafty room in which is the bottom of a long
+
+    shaft. To the south is a passageway and to the east a very narrow
+
+    passage. In the shaft can be seen a heavy iron chain.'
+  exits:
+    south:
+      to: machine-room
+    up:
+      to: timber-room
+      when:
+        compare_var:
+          name: count.items.by.player
+          op: lte
+          value: 2
+      msg: You cannot fit through this passage with that load.
+    east:
+      to: timber-room
+      when:
+        compare_var:
+          name: count.items.by.player
+          op: lte
+          value: 2
+      msg: You cannot fit through this passage with that load.
+  tags:
+  - dark
+- id: machine-room
+  name: Machine Room
+  description: Machine Room
+  exits:
+    north:
+      to: lower-shaft
+  tags:
+  - dark
+- id: mine-1
+  name: This is a nondescript part of a coal mine.
+  description: This is a nondescript part of a coal mine.
+  exits:
+    north:
+      to: gas-room
+    east:
+      to: mine-1
+    ne:
+      to: mine-2
+  tags:
+  - dark
+- id: mine-2
+  name: This is a nondescript part of a coal mine.
+  description: This is a nondescript part of a coal mine.
+  exits:
+    north:
+      to: mine-2
+    south:
+      to: mine-1
+    se:
+      to: mine-3
+  tags:
+  - dark
+- id: mine-3
+  name: This is a nondescript part of a coal mine.
+  description: This is a nondescript part of a coal mine.
+  exits:
+    south:
+      to: mine-3
+    sw:
+      to: mine-4
+    east:
+      to: mine-2
+  tags:
+  - dark
+- id: mine-4
+  name: This is a nondescript part of a coal mine.
+  description: This is a nondescript part of a coal mine.
+  exits:
+    north:
+      to: mine-3
+    west:
+      to: mine-4
+    down:
+      to: ladder-top
+  tags:
+  - dark
+- id: slide-room
+  name: 'This is a small chamber, which appears to have been part of a
+
+    coal mine. On the south wall of the chamber the letters \'
+  description: 'This is a small chamber, which appears to have been part of a
+
+    coal mine. On the south wall of the chamber the letters \'
+  exits:
+    east:
+      to: cold-passage
+    north:
+      to: mine-entrance
+    down:
+      to: cellar
+  tags:
+  - dark
+items:
+- id: mountain-range
+  name: mountain range
+  description: mountain range
+  keys:
+  - mountain-range
+  location: mountains
+- id: water
+  name: quantity of water
+  description: quantity of water
+  keys:
+  - water
+  - quantity
+  - liquid
+  - h2o
+  tags: [wasser]
+  in_container: bottle
+  portable: true
+  verb_map:
+    drink:
+    - msg: 'Thank you very much. I was rather thirsty (from all this talking, probably).'
+    - move_all: {what: items, in_container: bottle, tag: wasser, to: {in: nowhere}}
+    - move_all: {what: items, by: player, tag: wasser, to: {in: nowhere}}
+    eat:
+    - msg: 'Thank you very much. I was rather thirsty (from all this talking, probably).'
+    - move_all: {what: items, in_container: bottle, tag: wasser, to: {in: nowhere}}
+    - move_all: {what: items, by: player, tag: wasser, to: {in: nowhere}}
+- id: ghosts
+  name: number of ghosts
+  description: number of ghosts
+  keys:
+  - ghosts
+  location: entrance-to-hades
+- id: skull
+  name: crystal skull
+  tags: [schatz]
+  description: 'Lying in one corner of the room is a beautifully carved crystal skull.
+
+    It appears to be grinning at you rather nastily.'
+  keys:
+  - skull
+  location: land-of-living-dead
+- id: lowered-basket
+  name: From the chain is suspended a basket.
+  description: From the chain is suspended a basket.
+  keys:
+  - lowered-basket
+  location: lower-shaft
+- id: raised-basket
+  name: basket
+  description: At the end of the chain is a basket.
+  keys:
+  - raised-basket
+  location: shaft-room
+- id: lunch
+  name: lunch
+  description: A hot pepper sandwich is here.
+  keys:
+  - lunch
+  - food
+  - sandwich
+  - dinner
+  in_container: sandwich-bag
+  portable: true
+  verb_map:
+    eat:
+    - msg: Thank you very much. It really hit the spot.
+    - consume: lunch
+    drink:
+    - msg: How can you drink that?
+- id: bat
+  name: bat
+  description: bat
+  keys:
+  - bat
+  location: bat-room
+- id: bell
+  name: brass bell
+  description: brass bell
+  keys:
+  - bell
+  location: north-temple
+- id: axe
+  name: bloody axe
+  description: bloody axe
+  keys:
+  - axe
+  location: troll-room
+- id: bolt
+  name: bolt
+  description: bolt
+  keys:
+  - bolt
+  location: dam-room
+  portable: false
+  take_failure: It is firmly mounted on the control panel.
+  verb_map:
+    turn:
+    - if:
+        all:
+        - has_flag: gate-flag
+        - has_item: wrench
+      then:
+      - if:
+          has_flag: gates-open
+        then:
+        - msg: The sluice gates close and water starts to collect behind the dam.
+        - set_flag: gates-open
+          val: 'false'
+        - set_flag: low_tide
+          val: 'false'
+        else:
+        - msg: The sluice gates open and water pours through the dam.
+        - set_flag: gates-open
+          val: 'true'
+        - set_flag: low_tide
+          val: 'true'
+      else:
+      - if:
+          not:
+            has_flag: gate-flag
+        then:
+        - msg: The bolt is locked in place. Enable it with the yellow button in the maintenance room first.
+        else:
+        - msg: You need the wrench to turn the bolt.
+- id: bubble
+  name: green bubble
+  description: green bubble
+  keys:
+  - bubble
+  location: dam-room
+  portable: false
+  take_failure: It is an integral part of the control panel. Enable the bolt with the yellow button in the maintenance room first.
+- id: altar
+  name: altar
+  description: altar
+  keys:
+  - altar
+  location: south-temple
+- id: book
+  name: black book
+  description: On the altar is a large black book, open to page 569.
+  keys:
+  - book
+  in_container: altar
+  portable: true
+  verb_map:
+    read:
+    - if:
+        all:
+        - at: player
+          room: entrance-to-hades
+        - has_flag: exorcism_xc
+      then:
+      - msg: 'Each word of the prayer reverberates through the hall in a deafening confusion. As the last word fades, a voice, loud and commanding, speaks: "Begone, fiends!" A heart-stopping scream fills the cavern, and the spirits, sensing a greater power, flee through the walls.'
+      - consume: ghosts
+      - clear_condition: exorcism_xc
+      - set_flag: exorcism_xc
+        val: 'false'
+      - set_flag: lld_flag
+        val: 'true'
+      else:
+      - msg: "Commandment #12592\n\nOh ye who go about saying unto each: \"Hello sailor\":\nDost thou know the magnitude of thy sin before the gods?\nYea, verily, thou shalt be ground between two stones.\nShall the angry gods cast thy body into the whirlpool?\nSurely, thy eye shall be put out with a sharp stick!\nEven unto the ends of the earth shalt thou wander and\nUnto the land of the dead shalt thou be sent at last.\nSurely thou shalt repent of thy cunning."
+- id: sceptre
+  name: sceptre
+  tags: [schatz]
+  description: An ornamented sceptre, tapering to a sharp point, is here.
+  keys:
+  - sceptre
+  in_container: coffin
+  portable: true
+- id: timbers
+  name: broken timber
+  description: broken timber
+  keys:
+  - timbers
+  location: timber-room
+  portable: false
+- id: kitchen-table
+  name: kitchen table
+  description: A table seems to have been used recently for the preparation of food.
+  keys:
+  - kitchen-table
+  - table
+  location: kitchen
+  portable: false
+- id: attic-table
+  name: table
+  description: A table sits in the corner of the attic.
+  keys:
+  - attic-table
+  - table
+  location: attic
+  portable: false
+- id: sandwich-bag
+  name: brown sack
+  description: On the table is an elongated brown sack, smelling of hot peppers.
+  keys:
+  - sandwich-bag
+  in_container: kitchen-table
+  portable: true
+  capacity: 9
+- id: tool-chest
+  name: group of tool chests
+  description: group of tool chests
+  keys:
+  - tool-chest
+  location: maintenance-room
+- id: yellow-button
+  name: yellow button
+  description: yellow button
+  keys:
+  - yellow-button
+  location: maintenance-room
+  verb_map:
+    push:
+    - if:
+        has_flag: gate-flag
+      then:
+      - msg: Click. The bolt is already enabled.
+      else:
+      - msg: Click. The bolt on the control panel is now turnable.
+      - set_flag: gate-flag
+        val: 'true'
+- id: brown-button
+  name: brown button
+  description: brown button
+  keys:
+  - brown-button
+  location: maintenance-room
+  verb_map:
+    push:
+    - if:
+        has_flag: gate-flag
+      then:
+      - msg: Click. The bolt is locked again.
+      - set_flag: gate-flag
+        val: 'false'
+      else:
+      - msg: Click. The bolt is already locked.
+- id: red-button
+  name: red button
+  description: red button
+  keys:
+  - red-button
+  location: maintenance-room
+  verb_map:
+    push:
+    - if:
+        has_flag: dam-room-lights-on
+      then:
+      - msg: The lights within the room shut off.
+      - set_flag: dam-room-lights-on
+        val: 'false'
+      else:
+      - msg: The lights within the room come on.
+      - set_flag: dam-room-lights-on
+        val: 'true'
+- id: blue-button
+  name: blue button
+  description: blue button
+  keys:
+  - blue-button
+  location: maintenance-room
+  verb_map:
+    push:
+    - msg: Click. It seems jammed — it needs the water leak to be fixed first.
+- id: trophy-case
+  name: trophy case
+  description: trophy case
+  keys:
+  - trophy-case
+  location: living-room
+- id: rug
+  name: carpet
+  description: carpet
+  keys:
+  - rug
+  - carpet
+  location: living-room
+  portable: false
+  take_failure: The rug is extremely heavy and cannot be carried.
+  verb_map:
+    push:
+    - if:
+        has_flag: rug-moved
+      then:
+      - msg: Having moved the carpet previously, you find it impossible to move it again.
+      else:
+      - msg: With a great effort, the rug is moved to one side of the room, revealing the dusty cover of a closed trap door.
+      - set_flag: rug-moved
+        val: 'true'
+- id: chalice
+  name: chalice
+  tags: [schatz]
+  description: There is a silver chalice, intricately engraved, here.
+  keys:
+  - chalice
+  location: treasure-room
+- id: garlic
+  name: clove of garlic
+  description: clove of garlic
+  keys:
+  - garlic
+  - clove
+  in_container: sandwich-bag
+  portable: true
+  verb_map:
+    eat:
+    - msg: Thank you very much. It really hit the spot.
+    - consume: garlic
+    drink:
+    - msg: How can you drink that?
+- id: trident
+  name: crystal trident
+  tags: [schatz]
+  description: On the shore lies Poseidon's own crystal trident.
+  keys:
+  - trident
+  location: atlantis-room
+- id: cyclops
+  name: cyclops
+  description: cyclops
+  keys:
+  - cyclops
+  location: cyclops-room
+- id: dam
+  name: dam
+  description: dam
+  keys:
+  - dam
+  location: dam-room
+- id: trap-door
+  name: trap door
+  description: trap door
+  keys:
+  - trap-door
+  - trap
+  state: closed
+  location: living-room
+  portable: false
+  verb_map:
+    instead:open,closed:
+    - if:
+        has_flag: trap-door-open
+      then:
+      - msg: It is already open.
+      else:
+      - if:
+          has_flag: rug-moved
+        then:
+        - msg: The trap door opens.
+        - set_flag: trap-door-open
+          val: 'true'
+        else:
+        - msg: You can't see any trap door here.
+- id: front-door
+  name: door
+  description: door
+  keys:
+  - front-door
+  location: west-of-house
+- id: barrow-door
+  name: stone door
+  description: stone door
+  keys:
+  - barrow-door
+  location: stone-barrow
+- id: barrow
+  name: stone barrow
+  description: stone barrow
+  keys:
+  - barrow
+  location: stone-barrow
+- id: bottle
+  name: glass bottle
+  description: A bottle is sitting on the table.
+  keys:
+  - bottle
+  in_container: kitchen-table
+  portable: true
+  capacity: 4
+- id: coffin
+  name: gold coffin
+  tags: [schatz]
+  description: The solid-gold coffin used for the burial of Ramses II is here.
+  keys:
+  - coffin
+  location: egypt-room
+  portable: true
+- id: pump
+  name: hand-held air pump
+  description: 'A small hand-held air pump rests on the drained reservoir shore. Inflate the boat: stand here with the boat and type ''pump boat''.'
+  keys:
+  - pump
+  location: reservoir-north
+- id: jade
+  name: jade figurine
+  tags: [schatz]
+  description: There is an exquisite jade figurine here.
+  keys:
+  - jade
+  location: bat-room
+- id: stiletto
+  name: vicious stiletto
+  description: A vicious-looking stiletto lies here.
+  keys:
+  - stiletto
+  - blade
+  location: nowhere
+  portable: true
+  slot: weapon
+  effects: [attack+4]
+- id: large-bag
+  name: large bag
+  description: a large bag
+  keys:
+  - bag
+  - large-bag
+  location: nowhere
+  portable: false
+  take_failure: The bag will be taken over his dead body.
+- id: knife
+  name: nasty knife
+  description: On a table is a nasty-looking knife.
+  keys:
+  - knife
+  in_container: attic-table
+  portable: true
+- id: bones
+  name: skeleton
+  description: skeleton
+  keys:
+  - bones
+  location: maze-5
+- id: burned-out-lantern
+  name: burned-out lantern
+  description: The deceased adventurer's useless lantern is here.
+  keys:
+  - burned-out-lantern
+  location: maze-5
+- id: bag-of-coins
+  name: leather bag of coins
+  tags: [schatz]
+  description: An old leather bag, bulging with coins, is here.
+  keys:
+  - bag-of-coins
+  location: maze-5
+- id: lamp
+  name: brass lantern
+  description: There is a brass lantern (battery-powered) here.
+  keys:
+  - lamp
+  - lantern
+  location: living-room
+  state: off
+  tags_when:
+    lit: [lightsource]
+  portable: true
+- id: emerald
+  name: large emerald
+  tags: [schatz]
+  description: large emerald
+  keys:
+  - emerald
+  in_container: buoy
+  portable: true
+- id: advertisement
+  name: leaflet
+  description: A small leaflet is on the ground.
+  keys:
+  - advertisement
+  - leaflet
+  - mail
+  in_container: mailbox
+  portable: true
+  verb_map:
+    read:
+    - msg: "\"WELCOME TO ZORK!\n\nZORK is a game of adventure, danger, and low cunning. In it you will explore some of the most amazing territory ever seen by mortals. No computer should be without one!\""
+- id: leak
+  name: leak
+  description: leak
+  keys:
+  - leak
+  location: maintenance-room
+- id: machine
+  name: machine
+  description: "This is a large machine (partially dismantled for repairs) which could be described as a cross between a machine press and a clothes dryer. There is a large lid which is currently closed."
+  keys:
+  - machine
+  location: machine-room
+  capacity: 50
+  portable: false
+  take_failure: It is far too large to carry.
+- id: mailbox
+  name: small mailbox
+  description: small mailbox
+  keys:
+  - mailbox
+  location: west-of-house
+  portable: false
+  take_failure: It is securely anchored.
+- id: match
+  name: matchbook
+  description: There is a matchbook whose cover says \
+  keys:
+  - match
+  location: dam-lobby
+  state: unlit
+  tags_when:
+    lit: [lightsource]
+- id: mirror-2
+  name: mirror
+  description:
+    default: mirror
+    variants:
+    - when:
+        has_flag: mirror-mung
+      text: The mirror is broken into many pieces.
+  keys:
+  - mirror-2
+  - mirror
+  location: mirror-room-2
+  portable: false
+  take_failure: The mirror is many times your size. Give up.
+  verb_map:
+    examine:
+    - if:
+        has_flag: mirror-mung
+      then:
+      - msg: The mirror is broken into many pieces.
+      else:
+      - msg: There is an ugly person staring back at you.
+    attack:
+    - if:
+        has_flag: mirror-mung
+      then:
+      - msg: Haven't you done enough damage already?
+      else:
+      - msg: 'You have broken the mirror. I hope you have a seven years'' supply of good luck handy.'
+      - set_flag: mirror-mung
+        val: 'true'
+- id: mirror-1
+  name: mirror
+  description:
+    default: mirror
+    variants:
+    - when:
+        has_flag: mirror-mung
+      text: The mirror is broken into many pieces.
+  keys:
+  - mirror-1
+  - mirror
+  location: mirror-room-1
+  portable: false
+  take_failure: The mirror is many times your size. Give up.
+  verb_map:
+    examine:
+    - if:
+        has_flag: mirror-mung
+      then:
+      - msg: The mirror is broken into many pieces.
+      else:
+      - msg: There is an ugly person staring back at you.
+    attack:
+    - if:
+        has_flag: mirror-mung
+      then:
+      - msg: Haven't you done enough damage already?
+      else:
+      - msg: 'You have broken the mirror. I hope you have a seven years'' supply of good luck handy.'
+      - set_flag: mirror-mung
+        val: 'true'
+- id: painting
+  name: painting
+  tags: [schatz]
+  description: A painting by a neglected genius is here.
+  keys:
+  - painting
+  location: gallery
+- id: candles
+  name: pair of candles
+  description: On the two ends of the altar are burning candles.
+  keys:
+  - candles
+  location: south-temple
+  state: unlit
+  tags_when:
+    lit: [lightsource]
+- id: leaves
+  name: pile of leaves
+  description: On the ground is a pile of leaves.
+  keys:
+  - leaves
+  location: grating-clearing
+- id: inflatable-boat
+  name: boat
+  description: 'There is a folded pile of plastic here which has a small valve
+
+    attached.'
+  keys:
+  - inflatable-boat
+  - boat
+  - pile
+  - plastic
+  - valve
+  location: dam-base
+  verb_map:
+    pump: &id001
+    - if:
+        has_flag: boat-punctured
+      then:
+      - msg: No chance. Some moron punctured it.
+      else:
+      - if:
+          has_flag: boat-inflated
+        then:
+        - msg: It is already inflated.
+        else:
+        - if:
+            all:
+            - has_item: inflatable-boat
+            - at: player
+              room: reservoir-north
+          then:
+          - msg: You attach the pump to the boat's valve and pump it full. The boat inflates and appears seaworthy.
+          - set_flag: boat-inflated
+            val: 'true'
+          else:
+          - if:
+              not:
+                has_item: inflatable-boat
+            then:
+            - msg: You don't have the boat with you here.
+            else:
+            - msg: You need to bring the boat to the pump at the drained reservoir (reservoir-north) first.
+    inflate: *id001
+- id: bar
+  name: platinum bar
+  tags: [schatz]
+  description: On the ground is a large platinum bar.
+  keys:
+  - bar
+  location: loud-room
+  verb_map:
+    before:take:
+    - if:
+        not:
+          has_flag: loud-flag
+      then:
+      - block: The roar in this room is so overwhelming that you cannot bring yourself to touch it.
+- id: pot-of-gold
+  name: pot of gold
+  tags: [schatz]
+  description: At the end of the rainbow is a pot of gold.
+  keys:
+  - pot-of-gold
+  location: end-of-rainbow
+- id: prayer
+  name: prayer
+  description: prayer
+  keys:
+  - prayer
+  location: north-temple
+- id: railing
+  name: wooden railing
+  description: wooden railing
+  keys:
+  - railing
+  location: dome-room
+- id: buoy
+  name: red buoy
+  description: There is a red buoy here (probably a warning).
+  keys:
+  - buoy
+  location: river-4
+- id: rope
+  name: rope
+  description: A large coil of rope is lying in the corner.
+  keys:
+  - rope
+  location: attic
+- id: rusty-knife
+  name: rusty knife
+  description: Beside the skeleton is a rusty knife.
+  keys:
+  - rusty-knife
+  location: maze-5
+- id: sand
+  name: sand
+  description: sand
+  keys:
+  - sand
+  location: sandy-cave
+- id: bracelet
+  name: sapphire-encrusted bracelet
+  tags: [schatz]
+  description: sapphire-encrusted bracelet
+  keys:
+  - bracelet
+  location: gas-room
+- id: screwdriver
+  name: screwdriver
+  description: screwdriver
+  keys:
+  - screwdriver
+  location: maintenance-room
+- id: keys
+  name: skeleton key
+  description: skeleton key
+  keys:
+  - keys
+  location: maze-5
+- id: shovel
+  name: shovel
+  description: shovel
+  keys:
+  - shovel
+  location: sandy-beach
+- id: gunk
+  name: small piece of vitreous slag
+  description: A small piece of vitreous slag lies here.
+  keys:
+  - gunk
+  - slag
+  - piece
+  location: nowhere
+  verb_map:
+    instead:take:
+    - consume: gunk
+    - msg: The slag was rather insubstantial, and crumbles into dust at your touch.
+- id: coal
+  name: small pile of coal
+  tags: [kohle]
+  description: small pile of coal
+  keys:
+  - coal
+  location: dead-end-5
+- id: scarab
+  name: beautiful jeweled scarab
+  tags: [schatz]
+  description: beautiful jeweled scarab
+  keys:
+  - scarab
+  location: nowhere
+- id: machine-switch
+  name: switch
+  description: switch
+  keys:
+  - machine-switch
+  - switch
+  location: machine-room
+  portable: false
+  take_failure: It is an integral part of the machine.
+- id: wooden-door
+  name: wooden door
+  description: wooden door
+  keys:
+  - wooden-door
+  location: living-room
+- id: sword
+  name: sword
+  description: Above the trophy case hangs an elvish sword of great antiquity.
+  keys:
+  - sword
+  location: living-room
+- id: map
+  name: ancient map
+  description: In the trophy case is an ancient parchment which appears to be a map.
+  keys:
+  - map
+  in_container: trophy-case
+  portable: true
+- id: pedestal
+  name: pedestal
+  description: pedestal
+  keys:
+  - pedestal
+  location: torch-room
+- id: torch
+  name: torch
+  description: Sitting on the pedestal is a flaming torch, made of ivory.
+  keys:
+  - torch
+  in_container: pedestal
+  portable: true
+  tags: [schatz, lightsource]
+- id: guide
+  name: tour guidebook
+  description: Some guidebooks entitled "Flood Control Dam #3" are on the reception desk.
+  keys:
+  - guide
+  - guidebook
+  location: dam-lobby
+  verb_map:
+    read:
+    - msg: "\"Flood Control Dam #3\n\nFCD#3 was constructed in year 783 of the Great Underground Empire to harness the mighty Frigid River. This work was supported by a grant of 37 million zorkmids from your omnipotent local tyrant Lord Dimwit Flathead the Excessive. This impressive structure is composed of 370,000 cubic feet of concrete, is 256 feet tall at the center, and 193 feet wide at the top. The lake created behind the dam has a volume of 1.7 billion cubic feet, an area of 12 million square feet, and a shore line of 36 thousand feet.\n\nThe construction of FCD#3 took 112 days from ground breaking to the dedication. It required a work force of 384 slaves, 34 slave drivers, 12 engineers, 2 turtle doves, and a partridge in a pear tree. The work was managed by a command team composed of 2345 bureaucrats, 2347 secretaries (at least two of whom could type), 12,256 paper shufflers, 52,469 rubber stampers, 245,193 red tape processors, and nearly one million dead trees.\n\nWe will now point out some of the more interesting features of FCD#3 as we conduct you on a guided tour of the facilities:\n\n        1) You start your tour here in the Dam Lobby. You will notice on your right that....\""
+- id: trunk
+  name: trunk of jewels
+  tags: [schatz]
+  description: There is an old trunk here, bulging with assorted jewels.
+  keys:
+  - trunk
+  location: reservoir
+- id: tube
+  name: tube
+  description: There is an object which looks like a tube of toothpaste here.
+  keys:
+  - tube
+  location: maintenance-room
+  capacity: 7
+  portable: true
+- id: putty
+  name: viscous material
+  description: viscous material
+  keys:
+  - putty
+  in_container: tube
+  portable: true
+- id: engravings
+  name: wall with engravings
+  description: There are old engravings on the walls here.
+  keys:
+  - engravings
+  location: engravings-cave
+- id: owners-manual
+  name: ZORK owner's manual
+  description: Loosely attached to a wall is a small piece of paper.
+  keys:
+  - owners-manual
+  location: studio
+- id: wrench
+  name: wrench
+  description: wrench
+  keys:
+  - wrench
+  location: maintenance-room
+- id: control-panel
+  name: control panel
+  description: control panel
+  keys:
+  - control-panel
+  location: dam-room
+- id: nest
+  name: bird's nest
+  description: Beside you on the branch is a small bird's nest.
+  keys:
+  - nest
+  location: up-a-tree
+  capacity: 20
+  portable: true
+- id: egg
+  name: jewel-encrusted egg
+  tags: [schatz]
+  state: intact
+  description:
+    default: "In the bird's nest is a large egg encrusted with precious jewels, apparently scavenged by a childless songbird. The egg is covered with fine gold inlay, and ornamented in lapis lazuli and mother-of-pearl. Unlike most eggs, this one is hinged and closed with a delicate looking clasp. The egg appears extremely fragile."
+    variants:
+    - when:
+        state: egg
+        is: open
+      text: The jewel-encrusted egg is open. Inside it nestles a golden clockwork canary.
+    - when:
+        state: egg
+        is: broken
+      text: There is a somewhat ruined egg here.
+  keys:
+  - egg
+  in_container: nest
+  portable: true
+  capacity: 6
+  verb_map:
+    throw,intact:
+    - msg: 'Your rather indelicate handling of the egg has caused it some damage, although you have succeeded in opening it. There is a golden clockwork canary nestled in the egg. It seems to have recently had a bad experience. The mountings for its jewel-like eyes are empty, and its silver beak is crumpled. Through a cracked crystal window below its left wing you can see the remains of intricate machinery.'
+    - set_state: egg
+      to: broken
+    - set_state: canary
+      to: broken
+    throw,open:
+    - msg: The egg is already open.
+    throw,broken:
+    - msg: The egg is already broken.
+- id: canary
+  name: golden clockwork canary
+  tags: [schatz]
+  state: intact
+  description:
+    default: "There is a golden clockwork canary nestled in the egg. It has ruby eyes and a silver beak. Through a crystal window below its left wing you can see intricate machinery inside. It appears to have wound down."
+    variants:
+    - when:
+        state: canary
+        is: broken
+      text: "There is a golden clockwork canary here. It seems to have recently had a bad experience. The mountings for its jewel-like eyes are empty, and its silver beak is crumpled. Through a cracked crystal window below its left wing you can see the remains of intricate machinery. It is not clear what result winding it would have, as the mainspring seems sprung."
+  keys:
+  - canary
+  in_container: egg
+  portable: true
+  verb_map:
+    before:take:
+    - if:
+        state: egg
+        is: intact
+      then:
+      - block: The egg is closed. You will have to open it first.
+    wind,broken:
+    - msg: There is an unpleasant grinding noise from inside the canary.
+    wind,intact:
+    - if:
+        has_flag: sing-song
+      then:
+      - msg: The canary chirps blithely, if somewhat tinnily, for a short time.
+      else:
+      - if:
+          any:
+          - at: player
+            room: forest-1
+          - at: player
+            room: forest-2
+          - at: player
+            room: forest-3
+          - at: player
+            room: path
+          - at: player
+            room: up-a-tree
+        then:
+        - msg: 'The canary chirps, slightly off-key, an aria from a forgotten opera. From out of the greenery flies a lovely songbird. It perches on a limb just over your head and opens its beak to sing. As it does so a beautiful brass bauble drops from its mouth, bounces off the top of your head, and lands glimmering in the grass. As the canary winds down, the songbird flies away.'
+        - set_flag: sing-song
+          val: 'true'
+        - give: bauble
+        else:
+        - msg: The canary chirps blithely, if somewhat tinnily, for a short time.
+- id: grating
+  name: grating
+  description: A heavy iron grating blocks the way down into the darkness.
+  keys:
+  - grating
+  - grate
+  location: grating-clearing
+  verb_map:
+    unlock:
+    - msg: You use the skeleton key and the grating clicks open.
+    - set_flag: grate-unlocked
+      val: 'true'
+    open:
+    - if:
+        has_flag: grate-unlocked
+      then:
+      - msg: You push the grating up. It slides aside with a screech of metal on stone.
+      - set_flag: grate-open
+        val: 'true'
+      else:
+      - msg: The grating is locked. You need the skeleton key.
+- id: window
+  name: kitchen window
+  description: A small window which is slightly ajar, but not enough to allow entry.
+  keys:
+  - window
+  state: closed
+  location: east-of-house
+  verb_map:
+    instead:open,closed:
+    - if:
+        has_flag: kitchen-window-open
+      then:
+      - msg: The window is already open.
+      else:
+      - msg: With great effort, you open the window far enough to allow entry to the kitchen.
+      - set_state:
+          target: window
+          to: open
+      - set_flag: kitchen-window-open
+        val: 'true'
+    instead:open,open:
+    - msg: The window is already open.
+- id: diamond
+  name: huge diamond
+  tags: [schatz]
+  description: There is an enormous diamond (perfectly cut) here.
+  keys:
+  - diamond
+  location: nowhere
+  portable: true
+- id: bauble
+  name: beautiful brass bauble
+  tags: [schatz]
+  description: beautiful brass bauble
+  keys:
+  - bauble
+  location: nowhere
+  portable: true
+
+# --- Stufe E: Scenery (Original LOCAL-GLOBALS/NDESCBIT: chimney, slide, rainbow,
+# river, board, forest, tree) — je ein Item im charakteristischen Raum ---
+- id: chimney
+  name: chimney
+  description: A small chimney leads up into the fireplace.
+  keys:
+  - chimney
+  - fireplace
+  location: kitchen
+  portable: false
+- id: slide
+  name: slide
+  description: A steep metal slide twists downward into the darkness.
+  keys:
+  - slide
+  - chute
+  location: slide-room
+  portable: false
+- id: rainbow
+  name: rainbow
+  description: The rainbow is solid enough to walk on.
+  keys:
+  - rainbow
+  location: on-rainbow
+  portable: false
+- id: river
+  name: river
+  description: The river flows swiftly past.
+  keys:
+  - river
+  - stream
+  location: in-stream
+  portable: false
+- id: cliffs
+  name: cliffs
+  description: Sheer white cliffs rise on either side of the river.
+  keys:
+  - cliffs
+  - walls
+  location: white-cliffs-north
+  portable: false
+- id: board
+  name: board
+  description: The windows are boarded up.
+  keys:
+  - board
+  - boards
+  location: north-of-house
+  portable: false
+- id: forest
+  name: forest
+  description: The forest is dense and shadowy.
+  keys:
+  - forest
+  - trees
+  - pines
+  - hemlocks
+  location: forest-1
+  portable: false
+- id: tree
+  name: tree
+  description: The tree is tall and strong.
+  keys:
+  - tree
+  - branch
+  location: up-a-tree
+  portable: false
+
+containers:
+- id: kitchen-table
+  name: kitchen table
+  location: kitchen
+  capacity: 50
+  open: true
+- id: tool-chest
+  name: group of tool chests
+  location: maintenance-room
+  capacity: null
+  open: true
+- id: trophy-case
+  name: trophy case
+  location: living-room
+  capacity: 10000
+  open: true
+- id: altar
+  name: altar
+  location: south-temple
+  capacity: 50
+  open: true
+- id: control-panel
+  name: control panel
+  location: dam-room
+  capacity: null
+  open: true
+- id: pedestal
+  name: pedestal
+  location: torch-room
+  capacity: 30
+  open: true
+- id: mailbox
+  name: small mailbox
+  location: west-of-house
+  capacity: 10
+  open: false
+- id: dam
+  name: dam
+  location: dam-room
+  capacity: null
+  open: true
+- id: attic-table
+  name: table
+  location: attic
+  capacity: 40
+  open: true
+- id: coffin
+  name: gold coffin
+  location: egypt-room
+  capacity: 35
+  open: true
+- id: buoy
+  name: red buoy
+  location: river-4
+  capacity: 20
+  open: true
+npcs:
+- id: troll
+  name: Troll
+  desc: A nasty-looking troll, brandishing a bloody axe, blocks all passages out of the room.
+  keys:
+  - troll
+  location: troll-room
+  max_hp: 30
+  attack: 8
+  defense: 2
+- id: thief
+  name: thief
+  description: 'There is a suspicious-looking individual, holding a large bag, leaning
+    against one wall. He is armed with a deadly stiletto.'
+  keys:
+  - thief
+  - robber
+  - man
+  - person
+  - shady
+  - suspicious
+  - seedy
+  location: round-room
+  state: alive
+  max_hp: 35
+  attack: 9
+  defense: 4
+
+verbs:
+- name: give
+- name: open
+- name: unlock
+- name: push
+- name: pump
+- name: inflate
+- name: turn
+- name: throw
+- name: dig
+- name: drink
+- name: eat
+- name: fill
+- name: launch
+- name: land
+- name: deflate
+- name: shout
+- name: wave
+- name: tie
+- name: pray
+- name: wind
+- name: ring
+- name: rub
+- name: light
+  aliases: [burn]
+- name: extinguish
+  aliases: [douse]
+- name: odysseus
+patrol:
+  hostiles:
+  - npc: troll
+    guardian: true
+    path:
+    - troll-room
+    warn: A nasty-looking troll, brandishing a bloody axe, blocks all passages out of the room.
+
+rules:
+- id: score-skull
+  on: take skull
+  once: true
+  effects:
+  - add_var: { var: score, delta: 20 }
+- id: score-sceptre
+  on: take sceptre
+  once: true
+  effects:
+  - add_var: { var: score, delta: 10 }
+- id: score-chalice
+  on: take chalice
+  once: true
+  effects:
+  - add_var: { var: score, delta: 15 }
+- id: score-trident
+  on: take trident
+  once: true
+  effects:
+  - add_var: { var: score, delta: 15 }
+- id: score-coffin
+  on: take coffin
+  once: true
+  effects:
+  - add_var: { var: score, delta: 25 }
+- id: score-diamond
+  on: take diamond
+  once: true
+  effects:
+  - add_var: { var: score, delta: 20 }
+- id: score-jade
+  on: take jade
+  once: true
+  effects:
+  - add_var: { var: score, delta: 10 }
+- id: score-bag-of-coins
+  on: take bag-of-coins
+  once: true
+  effects:
+  - add_var: { var: score, delta: 15 }
+- id: score-emerald
+  on: take emerald
+  once: true
+  effects:
+  - add_var: { var: score, delta: 15 }
+- id: score-painting
+  on: take painting
+  once: true
+  effects:
+  - add_var: { var: score, delta: 10 }
+- id: score-bar
+  on: take bar
+  once: true
+  effects:
+  - add_var: { var: score, delta: 15 }
+- id: score-pot-of-gold
+  on: take pot-of-gold
+  once: true
+  effects:
+  - add_var: { var: score, delta: 20 }
+- id: score-bracelet
+  on: take bracelet
+  once: true
+  effects:
+  - add_var: { var: score, delta: 10 }
+- id: score-scarab
+  on: take scarab
+  once: true
+  effects:
+  - add_var: { var: score, delta: 10 }
+- id: score-torch
+  on: take torch
+  once: true
+  effects:
+  - add_var: { var: score, delta: 20 }
+- id: score-trunk
+  on: take trunk
+  once: true
+  effects:
+  - add_var: { var: score, delta: 20 }
+- id: score-egg
+  on: take egg
+  once: true
+  effects:
+  - add_var: { var: score, delta: 10 }
+- id: score-canary
+  on: take canary
+  once: true
+  effects:
+  - if:
+      state: canary
+      is: intact
+    then:
+    - add_var: { var: score, delta: 10 }
+- id: score-bauble
+  on: take bauble
+  once: true
+  effects:
+  - add_var: { var: score, delta: 2 }
+- id: score-room-kitchen
+  on: enter kitchen
+  once: true
+  effects:
+  - add_var: { var: score, delta: 10 }
+- id: score-room-cellar
+  on: enter cellar
+  once: true
+  effects:
+  - add_var: { var: score, delta: 25 }
+- id: score-room-treasure-room
+  on: enter treasure-room
+  once: true
+  effects:
+  - add_var: { var: score, delta: 25 }
+- id: score-room-ew-passage
+  on: enter ew-passage
+  once: true
+  effects:
+  - add_var: { var: score, delta: 5 }
+- id: score-room-lower-shaft
+  on: enter lower-shaft
+  once: true
+  effects:
+  - add_var: { var: score, delta: 13 }
+- id: score-win-hint
+  on: turn
+  once: true
+  when: { compare_var: { name: score, op: gte, value: 350 } }
+  effects:
+  - msg: 'An almost inaudible voice whispers in your ear, "Look to your treasures for the final secret."'
+  - set_flag: won
+    val: 'true'
+
+# --- Stufe A: Troll-Mechanik (Original: TROLL-FCN, 1actions.zil) ---
+# Tod (Kampf oder gefressene Waffe) öffnet die Passagen (Original: TROLL-FLAG).
+- id: troll-defeated
+  on: state troll
+  once: true
+  when: {state: troll, is: dead}
+  effects:
+  - msg: The troll lies dead on the floor. All passages out of the room are open.
+  - set_flag: troll-defeated
+    val: 'true'
+# give axe to troll: er bekommt seine Waffe zurück und kämpft wieder.
+- id: troll-give-axe
+  on: command give
+  when:
+    all:
+    - var: cmd.arg2
+      is: troll
+    - var: cmd.arg1
+      is: axe
+    - actor_has: troll
+      item: axe
+  effects:
+  - msg: The troll scratches his head in confusion, then takes the axe.
+# give sword/knife to troll: 20% frisst er die Waffe und stirbt (Original: PROB 20),
+# sonst wirft er sie zurück.
+- id: troll-give-sword
+  on: command give
+  when:
+    all:
+    - var: cmd.arg2
+      is: troll
+    - var: cmd.arg1
+      is: sword
+    - actor_has: troll
+      item: sword
+  effects:
+  - random:
+    - - 20
+      - - msg: 'The troll, who is not overly proud, graciously accepts the gift and eats it hungrily. Poor troll, he dies from an internal hemorrhage and his carcass disappears in a sinister black fog.'
+        - give: sword
+        - consume: sword
+        - damage_npc:
+            npc: troll
+            amount: 999
+    - - 80
+      - - msg: 'The troll, who is not overly proud, graciously accepts the gift and, being for the moment sated, throws it back. Fortunately, the troll has poor control, and the sword falls to the floor. He does not look pleased.'
+        - give: sword
+- id: troll-give-knife
+  on: command give
+  when:
+    all:
+    - var: cmd.arg2
+      is: troll
+    - var: cmd.arg1
+      is: knife
+    - actor_has: troll
+      item: knife
+  effects:
+  - random:
+    - - 20
+      - - msg: 'The troll, who is not overly proud, graciously accepts the gift and eats it hungrily. Poor troll, he dies from an internal hemorrhage and his carcass disappears in a sinister black fog.'
+        - give: knife
+        - consume: knife
+        - damage_npc:
+            npc: troll
+            amount: 999
+    - - 80
+      - - msg: 'The troll, who is not overly proud, graciously accepts the gift and, being for the moment sated, throws it back. Fortunately, the troll has poor control, and the knife falls to the floor. He does not look pleased.'
+        - give: knife
+# Andere Geschenke frisst er (Abweichung: Item bleibt beim Troll, keine consume-Referenz in Regeln).
+- id: troll-give-other
+  on: command give
+  when:
+    all:
+    - var: cmd.arg2
+      is: troll
+    - not:
+        any:
+        - var: cmd.arg1
+          is: axe
+        - var: cmd.arg1
+          is: sword
+        - var: cmd.arg1
+          is: knife
+  effects:
+  - msg: 'The troll, who is not overly proud, graciously accepts the gift and, not having the most discriminating tastes, gleefully eats it.'
+
+# --- Stufe A: Schwert-Glühen (Original: I-SWORD, 1actions.zil) ---
+# Hellwach bei Troll im Raum, blau bei Troll im Nachbarraum (cellar/ew-passage/maze-1).
+- id: sword-glow
+  on: turn
+  when: {has_item: sword}
+  effects:
+  - if:
+      all:
+      - at: player
+        room: troll-room
+      - not:
+          state: troll
+          is: dead
+    then:
+    - if:
+        compare_var:
+          name: sword_glow
+          op: lt
+          value: 2
+      then:
+      - msg: Your sword has begun to glow very brightly.
+      - set_var:
+          var: sword_glow
+          value: 2
+    else:
+    - if:
+        all:
+        - any:
+          - at: player
+            room: cellar
+          - at: player
+            room: ew-passage
+          - at: player
+            room: maze-1
+        - not:
+            state: troll
+            is: dead
+      then:
+      - if:
+          compare_var:
+            name: sword_glow
+            op: ne
+            value: 1
+        then:
+        - msg: Your sword is glowing with a faint blue glow.
+        - set_var:
+            var: sword_glow
+            value: 1
+      else:
+      - if:
+          compare_var:
+            name: sword_glow
+            op: gt
+            value: 0
+        then:
+        - msg: Your sword is no longer glowing.
+        - set_var:
+            var: sword_glow
+            value: 0
+
+# --- Stufe B: Zyklop (Original: CYCLOPS-FCN, V-ODYSSEUS, 1actions.zil:1515 / gverbs.zil:943) ---
+# Lunch füttern (Original: CYCLOWRATH < 0) startet einen Timer: ohne Wasser frisst er dich.
+- id: cyclops-lunch
+  on: command give
+  when:
+    all:
+    - var: cmd.arg2
+      is: cyclops
+    - var: cmd.arg1
+      is: lunch
+    - has_item: lunch
+    - at: player
+      room: cyclops-room
+    - not:
+        has_flag: cyclops_flag
+  effects:
+  - consume: lunch
+  - msg: 'The cyclops says "Mmm Mmm. I love hot peppers! But oh, could I use a drink. Perhaps I could drink the blood of that thing." From the gleam in his eye, it could be surmised that you are "that thing".'
+  - condition:
+      name: cyclops_thirst
+      turns: 6
+      end:
+      - msg: 'The cyclops, tired of all of your games and trickery, grabs you firmly. As he licks his chops, he says "Mmm. Just like Mom used to make ''em." It''s nice to be appreciated.'
+      - game_end: death
+# Wasser (Flasche) geben: nur wenn er durstig ist (Original: CYCLOWRATH < 0), dann schläft er.
+- id: cyclops-water
+  on: command give
+  when:
+    all:
+    - var: cmd.arg2
+      is: cyclops
+    - var: cmd.arg1
+      is: bottle
+    - has_item: bottle
+    - at: player
+      room: cyclops-room
+    - not:
+        has_flag: cyclops_flag
+  effects:
+  - if:
+      has_condition: cyclops_thirst
+    then:
+    - msg: The cyclops takes the bottle, checks that it's open, and drinks the water. A moment later, he lets out a yawn that nearly blows you over, and then falls fast asleep (what did you put in that drink, anyway?).
+    - set_flag: cyclops_flag
+      val: 'true'
+    - clear_condition: cyclops_thirst
+    else:
+    - msg: The cyclops apparently is not thirsty and refuses your generous offer.
+# Andere Geschenke (Original: "is not so stupid as to eat THAT!").
+- id: cyclops-give-other
+  on: command give
+  when:
+    all:
+    - var: cmd.arg2
+      is: cyclops
+    - not:
+        any:
+        - var: cmd.arg1
+          is: lunch
+        - var: cmd.arg1
+          is: bottle
+  effects:
+  - msg: The cyclops is not so stupid as to eat THAT!
+# ODYSSEUS rufen (Original: V-ODYSSEUS): Zyklop flieht, Ostwand wird zur Öffnung (magic).
+- id: cyclops-odysseus
+  on: command odysseus
+  effects:
+  - if:
+      all:
+      - at: player
+        room: cyclops-room
+      - not:
+          has_flag: cyclops_flag
+    then:
+    - msg: The cyclops, hearing the name of his father's deadly nemesis, flees the room by knocking down the wall on the east of the room.
+    - set_flag: magic
+      val: 'true'
+    - set_flag: cyclops_flag
+      val: 'true'
+    - clear_condition: cyclops_thirst
+    - consume: cyclops
+    else:
+    - msg: Wasn't he a sailor?
+
+# --- Stufe B: Exorzismus (Original: BELL-F, M-BEG-Routine im Hades-Eingang, I-XB/I-XC, 1actions.zil:343/1060-1146) ---
+# Abweichung: Glocke und Kerzen fallen nicht zu Boden (kein Item-Verschieb-Effekt); Kerzen gehen aus.
+- id: hades-ring-bell
+  on: command ring
+  when:
+    all:
+    - var: cmd.arg1
+      is: bell
+    - has_item: bell
+    - at: player
+      room: entrance-to-hades
+    - not:
+        has_flag: lld_flag
+  effects:
+  - msg: The bell suddenly becomes red hot and falls to the ground. The wraiths, as if paralyzed, stop their jeering and slowly turn to face you. On their ashen faces, the expression of a long-forgotten terror takes shape.
+  - place: {item: bell, in: entrance-to-hades}
+  - if:
+      state: candles
+      is: lit
+    then:
+    - msg: In your confusion, the candles drop to the ground (and they are out).
+    - place: {item: candles, in: entrance-to-hades}
+    - set_state:
+        target: candles
+        to: unlit
+  - set_flag: exorcism_bell
+    val: 'true'
+  - condition:
+      name: exorcism_bell
+      turns: 6
+      end:
+      - if:
+          not:
+            has_flag: exorcism_xc
+        then:
+        - msg: The tension of this ceremony is broken, and the wraiths, amused but shaken at your clumsy attempt, resume their hideous jeering.
+        - set_flag: exorcism_bell
+          val: 'false'
+- id: bell-ding
+  on: command ring
+  when:
+    all:
+    - var: cmd.arg1
+      is: bell
+    - has_item: bell
+    - not:
+        all:
+        - at: player
+          room: entrance-to-hades
+        - not:
+            has_flag: lld_flag
+  effects:
+  - msg: Ding, dong.
+# Kerzen anzünden (Original: CANDLES-FCN, 1actions.zil:2343): nur mit brennendem
+# Streichholz; die brennende Fackel verdampft die Kerzen. Brennt die Glocken-
+# Zeremonie: Kerzen an im Hades-Eingang → XC (3 Züge). Eine Regel mit if/else (R-01).
+- id: candles-light
+  on: command light
+  when:
+    all:
+    - var: cmd.arg1
+      is: candles
+    - has_item: candles
+    - not:
+        at: player
+        room: gas-room
+  effects:
+  - if:
+      any:
+      - var: cmd.arg2
+        is: torch
+      - var: cmd.arg3
+        is: torch
+    then:
+    - if:
+        state: candles
+        is: lit
+      then:
+      - msg: You realize, just in time, that the candles are already lighted.
+      else:
+      - msg: 'The heat from the torch is so intense that the candles are vaporized.'
+      - consume: candles
+    else:
+    - if:
+        state: candles
+        is: burned-out
+      then:
+      - msg: 'Alas, there''s not much left of the candles. Certainly not enough to burn.'
+      else:
+      - if:
+          state: candles
+          is: lit
+        then:
+        - msg: The candles are already lit.
+        else:
+        - if:
+            state: match
+            is: lit
+          then:
+          - msg: The candles are lit.
+          - set_state:
+              target: candles
+              to: lit
+          - set_var:
+              var: candles_battery
+              value: 75
+          - if:
+              all:
+              - at: player
+                room: entrance-to-hades
+              - has_flag: exorcism_bell
+            then:
+            - msg: The flames flicker wildly and appear to dance. The earth beneath your feet trembles, and your legs nearly buckle beneath you. The spirits cower at your unearthly power.
+            - clear_condition: exorcism_bell
+            - set_flag: exorcism_bell
+              val: 'false'
+            - set_flag: exorcism_xc
+              val: 'true'
+            - condition:
+                name: exorcism_xc
+                turns: 3
+                end:
+                - set_flag: exorcism_xc
+                  val: 'false'
+          else:
+          - msg: You should say what to light them with.
+# Gebet lesen (Original: EXORCISE-Zeremonie, `read book` mit XC): Geister fliehen, Hades öffnet sich.
+# --- Stufe B: Dom-Seil (Original: ROPE-FUNCTION, 1actions.zil:3030) ---
+- id: dome-tie-rope
+  on: command tie
+  when:
+    all:
+    - var: cmd.arg1
+      is: rope
+    - any:
+      - var: cmd.arg2
+        is: railing
+      - var: cmd.arg3
+        is: railing
+    - has_item: rope
+    - at: player
+      room: dome-room
+  effects:
+  - if:
+      has_flag: dome_flag
+    then:
+    - msg: The rope is already tied to it.
+    else:
+    - msg: The rope drops over the side and comes within ten feet of the floor.
+    - set_flag: dome_flag
+      val: 'true'
+
+# --- Stufe B: Regenbogen (Original: SCEPTRE-FUNCTION, RAINBOW-FCN, 1actions.zil:2592/2634) ---
+- id: rainbow-wave
+  on: command wave
+  when:
+    all:
+    - var: cmd.arg1
+      is: sceptre
+    - has_item: sceptre
+  effects:
+  - if:
+      any:
+      - at: player
+        room: aragain-falls
+      - at: player
+        room: end-of-rainbow
+    then:
+    - if:
+        has_flag: rainbow_flag
+      then:
+      - msg: The rainbow seems to have become somewhat run-of-the-mill.
+      - set_flag: rainbow_flag
+        val: 'false'
+      else:
+      - msg: Suddenly, the rainbow appears to become solid and, I venture, walkable (I think the giveaway was the stairs and bannister).
+      - if:
+          at: player
+          room: end-of-rainbow
+        then:
+        - msg: A shimmering pot of gold appears at the end of the rainbow.
+      - set_flag: rainbow_flag
+        val: 'true'
+    else:
+    - if:
+        at: player
+        room: on-rainbow
+      then:
+      - set_flag: rainbow_flag
+        val: 'false'
+      - msg: The structural integrity of the rainbow is severely compromised, leaving you hanging in midair, supported only by water vapor. Bye.
+      - game_end: death
+      else:
+      - msg: A dazzling display of color briefly emanates from the sceptre.
+
+
+# --- Stufe B: Gebet im Südtempel (Original: V-PRAY, gverbs.zil:1046; ZORN1 → forest-1) ---
+- id: south-temple-pray
+  on: command pray
+  when:
+    at: player
+    room: south-temple
+  effects:
+  - move: forest-1
+
+# --- Stufe B: Boot als Fahrzeug (Original: IBOAT-/RBOAT-/DBOAT-FUNCTION, V-BOARD,
+# V-LAUNCH, V-DISEMBARK, 1actions.zil:2652-2835) ---
+# Abweichung (bewusst): `Vehicles.hs` ist ein Stop-/Routenmodell (`drive to`, `wait`) und
+# kann das Boot nur zwischen Stationen teleportieren — das bricht den Einweg-Fluss
+# (nur `down`) und die `land`-Wege. Darum echte Zustandsmaschine über Flags:
+#   boat-inflated  = Boot ist aufgepumpt        boat-punctured = Boot hat ein Loch
+#   in-boat        = Spieler sitzt im Boot      (Wasser nur damit passierbar)
+# Abweichung: `land` fasst Original-`LAND`-Richtung + `V-DISEMBARK` zusammen (Aussteigen).
+# Abweichung: Glocke/Stichobjekte — boarden mit einer Waffe zersticht das Boot
+# (Original: RBOAT-FUNCTION `BOARD`), aber ohne Inventar-Spillover (ROB entfällt).
+- id: boat-board
+  on: before board
+  when:
+    any:
+    - var: cmd.arg1
+      is: boat
+    - var: cmd.arg1
+      is: inflatable-boat
+  effects:
+  - if:
+      any:
+      - has_item: sword
+      - has_item: knife
+      - has_item: rusty-knife
+      - has_item: axe
+      - has_item: sceptre
+    then:
+    - set_flag: boat-punctured
+      val: 'true'
+    - set_flag: boat-inflated
+      val: 'false'
+    - set_flag: in-boat
+      val: 'false'
+    - block:
+        msg: 'Oops! Something sharp seems to have slipped and punctured the boat. The boat deflates to the sounds of hissing, sputtering, and cursing.'
+        turn: true
+    else:
+    - if:
+        has_flag: boat-punctured
+      then:
+      - block:
+          msg: No chance. Some moron punctured it.
+          turn: true
+      else:
+      - if:
+          not:
+            has_flag: boat-inflated
+        then:
+        - block:
+            msg: You will have to inflate it first.
+            turn: true
+        else:
+        - set_flag: in-boat
+          val: 'true'
+        - block:
+            msg: 'You are now in the boat. On the bottom of the boat is a tan label, which reads: "Warning: This boat is not a life-saving device."'
+            turn: true
+# Flicken mit Kitt (Original: DBOAT-FUNCTION PUT/PLUG + FIX-BOAT, 1actions.zil:2652/2664).
+- id: boat-repair
+  on: command use
+  when:
+    all:
+    - var: cmd.arg1
+      is: putty
+    - has_flag: boat-punctured
+    - has_item: putty
+    - not:
+        var: cmd.arg2
+        is: leak
+  effects:
+  - msg: Well done. The boat is repaired.
+  - set_flag: boat-punctured
+    val: 'false'
+# launch: vom Land ins Wasser (Original: RBOAT-FUNCTION LAUNCH + GO-NEXT RIVER-LAUNCH).
+- id: boat-launch-not-in
+  on: command launch
+  when:
+    all:
+    - not:
+        has_flag: in-boat
+  effects:
+  - msg: You're not in the boat!
+- id: boat-launch-on-water
+  on: command launch
+  when:
+    all:
+    - has_flag: in-boat
+    - any:
+      - at: player
+        room: river-1
+      - at: player
+        room: river-2
+      - at: player
+        room: river-3
+      - at: player
+        room: river-4
+      - at: player
+        room: river-5
+      - at: player
+        room: reservoir
+      - at: player
+        room: in-stream
+  effects:
+  - if:
+      at: player
+      room: reservoir
+    then:
+    - msg: You are on the reservoir, or have you forgotten?
+    else:
+    - if:
+        at: player
+        room: in-stream
+      then:
+      - msg: You are on the stream, or have you forgotten?
+      else:
+      - msg: You are on the river, or have you forgotten?
+- id: boat-launch-dam-base
+  on: command launch
+  when:
+    all:
+    - has_flag: in-boat
+    - at: player
+      room: dam-base
+  effects:
+  - msg: The boat slips into the water and the current takes hold.
+  - move: river-1
+- id: boat-launch-white-cliffs-north
+  on: command launch
+  when:
+    all:
+    - has_flag: in-boat
+    - at: player
+      room: white-cliffs-north
+  effects:
+  - msg: The boat slips into the water and the current takes hold.
+  - move: river-3
+- id: boat-launch-white-cliffs-south
+  on: command launch
+  when:
+    all:
+    - has_flag: in-boat
+    - at: player
+      room: white-cliffs-south
+  effects:
+  - msg: The boat slips into the water and the current takes hold.
+  - move: river-4
+- id: boat-launch-sandy-beach
+  on: command launch
+  when:
+    all:
+    - has_flag: in-boat
+    - at: player
+      room: sandy-beach
+  effects:
+  - msg: The boat slips into the water and the current takes hold.
+  - move: river-4
+- id: boat-launch-shore
+  on: command launch
+  when:
+    all:
+    - has_flag: in-boat
+    - at: player
+      room: shore
+  effects:
+  - msg: The boat slips into the water and the current takes hold.
+  - move: river-5
+- id: boat-launch-here
+  on: command launch
+  when:
+    all:
+    - has_flag: in-boat
+    - not:
+        any:
+        - at: player
+          room: river-1
+        - at: player
+          room: river-2
+        - at: player
+          room: river-3
+        - at: player
+          room: river-4
+        - at: player
+          room: river-5
+        - at: player
+          room: reservoir
+        - at: player
+          room: in-stream
+        - at: player
+          room: dam-base
+        - at: player
+          room: white-cliffs-north
+        - at: player
+          room: white-cliffs-south
+        - at: player
+          room: sandy-beach
+        - at: player
+          room: shore
+  effects:
+  - msg: You can't launch it here.
+
+# --- Stufe B: land (Original: `LAND`-Richtung der Fluss-Räume, 1dungeon.zil RIVER-1..5) ---
+# Achtung (Engine-Semantik!): Regeln feuern in Definitionsreihenfolge gegen den
+# *jeweils schon veraenderten* Zustand — deshalb eine Regel mit if/else statt
+# mehrerer sich gegenseitig nachziehender Regeln (die Fallback-Zweigregel wuerde
+# nach dem `move:` erneut zutreffen).
+- id: land
+  on: command land
+  effects:
+  - if:
+      at: player
+      room: river-1
+    then:
+    - msg: You steer the boat to the landing on the west shore and climb out onto dry land.
+    - move: dam-base
+    - set_flag: in-boat
+      val: 'false'
+    else:
+    - if:
+        at: player
+        room: river-2
+      then:
+      - msg: There is no safe landing spot here.
+      else:
+      - if:
+          at: player
+          room: river-3
+        then:
+        - msg: You steer the boat to the narrow beach below the cliffs and climb out onto dry land.
+        - move: white-cliffs-north
+        - set_flag: in-boat
+          val: 'false'
+        else:
+        - if:
+            at: player
+            room: river-4
+          then:
+          - msg: You can land either to the east or the west.
+          else:
+          - if:
+              at: player
+              room: river-5
+            then:
+            - msg: You steer the boat to the large landing area on the east shore and climb out onto dry land.
+            - move: shore
+            - set_flag: in-boat
+              val: 'false'
+            else:
+            - if:
+                at: player
+                room: reservoir
+              then:
+              - msg: You can land either to the north or the south.
+              else:
+              - if:
+                  at: player
+                  room: in-stream
+                then:
+                - msg: You steer the boat to the narrow beach and climb out onto dry land.
+                - move: stream-view
+                - set_flag: in-boat
+                  val: 'false'
+                else:
+                - msg: You can't land here.
+
+# --- Stufe B: Entlüften (Original: V-DEFLATE/RBOAT-FUNCTION DEFLATE, 1actions.zil:2803) ---
+- id: boat-deflate-in-boat
+  on: command deflate
+  when:
+    all:
+    - has_flag: in-boat
+  effects:
+  - msg: You can't deflate the boat while you're in it.
+- id: boat-deflate
+  on: command deflate
+  when:
+    all:
+    - has_flag: boat-inflated
+    - not:
+        has_flag: in-boat
+  effects:
+  - msg: The boat deflates.
+  - set_flag: boat-inflated
+    val: 'false'
+  - set_flag: deflate
+    val: 'true'
+
+# --- Stufe C: Ei (Original: EGG-OBJECT / BAD-EGG, 1actions.zil:2919) ---
+# `on: before open`, damit `open egg with <werkzeug>` (cmd.arg3) und die Standard-
+# Meldung des Container-`open` nicht doppelt erscheinen.
+- id: egg-open
+  on: before open
+  when:
+    any:
+    - var: cmd.arg1
+      is: egg
+    - var: cmd.arg1
+      is: jewel-encrusted
+  effects:
+  - if:
+      any:
+      - state: egg
+        is: broken
+      - state: egg
+        is: open
+    then:
+    - block:
+        msg: The egg is already open.
+    else:
+    - if:
+        compare_var:
+          name: cmd.count
+          op: lte
+          value: 1
+      then:
+      - block:
+          msg: You have neither the tools nor the expertise.
+      else:
+      - if:
+          any:
+          - var: cmd.arg2
+            is: hands
+          - var: cmd.arg3
+            is: hands
+        then:
+        - block:
+            msg: I doubt you could do that without damaging it.
+        else:
+        - if:
+            any:
+            - var: cmd.arg3
+              is: knife
+            - var: cmd.arg3
+              is: sword
+            - var: cmd.arg3
+              is: axe
+            - var: cmd.arg3
+              is: rusty-knife
+            - var: cmd.arg3
+              is: sceptre
+            - var: cmd.arg3
+              is: shovel
+            - var: cmd.arg3
+              is: screwdriver
+          then:
+          - set_state: egg
+            to: broken
+          - set_state: canary
+            to: broken
+          - block:
+              msg: 'The egg is now open, but the clumsiness of your attempt has seriously compromised its esthetic appeal. There is a golden clockwork canary nestled in the egg. It seems to have recently had a bad experience. The mountings for its jewel-like eyes are empty, and its silver beak is crumpled. Through a cracked crystal window below its left wing you can see the remains of intricate machinery.'
+          else:
+          - if:
+              has_flag: egg-original
+            then:
+            - block:
+                msg: Not to say that using the {cmd.arg3} isn't original too...
+            else:
+            - set_flag: egg-original
+              val: 'true'
+            - block:
+                msg: The concept of using a {cmd.arg3} is certainly original.
+
+# --- Stufe C: Maschinen-Deckel (Original: MACHINE-F, 1actions.zil:2502) ---
+- id: machine-lid
+  on: before open
+  when:
+    var: cmd.arg1
+    is: machine
+  effects:
+  - if:
+      has_flag: machine-open
+    then:
+    - block:
+        msg: It already is.
+    else:
+    - set_flag: machine-open
+      val: 'true'
+    - block:
+        msg: The lid opens.
+- id: machine-lid-close
+  on: before close
+  when:
+    var: cmd.arg1
+    is: machine
+  effects:
+  - if:
+      has_flag: machine-open
+    then:
+    - set_flag: machine-open
+      val: 'false'
+    - block:
+        msg: The lid closes.
+    else:
+    - block:
+        msg: It already is.
+
+# --- Stufe C: Loud Room (Original: LOUD-ROOM-FCN, 1actions.zil:1660) ---
+- id: loud-room-echo
+  on: command shout
+  when:
+    all:
+    - at: player
+      room: loud-room
+    - any:
+      - var: cmd.arg1
+        is: echo
+      - var: cmd.raw_args
+        is: echo
+    - not:
+        has_flag: loud-flag
+  effects:
+  - msg: The acoustics of the room change subtly.
+  - set_flag: loud-flag
+    val: 'true'
+- id: loud-room-shout
+  on: command shout
+  when:
+    all:
+    - at: player
+      room: loud-room
+    - not:
+        has_flag: loud-flag
+  effects:
+  - msg: The sound of your voice is lost in the noise.
+# Wenn hinter dem Damm das Wasser laeuft, wird der Raum unertraeglich laut.
+- id: loud-room-eject
+  on: turn
+  when:
+    all:
+    - at: player
+      room: loud-room
+    - has_flag: gates-open
+    - not:
+        has_flag: low_tide
+    - not:
+        has_flag: loud-flag
+  effects:
+  - msg: 'It is unbearably loud here, with an ear-splitting roar seeming to come from all around you. There is a pounding in your head which won''t stop. With a tremendous effort, you scramble out of the room.'
+  - random:
+    - - 1
+      - - move: round-room
+    - - 1
+      - - move: damp-cave
+    - - 1
+      - - move: deep-canyon
+
+# --- Stufe C: Sand/Skarabaeus (Original: SAND-FUNCTION, 1actions.zil:2855) ---
+- id: beach-dig
+  on: command dig
+  when:
+    all:
+    - at: player
+      room: sandy-cave
+    - has_item: shovel
+  effects:
+  - add_var:
+      var: dig_count
+      delta: 1
+  - if:
+      compare_var:
+        name: dig_count
+        op: gt
+        value: 4
+    then:
+    - msg: 'The hole collapses, smothering you.'
+    - game_end: death
+    else:
+    - if:
+        compare_var:
+          name: dig_count
+          op: eq
+          value: 4
+      then:
+      - msg: You can see a scarab here in the sand.
+      - place: {item: scarab, in: sandy-cave}
+      else:
+      - if:
+          compare_var:
+            name: dig_count
+            op: eq
+            value: 1
+        then:
+        - msg: You seem to be digging a hole here.
+        else:
+        - if:
+            compare_var:
+              name: dig_count
+              op: eq
+              value: 2
+          then:
+          - msg: The hole is getting deeper, but that's about it.
+          else:
+          - msg: You are surrounded by a wall of sand on all sides.
+- id: beach-dig-hands
+  on: command dig
+  when:
+    all:
+    - at: player
+      room: sandy-cave
+    - not:
+        has_item: shovel
+  effects:
+  - msg: Digging with your hands is slow and tedious.
+
+# --- Stufe C: Kohlegas (Original: BOOM-ROOM, 1actions.zil:2446) ---
+# Streichholz anzünden (Original: MATCH-FUNCTION, 1actions.zil:2256): verbraucht eines
+# von 6 Hölzern (MATCH-COUNT), brennt 2 Züge (I-MATCH); in den windigen Räumen
+# (LOWER-SHAFT, TIMBER-ROOM) pfeift es sofort aus.
+- id: match-light
+  on: command light
+  when:
+    all:
+    - var: cmd.arg1
+      is: match
+    - has_item: match
+    - not:
+        at: player
+        room: gas-room
+  effects:
+  - if:
+      compare_var:
+        name: match_count
+        op: lte
+        value: 0
+    then:
+    - msg: I'm afraid that you have run out of matches.
+    else:
+    - add_var:
+        var: match_count
+        delta: -1
+    - if:
+        any:
+        - at: player
+          room: lower-shaft
+        - at: player
+          room: timber-room
+      then:
+      - msg: This room is drafty, and the match goes out instantly.
+      else:
+      - msg: One of the matches starts to burn.
+      - set_state:
+          target: match
+          to: lit
+      - set_var:
+          var: match_battery
+          value: 2
+- id: torch-light
+  on: command light
+  when:
+    all:
+    - var: cmd.arg1
+      is: torch
+    - has_item: torch
+    - not:
+        at: player
+        room: gas-room
+  effects:
+  - msg: The torch is already burning.
+- id: gas-boom-light
+  on: command light
+  when:
+    at: player
+    room: gas-room
+  effects:
+  - msg: 'How sad for an aspiring adventurer to light a {cmd.arg1} in a room which reeks of gas. Fortunately, there is justice in the world.'
+  - game_end: death
+- id: gas-boom-carry
+  on: enter gas-room
+  when:
+    any:
+    - state: candles
+      is: lit
+    - state: match
+      is: lit
+    - has_item: torch
+  effects:
+  - msg: 'Oh dear. It appears that the smell coming from this room was coal gas. I would have thought twice about carrying flaming objects in here.'
+  - game_end: death
+
+# --- Stufe C: Leck im Wartungsraum (Original: LEAK-FUNCTION / FIX-MAINT-LEAK, 1actions.zil:1362) ---
+- id: maint-leak-fix
+  on: command use
+  when:
+    all:
+    - var: cmd.arg1
+      is: putty
+    - var: cmd.arg2
+      is: leak
+    - has_item: putty
+    - at: player
+      room: maintenance-room
+    - not:
+        has_flag: leak-fixed
+  effects:
+  - msg: By some miracle of Zorkian technology, you have managed to stop the leak in the dam.
+  - set_flag: leak-fixed
+    val: 'true'
+
+# --- Stufe C: `search` soll die Raetsel nicht aushebeln (versteckte Items sind
+#     im Engine-Modell per `search` findbar; hier erst nach der Mechanik) ---
+- id: machine-turn
+  on: before turn
+  when:
+    any:
+    - var: cmd.arg1
+      is: switch
+    - var: cmd.arg1
+      is: machine-switch
+  effects:
+  - if:
+      has_flag: machine-open
+    then:
+    - block:
+        msg: The machine doesn't seem to want to do anything.
+    else:
+    - if:
+        any:
+        - var: cmd.arg3
+          is: screwdriver
+        - var: cmd.arg2
+          is: screwdriver
+      then:
+      - if:
+          any:
+          - in: {container: machine, item: coal}
+          - has_item: coal
+        then:
+        - place: {item: coal, in: machine-room}
+        - consume: coal
+        - place: {item: diamond, in_container: machine}
+        - block:
+            msg: The machine comes to life (figuratively) with a dazzling display of colored lights and bizarre noises. After a few moments, the excitement abates, leaving an enormous diamond inside.
+        else:
+        - place: {item: diamond, in: machine-room}
+        - consume: diamond
+        - place: {item: gunk, in_container: machine}
+        - block:
+            msg: The machine comes to life (figuratively) with a dazzling display of colored lights and bizarre noises. After a few moments, the excitement abates, leaving a small piece of vitreous slag inside.
+      else:
+      - block:
+          msg: It seems that a screwdriver won't do.
+
+# --- Stufe C: Kohle in die Maschine (Original: <IN? ,COAL ,MACHINE>) ---
+# `actor_has` prueft nur CarriedBy, nicht Container-Inhalt — darum merkt eine
+# Regel das `put coal in machine`. Zusatz-Lenienz: die Kohle zu tragen genuegt.
+# --- Stufe C: Kohle in die Maschine (Original: <IN? ,COAL ,MACHINE>) ---
+# `actor_has` prueft nur CarriedBy, nicht Container-Inhalt — darum merkt eine
+# Regel das `put coal in machine`. Zusatz-Lenienz: die Kohle zu tragen genuegt.
+- id: coal-in-machine
+  on: before put
+  when:
+    all:
+    - var: cmd.arg1
+      is: coal
+    - any:
+      - var: cmd.arg2
+        is: machine
+      - var: cmd.arg3
+        is: machine
+    - has_item: coal
+  effects:
+  - set_flag: coal-in-machine
+    val: 'true'
+
+# --- Stufe C: Spiegel (Original: MIRROR-MIRROR, 1actions.zil:971) ---
+# `on: before rub`, weil `rub mirror with <ding>` als ein Zielstring ankommt.
+- id: mirror-rub
+  on: before rub
+  when:
+    any:
+    - var: cmd.arg1
+      is: mirror
+    - var: cmd.arg1
+      is: mirror-1
+    - var: cmd.arg1
+      is: mirror-2
+  effects:
+  - if:
+      has_flag: mirror-mung
+    then:
+    - block:
+        msg: The mirror is broken into many pieces.
+    else:
+    - if:
+        all:
+        - compare_var:
+            name: cmd.count
+            op: gt
+            value: 1
+        - not:
+            var: cmd.arg3
+            is: hands
+        - not:
+            var: cmd.arg2
+            is: hands
+      then:
+      - block:
+          msg: You feel a faint tingling transmitted through the {cmd.arg3}.
+      else:
+      - if:
+          at: player
+          room: mirror-room-1
+        then:
+        - move: mirror-room-2
+        - block:
+            msg: 'There is a rumble from deep within the earth and the room shakes.'
+            turn: true
+        else:
+        - move: mirror-room-1
+        - block:
+            msg: 'There is a rumble from deep within the earth and the room shakes.'
+            turn: true
+
+# --- Stufe D: Dieb-Texte (Original: ROBBER-FUNCTION, 1actions.zil:1947) ---
+- id: thief-texts
+  on: before take
+  when:
+    var: cmd.arg1
+    is: thief
+  effects:
+  - block:
+      msg: Once you got him, what would you do with him?
+- id: thief-examine
+  on: before examine
+  when:
+    var: cmd.arg1
+    is: thief
+  effects:
+  - block:
+      msg: 'The thief is a slippery character with beady eyes that flit back and forth. He carries, along with an unmistakable arrogance, a large bag over his shoulder and a vicious stiletto, whose blade is aimed menacingly in your direction. I''d watch out if I were you.'
+- id: thief-talk
+  on: before talk
+  when:
+    var: cmd.arg1
+    is: thief
+  effects:
+  - block:
+      msg: The thief says nothing, as you have not been formally introduced.
+
+# --- Stufe D: Dieb (Original: ROBBER-FUNCTION `1actions.zil:1947`, I-THIEF `:3890`,
+#     THIEF-IN-TREASURE `:2138`, DEPOSIT-BOOTY `:1897`) ---
+
+# Schatzkammer betreten: der Dieb eilt zur Verteidigung herbei.
+- id: thief-defends-treasure-room
+  on: enter treasure-room
+  when:
+    not:
+      state: thief
+      is: dead
+  effects:
+  - msg: 'You hear a scream of anguish as you violate the robber''s hideaway. Using passages unknown to you, he rushes to its defense.'
+  - move_npc: thief
+    to: treasure-room
+  - set_flag: thief-fighting
+    val: 'true'
+
+# Kelch nicht nehmen, solange der Dieb dort kämpft (Original: CHALICE-FCN).
+- id: chalice-guard
+  on: before take
+  when:
+    all:
+    - var: cmd.arg1
+      is: chalice
+    - at: player
+      room: treasure-room
+    - at: thief
+      room: treasure-room
+    - not:
+        state: thief
+        is: dead
+  effects:
+  - block:
+      msg: You'd be stabbed in the back first.
+
+# Dem Dieb etwas geben (Original: ROBBER-FUNCTION, GIVE/THROW): Schätze bewundert er.
+- id: thief-give-treasure
+  on: before give
+  when:
+    all:
+    - var: cmd.arg2
+      is: thief
+    - not:
+        state: thief
+        is: dead
+    - actor_has_tag:
+        actor: player
+        tag: schatz
+  effects:
+  - msg: 'The thief is taken aback by your unexpected generosity, but stops to admire its beauty.'
+
+# Tod: Beute bleibt liegen, Stilett fällt, und die Schätze der Schatzkammer
+# erscheinen wieder (Original: ROBBER-FUNCTION F-DEAD + DEPOSIT-BOOTY).
+# EGG-SOLVE: hatte er das Ei dabei, ist es unversehrt geöffnet — der intakte
+# Kanarienvogel wird damit erreichbar.
+- id: thief-death
+  on: state thief
+  once: true
+  when:
+    state: thief
+    is: dead
+  effects:
+  - msg: 'As the thief dies, the power of his magic decreases, and his treasures reappear.'
+  - if:
+      all:
+      - actor_has: thief
+        item: egg
+      - state: egg
+        is: intact
+    then:
+    - set_state: egg
+      to: open
+    - msg: The jewel-encrusted egg falls open unharmed. Inside it nestles a golden clockwork canary.
+  - move_all:
+      what: items
+      by: thief
+      to:
+        by: player
+  - place: {item: stiletto, in: treasure-room}
+  - place: {item: large-bag, in: treasure-room}
+  - set_flag: thief-fighting
+    val: 'false'
+
+# --- Stufe D: Dieb wandert (Original: I-THIEF "Move to next room, and hack",
+#     1actions.zil:3890 - er zieht durch alle begehbaren, nicht-geheiligten Raeume) ---
+# Abweichung: der Original-Rundkurs laeuft ueber die ganze Raumliste; hier zieht eine
+# random:-Auswahl den Raum. move_npc braucht ein literales Ziel (Befunde OPEN-11).
+- id: thief-wanders
+  on: turn
+  when:
+    all:
+    - not:
+        state: thief
+        is: dead
+    - not:
+        has_flag: thief-fighting
+  effects:
+  - random:
+      stream: thief
+      choices:
+      - - 1
+        - - move_npc: thief
+            to: round-room
+      - - 1
+        - - move_npc: thief
+            to: troll-room
+      - - 1
+        - - move_npc: thief
+            to: cellar
+      - - 1
+        - - move_npc: thief
+            to: living-room
+      - - 1
+        - - move_npc: thief
+            to: kitchen
+      - - 1
+        - - move_npc: thief
+            to: attic
+      - - 1
+        - - move_npc: thief
+            to: studio
+      - - 1
+        - - move_npc: thief
+            to: gallery
+      - - 1
+        - - move_npc: thief
+            to: machine-room
+      - - 1
+        - - move_npc: thief
+            to: loud-room
+      - - 1
+        - - move_npc: thief
+            to: dam-room
+      - - 1
+        - - move_npc: thief
+            to: maintenance-room
+      - - 1
+        - - move_npc: thief
+            to: reservoir-south
+      - - 1
+        - - move_npc: thief
+            to: mirror-room-2
+      - - 1
+        - - move_npc: thief
+            to: cold-passage
+      - - 1
+        - - move_npc: thief
+            to: ew-passage
+      - - 1
+        - - move_npc: thief
+            to: deep-canyon
+      - - 1
+        - - move_npc: thief
+            to: damp-cave
+      - - 1
+        - - move_npc: thief
+            to: chasm-room
+      - - 1
+        - - move_npc: thief
+            to: engravings-cave
+      - - 1
+        - - move_npc: thief
+            to: egypt-room
+      - - 1
+        - - move_npc: thief
+            to: torch-room
+      - - 1
+        - - move_npc: thief
+            to: timber-room
+      - - 1
+        - - move_npc: thief
+            to: lower-shaft
+# Stehlen: der Dieb räumt dem Spieler die Schätze ab (Original: ROB/THIEF-VS-ADVENTURER).
+- id: thief-steals
+  on: turn
+  when:
+    all:
+    - not:
+        state: thief
+        is: dead
+    - not:
+        has_flag: thief-fighting
+    - actor_has_tag:
+        actor: player
+        tag: schatz
+  effects:
+  - random:
+      stream: thief
+      choices:
+      - - 25
+        - - move_all:
+              what: items
+              by: player
+              tag: schatz
+              to:
+                by: thief
+          - msg: 'A seedy-looking individual with a large bag just wandered through the room. On the way through, he quietly abstracted some valuables from your possession, mumbling something about "Doing unto others before..."'
+      - - 70
+        - - msg: ''
+
+# --- Stufe E: Lampe an/aus (Original LANTERN / V-LAMP-ON / V-LAMP-OFF,
+# 1actions.zil:2220 / gverbs.zil:771,786). Eine Regel mit if/else (R-01:
+# aufeinanderfolgende Regeln sehen den bereits geaenderten Zustand). ---
+- id: lamp-light
+  on: command light
+  when:
+    all:
+    - any:
+      - var: cmd.arg1
+        is: lamp
+      - var: cmd.arg1
+        is: lantern
+    - has_item: lamp
+    - not:
+        at: player
+        room: gas-room
+  effects:
+  - if:
+      state: lamp
+      is: burned-out
+    then:
+    - msg: A burned-out lamp won't light.
+    else:
+    - if:
+        state: lamp
+        is: lit
+      then:
+      - msg: It is already on.
+      else:
+      - msg: The lamp is now on.
+      - set_state:
+          target: lamp
+          to: lit
+
+# --- Stufe E: Löschen (Original V-LAMP-OFF, gverbs.zil:771; Verben EXTINGUISH/DOUSE) ---
+- id: lamp-out
+  on: command extinguish
+  when:
+    all:
+    - any:
+      - var: cmd.arg1
+        is: lamp
+      - var: cmd.arg1
+        is: lantern
+    - has_item: lamp
+  effects:
+  - if:
+      state: lamp
+      is: burned-out
+    then:
+    - msg: The lamp has already burned out.
+    else:
+    - if:
+        state: lamp
+        is: lit
+      then:
+      - msg: The lamp is now off.
+      - set_state:
+          target: lamp
+          to: off
+      else:
+      - msg: It is already off.
+- id: candles-out
+  on: command extinguish
+  when:
+    all:
+    - var: cmd.arg1
+      is: candles
+    - has_item: candles
+  effects:
+  - if:
+      state: candles
+      is: lit
+    then:
+    - msg: The flame is extinguished.
+    - set_state:
+        target: candles
+        to: unlit
+    else:
+    - msg: The candles are not lighted.
+- id: match-out
+  on: command extinguish
+  when:
+    all:
+    - var: cmd.arg1
+      is: match
+    - has_item: match
+  effects:
+  - if:
+      state: match
+      is: lit
+    then:
+    - msg: The match is out.
+    - set_state:
+        target: match
+        to: unlit
+    else:
+    - msg: The match is not burning.
+# "turn off <x>" als Synonym (Original V-LAMP-OFF kennt TURN OFF / PUT OUT / BLOW OUT;
+# der Parser kann nur ein-Wort-Verben, daher hier über `turn` + cmd.arg2).
+- id: turn-off-alias
+  on: command turn
+  when:
+    var: cmd.arg1
+    is: off
+  effects:
+  - if:
+      any:
+      - var: cmd.arg2
+        is: lamp
+      - var: cmd.arg2
+        is: lantern
+    then:
+    - if:
+        state: lamp
+        is: burned-out
+      then:
+      - msg: The lamp has already burned out.
+      else:
+      - if:
+          state: lamp
+          is: lit
+        then:
+        - msg: The lamp is now off.
+        - set_state:
+            target: lamp
+            to: off
+        else:
+        - msg: It is already off.
+    else:
+    - if:
+        var: cmd.arg2
+        is: candles
+      then:
+      - if:
+          state: candles
+          is: lit
+        then:
+        - msg: The flame is extinguished.
+        - set_state:
+            target: candles
+            to: unlit
+        else:
+        - msg: The candles are not lighted.
+      else:
+      - if:
+          var: cmd.arg2
+          is: match
+        then:
+        - if:
+            state: match
+            is: lit
+          then:
+          - msg: The match is out.
+          - set_state:
+              target: match
+              to: unlit
+          else:
+          - msg: The match is not burning.
+        else:
+        - msg: You can't turn that off.
+
+# --- Stufe E: Brenndauern (Original I-LANTERN/I-CANDLES/I-MATCH mit LAMP-TABLE
+# 200/100/70/15, CANDLE-TABLE 40/20/10/5, I-MATCH 2 — 1actions.zil:2220/2315/2343).
+# Reihenfolge innerhalb `on: turn` ist wichtig (R-01): Dimmer-Meldungen VOR dem
+# Verbrauchen (sehen den Alt-Wert), Ausbrennen DANACH. Aus = Zustandswechsel
+# (lamp/candles → burned-out, match → unlit), `tags_when` löscht damit das Licht.
+# Die Timer laufen nur im brennenden Zustand — `extinguish` pausiert sie wie das
+# Original (DISABLE <INT I-LANTERN>). ---
+- id: lamp-dim-1
+  on: turn
+  when:
+    all:
+    - state: lamp
+      is: lit
+    - compare_var:
+        name: lamp_battery
+        op: eq
+        value: 185
+  effects:
+  - msg: The lamp appears a bit dimmer.
+- id: lamp-dim-2
+  on: turn
+  when:
+    all:
+    - state: lamp
+      is: lit
+    - compare_var:
+        name: lamp_battery
+        op: eq
+        value: 85
+  effects:
+  - msg: The lamp is definitely dimmer now.
+- id: lamp-dim-3
+  on: turn
+  when:
+    all:
+    - state: lamp
+      is: lit
+    - compare_var:
+        name: lamp_battery
+        op: eq
+        value: 15
+  effects:
+  - msg: The lamp is nearly out.
+- id: lamp-burn
+  on: turn
+  when:
+    state: lamp
+    is: lit
+  effects:
+  - add_var:
+      var: lamp_battery
+      delta: -1
+- id: lamp-burnout
+  on: turn
+  when:
+    all:
+    - state: lamp
+      is: lit
+    - compare_var:
+        name: lamp_battery
+        op: lte
+        value: 0
+  effects:
+  - msg: "You'd better have more light than from the lamp."
+  - set_state:
+      target: lamp
+      to: burned-out
+- id: candles-dim-1
+  on: turn
+  when:
+    all:
+    - state: candles
+      is: lit
+    - compare_var:
+        name: candles_battery
+        op: eq
+        value: 35
+  effects:
+  - msg: The candles grow shorter.
+- id: candles-dim-2
+  on: turn
+  when:
+    all:
+    - state: candles
+      is: lit
+    - compare_var:
+        name: candles_battery
+        op: eq
+        value: 15
+  effects:
+  - msg: The candles are becoming quite short.
+- id: candles-dim-3
+  on: turn
+  when:
+    all:
+    - state: candles
+      is: lit
+    - compare_var:
+        name: candles_battery
+        op: eq
+        value: 5
+  effects:
+  - msg: The candles won't last long now.
+- id: candles-burn
+  on: turn
+  when:
+    state: candles
+    is: lit
+  effects:
+  - add_var:
+      var: candles_battery
+      delta: -1
+- id: candles-burnout
+  on: turn
+  when:
+    all:
+    - state: candles
+      is: lit
+    - compare_var:
+        name: candles_battery
+        op: lte
+        value: 0
+  effects:
+  - msg: "You'd better have more light than from the candles."
+  - set_state:
+      target: candles
+      to: burned-out
+- id: match-burn
+  on: turn
+  when:
+    state: match
+    is: lit
+  effects:
+  - add_var:
+      var: match_battery
+      delta: -1
+- id: match-burnout
+  on: turn
+  when:
+    all:
+    - state: match
+      is: lit
+    - compare_var:
+        name: match_battery
+        op: lte
+        value: 0
+  effects:
+  - msg: The match has gone out.
+  - set_state:
+      target: match
+      to: unlit
+
+# --- Stufe E: Wasser (Original V-FILL / WATER-F, gverbs.zil:471 / 1actions.zil).
+# `fill bottle` geht nur an Gewässern — das Original kennt dort GLOBAL-WATER in
+# genau diesen 19 Raeumen. ---
+- id: fill-bottle
+  on: command fill
+  when:
+    any:
+    - var: cmd.arg1
+      is: bottle
+    - var: cmd.arg1
+      is: container
+    - var: cmd.arg1
+      is: flask
+  effects:
+  - if:
+      in: {container: bottle, item: water}
+    then:
+    - msg: The bottle is already full.
+    else:
+    - if:
+        any:
+        - at: player
+          room: reservoir-south
+        - at: player
+          room: reservoir
+        - at: player
+          room: reservoir-north
+        - at: player
+          room: stream-view
+        - at: player
+          room: in-stream
+        - at: player
+          room: dam-room
+        - at: player
+          room: dam-base
+        - at: player
+          room: river-1
+        - at: player
+          room: river-2
+        - at: player
+          room: river-3
+        - at: player
+          room: river-4
+        - at: player
+          room: river-5
+        - at: player
+          room: white-cliffs-north
+        - at: player
+          room: white-cliffs-south
+        - at: player
+          room: shore
+        - at: player
+          room: sandy-beach
+        - at: player
+          room: aragain-falls
+        - at: player
+          room: end-of-rainbow
+        - at: player
+          room: canyon-bottom
+      then:
+      - msg: The bottle is now full of water.
+      - place: {item: water, in_container: bottle}
+      else:
+      - msg: There's nothing to fill it with.
+- id: fill-other
+  on: command fill
+  when:
+    not:
+      any:
+      - var: cmd.arg1
+        is: bottle
+      - var: cmd.arg1
+        is: container
+      - var: cmd.arg1
+        is: flask
+  effects:
+  - msg: You may know how to do that, but I don't.
