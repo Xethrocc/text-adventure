@@ -39,6 +39,7 @@ module Parser
     , executeCommand
     , executeCommandEv
     , dispatchCommandEv
+    , roomViewEvents
     , checkBeforeVeto
     , joinBeforeAndCmd
     , resolveCmdTarget
@@ -915,37 +916,16 @@ retainCommandFailure before after
     | getVariable "cmd.succeeded" before == Just (VVBool False) = commandFailed after
     | otherwise = after
 
-dispatchCommandCoreEv :: Command -> GameState -> CommandResultEv
-
-dispatchCommandCoreEv (Go dir) state
-    | canMove dir state = case getExitInDirection dir state of
-        Just (Open destinationRoom) ->
-            let (st', hookMsg) = transitionToRoom destinationRoom (clearActiveDialogue state)
-                fullMsg = joinAllEv [evMsg "move.ok" [("dir", show dir)], hookMsg]
-            in (st', fullMsg)
-        Just (Locked destinationRoom entityTarget)
-            | getEntityState entityTarget state == Just "unlocked" ->
-                let (st', hookMsg) = transitionToRoom destinationRoom (clearActiveDialogue state)
-                    fullMsg = joinAllEv [evMsg "move.ok" [("dir", show dir)], hookMsg]
-                in (st', fullMsg)
-            | otherwise -> (state, evMsg "move.door_locked" [])
-        Just (Guarded destinationRoom exitCond maybeMsg)
-            | evalPredicate exitCond state ->
-                let (st', hookMsg) = transitionToRoom destinationRoom (clearActiveDialogue state)
-                    fullMsg = joinAllEv [evMsg "move.ok" [("dir", show dir)], hookMsg]
-                in (st', fullMsg)
-            | otherwise ->
-                case maybeMsg of
-                    Just msg -> (commandFailed state, evRaw (formatWithVars msg state))
-                    Nothing  -> (state, evMsg "move.blocked" [])
-        Nothing -> (state, evMsg "move.no_exit" [])
-    | otherwise = (state, evMsg "move.blocked" [])
-
-dispatchCommandCoreEv Look state = case getCurrentRoom state of
-    Nothing -> (state, evMsg "look.void" [])
+-- | The room view as events: art, description, item/container/NPC listing and
+--   the vehicle addon. With 'runHooks' the room's @on_look@ output is spliced
+--   in and its effects applied (the @look@ command). Without them the view is
+--   pure — the game loop uses this as the auto-look after a room change
+--   (FIX-07: entering a room describes it, as classic IF does).
+roomViewEvents :: Bool -> GameState -> (GameState, [OutputEvent])
+roomViewEvents runHooks state = case getCurrentRoom state of
+    Nothing -> (state, [])
     Just room
-        | isDark room state ->
-            (commandFailed state, darkRoomEv room)
+        | isDark room state -> (state, darkRoomEv room)
         | otherwise ->
             let vIdOverride = case currentVehicle (save state) of
                     Just vId -> Map.lookup (currentRoom (save state))
@@ -989,7 +969,9 @@ dispatchCommandCoreEv Look state = case getCurrentRoom state of
                     []  -> []
                     [c] -> evMsg "look.corpse_one" [("name", c)]
                     cs  -> evMsg "look.corpse_many" [("names", intercalate ", " cs)]
-                (state', hookMsg) = runRoomHook roomOnLook (currentRoom (save state)) state
+                (state', hookMsg) = if runHooks
+                                    then runRoomHook roomOnLook (currentRoom (save state)) state
+                                    else (state, [])
                 vehicleMsg = vehicleLookAddon state'
                 asciiArt = renderArtForLook (roomAscii room) state
                 -- Phase 1.2: the room's art travels as a structured payload
@@ -1003,6 +985,39 @@ dispatchCommandCoreEv Look state = case getCurrentRoom state of
                         [ artFrags, evRaw desc, itemDesc, containerDesc, npcDesc, corpseDesc, hookMsg,
                           maybe [] evRaw vehicleMsg ]
             in (state', full)
+
+dispatchCommandCoreEv :: Command -> GameState -> CommandResultEv
+
+dispatchCommandCoreEv (Go dir) state
+    | canMove dir state = case getExitInDirection dir state of
+        Just (Open destinationRoom) ->
+            let (st', hookMsg) = transitionToRoom destinationRoom (clearActiveDialogue state)
+                fullMsg = joinAllEv [evMsg "move.ok" [("dir", show dir)], hookMsg]
+            in (st', fullMsg)
+        Just (Locked destinationRoom entityTarget)
+            | getEntityState entityTarget state == Just "unlocked" ->
+                let (st', hookMsg) = transitionToRoom destinationRoom (clearActiveDialogue state)
+                    fullMsg = joinAllEv [evMsg "move.ok" [("dir", show dir)], hookMsg]
+                in (st', fullMsg)
+            | otherwise -> (state, evMsg "move.door_locked" [])
+        Just (Guarded destinationRoom exitCond maybeMsg)
+            | evalPredicate exitCond state ->
+                let (st', hookMsg) = transitionToRoom destinationRoom (clearActiveDialogue state)
+                    fullMsg = joinAllEv [evMsg "move.ok" [("dir", show dir)], hookMsg]
+                in (st', fullMsg)
+            | otherwise ->
+                case maybeMsg of
+                    Just msg -> (commandFailed state, evRaw (formatWithVars msg state))
+                    Nothing  -> (state, evMsg "move.blocked" [])
+        Nothing -> (state, evMsg "move.no_exit" [])
+    | otherwise = (state, evMsg "move.blocked" [])
+
+dispatchCommandCoreEv Look state = case getCurrentRoom state of
+    Nothing -> (state, evMsg "look.void" [])
+    Just room
+        | isDark room state ->
+            (commandFailed state, darkRoomEv room)
+        | otherwise -> roomViewEvents True state
 
 dispatchCommandCoreEv Inventory state =
     let invItems = getItemsInLocation (CarriedBy ActorPlayer) state

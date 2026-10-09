@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### FIX-07: Raumansicht nach Bewegung (Auto-Describe)
+
+Bisher zeigte die CLI nach `go <direction>` nur `You move {dir}.` — die
+Raumbeschreibung erschien erst nach einem manuellen `look`. Regeln mit `move:`
+zeigten *überhaupt* keinen Zielraum (Befund `R-08`). Jetzt beschreibt die
+Game-Loop nach jedem Kommando, das den Raum gewechselt hat (Ausgang, `move:`-
+Effekt, Fahrzeug), den Zielraum wie `look`: Art, Beschreibung, Item-/Container-/
+NPC-Liste, Fahrzeug-Zusatz — dunkle Räume melden ihre Dunkelheit. Bei Game-Over
+bleibt die Ansicht aus (der Endtext hat das letzte Wort), `look`-Kommandos und
+`on_look`-Hooks bleiben unverändert (der Auto-Look läuft ohne Hooks).
+
+- `roomViewEvents` (Parser): die Raumansicht als wiederverwendbare Events,
+  `look` und Auto-Look nutzen denselben Renderpfad.
+- `autoDescribe` (GameLoop): hängt die Ansicht an alle vier Befehlspfade an
+  (Turn/No-Turn, Veto mit/ohne Turn).
+
 ### Zork Stufe E: Dunkelheit & Zielauflösung an das Original angeglichen
 
 Vier kleine, generische Engine-Anpassungen (jeweils mit Regressionstest):

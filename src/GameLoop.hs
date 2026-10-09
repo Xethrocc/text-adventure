@@ -211,7 +211,9 @@ applyAfterVeto skipEvents command stAfterBefore beforeMsgs loopState =
         (stateAfterTriggers, triggerMsg) =
             fireCommandTriggersSkipping skipEvents command (lsCurrent loopState) newState
         cmdMsg = joinBeforeAndCmd beforeMsgs message
-        combined = joinEv cmdMsg triggerMsg ++ sideEvents (lsCurrent loopState) stateAfterTriggers
+        combined = joinEv cmdMsg triggerMsg
+                   ++ autoDescribe (lsCurrent loopState) stateAfterTriggers
+                   ++ sideEvents (lsCurrent loopState) stateAfterTriggers
     in (loopState { lsCurrent = stateAfterTriggers { lastVeto = Nothing } }, combined)
 
 applyLoopCommandCore :: Command -> LoopState -> (LoopState, [OutputEvent])
@@ -248,7 +250,7 @@ applyLoopCommandCore command loopState =
         Left (stBlocked, msgs, False) ->
             -- Vetoed without turn consumption (Phase 2.2 default)
             (loopState { lsCurrent = stBlocked { lastVeto = Nothing } }
-            , msgs ++ sideEvents curSt stBlocked)
+            , msgs ++ autoDescribe curSt stBlocked ++ sideEvents curSt stBlocked)
 
         Left (stBlocked, msgs, True) ->
             -- Vetoed with consumesTurn = True: command action dropped, but turn ticks advance!
@@ -268,7 +270,8 @@ applyLoopCommandCore command loopState =
                 (stateAfterChapter, chapterMsg) = checkChapterGate stateAfterTurnTriggers
                 fullMsg = if null allTickMsgs then msgs else tickText ++ msgs
             in (loopState { lsCurrent = stateAfterChapter { lastVeto = Nothing }, lsHistory = history' }
-               , joinEv fullMsg turnTrigMsg ++ chapterMsg ++ sideEvents oldState stateAfterChapter)
+               , joinEv fullMsg turnTrigMsg ++ chapterMsg ++ autoDescribe oldState stateAfterChapter
+                 ++ sideEvents oldState stateAfterChapter)
 
         Right (stAfterBefore, beforeMsgs)
             | not (consumesTurnIn curSt command) ->
@@ -304,7 +307,19 @@ applyLoopCommandCore command loopState =
                            cmdMsg = joinBeforeAndCmd beforeMsgs message
                            fullMessage = if null allTickMsgs then cmdMsg else tickText ++ cmdMsg
                        in (loopState { lsCurrent = stateAfterChapter { lastVeto = Nothing }, lsHistory = history' },
-                           joinEv fullMessage triggerMsg ++ chapterMsg ++ sideEvents oldState stateAfterChapter)
+                           joinEv fullMessage triggerMsg ++ chapterMsg
+                           ++ autoDescribe oldState stateAfterChapter
+                           ++ sideEvents oldState stateAfterChapter)
+
+-- | FIX-07 (R-08): a command that moved the player describes the destination —
+--   classic IF shows the room on entry. Without this the CLI printed only
+--   "You move {dir}." and a rule-driven `move:` printed nothing at all.
+--   On game over the room stays hidden: the end text is the last word.
+autoDescribe :: GameState -> GameState -> [OutputEvent]
+autoDescribe before after
+    | gameOver (save after)                                  = []
+    | currentRoom (save before) == currentRoom (save after)  = []
+    | otherwise                                              = snd (roomViewEvents False after)
 
 -- | Phase 1.2: additive side events derived from the state transition —
 --   they contribute no text ('evTextOf' = ""), so the CLI/TUI rendering is
