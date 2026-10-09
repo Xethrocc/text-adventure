@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Container-Kommandos, Open-Reveal und Look-Inside (F5-Rest Zork-Port)
+
+- **`open`/`close`/`lock`/`unlock` laufen durch `verb_map`:** die vier
+  Container-Kommandos dispatchen jetzt über `runVerbMapEntry` (statt nur eines
+  halben `instead:`-Lookups in `open`). Damit feuern `verb_map`-Einträge wie das
+  Gitter-`unlock:`/`open:` des Zork-Ports wieder — das Rätsel war still tot.
+- **Open-Reveal wie V-OPEN:** leer oder `transparent` → „Opened."-Klasse;
+  sonst „Opening the {name} reveals a X, and a Y." (PRINT-CONTENTS-Format,
+  Artikel aus den Grammatikfeldern). Neue Keys `container.opened_reveals` +
+  `container.dark_now`; `container.empty` zurück für die Look-Inside-Zeile.
+- **`examine` zeigt Container-Inhalt** (V-EXAMINE → V-LOOK-INSIDE): unter der
+  Beschreibung die sichtbaren Inhalte bzw. „X is empty."
+- **„It is now pitch black."** nach `close`, wenn der Raum dadurch dunkel wird;
+  Lichtquellen in getragenen see-through Containern leuchten weiter (LIT?).
+- **Tag `transparent`** (TRANSBIT): Inhalt auch geschlossen sichtbar/erreichbar.
+
 ### `scenery`-Tag (NDESCBIT) und stille Leercontainer (Zork-Port F5)
 
 - **Tag `scenery`:** Items mit diesem semantischen Tag bleiben ansprechbar,

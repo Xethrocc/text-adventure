@@ -953,7 +953,7 @@ roomViewEvents runHooks state = case getCurrentRoom state of
                     ( [ (itemId i, itemName i)
                       | i <- itemsInRoom
                       , isContainer (itemId i) state
-                      , containerStateOf (itemId i) state == "open" ]
+                      , containerSeeThrough (itemId i) state ]
                       ++
                       [ (conId c, conName c)
                       | c <- Map.elems (containerDefs (world state))
@@ -967,7 +967,7 @@ roomViewEvents runHooks state = case getCurrentRoom state of
                             [ (itemId i, itemName i)
                             | i <- itemsInContainer cid state
                             , isContainer (itemId i) state
-                            , containerStateOf (itemId i) state == "open" ]
+                            , containerSeeThrough (itemId i) state ]
                 containerDesc = concat
                     [ case itemsInContainer cid state of
                         [] -> []   -- empty open containers stay silent (original behaviour)
@@ -999,6 +999,28 @@ roomViewEvents runHooks state = case getCurrentRoom state of
                         [ artFrags, evRaw desc, itemDesc, containerDesc, npcDesc, corpseDesc, hookMsg,
                           maybe [] evRaw vehicleMsg ]
             in (state', full)
+
+-- | The four container commands share one shape: a verb_map entry on the
+--   target item may replace or veto the action (the grating's `unlock:`, the
+--   dam's `instead:open`), otherwise the state machine in `standard` runs.
+containerCommand :: Verb -> String
+                 -> (String -> GameState -> (GameState, [OutputEvent]))
+                 -> GameState -> (GameState, [OutputEvent])
+containerCommand verb target standard state =
+    case findContainerRef target state of
+        Nothing -> (state, evMsg "container.not_a_container" [("target", target)])
+        Just cid ->
+            let vm = maybe Map.empty itemVerbMap (Map.lookup cid (itemDefs (world state)))
+                currentStatus = maybe "intact" itemStatus (Map.lookup cid (itemStates (save state)))
+            in runVerbMapEntry vm verb currentStatus cid (standard cid) state
+
+-- | The `{name}` message args of a container (with its grammar articles).
+containerNameArgs :: String -> GameState -> [(String, String)]
+containerNameArgs cid st =
+    [("name", containerName cid st)] ++ grammarArgs True "name" (grammarOfItem cid st)
+
+-- | 4.4: `take X from Y` — one item out of an open container (the item is
+--   looked up inside Y, so a closed container reports "closed", not "missing").
 
 dispatchCommandCoreEv :: Command -> GameState -> CommandResultEv
 
@@ -1294,57 +1316,52 @@ dispatchCommandCoreEv (ActionWithArgs verb args) state =
 
 -- | 4.4: container verbs — open / close / lock / unlock.
 dispatchCommandCoreEv (OpenCmd t) state =
-    case findContainerRef t state of
-        Nothing -> (state, evMsg "container.not_a_container" [("target", t)])
-        Just cid ->
-            -- PhaseInstead verb_map entries on items replace the standard
-            -- container-open action (e.g. the kitchen window with its
-            -- kitchen-window-open flag gating).
-            let gw = world state
-                itemM = Map.lookup cid (itemDefs gw)
-                itemVM = case itemM of
-                            Just item -> itemVerbMap item
-                            Nothing -> Map.empty
-                itemSt = case itemM of
-                            Just _ -> Map.lookup cid (itemStates (save state))
-                            Nothing -> Nothing
-                currentStatus = maybe "intact" itemStatus itemSt
-                insteadM = Map.lookup (PhaseInstead, VCustom "open", currentStatus) itemVM
-            in case insteadM of
-                Just outcome -> applyCommandOutcomeEv outcome cid state
-                Nothing -> case containerStateOf cid state of
-                    "locked" -> (state, evMsg "container.is_locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
-                    "open"   -> (state, evMsg "container.already_open" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
-                    _        -> (setEntityState cid "open" state
-                                , evMsg "container.opened" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
+    containerCommand (VCustom "open") t openContainer state
+  where
+    openContainer cid st = case containerStateOf cid st of
+        "locked" -> (st, evMsg "container.is_locked" (containerNameArgs cid st))
+        "open"   -> (st, evMsg "container.already_open" (containerNameArgs cid st))
+        _        ->
+            let opened = setEntityState cid "open" st
+                contents = itemsInContainer cid st
+            in if null contents || containerSeeThrough cid st
+               then (opened, evMsg "container.opened" (containerNameArgs cid st))
+               else (opened, evMsg "container.opened_reveals"
+                        (containerNameArgs cid st ++ [("items", revealContents contents)]))
 
 dispatchCommandCoreEv (CloseCmd t) state =
-    case findContainerRef t state of
-        Nothing -> (state, evMsg "container.not_a_container" [("target", t)])
-        Just cid -> case containerStateOf cid state of
-            "locked" -> (state, evMsg "container.is_locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
-            "closed" -> (state, evMsg "container.already_closed" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
-            _        -> (setEntityState cid "closed" state
-                        , evMsg "container.closed" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
+    containerCommand (VCustom "close") t closeContainer state
+  where
+    closeContainer cid st = case containerStateOf cid st of
+        "locked" -> (st, evMsg "container.is_locked" (containerNameArgs cid st))
+        "closed" -> (st, evMsg "container.already_closed" (containerNameArgs cid st))
+        _        ->
+            let closed = setEntityState cid "closed" st
+                -- V-CLOSE: closing that plunges the room into darkness says so.
+                darkNow = case getCurrentRoom st of
+                    Just room -> not (isDark room st) && isDark room closed
+                    Nothing   -> False
+                closedMsg = evMsg "container.closed" (containerNameArgs cid st)
+            in (closed, if darkNow
+                        then joinEv closedMsg (evMsg "container.dark_now" [])
+                        else closedMsg)
 
 dispatchCommandCoreEv (LockCmd t) state =
-    case findContainerRef t state of
-        Nothing -> (state, evMsg "container.not_a_container" [("target", t)])
-        Just cid -> case containerStateOf cid state of
-            "locked" -> (state, evMsg "container.is_locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
-            _        -> (setEntityState cid "locked" state
-                        , evMsg "container.locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
+    containerCommand (VCustom "lock") t lockContainer state
+  where
+    lockContainer cid st = case containerStateOf cid st of
+        "locked" -> (st, evMsg "container.is_locked" (containerNameArgs cid st))
+        _        -> (setEntityState cid "locked" st
+                    , evMsg "container.locked" (containerNameArgs cid st))
 
 dispatchCommandCoreEv (UnlockCmd t) state =
-    case findContainerRef t state of
-        Nothing -> (state, evMsg "container.not_a_container" [("target", t)])
-        Just cid -> case containerStateOf cid state of
-            "locked" -> (setEntityState cid "closed" state
-                        , evMsg "container.unlocked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
-            _        -> (state, evMsg "container.not_locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
+    containerCommand (VCustom "unlock") t unlockContainer state
+  where
+    unlockContainer cid st = case containerStateOf cid st of
+        "locked" -> (setEntityState cid "closed" st
+                    , evMsg "container.unlocked" (containerNameArgs cid st))
+        _        -> (st, evMsg "container.not_locked" (containerNameArgs cid st))
 
--- | 4.4: `take X from Y` — one item out of an open container (the item is
---   looked up inside Y, so a closed container reports "closed", not "missing").
 dispatchCommandCoreEv (TakeFromCmd x y) state =
     case findContainerRef y state of
         Nothing -> case findNpcTarget y state of
@@ -1931,7 +1948,8 @@ interactItem verb item maybeItemState targetStr state =
             if verb == VDrop && hasItem iId st
             then (dropItem iId st, evMsg "drop.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
             else if isExamineLike verb
-            then (st, lookWithArtEv (itemAscii item) st (resolveCondText (itemDescription item) st))
+            then (st, joinEv (lookWithArtEv (itemAscii item) st (resolveCondText (itemDescription item) st))
+                             (containerLookInsideEv iId st))
             else case if verb == VAttack then tryAttackVehicle targetStr st else Nothing of
                 Just res -> res
                 Nothing
@@ -2243,6 +2261,32 @@ itemIsFeelable st item = Set.member "feelable" (effectiveItemTags (itemId item) 
 --   (`tags_when`) count with their current status.
 itemIsScenery :: GameState -> ItemDef -> Bool
 itemIsScenery st item = Set.member "scenery" (effectiveItemTags (itemId item) item st)
+
+-- | V-EXAMINE on a container falls through to V-LOOK-INSIDE in the original:
+--   below the description the visible contents (or "is empty.") are listed.
+containerLookInsideEv :: String -> GameState -> [OutputEvent]
+containerLookInsideEv cid st
+    | not (isContainer cid st)          = []
+    | not (containerSeeThrough cid st)  = []
+    | otherwise = case itemsInContainer cid st of
+        [] -> evMsg "container.empty"
+                ([("name", containerName cid st)] ++ grammarArgs True "name" (grammarOfItem cid st))
+        contents -> evMsg "container.contains"
+                ([("name", containerName cid st), ("items", intercalate ", " (map itemName contents))]
+                    ++ grammarArgs True "name" (grammarOfItem cid st))
+
+-- | The original's PRINT-CONTENTS: every item with its article, comma-separated,
+--   "and" before the last one ("a leaflet" / "a clove of garlic, and a lunch").
+revealContents :: [ItemDef] -> String
+revealContents contents = go (map render contents)
+  where
+    render x = case gNom (itemGrammar x) of
+        Just a | not (null a) -> a ++ " " ++ itemName x
+        _                     -> itemName x
+    go []         = ""
+    go [x]        = x
+    go [x, y]     = x ++ ", and " ++ y
+    go (x : xs@(_ : _ : _)) = x ++ ", " ++ go xs
 
 -- | Item is reachable in darkness: carried, or its definition is tagged @feelable@.
 itemReachableInDark :: GameState -> String -> Bool

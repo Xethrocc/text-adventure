@@ -146,7 +146,8 @@ itemGrammarMsgKeys =
     , "item.cant_do", "search.nothing_item", "search.reveal"
     , "equip.ok", "unequip.ok", "unequip.not_equipped"
     , "npc.took_from", "npc.gave_to"
-    , "container.contains", "container.opened"
+    , "container.empty", "container.contains", "container.opened"
+    , "container.opened_reveals"
     , "container.closed", "container.locked", "container.unlocked"
     , "container.is_locked", "container.is_closed", "container.not_locked"
     , "container.already_open", "container.already_closed", "container.full"
@@ -389,6 +390,9 @@ catalogEntries =
     , ("pursuit.no_path",         "{name} can find no way.")
     , ("container.not_a_container", "{target} is not a container.")
     , ("container.opened",        "{name} is open now.")
+    , ("container.opened_reveals", "Opening the {name} reveals {items}.")
+    , ("container.dark_now",      "It is now pitch black.")
+    , ("container.empty",         "{name} is empty.")
     , ("container.closed",        "{name} is closed now.")
     , ("container.locked",        "{name} is locked now.")
     , ("container.unlocked",      "{name} is unlocked now.")

@@ -44,7 +44,7 @@ tests:
     expect:
       - "Truhe is closed now."
       - "Truhe is closed."
-      - "Truhe is open now."
+      - "Opening the Truhe reveals Amulett."
       - "Truhe is locked now."
       - "Truhe is locked."
   - name: "verschlossene kiste"

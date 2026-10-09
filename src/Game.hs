@@ -29,6 +29,8 @@ module Game
     , isContainer
     , containerCapacityOf
     , containerStateOf
+    , itemIsTransparent
+    , containerSeeThrough
     , itemsInContainer
     , visibleItemsAt
     , containerChainOpen
@@ -504,13 +506,25 @@ containerCapacityOf cid state =
 containerStateOf :: String -> GameState -> String
 containerStateOf cid state = fromMaybe "open" (getEntityState cid state)
 
+-- | TRANSBIT (original ZIL): a transparent container shows its contents even
+--   closed (glass case, bottle) and opens with a plain "Opened.".
+itemIsTransparent :: GameState -> ItemDef -> Bool
+itemIsTransparent st item = Set.member "transparent" (effectiveItemTags (itemId item) item st)
+
+-- | The original's SEE-INSIDE?: a container whose contents are visible and
+--   reachable — it is open, or it is transparent.
+containerSeeThrough :: String -> GameState -> Bool
+containerSeeThrough cid st =
+    containerStateOf cid st == "open"
+        || maybe False (itemIsTransparent st) (Map.lookup cid (itemDefs (world st)))
+
 -- | Items directly inside a container (hidden ones need discovery, like
 --   everywhere else).
 itemsInContainer :: String -> GameState -> [ItemDef]
 itemsInContainer cid state = getItemsInLocation (InContainer cid) state
 
--- | 4.4: every item at a location plus the contents of open containers,
---   recursively (closed containers cut the branch off).
+-- | 4.4: every item at a location plus the contents of see-through containers,
+--   recursively (closed containers cut the branch off, transparent ones don't).
 visibleItemsAt :: Location -> GameState -> [ItemDef]
 visibleItemsAt loc state =
     let direct = getItemsInLocation loc state
@@ -518,7 +532,7 @@ visibleItemsAt loc state =
             [ visibleItemsAt (InContainer (itemId i)) state
             | i <- direct
             , isContainer (itemId i) state
-            , containerStateOf (itemId i) state == "open" ]
+            , containerSeeThrough (itemId i) state ]
     in direct ++ nested
 
 -- | 4.4: is this container reachable from the outside (its whole chain of
@@ -1340,12 +1354,17 @@ effectiveItemTags iId def state =
         Just is -> itemTagsWith is def
         Nothing -> itemTags def
 
--- | Does the player carry or wear an item with the given tag?
+-- | Does the player carry or wear an item with the given tag? Carried
+--   see-through containers count with their contents (the original's LIT?
+--   searches the player's inventory recursively — a lamp in an open bag
+--   still lights the room, closing the bag is what makes it dark).
 playerHasTaggedItem :: String -> GameState -> Bool
 playerHasTaggedItem tag state =
-    any (\iId -> maybe False (\def -> Set.member tag (effectiveItemTags iId def state))
-                  (lookupItem iId state))
-        (inventory (save state) ++ Map.elems (equipment (save state)))
+    any (\i -> Set.member tag (effectiveItemTags (itemId i) i state))
+        (visibleItemsAt (CarriedBy ActorPlayer) state)
+        || any (\iId -> maybe False (\def -> Set.member tag (effectiveItemTags iId def state))
+                        (lookupItem iId state))
+               (Map.elems (equipment (save state)))
 
 -- | Check if a target string matches any living NPC in the room (for weapon routing)
 isLivingNPCInRoom :: String -> GameState -> Bool

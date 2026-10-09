@@ -11,12 +11,13 @@ end_art:
 # Die Engine-Stimme wird pro Abenteuer auf die Original-Antworten gestellt
 # (messages:-Override, Phase 4.3).
 messages:
-  container.opened: The {name} opens.
+  container.opened: Opened.
   container.closed: Closed.
   container.already_open: It is already open.
   container.already_closed: It is already closed.
   take.ok: Taken.
   take.already: You already have that.
+  take.not_portable: A valiant attempt.
   drop.ok: Dropped.
   target.not_seen: You can't see any such thing.
   move.no_exit: You can't go that way.
@@ -2224,6 +2225,7 @@ items:
   keys:
   - mountain-range
   location: mountains
+  portable: false
 - id: water
   name: quantity of water
   description: There's nothing special about the quantity of water.
@@ -2244,6 +2246,13 @@ items:
     - msg: 'Thank you very much. I was rather thirsty (from all this talking, probably).'
     - move_all: {what: items, in_container: bottle, tag: wasser, to: {in: nowhere}}
     - move_all: {what: items, by: player, tag: wasser, to: {in: nowhere}}
+    instead:take:
+    - if:
+        in: {container: bottle, item: water}
+      then:
+      - msg: It's in the bottle. Perhaps you should take that instead.
+      else:
+      - msg: The water slips through your fingers.
 - id: ghosts
   tags:
   - scenery
@@ -2252,6 +2261,7 @@ items:
   keys:
   - ghosts
   location: entrance-to-hades
+  portable: false
 - id: skull
   name: crystal skull
   tags: [schatz]
@@ -2267,12 +2277,18 @@ items:
   keys:
   - lowered-basket
   location: lower-shaft
+  portable: false
+  take_failure: The cage is securely fastened to the iron chain.
 - id: raised-basket
   name: basket
   description: At the end of the chain is a basket.
   keys:
   - raised-basket
   location: shaft-room
+  portable: false
+  take_failure: The cage is securely fastened to the iron chain.
+  tags:
+  - transparent
 - id: lunch
   name: lunch
   description: A hot pepper sandwich is here.
@@ -2289,12 +2305,15 @@ items:
     - consume: lunch
     drink:
     - msg: How can you drink that?
+  article: a
 - id: bat
   name: bat
   description: There's nothing special about the bat.
   keys:
   - bat
   location: bat-room
+  portable: false
+  take_failure: You can't reach him; he's on the ceiling.
 - id: bell
   name: brass bell
   description: brass bell
@@ -2374,6 +2393,7 @@ items:
   location: south-temple
   capacity: 50
   state: open
+  portable: false
 - id: book
   name: black book
   description: On the altar is a large black book, open to page 569.
@@ -2406,13 +2426,13 @@ items:
   - sceptre
   in_container: coffin
   portable: true
+  article: a
 - id: timbers
   name: broken timber
   description: There's nothing special about the broken timber.
   keys:
   - timbers
   location: timber-room
-  portable: false
 - id: kitchen-table
   tags:
   - scenery
@@ -2451,6 +2471,11 @@ items:
   - tool-chest
   location: maintenance-room
   capacity: 10000
+  portable: false
+  take_failure: The chests are so rusty and corroded that they crumble when you touch them.
+  verb_map:
+    instead:open:
+    - msg: The chests are so rusty and corroded that they crumble when you touch them.
 - id: yellow-button
   tags:
   - scenery
@@ -2469,6 +2494,7 @@ items:
       - msg: Click. The bolt on the control panel is now turnable.
       - set_flag: gate-flag
         val: 'true'
+  portable: false
 - id: brown-button
   tags:
   - scenery
@@ -2487,6 +2513,7 @@ items:
         val: 'false'
       else:
       - msg: Click. The bolt is already locked.
+  portable: false
 - id: red-button
   tags:
   - scenery
@@ -2507,6 +2534,7 @@ items:
       - msg: The lights within the room come on.
       - set_flag: dam-room-lights-on
         val: 'true'
+  portable: false
 - id: blue-button
   tags:
   - scenery
@@ -2518,9 +2546,11 @@ items:
   verb_map:
     push:
     - msg: Click. It seems jammed — it needs the water leak to be fixed first.
+  portable: false
 - id: trophy-case
   tags:
   - scenery
+  - transparent
   name: trophy case
   description:
     default: The trophy case is closed.
@@ -2534,6 +2564,8 @@ items:
   location: living-room
   capacity: 10000
   state: open
+  portable: false
+  take_failure: The trophy case is securely fastened to the wall.
 - id: rug
   tags:
   - scenery
@@ -2576,6 +2608,7 @@ items:
     - consume: garlic
     drink:
     - msg: How can you drink that?
+  article: a
 - id: trident
   name: crystal trident
   tags: [schatz]
@@ -2591,6 +2624,8 @@ items:
   keys:
   - cyclops
   location: cyclops-room
+  portable: false
+  take_failure: The cyclops doesn't take kindly to being grabbed.
 - id: dam
   tags:
   - scenery
@@ -2600,6 +2635,12 @@ items:
   - dam
   location: dam-room
   capacity: 10000
+  portable: false
+  verb_map:
+    instead:open:
+    - msg: Sounds reasonable, but this isn't how.
+    instead:close:
+    - msg: Sounds reasonable, but this isn't how.
 - id: trap-door
   tags:
   - scenery
@@ -2639,6 +2680,7 @@ items:
   keys:
   - front-door
   location: west-of-house
+  portable: false
 - id: barrow-door
   tags:
   - scenery
@@ -2647,6 +2689,7 @@ items:
   keys:
   - barrow-door
   location: stone-barrow
+  portable: false
 - id: barrow
   tags:
   - scenery
@@ -2655,14 +2698,18 @@ items:
   keys:
   - barrow
   location: stone-barrow
+  portable: false
 - id: bottle
   name: glass bottle
   description: A bottle is sitting on the table.
+  state: closed
   keys:
   - bottle
   in_container: kitchen-table
   portable: true
   capacity: 4
+  tags:
+  - transparent
 - id: coffin
   name: gold coffin
   tags: [schatz]
@@ -2708,6 +2755,7 @@ items:
   location: nowhere
   portable: false
   take_failure: The bag will be taken over his dead body.
+  take_failure: Sadly for you, the robber collapsed on top of the bag. Trying to take it would wake him. The bag will be taken over his dead body.
 - id: knife
   name: nasty knife
   description: On a table is a nasty-looking knife.
@@ -2723,6 +2771,63 @@ items:
   keys:
   - bones
   location: maze-5
+  verb_map:
+    instead:take:
+    - msg: A ghost appears in the room and is appalled at your desecration of the remains of a fellow adventurer. He casts a curse on your valuables and banishes them to the Land of the Living Dead. The ghost leaves, muttering obscenities.
+    - move_all:
+        what: items
+        in: maze-5
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    - move_all:
+        what: items
+        by: player
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    instead:attack:
+    - msg: A ghost appears in the room and is appalled at your desecration of the remains of a fellow adventurer. He casts a curse on your valuables and banishes them to the Land of the Living Dead. The ghost leaves, muttering obscenities.
+    - move_all:
+        what: items
+        in: maze-5
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    - move_all:
+        what: items
+        by: player
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    instead:push:
+    - msg: A ghost appears in the room and is appalled at your desecration of the remains of a fellow adventurer. He casts a curse on your valuables and banishes them to the Land of the Living Dead. The ghost leaves, muttering obscenities.
+    - move_all:
+        what: items
+        in: maze-5
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    - move_all:
+        what: items
+        by: player
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    instead:rub:
+    - msg: A ghost appears in the room and is appalled at your desecration of the remains of a fellow adventurer. He casts a curse on your valuables and banishes them to the Land of the Living Dead. The ghost leaves, muttering obscenities.
+    - move_all:
+        what: items
+        in: maze-5
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    - move_all:
+        what: items
+        by: player
+        tag: schatz
+        to:
+          in: land-of-living-dead
 - id: burned-out-lantern
   name: burned-out lantern
   description: The deceased adventurer's useless lantern is here.
@@ -2755,6 +2860,7 @@ items:
   - emerald
   in_container: buoy
   portable: true
+  article: a
 - id: advertisement
   name: leaflet
   description: A small leaflet is on the ground.
@@ -2767,6 +2873,7 @@ items:
   verb_map:
     read:
     - msg: "\"WELCOME TO ZORK!\n\nZORK is a game of adventure, danger, and low cunning. In it you will explore some of the most amazing territory ever seen by mortals. No computer should be without one!\""
+  article: a
 - id: leak
   tags:
   - scenery
@@ -2775,6 +2882,7 @@ items:
   keys:
   - leak
   location: maintenance-room
+  portable: false
 - id: machine
   tags:
   - scenery
@@ -2849,6 +2957,7 @@ items:
       - msg: 'You have broken the mirror. I hope you have a seven years'' supply of good luck handy.'
       - set_flag: mirror-mung
         val: 'true'
+  take_failure: The mirror is many times your size. Give up.
 - id: mirror-1
   tags:
   - scenery
@@ -2882,6 +2991,7 @@ items:
       - msg: 'You have broken the mirror. I hope you have a seven years'' supply of good luck handy.'
       - set_flag: mirror-mung
         val: 'true'
+  take_failure: The mirror is many times your size. Give up.
 - id: painting
   name: painting
   tags: [schatz]
@@ -2981,6 +3091,7 @@ items:
   keys:
   - prayer
   location: north-temple
+  portable: false
 - id: railing
   tags:
   - scenery
@@ -2989,6 +3100,7 @@ items:
   keys:
   - railing
   location: dome-room
+  portable: false
 - id: buoy
   name: red buoy
   description: There is a red buoy here (probably a warning).
@@ -3016,6 +3128,7 @@ items:
   keys:
   - sand
   location: sandy-cave
+  portable: false
 - id: bracelet
   name: sapphire-encrusted bracelet
   tags: [schatz]
@@ -3081,6 +3194,7 @@ items:
 - id: wooden-door
   tags:
   - scenery
+  - transparent
   name: wooden door
   description: >-
     The engravings translate to "This space intentionally left
@@ -3088,6 +3202,7 @@ items:
   keys:
   - wooden-door
   location: living-room
+  portable: false
 - id: sword
   name: sword
   description: Above the trophy case hangs an elvish sword of great antiquity.
@@ -3117,6 +3232,7 @@ items:
   location: torch-room
   capacity: 30
   state: open
+  portable: false
 - id: torch
   name: torch
   description: Sitting on the pedestal is a flaming torch, made of ivory.
@@ -3163,6 +3279,7 @@ items:
   keys:
   - engravings
   location: engravings-cave
+  portable: false
 - id: owners-manual
   name: ZORK owner's manual
   description: Loosely attached to a wall is a small piece of paper.
@@ -3184,6 +3301,7 @@ items:
   - control-panel
   location: dam-room
   capacity: 10000
+  portable: false
 - id: nest
   name: bird's nest
   description: Beside you on the branch is a small bird's nest.
@@ -3389,6 +3507,7 @@ items:
   - boards
   location: north-of-house
   portable: false
+  take_failure: The boards are securely fastened.
 - id: forest
   tags:
   - scenery
@@ -3443,6 +3562,7 @@ npcs:
 verbs:
 - name: give
 - name: open
+- name: close
 - name: unlock
 - name: push
 - name: pump

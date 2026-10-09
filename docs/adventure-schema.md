@@ -434,7 +434,7 @@ description:
 | `name` | String | **required** | Anzeigename |
 | `description` | String / Object | `""` | CondText (siehe Room) |
 | `keys` | [String] | `[]` | Aliase für Autovervollständigung |
-| `tags` | [String] | `[]` | `lightsource`, `feelable`, `scenery`, `weapon`, `vehicle`, … |
+| `tags` | [String] | `[]` | `lightsource`, `feelable`, `scenery`, `transparent`, `weapon`, `vehicle`, … |
 | `tags_when` | Object | `{}` | `{ <zustand>: [tags] }` — Tags, die nur gelten, solange der Item-Status `<zustand>` ist (s.u.) |
 | `location` | String | `"start"` | Start-Raum-ID; `inventory` startet beim Spieler; `nowhere` (Z-05): das Item existiert, ist aber noch nicht in der Welt (Start-Ort `Dormant`, s.u.) |
 | `state` | String | `"intact"` | Start-Status |
@@ -452,6 +452,9 @@ description:
 ansprechbar (`examine chimney`, `take chimney`), erscheint aber nicht in der
 „You see:"-Liste der Raumansicht und wird von `take all` übersprungen — für
 reine Szenerie (Kamin, Wald, Fluss, …), die nur als Text existiert.
+`transparent` ist das TRANSBIT: ein Container mit diesem Tag zeigt seinen Inhalt
+auch geschlossen (Flasche, Vitrine), sein Inhalt bleibt erreichbar und er öffnet
+mit einem schlichten „Opened." statt mit Reveal-Meldung.
 
 - **Validierungs-Warnung (`KeywordCollision`):** Teilen sich zwei Gegenstände oder ein Gegenstand und ein NPC im selben Raum dieselben Keywords (Namen, IDs oder `keys`-Aliase), meldet der Worldbuilder eine nicht-fatale Warnung (`KeywordCollision`). Dadurch wird frühzeitig auf mehrdeutige Spielerbefehle wie `take <name>` oder `examine <name>` hingewiesen.
 
