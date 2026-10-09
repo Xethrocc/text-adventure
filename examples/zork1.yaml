@@ -2340,6 +2340,7 @@ items:
   keys:
   - altar
   location: south-temple
+  capacity: 50
 - id: book
   name: black book
   description: On the altar is a large black book, open to page 569.
@@ -2386,6 +2387,7 @@ items:
   - kitchen-table
   - table
   location: kitchen
+  capacity: 50
   portable: false
 - id: attic-table
   name: table
@@ -2394,6 +2396,7 @@ items:
   - attic-table
   - table
   location: attic
+  capacity: 40
   portable: false
 - id: sandwich-bag
   name: brown sack
@@ -2409,6 +2412,7 @@ items:
   keys:
   - tool-chest
   location: maintenance-room
+  capacity: 10000
 - id: yellow-button
   name: yellow button
   description: yellow button
@@ -2474,6 +2478,7 @@ items:
   keys:
   - trophy-case
   location: living-room
+  capacity: 10000
 - id: rug
   name: carpet
   description: carpet
@@ -2533,6 +2538,7 @@ items:
   keys:
   - dam
   location: dam-room
+  capacity: 10000
 - id: trap-door
   name: trap door
   description: trap door
@@ -2590,6 +2596,7 @@ items:
   keys:
   - coffin
   location: egypt-room
+  capacity: 35
   portable: true
 - id: pump
   name: hand-held air pump
@@ -2701,6 +2708,8 @@ items:
   keys:
   - mailbox
   location: west-of-house
+  capacity: 10
+  state: closed
   portable: false
   take_failure: It is securely anchored.
 - id: match
@@ -2877,6 +2886,7 @@ items:
   keys:
   - buoy
   location: river-4
+  capacity: 20
 - id: rope
   name: rope
   description: A large coil of rope is lying in the corner.
@@ -2980,6 +2990,7 @@ items:
   keys:
   - pedestal
   location: torch-room
+  capacity: 30
 - id: torch
   name: torch
   description: Sitting on the pedestal is a flaming torch, made of ivory.
@@ -3044,6 +3055,7 @@ items:
   keys:
   - control-panel
   location: dam-room
+  capacity: 10000
 - id: nest
   name: bird's nest
   description: Beside you on the branch is a small bird's nest.
@@ -3260,62 +3272,6 @@ items:
   location: up-a-tree
   portable: false
 
-containers:
-- id: kitchen-table
-  name: kitchen table
-  location: kitchen
-  capacity: 50
-  open: true
-- id: tool-chest
-  name: group of tool chests
-  location: maintenance-room
-  capacity: null
-  open: true
-- id: trophy-case
-  name: trophy case
-  location: living-room
-  capacity: 10000
-  open: true
-- id: altar
-  name: altar
-  location: south-temple
-  capacity: 50
-  open: true
-- id: control-panel
-  name: control panel
-  location: dam-room
-  capacity: null
-  open: true
-- id: pedestal
-  name: pedestal
-  location: torch-room
-  capacity: 30
-  open: true
-- id: mailbox
-  name: small mailbox
-  location: west-of-house
-  capacity: 10
-  open: false
-- id: dam
-  name: dam
-  location: dam-room
-  capacity: null
-  open: true
-- id: attic-table
-  name: table
-  location: attic
-  capacity: 40
-  open: true
-- id: coffin
-  name: gold coffin
-  location: egypt-room
-  capacity: 35
-  open: true
-- id: buoy
-  name: red buoy
-  location: river-4
-  capacity: 20
-  open: true
 npcs:
 - id: troll
   name: Troll
