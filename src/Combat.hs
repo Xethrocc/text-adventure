@@ -497,7 +497,7 @@ resolveClassicNPC actors nid disp act st =
 resolveClassicNPCRetaliation :: [CombatActor] -> NPCID -> String -> Int -> Int -> [Effect] -> NPCDef -> NPCState -> GameState -> ([Effect], [[OutputEvent]])
 resolveClassicNPCRetaliation actors nid disp playerDmg hp playerEffects npc ns st =
     if hp <= 0
-    then ( playerEffects
+    then ( playerEffects ++ [SetValue (VRActorProp (ActorNPC nid) PState) (EVString "dead")]
          , [evMsg "combat.classic_kill" [("target", disp)]])
     else
         let allies = companionHits nid (npcLocation ns) (npcDefenseWith nid npc st) actors st
@@ -514,7 +514,7 @@ resolveClassicNPCRetaliation actors nid disp playerDmg hp playerEffects npc ns s
             effects = playerEffects ++ allyEffects ++ shipEffects
             msgsBeforeHit = allyMsgs ++ shipMsgs
         in if hp - allyTotal - shipTotal <= 0
-           then ( effects
+           then ( effects ++ [SetValue (VRActorProp (ActorNPC nid) PState) (EVString "dead")]
                 , evMsg "combat.classic_kill" [("target", disp)] : msgsBeforeHit )
            else
                let npcDmg = max 0 (npcAttackWith nid npc st - effectiveDefense st)

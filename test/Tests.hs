@@ -4972,7 +4972,8 @@ testResolveCombatDirect = do
     r1 <- expectEqual [playerEffect, ModifyValue VRPlayerHealth (-retalDmg)] effs
     r2 <- expectTrue "classic message names the damage"
               (any ("You hit for" `isInfixOf`) msgs)
-    r3 <- expectEqual [playerEffect] effsKill
+    r3 <- expectEqual [playerEffect, SetValue (VRActorProp (ActorNPC "goblin") PState) (EVString "dead")]
+        effsKill
     r4 <- expectTrue "a killing blow is reported as such"
               (any ("kill it" `isInfixOf`) msgsKill)
     r5 <- expectTrue "a killing blow draws no retaliation" (not (any hurtsPlayer effsKill))

@@ -3117,6 +3117,14 @@ items:
   keys:
   - rope
   location: attic
+  verb_map:
+    drop:
+    - if:
+        has_flag: dome_flag
+      then:
+      - msg: The rope is already untied.
+      else:
+      - msg: The rope is tied to the railing.
 - id: rusty-knife
   name: rusty knife
   description: Beside the skeleton is a rusty knife.
@@ -3241,9 +3249,9 @@ items:
   description: Sitting on the pedestal is a flaming torch, made of ivory.
   keys:
   - torch
-  in_container: pedestal
+  location: torch-room
   portable: true
-  tags: [schatz, lightsource]
+  tags: [schatz]
 - id: guide
   name: tour guidebook
   description: Some guidebooks entitled "Flood Control Dam #3" are on the reception desk.
@@ -3313,6 +3321,13 @@ items:
   location: up-a-tree
   capacity: 20
   portable: true
+  verb_map:
+    drop:
+    - msg: 'The nest falls to the ground, and the egg spills out of it, seriously damaged.'
+    - set_state: egg
+      to: broken
+    - set_state: canary
+      to: broken
 - id: egg
   name: jewel-encrusted egg
   tags: [schatz]
@@ -3334,6 +3349,12 @@ items:
   portable: true
   capacity: 6
   verb_map:
+    take,intact:
+    - block: I don't think that the egg would fit in your bag.
+    take,open:
+    - block: I don't think that the egg would fit in your bag.
+    take,broken:
+    - block: I don't think that the egg would fit in your bag.
     throw,intact:
     - msg: 'Your rather indelicate handling of the egg has caused it some damage, although you have succeeded in opening it. There is a golden clockwork canary nestled in the egg. It seems to have recently had a bad experience. The mountings for its jewel-like eyes are empty, and its silver beak is crumpled. Through a cracked crystal window below its left wing you can see the remains of intricate machinery.'
     - set_state: egg
@@ -3343,6 +3364,16 @@ items:
     throw,open:
     - msg: The egg is already open.
     throw,broken:
+    - msg: The egg is already broken.
+    drop,intact:
+    - msg: 'The egg falls to the ground and springs open, seriously damaged.'
+    - set_state: egg
+      to: broken
+    - set_state: canary
+      to: broken
+    drop,open:
+    - msg: The egg is already open.
+    drop,broken:
     - msg: The egg is already broken.
 - id: canary
   name: golden clockwork canary
@@ -3366,6 +3397,8 @@ items:
         is: intact
       then:
       - block: The egg is closed. You will have to open it first.
+    take,broken:
+    - block: The canary is broken. There's nothing you can do with it.
     wind,broken:
     - msg: There is an unpleasant grinding noise from inside the canary.
     wind,intact:
@@ -4936,8 +4969,23 @@ rules:
       is: torch
     - has_item: torch
     - not:
+        state: torch
+        is: lit
+    - not:
         at: player
         room: gas-room
+  effects:
+  - set_state: torch
+    to: lit
+  - msg: The torch begins to burn.
+- id: torch-already-lit
+  on: command light
+  when:
+    all:
+    - var: cmd.arg1
+      is: torch
+    - state: torch
+      is: lit
   effects:
   - msg: The torch is already burning.
 - id: gas-boom-light
