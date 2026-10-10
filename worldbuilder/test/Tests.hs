@@ -482,6 +482,48 @@ testKnowsSugar = do
         Nothing -> expectTrue "forget: parses" False
     pure (r1 && r2 && r3 && r4)
 
+-- | W1: `on: learn <fact>` compiles to 'E.OnLearn' — with the authored case
+--   preserved (fact ids live in the engine's case-sensitive
+--   `known.<actor>.<fact>` namespace, the `OnLearn` match is exact equality).
+testLearnTriggerCompiles :: IO Bool
+testLearnTriggerCompiles = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advFacts =
+                [ AFactDef "BriefWissen" ["brief"] "Der Brief." Nothing Nothing Nothing Nothing
+                , AFactDef "verabredung" [] "" Nothing Nothing Nothing Nothing ]
+            , advTriggers =
+                [ ATrigger "lernt" "learn BriefWissen" Nothing
+                    [AOLearn "verabredung" "player"] False 0 1 [] []
+                , ATrigger "start" "turn" Nothing
+                    [AOLearn "BriefWissen" "player"] False 0 1 [] [] ] }
+    case compileAdventure adv of
+        Left errs -> do putStrLn ("  unexpected compile error: " ++ issuesText errs); pure False
+        Right cr -> do
+            r1 <- expectTrue "on: learn keeps the authored case"
+                (any (\t -> E.trEvent t == E.OnLearn "BriefWissen") (E.triggerDefs (crWorld cr)))
+            r2 <- expectTrue ("compiles with zero warnings: " ++ show (map ciCode (crWarnings cr)))
+                (null (crWarnings cr))
+            pure (r1 && r2)
+
+-- | W1: `on: learn <fact>` diagnostics — an undeclared fact/statement id is a
+--   hard 'UnknownFact' (the 'UnknownRecipeId' pattern); a declared fact that no
+--   effect ever learns warns as 'UnreachableTrigger'.
+testLearnTriggerChecks :: IO Bool
+testLearnTriggerChecks = do
+    let advWith facts triggers = (minAdventure (minRoom "loc_0"))
+            { advFacts = facts, advTriggers = triggers }
+        declared = AFactDef "brief" ["brief"] "Der Brief." Nothing Nothing Nothing Nothing
+        onLearn f = ATrigger "t" ("learn " ++ f) Nothing [] False 0 1 [] []
+    r1 <- case compileAdventure (advWith [] [onLearn "fehlt"]) of
+            Left errs -> expectTrue "learn of undeclared fact is UnknownFact"
+                (any (\i -> ciCode i == "UnknownFact") errs)
+            Right _ -> expectTrue "undeclared fact must fail" False
+    r2 <- case compileAdventure (advWith [declared] [onLearn "brief"]) of
+            Left errs -> do putStrLn ("  unexpected compile error: " ++ issuesText errs); pure False
+            Right cr -> expectTrue "never-learned fact warns UnreachableTrigger"
+                (any (\i -> ciCode i == "UnreachableTrigger") (crWarnings cr))
+    pure (r1 && r2)
+
 -- ---------------------------------------------------------------------------
 -- K9: statements
 -- ---------------------------------------------------------------------------
@@ -4235,6 +4277,8 @@ tests =
     , ("facts: facts compile in order; empty lists omitted from world.json", testFactsCompile)
     , ("facts: static checks (UnknownFact, DuplicateFact, YieldsWithoutPremises)", testFactChecks)
     , ("facts: knows/learn/forget YAML sugar parses", testKnowsSugar)
+    , ("facts: on: learn <fact> compiles, authored case preserved (W1)", testLearnTriggerCompiles)
+    , ("facts: on: learn checks (UnknownFact, UnreachableTrigger) (W1)", testLearnTriggerChecks)
     -- K9: statements
     , ("statements: compile, list/map syntax, defaults, and json omission (K9.1)", testStatementsCompile)
     , ("statements: static checks (Duplicate, Clash, UnknownFact, Clashes, Placeholders) (K9.1/K9.2)", testStatementChecks)

@@ -434,7 +434,8 @@ evalTruth flagSet = go
 
 -- | B4: rules whose event can never fire — unknown room/item references in
 --   `on:`, `on: custom <name>` without any `raise: <name>`, `on: chapter <id>`
---   without that chapter, `on: levelup` without a `progression:` section.
+--   without that chapter, `on: levelup` without a `progression:` section, and
+--   `on: learn <fact>` that no effect ever learns.
 --   (`on: command/before <verb>` is already a hard error elsewhere.)
 checkUnreachableTriggers :: Adventure -> [CompileIssue]
 checkUnreachableTriggers a =
@@ -448,6 +449,10 @@ checkUnreachableTriggers a =
     chapters = Set.fromList (map achId (advChapters a))
     raised = Set.fromList ([n | AORaiseEvent n <- outs] ++ [map toLower target | t <- advTriggers a, target <- atChainsTo t])
     taughtRecipes = Set.fromList [ r | AOLearnRecipe r _ <- outs ]
+    -- W1: every fact/statement id that can ever reach `E.Learn` — the raw
+    --   `learn:` outcomes plus the combine yields (the generated `kombiniere`
+    --   verb and the cascade learn those too).
+    taughtFacts = Set.fromList ([f | AOLearn f _ <- outs] ++ [acdYields c | c <- advCombines a])
     roomReason r
         | Set.member r rooms = Nothing
         | otherwise          = Just ("no room '" ++ r ++ "' is declared")
@@ -472,6 +477,9 @@ checkUnreachableTriggers a =
         Right (E.OnLearnRecipe r)
             | not (Set.member r taughtRecipes) ->
                 Just ("no effect ever learns recipe '" ++ r ++ "'")
+        Right (E.OnLearn f)
+            | not (Set.member f taughtFacts) ->
+                Just ("no effect ever learns fact '" ++ f ++ "'")
         Right (E.OnLevelUp _) | isNothing (advProgression a) ->
             Just "the adventure declares no 'progression:' section, so nobody ever levels up"
         Right _ -> Nothing
@@ -2095,12 +2103,13 @@ compileStatements sdefs =
     | s <- sdefs ]
 
 -- | Validate the knowledge model: unknown fact or statement references (premises, yields,
---   'knows:' predicates, learn:/forget: outcomes, combine premises), a yields
+--   'knows:' predicates, learn:/forget: outcomes, combine premises), `on: learn <fact>`
+--   triggers on undeclared knowledge (the 'UnknownRecipeId' pattern), a yields
 --   without premises, duplicate fact ids, duplicate statement ids, and clashing fact/statement ids.
 --   Walked over the raw outcomes (via 'allAOutcomes') so rules, procedures and rooms are all covered.
 checkFactRefs :: [AFactDef] -> [AStatement] -> E.GameWorld -> Adventure -> [CompileIssue]
 checkFactRefs fdefs sdefs gw adv =
-    dupErrs ++ dupStmtErrs ++ clashErrs ++ yieldsErrs ++ refErrs ++ predErrs
+    dupErrs ++ dupStmtErrs ++ clashErrs ++ yieldsErrs ++ refErrs ++ predErrs ++ triggerLearnErrs
   where
     factIds = Set.fromList (map afdId fdefs)
     statementIds = Set.fromList (map stId sdefs)
@@ -2142,6 +2151,15 @@ checkFactRefs fdefs sdefs gw adv =
         [ ciError "predicates.knows" "UnknownFact"
             ("'knows' references undeclared fact '" ++ f ++ "'")
         | f <- nub (concatMap knowsInPredicate (allWorldPredicates gw))
+        , f `Set.notMember` allKnowledgeIds ]
+    -- `on: learn <f>` must point at declared knowledge exactly like `learn:`
+    -- (cf. the K11d 'UnknownRecipeId' check on `on: learn_recipe`).
+    triggerLearnErrs =
+        [ ciError ("rules." ++ atId t) "UnknownFact"
+            ("rule listens on 'learn " ++ f
+             ++ "', which is not a declared fact or statement")
+        | t <- advTriggers adv
+        , Right (E.OnLearn f) <- [compileAtOn (atOn t)]
         , f `Set.notMember` allKnowledgeIds ]
     knowsInPredicate p = case p of
         E.Knows _ f -> [f]
@@ -4036,6 +4054,12 @@ compileAtOn s
     -- keeps the authored case; everything below is lowercased as always.
     | ("learn_recipe" : rParts@(_ : _)) <- words s
     = Right (E.OnLearnRecipe (unwords rParts))
+    -- W1: `on: learn <fact>` — fact/statement ids live in the engine's
+    -- case-sensitive `known.<actor>.<fact>` namespace (the `OnLearn` match is
+    -- exact equality), so the id keeps the authored case like recipe ids;
+    -- only the keyword is matched case-insensitively.
+    | (kw : fParts@(_ : _)) <- words s, map toLower kw == "learn"
+    = Right (E.OnLearn (unwords fParts))
     | otherwise
     = case words (map toLower s) of
         ["turn"]                     -> Right E.OnTurn

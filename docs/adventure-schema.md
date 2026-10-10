@@ -1389,7 +1389,7 @@ rules:
     once: true
 ```
 
-Events: `enter room`, `leave room`, `look room`, `search room`, `take item`, `drop item`, `use item`, `state entity`, `standing_change faction` (G9c), `command verb`, `before verb`, `custom name`, `turn`. Alternativ kann die Mapping-Form `on_standing_change: {faction: <id>, to: <stufenname>}` direkt verwendet werden.
+Events: `enter room`, `leave room`, `look room`, `search room`, `take item`, `drop item`, `use item`, `state entity`, `standing_change faction` (G9c, auch `standing`), `command verb`, `before verb`, `custom name`, `chapter id` (W3), `levelup n` (W2, auch `level_up`), `learn fact` (W1), `learn_recipe id` (K11d), `talk`, `combat_start` (auch `combat start`), `turn`. Alternativ kann die Mapping-Form `on_standing_change: {faction: <id>, to: <stufenname>}` direkt verwendet werden.
 
 | Feld | Typ | Pflicht / Default | Bedeutung |
 |---|---|---|---|
@@ -3046,7 +3046,10 @@ combine_verb: kombiniere # optional: das Wort fürs Kombinieren (Default: kombin
   `{knows: <actor>, fact: <f>}`. Jeder Akteur hat seinen eigenen Wissensstand; das
   Notizbuch zeigt nur Spieler-Wissen (NPC-Wissen ist Detektivarbeit — Verhör).
 - **Lernen ist idempotent** (Set-Semantik); pro neu gelerntem Fakt feuert `OnLearn`
-  (Trigger `on: learn <fact>`) einmal, in Lernreihenfolge.
+  (Trigger `on: learn <fact>`) einmal, in Lernreihenfolge. Der Trigger schreibt
+  sich wie `on: learn_recipe <id>`: das Keyword ist case-insensitiv, die Fakt-ID
+  behält den **authored case** (der Namensraum `known.<actor>.<fact>` ist
+  case-sensitiv, der `OnLearn`-Match ist exakte Gleichheit).
 - **`combine:`-Kaskade:** alle Prämissen müssen dem **denselben Akteur** bekannt sein;
   die Ableitung läuft als geschlossene Operation in der `Learn`-Anwendung (terminierend,
   kein Kontrollfluss). `yields`-Fakten müssen deklariert sein.
@@ -3062,6 +3065,9 @@ combine_verb: kombiniere # optional: das Wort fürs Kombinieren (Default: kombin
   Fakten in **Deklarationsreihenfolge** — die ist Gameplay-Vertrag (nicht umsortieren).
 - **Checks:** `UnknownFact`, `DuplicateFact`, `YieldsWithoutPremises`,
   `KnownVariableClash` (`known.` gehört der Engine), Kollisionen der generierten Verben.
+  `UnknownFact` deckt auch `on: learn <fact>`-Trigger auf unerklärten Fakten/
+  Aussagen ab (wie `UnknownRecipeId` bei Rezepten); ein Fakt, den nie ein
+  Effekt lernt, warnt als `UnreachableTrigger`.
 
 ## Aussagen mit Sprecher und Wahrheitsgehalt: `statements:` (K9)
 
@@ -3948,5 +3954,6 @@ Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity =
 | `UnknownMsgKey` | Ein `messages:`-Schluessel ist kein Engine-Katalogschluessel — der Override bleibt wirkungslos. | Schluessel aus `docs/message-catalog.md` verwenden oder den Eintrag entfernen. |
 | `UnknownRecipeResult` | Ein Rezept deklariert ein `result:`, dessen Item-ID im Abenteuer nicht existiert. | Item in `items:` deklarieren oder Tippfehler im `result:`-Feld beheben. |
 | `UnreachableTrigger` (Fall `learn_recipe`) | Eine Regel hört auf `on: learn_recipe <id>`, aber kein `learn_recipe:`-Effekt lehrt dieses Rezept je. | `learn_recipe: <id>` an einer erreichbaren Stelle ergänzen, die `id:` korrigieren oder die Regel entfernen. |
+| `UnreachableTrigger` (Fall `learn`) | Eine Regel hört auf `on: learn <fact>`, aber kein `learn:`-Effekt und keine `combine:`-Ableitung lernt diesen Fakt je. | `learn: <fact>` an einer erreichbaren Stelle ergänzen, die ID korrigieren oder die Regel entfernen. |
 
 

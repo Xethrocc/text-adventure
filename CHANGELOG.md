@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### W1: `on: learn <fact>`-Trigger — jetzt compilierbar (offener Punkt 4)
+
+Die Engine feuert `OnLearn` seit W1 und `docs/adventure-schema.md` versprach den
+Trigger `on: learn <fact>` — aber `compileAtOn` lehnte ihn ab
+(„Unsupported trigger event“). Jetzt greift das Versprechen:
+
+- **`on: learn <fact>`** kompiliert zu `OnLearn <fact>` — wie bei
+  `on: learn_recipe <id>` (K11d) behält die Fakt-ID den **authored case**
+  (Namensraum `known.<actor>.<fact>` ist case-sensitiv, der `OnLearn`-Match ist
+  exakte Gleichheit); nur das Keyword wird case-insensitiv gematcht. Freie
+  IDs, auch Aussagen-IDs (`learn: <statement-id>`).
+- **Validierung** im bewährten Doppel-Spiegel: `UnknownFact` (hart), wenn der
+  Trigger auf einen nicht deklarierten Fakt/eine Aussage hört — analog
+  `UnknownRecipeId`; `UnreachableTrigger`-Warnung (B4), wenn kein `learn:`-
+  Effekt und keine `combine:`-Ableitung den Fakt je lernt.
+- Doku: Events-Liste der Regeln war unvollständig und führt jetzt alle
+  `compileAtOn`-Events (`learn`, `learn_recipe`, `chapter`, `levelup`, `talk`,
+  `combat_start` fehlten); W1-Abschnitt und Diagnose-Tabelle ergänzt.
+- Tests: zwei Worldbuilder-Tests (Fall-Erhalt, `UnknownFact`,
+  `UnreachableTrigger`) — Stand 305 Worldbuilder-Tests.
+
 ### FIX-10: Container-Zielauflösung granular — `put` verschluckt keine Items mehr
 
 Vier Bugs aus dem Zork-Playtest („trophy case is not a container." und
