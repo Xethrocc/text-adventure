@@ -36,8 +36,6 @@ items:
     desc: A brass key.
     keys: [key]
     location: hallway
-    on_take:
-      - {start_quest: find_treasure}
 
 npcs:
   - id: gardener
@@ -58,6 +56,24 @@ npcs:
             text: I grow roses.
             choices:
               - {text: Farewell., next: null}
+
+rules:
+  - id: find_treasure_start
+    on: enter hallway
+    effects:
+      - {start_quest: find_treasure}
+    once: true
+  - id: find_treasure_explored
+    on: search hallway
+    when: {not: {has_item: key}}
+    effects:
+      - {advance_quest: find_treasure}
+    once: true
+  - id: find_treasure_done
+    on: take key
+    effects:
+      - {complete_quest: find_treasure}
+    once: true
 
 quests:
   - id: find_treasure

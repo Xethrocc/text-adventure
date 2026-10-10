@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Demo: `find_treasure`-Quest repariert (offener Punkt 5)
+
+Die Demo-Quest war seit Phase 5 tot geboren: `key.on_take` startete sie, nichts
+schrieb sie je fort (`QuestNeverProgressed`) — die Belohnung „Quest complete!“
+konnte nie feuern. Jetzt läuft der volle Lebenszyklus (live durchgespielt):
+
+- **`go north`** (Flur betreten) → Start, Journal „Explore the hallway.“
+- **`search`** im Flur → `advance_quest`, Journal „Find the key.“
+- **`take key`** → `complete_quest`, Belohnung „Quest complete!“, Journal-Eintrag
+  „(completed)“.
+
+**`rules:` statt `hallway.on_enter`/`key.on_take`** (Abweichung von der
+Handoff-Skizze): ein `on_enter`-Start grüßt jeden Hallway-Wiedereintritt mit
+`quest.cannot_start`, ein Item-`on_take` feuert nach Drop/Take erneut — drei
+`once: true`-Regeln sind gegen beides immun. Die Suche trägt zusätzlich
+`when: {not: {has_item: key}}`, damit eine Suche nach dem Schlüssel-Fund
+kein `quest.not_active` produziert. Die Handoff-Skizze (nur Start + ein
+`advance_quest`) hätte die Quest bei „Find the key.“ stehen lassen und die
+Belohnung totgelassen.
+
+**Demo-Artefakt-Bytes geändert (Nutzerfreigabe 2026-10-09):** Byte-Nachweis per
+Worktree-Diff gegen `9de3d10` (misst auch den W1-Trigger-Commit mit): von 54
+Artefakten der 27 gelieferten Abenteuer ist nur `demo/world.json` neu (drei
+`triggerDefs`, der `VTake`→`StartQuest`-Entry der Key entfällt) — `demo/save.json`
+und alle anderen 53 Artefakte byte-identisch.
+
 ### W1: `on: learn <fact>`-Trigger — jetzt compilierbar (offener Punkt 4)
 
 Die Engine feuert `OnLearn` seit W1 und `docs/adventure-schema.md` versprach den
