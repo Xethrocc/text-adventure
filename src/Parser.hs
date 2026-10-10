@@ -827,6 +827,26 @@ findScopeItem targetStr state =
     scopeItems = visibleItemsAt (InRoom (currentRoom (save state))) state
                 ++ getItemsInLocation (CarriedBy ActorPlayer) state
 
+-- | Scope-independent existence: is this target the name of some item, NPC or
+--   container anywhere in the world, whether or not the player can see it?
+--   Tells "you can't see that" (known, out of scope) from "no such thing"
+--   (unknown) — both used to collapse into "not a container".
+targetExistsAnywhere :: String -> GameState -> Bool
+targetExistsAnywhere targetStr state =
+    any (matchesItemTarget targetStr) (Map.elems (itemDefs (world state)))
+    || any (matchesNPCTarget targetStr) (Map.elems (npcDefs (world state)))
+    || any (\c -> conName c == targetStr || conId c == targetStr)
+           (Map.elems (containerDefs (world state)))
+
+-- | The error for a container/NPC target that did not resolve in scope: a
+--   known-but-invisible target reports `target.not_seen` ("You can't see any
+--   such thing."), an unknown one keeps the historical
+--   `container.not_a_container` ("X is not a container.").
+containerRefError :: String -> GameState -> (GameState, [OutputEvent])
+containerRefError target state
+    | targetExistsAnywhere target state = (state, evMsg "target.not_seen" [("target", target)])
+    | otherwise = (state, evMsg "container.not_a_container" [("target", target)])
+
 -- | B7: resolve an NPC target in the current room by id, name or keyword
 --   (same matching as combat/dialogue targets).
 findNpcTarget :: String -> GameState -> Maybe NPCDef
@@ -1016,7 +1036,7 @@ containerCommand :: Verb -> String
                  -> GameState -> (GameState, [OutputEvent])
 containerCommand verb target standard state =
     case findContainerRef target state of
-        Nothing -> (state, evMsg "container.not_a_container" [("target", target)])
+        Nothing -> containerRefError target state
         Just cid ->
             let vm = maybe Map.empty itemVerbMap (Map.lookup cid (itemDefs (world state)))
                 currentStatus = maybe "intact" itemStatus (Map.lookup cid (itemStates (save state)))
@@ -1374,13 +1394,17 @@ dispatchCommandCoreEv (TakeFromCmd x y) state =
     case findContainerRef y state of
         Nothing -> case findNpcTarget y state of
             -- B7: not a container — maybe an NPC carries the item.
-            Nothing -> (state, evMsg "container.not_a_container" [("target", y)])
+            Nothing -> containerRefError y state
             Just npc ->
                 case [ i | i <- getItemsInLocation (CarriedBy (ActorNPC (npcId npc))) state
                          , matchesItemTarget x i ] of
                     []      -> (state, evMsg "npc.no_item" ([("item", x), ("npc", npcName npc)] ++ grammarArgs False "npc" (npcGrammar npc)))
                     (it : _) -> takeItemFromNpc it npc state
         Just cid
+            -- A visible non-container (sword, lamp …) is not a pocket — unless
+            --   author-placed contents actually sit inside (in_container:).
+            | not (isContainer cid state), null (itemsInContainer cid state) ->
+                (state, evMsg "container.not_a_container" [("target", y)])
             | not (containerChainOpen cid state) ->
                 (state, evMsg "container.is_locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
             | containerStateOf cid state /= "open" ->
@@ -1402,7 +1426,22 @@ dispatchCommandCoreEv (TakeFromCmd x y) state =
 --   equipped stay on it — they are deliberately not part of what is in its hands.
 dispatchCommandCoreEv (TakeAllFromCmd y) state =
     case findNpcTarget y state of
-        Nothing -> (state, evMsg "container.not_a_container" [("target", y)])
+        Nothing -> case findContainerRef y state of
+            -- `take all from <container>`: the same mass operation over the
+            --   container's contents, reusing the single-item path (incl. the
+            --   inventory limit) so no new message key is needed.
+            Just cid | isContainer cid state ->
+                if containerStateOf cid state /= "open"
+                then (state, evMsg "container.is_closed" (containerNameArgs cid state))
+                else case itemsInContainer cid state of
+                    [] -> (state, evMsg "container.empty" (containerNameArgs cid state))
+                    carried ->
+                        let (finalState, msgs) = foldl' (\(s, ms) it ->
+                                let (s', m) = dispatchCommandCoreEv (TakeFromCmd (itemId it) y) s
+                                in (s', ms ++ [m])) (state, []) carried
+                        in (finalState, evIntercalate msgs)
+            Just _    -> (state, evMsg "container.not_a_container" [("target", y)])
+            Nothing   -> containerRefError y state
         Just npc ->
             let carried = getItemsInLocation (CarriedBy (ActorNPC (npcId npc))) state
             in if null carried
@@ -1429,8 +1468,12 @@ dispatchCommandCoreEv (GiveCmd x y) state =
 -- | 4.4: `put X in Y` — one item into an open container (capacity checked).
 dispatchCommandCoreEv (PutInCmd x y) state =
     case findContainerRef y state of
-        Nothing -> (state, evMsg "container.not_a_container" [("target", y)])
+        Nothing -> containerRefError y state
         Just cid
+            -- Only real containers (capacity/`containers:`) hold things;
+            --   putting into e.g. the sword used to swallow the item for good.
+            | not (isContainer cid state) ->
+                (state, evMsg "container.not_a_container" [("target", y)])
             | not (containerChainOpen cid state) ->
                 (state, evMsg "container.is_locked" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
             | containerStateOf cid state /= "open" ->
@@ -1439,7 +1482,11 @@ dispatchCommandCoreEv (PutInCmd x y) state =
                 (state, evMsg "container.full" ([("name", containerName cid state)] ++ grammarArgs True "name" (grammarOfItem cid state)))
             | otherwise ->
                 case findScopeItem x state of
-                    Nothing -> (state, evMsg "container.no_item" ([("item", x), ("name", y)] ++ grammarArgs True "name" (grammarOfItem cid state)))
+                    Nothing
+                        | targetExistsAnywhere x state ->
+                            (state, evMsg "target.not_carried" [("target", x)])
+                        | otherwise ->
+                            (state, evMsg "target.not_seen" [("target", x)])
                     Just iId ->
                         ( relocateItem iId (InContainer cid) state
                         , evMsg "container.put"

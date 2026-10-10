@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+### FIX-10: Container-Zielauflösung granular — `put` verschluckt keine Items mehr
+
+Vier Bugs aus dem Zork-Playtest („trophy case is not a container." und
+verschwundene Items):
+
+- **`put X in Y` legte Items in Nicht-Container** (Schwert, Lampe …) und
+  verschluckte sie: `findContainerRef` matched jedes sichtbare Item,
+  `relocateItem` legte hinein — die Anzeige hängt aber an `isContainer`, das
+  Item war danach praktisch weg. `PutInCmd` verlangt jetzt einen echten
+  Container (`capacity`/`containers:`) und meldet sonst „X is not a container.“
+- **Fehlendes put-Item:** „You find no skull in trophy case.“ (klang wie
+  Durchsuchen der Vitrine) → jetzt „You don't have 'skull'.“
+  (`target.not_carried`) für bekannte Items, „You can't see any such thing.“
+  (`target.not_seen`) für unbekannte.
+- **Scope ≠ Existenz:** Ein bekannter, aber nicht sichtbarer Ziel-Container
+  (z. B. `open trophy case` aus dem Keller) meldete „is not a container“ →
+  jetzt `target.not_seen`. Unbekannte Ziele behalten die historische
+  Formulierung. Gilt für `open`/`close`/`lock`/`unlock`, `put`, `take X from
+  Y`, `take all from Y` (gemeinsame Stelle `containerRefError`).
+- **`take all from <container>`** lehnte sichtbare Container mit „is not a
+  container“ ab → jetzt Massen-Entnahme wie `take all from <npc>` (B9-Idiom,
+  pro Item eine `container.took_from`-Zeile, Inventarlimit via Einzelpfad);
+  `take X from <Nicht-Container>` meldet „is not a container“ statt „You find
+  no …“.
+
+Regressionstest `testContainerScopeErrors` (10 Fälle, inkl. „Item bleibt beim
+verweigerten `put` im Inventar“). `isContainerHolder` (nur noch
+`place:`/`in_container:`-Effekte) kommentarisch abgegrenzt.
+
 ### Doku: `docs/tui.md` (TUI-Handbuch)
 
 - Neue Doku-Seite zur Brick-TUI: Start/Flags, Layout (HUD, Karte mit Ebenen,

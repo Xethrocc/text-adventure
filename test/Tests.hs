@@ -6886,6 +6886,49 @@ testCommandSucceeded = do
     raw <- expectEqual (Just (VVBool False)) (getVariable "cmd.succeeded" failed)
     pure (and (raw : results))
 
+-- | FIX-10: granular container scope errors and a `put` that never swallows
+--   items. A known-but-invisible target reports "you can't see" (target.not_seen)
+--   instead of "is not a container", an unknown container keeps the historical
+--   wording, a missing put-item reports "you don't have" (target.not_carried)
+--   instead of "you find no X in Y", and non-containers reject `put`/`take from`.
+testContainerScopeErrors :: IO Bool
+testContainerScopeErrors = do
+    let base = initSampleGame
+        -- sword_rusty becomes a real container (capacity), as in testCommandSucceeded
+        boxed = base { world = (world base) { itemDefs =
+            Map.adjust (\i -> i { itemCapacity = Just 2 }) "sword_rusty" (itemDefs (world base)) } }
+        carrying = pickupItem "potion_healing" boxed
+        msgOf cmd st = renderEvents (snd (executeCommandEv cmd st))
+    -- `put` into a visible non-container refuses and keeps the item.
+    let (st1, _) = executeCommandEv (PutInCmd "potion_healing" "torch") carrying
+    r1 <- expectTrue "put into non-container refuses"
+        ("is not a container" `isInfixOf` msgOf (PutInCmd "potion_healing" "torch") carrying)
+    r2 <- expectTrue "put into non-container keeps the item" (hasItem "potion_healing" st1)
+    -- A known item the player does not carry reports "you don't have" ...
+    r3 <- expectTrue "put missing item reports not carried"
+        ("You don't have" `isInfixOf` msgOf (PutInCmd "gold" "sword_rusty") carrying)
+    -- ... an unknown one "you can't see", an unknown container the old wording.
+    r4 <- expectTrue "put unknown item reports not seen"
+        ("You don't see" `isInfixOf` msgOf (PutInCmd "dragon" "sword_rusty") carrying)
+    r5 <- expectTrue "unknown container target keeps historical wording"
+        ("is not a container" `isInfixOf` msgOf (PutInCmd "potion_healing" "missing") carrying)
+    -- A container out of scope is "you can't see", not "not a container".
+    r6 <- expectTrue "open known-but-invisible target reports not seen"
+        ("You don't see" `isInfixOf` msgOf (OpenCmd "key") carrying)
+    r7 <- expectTrue "open known-but-invisible target is not 'not a container'"
+        (not ("is not a container" `isInfixOf` msgOf (OpenCmd "key") carrying))
+    -- `take X from <non-container>` refuses instead of hunting for contents.
+    r8 <- expectTrue "take from non-container refuses"
+        ("is not a container" `isInfixOf` msgOf (TakeFromCmd "potion_healing" "torch") boxed)
+    -- `take all from <container>` empties the container (B9 mass operation).
+    let filled = relocateItem "potion_healing" (InContainer "sword_rusty") boxed
+        (st9, _) = executeCommandEv (TakeAllFromCmd "sword_rusty") filled
+    r9 <- expectTrue "take all from container takes the contents" (hasItem "potion_healing" st9)
+    -- A successful put still works and moves the item.
+    let (st10, _) = executeCommandEv (PutInCmd "potion_healing" "sword_rusty") carrying
+    r10 <- expectTrue "successful put moves the item" (not (hasItem "potion_healing" st10))
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10])
+
 -- | OPEN-01: before is pending/false; command rules observe the completed bit.
 testCommandSucceededRules :: IO Bool
 testCommandSucceededRules = do
@@ -12339,6 +12382,7 @@ main = do
         , runTest "World loaders and their error branches (L1)" testWorldLoadersAndErrors
         , runTest "equipmentSummary text (L8)" testEquipmentSummaryText
         , runTest "cmd.succeeded action outcomes (OPEN-01)" testCommandSucceeded
+        , runTest "container scope errors and put safety (FIX-10)" testContainerScopeErrors
         , runTest "cmd.succeeded rules and verb_map (OPEN-01)" testCommandSucceededRules
         , runTest "cmd.succeeded compounds and batches (OPEN-01)" testCommandSucceededCompound
         , runTest "set_state synchronizes item states (OPEN-02)" testSetStateSynchronizesItems

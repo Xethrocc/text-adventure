@@ -919,8 +919,9 @@ placeItem iid loc st
             Nothing -> Nothing
 
 -- | Can this id hold contents? Any existing item or `containers:` entry can
---   (matching `put X in Y` and `in_container:`); `capacity:` limits, no
---   capacity means unlimited.
+--   (matching `place:`/`in_container:` effects); `capacity:` limits, no
+--   capacity means unlimited. The player-facing `put X in Y` is stricter and
+--   requires 'isContainer' (a declared container) — see PutInCmd.
 isContainerHolder :: String -> GameState -> Bool
 isContainerHolder cid state =
     isJust (lookupItem cid state) || Map.member cid (containerDefs (world state))
