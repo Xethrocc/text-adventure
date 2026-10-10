@@ -429,14 +429,27 @@ idsFromOutcomeItem outcome = case outcome of
 
 idsFromOutcomeNPC :: Effect -> [String]
 idsFromOutcomeNPC outcome = case outcome of
-    MoveEntity nId _
-        | isDynamicItemRef nId -> []
-        | otherwise            -> [nId]
+    MoveEntity nId dest
+        | isDynamicItemRef nId -> destNpcRefs dest
+        | otherwise            -> [nId] ++ destNpcRefs dest
+    PlaceItem _ dest           -> destNpcRefs dest
+    MoveAll _ dest             -> whereNpcRefs dest
     Sequence os                  -> concatMap idsFromOutcomeNPC os
     RandomChoice os              -> concatMap (idsFromOutcomeNPC . snd) os
     RandomChoiceOn _ os          -> concatMap (idsFromOutcomeNPC . snd) os
     Conditional _ t e            -> idsFromOutcomeNPC t ++ idsFromOutcomeNPC e
     _                            -> []
+
+-- | OPEN-11: NPC references inside dynamic destinations (`to: {room_of: <npc>}`)
+--   — a typo there would silently no-op at runtime, so it is validated like
+--   every other NPC reference.
+destNpcRefs :: Location -> [String]
+destNpcRefs (RoomOf (ActorNPC n)) = [n]
+destNpcRefs _                    = []
+
+whereNpcRefs :: CountWhere -> [String]
+whereNpcRefs (CountInRoomOf (ActorNPC n)) = [n]
+whereNpcRefs _                            = []
 
 -- | Collect entity IDs referenced via VRActorProp (item state / NPC state /
 --   generic property writes). These are checked against itemDefs ∪ npcDefs.
@@ -486,6 +499,8 @@ checkPlacementRefs gw = concatMap effectRefs (allOutcomes gw)
     effectRefs (PlaceItem i (InContainer c)) = containerRef i c
         ++ [InvalidPlacement i "self containment" | i == c]
     effectRefs (PlaceItem _ (InRoom _)) = []
+    effectRefs (PlaceItem _ Here)       = []
+    effectRefs (PlaceItem _ (RoomOf _)) = []
     effectRefs (PlaceItem i _) = [InvalidPlacement i "expected room/container"]
     effectRefs (Sequence es) = concatMap effectRefs es
     effectRefs (Conditional p t e) = predicateRefs p ++ effectRefs t ++ effectRefs e

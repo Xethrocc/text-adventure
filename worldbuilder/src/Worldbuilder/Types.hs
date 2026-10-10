@@ -1607,7 +1607,7 @@ data AActionOutcome
     | AOCompleteQuest String
     | AOEquipItem String
     | AORoomTransition String
-    | AOMoveNPC String String          -- ^ npc id, target room (move_npc + to)
+    | AOMoveNPC String E.Location      -- ^ npc id, target room (move_npc + to; OPEN-11 dynamic targets)
     | AODamageNPC String Int           -- ^ damage_npc: { npc: id, amount: N } (Phase 7g)
     | AOGameEnd String (Maybe String)  -- ^ reason (victory/death/custom), optional msg
     | AOConditional E.Predicate [AActionOutcome] [AActionOutcome]  -- ^ if/then/else
@@ -1697,18 +1697,19 @@ parseRandomChoiceValue v =
         pure (AORandomChoice streamName cs))
 
 -- | Exactly one destination is required; nowhere is only an initial location
---   (and a `move_all` target), never a `place:` destination.
+--   (and a `move_all` target), never a `place:` destination. OPEN-11: `in:`
+--   takes the dynamic targets (`in: {here}`, `in: {room_of: <npc>}`) too.
 parsePlace :: Object -> Parser AActionOutcome
 parsePlace o = do
     p <- o .: "place"
     iid <- p .: "item"
-    room <- p .:? "in"
-    container <- p .:? "in_container"
+    room <- p .:? "in" :: Parser (Maybe E.Location)
+    container <- p .:? "in_container" :: Parser (Maybe String)
     case (room, container) of
-        (Just "nowhere", Nothing) ->
+        (Just (E.InRoom "nowhere"), Nothing) ->
             fail "place: 'in: nowhere' is not a placement target (use move_all with to: {in: nowhere})"
-        (Just r, Nothing) -> pure (AOPlace iid (E.InRoom r))
-        (Nothing, Just c) -> pure (AOPlace iid (E.InContainer c))
+        (Just loc, Nothing) -> pure (AOPlace iid loc)
+        (Nothing, Just c)   -> pure (AOPlace iid (E.InContainer c))
         _ -> fail "place requires exactly one of in or in_container"
 
 instance FromJSON AActionOutcome where

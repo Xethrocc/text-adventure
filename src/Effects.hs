@@ -345,10 +345,18 @@ applyOutcomeWith depth salt outcome targetId state
         let (state', m) = modifyValuePropWithDepth depth vr delta state
         in (state', m, salt)
 
+    PlaceItem iid Here ->
+        withResolvedDest depth salt targetId Here (PlaceItem iid) state
+    PlaceItem iid (RoomOf actor) ->
+        withResolvedDest depth salt targetId (RoomOf actor) (PlaceItem iid) state
     PlaceItem iid loc ->
         case placeItem iid loc state of
             Left err -> (state, evRaw err, salt)
             Right st' -> (st', [], salt)
+    MoveEntity eid Here ->
+        withResolvedDest depth salt targetId Here (MoveEntity eid) state
+    MoveEntity eid (RoomOf actor) ->
+        withResolvedDest depth salt targetId (RoomOf actor) (MoveEntity eid) state
     MoveEntity _ Dormant ->
         (state, evRaw "Dormant is only an initial item location.", salt)
     MoveEntity eid (InRoom room) ->
@@ -601,10 +609,12 @@ applyOutcomeWith depth salt outcome targetId state
                 (state, []) (countNpcMembers cs state)
         in (stDmg, evs, salt)
     MoveAll cs dest ->
-        let loc = whereLocation dest
-            st1 = foldl' (\st i -> setItemLoc (itemId i) loc st) state (countItemMembers cs state)
-            st2 = foldl' (\st n -> setNpcLoc n loc st) st1 (countNpcMembers cs state)
-        in (st2, [], salt)
+        case whereLocation state dest of
+            Nothing -> (state, dynamicTargetUnresolved, salt)
+            Just loc ->
+                let st1 = foldl' (\st i -> setItemLoc (itemId i) loc st) state (countItemMembers cs state)
+                    st2 = foldl' (\st n -> setNpcLoc n loc st) st1 (countNpcMembers cs state)
+                in (st2, [], salt)
     RevealAll cs ->
         (foldl' (\st i -> setItemDiscovered (itemId i) st) state
             (countItemMembers cs state), [], salt)
@@ -1112,11 +1122,43 @@ setSeekerRoom _ _ state = state
 --   holding pen (`location: nowhere`, OPEN-04), so `to: {in: nowhere}` takes an
 --   item out of the world while keeping it placeable later (unlike `consume:`,
 --   whose `Removed` tombstone is permanent).
-whereLocation :: CountWhere -> Location
-whereLocation (CountInRoom "nowhere") = Dormant
-whereLocation (CountInRoom r)       = InRoom r
-whereLocation (CountCarriedBy a)    = CarriedBy a
-whereLocation (CountInContainer c)  = InContainer c
+--
+--   OPEN-11: the dynamic targets (`to: {here}`, `to: {room_of: <actor>}`)
+--   resolve against the live state; 'Nothing' when the actor is not in a room,
+--   and the caller no-ops instead of moving entities to a wrong place.
+whereLocation :: GameState -> CountWhere -> Maybe Location
+whereLocation _  (CountInRoom "nowhere") = Just Dormant
+whereLocation _  (CountInRoom r)        = Just (InRoom r)
+whereLocation _  (CountCarriedBy a)     = Just (CarriedBy a)
+whereLocation _  (CountInContainer c)   = Just (InContainer c)
+whereLocation st CountInRoomHere        = InRoom <$> actorRoom st ActorPlayer
+whereLocation st (CountInRoomOf a)      = InRoom <$> actorRoom st a
+
+-- | OPEN-11: the dev-facing line when a dynamic target cannot resolve (the
+--   'MoveEntity' 'Dormant' precedent: author misuse surfaced at runtime).
+dynamicTargetUnresolved :: [OutputEvent]
+dynamicTargetUnresolved =
+    evRaw "Cannot resolve the dynamic target: the actor is not in a room."
+
+-- | OPEN-11: run an effect whose destination is a dynamic target. `here` and
+--   `room_of <actor>` resolve against the live state and the effect re-enters
+--   'applyOutcomeWith' with the concrete destination; an actor without a room
+--   turns the effect into a no-op ('dynamicTargetUnresolved').
+withResolvedDest
+    :: Int -> Int -> ItemID -> Location -> (Location -> Effect)
+    -> GameState -> (GameState, [OutputEvent], Int)
+withResolvedDest depth salt targetId loc mkEffect state =
+    case resolveDynamicDest state loc of
+        Just resolved -> applyOutcomeWith (depth + 1) salt (mkEffect resolved) targetId state
+        Nothing       -> (state, dynamicTargetUnresolved, salt)
+
+-- | OPEN-11: resolve a dynamic destination; concrete destinations pass
+--   through unchanged. 'Nothing' only for `room_of` when the actor is not in a
+--   room — `here` always resolves (the player is always somewhere).
+resolveDynamicDest :: GameState -> Location -> Maybe Location
+resolveDynamicDest st Here       = InRoom <$> actorRoom st ActorPlayer
+resolveDynamicDest st (RoomOf a) = InRoom <$> actorRoom st a
+resolveDynamicDest _  loc        = Just loc
 
 -- | B3: set an item's location directly.
 setItemLoc :: ItemID -> Location -> GameState -> GameState

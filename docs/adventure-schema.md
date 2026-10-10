@@ -534,7 +534,7 @@ items:
 | `{ give: item_id }` | MoveEntity to CarriedBy "player" (String-Form) |
 | `{ give: {item: id, to: actor} }` | MoveEntity to CarriedBy actor (B7: `"player"` oder NPC-ID) |
 | `{ consume: item_id }` | MoveEntity Removed (Ort-Regel K15.0: nur erreichbare Items im Inventar, ausgerüstet oder im Raum; geschützte Items in Containern oder bei NPCs werden mit `consume.not_reachable` verweigert; unterstützt dynamische Referenzen `"{item1}"` / `"{item2}"` in `interactions.item`) |
-| `{ place: {item: id, in: room_id} }` | PlaceItem (E-02) — setzt genau dieses Item in den Raum (auch aus `location: nowhere`). Prüft Item/Raum, Kapazität und Zyklen; Portabilität, Sichtbarkeit und Container-Schlösser werden bewusst ignoriert (Autoren-Setzung). Genau ein Ziel: `in:` **oder** `in_container:` |
+| `{ place: {item: id, in: room_id} }` | PlaceItem (E-02) — setzt genau dieses Item in den Raum (auch aus `location: nowhere`). Prüft Item/Raum, Kapazität und Zyklen; Portabilität, Sichtbarkeit und Container-Schlösser werden bewusst ignoriert (Autoren-Setzung). Genau ein Ziel: `in:` **oder** `in_container:`. `in:` nimmt neben der Raum-ID auch die dynamischen Ziele `in: {here}` / `in: {room_of: <npc>}` (OPEN-11, s. u.) |
 | `{ place: {item: id, in_container: cid} }` | PlaceItem (E-02) — setzt genau dieses Item in den Container (auch Plain-Items ohne `capacity:`, die dann unbegrenzt fassen) |
 | `{ set_flag: name, val: "true" }` | SetValue (VRFlag name) "true" |
 | `{ set_var: { var: name, value: N } }` | SetValue (VRVariable name) N — ganzzahlige Variable setzen |
@@ -545,7 +545,7 @@ items:
 | `{ complete_quest: id }` | QuestOp CompleteQuest |
 | `{ equip: item_id }` | MoveEntity to EquippedBy "player" |
 | `{ move: room_id }` | SetValue (VRProperty "player" "room") — bewegt den Spieler |
-| `{ move_npc: npc_id, to: room_id }` | MoveEntity — bewegt einen NPC |
+| `{ move_npc: npc_id, to: room_id }` | MoveEntity — bewegt einen NPC; `to:` nimmt neben der Raum-ID auch `to: {here}` / `to: {room_of: <npc>}` (OPEN-11, s. u.) |
 | `{ game_end: victory }` / `{ game_end: death, msg: "…" }` | GameEnd |
 | `{ if: <predicate>, then: […], else: […] }` | Conditional — Prädikat-gesteuerter Zweig |
 | `{ msg: "Text", then: [...], else: [...] }` | Sequence [SendMessage, Conditional...] |
@@ -569,6 +569,36 @@ items:
 Flags sind für Prädikate faktisch boolesch: `has_flag` prüft, ob ein Flag gesetzt
 ist (`"true"`). Ein Vergleich gegen einen *anderen* String-Wert ist über Flags
 nicht ausdrückbar — dafür gibt es Text-Variablen.
+
+### Dynamische Ziele (OPEN-11)
+
+`place:` (`in:`), `move_npc:` (`to:`) und `move_all:` (`to:`) nehmen neben
+literalen Ziel-IDs zwei **dynamische Ziele**, die zur Laufzeit gegen den
+Spielzustand aufgelöst werden:
+
+| Form | Bedeutung |
+|---|---|
+| `{here}` (Langform `{here: true}`) | der aktuelle Raum des Spielers — „Item fällt vor die Füße“, „NPC zieht zum Spieler“ |
+| `{room_of: <npc>}` | der aktuelle Raum dieses Akteurs (`player` oder NPC-ID) — „der Dieb lässt den Kram in *seinem* Raum liegen“ |
+
+```yaml
+effects:
+  - place: {item: glocke, in: {here}}                  # fällt vor die Füße
+  - place: {item: kram, in: {room_of: dieb}}           # in des Diebs Raum
+  - move_npc: dieb                                     # NPC zieht zum Spieler
+    to: {here}
+  - move_all: {what: items, by: dieb, tag: kram, to: {room_of: dieb}}
+```
+
+- **Auflösung zur Laufzeit:** `room_of:` mit einem Akteur ohne Raum
+  (unplatziert/entfernt/unbekannt) macht den Effekt zum No-op mit einer
+  Entwickler-Meldung (wie `Dormant`). `here` löst immer auf (der Spieler ist
+  immer irgendwo).
+- **Validierung:** `room_of:` mit unbekanntem Akteur ist der Compile-Fehler
+  `UnknownNpc` (derselbe Vertrag wie `give: {to:}`); in Weltständen prüft
+  `validateWorld` die NPC-Referenz mit.
+- **Literale bleiben literal:** `to: <room_id>` bzw. `in: <room_id>` — ein Raum
+  darf `here` heißen. Dynamisch ist nur die Objektform `{here}`/`{room_of: …}`.
 
 ### Item-Status-Synchronisation (OPEN-02 / Z-01)
 
@@ -3563,6 +3593,8 @@ effects:
   - set_state_all: {what: items, in: halle, tag: licht, state: brennend}
   - move_all:     {what: items, in_container: flasche, tag: wasser, to: {in: nowhere}}
                    # Container-Inhalt nehmen ("Flasche leertrinken"), ohne zu konsumieren
+  - move_all:     {what: items, by: dieb, tag: kram, to: {room_of: dieb}}   # in des Diebs eigenen Raum (OPEN-11)
+  - move_all:     {what: items, in: halle, to: {here}}                     # vor die Füße des Spielers (OPEN-11)
 ```
 
 Die **Zielmengen** sind dieselbe Sprache wie die B2-Abfragen (`what` ×
@@ -3572,7 +3604,7 @@ eine Sprache. Die Wirkung pro Zielart:
 | Operation | Items | NPCs |
 |---|---|---|
 | `damage_all` | — | Health (wie `damage:`, keine Klemmung) |
-| `move_all` | Location (Raum oder `by:`-Akteur) | Position |
+| `move_all` | Location (Raum, `by:`-Akteur oder ein dynamisches Ziel, s. *Dynamische Ziele (OPEN-11)*) | Position |
 | `reveal_all` | `itemDiscovered` | — |
 | `consume_all` | entfernt (`Removed`) | — |
 | `set_state_all` | `itemStatus` | `npcStatus` |

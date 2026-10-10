@@ -12735,8 +12735,54 @@ main = do
         , runTest "place: reference, cycle, capacity and destination checks (E-02)" testPlaceItemValidation
         , runTest "blocked exit form yields the normal blocked message (W-02)" testBlockedExitForm
         , runTest "container membership predicate in: {container, item} (Z-03)" testContainerHasPredicate
+        -- OPEN-11: dynamische Ziele (to: {here} / to: {room_of: <npc>})
+        , runTest "dynamic targets: here/room_of resolve at apply time (OPEN-11)" testDynamicTargetsResolve
+        , runTest "dynamic targets: unresolvable room_of is a no-op with message (OPEN-11)" testDynamicTargetsUnresolvable
         ]
     when (not (and results)) exitFailure
+
+-- | OPEN-11: dynamic targets — `to: {here}` / `to: {room_of: <npc>}` resolve
+--   against the live state at apply time: an item lands at the player's feet,
+--   the thief's junk lands in *his* room, an NPC walks to the player. Sample
+--   game: player/oldman in "start", goblin in "hallway", gold in "treasure".
+testDynamicTargetsResolve :: IO Bool
+testDynamicTargetsResolve = do
+    let itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+        npcL n st = npcLocation <$> Map.lookup n (npcStates (save st))
+        base = initSampleGame
+        (st1, _) = applyOutcome (PlaceItem "gold" (RoomOf (ActorNPC "goblin"))) "" base
+    -- Dieb-Beute: `room_of` ist der Raum des NPCs (Goblin im Flur), nicht der
+    -- Spieler-Raum.
+    r1 <- expectEqual (Just (InRoom "hallway")) (itemLoc "gold" st1)
+    let (st2, _) = applyOutcome (PlaceItem "gold" Here) "" base
+    r2 <- expectEqual (Just (InRoom "start")) (itemLoc "gold" st2)
+    let (st3, _) = applyOutcome (MoveEntity "goblin" Here) "" base
+    r3 <- expectEqual (Just (InRoom "start")) (npcL "goblin" st3)
+    -- DROP-JUNK: move_all in den Raum des Trägers.
+    let (st4, _) = applyOutcome (MoveEntity "gold" (CarriedBy (ActorNPC "goblin"))) "" base
+        (st5, _) = applyOutcome
+            (MoveAll (CountSpec CountItems (CountCarriedBy (ActorNPC "goblin")) Nothing)
+                     (CountInRoomOf (ActorNPC "goblin"))) "" st4
+    r4 <- expectEqual (Just (InRoom "hallway")) (itemLoc "gold" st5)
+    pure (r1 && r2 && r3 && r4)
+
+-- | OPEN-11: `room_of` naming an actor that is not in a room is a no-op with
+--   the dev-facing line (the 'Dormant' precedent) — nothing moves.
+testDynamicTargetsUnresolvable :: IO Bool
+testDynamicTargetsUnresolvable = do
+    let itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+        base = initSampleGame
+        (st1, msg) = applyOutcome (PlaceItem "gold" (RoomOf (ActorNPC "ghost"))) "" base
+    r1 <- expectEqual (Just (InRoom "treasure")) (itemLoc "gold" st1)
+    r2 <- expectTrue ("message shown: " ++ msg)
+            ("Cannot resolve the dynamic target" `isInfixOf` msg)
+    let (st2, msg2) = applyOutcome
+            (MoveAll (CountSpec CountItems (CountInRoom "treasure") Nothing)
+                     (CountInRoomOf (ActorNPC "ghost"))) "" base
+    r3 <- expectEqual (Just (InRoom "treasure")) (itemLoc "gold" st2)
+    r4 <- expectTrue ("message shown: " ++ msg2)
+            ("Cannot resolve the dynamic target" `isInfixOf` msg2)
+    pure (r1 && r2 && r3 && r4)
 
 -- | K16b.1: Classic — CAAbility runs ability effects, consumes the round,
 --   and the NPC strikes back (same Rache-Schlag as CAAttack).

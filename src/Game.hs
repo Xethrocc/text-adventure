@@ -678,6 +678,8 @@ countItemMembers cs st = case csWhat cs of
         -- and give: must not resurrect).
         CountInRoom "nowhere" -> dormantItems st
         CountInRoom r      -> itemsAtLoc (InRoom r) st
+        CountInRoomHere    -> itemsAtLoc (InRoom (currentRoom (save st))) st
+        CountInRoomOf a    -> maybe [] (\r -> itemsAtLoc (InRoom r) st) (actorRoom st a)
         CountCarriedBy a   -> itemsAtLoc (CarriedBy a) st ++ itemsAtLoc (EquippedBy a) st
         CountInContainer c -> itemsAtLoc (InContainer c) st
     tagged i = case csTag cs of
@@ -703,11 +705,15 @@ countNpcMembers cs st = case csWhat cs of
     CountAliveNpcs -> [ nId | nId <- npcsAt, not (isDeadNPC nId st) ]
   where
     npcsAt = case csWhere cs of
-        CountInRoom r      -> [ nId
-                              | (nId, ns) <- Map.toList (npcStates (save st))
-                              , npcLocation ns == InRoom r ]
+        CountInRoom r      -> npcsIn r
+        CountInRoomHere    -> npcsIn (currentRoom (save st))
+        CountInRoomOf a    -> maybe [] npcsIn (actorRoom st a)
         CountCarriedBy _   -> []
         CountInContainer _ -> []
+    npcsIn r =
+        [ nId
+        | (nId, ns) <- Map.toList (npcStates (save st))
+        , npcLocation ns == InRoom r ]
 
 -- | The room an actor currently occupies. 'Nothing' when the actor is not in
 --   a room (carried, removed, unknown).

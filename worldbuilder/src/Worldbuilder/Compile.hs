@@ -3488,7 +3488,7 @@ compileAActionOutcome ao = case ao of
     AOCompleteQuest q -> E.QuestOp E.CompleteQuest q
     AOEquipItem i -> E.MoveEntity i (E.EquippedBy E.ActorPlayer)
     AORoomTransition r -> E.SetValue (E.VRActorProp E.ActorPlayer E.PRoom) (E.EVString r)
-    AOMoveNPC n r -> E.MoveEntity n (E.InRoom r)
+    AOMoveNPC n loc -> E.MoveEntity n loc
     AODamageNPC n amount -> E.ModifyValue (E.VRActorProp (E.ActorNPC n) E.PHealth) (-amount)
     AOGameEnd r m -> E.GameEnd (parseGameOverReason r) (fromMaybe "" m)
     AOConditional p ts es ->
@@ -4353,7 +4353,21 @@ checkNpcPossessionRefs adv =
         [ ciError "outcomes.give.to" "UnknownNpc"
             ("give target '" ++ tgt ++ "' is not 'player' or an existing npc id")
         | bad tgt ]
+    -- OPEN-11: `to: {room_of: <npc>}` / `in: {room_of: <npc>}` name an actor
+    -- too — a typo there would silently no-op at runtime.
+    outcomeGo (AOMoveNPC _ dest) = roomOfErr "outcomes.move_npc.to" dest
+    outcomeGo (AOPlace _ dest)   = roomOfErr "outcomes.place.in" dest
+    outcomeGo (AOMoveAll _ dest) =
+        [ ciError "outcomes.move_all.to" "UnknownNpc"
+            ("dynamic target 'room_of: " ++ E.actorId a
+             ++ "' is not 'player' or an existing npc id")
+        | E.CountInRoomOf a <- [dest], bad (E.actorId a) ]
     outcomeGo _ = []
+    roomOfErr path dest =
+        [ ciError path "UnknownNpc"
+            ("dynamic target 'room_of: " ++ E.actorId a
+             ++ "' is not 'player' or an existing npc id")
+        | E.RoomOf a <- [dest], bad (E.actorId a) ]
 
 -- | B9: both halves of an `interactions: npc:` entry must resolve. A typo in
 --   the item id would silently fall through to the attack fallback, so both

@@ -191,6 +191,7 @@ import Data.Char (toLower, isDigit, isAlpha, isAlphaNum, isSpace)
 import Data.List (intercalate, stripPrefix, foldl')
 import Data.Maybe (isNothing, isJust)
 import qualified Data.Foldable as Foldable
+import qualified Data.Aeson.KeyMap as KeyMap
 import Text.Read (readMaybe)
 
 import Types.Cards
@@ -528,18 +529,24 @@ data CountWhere
     = CountInRoom RoomID
     | CountCarriedBy ActorRef
     | CountInContainer ItemID   -- ^ every item directly inside this container
+    | CountInRoomHere           -- ^ OPEN-11: dynamic target — the player's current room at apply time
+    | CountInRoomOf ActorRef    -- ^ OPEN-11: dynamic target — the actor's current room at apply time
     deriving (Show, Eq, Generic)
 
 instance ToJSON CountWhere where
     toJSON (CountInRoom r)       = object [ "in" .= r ]
     toJSON (CountCarriedBy a)    = object [ "by" .= actorId a ]
     toJSON (CountInContainer c)  = object [ "in_container" .= c ]
+    toJSON CountInRoomHere       = object [ "here" .= True ]
+    toJSON (CountInRoomOf a)     = object [ "room_of" .= actorId a ]
 
 instance FromJSON CountWhere where
     parseJSON = withObject "CountWhere" $ \o ->
             (CountInRoom <$> o .: "in")
         <|> (CountCarriedBy . parseActorString <$> o .: "by")
         <|> (CountInContainer <$> o .: "in_container")
+        <|> (do guard (KeyMap.member "here" o); pure CountInRoomHere)
+        <|> (CountInRoomOf . parseActorString <$> o .: "room_of")
 
 -- | B2: a general count query — `count.<what>.<in|by>.<id>[.<tag>]` in the
 --   string form, `{count: {what: …, in|by: …, tag: …}}` as an object.
@@ -560,6 +567,8 @@ instance ToJSON CountSpec where
         whereKey (CountInRoom r)       = ("in" :: Key) .= r
         whereKey (CountCarriedBy a)    = ("by" :: Key) .= actorId a
         whereKey (CountInContainer c)  = ("in_container" :: Key) .= c
+        whereKey CountInRoomHere       = ("here" :: Key) .= True
+        whereKey (CountInRoomOf a)     = ("room_of" :: Key) .= actorId a
 
 instance FromJSON CountSpec where
     parseJSON = withObject "CountSpec" $ \o -> do
@@ -1234,6 +1243,8 @@ data Location
     | EquippedBy ActorRef
     | Dormant              -- ^ Not yet in the world; unlike Removed, may be given/placed.
     | Removed
+    | Here                 -- ^ OPEN-11: dynamic target — the player's current room at apply time
+    | RoomOf ActorRef      -- ^ OPEN-11: dynamic target — the actor's current room at apply time
     deriving (Show, Eq, Generic)
 
 instance ToJSON Location where
@@ -1243,23 +1254,32 @@ instance ToJSON Location where
     toJSON (EquippedBy a)   = object [ "tag" .= ("EquippedBy" :: T.Text), "contents" .= toJSON a ]
     toJSON Dormant          = object [ "tag" .= ("Dormant" :: T.Text) ]
     toJSON Removed          = object [ "tag" .= ("Removed" :: T.Text) ]
+    toJSON Here             = object [ "tag" .= ("Here" :: T.Text) ]
+    toJSON (RoomOf a)       = object [ "tag" .= ("RoomOf" :: T.Text), "contents" .= toJSON a ]
 
 instance FromJSON Location where
     parseJSON (String s) = pure (InRoom (T.unpack s))
-    parseJSON v = withObject "Location" (\o -> do
-        tag <- o .: "tag" :: Parser T.Text
-        case tag of
-            "InRoom"      -> InRoom <$> o .: "contents"
-            "CarriedBy"   -> do
-                c <- o .: "contents"
-                CarriedBy <$> parseJSON c
-            "InContainer" -> InContainer <$> o .: "contents"
-            "EquippedBy"  -> do
-                c <- o .: "contents"
-                EquippedBy <$> parseJSON c
-            "Dormant"     -> pure Dormant
-            "Removed"     -> pure Removed
-            _             -> fail ("Unknown Location tag: " ++ T.unpack tag)) v
+    parseJSON v = withObject "Location" (\o ->
+            (do guard (KeyMap.member "here" o); pure Here)
+        <|> (RoomOf . parseActorString <$> o .: "room_of")
+        <|> (do
+            tag <- o .: "tag" :: Parser T.Text
+            case tag of
+                "InRoom"      -> InRoom <$> o .: "contents"
+                "CarriedBy"   -> do
+                    c <- o .: "contents"
+                    CarriedBy <$> parseJSON c
+                "InContainer" -> InContainer <$> o .: "contents"
+                "EquippedBy"  -> do
+                    c <- o .: "contents"
+                    EquippedBy <$> parseJSON c
+                "Dormant"     -> pure Dormant
+                "Removed"     -> pure Removed
+                "Here"        -> pure Here
+                "RoomOf"      -> do
+                    c <- o .: "contents"
+                    RoomOf <$> parseJSON c
+                _             -> fail ("Unknown Location tag: " ++ T.unpack tag))) v
 
 -- ---------------------------------------------------------------------------
 -- Conditionally selected text (Phase 3g)

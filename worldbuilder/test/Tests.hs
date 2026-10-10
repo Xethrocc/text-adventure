@@ -524,6 +524,80 @@ testLearnTriggerChecks = do
                 (any (\i -> ciCode i == "UnreachableTrigger") (crWarnings cr))
     pure (r1 && r2)
 
+-- | OPEN-11: dynamic target shapes — `to: {here}` / `to: {room_of: <npc>}` on
+--   move_npc and move_all, `in: {here}` / `in: {room_of: …}` on place (bare
+--   `{here}` and `{here: true}` both), plus the world.json round-trip.
+testDynamicTargetSugar :: IO Bool
+testDynamicTargetSugar = do
+    r1 <- case Aeson.decode (BLC.pack "{\"move_npc\":\"dieb\",\"to\":{\"here\":null}}") of
+        Just o -> expectEqual (AOMoveNPC "dieb" E.Here) o
+        Nothing -> expectTrue "move_npc to: {here} parses" False
+    r2 <- case Aeson.decode (BLC.pack "{\"move_npc\":\"dieb\",\"to\":{\"room_of\":\"dieb\"}}") of
+        Just o -> expectEqual (AOMoveNPC "dieb" (E.RoomOf (E.ActorNPC "dieb"))) o
+        Nothing -> expectTrue "move_npc to: {room_of: <npc>} parses" False
+    r3 <- case Aeson.decode (BLC.pack "{\"place\":{\"item\":\"glocke\",\"in\":{\"here\":true}}}") of
+        Just o -> expectEqual (AOPlace "glocke" E.Here) o
+        Nothing -> expectTrue "place in: {here: true} parses" False
+    r4 <- case Aeson.decode (BLC.pack "{\"move_all\":{\"what\":\"items\",\"by\":\"dieb\",\"to\":{\"room_of\":\"dieb\"}}}") of
+        Just o -> expectEqual
+            (AOMoveAll (E.CountSpec E.CountItems (E.CountCarriedBy (E.ActorNPC "dieb")) Nothing)
+                       (E.CountInRoomOf (E.ActorNPC "dieb"))) o
+        Nothing -> expectTrue "move_all to: {room_of: <npc>} parses" False
+    let rtLoc l = Aeson.decode (Aeson.encode l) :: Maybe E.Location
+        rtWhere w = Aeson.decode (Aeson.encode w) :: Maybe E.CountWhere
+    r5 <- expectEqual (Just E.Here) (rtLoc E.Here)
+    r6 <- expectEqual (Just (E.RoomOf (E.ActorNPC "dieb"))) (rtLoc (E.RoomOf (E.ActorNPC "dieb")))
+    r7 <- expectEqual (Just E.CountInRoomHere) (rtWhere E.CountInRoomHere)
+    r8 <- expectEqual (Just (E.CountInRoomOf (E.ActorNPC "dieb"))) (rtWhere (E.CountInRoomOf (E.ActorNPC "dieb")))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- | OPEN-11: dynamic targets compile into the typed destinations; `room_of:`
+--   naming an unknown actor is a hard 'UnknownNpc' (the give.to contract).
+testDynamicTargetCompileAndChecks :: IO Bool
+testDynamicTargetCompileAndChecks = do
+    let yaml toLine = unlines
+            [ "start_room: loc_0"
+            , "rooms: [ {id: loc_0, name: R, desc: D} ]"
+            , "npcs: [ {id: dieb, name: Dieb, desc: D, location: loc_0} ]"
+            , "items: [ {id: glocke, name: Glocke, location: loc_0} ]"
+            , "rules:"
+            , "  - id: r1"
+            , "    on: turn"
+            , "    effects:"
+            , "      - move_npc: dieb"
+            , "        to: " ++ toLine
+            , "      - place:"
+            , "          item: glocke"
+            , "          in: " ++ toLine ]
+        compileIt toLine = case decode1 (BLC.pack (yaml toLine)) of
+            Left err  -> Left (show err)
+            Right adv -> Right (compileAdventure (adv :: Adventure))
+        hasEffect eff cr = any (elem eff . E.trEffects) (E.triggerDefs (crWorld cr))
+    r1 <- case compileIt "{here}" of
+            Left err -> do putStrLn ("  yaml decode failed: " ++ err); pure False
+            Right (Left errs) -> do putStrLn ("  unexpected: " ++ issuesText errs); pure False
+            Right (Right cr) -> do
+                a <- expectTrue "move_npc to: {here} compiles"
+                    (hasEffect (E.MoveEntity "dieb" E.Here) cr)
+                b <- expectTrue "place in: {here} compiles"
+                    (hasEffect (E.PlaceItem "glocke" E.Here) cr)
+                pure (a && b)
+    r2 <- case compileIt "{room_of: dieb}" of
+            Left err -> do putStrLn ("  yaml decode failed: " ++ err); pure False
+            Right (Left errs) -> do putStrLn ("  unexpected: " ++ issuesText errs); pure False
+            Right (Right cr) -> do
+                a <- expectTrue "move_npc to: {room_of} compiles"
+                    (hasEffect (E.MoveEntity "dieb" (E.RoomOf (E.ActorNPC "dieb"))) cr)
+                b <- expectTrue "place in: {room_of} compiles"
+                    (hasEffect (E.PlaceItem "glocke" (E.RoomOf (E.ActorNPC "dieb"))) cr)
+                pure (a && b)
+    r3 <- case compileIt "{room_of: fehlt}" of
+            Left err -> do putStrLn ("  yaml decode failed: " ++ err); pure False
+            Right (Left errs) -> expectTrue "unknown room_of actor is UnknownNpc"
+                (any (\i -> ciCode i == "UnknownNpc") errs)
+            Right (Right _) -> expectTrue "unknown room_of actor must fail" False
+    pure (r1 && r2 && r3)
+
 -- ---------------------------------------------------------------------------
 -- K9: statements
 -- ---------------------------------------------------------------------------
@@ -4279,6 +4353,8 @@ tests =
     , ("facts: knows/learn/forget YAML sugar parses", testKnowsSugar)
     , ("facts: on: learn <fact> compiles, authored case preserved (W1)", testLearnTriggerCompiles)
     , ("facts: on: learn checks (UnknownFact, UnreachableTrigger) (W1)", testLearnTriggerChecks)
+    , ("targets: to/in {here}/{room_of} sugar and JSON round-trip (OPEN-11)", testDynamicTargetSugar)
+    , ("targets: dynamic targets compile; unknown room_of is UnknownNpc (OPEN-11)", testDynamicTargetCompileAndChecks)
     -- K9: statements
     , ("statements: compile, list/map syntax, defaults, and json omission (K9.1)", testStatementsCompile)
     , ("statements: static checks (Duplicate, Clash, UnknownFact, Clashes, Placeholders) (K9.1/K9.2)", testStatementChecks)

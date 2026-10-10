@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+### OPEN-11: Dynamische Ziele — `to: {here}` / `to: {room_of: <npc>}`
+
+`place:`, `move_npc:` und `move_all: … to:` verlangten **literale** Ziele — damit
+war nicht ausdrückbar: „Item fällt vor die Füße“ (Glocke/Kerzen, Dieb-Beute),
+„der Dieb lässt den Kram in *seinem* Raum liegen“ (`DROP-JUNK`), „NPC zieht zum
+Spieler“. Der Zork-Port arbeitete per `give:` drum herum; jetzt gibt es die
+beiden dynamischen Ziele:
+
+- **`{here}`** (Langform `{here: true}`) — der aktuelle Raum des Spielers, und
+  **`{room_of: <npc>}`** — der aktuelle Raum dieses Akteurs (`player` oder
+  NPC-ID). Für `place: {item, in: …}`, `move_npc: …, to:` und
+  `move_all: …, to:`. Auflösung zur Laufzeit gegen den Spielzustand; literale
+  Ziele bleiben literal (ein Raum darf `here` heißen — dynamisch ist nur die
+  Objektform).
+- **Engine:** `Location`/`CountWhere` tragen `Here`/`RoomOf` bzw.
+  `CountInRoomHere`/`CountInRoomOf` (world.json-Round-Trip); die Auflösung
+  läuft an einer Stelle (`withResolvedDest`/`whereLocation` → `actorRoom`). Ein
+  Akteur ohne Raum macht den Effekt zum No-op mit Entwickler-Meldung (die
+  `Dormant`-Präzedenz); `here` löst immer auf.
+- **Validierung:** `room_of:` mit unbekanntem Akteur ist der Compile-Fehler
+  `UnknownNpc` (Vertrag von `give: {to:}`); `validateWorld` prüft die
+  NPC-Referenz in dynamischen Zielen (`destNpcRefs`/`whereNpcRefs`);
+  dynamische `place:`-Ziele sind keine `InvalidPlacement` mehr.
+- Docs: neuer Abschnitt *Dynamische Ziele (OPEN-11)* (Beispiel live durch den
+  Compiler validiert), Beispiele in B3 (`move_all`).
+- Tests: 2 Engine-Tests (Dieb-Beute, „vor die Füße“, NPC-zum-Spieler,
+  DROP-JUNK; No-op-Fall) + 2 Worldbuilder-Tests (Sugar, JSON-Round-Trip,
+  Compile, `UnknownNpc`) — Stand 586 Engine-/307 Worldbuilder-Tests.
+- **Byte-Vertrag bestanden:** Worktree-Diff gegen `9de3d10`, 27 Abenteuer ×
+  world/save = 54 Artefakte — nur `demo/world.json` trägt die freigegebene
+  Punkt-2-Delta, die übrigen 53 byte-identisch.
+
 ### Demo: `find_treasure`-Quest repariert (offener Punkt 5)
 
 Die Demo-Quest war seit Phase 5 tot geboren: `key.on_take` startete sie, nichts
