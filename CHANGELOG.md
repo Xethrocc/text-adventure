@@ -291,6 +291,10 @@ Referenz ist `befunde-text-adventure-engine.md` §7.
 
 ### Punkte-/Score-System (K17)
 
+> **Nummern-Hinweis (2026-10-09):** der zugehörige Commit `ab549da` ist im Titel
+> fälschlich als „K11e" betitelt — K11e ist die Rezeptreihe (K11a–e). Die Nummer
+> ist durchgehend **K17** (siehe `plan-k17-score.md`).
+
 - **Prinzip & Design-Entscheidung:**
   - Score ist **kein neuer Engine-Block**: Punkte sammeln bleibt Autorenarbeit über normale Trigger-Effekte (`add_var` bei `on: take`, `on: learn_recipe`, `on: npc_death`, `on: enter` etc.).
   - `score` bleibt ein normales `variables:`-Item (`type: int`, optional `max:`, optional `score_rankings:`).
