@@ -53,7 +53,7 @@ In-game saves are written to `saves/<slot>.json`. The directory can be
 redirected with `--saves-dir DIR` or the `TA_SAVES_DIR` environment variable
 (the flag wins) — used by tests and CI for hermetic runs.
 
-Whole pipeline — build, all six test suites, validation of 27 shipped
+Whole pipeline — build, all six test suites, validation of 28 shipped
 adventures, 66 scripted playthroughs (53 happy paths + 13 non-victory runs), authored
 tests (`worldbuilder test`), the content fuzzer (`worldbuilder fuzz`, seeded
 reproducible runs for crashes, non-terminating steps and frozen loops), the
@@ -96,7 +96,7 @@ inside the ZIP walks through it step by step.
 | `worldbuilder/` | authoring schema, compiler, validator, CLI |
 | `img2ascii/` | helper tool: images → ASCII art for room banners |
 | `text2ascii/` | helper tool: text → banner art (block/slant/outline fonts) for title and end screens |
-| `examples/` | `thefog.yaml` (reference game), `demo.yaml`, `genres/` (6 genre fixtures), `modules/` (7a–7h fixtures + `combo.yaml` composition proof), `fixtures/` (small feature fixtures), `templates/` (dungeon template for the world generator) |
+| `examples/` | `thefog.yaml` (reference game), `demo.yaml`, `zork1.yaml` (port of Zork I: ~100 rooms, trolls/thieves with combat states, mazes, score/treasures — validated, playthrough works with engine caveats around light sources and light-battery depletion), `genres/` (6 genre fixtures), `modules/` (7a–7h fixtures + `combo.yaml` composition proof), `fixtures/` (small feature fixtures), `templates/` (dungeon template for the world generator) |
 | `ci/e2e/` | scripted playthroughs: `<name>.in` plus the expected marker in `<name>.expect` |
 | `docs/` | `adventure-schema.md`, `modules.md`, `genres.md`, `worldgen.md`, `tui.md`, `thefog-playthrough.md` |
 | `scripts/ci.sh` | the whole pipeline in one command |

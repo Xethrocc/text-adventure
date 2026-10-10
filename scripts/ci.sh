@@ -67,6 +67,7 @@ echo "== 3. validate adventures =="
 adv=(examples/demo.yaml examples/thefog.yaml)
 for f in examples/genres/*.yaml; do adv+=("$f"); done
 for f in examples/modules/*.yaml; do adv+=("$f"); done
+adv+=(examples/zork1.yaml)
 for f in "${adv[@]}"; do
     echo "-- validate $f"
     "${WORLDBUILDER[@]}" validate "$f"
