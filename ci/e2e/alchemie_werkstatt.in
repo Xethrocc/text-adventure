@@ -1,0 +1,50 @@
+recipes
+north
+take blutdistel
+take phiole
+craft wundbalsam
+south
+use wundbalsam on stadtwache
+south
+buy schwefel
+north
+north
+north
+take salz
+south
+east
+take feuertraktat
+west
+craft feueressenz
+south
+south
+sell feueressenz
+buy silberdistille
+buy mondkraut
+north
+north
+east
+take rezeptbuch
+take kristallphiole
+west
+craft mana_elixier
+south
+use mana_elixier on magierin
+north
+east
+take grimoire
+west
+west
+take sternenmoos
+east
+south
+south
+buy quellsilber
+buy goldstaub
+north
+north
+craft magnum_opus
+south
+south
+use magnum_opus on meister_bruno
+quit

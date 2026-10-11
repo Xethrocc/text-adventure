@@ -1,0 +1,696 @@
+# Die Alchemisten-Werkstatt — Das Geheimnis des Magnum Opus
+#
+# Demonstriert die Verzahnung von:
+#   - K11 Rezept- und Brausystem (interactions: item:, requires_learning,
+#     learn_recipe, craft <ziel>, recipes-Rezeptbuch).
+#   - Wirtschaftskreislauf & Handel:
+#     - Rohstoffbeschaffung (Krämer Bruno auf dem Marktplatz: Schwefel, Mondkraut,
+#       Quellsilber, Goldstaub).
+#     - Werkstatt-Ausbau (Silberdistille für fortgeschrittene Transmutationen).
+#     - Eigenanbau & Sammeln (Kräutergarten mit Sternenmoos).
+#     - Kundenaufträge & Verkauf:
+#       - Stadtwache Kurt (braucht Wundbalsam für Schnittwunde).
+#       - Magierin Elena (braucht Geist-Elixier für arkanes Ritual).
+#       - Freier Verkauf von Mixturen (Flüssiges Feuer).
+#   - Gildenprogression: Lehrling -> Geselle -> Meisteralchemist mit Factions
+#     und zusammenhängenden Quests.
+#   - Episches Alchemie-Finale: Vollendung des Magnum Opus (Stein der Weisen).
+
+name: Die Alchemisten-Werkstatt
+start_room: laden
+
+language: de
+
+title_art: |
+  =============================================================
+     D I E   A L C H E M I S T E N - W E R K S T A T T
+        --- Das Geheimnis des Magnum Opus ---
+  =============================================================
+
+end_art:
+  victory: |
+    =============================================================
+       M E I S T E R   D E R   A L C H E M I E
+    =============================================================
+    Das Magnum Opus ist vollbracht! Der goldene Glanz des Steins
+    der Weisen erhellt deine Werkstatt. Vom Gildenrat wirst du
+    einstimmig zum Grossmeister ernannt. Dein Name wird fuer alle
+    Zeiten in den Annalen der Alchemie verewigt!
+
+verbs:
+  - name: buy
+    aliases: [kaufen, kaufe, purchase]
+  - name: sell
+    aliases: [verkaufen, verkaufe, abgeben]
+  - name: harvest
+    aliases: [ernten, ernte, pfluecken, pfluecke]
+  - name: bilanz
+    aliases: [boerse, taler, finanzen, geld, vermoegen]
+
+variables:
+  - name: "taler"
+    type: int
+    initial: 15
+    min: 0
+  - name: "gildenrang"
+    type: int
+    initial: 1
+    min: 1
+    max: 3
+  - name: "kunden.wache"
+    type: int
+    initial: 0
+  - name: "kunden.magierin"
+    type: int
+    initial: 0
+  - name: "moos_geerntet"
+    type: int
+    initial: 0
+
+factions:
+  - id: alchemiegilde
+    name: Alchemiegilde
+    initial: 0
+    levels:
+      - { at: 0,  name: "Lehrling" }
+      - { at: 10, name: "Geselle" }
+      - { at: 25, name: "Meister" }
+
+rooms:
+  - id: laden
+    name: Verkaufsraum
+    desc: >
+      Der Verkaufsraum deiner Werkstatt duftet nach getrockneten Kräutern,
+      Harz und altem Bienenwachs. Hinter der polierten Verkaufstheke aus
+      Eichenholz glänzen leere Schaugläser. Eine Tür im Norden führt in dein
+      Alchemielabor, während der südliche Ausgang auf das Pflaster des
+      Marktplatzes hinausgeht.
+    exits:
+      north: { to: labor }
+      south: { to: marktplatz }
+
+  - id: labor
+    name: Alchemielabor
+    desc: >
+      Das Herzstück deines Schaffens. In der Mitte des Raumes steht ein
+      schwerer Arbeitstisch mit Mörsern, Schmelztiegeln und Retorten.
+      Über einer Esse ruht der eiserne Kessel. Im Westen gelangst du in das
+      sonnige Gewächshaus, im Osten in deine Bibliothek. Nach Norden führt eine
+      steile Steintreppe hinab in den Vorratskeller, und nach Süden geht es
+      zurück in den Verkaufsraum.
+    exits:
+      south: { to: laden }
+      west: { to: kraeutergarten }
+      east: { to: bibliothek }
+      north: { to: keller }
+
+  - id: kraeutergarten
+    name: Kräutergarten & Gewächshaus
+    desc: >
+      Warme Luft schlägt dir unter den bleiverglasten Scheiben des Gewächshauses
+      entgegen. Auf den Beeten sprießen seltene Gewächse. In einer schattigen
+      Ecke gedeiht ein üppiges Moosbeet mit phosphoreszierendem Sternenmoos.
+      Ein gemauerter Ziehbrunnen spendet frisches Quellwasser. Nach Osten
+      gelangst du zurück ins Labor.
+    exits:
+      east: { to: labor }
+
+  - id: bibliothek
+    name: Studierstube & Archiv
+    desc: >
+      Regale voller Folianten, Pergamentrollen und getrockneter Essenzen
+      säumen die Wände. Auf einem wuchtigen Lesepult liegen geöffnete
+      Schriften früherer Alchemie-Meister. Hier ist der Ort des Studiums und
+      der Rezeptforschung. Der westliche Durchgang führt zurück ins Labor.
+    exits:
+      west: { to: labor }
+
+  - id: keller
+    name: Vorratskeller
+    desc: >
+      Kühle Gewölbeluft umfängt dich zwischen feuchten Bruchsteinmauern.
+      In diesem Lagerraum ruhen Reagenzien und Tonkrüge für langwierige
+      Gärprozesse. Eine alte Eichenholztruhe steht neben einem Weinregal.
+      Die Treppe nach Süden führt hinauf ins Labor.
+    exits:
+      south: { to: labor }
+
+  - id: marktplatz
+    name: Marktplatz der Freien Reichsstadt
+    desc: >
+      Buntes Treiben erfüllt das historische Pflaster. Händler bieten Tücher,
+      Gewürze und Werkzeuge feil. An einem stattlichen Stand mit Waagen und
+      Büchsen wacht Meister Bruno, der Vorstand der städtischen Alchemisten.
+      Im Norden liegt die hölzerne Eingangstür zu deiner Werkstatt.
+    exits:
+      north: { to: laden }
+
+npcs:
+  - id: stadtwache
+    name: Hauptmann Kurt
+    desc: >
+      Ein hochgewachsener Gardist der Stadtwache im Kettenhemd. Mit schmerzverzerrtem
+      Gesicht presst er ein blutiges Tuch auf seinen tief aufgeschürften Unterarm.
+    keys: [stadtwache, wache, kurt, hauptmann]
+    location: laden
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    on_talk:
+      msg: >
+        Hauptmann Kurt stöhnt leise: 'Verdammtes Straßenpack... Die Wunde brennt wie
+        Feuer! Hast du nicht einen wirksamen Wundbalsam für mich, Alchemist?
+        Die Stadtwache zahlt dir 15 Taler!'
+
+  - id: magierin
+    name: Magierin Elena
+    desc: >
+      Eine Gelehrte der Hohen Akademie in nachtblauer Seidenrobe. Um ihren Hals
+      schimmert ein saphirblauer Talisman. Sie wartet aufmerksam im Verkaufsraum.
+    keys: [magierin, elena, gelehrte]
+    location: laden
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    on_talk:
+      msg: >
+        Magierin Elena mustert dich prüfend: 'Mein Ritual zur Sternenwende erfordert
+        höchste geistige Klarheit. Braue mir ein reinstes Geist-Elixier aus Mondkraut
+        und einer Kristallphiole! Ich entlohne dich fürstlich mit 25 Talern.'
+
+  - id: meister_bruno
+    name: Meister Bruno
+    desc: >
+      Ein beleibter Mann mit grauem Spitzbart und einer ledernen Alchemistenschürze.
+      Als Obmann der Gilde beaufsichtigt er den Reagenzienhandel und die Vergabe
+      der Meistertitel.
+    keys: [meister_bruno, bruno, haendler, meister]
+    location: marktplatz
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    on_talk:
+      msg: >
+        Meister Bruno nickt wohlwollend: 'Sei gegrüßt in der Gilde! Hier kannst du
+        seltene Reagenzien erwerben (kaufen <ware>) oder hergestellte Elixiere
+        an mich veräußern (verkaufen <trank>). Zeige mir dein Können, und der
+        Großmeistertitel wird dein sein!'
+
+items:
+  # --- Reagenzien im Labor & Vorräten ---
+  - id: blutdistel
+    name: Blutdistel
+    desc: Ein Bündel feuerroter, dorniger Blutdisteln. Bekannt für ihre blutstillende Wirkung.
+    location: labor
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [blutdistel, distel, heilkraut]
+
+  - id: phiole
+    name: Glasphiole
+    desc: Eine schlichte, mundgeblasene Phiole aus klarem Glas.
+    location: labor
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [phiole, glasphiole, flasche]
+
+  - id: salz
+    name: Alchemistensalz
+    desc: Ein Steinguttiegel gefüllt mit feinst kristallisiertem Alchemistensalz.
+    location: keller
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [salz, alchemistensalz, tiegel]
+
+  - id: kristallphiole
+    name: Kristallphiole
+    desc: Eine meisterhaft geschliffene Phiole aus reinem Bergkristall, ideal für arkanes Elixier.
+    location: bibliothek
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [kristallphiole, bergkristall]
+
+  - id: sternenmoos
+    name: Sternenmoos
+    desc: Ein Büschel seltenes Sternenmoos, das in der Dunkelheit ein sanftes Smaragdlicht verströmt.
+    location: kraeutergarten
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [sternenmoos, moos]
+
+  # --- Schriften in der Bibliothek ---
+  - id: rezeptbuch
+    name: Alchemisten-Rezeptbuch
+    desc: Ein abgegriffenes Buch mit handschriftlichen Notizen zu elementaren Destillationen.
+    location: bibliothek
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [rezeptbuch, buch, handbuch]
+    on_take:
+      - msg: "Du nimmst das Rezeptbuch zur Hand und studierst die Destillation von Geist-Elixieren."
+      - learn_recipe: mana_rezept
+
+  - id: feuertraktat
+    name: Feuertraktat
+    desc: Eine schmale Abhandlung über thermische Reaktionen und die Herstellung flüssigen Feuers.
+    location: bibliothek
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [feuertraktat, traktat, pergament, rolle]
+    on_take:
+      - msg: "Du studierst die Abhandlung über feurige Reagenzien und lernst die Formel für Flüssiges Feuer!"
+      - learn_recipe: feuer_rezept
+
+  - id: grimoire
+    name: Versiegeltes Grimoire
+    desc: Ein monumentaler Band mit schwerem Goldsiegel. Es birgt die Formel des Magnum Opus.
+    location: bibliothek
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [grimoire, meisterbuch, zauberbuch]
+    on_take:
+      - if: { compare_var: { name: gildenrang, op: gte, value: 3 } }
+        then:
+          - msg: "Als anerkannter Meister brichst du das Großmeistersiegel! Du studierst die uralten Glyphen und begreifst das Geheimnis des Magnum Opus."
+          - learn_recipe: magnum_opus_rezept
+          - advance_quest: quest_meister
+        else:
+          - msg: "Das Siegel des Großmeisters ist durch einen Bannzauber gesichert. Erst als anerkannter Meisteralchemist (Rang 3) darfst du es öffnen!"
+
+  # --- Handelswaren auf dem Marktplatz (Bruno) ---
+  - id: schwefel
+    name: Schwefelpulver
+    desc: Ein Beutel voll gereinigtem, feinem Schwefelpulver mit stechendem Aroma.
+    location: marktplatz
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [schwefel, schwefelpulver, pulver]
+    verb_map:
+      buy,intact:
+        - if: { compare_var: { name: taler, op: gte, value: 10 } }
+          then:
+            - add_var: { var: taler, delta: -10 }
+            - give: schwefel
+            - msg: "Du kaufst das Schwefelpulver für 10 Taler. (Verbleibend: {taler} Taler)"
+          else:
+            - msg: "Dafür reichen deine Taler nicht! Schwefelpulver kostet 10 Taler."
+      sell,intact:
+        - add_var: { var: taler, delta: 5 }
+        - consume: schwefel
+        - msg: "Du verkaufst das Schwefelpulver zurück für 5 Taler."
+
+  - id: silberdistille
+    name: Silberdistille
+    desc: Eine prachtvolle Destillier-Apparatur aus getriebenem Sterlingsilber mit Glaskolben und Kühlschleife.
+    location: marktplatz
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [silberdistille, distille, apparatur]
+    verb_map:
+      buy,intact:
+        - if: { compare_var: { name: taler, op: gte, value: 30 } }
+          then:
+            - add_var: { var: taler, delta: -30 }
+            - give: silberdistille
+            - advance_quest: quest_geselle
+            - msg: "Du kaufst die meisterhafte Silberdistille für 30 Taler! Zwei Gehilfen der Gilde tragen sie sogleich in dein Alchemielabor."
+          else:
+            - msg: "Dafür reichen deine Taler nicht! Die Silberdistille kostet 30 Taler."
+
+  - id: mondkraut
+    name: Mondkraut
+    desc: Getrocknete, silbrig schimmernde Blätter der nachtblühenden Mondpflanze.
+    location: marktplatz
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [mondkraut, kraut, blatt]
+    verb_map:
+      buy,intact:
+        - if: { compare_var: { name: taler, op: gte, value: 8 } }
+          then:
+            - add_var: { var: taler, delta: -8 }
+            - give: mondkraut
+            - msg: "Du kaufst das Mondkraut für 8 Taler. (Verbleibend: {taler} Taler)"
+          else:
+            - msg: "Dafür reichen deine Taler nicht! Mondkraut kostet 8 Taler."
+      sell,intact:
+        - add_var: { var: taler, delta: 4 }
+        - consume: mondkraut
+        - msg: "Du verkaufst das Mondkraut für 4 Taler."
+
+  - id: quellsilber
+    name: Quellsilber
+    desc: Flüssiges, lebendiges Alchemistenquecksilber in einer versiegelten Steingutflasche.
+    location: marktplatz
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [quellsilber, silber, quecksilber]
+    verb_map:
+      buy,intact:
+        - if: { compare_var: { name: gildenrang, op: lt, value: 3 } }
+          then:
+            - msg: "Meister Bruno schüttelt den Kopf: 'Quellsilber verkaufe ich nur an anerkannte Meister der Alchemie!'"
+          else:
+            - if: { compare_var: { name: taler, op: gte, value: 12 } }
+              then:
+                - add_var: { var: taler, delta: -12 }
+                - give: quellsilber
+                - msg: "Du kaufst das alchemistische Quellsilber für 12 Taler. (Verbleibend: {taler} Taler)"
+              else:
+                - msg: "Dafür reichen deine Taler nicht! Quellsilber kostet 12 Taler."
+
+  - id: goldstaub
+    name: Goldstaub
+    desc: Feinst vermahlener, alchemistisch geläuterter Goldstaub in einem Samtbeutel.
+    location: marktplatz
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [goldstaub, staub, gold]
+    verb_map:
+      buy,intact:
+        - if: { compare_var: { name: gildenrang, op: lt, value: 3 } }
+          then:
+            - msg: "Meister Bruno schüttelt den Kopf: 'Goldstaub für Transmutationen ist Meisteralchemisten vorbehalten!'"
+          else:
+            - if: { compare_var: { name: taler, op: gte, value: 15 } }
+              then:
+                - add_var: { var: taler, delta: -15 }
+                - give: goldstaub
+                - msg: "Du kaufst den reinen Goldstaub für 15 Taler. (Verbleibend: {taler} Taler)"
+              else:
+                - msg: "Dafür reichen deine Taler nicht! Goldstaub kostet 15 Taler."
+
+  # --- Herstellbare Tränke & Produkte ---
+  - id: wundbalsam
+    name: Kleiner Wundbalsam
+    desc: Ein rubinroter Balsam in einer Glasphiole, der Wunden rasch schließt.
+    location: nowhere
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [wundbalsam, balsam]
+    verb_map:
+      sell,intact:
+        - if: { at: player, room: marktplatz }
+          then:
+            - add_var: { var: taler, delta: 10 }
+            - consume: wundbalsam
+            - msg: "Meister Bruno kauft deinen Wundbalsam für 10 Taler an."
+          else:
+            - msg: "Verkaufe den Balsam an Hauptmann Kurt im Laden oder an Bruno auf dem Markt!"
+
+  - id: feueressenz
+    name: Flüssiges Feuer
+    desc: Eine gefährlich warm glimmende Phiole voller feuriger Essenz.
+    location: nowhere
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [feueressenz, feuer, essenz]
+    verb_map:
+      sell,intact:
+        - if: { at: player, room: marktplatz }
+          then:
+            - add_var: { var: taler, delta: 20 }
+            - consume: feueressenz
+            - msg: "Meister Bruno prüft die Feueressenz begeistert: 'Erstklassige Hitzeentwicklung!' Er zahlt dir 20 Taler ab."
+          else:
+            - msg: "Hier kannst du nichts verkaufen. Biete die Essenz Bruno auf dem Marktplatz an!"
+
+  - id: mana_elixier
+    name: Geist-Elixier
+    desc: Ein tief azurblaues Elixier in einer geschliffenen Kristallphiole.
+    location: nowhere
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [mana_elixier, elixier, geistelixier]
+    verb_map:
+      sell,intact:
+        - if: { at: player, room: marktplatz }
+          then:
+            - add_var: { var: taler, delta: 15 }
+            - consume: mana_elixier
+            - msg: "Meister Bruno zahlt dir 15 Taler für das Elixier."
+          else:
+            - msg: "Magierin Elena im Verkaufsraum zahlt dir deutlich mehr dafür!"
+
+  - id: magnum_opus
+    name: Der Stein der Weisen
+    desc: >
+      Eine strahlende, rubingoldene Quintessenz von unendlicher Tiefe.
+      Sie pulsiert vor kosmischer Lebenskraft und warmem Licht.
+    location: nowhere
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [magnum_opus, stein, opus]
+
+interactions:
+  item:
+    # 1. Wundbalsam: Bekannt von Beginn an (Lehrlingsstufe)
+    - id: wundbalsam_rezept
+      ingredients: [blutdistel, phiole]
+      result: wundbalsam
+      effects:
+        - msg: "Du zerkleinerst die Blutdistel im Mörser und vermengst sie in der Phiole zu einem balsamischen Wundheilmittel."
+        - consume: blutdistel
+        - consume: phiole
+        - give: wundbalsam
+        - advance_quest: quest_lehrling
+
+    # 2. Flüssiges Feuer: Gelernt aus dem Feuertraktat (Gesellen-Finanzierung)
+    - id: feuer_rezept
+      requires_learning: true
+      ingredients: [schwefel, salz]
+      result: feueressenz
+      effects:
+        - msg: "Vorsichtig sublimierst du Schwefel und Alchemistensalz über der Flamme. Zischend kondensiert feurige Essenz!"
+        - consume: schwefel
+        - consume: salz
+        - give: feueressenz
+
+    # 3. Geist-Elixier: Gelernt aus dem Rezeptbuch (Gesellenprüfung)
+    - id: mana_rezept
+      requires_learning: true
+      ingredients: [mondkraut, kristallphiole]
+      result: mana_elixier
+      effects:
+        - msg: "Du destillierst das silbrige Mondkraut in die Kristallphiole. Ein intensiv azurblau leuchtendes Mana-Elixier entsteht!"
+        - consume: mondkraut
+        - consume: kristallphiole
+        - give: mana_elixier
+
+    # 4. Magnum Opus: Gelernt aus dem Grimoire (Meisterprüfung)
+    - id: magnum_opus_rezept
+      requires_learning: true
+      ingredients: [sternenmoos, quellsilber, goldstaub]
+      result: magnum_opus
+      effects:
+        - msg: "In der Silberdistille verbinden sich Sternenmoos, Quellsilber und Goldstaub zu einer leuchtend goldenen Quintessenz. Das Magnum Opus — der Stein der Weisen — ist vollendet!"
+        - consume: sternenmoos
+        - consume: quellsilber
+        - consume: goldstaub
+        - give: magnum_opus
+        - advance_quest: quest_meister
+
+  npc:
+    # Hauptmann Kurt heilen
+    - item: wundbalsam
+      target: stadtwache
+      effects:
+        - msg: "Du reichst Hauptmann Kurt den Wundbalsam. Er streicht ihn auf die Schnittwunde — die Blutung stoppt sofort! Dankbar drückt er dir 15 Taler in die Hand."
+        - consume: wundbalsam
+        - add_var: { var: taler, delta: 15 }
+        - standing: { faction: alchemiegilde, add: 10 }
+        - set_var: { var: gildenrang, value: 2 }
+        - set_var: { var: kunden.wache, value: 1 }
+        - complete_quest: quest_lehrling
+
+    # Magierin Elena beliefern
+    - item: mana_elixier
+      target: magierin
+      effects:
+        - msg: "Magierin Elena trinkt das saphirblaue Geist-Elixier mit sichtbarem Genuss. Ihre Augen leuchten azurblau auf:\n'Hervorragende Destillation! Hier sind deine 25 Taler.' Sie übergibt dir die schwere Börse."
+        - consume: mana_elixier
+        - add_var: { var: taler, delta: 25 }
+        - standing: { faction: alchemiegilde, add: 15 }
+        - set_var: { var: gildenrang, value: 3 }
+        - set_var: { var: kunden.magierin, value: 1 }
+        - complete_quest: quest_geselle
+
+    # Meister Bruno das Magnum Opus präsentieren
+    - item: magnum_opus
+      target: meister_bruno
+      effects:
+        - msg: "Meister Bruno hält das Magnum Opus mit ehrfürchtig zitternden Händen ins Licht. Der goldene Schein des Steins der Weisen taucht den Marktplatz in überirdische Wärme!\n'Bei allen alten Meistern... du hast das Unmögliche vollbracht!' Der Gildenrat verneigt sich tief vor dir."
+        - complete_quest: quest_meister
+        - game_end: victory
+        - msg: "Das Magnum Opus ist vollbracht! Du bist nun Großmeister der Alchemie."
+
+quests:
+  - id: quest_lehrling
+    name: Lehrlingsauftrag
+    desc: Braue einen Wundbalsam und versorge Hauptmann Kurt im Laden.
+    stages:
+      - { id: brauen, desc: "Nimm Blutdistel und Phiole im Labor und braue den Wundbalsam." }
+      - { id: liefern, desc: "Übergib den Wundbalsam an die Stadtwache im Verkaufsraum." }
+    on_complete: quest_geselle
+
+  - id: quest_geselle
+    name: Gesellenprüfung
+    desc: Erwirtschafte 30 Taler für die Silberdistille und beliefere Magierin Elena mit einem Mana-Elixier.
+    stages:
+      - { id: distille, desc: "Kaufe die Silberdistille auf dem Marktplatz für 30 Taler." }
+      - { id: mana, desc: "Braue das Mana-Elixier und überreiche es Magierin Elena im Laden." }
+    on_complete: quest_meister
+
+  - id: quest_meister
+    name: Das Magnum Opus
+    desc: Entziffere das Grimoire des Meisters und vollende das Magnum Opus.
+    stages:
+      - { id: grimoire, desc: "Studiere das versiegelte Grimoire in der Bibliothek." }
+      - { id: zutaten, desc: "Beschaffe Sternenmoos, Quellsilber und Goldstaub." }
+      - { id: opus, desc: "Braue das Magnum Opus und präsentiere es Meister Bruno." }
+
+rules:
+  # Spielstart: Quest-Initialisierung
+  - id: initialisierung
+    on: enter laden
+    once: true
+    effects:
+      - start_quest: quest_lehrling
+      - msg: "Ein neuer Arbeitstag in deiner Alchemisten-Werkstatt beginnt. In deiner Geldbörse klimpern 15 Taler."
+
+  # Diebstahlschutz auf dem Marktplatz
+  - id: diebstahlschutz_markt
+    on: "before take"
+    when: { at: player, room: marktplatz }
+    effects:
+      - block: "Meister Bruno schaut dich streng an: 'Nichts wird eingesteckt! Wer Ware will, muss sie ehrlich erwerben (kaufen <ware>).'"
+
+  # Bilanz anzeigen
+  - id: bilanz_anzeigen
+    on: "command bilanz"
+    effects:
+      - msg: "=== ALCHEMISTEN-BILANZ ===\nVermögen: {taler} Taler\nGildenrang: {gildenrang} (1=Lehrling, 2=Geselle, 3=Meister)\n=========================="
+
+  # Ernten im Garten via harvest-Befehl
+  - id: garten_ernten
+    on: "command harvest"
+    when:
+      all:
+        - at: player
+          room: kraeutergarten
+        - not: { has_item: sternenmoos }
+        - compare_var: { name: moos_geerntet, op: eq, value: 0 }
+    effects:
+      - give: sternenmoos
+      - set_var: { var: moos_geerntet, value: 1 }
+      - msg: "Vorsichtig schneidest du ein Büschel des feucht leuchtenden Sternenmooses vom Gartenbeet."
+
+  # Fallback für give wundbalsam to stadtwache
+  - id: wache_geben_fallback
+    on: "command give"
+    when:
+      all:
+        - compare_var: { name: kunden.wache, op: eq, value: 0 }
+        - actor_has: { actor: stadtwache, item: wundbalsam }
+    effects:
+      - msg: "Hauptmann Kurt streicht den Wundbalsam auf seine Schnittwunde — die Blutung stoppt sofort! Dankbar drückt er dir 15 Taler in die Hand."
+      - add_var: { var: taler, delta: 15 }
+      - standing: { faction: alchemiegilde, add: 10 }
+      - set_var: { var: gildenrang, value: 2 }
+      - set_var: { var: kunden.wache, value: 1 }
+      - complete_quest: quest_lehrling
+
+  # Fallback für give mana_elixier to magierin
+  - id: elena_geben_fallback
+    on: "command give"
+    when:
+      all:
+        - compare_var: { name: kunden.magierin, op: eq, value: 0 }
+        - actor_has: { actor: magierin, item: mana_elixier }
+    effects:
+      - msg: "Magierin Elena trinkt das saphirblaue Geist-Elixier mit sichtbarem Genuss. 'Hervorragende Destillation! Hier sind deine 25 Taler.'"
+      - add_var: { var: taler, delta: 25 }
+      - standing: { faction: alchemiegilde, add: 15 }
+      - set_var: { var: gildenrang, value: 3 }
+      - set_var: { var: kunden.magierin, value: 1 }
+      - complete_quest: quest_geselle
+
+  # Fallback für give magnum_opus to meister_bruno
+  - id: bruno_geben_fallback
+    on: "command give"
+    when:
+      all:
+        - actor_has: { actor: meister_bruno, item: magnum_opus }
+    effects:
+      - msg: "Meister Bruno hält das Magnum Opus mit ehrfürchtig zitternden Händen ins Licht. Der goldene Schein des Steins der Weisen taucht den Marktplatz in überirdische Wärme!\n'Bei allen alten Meistern... du hast das Unmögliche vollbracht!' Der Gildenrat verneigt sich tief vor dir."
+      - complete_quest: quest_meister
+      - game_end: victory
+      - msg: "Das Magnum Opus ist vollbracht! Du bist nun Großmeister der Alchemie."
+
+tests:
+  - name: alchemie_meister_sieg
+    input:
+      - "recipes"
+      - "north"
+      - "take blutdistel"
+      - "take phiole"
+      - "craft wundbalsam"
+      - "south"
+      - "use wundbalsam on stadtwache"
+      - "south"
+      - "buy schwefel"
+      - "north"
+      - "north"
+      - "north"
+      - "take salz"
+      - "south"
+      - "east"
+      - "take feuertraktat"
+      - "west"
+      - "craft feueressenz"
+      - "south"
+      - "south"
+      - "sell feueressenz"
+      - "buy silberdistille"
+      - "buy mondkraut"
+      - "north"
+      - "north"
+      - "east"
+      - "take rezeptbuch"
+      - "take kristallphiole"
+      - "west"
+      - "craft mana_elixier"
+      - "south"
+      - "use mana_elixier on magierin"
+      - "north"
+      - "east"
+      - "take grimoire"
+      - "west"
+      - "west"
+      - "take sternenmoos"
+      - "east"
+      - "south"
+      - "south"
+      - "buy quellsilber"
+      - "buy goldstaub"
+      - "north"
+      - "north"
+      - "craft magnum_opus"
+      - "south"
+      - "south"
+      - "use magnum_opus on meister_bruno"
+    expect:
+      - "Rezepte: 1 /"
+      - "Du zerkleinerst die Blutdistel im Mörser"
+      - "Hauptmann Kurt"
+      - "Du kaufst das Schwefelpulver für 10 Taler"
+      - "Du studierst die Abhandlung über feurige Reagenzien"
+      - "Vorsichtig sublimierst du Schwefel"
+      - "Meister Bruno prüft die Feueressenz begeistert"
+      - "Du kaufst die meisterhafte Silberdistille für 30 Taler"
+      - "Du kaufst das Mondkraut für 8 Taler"
+      - "Du nimmst das Rezeptbuch zur Hand"
+      - "Ein intensiv azurblau leuchtendes Mana-Elixier entsteht"
+      - "Magierin Elena trinkt das saphirblaue Geist-Elixier"
+      - "Als anerkannter Meister brichst du das Großmeistersiegel"
+      - "Du kaufst das alchemistische Quellsilber für 12 Taler"
+      - "Du kaufst den reinen Goldstaub für 15 Taler"
+      - "Das Magnum Opus — der Stein der Weisen — ist vollendet"
+      - "Das Magnum Opus ist vollbracht! Du bist nun Großmeister der Alchemie"
