@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### OPEN-16: Parser-Default-Ziel bei eineindeutigem Scope
+
+Bare Verben ohne Objekt (`attack`, `take`, `open`, `talk`, …) lösen jetzt automatisch
+das einzige passende Ziel im Raum auf. Bei mehreren Zielen erscheint die vorhandene
+Disambiguation-Frage mit Nummernliste; bei keinem Ziel eine verb-spezifische Meldung.
+
+- **`bareVerbCandidates`**: liefert je Verb die passenden Ziele — `attack`/`talk` →
+  lebende NPCs, `take` → tragbare Items im Raum, `drop` → getragene Items, `use`/
+  `examine`/Custom → Items + NPCs, `open`/`close`/`lock`/`unlock` → Container mit
+  passendem Zustand.
+- **`interactBare`**: 1 Kandidat → Auto-Target (`interactEntityById`), mehrere →
+  `interactAmbiguous`, keiner → `bareVerbNoTarget`.
+- **`containerCommand`**: bare `open`/`close`/`lock`/`unlock` nutzen
+  `containerCandidates` (Zustandsfilter: `open` → closed/locked, `close` → open,
+  `lock` → closed, `unlock` → locked).
+- **Parser**: bare `open`/`close`/`lock`/`unlock`/`use`/`look at` werden jetzt
+  erkannt (vorher `Unknown`).
+- **Custom-Verben mit `on: command`-Trigger** behalten das alte Verhalten: der
+  Trigger IST der Handler, die bare Form wird akzeptiert.
+- **Neue Meldungen**: `talk.no_target`, `examine.no_target`, `open.no_target`,
+  `close.no_target`, `lock.no_target`, `unlock.no_target`, `verb.no_target`.
+
 ## [0.11.0.0] — 2026-10-11
 
 Zork I Port, 5 Genre-Benchmark-Adventures, vollständige CI-E2E-Pipeline,

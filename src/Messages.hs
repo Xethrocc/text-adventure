@@ -276,6 +276,13 @@ catalogEntries =
     , ("combat.not_engaged",  "You are not in combat.")
     , ("attack.cant_target",  "You can't attack the {target}.")
     , ("attack.none_here",    "There's nothing to fight here.")
+    , ("talk.no_target",      "There's no one to talk to.")
+    , ("examine.no_target",   "There's nothing here to examine.")
+    , ("open.no_target",      "There's nothing to open here.")
+    , ("close.no_target",     "There's nothing to close here.")
+    , ("lock.no_target",      "There's nothing to lock here.")
+    , ("unlock.no_target",    "There's nothing to unlock here.")
+    , ("verb.no_target",      "What do you want to {verb}?")
     -- -- darkness (B3, Phase 0.3 default) ------------------------------------
     , ("dark.default",        "It's pitch black. You can't see anything.")
     -- -- vehicles (Parser half; Vehicles.hs reuses in its own commit) ---------

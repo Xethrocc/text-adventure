@@ -427,6 +427,11 @@ parseSimpleCommandWith env defs tokens input = case tokens of
         | not (null targetParts)
         , not (any (`elem` prepsOf env "from") targetParts) -> UnequipCmd (unwords (safeStripStopWords targetParts))
     -- 4.4: container verbs (open/close/lock/unlock + take X from Y / put X in Y)
+    -- OPEN-16: bare forms reach the default-target resolution in `containerCommand`.
+    ["open"]       -> OpenCmd ""
+    ["close"]      -> CloseCmd ""
+    ["lock"]       -> LockCmd ""
+    ["unlock"]     -> UnlockCmd ""
     "open"       : targetParts | not (null targetParts) -> OpenCmd (unwords (safeStripStopWords targetParts))
     "close"      : targetParts | not (null targetParts) -> CloseCmd (unwords (safeStripStopWords targetParts))
     "lock"       : targetParts | not (null targetParts) -> LockCmd (unwords (safeStripStopWords targetParts))
@@ -446,6 +451,7 @@ parseSimpleCommandWith env defs tokens input = case tokens of
     "give" : rest | Just (x, y) <- splitPrep (prepsOf env "to") rest ->
         GiveCmd (unwords (safeStripStopWords x)) (unwords (safeStripStopWords y))
     -- Complex parsing (supports multi-word targets with stop-word stripping)
+    ["look", "at"] -> Interact VLookAt ""
     "look"  : "at"   : targetParts | not (null targetParts) -> Interact VLookAt (unwords (safeStripStopWords targetParts))
     "pick"  : "up"   : targetParts | not (null targetParts) -> Interact VTake (unwords (safeStripStopWords targetParts))
     "put"   : "down" : targetParts | not (null targetParts) -> Interact VDrop (unwords (safeStripStopWords targetParts))
@@ -460,6 +466,7 @@ parseSimpleCommandWith env defs tokens input = case tokens of
         parseAbilityCmd env abParts
     "ability" : abParts | not (null abParts) ->
         parseAbilityCmd env abParts
+    ["use"]        -> Interact VUse ""
     "use"   : useParts -> parseUse env useParts input
     -- K11b: `craft <result>`
     ["craft"]              -> CraftCmd ""
@@ -604,6 +611,10 @@ resolveCmdTarget cmd st = case cmd of
         resolveTargetToPair (VCustom "watch") target st
     WatchCmd Nothing ->
         ("", "none")
+    OpenCmd t   -> resolveTargetToPair (VCustom "open") t st
+    CloseCmd t  -> resolveTargetToPair (VCustom "close") t st
+    LockCmd t   -> resolveTargetToPair (VCustom "lock") t st
+    UnlockCmd t -> resolveTargetToPair (VCustom "unlock") t st
     EnterVehicleCmd target ->
         resolveTargetToPair (VCustom "enter") target st
     DriveToCmd target ->
@@ -1034,16 +1045,58 @@ roomViewEvents runHooks state = case getCurrentRoom state of
 -- | The four container commands share one shape: a verb_map entry on the
 --   target item may replace or veto the action (the grating's `unlock:`, the
 --   dam's `instead:open`), otherwise the state machine in `standard` runs.
+-- | OPEN-16: candidate containers for a bare container verb.
+--   Only containers whose state the verb can act on are candidates
+--   (`open` → closed/locked, `close` → open, `lock` → closed, `unlock` → locked).
+containerCandidates :: Verb -> GameState -> [String]
+containerCandidates verb state =
+    [ itemId i
+    | i <- visibleItemsAt (InRoom room) state
+    , isContainer (itemId i) state
+    , containerStateMatches (verbCanonicalName verb) (containerStateOf (itemId i) state)
+    ]
+  where
+    room = currentRoom (save state)
+    containerStateMatches "open"   s = s /= "open"
+    containerStateMatches "close"  s = s == "open"
+    containerStateMatches "lock"   s = s == "closed"
+    containerStateMatches "unlock" s = s == "locked"
+    containerStateMatches _ _        = True
+
+-- | OPEN-16: message when a bare container verb has no candidate target.
+containerNoTarget :: Verb -> GameState -> (GameState, [OutputEvent])
+containerNoTarget verb state = case verbCanonicalName verb of
+    "open"   -> (commandFailed state, evMsg "open.no_target" [])
+    "close"  -> (commandFailed state, evMsg "close.no_target" [])
+    "lock"   -> (commandFailed state, evMsg "lock.no_target" [])
+    "unlock" -> (commandFailed state, evMsg "unlock.no_target" [])
+    _        -> (commandFailed state, evMsg "verb.no_target" [("verb", verbCanonicalName verb)])
+
 containerCommand :: Verb -> String
                  -> (String -> GameState -> (GameState, [OutputEvent]))
                  -> GameState -> (GameState, [OutputEvent])
-containerCommand verb target standard state =
-    case findContainerRef target state of
-        Nothing -> containerRefError target state
-        Just cid ->
-            let vm = maybe Map.empty itemVerbMap (Map.lookup cid (itemDefs (world state)))
-                currentStatus = maybe "intact" itemStatus (Map.lookup cid (itemStates (save state)))
-            in runVerbMapEntry vm verb currentStatus cid (standard cid) state
+containerCommand verb target standard state
+    -- Disambiguation replay: the chosen entity id is in `chosenTarget`.
+    | Just chosen <- chosenTarget state =
+        let vm = maybe Map.empty itemVerbMap (Map.lookup chosen (itemDefs (world state)))
+            currentStatus = maybe "intact" itemStatus (Map.lookup chosen (itemStates (save state)))
+        in runVerbMapEntry vm verb currentStatus chosen (standard chosen) state
+    -- OPEN-16: bare container verb → default target resolution.
+    | null (words target) =
+        case containerCandidates verb state of
+            []    -> containerNoTarget verb state
+            [cid] ->
+                let vm = maybe Map.empty itemVerbMap (Map.lookup cid (itemDefs (world state)))
+                    currentStatus = maybe "intact" itemStatus (Map.lookup cid (itemStates (save state)))
+                in runVerbMapEntry vm verb currentStatus cid (standard cid) state
+            ids   -> interactAmbiguous ids state
+    | otherwise =
+        case findContainerRef target state of
+            Nothing -> containerRefError target state
+            Just cid ->
+                let vm = maybe Map.empty itemVerbMap (Map.lookup cid (itemDefs (world state)))
+                    currentStatus = maybe "intact" itemStatus (Map.lookup cid (itemStates (save state)))
+                in runVerbMapEntry vm verb currentStatus cid (standard cid) state
 
 -- | The `{name}` message args of a container (with its grammar articles).
 containerNameArgs :: String -> GameState -> [(String, String)]
@@ -2151,6 +2204,57 @@ interactDevice verb dev _targetStr state
     | hasOnCommandTrigger verb state = ruleHandledVerb verb state
     | otherwise = (state, evMsg "item.cant_do" [("item", devName dev)])
 
+-- | OPEN-16: candidate targets for a bare verb (no object given).
+--   Exactly one candidate → auto-target; several → disambiguation question;
+--   none → verb-specific "nothing to X" message.
+bareVerbCandidates :: Verb -> GameState -> [String]
+bareVerbCandidates verb state = case verb of
+    VAttack   -> [npcId n | n <- getNPCsInRoom room state, not (isDeadNPC (npcId n) state)]
+    VTalk     -> [npcId n | n <- getNPCsInRoom room state, not (isDeadNPC (npcId n) state)]
+    VTake     -> [itemId i | i <- visibleItemsAt (InRoom room) state, itemPortable i]
+    VDrop     -> [itemId i | i <- visibleItemsAt (CarriedBy ActorPlayer) state]
+    VUse      -> map itemId (visibleItemsAt (InRoom room) state ++ visibleItemsAt (CarriedBy ActorPlayer) state)
+    VLookAt   -> map itemId (visibleItemsAt (InRoom room) state ++ visibleItemsAt (CarriedBy ActorPlayer) state)
+                 ++ [npcId n | n <- getNPCsInRoom room state]
+    VCustom _ -> map itemId (visibleItemsAt (InRoom room) state ++ visibleItemsAt (CarriedBy ActorPlayer) state)
+                 ++ [npcId n | n <- getNPCsInRoom room state]
+    _         -> []
+  where
+    room = currentRoom (save state)
+
+-- | OPEN-16: message when a bare verb has no candidate target.
+bareVerbNoTarget :: Verb -> GameState -> (GameState, [OutputEvent])
+bareVerbNoTarget verb state = case verb of
+    VAttack    -> (commandFailed state, evMsg "attack.none_here" [])
+    VTalk      -> (commandFailed state, evMsg "talk.no_target" [])
+    VTake      -> (commandFailed state, evMsg "take.none_here" [])
+    VDrop      -> (commandFailed state, evMsg "drop.nothing" [])
+    VUse       -> (commandFailed state, evMsg "use.nothing" [])
+    VLookAt    -> (commandFailed state, evMsg "examine.no_target" [])
+    VCustom vn -> (commandFailed state, evMsg "verb.no_target" [("verb", vn)])
+    _          -> (commandFailed state, evMsg "verb.no_target" [("verb", verbCanonicalName verb)])
+
+-- | OPEN-16: run the interaction handler for an entity resolved by ID
+--   (the auto-target path of a bare verb).
+interactEntityById :: Verb -> String -> GameState -> (GameState, [OutputEvent])
+interactEntityById verb eid state =
+    let name = entityDisplayName state eid
+        stateWithVars = bindCommandVars (Interact verb name) state
+    in case chosenResolution eid stateWithVars of
+        ResolvedItem iid -> case Map.lookup iid (itemDefs (world state)) of
+            Just item -> interactItem verb item (Map.lookup iid (itemStates (save state))) name stateWithVars
+            Nothing   -> (state, evMsg "target.not_seen" [("target", name)])
+        ResolvedNPC nid -> case Map.lookup nid (npcDefs (world state)) of
+            Just npc  -> interactNpc verb npc (Map.lookup nid (npcStates (save state))) name stateWithVars
+            Nothing   -> (state, evMsg "target.not_seen" [("target", name)])
+        ResolvedVehicle vid -> case Map.lookup vid (vehicleDefs (world state)) of
+            Just veh  -> interactVehicle verb veh name stateWithVars
+            Nothing   -> (state, evMsg "target.not_seen" [("target", name)])
+        ResolvedDevice did -> case Map.lookup did (deviceDefs (world state)) of
+            Just dev  -> interactDevice verb dev name stateWithVars
+            Nothing   -> (state, evMsg "target.not_seen" [("target", name)])
+        _ -> (state, evMsg "target.not_seen" [("target", name)])
+
 -- | Execute a bare interaction command without a target string.
 interactBare :: Verb -> GameState -> (GameState, [OutputEvent])
 interactBare verb state
@@ -2164,7 +2268,15 @@ interactBare verb state
     | VCustom vn <- verb
     , vn `elem` ["defend", "flee"]
     = (state, evMsg "combat.not_engaged" [])
-    | otherwise = ruleHandledVerb verb state   -- bare verb; triggers carry the message
+    -- OPEN-16: default target resolution for bare verbs.
+    -- Custom verbs with an `on: command` trigger keep the old behaviour:
+    -- the trigger IS the handler, so the bare form is accepted as-is.
+    | VCustom _ <- verb, hasOnCommandTrigger verb state = ruleHandledVerb verb state
+    | otherwise =
+        case bareVerbCandidates verb state of
+            []    -> bareVerbNoTarget verb state
+            [eid] -> interactEntityById verb eid state
+            ids   -> interactAmbiguous ids state
 
 -- | Fallback interaction when target was not found.
 interactNotFound :: Verb -> String -> GameState -> (GameState, [OutputEvent])
@@ -2209,6 +2321,10 @@ disambiguableCommand cmd = case cmd of
     ActionWithArgs _ _ -> True
     EquipCmd _         -> True
     UnequipCmd _       -> True
+    OpenCmd _          -> True
+    CloseCmd _         -> True
+    LockCmd _          -> True
+    UnlockCmd _        -> True
     _                  -> False
 
 -- | Phase 2.3: interpret the player's answer to a disambiguation question.

@@ -1,4 +1,4 @@
--- | Generated from lang/de.json (sha256: 268a7b3f3d4ac8e09a653bfe5094c35812997ad8fc9d3f42adf8b49221b4d2a8) by scripts/gen-lang-pack.py.
+-- | Generated from lang/de.json (sha256: dda83e4dffeecc70e17b8aa08ffe5dffd3d75633f8f85d088a54dedf2f6f3628) by scripts/gen-lang-pack.py.
 --   DO NOT EDIT by hand - rerun the generator after changing the JSON.
 --
 --   Language-pack data (Phase 4.3): message templates keyed like the
@@ -98,6 +98,13 @@ langDe =
       , ("combat.not_engaged", "Du befindest dich in keinem Kampf.")
       , ("attack.cant_target", "Du kannst {target} nicht angreifen.")
       , ("attack.none_here", "Hier gibt es nichts zu bekämpfen.")
+      , ("talk.no_target", "Hier gibt es niemanden, mit dem du sprechen kannst.")
+      , ("examine.no_target", "Hier gibt es nichts zu untersuchen.")
+      , ("open.no_target", "Hier gibt es nichts zu öffnen.")
+      , ("close.no_target", "Hier gibt es nichts zu schließen.")
+      , ("lock.no_target", "Hier gibt es nichts zu verschließen.")
+      , ("unlock.no_target", "Hier gibt es nichts aufzuschließen.")
+      , ("verb.no_target", "Was möchtest du {verb}?")
       , ("dark.default", "Es ist pechschwarz. Du kannst nichts sehen.")
       , ("vehicle.not_in", "Du befindest dich in keinem Fahrzeug.")
       , ("refuel.no_vehicle", "Hier gibt es kein Fahrzeug zum Betanken.")
