@@ -1,0 +1,596 @@
+# Krypta der Verdammten — Roguelite Deckbuilding Dungeon Crawler
+#
+# Demonstriert die Verzahnung von:
+#   - Deckbuilder-System: cards-Block, Kosten (energy), Typen (attack, skill, curse),
+#     Synergien (card_in_hand), Handlimits, Kartenziehen (draw_cards),
+#     Kartenbannung (exhaust_card) und Deck-Erweiterung (add_card).
+#   - Rundenbasiertes Kartenduell mit HUD (renderDeckCombatHud: HP, Energy, Block, Draw/Discard).
+#   - Roguelite Meta-Progression: meta.runs, meta.seelen, meta.siege über Permadeath hinweg.
+#   - Dungeon-Crawl mit Verzweigungen: Schrein der Ahnen -> Knochenkammer ->
+#     Blutaltar (Opfer-Event für Finisher-Karte) vs. Schatzkammer (Elixier & Gold) ->
+#     Tiefe Gruft (Elite-Ghul) -> Läuterungsbecken (Rastplatz/Deckbau) ->
+#     Allerheiligstes (Bosskampf gegen Lich Malakor).
+#   - Schlüssel- & Tür-Mechaniken, Schatztruhen, Container, Tränke & Custom-Verben.
+
+name: Krypta der Verdammten
+start_room: vorhof
+
+language: de
+
+combat:
+  profile: classic
+  screen:
+    bar_width: 20
+    scene: ">>KAMPF IN DER KRYPTA DER VERDAMMTEN<<"
+
+player:
+  max_hp: 35
+  attack: 4
+  defense: 2
+
+variables:
+  - name: "energy"
+    type: int
+    initial: 3
+    min: 0
+    max: 3
+  - name: "block"
+    type: int
+    initial: 0
+    min: 0
+  - name: "schild"
+    type: int
+    initial: 0
+    min: 0
+  - name: "gold"
+    type: int
+    initial: 10
+    min: 0
+  - name: "meta.runs"
+    type: int
+    initial: 0
+  - name: "meta.seelen"
+    type: int
+    initial: 0
+  - name: "meta.siege"
+    type: int
+    initial: 0
+  - name: "meta.segen"
+    type: int
+    initial: 0
+  - name: "initial_draw"
+    type: int
+    initial: 0
+  - name: "kampf1_gezogen"
+    type: int
+    initial: 0
+  - name: "kampf2_gezogen"
+    type: int
+    initial: 0
+  - name: "boss_gezogen"
+    type: int
+    initial: 0
+  - name: "schatz_geholt"
+    type: int
+    initial: 0
+  - name: "altar_geopfert"
+    type: int
+    initial: 0
+  - name: "gerastet"
+    type: int
+    initial: 0
+  - name: "portal_offen"
+    type: int
+    initial: 0
+
+title_art: |
+  =============================================================
+     K R Y P T A   D E R   V E R D A M M T E N
+      --- Roguelite Deckbuilder Dungeon Crawler ---
+  =============================================================
+
+end_art:
+  victory: |
+    =============================================================
+       S I E G   I N   D E N   K A T A K O M B E N
+    =============================================================
+    Der finstere Lich Malakor ist vernichtet! Die Seelen der
+    Verdammten sind befreit und die uralte Krypta verfaellt zu Staub.
+    Dein Name wird auf ewig als Meister des Decks besungen!
+  death: |
+    =============================================================
+       G E F A L L E N   I N   D E R   K R Y P T A
+    =============================================================
+    Deine Kraefte haben dich verlassen. Deine Knochen reihen sich
+    in die Saeulen der Krypta ein. Doch deine gesammelten Seelen
+    harren am Schrein der Ahnen auf deinen naechsten Aufstieg...
+
+verbs:
+  - name: "status"
+    aliases: ["stats", "charakter"]
+  - name: "trinken"
+    aliases: ["drink", "schlucken"]
+  - name: "absteigen"
+    aliases: ["descend", "hinab"]
+  - name: "opfern"
+    aliases: ["sacrifice"]
+  - name: "beten"
+    aliases: ["pray", "weihen"]
+  - name: "rasten"
+    aliases: ["rest", "ausruhen"]
+
+cards:
+  strike:
+    name: "Hieb"
+    cost: { energy: 1 }
+    type: attack
+    target: single_enemy
+    description: "Fügt einem gewählten Feind 6 Schaden zu."
+    outcomes:
+      - damage_enemy: { target: chosen, amount: 6 }
+
+  defend:
+    name: "Schildparade"
+    cost: { energy: 1 }
+    type: skill
+    target: self
+    description: "Erhöht Schutz um 5 Block gegen Gegenangriffe."
+    outcomes:
+      - add_var: { variable: block, delta: 5 }
+      - add_var: { variable: schild, delta: 5 }
+
+  bash:
+    name: "Schmetterschlag"
+    cost: { energy: 2 }
+    type: attack
+    target: single_enemy
+    description: "Fügt 8 schweren Schaden zu. Kombo mit Schildparade auf der Hand: +4 Bonusschaden!"
+    outcomes:
+      - damage_enemy: { target: chosen, amount: 8 }
+      - if: { card_in_hand: defend }
+        then:
+          - damage_enemy: { target: chosen, amount: 4 }
+          - msg: "Schildschlag-Synergie! Die Schildparade auf deiner Hand verstärkt den Schlag um 4 Bonusschaden!"
+
+  eiserne_welle:
+    name: "Eiserne Welle"
+    cost: { energy: 1 }
+    type: attack
+    target: single_enemy
+    description: "Fügt 4 Schaden zu und gewährt 4 Block."
+    outcomes:
+      - damage_enemy: { target: chosen, amount: 4 }
+      - add_var: { variable: block, delta: 4 }
+      - add_var: { variable: schild, delta: 4 }
+
+  cleave:
+    name: "Rundumschlag"
+    cost: { energy: 1 }
+    type: attack
+    target: all_enemies
+    description: "Fügt allen anwesenden Feinden 5 Schaden zu."
+    outcomes:
+      - damage_all_enemies: 5
+
+  blutpakt:
+    name: "Blutpakt"
+    cost: {}
+    type: skill
+    target: self
+    description: "Kostenlos: Opfere 3 Lebenspunkte, ziehe 2 Karten."
+    outcomes:
+      - damage: 3
+      - draw_cards: 2
+      - msg: "Dunkle Macht durchströmt deine Adern — du opferst Lebenskraft für neues Kartenwissen!"
+
+  seelenernte:
+    name: "Seelenernte"
+    cost: { energy: 1 }
+    type: attack
+    target: single_enemy
+    description: "Fügt 7 nekrotischen Schaden zu und gewährt +1 Seelenessenz."
+    outcomes:
+      - damage_enemy: { target: chosen, amount: 7 }
+      - add_var: { variable: meta.seelen, delta: 1 }
+
+  hinrichten:
+    name: "Hinrichten"
+    cost: { energy: 2 }
+    type: attack
+    target: single_enemy
+    exhaust: true
+    description: "Fügt 16 vernichtenden Schaden zu. Erschöpft sich nach Gebrauch."
+    outcomes:
+      - damage_enemy: { target: chosen, amount: 16 }
+      - msg: "Ein verheerender Todesstoß zerschmettert die Knochen des Gegners!"
+
+handLimit: 5
+deck:
+  bash: 1
+  strike: 3
+  defend: 1
+  eiserne_welle: 1
+  strike: 2
+  defend: 2
+
+rooms:
+  # Ebene 0: Vorhof & Meta-Hub
+  - id: vorhof
+    name: "Krypta-Vorhof"
+    desc: "Ein verlassener, nebliger Friedhof am Hang des Berges. Vor dir ragt der uralte Schrein der Ahnen auf. Eine finstere Steintreppe führt hinab ('down' oder 'absteigen') in die Tiefen der Krypta."
+    exits:
+      down: knochenkammer
+    on_enter:
+      - if: { compare_var: { name: initial_draw, op: eq, value: 0 } }
+        then:
+          - set_var: { var: initial_draw, value: 1 }
+          - add_var: { var: meta.runs, delta: 1 }
+          - draw_cards: 5
+
+  # Ebene 1: Knochenkammer (Erster Kampf)
+  - id: knochenkammer
+    name: "Knochenkammer"
+    desc: "Mächtige Säulen aus gebleichten Menschenknochen stützen das Gewölbe. Der Boden ist mit Schädeln übersät. Nach Westen führt ein Pfad zum Blutaltar, nach Osten zur Schatzkammer."
+    exits:
+      up: vorhof
+      west:
+        to: blutaltar
+        blocked: true
+        msg: "Der Skelettkrieger stellt sich dir mit gezogenem Schwert in den Weg! Du musst ihn zuerst bezwingen."
+      east:
+        to: schatzkammer
+        blocked: true
+        msg: "Der Skelettkrieger stellt sich dir mit gezogenem Schwert in den Weg! Du musst ihn zuerst bezwingen."
+    on_enter:
+      - if: { compare_var: { name: kampf1_gezogen, op: eq, value: 0 } }
+        then:
+          - set_var: { var: kampf1_gezogen, value: 1 }
+          - set_var: { var: player.energy, value: 3 }
+          - set_var: { var: energy, value: 3 }
+          - draw_cards: 5
+
+  # Verzweigung West: Altar des Blutes (Event)
+  - id: blutaltar
+    name: "Altar des Blutes"
+    desc: "Eine unheimliche, rot glimmende Opferschale thront auf einem Basaltaltar. Hier kannst du dein eigenes Blut 'opfern', um eine verbotene Angriffskarte zu erlangen. Nach Osten führt der Weg zur tiefen Gruft."
+    exits:
+      east: tiefe_gruft
+
+  # Verzweigung Ost: Krypta-Schatzkammer (Belohnung & Vorräte)
+  - id: schatzkammer
+    name: "Krypta-Schatzkammer"
+    desc: "Alte Grabbeigaben schimmern im Fackelschein. In der Mitte steht ein schwerer Steinsarkophag, den du untersuchen oder durchsuchen kannst. Nach Westen führt der Weg zur tiefen Gruft."
+    exits:
+      west: tiefe_gruft
+    search:
+      - if: { compare_var: { name: schatz_geholt, op: eq, value: 0 } }
+        then:
+          - set_var: { var: schatz_geholt, value: 1 }
+          - give: lebensbalsam
+          - add_var: { var: gold, delta: 15 }
+          - add_card: { card: blutpakt, to: discard }
+          - msg: "Du öffnest die schwere Steinplatte des Sarkophags! Darin findest du einen Lebensbalsam, 15 Goldmünzen und eine uralte Pergamentrolle, die dir die Karte 'Blutpakt' verleiht!"
+        else:
+          - msg: "Der Sarkophag ist bereits leergeräumt."
+
+  # Ebene 2: Tiefe Gruft (Elite-Kampf)
+  - id: tiefe_gruft
+    name: "Tiefe Gruft"
+    desc: "Feuchte Kälte schlägt dir entgegen. Modergeruch erfüllt die Finsternis. Nach Norden führt ein Gang zum Läuterungsbecken, während Pfade zurück nach Westen und Osten abzweigen."
+    exits:
+      west: blutaltar
+      east: schatzkammer
+      north:
+        to: laeuterungsbecken
+        blocked: true
+        msg: "Die faulige Ghulbestie fletscht die Reißzähne und lässt dich nicht passieren!"
+    on_enter:
+      - if: { compare_var: { name: kampf2_gezogen, op: eq, value: 0 } }
+        then:
+          - set_var: { var: kampf2_gezogen, value: 1 }
+          - set_var: { var: player.energy, value: 3 }
+          - set_var: { var: energy, value: 3 }
+          - draw_cards: 5
+
+  # Rastplatz vor dem Boss
+  - id: laeuterungsbecken
+    name: "Läuterungsbecken"
+    desc: "Ein kristallklares, geweihtes Wasserbecken spendet Ruhe. Hier kannst du 'rasten', um Wunden zu heilen und dein Kartendeck von einfachen Hieben zu reinigen. Im Norden versperrt ein massives Obsidianportal den Weg zum Thronsaal."
+    exits:
+      south: tiefe_gruft
+
+  # Ebene 3: Das Allerheiligste (Bosskampf)
+  - id: nekromanten_thron
+    name: "Thronsaal des Lichs"
+    desc: "Ein monumentaler Saal aus schwarzem Marmor. Auf einem Thron aus gepeinigten Seelen thront Malakor, der Herrscher der Verdammten. Grüne Flammen zucken über den Boden!"
+    exits:
+      south: laeuterungsbecken
+    on_enter:
+      - if: { compare_var: { name: boss_gezogen, op: eq, value: 0 } }
+        then:
+          - set_var: { var: boss_gezogen, value: 1 }
+          - set_var: { var: player.energy, value: 3 }
+          - set_var: { var: energy, value: 3 }
+          - draw_cards: 5
+
+items:
+  - id: lebensbalsam
+    name: "Lebensbalsam"
+    desc: "Ein dickflüssiges, golden schimmerndes Elixier in einer Steingutflasche."
+    location: nowhere
+    gender: m
+    article: {nom: der, acc: den, dat: dem}
+    keys: [lebensbalsam, balsam, trank, elixier, flasche]
+    verb_map:
+      trinken:
+        - heal: 15
+        - consume: lebensbalsam
+        - msg: "Du trinkst den Lebensbalsam. Wohltuende Wärme durchströmt deinen Körper (+15 HP)!"
+      use:
+        - heal: 15
+        - consume: lebensbalsam
+        - msg: "Du trinkst den Lebensbalsam. Wohltuende Wärme durchströmt deinen Körper (+15 HP)!"
+
+  - id: krypta_schluessel
+    name: "Kryptaschlüssel"
+    desc: "Ein schwerer, kalter Eisenschlüssel mit der Gravur eines Totenschädels."
+    location: nowhere
+    gender: m
+    article: {nom: der, acc: den, dat: dem}
+    keys: [schluessel, kryptaschluessel, eisenschluessel]
+    verb_map:
+      use:
+        - if: { at: player, room: laeuterungsbecken }
+          then:
+            - if: { compare_var: { name: portal_offen, op: eq, value: 0 } }
+              then:
+                - set_var: { var: portal_offen, value: 1 }
+                - set_exit: { from: laeuterungsbecken, dir: north, to: nekromanten_thron }
+                - msg: "Klick! Der schwere Schlüssel dreht sich im Schloss. Das Obsidianportal schwingt mit tiefem Donnern auf!"
+              else:
+                - msg: "Das Obsidianportal ist bereits aufgeschlossen."
+          else:
+            - msg: "Hier gibt es kein passendes Schloss für diesen Schlüssel."
+
+npcs:
+  - id: skelett
+    name: "Skelettkrieger"
+    desc: "Ein klapperndes Skelett in rostigen Eisenketten, das ein gezacktes Breitschwert führt."
+    location: knochenkammer
+    gender: m
+    article: {nom: der, acc: den, dat: dem}
+    max_hp: 16
+    attack: 5
+    defense: 0
+    state: idle
+
+  - id: ghul
+    name: "Ghulbestie"
+    desc: "Eine blutdürstige, bucklige Kreatur mit rasiermesserscharfen Klauen und glühenden Augen."
+    location: tiefe_gruft
+    gender: f
+    article: {nom: die, acc: die, dat: der}
+    max_hp: 26
+    attack: 7
+    defense: 1
+    state: idle
+
+  - id: malakor
+    name: "Lich Malakor"
+    desc: "Der Herrscher der Verdammten. Ein schwebender Schemen in finsterer Robe, umhüllt von Seelenfrost."
+    location: nekromanten_thron
+    gender: m
+    article: {nom: der, acc: den, dat: dem}
+    max_hp: 35
+    attack: 9
+    defense: 2
+    state: idle
+
+rules:
+  # --- Abstieg in die Krypta ---
+  - id: regel_absteigen
+    on: "command absteigen"
+    when:
+      at: player
+      room: vorhof
+    effects:
+      - move: knochenkammer
+
+  # --- Beten am Schrein der Ahnen (Meta-Progression) ---
+  - id: regel_beten
+    on: "command beten"
+    when:
+      at: player
+      room: vorhof
+    effects:
+      - if: { compare_var: { name: meta.segen, op: eq, value: 0 } }
+        then:
+          - if: { compare_var: { name: meta.seelen, op: gte, value: 10 } }
+            then:
+              - add_var: { var: meta.seelen, delta: -10 }
+              - set_var: { var: meta.segen, value: 1 }
+              - add_card: { card: seelenernte, to: draw }
+              - heal: 10
+              - msg: "Du opferst 10 Seelen am Schrein der Ahnen. Ein gleissendes Licht umhüllt dich: Du erhältst den Segen der Ahnen (+10 HP) und die Karte 'Seelenernte' für deinen Aufstieg!"
+            else:
+              - msg: "Der Schrein der Ahnen verlangt mindestens 10 Seelenessenz für seinen Segen. Du besitzt aktuell {meta.seelen} Seelen."
+        else:
+          - msg: "Du trägst den Segen der Ahnen bereits in dir."
+
+  # --- Gegenangriff: Skelettkrieger schlägt am Zugende zu ---
+  - id: skelett_gegenangriff
+    on: "command end_turn"
+    when:
+      all:
+        - at: player
+          room: knochenkammer
+        - not:
+            state: skelett
+            is: dead
+    effects:
+      - if: { compare_var: { name: schild, op: gte, value: 5 } }
+        then:
+          - add_var: { var: schild, delta: -5 }
+          - msg: "Das Skelett schlägt mit seinem Rostschwert zu, doch dein Schild fängt den Hieb ab!"
+        else:
+          - if: { compare_var: { name: schild, op: gt, value: 0 } }
+            then:
+              - msg: "Das Skelett durchbricht deinen Schild teilweise! (-3 HP)"
+              - damage: 3
+              - set_var: { var: schild, value: 0 }
+            else:
+              - msg: "Das Skelett trifft dich mit voller Wucht mit seinem Rostschwert! (-5 HP)"
+              - damage: 5
+      - set_var: { var: schild, value: 0 }
+
+  # --- Skelett besiegt ---
+  - id: skelett_tod
+    on: "state skelett"
+    effects:
+      - msg: "Das Skelett zerfällt in einen Haufen staubiger Knochen! Du nimmst 5 Gold und 2 Seelen an dich. Die Wege nach West und Ost sind nun frei."
+      - set_exit: { from: knochenkammer, dir: west, to: blutaltar }
+      - set_exit: { from: knochenkammer, dir: east, to: schatzkammer }
+      - add_var: { var: gold, delta: 5 }
+      - add_var: { var: meta.seelen, delta: 2 }
+
+  # --- Blutaltar-Opfer ---
+  - id: regel_opfern
+    on: "command opfern"
+    when:
+      at: player
+      room: blutaltar
+    effects:
+      - if: { compare_var: { name: altar_geopfert, op: eq, value: 0 } }
+        then:
+          - set_var: { var: altar_geopfert, value: 1 }
+          - damage: 4
+          - add_card: { card: hinrichten, to: draw }
+          - msg: "Du schneidest dir die Handfläche auf und lässt dein Blut in die Altarschale tropfen (-4 HP). Dunkle Seelenenergie lodert auf: Die verheerende Karte 'Hinrichten' wurde ganz oben auf deinen Nachziehstapel gelegt!"
+        else:
+          - msg: "Die Glut des Altars ist erloschen. Ein weiteres Opfer wird nicht erhört."
+
+  # --- Gegenangriff: Ghul schlägt am Zugende zu ---
+  - id: ghul_gegenangriff
+    on: "command end_turn"
+    when:
+      all:
+        - at: player
+          room: tiefe_gruft
+        - not:
+            state: ghul
+            is: dead
+    effects:
+      - if: { compare_var: { name: schild, op: gte, value: 7 } }
+        then:
+          - add_var: { var: schild, delta: -7 }
+          - msg: "Der Ghul holt mit knochigen Klauen aus, doch dein Schildblock hält stand!"
+        else:
+          - if: { compare_var: { name: schild, op: gt, value: 0 } }
+            then:
+              - msg: "Der Ghul fetzt an deiner Deckung vorbei! (-4 HP)"
+              - damage: 4
+              - set_var: { var: schild, value: 0 }
+            else:
+              - msg: "Der Ghul reißt dir mit blutigen Klauen das Fleisch auf! (-7 HP)"
+              - damage: 7
+      - set_var: { var: schild, value: 0 }
+
+  # --- Ghul besiegt: Lässt Schlüssel und Seelen fallen ---
+  - id: ghul_tod
+    on: "state ghul"
+    effects:
+      - msg: "Der Ghul bricht mit einem gurgelnden Röcheln zusammen! Zwischen seinen Überresten funkelt der schwere Kryptaschlüssel. Du nimmst 4 Seelen und 15 Gold an dich."
+      - set_exit: { from: tiefe_gruft, dir: north, to: laeuterungsbecken }
+      - place: { item: krypta_schluessel, in: tiefe_gruft }
+      - add_var: { var: meta.seelen, delta: 4 }
+      - add_var: { var: gold, delta: 15 }
+
+  # --- Rasten am Läuterungsbecken ---
+  - id: regel_rasten
+    on: "command rasten"
+    when:
+      at: player
+      room: laeuterungsbecken
+    effects:
+      - if: { compare_var: { name: gerastet, op: eq, value: 0 } }
+        then:
+          - set_var: { var: gerastet, value: 1 }
+          - heal: 15
+          - exhaust_card: strike
+          - msg: "Du kniest am Becken nieder und trinkst das heilige Quellwasser (+15 HP). Das Wasser reinigt deinen Geist: Eine einfache Hieb-Karte wurde aus deinem Deck geläutert!"
+        else:
+          - msg: "Das Becken ist nun ruhig. Du hast bereits neue Kraft geschöpft."
+
+  # --- Gegenangriff: Lich Malakor schlägt am Zugende zu ---
+  - id: malakor_gegenangriff
+    on: "command end_turn"
+    when:
+      all:
+        - at: player
+          room: nekromanten_thron
+        - not:
+            state: malakor
+            is: dead
+    effects:
+      - if: { compare_var: { name: schild, op: gte, value: 9 } }
+        then:
+          - add_var: { var: schild, delta: -9 }
+          - msg: "Lich Malakor schleudert einen Blitz aus Seelenfrost, doch dein Schild wallt schützend auf!"
+        else:
+          - if: { compare_var: { name: schild, op: gt, value: 0 } }
+            then:
+              - msg: "Malakors Froststrahl bricht durch deinen Schild! (-5 HP)"
+              - damage: 5
+              - set_var: { var: schild, value: 0 }
+            else:
+              - msg: "Malakors Seelenfrost sengt dein Fleisch! (-9 HP)"
+              - damage: 9
+      - set_var: { var: schild, value: 0 }
+
+  # --- Malakor besiegt: Epischer Sieg ---
+  - id: malakor_tod
+    on: "state malakor"
+    effects:
+      - msg: "Lich Malakor bricht mit einem schrillen Schrei in sich zusammen! Die finstere Macht weicht aus der Krypta. Du erbeutest 25 Seelen der Verdammten!"
+      - add_var: { var: meta.siege, delta: 1 }
+      - add_var: { var: meta.seelen, delta: 25 }
+      - game_end: victory
+      - msg: "Du hast Lich Malakor bezwungen und die Krypta der Verdammten erlöst!"
+
+tests:
+  - name: krypta_sieg
+    input:
+      - "down"
+      - "play 1"
+      - "play 3"
+      - "go west"
+      - "opfern"
+      - "go east"
+      - "play 4"
+      - "play 3"
+      - "end turn"
+      - "play 2"
+      - "take schluessel"
+      - "go north"
+      - "rasten"
+      - "use schluessel"
+      - "go north"
+      - "play 1"
+      - "play 4"
+      - "end turn"
+      - "play 5"
+      - "play 2"
+      - "end turn"
+      - "play 2"
+    expect:
+      - "Mächtige Säulen aus gebleichten Menschenknochen"
+      - "Schildschlag-Synergie"
+      - "Das Skelett zerfällt in einen Haufen staubiger Knochen"
+      - "Eine unheimliche, rot glimmende Opferschale"
+      - "Feuchte Kälte schlägt dir entgegen"
+      - "Hinrichten on Ghulbestie"
+      - "Der Ghul bricht mit einem gurgelnden Röcheln zusammen"
+      - "Ein kristallklares, geweihtes Wasserbecken"
+      - "Ein monumentaler Saal aus schwarzem Marmor"
+      - "Lich Malakor bricht mit einem schrillen Schrei in sich zusammen"
+      - "Du hast Lich Malakor bezwungen und die Krypta der Verdammten erlöst!"
