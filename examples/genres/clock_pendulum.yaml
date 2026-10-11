@@ -1,0 +1,323 @@
+# Das Pendel des Kerkermeisters (The Inquisitor's Pendulum)
+# Inspiriert von Edgar Allan Poe: "The Pit and the Pendulum" [PD]
+# Port Quest 2: Zeitgetriebene (Clock-Driven) Narrative
+# Testet:
+#   - turn-Trigger mit Cooldowns (1, 3, 5 Runden)
+#   - Countdown-Bedingung (condition: pendel, turns: 12) mit Tick- und End-Effekten
+#   - Dynamische Räume und Ausgänge (set_exit / remove_exit im Takt von Flut und Schranke)
+#   - Sich ändernde Raumbeschreibungen via CondText (description: variants:)
+#   - Modulo- und Zyklenvariablen (glocke, flut_zyklus)
+#   - Save/Load während aktiver Timer und Ticks
+#   - Deterministisches Game Over bei Ablauf und Rettung innerhalb des Zeitfensters
+
+name: Das Pendel des Kerkermeisters
+start_room: kerkerzelle
+
+title_art: |
+  =======================================================
+     D A S   P E N D E L   D E R   I N Q U I S I T I O N
+  =======================================================
+
+end_art:
+  victory: |
+    =======================================================
+       F R E I H E I T   I N   L E T Z T E R   S E K U N D E
+    =======================================================
+    Mit dem Oel hast du die Ratten angelockt, die deine
+    Fesseln durchtrennten! Im letzten Moment vor dem Niedergang
+    der Klinge hast du die Geheimtuer entriegelt und den
+    Kanal ins freie Morgenlicht erreicht.
+  zerteilt: |
+    =======================================================
+       D I E   S C H N E I D E N D E   K L I N G E
+    =======================================================
+    Das staehlerne Pendel erreicht deine Brust. Die eisige
+    Klinge vollstreckt das Urteil der Inquisition in der
+    Finsternis.
+  ertrunken: |
+    =======================================================
+       I M   K E R K E R   E R T R U N K E N
+    =======================================================
+    Die Schleuse hat sich geschlossen und das eisige Wasser
+    des Zisternenkanals hat die Kammer vollstaendig gefuellt.
+    Es gibt kein Entkommen mehr.
+
+verbs:
+  - name: "warten"
+    aliases: ["rasten", "verharren", "pause"]
+
+variables:
+  - name: "pendel_timer"
+    type: int
+    initial: 12
+    min: 0
+    max: 12
+  - name: "glocke"
+    type: int
+    initial: 0
+    min: 0
+    max: 100
+  - name: "wasserstand"
+    type: int
+    initial: 0
+    min: 0
+    max: 10
+  - name: "schranke_offen"
+    type: int
+    initial: 0
+    min: 0
+    max: 1
+  - name: "fesseln_geloest"
+    type: int
+    initial: 0
+    min: 0
+    max: 1
+  - name: "ventil_gedreht"
+    type: int
+    initial: 0
+    min: 0
+    max: 1
+  - name: "geheimtuer_offen"
+    type: int
+    initial: 0
+    min: 0
+    max: 1
+
+rooms:
+  # 1. Startraum: Der Richtblock unter dem Pendel
+  - id: kerkerzelle
+    name: Die Richtzelle
+    description:
+      default: "Ein duesterer Gewoelberaum aus schwarzem Basalt. Hoch oben an der Decke schwingt eine riesige, sichelfoermige Stahlklinge an einem langen Pendel hin und her. Ihr Zischen schneidet durch die feuchte Luft."
+      variants:
+        - when: { compare_var: { name: pendel_timer, op: "<=", value: 3 } }
+          text: "Die sichelfoermige Klinge schwingt nun bedrohlich tief! Der Luftzug streift bereits dein Gesicht, und der Schatten der Klinge verdunkelt den Stein."
+        - when: { compare_var: { name: pendel_timer, op: "<=", value: 7 } }
+          text: "Das Pendel ist merklich tiefer gesunken. Mit jedem dumpfen Schwingen senkt sich die Klinge ein Stueck naeher herab."
+    exits:
+      north: wandelgang
+
+  # 2. Wandelgang vor der Zelle
+  - id: wandelgang
+    name: Feuchter Wandelgang
+    description:
+      default: "Ein modriger Steingang zwischen den Kerkertrakten. An den feuchten Mauern tropft unaufhoerlich Wasser herab."
+      variants:
+        - when: { compare_var: { name: schranke_offen, op: eq, value: 1 } }
+          text: "Ein modriger Steingang. Das schwere Eisengitter nach Osten ist nach oben gewinscht und gibt den Durchgang frei."
+        - when: { compare_var: { name: schranke_offen, op: eq, value: 0 } }
+          text: "Ein modriger Steingang. Nach Osten versperrt ein massives Fallgitter aus schwarzem Eisen den Weg zur Zisterne."
+    exits:
+      south: kerkerzelle
+      west: abgrund
+
+  # 3. Die bodenlose Grube
+  - id: abgrund
+    name: Die finstere Grube
+    description:
+      default: "In der Mitte dieses runden Raumes gaehnt ein kreisrunder, bodenloser Schacht in vollkommene Finsternis. Kalte Luft stroemt herauf."
+    exits:
+      east: wandelgang
+    on_enter:
+      - if: { not: { has_flag: abgrund_warnung } }
+        then:
+          - set_flag: abgrund_warnung
+          - msg: "Vorsicht! Am Rand des tiefen Schachts droht jeder falsche Schritt den toedlichen Sturz."
+
+  # 4. Die Schleusen- und Zisternenkammer
+  - id: zisterne
+    name: Die Zisternenkammer
+    description:
+      default: "Eine gewoelbte Kammer mit alten Wasserrohren. Am Boden sammelt sich ein schlammiges Rinnsal."
+      variants:
+        - when: { compare_var: { name: wasserstand, op: gte, value: 4 } }
+          text: "Eine gewoelbte Kammer mit alten Wasserrohren. Das Wasser steht dir bis zur Brust und steigt sekstuendlich!"
+        - when: { compare_var: { name: wasserstand, op: gte, value: 2 } }
+          text: "Eine gewoelbte Kammer mit alten Wasserrohren. Kalte Fluten schwappen um deine Knie."
+    exits:
+      west: wandelgang
+
+  # 5. Der Fluchtkanal (zunaechst verborgen, wird via set_exit geoeffnet)
+  - id: fluchtkanal
+    name: Unterirdischer Fluchtkanal
+    description: "Ein uralter Abwasserkanal aus roemischem Mauerwerk. Am Ende des Kanals schimmert schwach das blassblaue Tageslicht des Morgens."
+    exits:
+      south: zisterne
+    on_enter:
+      - msg: "Du hast den Kanal erreicht! Frische Morgenluft fuellt deine Lungen."
+      - game_end: victory
+
+items:
+  - id: fesseln
+    name: lederne Fesseln
+    keys: [fessel, fesseln, riemen, leder]
+    desc: "Zaehe Lederriemen, die an den Eisenringen des Richtblocks befestigt waren."
+    location: kerkerzelle
+
+  - id: oel_krug
+    name: Krug mit fettigem Oel
+    keys: [krug, oel, speiseoel, fett]
+    desc: "Ein kleiner Tonkrug mit altem, ranzigem Speiseoel. Der Geruch zieht die hungrigen Kerker-Ratten an."
+    location: kerkerzelle
+    verb_map:
+      use,intact:
+        - if: { compare_var: { name: fesseln_geloest, op: eq, value: 0 } }
+          then:
+            - set_var: { var: fesseln_geloest, value: 1 }
+            - msg: "Du schmierst das ranzige Fett ueber die Lederfesseln. Hunderte von Ratten stuerzen sich darauf und zernagen das Leder in Sekundenschnelle! Deine Haende sind frei!"
+          else:
+            - msg: "Deine Fesseln sind bereits geloest."
+
+  - id: kupferschluessel
+    name: verrosteter Kupferschluessel
+    keys: [schluessel, kupferschluessel]
+    desc: "Ein schwerer, gruenspaniger Schluessel mit einem sechskantigen Bart."
+    location: abgrund
+
+  - id: flutventil
+    name: eisernes Flutventil
+    keys: [ventil, rad, hebel, flutventil]
+    desc: "Ein grosses gusseisernes Rad an den Schleusenrohren der Zisterne."
+    location: zisterne
+    verb_map:
+      use,intact:
+        - if: { compare_var: { name: ventil_gedreht, op: eq, value: 0 } }
+          then:
+            - set_var: { var: ventil_gedreht, value: 1 }
+            - set_var: { var: wasserstand, value: 0 }
+            - msg: "Mit lautem Quietschen drehst du das Flutventil zu! Das einstroemende Wasser wird gestoppt und laeuft durch einen Nebensumpf ab."
+          else:
+            - msg: "Das Flutventil ist bereits fest zugedreht."
+
+  - id: geheimschloss
+    name: sechseckiges Messingschloss
+    keys: [schloss, messingschloss, mechanik]
+    desc: "Ein kunstvoll im Mauerwerk der Zisterne verborgenes Schloss."
+    location: zisterne
+    verb_map:
+      use,intact:
+        - if: { has_item: kupferschluessel }
+          then:
+            - if: { compare_var: { name: geheimtuer_offen, op: eq, value: 0 } }
+              then:
+                - set_var: { var: geheimtuer_offen, value: 1 }
+                - set_exit: { from: zisterne, dir: north, to: fluchtkanal }
+                - msg: "Klick! Der Kupferschluessel greift. Die verputzte Mauer nach Norden weicht zurueck und entbloesst einen Fluchtkanal!"
+              else:
+                - msg: "Das Schloss ist bereits aufgeschlossen."
+          else:
+            - msg: "Du benoetigst den passenden Schluessel, um dieses Schloss zu entriegeln."
+
+rules:
+  # --- Verbbehandlung fuer Warten / Rasten ---
+  - id: regel_warten
+    on: "command warten"
+    effects:
+      - msg: "Du verharrst regungslos und lauschst dem Ticken der Zeit im Kerker."
+
+  # --- Startet beim ersten Turn auch eine Countdown-Condition zur Engine-Validierung ---
+  - id: start_condition_timer
+    on: turn
+    when:
+      not: { has_flag: condition_gestartet }
+    effects:
+      - set_flag: condition_gestartet
+      - condition:
+          name: inquisitions_frist
+          turns: 12
+          hidden: true
+          tick:
+            - msg: "Das Uhrwerk der Inquisition rastet mit einem metallischen Klicken weiter."
+          end:
+            - msg: "Die Frist der Inquisition ist endgueltig abgelaufen!"
+
+  # --- Primärer Countdown: Das Pendel senkt sich pro Runde um 1 Stufe ---
+  - id: pendel_tick
+    on: turn
+    effects:
+      - add_var: { var: pendel_timer, delta: -1 }
+      - msg: "Das schwere Eisenpendel zischt durch die Luft und senkt sich unerbittlich um eine Raste tiefer!"
+      - if: { compare_var: { name: pendel_timer, op: lte, value: 0 } }
+        then:
+          - msg: "ZISCH! Die rasiermesserscharfe Pendelklinge saust durch das Holz des Richtblocks!"
+          - if: { compare_var: { name: fesseln_geloest, op: eq, value: 1 } }
+            then:
+              - msg: "Da du nicht mehr gefesselt bist, rollst du dich im letzten Wimpernschlag zur Seite!"
+            else:
+              - game_end: zerteilt
+
+  # --- Intervall 1: Jeder Zug (every: 1) - Wasserlaeuten und Tropfen ---
+  - id: tropfen_tick
+    on: turn
+    effects:
+      - add_var: { var: glocke, delta: 1 }
+
+  # --- Intervall 2: Alle 3 Zuege (cooldown: 3) - Der Inquisitions-Glockenschlag ---
+  - id: glockenschlag
+    on: turn
+    cooldown: 3
+    effects:
+      - msg: "BOMM... In der Ferne schlaegt die eiserne Glocke des Inquisitionsturms einen dumpfen Takt."
+
+  # --- Intervall 3: Alle 5 Zuege (cooldown: 5) - Mechanischer Riegel schaltet Gitter um ---
+  - id: gitter_zyklus
+    on: turn
+    cooldown: 5
+    effects:
+      - if: { compare_var: { name: schranke_offen, op: eq, value: 0 } }
+        then:
+          - set_var: { var: schranke_offen, value: 1 }
+          - set_exit: { from: wandelgang, dir: east, to: zisterne }
+          - msg: "RUMMS! Ein Gegengewicht poltert in der Mauer. Das Fallgitter nach Osten faehrt mit rasselnden Ketten nach oben!"
+        else:
+          - set_var: { var: schranke_offen, value: 0 }
+          - remove_exit: { from: wandelgang, dir: east }
+          - msg: "KLIRR-KRACH! Das schwere Fallgitter saust krachend herab und riegelt den Weg nach Osten ab!"
+
+  # --- Wasserstand steigt in der Zisterne, wenn das Ventil offen bleibt ---
+  - id: wasser_anstieg
+    on: turn
+    when:
+      all:
+        - at: player
+          room: zisterne
+        - compare_var: { name: ventil_gedreht, op: eq, value: 0 }
+        - compare:
+            lhs: turn.count
+            op: ">="
+            rhs: 6
+    effects:
+      - add_var: { var: wasserstand, delta: 1 }
+      - if: { compare_var: { name: wasserstand, op: gte, value: 5 } }
+        then:
+          - msg: "GURGELN! Die Fluten ueberfluten die Gewoelbe voellig!"
+          - game_end: ertrunken
+
+  # --- Countdown-Warnung kurz vor dem finalen Pendelschlag ---
+  - id: pendel_warnung_nah
+    on: turn
+    when:
+      all:
+        - compare_var: { name: pendel_timer, op: "<=", value: 2 }
+        - compare_var: { name: pendel_timer, op: ">", value: 0 }
+    effects:
+      - msg: "TOEDLICHE GEFAHR! Die Klinge pfeift haarscharf ueber deine Brust! Nur noch wenige Sekunden!"
+
+  # --- Fesseln hindern am Verlassen der Richtzelle ---
+  - id: block_flucht_mit_fesseln
+    on: "enter wandelgang"
+    when:
+      all:
+        - compare_var: { name: fesseln_geloest, op: eq, value: 0 }
+    effects:
+      - block:
+          msg: "Du kannst nicht fliehen! Die Lederfesseln binden deine Haende noch immer fest an den Richtblock."
+          turn: false
+
+tests:
+  - name: "warten und pendel tick"
+    input: [look, use oel, north, warten]
+    expect:
+      - "Deine Haende sind frei!"
+      - "Das schwere Eisenpendel zischt durch die Luft"
+      - "Ein modriger Steingang"

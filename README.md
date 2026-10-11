@@ -200,7 +200,9 @@ an entry in `scripts/ci.sh`, tests in `test/Tests.hs` or
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+The engine is licensed under the MIT License — see [LICENSE](LICENSE).
+
+For bundled sample adventures and third-party material (such as `examples/zork1.yaml`, which is an unofficial community port based on the open-source MIT release of Zork I provided by Microsoft/Activision, not affiliated with or endorsed by Microsoft or Infocom), please see [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for details, attribution, and licensing requirements.
 
 ## Acknowledgments
 

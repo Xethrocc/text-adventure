@@ -1,0 +1,524 @@
+# Das Spiel von Nim (Marienbad / Streichholzspiel) [PD]
+# Port Quest 4: Brett-/Kartenspiel-Adapter
+# Testet die text-adventure Engine ohne Raumwechsel:
+#   - VarMap als Brettzustand (Haufen A, B, C und Hölzer)
+#   - Zug-Alternierung (Spieler <-> Automaten-KI)
+#   - Gegner-KI mit taktischen Endspiel-Konditionen und gewichteter RandomChoice
+#   - ASCII-Brettdarstellung der Streichhölzer (| | |)
+#   - Misère-Sieg/Niederlage (wer das letzte Holz nimmt, verliert)
+#   - Save/Load des Brettzustands mitten in der Partie
+
+name: Das Spiel von Nim
+start_room: spieltisch
+
+title_art: |
+  =============================================================
+           D A S   S P I E L   V O N   N I M
+  =============================================================
+  Das antike Spiel gegen den mechanischen Automaten Maelzel-Nim.
+
+end_art:
+  victory: |
+    =============================================================
+             S I E G   U E B E R   D E N   A U T O M A T E N
+    =============================================================
+    Maelzel-Nim greift mit klappernden Messingfingern nach dem
+    letzten Streichholz auf dem Tisch. Die Federn entspannen sich,
+    die Zahnraeder stoppen. Du hast das Spiel gewonnen!
+  death: |
+    =============================================================
+             N I E D E R L A G E   I M   S A L O N
+    =============================================================
+    Kein Ausweg: Du musstest das letzte Streichholz vom Tisch
+    nehmen. Der mechanische Meister verneigt sich hoehnisch mit
+    einem metallischen Ticken.
+
+verbs:
+  - name: "zug"
+    aliases: ["ziehe", "move", "play", "nimm"]
+  - name: "status"
+    aliases: ["brett", "tisch", "board"]
+  - name: "regeln"
+    aliases: ["rules", "hilfe", "help"]
+
+variables:
+  - name: meta.runs
+    type: int
+    initial: 0
+  - name: partie_aktiv
+    type: int
+    initial: 1
+    min: 0
+    max: 1
+  - name: am_zug
+    type: int
+    initial: 1
+    min: 1
+    max: 2
+  - name: haufen_a
+    type: int
+    initial: 3
+    min: 0
+    max: 3
+  - name: haufen_b
+    type: int
+    initial: 4
+    min: 0
+    max: 4
+  - name: haufen_c
+    type: int
+    initial: 5
+    min: 0
+    max: 5
+  - name: gesamt
+    type: int
+    initial: 12
+    min: 0
+    max: 12
+  - name: zug_menge
+    type: int
+    initial: 1
+    min: 0
+    max: 10
+  - name: zuege_spieler
+    type: int
+    initial: 0
+    min: 0
+  - name: zuege_automat
+    type: int
+    initial: 0
+    min: 0
+  - name: art_a
+    type: text
+    initial: "| | |"
+  - name: art_b
+    type: text
+    initial: "| | | |"
+  - name: art_c
+    type: text
+    initial: "| | | | |"
+
+rooms:
+  - id: spieltisch
+    name: Der Messingsalon von Nim
+    desc: |
+      Ein holzgetäfelter Salon, erfüllt vom sanften Ticken präziser Uhrenwerke.
+      Vor dir thront Maelzel-Nim, der mechanische Meister des Streichholzspiels.
+
+      Auf der grünen Samtplatte liegen drei Reihen geschliffener Hölzer:
+        Haufen 1 [Links] : {art_a}  ({haufen_a})
+        Haufen 2 [Mitte] : {art_b}  ({haufen_b})
+        Haufen 3 [Rechts]: {art_c}  ({haufen_c})
+      Gesamt: {gesamt} Streichhölzer auf dem Tisch.
+
+      Befehle:
+        'zug <1|2|3> <anzahl>'  - Hölzer von einem Haufen nehmen (z. B. 'zug 1 2')
+        'status'                - Aktuelles Brett anzeigen
+        'regeln'                - Spielregeln nachlesen
+
+rules:
+  # Regeln anzeigen
+  - id: rule_regeln
+    on: "command regeln"
+    effects:
+      - text: |
+          =============================================================
+                   R E G E L N   V O N   N I M   (Marienbad)
+          =============================================================
+          1. Drei Haufen von Streichhölzern liegen auf dem Samttisch:
+             Haufen 1 (3), Haufen 2 (4), Haufen 3 (5).
+          2. In jedem Zug wählst du EINEN Haufen und nimmst mindestens
+             1 Streichholz (bis zu allen Hölzern dieses Haufens).
+          3. Befehl: 'zug <haufen> <anzahl>'  (z. B. 'zug 1 2').
+          4. Danach ist der mechanische Automat Maelzel-Nim am Zug.
+          5. MISÈRE-REGEL: Wer das ALLERLETZTE Streichholz vom Tisch
+             nehmen muss, VERLIERT die Partie!
+          =============================================================
+
+  # Status / Brett anzeigen
+  - id: rule_status
+    on: "command status"
+    effects:
+      - text: |
+          =============================================================
+                   D A S   S P I E L   V O N   N I M
+          =============================================================
+            Haufen 1 [Links] : {art_a}  ({haufen_a})
+            Haufen 2 [Mitte] : {art_b}  ({haufen_b})
+            Haufen 3 [Rechts]: {art_c}  ({haufen_c})
+          Gesamt: {gesamt} Streichhölzer auf dem Tisch.
+          Zug {zuege_spieler} (Spieler) / {zuege_automat} (Automat).
+
+  # Spieler-Zug: Haufen 1
+  - id: player_move_a
+    on: "command zug"
+    when:
+      all:
+        - compare_var: { name: partie_aktiv, op: eq, value: 1 }
+        - compare_var: { name: am_zug, op: eq, value: 1 }
+        - compare_var: { name: "cmd.count", op: gte, value: 1 }
+        - any:
+            - compare_var: { name: "cmd.arg1", op: eq, value: 1 }
+            - { var: "cmd.arg1", is: "1" }
+            - { var: "cmd.arg1", is: "links" }
+            - { var: "cmd.arg1", is: "h1" }
+            - { var: "cmd.arg1", is: "haufen1" }
+            - { var: "cmd.arg1", is: "a" }
+    effects:
+      - if: { compare_var: { name: "cmd.count", op: eq, value: 1 } }
+        then:
+          - set_var: { var: zug_menge, value: 1 }
+        else:
+          - compute_var: { var: zug_menge, expr: "cmd.arg2" }
+      - if: { compare_var: { name: haufen_a, op: eq, value: 0 } }
+        then:
+          - msg: "Ungültiger Zug! Haufen 1 ist bereits leer."
+        else:
+          - if: { compare_var: { name: zug_menge, op: lte, value: 0 } }
+            then:
+              - msg: "Du musst mindestens 1 Streichholz nehmen!"
+            else:
+              - if: { compare_var: { name: zug_menge, op: gt, var: haufen_a } }
+                then:
+                  - msg: "Ungültiger Zug! In Haufen 1 liegen nur {haufen_a} Hölzer (du wolltest {zug_menge} nehmen)."
+                else:
+                  - compute_var: { var: haufen_a, expr: "haufen_a - zug_menge" }
+                  - compute_var: { var: zuege_spieler, expr: "zuege_spieler + 1" }
+                  - msg: "Du nimmst {zug_menge} Streichhölzer von Haufen 1."
+                  - if: { compare_var: { name: haufen_a, op: eq, value: 3 } }
+                    then: [ set_var: { var: art_a, value: "| | |" } ]
+                  - if: { compare_var: { name: haufen_a, op: eq, value: 2 } }
+                    then: [ set_var: { var: art_a, value: "| |" } ]
+                  - if: { compare_var: { name: haufen_a, op: eq, value: 1 } }
+                    then: [ set_var: { var: art_a, value: "|" } ]
+                  - if: { compare_var: { name: haufen_a, op: eq, value: 0 } }
+                    then: [ set_var: { var: art_a, value: "(leer)" } ]
+                  - compute_var: { var: gesamt, expr: "haufen_a + haufen_b + haufen_c" }
+                  - if: { compare_var: { name: gesamt, op: eq, value: 0 } }
+                    then:
+                      - msg: "Du hast das letzte Streichholz genommen! Der Automat schnarrt: Du hast verloren!"
+                      - set_var: { var: partie_aktiv, value: 0 }
+                      - game_end: death
+                    else:
+                      - set_var: { var: am_zug, value: 2 }
+
+  # Spieler-Zug: Haufen 2
+  - id: player_move_b
+    on: "command zug"
+    when:
+      all:
+        - compare_var: { name: partie_aktiv, op: eq, value: 1 }
+        - compare_var: { name: am_zug, op: eq, value: 1 }
+        - compare_var: { name: "cmd.count", op: gte, value: 1 }
+        - any:
+            - compare_var: { name: "cmd.arg1", op: eq, value: 2 }
+            - { var: "cmd.arg1", is: "2" }
+            - { var: "cmd.arg1", is: "mitte" }
+            - { var: "cmd.arg1", is: "h2" }
+            - { var: "cmd.arg1", is: "haufen2" }
+            - { var: "cmd.arg1", is: "b" }
+    effects:
+      - if: { compare_var: { name: "cmd.count", op: eq, value: 1 } }
+        then:
+          - set_var: { var: zug_menge, value: 1 }
+        else:
+          - compute_var: { var: zug_menge, expr: "cmd.arg2" }
+      - if: { compare_var: { name: haufen_b, op: eq, value: 0 } }
+        then:
+          - msg: "Ungültiger Zug! Haufen 2 ist bereits leer."
+        else:
+          - if: { compare_var: { name: zug_menge, op: lte, value: 0 } }
+            then:
+              - msg: "Du musst mindestens 1 Streichholz nehmen!"
+            else:
+              - if: { compare_var: { name: zug_menge, op: gt, var: haufen_b } }
+                then:
+                  - msg: "Ungültiger Zug! In Haufen 2 liegen nur {haufen_b} Hölzer (du wolltest {zug_menge} nehmen)."
+                else:
+                  - compute_var: { var: haufen_b, expr: "haufen_b - zug_menge" }
+                  - compute_var: { var: zuege_spieler, expr: "zuege_spieler + 1" }
+                  - msg: "Du nimmst {zug_menge} Streichhölzer von Haufen 2."
+                  - if: { compare_var: { name: haufen_b, op: eq, value: 4 } }
+                    then: [ set_var: { var: art_b, value: "| | | |" } ]
+                  - if: { compare_var: { name: haufen_b, op: eq, value: 3 } }
+                    then: [ set_var: { var: art_b, value: "| | |" } ]
+                  - if: { compare_var: { name: haufen_b, op: eq, value: 2 } }
+                    then: [ set_var: { var: art_b, value: "| |" } ]
+                  - if: { compare_var: { name: haufen_b, op: eq, value: 1 } }
+                    then: [ set_var: { var: art_b, value: "|" } ]
+                  - if: { compare_var: { name: haufen_b, op: eq, value: 0 } }
+                    then: [ set_var: { var: art_b, value: "(leer)" } ]
+                  - compute_var: { var: gesamt, expr: "haufen_a + haufen_b + haufen_c" }
+                  - if: { compare_var: { name: gesamt, op: eq, value: 0 } }
+                    then:
+                      - msg: "Du hast das letzte Streichholz genommen! Der Automat schnarrt: Du hast verloren!"
+                      - set_var: { var: partie_aktiv, value: 0 }
+                      - game_end: death
+                    else:
+                      - set_var: { var: am_zug, value: 2 }
+
+  # Spieler-Zug: Haufen 3
+  - id: player_move_c
+    on: "command zug"
+    when:
+      all:
+        - compare_var: { name: partie_aktiv, op: eq, value: 1 }
+        - compare_var: { name: am_zug, op: eq, value: 1 }
+        - compare_var: { name: "cmd.count", op: gte, value: 1 }
+        - any:
+            - compare_var: { name: "cmd.arg1", op: eq, value: 3 }
+            - { var: "cmd.arg1", is: "3" }
+            - { var: "cmd.arg1", is: "rechts" }
+            - { var: "cmd.arg1", is: "h3" }
+            - { var: "cmd.arg1", is: "haufen3" }
+            - { var: "cmd.arg1", is: "c" }
+    effects:
+      - if: { compare_var: { name: "cmd.count", op: eq, value: 1 } }
+        then:
+          - set_var: { var: zug_menge, value: 1 }
+        else:
+          - compute_var: { var: zug_menge, expr: "cmd.arg2" }
+      - if: { compare_var: { name: haufen_c, op: eq, value: 0 } }
+        then:
+          - msg: "Ungültiger Zug! Haufen C ist bereits leer."
+        else:
+          - if: { compare_var: { name: zug_menge, op: lte, value: 0 } }
+            then:
+              - msg: "Du musst mindestens 1 Streichholz nehmen!"
+            else:
+              - if: { compare_var: { name: zug_menge, op: gt, var: haufen_c } }
+                then:
+                  - msg: "Ungültiger Zug! In Haufen C liegen nur {haufen_c} Hölzer (du wolltest {zug_menge} nehmen)."
+                else:
+                  - compute_var: { var: haufen_c, expr: "haufen_c - zug_menge" }
+                  - compute_var: { var: zuege_spieler, expr: "zuege_spieler + 1" }
+                  - msg: "Du nimmst {zug_menge} Streichhölzer von Haufen C."
+                  - if: { compare_var: { name: haufen_c, op: eq, value: 5 } }
+                    then: [ set_var: { var: art_c, value: "| | | | |" } ]
+                  - if: { compare_var: { name: haufen_c, op: eq, value: 4 } }
+                    then: [ set_var: { var: art_c, value: "| | | |" } ]
+                  - if: { compare_var: { name: haufen_c, op: eq, value: 3 } }
+                    then: [ set_var: { var: art_c, value: "| | |" } ]
+                  - if: { compare_var: { name: haufen_c, op: eq, value: 2 } }
+                    then: [ set_var: { var: art_c, value: "| |" } ]
+                  - if: { compare_var: { name: haufen_c, op: eq, value: 1 } }
+                    then: [ set_var: { var: art_c, value: "|" } ]
+                  - if: { compare_var: { name: haufen_c, op: eq, value: 0 } }
+                    then: [ set_var: { var: art_c, value: "(leer)" } ]
+                  - compute_var: { var: gesamt, expr: "haufen_a + haufen_b + haufen_c" }
+                  - if: { compare_var: { name: gesamt, op: eq, value: 0 } }
+                    then:
+                      - msg: "Du hast das letzte Streichholz genommen! Der Automat schnarrt: Du hast verloren!"
+                      - set_var: { var: partie_aktiv, value: 0 }
+                      - game_end: death
+                    else:
+                      - set_var: { var: am_zug, value: 2 }
+
+  # Spieler-Zug: Unbekannter Befehl / fehlende Argumente
+  - id: player_move_help
+    on: "command zug"
+    when:
+      compare_var: { name: "cmd.count", op: lt, value: 1 }
+    effects:
+      - msg: "Verwendung: zug <a|b|c> <anzahl>  (z. B. 'zug a 2' oder 'zug c 1'). Mit 'status' siehst du das Brett."
+
+  # =============================================================
+  # AUTOMATEN-KI (Triggert auf turn, wenn am_zug == 2)
+  # =============================================================
+
+  # Endspiel-Taktik 1: Nur noch Haufen A hat Hölzer
+  - id: ai_endspiel_nur_a
+    on: turn
+    when:
+      all:
+        - compare_var: { name: am_zug, op: eq, value: 2 }
+        - compare_var: { name: haufen_a, op: gt, value: 0 }
+        - compare_var: { name: haufen_b, op: eq, value: 0 }
+        - compare_var: { name: haufen_c, op: eq, value: 0 }
+    effects:
+      - if: { compare_var: { name: haufen_a, op: eq, value: 1 } }
+        then:
+          - set_var: { var: haufen_a, value: 0 }
+          - set_var: { var: art_a, value: "(leer)" }
+          - set_var: { var: gesamt, value: 0 }
+          - msg: "Maelzel-Nim muss das letzte Streichholz von Haufen A nehmen!"
+          - set_var: { var: partie_aktiv, value: 0 }
+          - game_end: victory
+        else:
+          # Lässt genau 1 Holz für den Spieler liegen!
+          - set_var: { var: haufen_a, value: 1 }
+          - set_var: { var: art_a, value: "|" }
+          - set_var: { var: gesamt, value: 1 }
+          - compute_var: { var: zuege_automat, expr: "zuege_automat + 1" }
+          - msg: "Maelzel-Nim surrt kalt: Er nimmt Hölzer von Haufen A und lässt genau 1 Holz für dich liegen!"
+          - set_var: { var: am_zug, value: 1 }
+
+  # Endspiel-Taktik 2: Nur noch Haufen B hat Hölzer
+  - id: ai_endspiel_nur_b
+    on: turn
+    when:
+      all:
+        - compare_var: { name: am_zug, op: eq, value: 2 }
+        - compare_var: { name: haufen_a, op: eq, value: 0 }
+        - compare_var: { name: haufen_b, op: gt, value: 0 }
+        - compare_var: { name: haufen_c, op: eq, value: 0 }
+    effects:
+      - if: { compare_var: { name: haufen_b, op: eq, value: 1 } }
+        then:
+          - set_var: { var: haufen_b, value: 0 }
+          - set_var: { var: art_b, value: "(leer)" }
+          - set_var: { var: gesamt, value: 0 }
+          - msg: "Maelzel-Nim muss das letzte Streichholz von Haufen B nehmen!"
+          - set_var: { var: partie_aktiv, value: 0 }
+          - game_end: victory
+        else:
+          - set_var: { var: haufen_b, value: 1 }
+          - set_var: { var: art_b, value: "|" }
+          - set_var: { var: gesamt, value: 1 }
+          - compute_var: { var: zuege_automat, expr: "zuege_automat + 1" }
+          - msg: "Maelzel-Nim surrt kalt: Er nimmt Hölzer von Haufen B und lässt genau 1 Holz für dich liegen!"
+          - set_var: { var: am_zug, value: 1 }
+
+  # Endspiel-Taktik 3: Nur noch Haufen C hat Hölzer
+  - id: ai_endspiel_nur_c
+    on: turn
+    when:
+      all:
+        - compare_var: { name: am_zug, op: eq, value: 2 }
+        - compare_var: { name: haufen_a, op: eq, value: 0 }
+        - compare_var: { name: haufen_b, op: eq, value: 0 }
+        - compare_var: { name: haufen_c, op: gt, value: 0 }
+    effects:
+      - if: { compare_var: { name: haufen_c, op: eq, value: 1 } }
+        then:
+          - set_var: { var: haufen_c, value: 0 }
+          - set_var: { var: art_c, value: "(leer)" }
+          - set_var: { var: gesamt, value: 0 }
+          - msg: "Maelzel-Nim muss das letzte Streichholz von Haufen C nehmen!"
+          - set_var: { var: partie_aktiv, value: 0 }
+          - game_end: victory
+        else:
+          - set_var: { var: haufen_c, value: 1 }
+          - set_var: { var: art_c, value: "|" }
+          - set_var: { var: gesamt, value: 1 }
+          - compute_var: { var: zuege_automat, expr: "zuege_automat + 1" }
+          - msg: "Maelzel-Nim surrt kalt: Er nimmt Hölzer von Haufen C und lässt genau 1 Holz für dich liegen!"
+          - set_var: { var: am_zug, value: 1 }
+
+  # Mittelspiel-Taktik 4: Mehrere Haufen vorhanden -> Zufallswahl über benannten RNG-Strom 'nim_ai'
+  - id: ai_mittelspiel_zug
+    on: turn
+    when:
+      all:
+        - compare_var: { name: am_zug, op: eq, value: 2 }
+        - compare_var: { name: gesamt, op: gt, value: 1 }
+        - any:
+            - all: [ compare_var: { name: haufen_a, op: gt, value: 0 }, compare_var: { name: haufen_b, op: gt, value: 0 } ]
+            - all: [ compare_var: { name: haufen_a, op: gt, value: 0 }, compare_var: { name: haufen_c, op: gt, value: 0 } ]
+            - all: [ compare_var: { name: haufen_b, op: gt, value: 0 }, compare_var: { name: haufen_c, op: gt, value: 0 } ]
+    effects:
+      - random:
+          stream: nim_ai
+          choices:
+            # Option 1: Ziehe von Haufen A (wenn möglich)
+            - - 2
+              - - if: { compare_var: { name: haufen_a, op: gt, value: 0 } }
+                  then:
+                    - compute_var: { var: haufen_a, expr: "haufen_a - 1" }
+                    - msg: "Maelzel-Nim klickt leise und nimmt 1 Streichholz von Haufen A."
+                    - if: { compare_var: { name: haufen_a, op: eq, value: 2 } }
+                      then: [ set_var: { var: art_a, value: "| |" } ]
+                    - if: { compare_var: { name: haufen_a, op: eq, value: 1 } }
+                      then: [ set_var: { var: art_a, value: "|" } ]
+                    - if: { compare_var: { name: haufen_a, op: eq, value: 0 } }
+                      then: [ set_var: { var: art_a, value: "(leer)" } ]
+                  else:
+                    # Ausweichzug von C
+                    - compute_var: { var: haufen_c, expr: "haufen_c - 1" }
+                    - msg: "Maelzel-Nim klickt leise und nimmt 1 Streichholz von Haufen C."
+                    - if: { compare_var: { name: haufen_c, op: eq, value: 4 } }
+                      then: [ set_var: { var: art_c, value: "| | | |" } ]
+                    - if: { compare_var: { name: haufen_c, op: eq, value: 3 } }
+                      then: [ set_var: { var: art_c, value: "| | |" } ]
+                    - if: { compare_var: { name: haufen_c, op: eq, value: 2 } }
+                      then: [ set_var: { var: art_c, value: "| |" } ]
+                    - if: { compare_var: { name: haufen_c, op: eq, value: 1 } }
+                      then: [ set_var: { var: art_c, value: "|" } ]
+                    - if: { compare_var: { name: haufen_c, op: eq, value: 0 } }
+                      then: [ set_var: { var: art_c, value: "(leer)" } ]
+            # Option 2: Ziehe 2 von Haufen B (wenn >= 2, sonst 1)
+            - - 3
+              - - if: { compare_var: { name: haufen_b, op: gte, value: 2 } }
+                  then:
+                    - compute_var: { var: haufen_b, expr: "haufen_b - 2" }
+                    - msg: "Maelzel-Nim greift geschickt zu und nimmt 2 Streichhölzer von Haufen B."
+                  else:
+                    - if: { compare_var: { name: haufen_b, op: eq, value: 1 } }
+                      then:
+                        - set_var: { var: haufen_b, value: 0 }
+                        - msg: "Maelzel-Nim nimmt das verbliebene Streichholz von Haufen B."
+                      else:
+                        - compute_var: { var: haufen_a, expr: "haufen_a - 1" }
+                        - msg: "Maelzel-Nim wendet sich Haufen A zu und nimmt 1 Streichholz."
+                - if: { compare_var: { name: haufen_b, op: eq, value: 3 } }
+                  then: [ set_var: { var: art_b, value: "| | |" } ]
+                - if: { compare_var: { name: haufen_b, op: eq, value: 2 } }
+                  then: [ set_var: { var: art_b, value: "| |" } ]
+                - if: { compare_var: { name: haufen_b, op: eq, value: 1 } }
+                  then: [ set_var: { var: art_b, value: "|" } ]
+                - if: { compare_var: { name: haufen_b, op: eq, value: 0 } }
+                  then: [ set_var: { var: art_b, value: "(leer)" } ]
+                - if: { compare_var: { name: haufen_a, op: eq, value: 2 } }
+                  then: [ set_var: { var: art_a, value: "| |" } ]
+                - if: { compare_var: { name: haufen_a, op: eq, value: 1 } }
+                  then: [ set_var: { var: art_a, value: "|" } ]
+                - if: { compare_var: { name: haufen_a, op: eq, value: 0 } }
+                  then: [ set_var: { var: art_a, value: "(leer)" } ]
+            # Option 3: Ziehe 2 von Haufen C (wenn >= 2, sonst 1)
+            - - 3
+              - - if: { compare_var: { name: haufen_c, op: gte, value: 2 } }
+                  then:
+                    - compute_var: { var: haufen_c, expr: "haufen_c - 2" }
+                    - msg: "Maelzel-Nim surrt metallisch und nimmt 2 Streichhölzer von Haufen C."
+                  else:
+                    - if: { compare_var: { name: haufen_c, op: eq, value: 1 } }
+                      then:
+                        - set_var: { var: haufen_c, value: 0 }
+                        - msg: "Maelzel-Nim räumt das letzte Holz von Haufen C ab."
+                      else:
+                        - compute_var: { var: haufen_b, expr: "haufen_b - 1" }
+                        - msg: "Maelzel-Nim nimmt 1 Streichholz von Haufen B."
+                - if: { compare_var: { name: haufen_c, op: eq, value: 4 } }
+                  then: [ set_var: { var: art_c, value: "| | | |" } ]
+                - if: { compare_var: { name: haufen_c, op: eq, value: 3 } }
+                  then: [ set_var: { var: art_c, value: "| | |" } ]
+                - if: { compare_var: { name: haufen_c, op: eq, value: 2 } }
+                  then: [ set_var: { var: art_c, value: "| |" } ]
+                - if: { compare_var: { name: haufen_c, op: eq, value: 1 } }
+                  then: [ set_var: { var: art_c, value: "|" } ]
+                - if: { compare_var: { name: haufen_c, op: eq, value: 0 } }
+                  then: [ set_var: { var: art_c, value: "(leer)" } ]
+                - if: { compare_var: { name: haufen_b, op: eq, value: 3 } }
+                  then: [ set_var: { var: art_b, value: "| | |" } ]
+                - if: { compare_var: { name: haufen_b, op: eq, value: 2 } }
+                  then: [ set_var: { var: art_b, value: "| |" } ]
+                - if: { compare_var: { name: haufen_b, op: eq, value: 1 } }
+                  then: [ set_var: { var: art_b, value: "|" } ]
+                - if: { compare_var: { name: haufen_b, op: eq, value: 0 } }
+                  then: [ set_var: { var: art_b, value: "(leer)" } ]
+      - compute_var: { var: gesamt, expr: "haufen_a + haufen_b + haufen_c" }
+      - compute_var: { var: zuege_automat, expr: "zuege_automat + 1" }
+      - text: |
+          -------------------------------------------------------------
+            [A] {art_a}  ({haufen_a})
+            [B] {art_b}  ({haufen_b})
+            [C] {art_c}  ({haufen_c})
+          Gesamt: {gesamt} Streichhölzer. Du bist am Zug.
+      - set_var: { var: am_zug, value: 1 }
+
+tests:
+  - name: "status und fehlerhafter zug"
+    input: [status, zug 1 9]
+    expect:
+      - "Haufen 1 [Links] : | | |  (3)"
+      - "Ungültiger Zug! In Haufen 1 liegen nur 3 Hölzer"

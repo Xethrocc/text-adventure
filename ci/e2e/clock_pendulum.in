@@ -1,0 +1,10 @@
+use oel
+north
+west
+take schluessel
+east
+east
+use ventil
+use schloss
+north
+quit

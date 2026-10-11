@@ -1,0 +1,13 @@
+use oel
+north
+west
+take schluessel
+east
+east
+warten
+warten
+warten
+warten
+warten
+warten
+quit

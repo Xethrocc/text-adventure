@@ -1,0 +1,559 @@
+# Der leere Stuhl — eine choice-driven Visual Novel
+# Port Quest 1: Testet Dialogbäume (konditionale Zweige, visible_when, dialog_end),
+# Factions & Standing (Vertrauen, standing at_least/at_most), Werte-Verdrängung
+# (Mut, Neugier, Vertrauen), Quests als Enden-Gatter, Tag-Zyklen und multiple Enden.
+
+name: Der leere Stuhl
+start_room: home
+journal: notes
+
+title_art: |
+  ####   ####  ####  #####     ###   #####  ####
+  #   #  #     #     #     #  #   #  #     #
+  ####   ####  ####  #####   #     # #     #
+  #   #  #     #     #     #  ####### #####  ####
+  #   #  #     #     #     #  #     # #      #
+  #   #  ####  ####  #####   #     # #      ####
+
+clips:
+  - id: title-screen
+    fps: 2
+    frames:
+      - |
+        . . .
+        . . .
+      - |
+        . D E R .
+        . L E E R E .
+          S T U H L
+      - |
+        D E R   L E E R E
+        S T U H L
+
+end_art:
+  victory: |
+    *** DIE WAHRHEIT ***
+    Du hast den Mut aufgebracht und das Rätsel gelöst. Alex musste
+    untertauchen, aber eure Freundschaft hat überlebt.
+  quiet_secret: |
+    *** DAS GEHEIMNIS SCHLÄFT ***
+    Du weißt, was geschehen ist, aber du schweigst. Manch ein Geheimnis
+    ist zu schwer für das Tageslicht.
+  blessed_ignorance: |
+    *** RUHEN LASSEN ***
+    Du hast nicht weiter gebohrt. Alex' Spuren verwehen im Wind des Parks.
+    Du kehrst in deinen Alltag zurück.
+  bitter_flight: |
+    *** ZERBROCHENES VERTRAUEN ***
+    Deine Zweifel und deine Anschuldigungen haben alles zerstört.
+    Niemand traut dir mehr, und Alex bleibt für immer fort.
+  death: |
+    *** DIE SPUR IST KALT ***
+    Die Tage vergingen ungenutzt. Als du endlich handeln wolltest,
+    waren alle Zeugen verstummt und alle Spuren verwischt.
+  reckless_ruin: |
+    *** BLINDER STURM ***
+    Reiner Übermut ohne Verstand. Du hast die Falschen beschuldigt
+    und wurdest aus der Stadt gejagt.
+
+factions:
+  - id: vertrauen
+    name: Vertrauen der Stadt
+    initial: 10
+    levels:
+      - {at: 20, name: trusted}
+      - {at: 5,  name: skeptical}
+
+variables:
+  - name: mut
+    type: int
+    initial: 1
+    min: 0
+    max: 5
+  - name: neugier
+    type: int
+    initial: 2
+    min: 0
+    max: 5
+  - name: gewissheit
+    type: int
+    initial: 0
+    min: 0
+    max: 5
+  - name: tag
+    type: int
+    initial: 1
+    min: 1
+    max: 5
+  - name: score
+    type: int
+    initial: 0
+    max: 100
+    score_rankings:
+      - {at: 0, title: "Zweifler"}
+      - {at: 30, title: "Spurensucher"}
+      - {at: 60, title: "Ermittler"}
+
+rooms:
+  - id: home
+    name: Deine Wohnung
+    desc: "Deine Wohnung ist so, wie du sie verlassen hast. Staub liegt auf
+      den Möbeln, aber es riecht noch nach Alex' vertrautem Parfüm. Auf dem Tisch liegt
+      ein brauner Umschlag."
+    exits:
+      south: {to: cafe}
+      east: {to: study}
+    ascii:
+      frames:
+        - |
+          |~|  ~
+          | | ~ |
+        - |
+          | | ~ |
+          |~|  ~
+      every: 2
+      ambient:
+        fps: 3
+        frames:
+          - |
+            ~  ~  ~  ~
+             ~  ~  ~
+          - |
+            ~  ~  ~
+             ~  ~  ~  ~
+    intro: title-screen
+
+  - id: cafe
+    name: Café 'Le Temps'
+    desc: "Das Café ist warm und riecht nach frisch gerösteten Bohnen. Am Fenster
+      steht Alex' ehemaliger Stammplatz."
+    exits:
+      north: {to: home}
+      west: {to: park}
+      east: {to: alley}
+    ascii:
+      frames:
+        - |
+          (  _  ) ~
+          ( \/ )
+          (  _  )
+        - |
+          (  _  )
+          ( \/ )
+          (  _  ) ~
+      every: 3
+      ambient:
+        fps: 4
+        frames:
+          - |
+            ~  ~  ~
+             ~  ~
+          - |
+            ~  ~
+             ~  ~  ~
+
+  - id: park
+    name: Stadtpark
+    desc: "Alte Kastanien wiegen sich im Herbstwind. Auf einer Bank sitzt Frau Greta
+      und füttert die Tauben."
+    exits:
+      east: {to: cafe}
+    ascii:
+      frames:
+        - |
+          /|\  /~\
+          / | \
+          \|/
+        - |
+          /~|\ /~\
+          / | \
+          \|/
+      every: 2
+      ambient:
+        fps: 2
+        frames:
+          - |
+            /~\  ~  /~\
+            / | \
+            \|/
+          - |
+            /|\  ~ /|\
+            / | \
+            \|/
+
+  - id: alley
+    name: Schattige Gasse
+    desc: "Hinter dem Café verengen sich die Häuserzeilen. An einer feuchten Mauer
+      lehnt Jonas im Halbschatten."
+    exits:
+      west: {to: cafe}
+    ascii:
+      frames:
+        - |
+          | |  .
+          | | : :
+          | |  .
+        - |
+          | | : :
+          | |  .
+          | | : :
+      every: 3
+
+  - id: study
+    name: Kammer des Nachdenkens
+    desc: "Ein stiller Raum mit Blick auf die Dächer. Ein einfacher Stuhl steht
+      vor dem Schreibtisch."
+    exits:
+      west: {to: home}
+    ascii:
+      frames:
+        - |
+          _______
+          |_______|
+          \     /
+           \   /
+            \ /
+        - |
+          _______
+          |_______|
+          \   /
+           \ /
+            V
+      every: 2
+      ambient:
+        fps: 2
+        frames:
+          - |
+            ~  ~  ~  ~
+             ~  ~
+          - |
+            ~  ~
+             ~  ~  ~
+
+items:
+  - id: letter
+    name: brauner Briefumschlag
+    desc: "Ein versiegelter brauner Umschlag. Auf der Vorderseite steht deine Adresse
+      in Alex' schwungvoller Handschrift."
+    keys: [letter, brief, post, umschlag]
+    location: home
+    on_take:
+      - add_var: {var: score, delta: 10}
+      - learn: alex_brief
+      - start_quest: alex_suche
+      - narrative:
+          - "Du brichst das Siegel des Umschlags. Ein handgeschriebener Zettel fällt heraus:"
+          - "Alex: 'Wenn du das liest, bin ich nicht mehr hier. Glaube nicht den Gerüchten im Café. Und hüte dich vor Jonas in der Gasse. Finde heraus, wer mich verraten hat.'"
+          - "Ein kalter Schauer läuft dir über den Rücken."
+      - condition:
+          name: spur_cold
+          turns: 35
+          tick:
+            - msg: "Die Uhr an der Wand tickt unerbittlich. Die Tage vergehen."
+          end:
+            - msg: "Zu viel Zeit ist verstrichen. Die Spuren sind endgültig verweht."
+            - game_end: death
+
+facts:
+  - id: alex_brief
+    keys: [brief, alex, letter]
+    text: "Brief von Alex: 'Glaube nicht den Gerüchten im Café. Hüte dich vor Jonas in der Gasse.'"
+    source: "brauner Umschlag"
+    tag: brief
+
+  - id: maria_zeuge
+    keys: [maria, koffer, flucht]
+    text: "Maria sah Alex an jenem Dienstag mit einem gepackten Koffer das Café verlassen."
+    source: "Maria (Barista)"
+    tag: zeuge
+
+  - id: greta_warnung
+    keys: [greta, schatten, beobachter]
+    text: "Frau Greta sah fremde Männer, die Alex' Wohnung vom Park aus beobachtet haben."
+    source: "Frau Greta"
+    tag: zeuge
+
+  - id: jonas_drohung
+    keys: [jonas, schulden, fluchtgrund]
+    text: "Jonas verlangte Geld von Alex und drohte ihm mit der Stadtgarde."
+    source: "Jonas (Schattengestalt)"
+    tag: zeuge
+
+quests:
+  - id: alex_suche
+    name: Alex' Spur
+    desc: Befrage die Bewohner der Stadt und triff am Stuhl deine Entscheidung.
+    stages:
+      - id: befragen
+        desc: Sprich mit Maria, Greta und Jonas über Alex' Verschwinden.
+      - id: entscheiden
+        desc: Kehre in die Kammer des Nachdenkens zurück und entscheide über Alex' Schicksal.
+    reward:
+      - msg: "Du hast alle Puzzlestücke zusammengetragen."
+
+npcs:
+  - id: barista
+    name: Maria (Barista)
+    desc: "Die Barista des 'Le Temps'. Ihre Hände arbeiten routiniert an der Espressomaschine."
+    keys: [maria, barista, wirtin]
+    location: cafe
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "Willkommen zurück. Wie kann ich dir helfen?"
+            choices:
+              - text: "Erzähl mir, was am Tag von Alex' Verschwinden passiert ist."
+                next: alex_story
+                outcomes:
+                  - learn: maria_zeuge
+                  - add_var: {var: gewissheit, delta: 1}
+                  - add_var: {var: neugier, delta: 1}
+                  - add_var: {var: mut, delta: -1}
+                  - add_var: {var: score, delta: 15}
+              - text: "Ich vertraue dir, Maria. Weißt du, wohin er wollte?"
+                next: alex_destination
+                visible_when: {standing: {faction: vertrauen, at_least: 10}}
+                outcomes:
+                  - standing: {faction: vertrauen, add: 5}
+                  - add_var: {var: mut, delta: 1}
+                  - add_var: {var: gewissheit, delta: 1}
+              - text: "Nur einen Kaffee, danke."
+                outcomes:
+                  - dialog_end: true
+          alex_story:
+            text: "Er wirkte gehetzt. Er hatte einen schwarzen Koffer dabei und schaute ständig zur Tür."
+            choices:
+              - text: "Hat er mit jemandem gesprochen?"
+                next: alex_talk
+                outcomes:
+                  - add_var: {var: gewissheit, delta: 1}
+              - text: "Danke für die Auskunft."
+                outcomes:
+                  - dialog_end: true
+          alex_talk:
+            text: "Nur kurz mit Jonas aus der Gasse. Danach war er wie verwandelt."
+            choices:
+              - text: "Verstehe. Danke, Maria."
+                outcomes:
+                  - dialog_end: true
+          alex_destination:
+            text: "Weil du es bist: Er murmelte etwas vom alten Hafenbahnhof im Norden."
+            choices:
+              - text: "Das hilft mir sehr weiter!"
+                outcomes:
+                  - dialog_end: true
+
+  - id: neighbor
+    name: Frau Greta (Nachbarin)
+    desc: "Eine ältere Dame mit aufmerksamem Blick. Sie streut Taubenfutter aus."
+    keys: [greta, nachbarin, dame]
+    location: park
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "Guten Tag, mein Kind. Suchst du auch nach Ruhe im Park?"
+            choices:
+              - text: "Haben Sie in letzter Zeit etwas Verdächtiges bemerkt, Frau Greta?"
+                next: greta_seen
+                outcomes:
+                  - learn: greta_warnung
+                  - add_var: {var: gewissheit, delta: 1}
+                  - add_var: {var: mut, delta: 1}
+                  - add_var: {var: neugier, delta: -1}
+                  - add_var: {var: score, delta: 15}
+              - text: "Glauben Sie den bösen Gerüchten über Alex?"
+                next: greta_rumors
+                outcomes:
+                  - standing: {faction: vertrauen, add: -5}
+                  - add_var: {var: neugier, delta: 1}
+              - text: "Einen schönen Tag noch, Frau Greta."
+                outcomes:
+                  - dialog_end: true
+          greta_seen:
+            text: "Männer in dunklen Mänteln lungerten um euer Haus herum. Alex war in Gefahr!"
+            choices:
+              - text: "Wissen Sie, wer diese Männer waren?"
+                next: greta_men
+                outcomes:
+                  - add_var: {var: gewissheit, delta: 1}
+              - text: "Passen Sie gut auf sich auf."
+                outcomes:
+                  - dialog_end: true
+          greta_men:
+            text: "Sie trugen Abzeichen der Stadtwache. Aber sie benahmen sich wie Schläger."
+            choices:
+              - text: "Danke, das ist ein wichtiger Hinweis."
+                outcomes:
+                  - dialog_end: true
+          greta_rumors:
+            text: "Die Leute reden viel Schlechtes. Doch wer keinen Glauben an Freunde hat, steht bald ganz alleine da."
+            choices:
+              - text: "Sie haben wohl recht."
+                outcomes:
+                  - dialog_end: true
+
+  - id: informant
+    name: Jonas (Schattengestalt)
+    desc: "Ein hagerer Mann mit zerschlissenem Kragen und nervösen Augen."
+    keys: [jonas, schatten, mann, informant]
+    location: alley
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "Was willst du hier? Schnüffler haben in dieser Gasse nichts verloren."
+            choices:
+              - text: "Ich weiß, dass du Alex bedroht hast. Rede!"
+                next: jonas_confront
+                outcomes:
+                  - learn: jonas_drohung
+                  - add_var: {var: mut, delta: 2}
+                  - add_var: {var: neugier, delta: -1}
+                  - standing: {faction: vertrauen, add: -5}
+                  - add_var: {var: gewissheit, delta: 1}
+                  - add_var: {var: score, delta: 15}
+              - text: "Ich habe Gold. Was weißt du über Alex?"
+                next: jonas_bribe
+                outcomes:
+                  - add_var: {var: gewissheit, delta: 1}
+                  - add_var: {var: neugier, delta: 1}
+                  - add_var: {var: mut, delta: -1}
+              - text: "Schon gut, ich gehe wieder."
+                outcomes:
+                  - dialog_end: true
+          jonas_confront:
+            text: "Immer langsam! Er schuldete mächtigen Leuten Gefallen. Ich habe ihn nur gewarnt, dass sie ihn holen kommen!"
+            choices:
+              - text: "Wer will ihn holen?"
+                next: jonas_who
+                outcomes:
+                  - add_var: {var: gewissheit, delta: 1}
+              - text: "Verzieh dich, Jonas."
+                outcomes:
+                  - dialog_end: true
+          jonas_bribe:
+            text: "Gold spricht eine deutliche Sprache. Alex ist nach Norden geflohen, bevor die Gläubiger zugriffen."
+            choices:
+              - text: "Mehr wollte ich nicht wissen."
+                outcomes:
+                  - dialog_end: true
+          jonas_who:
+            text: "Leute aus dem Syndikat. Wenn du dich einmischst, bist du als Nächster dran!"
+            choices:
+              - text: "Ich habe keine Angst."
+                outcomes:
+                  - dialog_end: true
+
+  - id: memory
+    name: Alex' Stuhl
+    desc: "Ein einfacher Holzstuhl am Schreibtisch. Hier wurden einst gemeinsame Pläne geschmiedet."
+    keys: [stuhl, gedenken, platz]
+    location: study
+    ascii:
+      frames:
+        - |
+          _______
+          |_______|
+          \     /
+           \   /
+            \ /
+        - |
+          _______
+          |_______|
+          \   /
+           \ /
+            V
+      every: 2
+      ambient:
+        fps: 2
+        frames:
+          - |
+            ~  ~  ~  ~
+             ~  ~
+          - |
+            ~  ~
+             ~  ~  ~
+    dialogue:
+      alive:
+        entry: decision
+        nodes:
+          decision:
+            text: "Du nimmst auf dem Stuhl Platz. Der geöffnete Brief und all die gesammelten Hinweise liegen vor dir. Wie entscheidest du dich?"
+            choices:
+              # Ende 1: VICTORY - Vollständige Wahrheit & Mut & Vertrauen
+              - text: "Ich kenne die ganze Wahrheit und reise Alex nach, um ihm beizustehen!"
+                visible_when:
+                  all:
+                    - compare_var: {name: gewissheit, op: gte, value: 4}
+                    - compare_var: {name: mut, op: gte, value: 2}
+                    - standing: {faction: vertrauen, at_least: 10}
+                outcomes:
+                  - complete_quest: alex_suche
+                  - add_var: {var: score, delta: 40}
+                  - msg: "Mit festem Entschluss brichst du nach Norden auf."
+                  - game_end: victory
+
+              # Ende 2: QUIET_SECRET - Viel Wissen, aber wenig Mut / behütetes Geheimnis
+              - text: "Ich behalte das Geheimnis für mich. Die Verfolger sollen glauben, Alex sei tot."
+                visible_when:
+                  all:
+                    - compare_var: {name: gewissheit, op: gte, value: 3}
+                    - compare_var: {name: mut, op: lt, value: 2}
+                outcomes:
+                  - complete_quest: alex_suche
+                  - add_var: {var: score, delta: 25}
+                  - msg: "Du verbrennst die Notizen in der Kaminfeuerung."
+                  - game_end: quiet_secret
+
+              # Ende 3: BLESSED_IGNORANCE - Wenig Wissen / Ruhen lassen
+              - text: "Ich lasse die Vergangenheit ruhen und stelle keine weiteren Fragen mehr."
+                visible_when:
+                  compare_var: {name: gewissheit, op: lt, value: 2}
+                outcomes:
+                  - complete_quest: alex_suche
+                  - add_var: {var: score, delta: 10}
+                  - msg: "Du schließt das Fenster und kehrst in deinen Alltag zurück."
+                  - game_end: blessed_ignorance
+
+              # Ende 4: BITTER_FLIGHT - Zerbrochenes Vertrauen
+              - text: "Ich wende mich von dieser Stadt ab. Niemandem hier ist zu trauen."
+                visible_when:
+                  standing: {faction: vertrauen, at_most: 5}
+                outcomes:
+                  - complete_quest: alex_suche
+                  - msg: "Einsam und verbittert packst du deine Sachen."
+                  - game_end: bitter_flight
+
+              # Ende 5: RECKLESS_RUIN - Zu viel Mut, keine Gewissheit (Stürmer & Dränger)
+              - text: "Ich stürme zur Stadtwache und mache einen Riesenaufruhr!"
+                visible_when:
+                  all:
+                    - compare_var: {name: mut, op: gte, value: 3}
+                    - compare_var: {name: gewissheit, op: lte, value: 2}
+                outcomes:
+                  - complete_quest: alex_suche
+                  - msg: "Ohne Beweise lacht man dich aus und sperrt dich ein."
+                  - game_end: reckless_ruin
+
+              # Standard-Abbruch
+              - text: "Ich brauche noch einen Moment zum Nachdenken."
+                outcomes:
+                  - dialog_end: true
+
+rules:
+  # Regel: Nach 15 Zügen wechselt der Tag (Simuliert Zyklus/Zeitschritt)
+  - id: tag_wechsel
+    on: turn
+    when:
+      all:
+        - compare_var: {name: tag, op: eq, value: 1}
+        - compare_var: {name: "turn.count", op: gte, value: 15}
+    once: true
+    effects:
+      - add_var: {var: tag, delta: 1}
+      - msg: "Die Dämmerung bricht herein. Ein neuer Tag bricht an."

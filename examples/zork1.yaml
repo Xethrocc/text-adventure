@@ -5254,8 +5254,11 @@ rules:
 
 # --- Stufe D: Dieb wandert (Original: I-THIEF "Move to next room, and hack",
 #     1actions.zil:3890 - er zieht durch alle begehbaren, nicht-geheiligten Raeume) ---
-# Abweichung: der Original-Rundkurs laeuft ueber die ganze Raumliste; hier zieht eine
-# random:-Auswahl den Raum. move_npc braucht ein literales Ziel (Befunde OPEN-11).
+# Abweichung: statt Rundkurs eine gestaffelte Verfolgung (step_toward/step_away):
+# der Dieb bleibt dem Spieler auf den Fersen (7/10 Richtung Spieler), zieht sich
+# gelegentlich zurueck (1/10) oder lauert (2/10). Auf Distanz 0 loert er im Raum
+# und verlaesst ihn bald wieder (5/10 Abgang), wie der Original-Raeuber zwischen
+# seinen Einbruechen.
 - id: thief-wanders
   on: turn
   when:
@@ -5266,81 +5269,38 @@ rules:
     - not:
         has_flag: thief-fighting
   effects:
-  - random:
-      stream: thief
-      choices:
-      - - 1
-        - - move_npc: thief
-            to: round-room
-      - - 1
-        - - move_npc: thief
-            to: troll-room
-      - - 1
-        - - move_npc: thief
-            to: cellar
-      - - 1
-        - - move_npc: thief
-            to: living-room
-      - - 1
-        - - move_npc: thief
-            to: kitchen
-      - - 1
-        - - move_npc: thief
-            to: attic
-      - - 1
-        - - move_npc: thief
-            to: studio
-      - - 1
-        - - move_npc: thief
-            to: gallery
-      - - 1
-        - - move_npc: thief
-            to: machine-room
-      - - 1
-        - - move_npc: thief
-            to: loud-room
-      - - 1
-        - - move_npc: thief
-            to: dam-room
-      - - 1
-        - - move_npc: thief
-            to: maintenance-room
-      - - 1
-        - - move_npc: thief
-            to: reservoir-south
-      - - 1
-        - - move_npc: thief
-            to: mirror-room-2
-      - - 1
-        - - move_npc: thief
-            to: cold-passage
-      - - 1
-        - - move_npc: thief
-            to: ew-passage
-      - - 1
-        - - move_npc: thief
-            to: deep-canyon
-      - - 1
-        - - move_npc: thief
-            to: damp-cave
-      - - 1
-        - - move_npc: thief
-            to: chasm-room
-      - - 1
-        - - move_npc: thief
-            to: engravings-cave
-      - - 1
-        - - move_npc: thief
-            to: egypt-room
-      - - 1
-        - - move_npc: thief
-            to: torch-room
-      - - 1
-        - - move_npc: thief
-            to: timber-room
-      - - 1
-        - - move_npc: thief
-            to: lower-shaft
+  - compute_var:
+      var: thief_dist
+      expr: distance.thief.player
+  - if:
+      compare_var:
+        name: thief_dist
+        op: gt
+        value: 0
+    then:
+    - random:
+        stream: thief
+        choices:
+        - - 7
+          - - step_toward: [thief, player]
+        - - 1
+          - - step_away_from: [thief, player]
+        - - 2
+          - - msg: 'You hear the soft scrape of footsteps somewhere in the dark.'
+  - if:
+      compare_var:
+        name: thief_dist
+        op: eq
+        value: 0
+    then:
+    - random:
+        stream: thief
+        choices:
+        - - 5
+          - - step_away_from: [thief, player]
+        - - 5
+          - - msg: ''
+
 # Stehlen: der Dieb räumt dem Spieler die Schätze ab (Original: ROB/THIEF-VS-ADVENTURER).
 - id: thief-steals
   on: turn
@@ -5351,6 +5311,10 @@ rules:
         is: dead
     - not:
         has_flag: thief-fighting
+    - compare_var:
+        name: thief_dist
+        op: eq
+        value: 0
     - actor_has_tag:
         actor: player
         tag: schatz

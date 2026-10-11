@@ -1,0 +1,197 @@
+# Die Manufaktur am Fluss (Idle / Incremental) [PD]
+# Port Quest 5: Testet autonome Prozesse der text-adventure Engine:
+#   - `turn`-Trigger ohne eigene Spieleraktion (Auto-Produktion pro 'warten')
+#   - Ressourcen-Pipeline Holz -> Stein -> Gold (Gebäude "fressen" Vorstufen)
+#   - Dynamische Preise (compute_var + compare_var gegen Variable)
+#   - Meta-Progression (meta.prestige) mit Aufstieg (Reset) und Multiplikator
+
+name: Die Manufaktur am Fluss
+start_room: kontor
+
+title_art: |
+  =============================================================
+        D I E   M A N U F A K T U R   A M   F L U S S
+  =============================================================
+  Warte, baue, steige auf. Die Maschinen arbeiten fuer dich.
+
+end_art:
+  victory: |
+    =============================================================
+          D I E   M A N U F A K T U R   G E H O E R T   D I R
+    =============================================================
+    Zwei Aufstiege liegen hinter dir. Die Raeder drehen sich von
+    allein, das Gold fliesst - der Fluss gehoert nun dir.
+
+verbs:
+  - name: "warten"
+    aliases: ["wait", "weiter", "tick"]
+  - name: "kaufe"
+    aliases: ["buy", "bau"]
+  - name: "status"
+    aliases: ["bilanz", "lager"]
+  - name: "aufstieg"
+    aliases: ["prestige"]
+
+variables:
+  - name: meta.prestige
+    type: int
+    initial: 0
+    min: 0
+  - name: holz
+    type: int
+    initial: 0
+    min: 0
+  - name: stein
+    type: int
+    initial: 0
+    min: 0
+  - name: gold
+    type: int
+    initial: 0
+    min: 0
+  - name: saegewerke
+    type: int
+    initial: 0
+    min: 0
+  - name: steinbrueche
+    type: int
+    initial: 0
+    min: 0
+  - name: muenzpressen
+    type: int
+    initial: 0
+    min: 0
+  - name: mult
+    type: int
+    initial: 1
+    min: 1
+  - name: kosten
+    type: int
+    initial: 0
+    min: 0
+
+rooms:
+  - id: kontor
+    name: Das Kontor
+    desc: |
+      Ein Schreibtisch am Fluss. Hier laufen alle Faeden zusammen.
+      Befehle: 'warten' (ein Tick), 'kaufe <saege|bruch|presse>',
+      'status', 'aufstieg' (ab 100 Gold).
+    exits: {}
+
+rules:
+  - id: rule_status
+    on: "command status"
+    effects:
+      - text: |
+          ------------------------------------------------------------
+          Holz {holz} | Stein {stein} | Gold {gold}   (Multiplikator x{mult})
+          Saegewerke {saegewerke} | Steinbrueche {steinbrueche} | Muenzpressen {muenzpressen}
+          Prestige: {meta.prestige}
+          ------------------------------------------------------------
+
+  - id: rule_warten
+    on: "command warten"
+    effects:
+      - msg: "Die Raeder drehen sich ..."
+
+  - id: kaufe_saege
+    on: "command kaufe"
+    when:
+      var: "cmd.arg1"
+      is: "saege"
+    effects:
+      - compute_var: { var: kosten, expr: "10 + saegewerke * 5" }
+      - if: { compare_var: { name: holz, op: gte, var: kosten } }
+        then:
+          - compute_var: { var: holz, expr: "holz - kosten" }
+          - compute_var: { var: saegewerke, expr: "saegewerke + 1" }
+          - msg: "Saegewerk gebaut ({kosten} Holz)."
+        else:
+          - msg: "Zu wenig Holz: ein Saegewerk kostet {kosten} Holz."
+
+  - id: kaufe_bruch
+    on: "command kaufe"
+    when:
+      var: "cmd.arg1"
+      is: "bruch"
+    effects:
+      - compute_var: { var: kosten, expr: "20 + steinbrueche * 10" }
+      - if: { compare_var: { name: holz, op: gte, var: kosten } }
+        then:
+          - compute_var: { var: holz, expr: "holz - kosten" }
+          - compute_var: { var: steinbrueche, expr: "steinbrueche + 1" }
+          - msg: "Steinbruch eroeffnet ({kosten} Holz)."
+        else:
+          - msg: "Zu wenig Holz: ein Steinbruch kostet {kosten} Holz."
+
+  - id: kaufe_presse
+    on: "command kaufe"
+    when:
+      var: "cmd.arg1"
+      is: "presse"
+    effects:
+      - compute_var: { var: kosten, expr: "15 + muenzpressen * 10" }
+      - if: { compare_var: { name: stein, op: gte, var: kosten } }
+        then:
+          - compute_var: { var: stein, expr: "stein - kosten" }
+          - compute_var: { var: muenzpressen, expr: "muenzpressen + 1" }
+          - msg: "Muenzpresse aufgestellt ({kosten} Stein)."
+        else:
+          - msg: "Zu wenig Stein: eine Muenzpresse kostet {kosten} Stein."
+
+  - id: aufstieg
+    on: "command aufstieg"
+    effects:
+      - if: { compare_var: { name: gold, op: gte, value: 100 } }
+        then:
+          - add_var: { var: meta.prestige, delta: 1 }
+          - set_var: { var: holz, value: 0 }
+          - set_var: { var: stein, value: 0 }
+          - set_var: { var: gold, value: 0 }
+          - set_var: { var: saegewerke, value: 0 }
+          - set_var: { var: steinbrueche, value: 0 }
+          - set_var: { var: muenzpressen, value: 0 }
+          - compute_var: { var: mult, expr: "1 + meta.prestige" }
+          - msg: "AUFSTIEG! Alles beginnt von vorn - aber dauerhaft x{mult}."
+        else:
+          - msg: "Dafuer brauchst du mindestens 100 Gold."
+
+  - id: sieg
+    on: turn
+    when:
+      compare_var: { name: meta.prestige, op: gte, value: 2 }
+    effects:
+      - game_end: victory
+
+  - id: prod_holz
+    on: turn
+    effects:
+      - compute_var: { var: holz, expr: "holz + (1 + saegewerke * 2) * mult" }
+
+  - id: prod_stein
+    on: turn
+    when:
+      all:
+        - compare_var: { name: steinbrueche, op: gt, value: 0 }
+        - compare_var: { name: holz, op: gte, var: steinbrueche }
+    effects:
+      - compute_var: { var: holz, expr: "holz - steinbrueche" }
+      - compute_var: { var: stein, expr: "stein + steinbrueche * 2 * mult" }
+
+  - id: prod_gold
+    on: turn
+    when:
+      all:
+        - compare_var: { name: muenzpressen, op: gt, value: 0 }
+        - compare_var: { name: stein, op: gte, var: muenzpressen }
+    effects:
+      - compute_var: { var: stein, expr: "stein - muenzpressen" }
+      - compute_var: { var: gold, expr: "gold + muenzpressen * 3 * mult" }
+
+tests:
+  - name: "auto-produktion und zu teurer kauf"
+    input: [warten, kaufe presse, status]
+    expect:
+      - "Zu wenig Stein: eine Muenzpresse kostet 15 Stein."
+      - "Holz 2"

@@ -1,0 +1,294 @@
+# Die Katakomben von Morvath (Roguelike / Dungeon Crawler)
+# Port Quest 3: Testet Roguelike-Mechaniken der text-adventure Engine:
+#   - Classic Combat Profil mit Attack/Defense/HP & Party-Begleiter (Knappe Alwin)
+#   - Dynamisches Dungeon-Gitter über 'generate_room' (Level 1 -> Level 2 -> Level 3 Abstieg)
+#   - Patrouillen-KI (Hostile Patrol 'kobold_spaeher') auf Rundkurs
+#   - Hinterhalt / Encounter-Tabellen mit Zufallsereignissen
+#   - Quests als Boss-Schlacht mit Belohnung ('bezwinger_des_abyss')
+#   - Loot-Kaskaden & Ausrüstung: Waffe mit Slot & Attributs-Bonus ('obsidian_klinge', slot: weapon, attack+4)
+#   - Raumsuche ('search:') für versteckte Gegenstände (Heiltrank)
+#   - Ironman-Modus mit ausgewiesener Savezone ('save_zones: [lager]') und meta.* Progression
+
+name: Die Katakomben von Morvath
+start_room: lager
+
+game:
+  ironman: true
+  save_zones: [lager]
+
+combat:
+  profile: classic
+  screen:
+    bar_width: 20
+    scene: ">>KAMPF IN DEN KATAKOMBEN VON MORVATH<<"
+
+player:
+  max_hp: 30
+  attack: 4
+  defense: 2
+
+variables:
+  - name: meta.runs
+    type: int
+    initial: 0
+  - name: tiefe
+    type: int
+    initial: 1
+    min: 1
+    max: 3
+  - name: boss_besiegt
+    type: int
+    initial: 0
+    min: 0
+    max: 1
+
+title_art: |
+  =============================================================
+     D I E   K A T A K O M B E N   V O N   M O R V A T H
+  =============================================================
+
+end_art:
+  victory: |
+    =============================================================
+       S I E G   U E B E R   D E N   A B Y S S
+    =============================================================
+    Der Daemonenfuerst Morvath ist gefallen! Mit der Obsidian-
+    klinge in der Hand und den Schaetzen der Katakomben kehrst
+    du triumphierend an die Oberflaeche zurueck.
+  death: |
+    =============================================================
+       I N   D E N   T I E F E N   G E F A L L E N
+    =============================================================
+    Deine Kraefte haben dich verlassen. Die Katakomben fordern
+    ein weiteres Opfer in der ewigen Finsternis.
+
+verbs:
+  - name: "folgen"
+    aliases: ["follow", "mitkommen"]
+  - name: "absteigen"
+    aliases: ["descend", "hinab"]
+
+quests:
+  - id: bezwinger_des_abyss
+    name: Der Schrecken von Morvath
+    desc: Dringe in die dritte Ebene vor und vernichte den Daemonenfuersten.
+    stages:
+      - id: spurensuche
+        desc: Finde den Abstieg in die tieferen Gewoelbe.
+      - id: bosskampf
+        desc: Stelle Morvath im Heiligtum des Abyss.
+    reward:
+      - msg: "Das Boese in Morvath ist bezwungen!"
+
+encounter_tables:
+  - id: dunkelheit
+    on: turn
+    cooldown: 3
+    when:
+      at: player
+      room: gewoelbe_1
+    entries:
+      - weight: 2
+        effects:
+          - msg: "Ein Schwarm Fledermaeuse flattert schrill aus der Dunkelheit!"
+          - damage: 1
+      - weight: 3
+        effects:
+          - msg: "Tropfendes Wasser hallt durch die verlassenen Steingaenge."
+
+patrol:
+  hostiles:
+    - npc: kobold_spaeher
+      path: [gewoelbe_1, kreuzung_1, vorraum_2]
+      start_index: 0
+      warn: "WARNUNG: Gehässiges Kichern hallt durch die Gänge! Ein Kobold-Späher pirscht umher!"
+      attack:
+        - msg: "Der Kobold-Späher springt dich aus dem Schatten an und sticht mit seinem rostigen Dolch zu!"
+        - damage: 2
+
+rooms:
+  # Ebene 1:
+  - id: lager
+    name: Oberes Basislager
+    desc: "Ein provisorisches Lager am Eingang der Katakomben. Fackeln spenden warmes Licht. Hier ist der einzige sichere Zufluchtsort."
+    exits:
+      north: gewoelbe_1
+    search:
+      - give: heiltrank
+      - msg: "In einer Nische hinter den Kisten findest du einen versiegelten Heiltrank!"
+
+  - id: gewoelbe_1
+    name: Feuchtes Steingewoelbe
+    desc: "Ein modriger Raum aus grob behauenen Steinquadern. Im Norden liegt eine Weggabelung."
+    exits:
+      south: lager
+      north: kreuzung_1
+
+  - id: kreuzung_1
+    name: Dunkle Kreuzung
+    desc: "Skelettreste saeumen den Weg. Ein Durchgang führt weiter hinab zur zweiten Ebene."
+    exits:
+      south: gewoelbe_1
+      down: vorraum_2
+
+  # Ebene 2:
+  - id: vorraum_2
+    name: Vorraum der Krypta
+    desc: "Kalte Zugluft weht von den Gräbern herauf. Im Osten gaehnt der Eingang zur Grabkammer."
+    exits:
+      up: kreuzung_1
+      east: krypta_2
+
+  - id: krypta_2
+    name: Krypta der Vergessenen
+    desc: "Uralte Steinsarkophage stehen entlang der Waende. Hier fuehrt ein finsterer Schacht hinab ins Erdinnere."
+    exits:
+      west: vorraum_2
+
+  # Ebene 3 (Startet ohne Eingang; wird via set_exit aufgesperrt):
+  - id: sanctum_3
+    name: Heiligtum des Abyss
+    desc: "Ein gigantischer Altarraum tief im Erdinneren. Glutrotes Magma spiegelt sich an den Wänden. Hier thront Morvath!"
+    exits:
+      up: krypta_2
+
+npcs:
+  # Begleiter (Party-Modul)
+  - id: alwin
+    name: Knappe Alwin
+    desc: "Ein treuer junger Knappe mit Schild und Helm. Er brennt darauf, sich im Kampf zu beweisen."
+    keys: [alwin, knappe, begleiter]
+    location: lager
+    state: alive
+    max_hp: 20
+    attack: 4
+    defense: 2
+    party:
+      can_join: true
+      order_verb: folgen
+      hp_tracked: true
+      follow_msg: "Knappe Alwin zieht sein Schwert und folgt dir entschlossen!"
+      stay_msg: "Knappe Alwin bezieht Stellung und wartet."
+    dialogue:
+      alive:
+        entry: bereit
+        nodes:
+          bereit:
+            text: "„Ich stehe an Eurer Seite, mein Herr! Sollen wir in die Tiefe vorstoßen?“"
+            choices:
+              - text: "Folge mir in den Kampf!"
+                next: null
+              - text: "Warte hier im Lager."
+                next: null
+
+  # Patrouillierender Feind
+  - id: kobold_spaeher
+    name: Kobold-Späher
+    desc: "Eine bucklige Kreatur mit gelben Augen und gezücktem Schanddolch."
+    keys: [kobold, spaeher, feind]
+    location: gewoelbe_1
+    state: alive
+    max_hp: 8
+    attack: 3
+    defense: 1
+
+  # Wächter vor Ebene 2
+  - id: skelettkrieger
+    name: Skelettkrieger
+    desc: "Ein klapperndes Skelett in rostiger Plattenruestung, das einen Knochenfaustschild traegt."
+    keys: [skelett, krieger, skelettkrieger]
+    location: kreuzung_1
+    state: alive
+    max_hp: 12
+    attack: 4
+    defense: 2
+
+  # Boss in Ebene 3
+  - id: daemon_morvath
+    name: Daemonenfuerst Morvath
+    desc: "Eine riesenhafte Gestalt aus schattenhaftem Rauch und gluehender Lava."
+    keys: [daemon, morvath, boss, fuerst]
+    location: sanctum_3
+    state: alive
+    max_hp: 22
+    attack: 6
+    defense: 3
+
+items:
+  - id: heiltrank
+    name: Roter Heiltrank
+    desc: "Eine Glasflasche mit leuchtend roter Essenz, die Lebenskraft spendet."
+    keys: [trank, heiltrank, flasche]
+    location: nowhere
+    verb_map:
+      use,intact:
+        - heal: 15
+        - consume: heiltrank
+        - msg: "Du trinkst den Heiltrank in einem Zug. Eine warme Woge heilt deine Wunden (+15 HP)!"
+
+  - id: obsidian_klinge
+    name: Klinge des Abgrunds
+    desc: "Ein meisterhaft geschmiedetes Kurzschwert aus schwarzem Obsidian mit Runenverzierung."
+    keys: [klinge, schwert, obsidian, obsidianklinge, waffe]
+    location: krypta_2
+    slot: weapon
+    effects: [attack+4]
+
+rules:
+  # Quest-Initialisierung beim ersten Zug
+  - id: init_intro
+    on: turn
+    once: true
+    effects:
+      - start_quest: bezwinger_des_abyss
+      - msg: "Ein Schaudern erfasst dich: Der Daemonenfuerst Morvath lauert in den Tiefen!"
+
+  # Dynamischer Abstieg nach Ebene 3 per set_exit
+  - id: absteigen_nach_ebene3
+    on: "command absteigen"
+    when:
+      all:
+        - at: player
+          room: krypta_2
+        - compare_var: { name: tiefe, op: lt, value: 3 }
+    effects:
+      - set_var: { var: tiefe, value: 3 }
+      - set_exit:
+          from: krypta_2
+          dir: down
+          to: sanctum_3
+      - advance_quest: bezwinger_des_abyss
+      - msg: "Du kletterst durch den finsteren Schacht hinab in Ebene 3! Der Weg in das Heiligtum des Abyss ist geöffnet."
+
+  # Boss-Besiegung triggert Quest-Abschluss & Sieg
+  - id: boss_getoetet
+    on: "state daemon_morvath"
+    when:
+      state: daemon_morvath
+      is: dead
+    once: true
+    effects:
+      - set_var: { var: boss_besiegt, value: 1 }
+      - complete_quest: bezwinger_des_abyss
+      - msg: "Mit einem ohrenbetaeubenden Schrei loest sich Morvath in Asche auf!"
+      - game_end: victory
+
+  # Player Tod
+  - id: player_tod
+    on: turn
+    when:
+      compare:
+        lhs: player.hp
+        op: "<="
+        rhs: 0
+    effects:
+      - msg: "Du brichst blutend im Staub der Katakomben zusammen."
+      - game_end: death
+
+tests:
+  - name: "alwin anwerben und heiltrank suchen"
+    input: [folgen alwin, search, inventory]
+    expect:
+      - "Knappe Alwin zieht sein Schwert"
+      - "In einer Nische hinter den Kisten"
+      - "Roter Heiltrank"
