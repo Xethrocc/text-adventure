@@ -929,6 +929,37 @@ testPursuitSugar = do
             _ -> expectTrue "step_away_from compiles" False
     pure (r1 && r2)
 
+-- | Regression FIX-11: the object form of `step_toward:`/`step_away_from:`
+--   accepts `message:` as alias for `msg:` (previously `.:? "msg" <|> .:? "message"`
+--   never read `message:` because `.:?` succeeds with Nothing).
+testStepMsgAlias :: IO Bool
+testStepMsgAlias = do
+    let yamlToward = "step_toward: {seeker: wolf, target: player, message: 'Der Wolf naeht sich.'}"
+        yamlAway   = "step_away_from: {seeker: wolf, target: halle, message: 'Weg!'}"
+        parseOne yaml = case decode1 (BLC.pack yaml) of
+            Left err -> do
+                putStrLn ("  yaml parse failed: " ++ show err)
+                pure False
+            Right val -> case (Aeson.fromJSON (val :: Aeson.Value) :: Aeson.Result AActionOutcome) of
+                Aeson.Error err -> do
+                    putStrLn ("  outcome parse failed: " ++ err)
+                    pure False
+                Aeson.Success out -> expectTrue ("message alias, got: " ++ show out) (case out of
+                    AOStepToward "wolf" _ (Just "Der Wolf naeht sich.") -> True
+                    AOStepAwayFrom "wolf" _ (Just "Weg!") -> True
+                    _ -> False)
+    r1 <- parseOne yamlToward
+    r2 <- parseOne yamlAway
+    -- msg: itself keeps working
+    let yamlMsg = "step_toward: {seeker: wolf, target: player, msg: 'Direkt.'}"
+    r3 <- case decode1 (BLC.pack yamlMsg) of
+        Left err -> do putStrLn ("  yaml parse failed: " ++ show err); pure False
+        Right val -> case (Aeson.fromJSON (val :: Aeson.Value) :: Aeson.Result AActionOutcome) of
+            Aeson.Error err -> do putStrLn ("  outcome parse failed: " ++ err); pure False
+            Aeson.Success (AOStepToward _ _ (Just "Direkt.")) -> expectTrue "msg still works" True
+            Aeson.Success other -> expectTrue ("expected msg form, got: " ++ show other) False
+    pure (r1 && r2 && r3)
+
 -- | `pursuit:` compiles to one `on: turn` trigger per pursuer, emitted in
 --   npc-id order; unknown pursuers and unknown `ignores:` values are errors.
 testPursuitSection :: IO Bool
@@ -4373,6 +4404,7 @@ tests =
     , ("chapters: next_chapter/goto_chapter sugar compiles", testChapterSugar)
     -- Pursuit (Tür IV)
     , ("pursuit: step_toward/step_away_from sugar compiles", testPursuitSugar)
+    , ("pursuit: step_toward/step_away_from message: alias (FIX-11)", testStepMsgAlias)
     , ("mass ops: damage/move/reveal/consume/set_state sugar (B3)", testMassOpSugar)
     , ("pursuit: section emits sorted on:turn triggers; checks", testPursuitSection)
     -- 5.3: include:

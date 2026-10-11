@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### FIX-11: `message:`-Alias an `step_toward:`/`step_away_from:` war tot
+
+In der Objektform las der Parser `so .:? "msg" <|> so .:? "message"` — weil `.:?`
+bei fehlendem Key `Nothing` liefert (und damit erfolgreich ist), wurde die
+`message:`-Variante **nie** gelesen. Jetzt liest er `message:` wirklich als Alias
+(`msg:` bleibt die dokumentierte Form, siehe `docs/adventure-schema.md`). Rein
+parserseitig; bestehende Abenteuer sind unberührt (das Feld war nie wirksam).
+Regressionstest in der Worldbuilder-Suite.
+
 ### OPEN-15 & OPEN-20: `steal:` und `swap_inventory:`
 
 Zwei neue Effekte aus den Zork-Mechanik-Entscheidungen (A3 „NPC-Diebstahl + Rückgabe",

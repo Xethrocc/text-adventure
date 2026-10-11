@@ -1771,7 +1771,7 @@ instance FromJSON AActionOutcome where
                     Object so -> do
                         seeker <- so .:? "seeker" .!= ""
                         target <- so .: "target"
-                        mMsg   <- so .:? "msg" <|> so .:? "message"
+                        mMsg   <- so .:? "msg" >>= maybe (so .:? "message") (pure . Just)
                         pure (AOStepToward seeker target mMsg)
                     _ -> fail "step_toward: expected list or object")
         <|> (do sav <- o .: "step_away_from"
@@ -1785,7 +1785,7 @@ instance FromJSON AActionOutcome where
                     Object so -> do
                         seeker <- so .:? "seeker" .!= ""
                         target <- so .: "target"
-                        mMsg   <- so .:? "msg" <|> so .:? "message"
+                        mMsg   <- so .:? "msg" >>= maybe (so .:? "message") (pure . Just)
                         pure (AOStepAwayFrom seeker target mMsg)
                     _ -> fail "step_away_from: expected list or object")
         -- B3: closed mass operations (the count-set language of B2 plus an
