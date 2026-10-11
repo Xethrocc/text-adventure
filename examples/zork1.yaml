@@ -2588,6 +2588,17 @@ items:
       - msg: With a great effort, the rug is moved to one side of the room, revealing the dusty cover of a closed trap door.
       - set_flag: rug-moved
         val: 'true'
+    move:
+    - if:
+        has_flag: rug-moved
+      then:
+      - msg: Having moved the carpet previously, you find it impossible to move it again.
+      else:
+      - msg: With a great effort, the rug is moved to one side of the room, revealing the dusty cover of a closed trap door.
+      - set_flag: rug-moved
+        val: 'true'
+    raise:
+    - msg: The rug is too heavy to lift, but in trying to take it you have noticed an irregularity beneath it.
 - id: chalice
   name: chalice
   tags: [schatz]
@@ -2816,6 +2827,76 @@ items:
         to:
           in: land-of-living-dead
     instead:rub:
+    - msg: A ghost appears in the room and is appalled at your desecration of the remains of a fellow adventurer. He casts a curse on your valuables and banishes them to the Land of the Living Dead. The ghost leaves, muttering obscenities.
+    - move_all:
+        what: items
+        in: maze-5
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    - move_all:
+        what: items
+        by: player
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    instead:move:
+    - msg: A ghost appears in the room and is appalled at your desecration of the remains of a fellow adventurer. He casts a curse on your valuables and banishes them to the Land of the Living Dead. The ghost leaves, muttering obscenities.
+    - move_all:
+        what: items
+        in: maze-5
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    - move_all:
+        what: items
+        by: player
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    instead:raise:
+    - msg: A ghost appears in the room and is appalled at your desecration of the remains of a fellow adventurer. He casts a curse on your valuables and banishes them to the Land of the Living Dead. The ghost leaves, muttering obscenities.
+    - move_all:
+        what: items
+        in: maze-5
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    - move_all:
+        what: items
+        by: player
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    instead:lower:
+    - msg: A ghost appears in the room and is appalled at your desecration of the remains of a fellow adventurer. He casts a curse on your valuables and banishes them to the Land of the Living Dead. The ghost leaves, muttering obscenities.
+    - move_all:
+        what: items
+        in: maze-5
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    - move_all:
+        what: items
+        by: player
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    instead:kick:
+    - msg: A ghost appears in the room and is appalled at your desecration of the remains of a fellow adventurer. He casts a curse on your valuables and banishes them to the Land of the Living Dead. The ghost leaves, muttering obscenities.
+    - move_all:
+        what: items
+        in: maze-5
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    - move_all:
+        what: items
+        by: player
+        tag: schatz
+        to:
+          in: land-of-living-dead
+    instead:kiss:
     - msg: A ghost appears in the room and is appalled at your desecration of the remains of a fellow adventurer. He casts a curse on your valuables and banishes them to the Land of the Living Dead. The ghost leaves, muttering obscenities.
     - move_all:
         what: items
@@ -3252,6 +3333,9 @@ items:
   location: torch-room
   portable: true
   tags: [schatz]
+  state: lit
+  tags_when:
+    lit: [lightsource]
 - id: guide
   name: tour guidebook
   description: Some guidebooks entitled "Flood Control Dam #3" are on the reception desk.
@@ -3737,6 +3821,11 @@ verbs:
 - name: wind
 - name: ring
 - name: rub
+- name: move
+- name: raise
+- name: lower
+- name: kick
+- name: kiss
 - name: light
   aliases: [burn]
 - name: extinguish
@@ -4961,29 +5050,16 @@ rules:
       - set_var:
           var: match_battery
           value: 2
-- id: torch-light
-  on: command light
-  when:
-    all:
-    - var: cmd.arg1
-      is: torch
-    - has_item: torch
-    - not:
-        state: torch
-        is: lit
-    - not:
-        at: player
-        room: gas-room
-  effects:
-  - set_state: torch
-    to: lit
-  - msg: The torch begins to burn.
+# Die Fackel brennt von Anfang an (Original: ONBIT + FLAMEBIT) und lässt sich nicht
+# löschen (TORCH-OBJECT). `tags_when: {lit: [lightsource]}` am Item macht sie zur
+# Lichtquelle — auch am Boden liegend (OPEN-13).
 - id: torch-already-lit
   on: command light
   when:
     all:
     - var: cmd.arg1
       is: torch
+    - has_item: torch
     - state: torch
       is: lit
   effects:
@@ -5413,6 +5489,15 @@ rules:
         to: unlit
     else:
     - msg: The candles are not lighted.
+- id: torch-out
+  on: command extinguish
+  when:
+    all:
+    - var: cmd.arg1
+      is: torch
+    - has_item: torch
+  effects:
+  - msg: You nearly burn your hand trying to extinguish the flame.
 - id: match-out
   on: command extinguish
   when:
@@ -5493,7 +5578,15 @@ rules:
           else:
           - msg: The match is not burning.
         else:
-        - msg: You can't turn that off.
+        - if:
+            all:
+            - var: cmd.arg2
+              is: torch
+            - has_item: torch
+          then:
+          - msg: You nearly burn your hand trying to extinguish the flame.
+          else:
+          - msg: You can't turn that off.
 
 # --- Stufe E: Brenndauern (Original I-LANTERN/I-CANDLES/I-MATCH mit LAMP-TABLE
 # 200/100/70/15, CANDLE-TABLE 40/20/10/5, I-MATCH 2 — 1actions.zil:2220/2315/2343).
