@@ -1,0 +1,761 @@
+# Verschollen im ewigen Eis (survival_expedition)
+#
+# Genre: Survival Wilderness Mystery / Arktische Expeditions-Simulation
+#
+# Demonstriert die Verzahnung von:
+#   - OPEN-17 Item-Timer (fuel:):
+#       - 'sturmlaterne': ticks_when: lit, Meilenstein-Warnung, Erloeschen bei 0,
+#         tags_when: {lit: [lightsource]}, Nachfuellen via add_fuel / set_fuel.
+#       - 'lagerfeuer': stationaer in camp_aurora, ticks_when: burning, waermt auf 20.
+#   - Kaelte- & Unterkuehlungsmechanik ('waerme', Start 20, Max 20, Min 0):
+#       - In eisigen Aussenraeumen -1 Waerme/Zug (bei brennender Laterne)
+#         bzw. -2 Waerme/Zug (ungeschuetzt im Schneesturm).
+#       - Bei waerme <= 0 toedlicher Zusammenbruch (game_end: death).
+#       - In beheizten Raeumen (Lagerfeuer / laufendes Aggregat) Regeneration.
+#       - Notfall-Nahrung: Trockenfleisch spendet sofort +5 Waerme.
+#   - Tagebuch- & Dokumenten-Archaeologie (Dr. Archibald Thorne / HMS Resolute):
+#       - 4 Tagebuchseiten mit Lore-Enthuellungen (+25 Punkte je Fund).
+#   - Werkzeugkette & Raetsel:
+#       - Handkurbel -> Notstromaggregat -> Funkgeraet (SOS auf 121.5 MHz).
+#       - Kletterseil -> Eisspalten-Ueberquerung -> Gletscherhoehle.
+#       - Eispickel -> Steilwand-Aufstieg -> Gipfelplateau.
+#       - Signalpistole auf dem Gipfelplateau -> Rettungsflugzeug -> SIEG!
+#   - Deutsche Grammatik:
+#       - Alle Gegenstaende mit gender: (m, f, n) und vollstaendigen article:-Formen.
+
+name: Verschollen im ewigen Eis
+start_room: camp_aurora
+
+language: de
+
+title_art: |
+  =============================================================
+     V E R S C H O L L E N   I M   E W I G E N   E I S
+       --- Arktische Survival-Expedition King William ---
+  =============================================================
+
+end_art:
+  victory: |
+    =============================================================
+         G E R E T T E T   A U S   D E M   P A C K E I S
+    =============================================================
+    Das Rettungsflugzeug durchbricht die schneeverhangene Wolkendecke!
+    Deine rote Signalrakete hat dich vor dem Kaelterod bewahrt.
+    Die Logbuecher von Dr. Archibald Thorne sind geborgen und
+    das tragische Schicksal der HMS Resolute ist endlich aufgeklaert!
+    Kapitaen Vance, du hast das Unmoegliche ueberlebt!
+  death: |
+    =============================================================
+         E R F R O R E N   I M   S C H N E E S T U R M
+    =============================================================
+    Deine Kraefte schwinden. Die erbarmungslose Kaelte der Arktis
+    laehmt deine Glieder, bis dein Herzschlag im Blizzard erstarrt.
+    Eisiger Wind weht deine Spuren fuer immer zu.
+    King William Island fordert ein weiteres Opfer...
+
+verbs:
+  - name: light
+    aliases: [anzuenden, entzuenden]
+  - name: extinguish
+    aliases: [loeschen, ausmachen]
+  - name: eat
+    aliases: [essen, verzehren]
+  - name: fire
+    aliases: [abfeuern, schiessen]
+
+variables:
+  - name: waerme
+    type: int
+    initial: 20
+    min: 0
+    max: 20
+  - name: score
+    type: int
+    initial: 0
+    max: 200
+    score_rankings:
+      - { at: 0,   title: "Gestrandeter" }
+      - { at: 50,  title: "Eislaeufer" }
+      - { at: 100, title: "Polarforscher" }
+      - { at: 150, title: "Arktis-Pionier" }
+      - { at: 200, title: "Legendaerer Expeditionsleiter" }
+  - name: aggregat_laeuft
+    type: int
+    initial: 0
+  - name: sos_gesendet
+    type: int
+    initial: 0
+  - name: seil_gespannt
+    type: int
+    initial: 0
+  - name: wand_erklommen
+    type: int
+    initial: 0
+
+quests:
+  - id: arktis_rettung
+    name: "Verschollen im ewigen Eis"
+    desc: "Ueberlebe die arktische Kaelte, berge Thornes Tagebuecher, aktiviere den Notsender und feuere die Signalrakete ab."
+    stages:
+      - id: aggregat_starten
+        desc: "Finde die Handkurbel und starte das Notstromaggregat in der Forschungsstation."
+      - id: sos_abstrahlen
+        desc: "Sende das SOS-Signal ueber das Funkgeraet auf 121.5 MHz ab."
+      - id: gipfel_rettung
+        desc: "Erklimme das Gipfelplateau und feuere die Signalpistole ab."
+    reward:
+      - msg: "Die Rettungsexpedition ist siegreich beendet!"
+
+rooms:
+  - id: camp_aurora
+    name: Camp Aurora
+    desc: >
+      Ein verlassenes Zeltlager am Rand der zerkluefteten Packeisbank. Zerfetzte Zeltplanen
+      flattern im beissenden Polarwind. Im Zentrum des Lagers liegt eine erloschene
+      Feuerstelle, umgeben von schneebedeckten Holzkisten. Nach Sueden fuehrt ein Pfad zum
+      halb eingestuerzten Proviantlager. Im Norden erstreckt sich das weite, sturmgepeitschte Schneefeld.
+    exits:
+      south: { to: proviantlager }
+      north: { to: schneefeld }
+
+  - id: proviantlager
+    name: Eingestuerztes Proviantlager
+    desc: >
+      Ein notduerftig unter Felsueberhaengen errichteter Unterstand. Schneewehen haben das
+      Wellblechdach eingedrueckt, doch hier bist du vor dem toedlichen Windchill geschuetzt.
+      Aufgebrochene Kisten und zerrissene Saecke liegen im Frost verstreut. Nach Norden
+      geht es zurueck ins Hauptlager.
+    exits:
+      north: { to: camp_aurora }
+
+  - id: schneefeld
+    name: Tosendes Schneefeld
+    desc: >
+      Eine weisse Hoelle aus wirbelnden Schneemassen und gnadenlosen Sturmboeen. Der eisige
+      Blizzard raubt dir fast den Atem und die Sicht reicht kaum drei Schritte weit.
+      Nach Westen fuehrt eine Faehrte zu den massiven Holzbohlen einer Forschungsstation.
+      Im Norden gaehnt eine bedrohliche Gletscherspalte im Packeis. Nach Sueden fuehrt der
+      Weg zurueck zu Camp Aurora.
+    exits:
+      south: { to: camp_aurora }
+      west: { to: forschungsstation }
+      north: { to: eisspalte }
+
+  - id: forschungsstation
+    name: Forschungsstation der HMS Resolute
+    desc: >
+      Ein massives Blockhaus aus schweren Eichenbalken, tief im Permafrost verankert.
+      Trotz des heulenden Sturms draussen ist es hier trocken und windgeschuetzt. An der Wand
+      steht ein schweres Dieselaggregat, verkrustet mit altem Schmieroel. Nach Norden
+      fuehrt eine Tuer in die Funkzentrale. Nach Osten fuehrt die Tuer hinaus
+      auf das Schneefeld.
+    exits:
+      east: { to: schneefeld }
+      north: { to: funkzentrale }
+
+  - id: funkzentrale
+    name: Funkzentrale
+    desc: >
+      Der rueckwaertige Raum der Station ist vollgestellt mit Morsetasten, Kupferkabeln und
+      schweren Vakuumroehren. Dicke Antennenkabel fuehren durch das Dach nach oben zum
+      Gipfelgrat. Auf dem Funktisch thront die Hauptsendeanlage. Nach Sueden gelangst du
+      zurueck in den Hauptraum der Station.
+    exits:
+      south: { to: forschungsstation }
+
+  - id: eisspalte
+    name: Gletscher-Eisspalte
+    desc: >
+      Ein schwindelerregender Abgrund reisst das blaeulich schimmernde Inlandeis entzwei.
+      Tief unten in der Tiefe gurgeln eisige Schmelzwasserstroeme. Der alte Holzsteg ist
+      laengst in die Schlucht gestuerzt. Jenseits der Spalte liegt im Westen der Eingang zu
+      einer geschuetzten Gletscherhoehle, waehrend der Grat nach Norden steil zu einer
+      eisigen Felswand ansteigt. Nach Sueden fuehrt der Weg zurueck auf das Schneefeld.
+    exits:
+      south: { to: schneefeld }
+      west:
+        to: gletscherhoehle
+        locked_by: spalte_seil
+        msg: "Ein gaehnender Abgrund trennt dich von der Gletscherhoehle. Ohne ein gespanntes Kletterseil stuerzt du in die Tiefe!"
+      north:
+        to: steilwand
+        locked_by: spalte_seil
+        msg: "Die zerklueftete Eisspalte schneidet den Pfad nach Norden ab. Du musst erst ein Seil ueber den Abgrund spannen."
+
+  - id: gletscherhoehle
+    name: Blaue Gletscherhoehle
+    desc: >
+      Das Licht bricht sich in bizarren Formen durch massives, tausendjaehriges Gletschereis.
+      Riesige Eiszapfen haengen von der Gewoelbedecke herab. Im hinteren Teil liegen die
+      ueberfrorenen Ueberreste von Dr. Thornes letztem Notbiwak. Nach Osten fuehrt der Weg
+      zurueck an die Eisspalte.
+    exits:
+      east: { to: eisspalte }
+
+  - id: steilwand
+    name: Gefrorene Steilwand
+    desc: >
+      Eine fast senkrechte Wand aus hartgepresstem Firneis und dunklem Basaltgestein
+      ragt empor zum Grat. Eisiger Fallwind peitscht von oben herab. Ohne geeignetes
+      Kletterwerkzeug ist die glatte Eiswand unueberwindbar. Nach Sueden geht es hinab
+      zur Eisspalte.
+    exits:
+      south: { to: eisspalte }
+      north:
+        to: gipfel_plateau
+        locked_by: steilwand_route
+        msg: "Die spiegelglatte Eiswand bietet keinen Halt fuer deine Stiefel. Du musst erst mit dem Eispickel Tritte ins Eis schlagen!"
+
+  - id: gipfel_plateau
+    name: Gipfelplateau
+    desc: >
+      Der hoechste Punkt des Eisrueckens. Orkanartige Boeen reissen am gefrorenen Grat.
+      Vor dir ragt der staehlerne Not-Antennenmast der Resolute-Expedition in den duesteren
+      Polarhimmel. Von hier oben hast du freien Blick ueber die unendliche Weite des
+      arktischen Packeises — der perfekte Ort, um ein weithin sichtbares Notsignal
+      abzufeuern! Nach Sueden fuehrt der Abstieg zurueck zur Steilwand.
+    exits:
+      south: { to: steilwand }
+
+items:
+  - id: sturmlaterne
+    name: Sturmlaterne
+    desc: Eine robuste Petroleumlaterne aus Messing mit sturmfestem Glaszylinder. Sie spendet ueberlebenswichtiges Licht und schuetzt vor der Kaelte.
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [sturmlaterne, laterne, lampe, petroleumlampe]
+    location: camp_aurora
+    state: unlit
+    tags_when:
+      lit: [lightsource]
+    fuel:
+      start: 30
+      ticks_when: lit
+      warn:
+        - at: 5
+          effects:
+            - msg: "Das Glas der Sturmlaterne truebt sich, die Flamme flackert schwach. Das Petroleum neigt sich dem Ende zu!"
+      on_empty:
+        - set_state: { target: sturmlaterne, to: unlit }
+        - msg: "Mit einem letzten Zischen erlischt die Flamme der Sturmlaterne. Eisige Dunkelheit umfaengt dich!"
+    verb_map:
+      light,unlit:
+        - if: { has_item: streichhoelzer }
+          then:
+            - set_state: { target: sturmlaterne, to: lit }
+            - msg: "Du reisst ein Streichholz an und entzuendest den Docht der Sturmlaterne. Ein warmer Schein erhellt die Umgebung."
+          else:
+            - msg: "Du hast keine Streichhoelzer, um die Sturmlaterne zu entzuenden."
+      light,lit:
+        - msg: "Die Sturmlaterne brennt bereits mit stetiger Flamme."
+      extinguish,lit:
+        - set_state: { target: sturmlaterne, to: unlit }
+        - msg: "Du drehst das Raedchen herunter und loeschst die Flamme der Sturmlaterne, um wertvolles Petroleum zu sparen."
+      extinguish,unlit:
+        - msg: "Die Sturmlaterne ist bereits aus."
+      use,unlit:
+        - if: { has_item: streichhoelzer }
+          then:
+            - set_state: { target: sturmlaterne, to: lit }
+            - msg: "Du reisst ein Streichholz an und entzuendest den Docht der Sturmlaterne. Ein warmer Schein erhellt die Umgebung."
+          else:
+            - msg: "Du hast keine Streichhoelzer, um die Sturmlaterne zu entzuenden."
+      use,lit:
+        - set_state: { target: sturmlaterne, to: unlit }
+        - msg: "Du drehst das Raedchen herunter und loeschst die Flamme der Sturmlaterne."
+
+  - id: streichhoelzer
+    name: Streichhoelzer
+    desc: Eine wasserdicht versiegelte Blechdose mit Schwefelhoelzern. Unverzichtbar zum Entfachen von Feuer.
+    gender: m
+    article: { nom: die, acc: die, dat: den }
+    keys: [streichhoelzer, hoelzer, streichholz, zuendhoelzer, dose]
+    location: camp_aurora
+
+  - id: feuerholz
+    name: Feuerholz
+    desc: Ein Buendel trockenes Treibholz und Zunder, zusammengebunden mit Hanfschnur.
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [feuerholz, holz, treibholz, scheite, buendel]
+    location: camp_aurora
+
+  - id: lagerfeuer
+    name: Lagerfeuer
+    desc: Eine mit Steinen umfasste Feuerstelle im Zentrum des Camps.
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [lagerfeuer, feuer, feuerstelle]
+    location: camp_aurora
+    portable: false
+    state: unlit
+    fuel:
+      start: 10
+      ticks_when: burning
+      warn:
+        - at: 3
+          effects:
+            - msg: "Das Lagerfeuer glimmt nur noch schwach in der Asche. Das Holz ist fast heruntergebrannt."
+      on_empty:
+        - set_state: { target: lagerfeuer, to: unlit }
+        - msg: "Mit einem leisen Knistern erlischt das Lagerfeuer vollends. Kalte Asche bleibt zurueck."
+    verb_map:
+      light,unlit:
+        - if: { has_item: streichhoelzer }
+          then:
+            - set_state: { target: lagerfeuer, to: burning }
+            - set_fuel: { item: lagerfeuer, to: 10 }
+            - set_var: { var: waerme, value: 20 }
+            - msg: "Du entfachst das Lagerfeuer mit einem Streichholz. Wohlige Hitze breitet sich im Camp aus und waermt dich durch! (Waerme auf 20 regeneriert)"
+          else:
+            - msg: "Du benoetigst Streichhoelzer, um das Lagerfeuer zu entzuenden."
+      light,burning:
+        - msg: "Das Lagerfeuer prasselt bereits munter und spendet behagliche Waerme."
+      extinguish,burning:
+        - set_state: { target: lagerfeuer, to: unlit }
+        - msg: "Du wirfst Schnee auf die Glut und loeschst das Lagerfeuer."
+
+  - id: trockenfleisch
+    name: Trockenfleisch
+    desc: Salzig gepoekeltes Walrossfleisch. Zaeh wie Leder, aber reich an naehrenden Kalorien.
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [trockenfleisch, fleisch, proviant, nahrung]
+    location: proviantlager
+    verb_map:
+      eat,intact:
+        - add_var: { var: waerme, delta: 5 }
+        - consume: trockenfleisch
+        - msg: "Du kaust auf dem zaehen, salzigen Trockenfleisch. Neue Lebensgeister und wohlige Waerme durchstroemen deinen Koerper! (+5 Waerme)"
+      use,intact:
+        - add_var: { var: waerme, delta: 5 }
+        - consume: trockenfleisch
+        - msg: "Du kaust auf dem zaehen, salzigen Trockenfleisch. Neue Lebensgeister und wohlige Waerme durchstroemen deinen Koerper! (+5 Waerme)"
+
+  - id: kletterseil
+    name: Kletterseil
+    desc: Ein dreissig Meter langes, strapazierfaehiges Hanfseil mit eisernen Sicherungshaken.
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [kletterseil, seil, hanfseil, tau]
+    location: proviantlager
+    verb_map:
+      use,intact:
+        - if: { at: player, room: eisspalte }
+          then:
+            - if: { compare_var: { name: seil_gespannt, op: eq, value: 0 } }
+              then:
+                - set_var: { var: seil_gespannt, value: 1 }
+                - set_state: { target: spalte_seil, to: unlocked }
+                - add_var: { var: score, delta: 25 }
+                - msg: "Mit sicherem Wurf verankerst du das Kletterseil mit Stahlhaken auf beiden Seiten des klaffenden Abgrunds. Eine stabile Seilbruecke spannt sich ueber die eisige Tiefe! Der Uebergang ist nun frei."
+              else:
+                - msg: "Das Kletterseil ist bereits fest ueber der Spalte verankert."
+          else:
+            - msg: "Hier gibt es keinen Abgrund, der mit dem Kletterseil ueberbrueckt werden muesste."
+
+  - id: tagebuch_seite_1
+    name: 1. Tagebuchseite
+    desc: >
+      [Tagebuch von Dr. Archibald Thorne – 14. August 1910]
+      "Wir haben das Packeis von King William Island durchstossen. Die Expedition HMS Resolute steht kurz vor ihrem Ziel.
+      In den tieferen Gletscherschichten schimmern metallische Splitter von unbeschreiblicher Dichte – Bruchstuecke des
+      praehistorischen 'Himmelsspalts'. Doch der fruehe Wintereinbruch droht uns abzuschneiden. Wenn der Frost einsetzt,
+      wird die Kaelte zu unserem erbarmungslosesten Feind..."
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [seite1, seite_1, seite, tagebuchseite1, tagebuchseite, tagebuch_seite_1, logbuch]
+    location: proviantlager
+    on_take:
+      - if: { not: { has_flag: seite1_genommen } }
+        then:
+          - set_flag: seite1_genommen
+          - add_var: { var: score, delta: 25 }
+          - msg: "Du nimmst die vergilbte 1. Tagebuchseite an dich. (+25 Expeditionspunkte)"
+
+  - id: kurbel
+    name: Handkurbel
+    desc: Eine schwere Eisenkurbel mit Vierkant-Aufsatz zum manuellen Anlassen von Motoren.
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [kurbel, handkurbel, starterkurbel, eisenkurbel]
+    location: forschungsstation
+    verb_map:
+      use,intact:
+        - if: { at: player, room: forschungsstation }
+          then:
+            - if: { compare_var: { name: aggregat_laeuft, op: eq, value: 0 } }
+              then:
+                - set_var: { var: aggregat_laeuft, value: 1 }
+                - set_state: { target: aggregat, to: running }
+                - advance_quest: arktis_rettung
+                - add_var: { var: score, delta: 30 }
+                - msg: "Mit kraeftigem Schwung drehst du die Handkurbel am Notstromaggregat. Der Dieselmotor stottert, spuckt schwarzen Rauch aus und springt dann mit sattem Droehnen an! Strom fliesst nun in die Funkzentrale. (+30 Punkte)"
+              else:
+                - msg: "Das Notstromaggregat laeuft bereits mit gleichmaessigem Droehnen."
+          else:
+            - msg: "Hier gibt es keine Vorrichtung fuer die Handkurbel."
+
+  - id: tagebuch_seite_2
+    name: 2. Tagebuchseite
+    desc: >
+      [Tagebuch von Dr. Archibald Thorne – 2. November 1910]
+      "Der Schneesturm tobt seit drei Wochen ohne Unterlass. Das Packeis hat die Resolute zermalmt.
+      Unser Funker Collins hat die Kaelte nicht ueberlebt. Bevor er starb, errichteten wir eine Notantenne auf dem
+      hoechsten Grat – dem Gipfelplateau. Doch das Stationsaggregat braucht manuellen Schwung mit der Handkurbel,
+      um Strom zur Sendeanlage zu leiten. Thorne, bleib standhaft!"
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [seite2, seite_2, seite, tagebuchseite2, tagebuchseite, tagebuch_seite_2, logbuch]
+    location: forschungsstation
+    on_take:
+      - if: { not: { has_flag: seite2_genommen } }
+        then:
+          - set_flag: seite2_genommen
+          - add_var: { var: score, delta: 25 }
+          - msg: "Du nimmst die zerknitterte 2. Tagebuchseite an dich. (+25 Expeditionspunkte)"
+
+  - id: aggregat
+    name: Notstromaggregat
+    desc: Ein schwerer Dieselgenerator mit Schwungrad und Vierkant-Aufnahme fuer eine Anlasserkurbel.
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [aggregat, notstromaggregat, generator, dieselaggregat, motor]
+    location: forschungsstation
+    portable: false
+    verb_map:
+      use,intact:
+        - if: { has_item: kurbel }
+          then:
+            - if: { compare_var: { name: aggregat_laeuft, op: eq, value: 0 } }
+              then:
+                - set_var: { var: aggregat_laeuft, value: 1 }
+                - set_state: { target: aggregat, to: running }
+                - advance_quest: arktis_rettung
+                - add_var: { var: score, delta: 30 }
+                - msg: "Mit kraeftigem Schwung drehst du die Handkurbel am Notstromaggregat. Der Dieselmotor stottert, spuckt schwarzen Rauch aus und springt dann mit sattem Droehnen an! Strom fliesst nun in die Funkzentrale. (+30 Punkte)"
+              else:
+                - msg: "Das Notstromaggregat laeuft bereits mit gleichmaessigem Droehnen."
+          else:
+            - msg: "Um das Aggregat anzuwerfen, fehlt dir eine passende Handkurbel."
+
+  - id: signalpistole
+    name: Signalpistole
+    desc: Eine schwere Leuchtpistole Kaliber 4 mit Messinglauf, geladen mit einer roten Notfall-Leuchtrakete.
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [signalpistole, pistole, leuchtpistole, rakete]
+    location: funkzentrale
+    verb_map:
+      fire,intact:
+        - if: { at: player, room: gipfel_plateau }
+          then:
+            - if: { compare_var: { name: sos_gesendet, op: eq, value: 1 } }
+              then:
+                - complete_quest: arktis_rettung
+                - msg: "Du richtest die Signalpistole in den stuermischen Polarhimmel und drueckst ab! Ein ohrenbetaeubender Knall zerreisst den Blizzard. Eine leuchtend rote Notfall-Magnesiumkugel steigt zischend empor und taucht das ewige Eis in gleissendes Rubinrot.\n\nNur wenige Augenblicke spaeter durchdringt das tiefe Brummen zweier Flugzeugmotoren das Heulen des Windes: Die Kuestenwache hat dein 121.5-MHz-Funksignal angepeilt und die Leuchtrakete gesichtet! Das Rettungsflugzeug setzt zur Kufenlandung auf dem Packeis an. Vance, du hast es geschafft — die Expedition ist gerettet!\n\nSIEG — Du wirst aus der eisigen Hoelle evakuiert! Endstand: {score}/200 Punkte."
+                - game_end: victory
+              else:
+                - msg: "Du feuerst eine Leuchtkugel in den Himmel, doch ohne ein laufendes Funkleitstrahl-Signal (121.5 MHz) kann kein Rettungsflugzeug deine genaue Position in der Eiswueste King Williams anpeilen. Starte zuerst den Sender in der Funkzentrale!"
+          else:
+            - msg: "Hier unten zwischen den Eiswaenden wuerde niemand das Notsignal sehen. Du musst das Signal vom hoechsten Punkt abfeuern — dem Gipfelplateau!"
+      use,intact:
+        - if: { at: player, room: gipfel_plateau }
+          then:
+            - if: { compare_var: { name: sos_gesendet, op: eq, value: 1 } }
+              then:
+                - complete_quest: arktis_rettung
+                - msg: "Du richtest die Signalpistole in den stuermischen Polarhimmel und drueckst ab! Ein ohrenbetaeubender Knall zerreisst den Blizzard. Eine leuchtend rote Notfall-Magnesiumkugel steigt zischend empor und taucht das ewige Eis in gleissendes Rubinrot.\n\nNur wenige Augenblicke spaeter durchdringt das tiefe Brummen zweier Flugzeugmotoren das Heulen des Windes: Die Kuestenwache hat dein 121.5-MHz-Funksignal angepeilt und die Leuchtrakete gesichtet! Das Rettungsflugzeug setzt zur Kufenlandung auf dem Packeis an. Vance, du hast es geschafft — die Expedition ist gerettet!\n\nSIEG — Du wirst aus der eisigen Hoelle evakuiert! Endstand: {score}/200 Punkte."
+                - game_end: victory
+              else:
+                - msg: "Du feuerst eine Leuchtkugel in den Himmel, doch ohne ein laufendes Funkleitstrahl-Signal (121.5 MHz) kann kein Rettungsflugzeug deine genaue Position in der Eiswueste King Williams anpeilen. Starte zuerst den Sender in der Funkzentrale!"
+          else:
+            - msg: "Hier unten zwischen den Eiswaenden wuerde niemand das Notsignal sehen. Du musst das Signal vom hoechsten Punkt abfeuern — dem Gipfelplateau!"
+
+  - id: tagebuch_seite_3
+    name: 3. Tagebuchseite
+    desc: >
+      [Tagebuch von Dr. Archibald Thorne – 19. Januar 1911]
+      "Dunkelheit und minus vierzig Grad. Vorraete schwinden dahin. An alle, die dies finden:
+      Der Sender ist vorkonfiguriert auf den Notrufkanal 121.5 MHz! Sobald der Strom fliesst, muss das Signal
+      abgestrahlt werden. Nur so kann ein Rettungsschiff den Peilstrahl empfangen. Eine rote Signalrakete vom
+      Gipfel wird sie leiten..."
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [seite3, seite_3, seite, tagebuchseite3, tagebuchseite, tagebuch_seite_3, logbuch]
+    location: funkzentrale
+    on_take:
+      - if: { not: { has_flag: seite3_genommen } }
+        then:
+          - set_flag: seite3_genommen
+          - add_var: { var: score, delta: 25 }
+          - msg: "Du nimmst die feuchte 3. Tagebuchseite an dich. (+25 Expeditionspunkte)"
+
+  - id: funkgeraet
+    name: Funkgeraet
+    desc: Ein britisches Marconi-Funkgeraet mit Roehrenverstaerker und Frequenzwahl. Die Skala ist auf 121.5 MHz eingestellt.
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [funkgeraet, funkstation, sender, funke, radio]
+    location: funkzentrale
+    portable: false
+    verb_map:
+      use,intact:
+        - if: { compare_var: { name: aggregat_laeuft, op: eq, value: 1 } }
+          then:
+            - if: { compare_var: { name: sos_gesendet, op: eq, value: 0 } }
+              then:
+                - set_var: { var: sos_gesendet, value: 1 }
+                - advance_quest: arktis_rettung
+                - add_var: { var: score, delta: 50 }
+                - msg: "Du schaltest das Funkgeraet ein. Die Roehren glimmen auf, ein vertrautes Rauschen erfuellt den Raum! Du stellst den Leitstrahl auf den internationalen Notrufkanal 121.5 MHz ein und sendest das SOS-Morsesignal der HMS Resolute ab. Die Antennenanlage auf dem Gipfel strahlt das Signal nun kraftvoll in die Polarregion ab! (+50 Punkte)"
+              else:
+                - msg: "Das Funkgeraet sendet bereits kontinuierlich das automatisierte SOS-Notruf-Signal auf 121.5 MHz ab."
+          else:
+            - msg: "Das Funkgeraet bleibt stumm und dunkel. Es bekommt keinen Strom. Das Dieselaggregat in der Station muss zuerst gestartet werden!"
+
+  - id: eispickel
+    name: Eispickel
+    desc: Ein professioneller Bergsteiger-Eispickel mit scharfem Schaufelkopf und gehaerteter Dornspitze.
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [eispickel, pickel, axt, eisaxt]
+    location: gletscherhoehle
+    verb_map:
+      use,intact:
+        - if: { at: player, room: steilwand }
+          then:
+            - if: { compare_var: { name: wand_erklommen, op: eq, value: 0 } }
+              then:
+                - set_var: { var: wand_erklommen, value: 1 }
+                - set_state: { target: steilwand_route, to: unlocked }
+                - add_var: { var: score, delta: 20 }
+                - msg: "Mit wuchtigen Schlaegen treibst du die gehaertete Stahlspitze des Eispickels in die glasharte Steilwand. Schritt fuer Schritt schlaegst du sichere Tritte und Stufen in das blau schimmernde Eis. Der Aufstieg zum Gipfelplateau ist gesichert!"
+              else:
+                - msg: "Die Eistritte sind bereits in die Wand geschlagen. Der Pfad nach oben ist frei."
+          else:
+            - msg: "Hier ist das Eis flach — du brauchst den Eispickel im Moment nicht."
+
+  - id: petroleumkanister
+    name: Petroleumkanister
+    desc: Ein roter Fuenf-Liter-Blechkanister mit gefiltertem Lampenpetroleum.
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [petroleumkanister, petroleum, kanister, brennstoff, oel]
+    location: gletscherhoehle
+    verb_map:
+      use,intact:
+        - if: { has_item: sturmlaterne }
+          then:
+            - add_fuel: { item: sturmlaterne, delta: 15 }
+            - msg: "Gluckern hallt durch die Stille. Du fuellst frisches Petroleum in den Tank der Sturmlaterne nach. Die Flamme brennt wieder kraeftig!"
+          else:
+            - msg: "Du benoetigst die Sturmlaterne, um das Petroleum einzufuellen."
+
+  - id: tagebuch_seite_4
+    name: 4. Tagebuchseite
+    desc: >
+      [Tagebuch von Dr. Archibald Thorne – 4. Maerz 1911]
+      "Letzter Eintrag. Die Hoehle schuetzt vor dem Wind, doch das Petroleum ist fast verbraucht.
+      Ich hinterlasse den letzten Reservekanister hier im Eis. Wenn du die Signalpistole besitzt: Gehe zur Steilwand,
+      schlage mit dem Eispickel Tritte ins Eis und feuere die Rakete auf dem Gipfel ab!
+      Moege Gott deiner Seele gnaedig sein in dieser weissen Hoelle."
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [seite4, seite_4, seite, tagebuchseite4, tagebuchseite, tagebuch_seite_4, logbuch]
+    location: gletscherhoehle
+    on_take:
+      - if: { not: { has_flag: seite4_genommen } }
+        then:
+          - set_flag: seite4_genommen
+          - add_var: { var: score, delta: 25 }
+          - msg: "Du nimmst die eisstarre 4. Tagebuchseite an dich. (+25 Expeditionspunkte)"
+
+interactions:
+  entity: []
+  item:
+    - item1: kurbel
+      item2: aggregat
+      effects:
+        - if: { compare_var: { name: aggregat_laeuft, op: eq, value: 0 } }
+          then:
+            - set_var: { var: aggregat_laeuft, value: 1 }
+            - set_state: { target: aggregat, to: running }
+            - advance_quest: arktis_rettung
+            - add_var: { var: score, delta: 30 }
+            - msg: "Mit kraeftigem Schwung drehst du die Handkurbel am Notstromaggregat. Der Dieselmotor stottert, spuckt schwarzen Rauch aus und springt dann mit sattem Droehnen an! Strom fliesst nun in die Funkzentrale. (+30 Punkte)"
+          else:
+            - msg: "Das Notstromaggregat laeuft bereits mit gleichmaessigem Droehnen."
+    - item1: petroleumkanister
+      item2: sturmlaterne
+      effects:
+        - add_fuel: { item: sturmlaterne, delta: 15 }
+        - msg: "Gluckern hallt durch die Stille. Du fuellst frisches Petroleum in den Tank der Sturmlaterne nach. Die Flamme brennt wieder kraeftig!"
+    - item1: streichhoelzer
+      item2: sturmlaterne
+      effects:
+        - if: { state: sturmlaterne, is: unlit }
+          then:
+            - set_state: { target: sturmlaterne, to: lit }
+            - msg: "Du reisst ein Streichholz an und entzuendest den Docht der Sturmlaterne. Ein warmer Schein erhellt die Umgebung."
+          else:
+            - msg: "Die Sturmlaterne brennt bereits."
+    - item1: feuerholz
+      item2: lagerfeuer
+      effects:
+        - if: { state: lagerfeuer, is: burning }
+          then:
+            - add_fuel: { item: lagerfeuer, delta: 10 }
+            - consume: feuerholz
+            - msg: "Du legst das Feuerholz auf das prasselnde Lagerfeuer. Neue Flammen schlagen empor!"
+          else:
+            - msg: "Das Holz liegt auf der Feuerstelle bereit, muss aber noch mit Streichhoelzern entzuendet werden."
+
+rules:
+  - id: start_expedition
+    on: enter camp_aurora
+    once: true
+    effects:
+      - start_quest: arktis_rettung
+
+  # Kaelte-Drain mit brennender Laterne: -1 Waerme pro Zug in Aussenbereichen
+  - id: cold_drain_protected
+    on: turn
+    when:
+      all:
+        - any:
+            - at: player
+              room: schneefeld
+            - at: player
+              room: eisspalte
+            - at: player
+              room: steilwand
+            - at: player
+              room: gipfel_plateau
+        - state: sturmlaterne
+          is: lit
+    effects:
+      - add_var: { var: waerme, delta: -1 }
+      - if: { compare_var: { name: waerme, op: lte, value: 0 } }
+        then:
+          - game_end: death
+          - msg: "Du sinkst in den gefrorenen Schnee. Die eisige Kaelte betaeubt deine Sinne... Deine Reise endet im ewigen Eis."
+
+  # Kaelte-Drain ohne brennende Laterne: -2 Waerme pro Zug im Schneesturm
+  - id: cold_drain_unprotected
+    on: turn
+    when:
+      all:
+        - any:
+            - at: player
+              room: schneefeld
+            - at: player
+              room: eisspalte
+            - at: player
+              room: steilwand
+            - at: player
+              room: gipfel_plateau
+        - not: { state: sturmlaterne, is: lit }
+    effects:
+      - add_var: { var: waerme, delta: -2 }
+      - msg: "Eisiger Windchill und peitschender Schneesturm schneiden durch deine Kleidung! Ohne den Schein der Laterne verlierst du rasend schnell an Koerperwaerme (-2 Waerme)."
+      - if: { compare_var: { name: waerme, op: lte, value: 0 } }
+        then:
+          - game_end: death
+          - msg: "Du sinkst in den gefrorenen Schnee. Die eisige Kaelte betaeubt deine Sinne... Deine Reise endet im ewigen Eis."
+
+  # Lagerfeuer-Waerme in camp_aurora
+  - id: lagerfeuer_heat
+    on: turn
+    when:
+      all:
+        - at: player
+          room: camp_aurora
+        - state: lagerfeuer
+          is: burning
+    effects:
+      - if: { compare_var: { name: waerme, op: lt, value: 20 } }
+        then:
+          - set_var: { var: waerme, value: 20 }
+          - msg: "Die Glut des Lagerfeuers spendet behagliche Waerme und schuetzt dich vor der arktischen Kaelte."
+
+  # Stations-Heizung bei laufendem Aggregat (+2 Waerme pro Zug)
+  - id: station_heat
+    on: turn
+    when:
+      all:
+        - any:
+            - at: player
+              room: forschungsstation
+            - at: player
+              room: funkzentrale
+        - state: aggregat
+          is: running
+    effects:
+      - if: { compare_var: { name: waerme, op: lt, value: 20 } }
+        then:
+          - add_var: { var: waerme, delta: 2 }
+
+tests:
+  - name: expedition_victory_walkthrough
+    input:
+      - "take streichhoelzer"
+      - "take sturmlaterne"
+      - "light sturmlaterne"
+      - "south"
+      - "take fleisch"
+      - "take seil"
+      - "take seite1"
+      - "read seite1"
+      - "north"
+      - "north"
+      - "west"
+      - "take kurbel"
+      - "take seite2"
+      - "read seite2"
+      - "use kurbel on aggregat"
+      - "north"
+      - "take signalpistole"
+      - "take seite3"
+      - "read seite3"
+      - "use funkgeraet"
+      - "south"
+      - "east"
+      - "north"
+      - "use seil"
+      - "west"
+      - "take eispickel"
+      - "take petroleum"
+      - "take seite4"
+      - "read seite4"
+      - "use petroleum on sturmlaterne"
+      - "east"
+      - "north"
+      - "use eispickel"
+      - "north"
+      - "fire signalpistole"
+    expect:
+      - "Du nimmst die Streichhoelzer"
+      - "Du nimmst die Sturmlaterne"
+      - "Du reisst ein Streichholz an und entzuendest den Docht der Sturmlaterne"
+      - "Du nimmst das Trockenfleisch"
+      - "Du nimmst das Kletterseil"
+      - "Du nimmst die vergilbte 1. Tagebuchseite an dich"
+      - "Tagebuch von Dr. Archibald Thorne – 14. August 1910"
+      - "Du nimmst die Handkurbel"
+      - "Du nimmst die zerknitterte 2. Tagebuchseite an dich"
+      - "Tagebuch von Dr. Archibald Thorne – 2. November 1910"
+      - "Mit kraeftigem Schwung drehst du die Handkurbel am Notstromaggregat"
+      - "Du nimmst die Signalpistole"
+      - "Du nimmst die feuchte 3. Tagebuchseite an dich"
+      - "Tagebuch von Dr. Archibald Thorne – 19. Januar 1911"
+      - "Du schaltest das Funkgeraet ein"
+      - "Mit sicherem Wurf verankerst du das Kletterseil"
+      - "Du nimmst den Eispickel"
+      - "Du nimmst den Petroleumkanister"
+      - "Du nimmst die eisstarre 4. Tagebuchseite an dich"
+      - "Tagebuch von Dr. Archibald Thorne – 4. Maerz 1911"
+      - "Gluckern hallt durch die Stille"
+      - "Mit wuchtigen Schlaegen treibst du die gehaertete Stahlspitze des Eispickels in die glasharte Steilwand"
+      - "Gipfelplateau"
+      - "SIEG — Du wirst aus der eisigen Hoelle evakuiert! Endstand: 200/200 Punkte."

@@ -1,0 +1,36 @@
+take streichhoelzer
+take sturmlaterne
+light sturmlaterne
+south
+take fleisch
+take seil
+take seite1
+read seite1
+north
+north
+west
+take kurbel
+take seite2
+read seite2
+use kurbel on aggregat
+north
+take signalpistole
+take seite3
+read seite3
+use funkgeraet
+south
+east
+north
+use seil
+west
+take eispickel
+take petroleum
+take seite4
+read seite4
+use petroleum on sturmlaterne
+east
+north
+use eispickel
+north
+fire signalpistole
+quit
