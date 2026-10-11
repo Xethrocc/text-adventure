@@ -623,6 +623,7 @@ data AItem = AItem
     , aiCarriedBy :: Maybe String    -- ^ B7: npc id (or "player") — the item starts in this actor's possession
     , aiGrammar :: E.Grammar         -- ^ 4.3.5: article:/gender: grammar metadata (empty = none)
     , aiRepeatable :: Maybe Bool     -- ^ K15: repeatable world object (default: False)
+    , aiFuel :: Maybe AFuelDef       -- ^ OPEN-17: generischer Item-Timer (`fuel:`)
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AItem where
@@ -651,6 +652,38 @@ instance FromJSON AItem where
         <*> o .:? "carried_by"
         <*> E.grammarFromJSONFields o
         <*> o .:? "repeatable"
+        <*> o .:? "fuel"
+
+-- | OPEN-17: `fuel:` on an item — a generic item timer. The counter itself
+--   lives in `itemProps["fuel"]`; this is the definition: how it starts, when
+--   it ticks down (`ticks_when:` — an item status, so `extinguish` pauses the
+--   lamp like the original `DISABLE`), which burn milestones fire `warn:`
+--   effects and what runs when the counter reaches 0 (`on_empty:`).
+data AFuelDef = AFuelDef
+    { afdStart     :: Int
+    , afdTicksWhen :: Maybe String
+    , afdWarn      :: [AFuelWarn]
+    , afdOnEmpty   :: [AActionOutcome]
+    } deriving (Show, Eq, Generic)
+
+-- | One burn milestone: fires when a tick decrement lands the counter exactly
+--   on `at:` (set_fuel/add_fuel jumps deliberately skip milestones).
+data AFuelWarn = AFuelWarn
+    { afwAt      :: Int
+    , afwEffects :: [AActionOutcome]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AFuelDef where
+    parseJSON = withObject "AFuelDef" $ \o -> AFuelDef
+        <$> o .: "start"
+        <*> o .:? "ticks_when"
+        <*> o .:? "warn" .!= []
+        <*> o .:? "on_empty" .!= []
+
+instance FromJSON AFuelWarn where
+    parseJSON = withObject "AFuelWarn" $ \o -> AFuelWarn
+        <$> o .: "at"
+        <*> o .:? "effects" .!= []
 
 -- ---------------------------------------------------------------------------
 -- NPCs
@@ -1676,6 +1709,8 @@ data AActionOutcome
     | AOStealItem String String String (Maybe String)
       -- ^ steal: {item: <item>, from: <actor>, to: <actor>, msg?: <text>} (OPEN-15)
     | AOSwapInventory String String    -- ^ swap_inventory: {source, target} (OPEN-20)
+    | AOSetFuel String Int             -- ^ set_fuel: {item, to} (OPEN-17)
+    | AOAddFuel String Int             -- ^ add_fuel: {item, delta} (OPEN-17)
     | AOForget String String           -- ^ forget: <fact> - same shapes (W1)
     deriving (Show, Eq, Generic)
 
@@ -1820,6 +1855,12 @@ instance FromJSON AActionOutcome where
         -- OPEN-20: atomarer Tausch zweier Inventare (getragen + ausgeruestet).
         <|> (do so <- o .: "swap_inventory" :: Parser Object
                 AOSwapInventory <$> so .: "source" <*> so .: "target")
+        -- OPEN-17: Item-Timer schreiben (Zähler klammert bei 0; wird 0 →
+        --   `on_empty` der `fuel:`-Definition).
+        <|> (do fo <- o .: "set_fuel" :: Parser Object
+                AOSetFuel <$> fo .: "item" <*> fo .: "to")
+        <|> (do fo <- o .: "add_fuel" :: Parser Object
+                AOAddFuel <$> fo .: "item" <*> fo .: "delta")
         <|> (AOSetInventoryLimit <$> o .: "set_inventory_limit")
         <|> (AOSayNode <$> o .: "say_node")
         <|> (o .: "dialog_end" >>= \b -> if b :: Bool then pure AODialogEnd else empty)
@@ -2084,7 +2125,7 @@ knownKeys EntItem = Set.fromList
     [ "id", "name", "desc", "description", "ascii", "keys", "tags", "tags_when"
     , "location", "state", "slot", "effects", "hidden", "searchable", "discover"
     , "props", "on_take", "verb_map", "portable", "take_failure", "in_container"
-    , "capacity", "carried_by", "article", "gender", "repeatable"
+    , "capacity", "carried_by", "article", "gender", "repeatable", "fuel"
     ]
 knownKeys EntNPC = Set.fromList
     [ "id", "name", "desc", "description", "ascii", "keys", "location"

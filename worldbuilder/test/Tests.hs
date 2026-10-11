@@ -1654,6 +1654,7 @@ minItem iid = AItem
     , aiCarriedBy = Nothing
     , aiGrammar = E.emptyGrammar
     , aiRepeatable = Nothing
+    , aiFuel = Nothing
     }
 
 advWithItem :: AItem -> Adventure
@@ -6861,6 +6862,7 @@ minItemKey iid = AItem
     , aiCarriedBy = Nothing
     , aiGrammar = E.emptyGrammar
     , aiRepeatable = Nothing
+    , aiFuel = Nothing
     }
 
 -- | Minimal usable ANPC for pool entries. Map.empty

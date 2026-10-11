@@ -285,6 +285,10 @@ outcomeSurfaces a =
   where
     roomOutcomes r = concat (catMaybes [ arOnEnter r, arOnLook r, arOnExit r, arSearch r ])
     itemOutcomes i = maybe [] id (aiOnTake i) ++ concat (Map.elems (aiVerbMap i))
+        -- OPEN-17: the effect trees of item timers (`fuel:` milestones and the
+        --   `on_empty` handler) carry references like any other outcome tree.
+        ++ maybe [] fuelOutcomes (aiFuel i)
+    fuelOutcomes fd = concatMap afwEffects (afdWarn fd) ++ afdOnEmpty fd
     dialogOutcomes tr =
         concatMap (concatMap adcOutcomes . adnChoices) (Map.elems (adtNodes tr))
     npcOutcomes n =
@@ -3037,11 +3041,13 @@ compileItemDefSafe registry i =
         verbMapWrap = case compileVerbMapSafe registry (bp ++ ".verb_map") (aiVerbMap i) of
             Left errs -> Left errs
             Right v   -> Right v
-    in case (slotWrap, effectsWrap, verbMapWrap) of
-        (Left es, _, _) -> Left es
-        (_, Left es, _) -> Left es
-        (_, _, Left es) -> Left es
-        (Right slot, Right effects, Right verbMap) ->
+        fuelWrap = compileFuelDef (bp ++ ".fuel") (aiFuel i)
+    in case (slotWrap, effectsWrap, verbMapWrap, fuelWrap) of
+        (Left es, _, _, _) -> Left es
+        (_, Left es, _, _) -> Left es
+        (_, _, Left es, _) -> Left es
+        (_, _, _, Left es) -> Left es
+        (Right slot, Right effects, Right verbMap, Right fuel) ->
             -- Merge on_take into verb_map (Phase 4.2: `on_take:` is the
             -- historical PhaseAfter take entry; an `instead:take,<state>`
             -- entry replaces it and it does not run).
@@ -3075,7 +3081,33 @@ compileItemDefSafe registry i =
                 -- `location: nowhere` (OPEN-04) is a holding pen, not a room —
                 -- it must never be a repeatable home.
                 , E.itemHomeLocation = if aiLocation i `elem` ["", "nowhere"] then Nothing else Just (aiLocation i)
+                , E.itemFuel = fuel
                 })
+
+-- | OPEN-17: `fuel:` — the item-timer definition plus its effect trees
+--   (milestones and the `on_empty` handler). Static shape checks: the counter
+--   must start non-negative, milestones must be positive.
+compileFuelDef :: String -> Maybe AFuelDef -> Either [CompileIssue] (Maybe E.FuelDef)
+compileFuelDef _ Nothing = Right Nothing
+compileFuelDef bp (Just fd) =
+    let startErrs =
+            [ ciError (bp ++ ".start") "InvalidFuelStart"
+                ("fuel start must be >= 0, but is " ++ show (afdStart fd))
+            | afdStart fd < 0 ]
+        warnErrs = concat
+            [ [ ciError (bp ++ ".warn") "InvalidFuelThreshold"
+                    ("fuel warn threshold must be > 0, but is " ++ show (afwAt w)) ]
+            | w <- afdWarn fd, afwAt w <= 0 ]
+        errs = startErrs ++ warnErrs
+    in if null errs
+       then Right (Just E.FuelDef
+            { E.fuelStart = afdStart fd
+            , E.fuelTicksWhen = afdTicksWhen fd
+            , E.fuelWarn = [ E.FuelWarn (afwAt w) (compileOutcomes (afwEffects w)) | w <- afdWarn fd ]
+            , E.fuelOnEmpty =
+                if null (afdOnEmpty fd) then Nothing else Just (compileOutcomes (afdOnEmpty fd))
+            })
+       else Left errs
 
 compileItemStates :: [AItem] -> ([CompileIssue], Map.Map String E.ItemState)
 compileItemStates items =
@@ -3097,9 +3129,17 @@ compileItemStateSafe i
                 Nothing | aiLocation i == "nowhere" -> E.Dormant
                         | otherwise -> E.InRoom (aiLocation i)
         , E.itemStatus = aiState i
-        , E.itemProps = aiProps i
+        , E.itemProps = seedFuelProp (aiFuel i) (aiProps i)
         , E.itemDiscovered = not (aiHidden i)
         })
+
+-- | OPEN-17: seed the timer counter from `fuel.start`; an explicit
+--   `props: {fuel: …}` wins (the author knows better).
+seedFuelProp :: Maybe AFuelDef -> Map.Map String Int -> Map.Map String Int
+seedFuelProp Nothing props = props
+seedFuelProp (Just fd) props
+    | Map.member E.fuelPropKey props = props
+    | otherwise                      = Map.insert E.fuelPropKey (afdStart fd) props
 
 compileSlot :: Maybe String -> Either String (Maybe E.EquipSlot)
 compileSlot Nothing = Right Nothing
@@ -3487,6 +3527,9 @@ compileAActionOutcome ao = case ao of
         E.StealItem i (compileActorRef fromA) (compileActorRef toA) mMsg
     -- OPEN-20: atomarer Tausch zweier Inventare.
     AOSwapInventory src tgt -> E.SwapInventory (compileActorRef src) (compileActorRef tgt)
+    -- OPEN-17: Item-Timer schreiben.
+    AOSetFuel i n -> E.SetFuel i n
+    AOAddFuel i d -> E.AddFuel i d
     -- B9: NPC equipment. The engine keeps the slot in the item's own
     -- definition (`itemEquipSlot`, YAML `slot:`), so no new SaveState field is needed; the
     -- actor comes from the same `to` field as the B7 give-sugar.
