@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### FIX-12: Alias-Fallbacks waren überall tot (`message:`, `text:`, `ascii:`, `tc*`, `nextNode`)
+
+Die FIX-11-Klasse steckte an sieben weiteren Stellen: überall stand
+`o .:? "a" <|> o .:? "b"` — weil `.:?` bei fehlendem Key erfolgreich `Nothing`
+liefert, wurde der Alias **nie** gelesen. Jetzt liest jedes Alias-Feld seinen
+Fallback wirklich (Maybe-Kette); bei doppeltem Key gewinnt die Hauptform.
+
+- **Worldbuilder:** Exit-`message:` (`AExitRef`), `block: {message:|text:}`,
+  Biome-`ascii:` (Alias von `ascii_art:`).
+- **Engine:** die Legacy-Namen `tcInitiative`/`tcFleeAllowed`/`tcMaxRounds`/
+  `tcSpeedAttribute` (`TacticalCombat`) und das CamelCase-`nextNode`
+  (`ChoiceSnapshot`) — alte JSON-Dateien mit diesen Namen werden wieder korrekt
+  gelesen, statt still in die Defaultwerte zu fallen.
+
+Regressionstests in beiden Suites (`testAliasFallbacks`, `testJsonAliasFallbacks`).
+Bestehende Abenteuer sind unberührt; nur Dateien, die ausschließlich einen
+Alias-Key tragen, ändern ihr Verhalten — und die waren vorher still falsch.
+
 ### FIX-11: `message:`-Alias an `step_toward:`/`step_away_from:` war tot
 
 In der Objektform las der Parser `so .:? "msg" <|> so .:? "message"` — weil `.:?`

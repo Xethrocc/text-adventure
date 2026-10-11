@@ -12758,6 +12758,8 @@ main = do
         , runTest "swap_inventory: exchanges both inventories in one step (OPEN-20)" testSwapInventoriesMechanics
         , runTest "swap_inventory: worn gear stays worn, player slots rebuilt (OPEN-20)" testSwapInventoriesKeepsWorn
         , runTest "steal/swap_inventory JSON round-trips (OPEN-15/OPEN-20)" testStealSwapJsonRoundTrip
+        -- FIX-12: JSON-Alias-Fallbacks
+        , runTest "JSON aliases: tc*/nextNode legacy names are read again (FIX-12)" testJsonAliasFallbacks
         ]
     when (not (and results)) exitFailure
 
@@ -12918,6 +12920,27 @@ testStealSwapJsonRoundTrip = do
     r3 <- expectTrue "SwapInventory round-trips"
             (rt (SwapInventory ActorPlayer (ActorNPC "dieb")))
     pure (r1 && r2 && r3)
+
+-- | Regression FIX-12: JSON-Aliase waren tot (die FIX-11-Klasse) — `.:? "a" <|>
+--   .:? "b"` liest `b` nie, weil `.:?` bei fehlendem Key erfolgreich `Nothing`
+--   liefert. Die Legacy-Namen (`tc*`) und das CamelCase-`nextNode` werden
+--   wieder gelesen; bei doppeltem Key gewinnt die Hauptform.
+testJsonAliasFallbacks :: IO Bool
+testJsonAliasFallbacks = do
+    let snap s = Aeson.decode (BLC.pack s) :: Maybe ChoiceSnapshot
+        tac s  = Aeson.decode (BLC.pack s) :: Maybe TacticalCombat
+    r1 <- expectEqual (Just (ChoiceSnapshot 1 "x" (Just "b")))
+            (snap "{\"index\":1,\"text\":\"x\",\"nextNode\":\"b\"}")
+    r2 <- expectEqual (Just (ChoiceSnapshot 1 "x" (Just "b")))
+            (snap "{\"index\":1,\"text\":\"x\",\"next_node\":\"b\"}")
+    r3 <- expectEqual (Just (ChoiceSnapshot 1 "x" (Just "a")))
+            (snap "{\"index\":1,\"text\":\"x\",\"next_node\":\"a\",\"nextNode\":\"b\"}")
+    r4 <- expectEqual (Just (TacticalCombat EnemyFirst False 7 "init"))
+            (tac "{\"tcInitiative\":\"enemy_first\",\"tcFleeAllowed\":false,\"tcMaxRounds\":7,\"tcSpeedAttribute\":\"init\"}")
+    r5 <- expectEqual (Just (TacticalCombat PlayerFirst True 100 "speed"))
+            (tac "{\"initiative\":\"player_first\",\"flee_allowed\":true,\"max_rounds\":100,\"speed_attribute\":\"speed\"}")
+    r6 <- expectEqual (Just (TacticalCombat PlayerFirst True 100 "speed")) (tac "{}")
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
 
 -- | K16b.1: Classic — CAAbility runs ability effects, consumes the round,
 --   and the NPC strikes back (same Rache-Schlag as CAAttack).

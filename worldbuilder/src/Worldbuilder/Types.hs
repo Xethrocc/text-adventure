@@ -519,7 +519,10 @@ instance FromJSON AExitRef where
         <*> o .:? "locked_by"
         <*> o .:? "when"
         <*> o .:? "blocked" .!= False
-        <*> (o .:? "msg" <|> o .:? "message")) v
+        <*> (o .:? "msg" >>= maybe (o .:? "message") (pure . Just))) v
+        -- FIX-12: `.:?` succeeds with Nothing for a missing key, so an alias
+        -- needs the maybe-chain — `.:? "msg" <|> .:? "message"` never read
+        -- `message:`.
 
 -- ---------------------------------------------------------------------------
 -- Procedural Sandbox Zones (Schritt 3 / Phase 3E)
@@ -543,7 +546,7 @@ instance FromJSON ABiomeTemplate where
         <*> o .:? "name_pattern"
         <*> textField o
         <*> o .:? "tags" .!= []
-        <*> (o .:? "ascii_art" <|> o .:? "ascii")
+        <*> (o .:? "ascii_art" >>= maybe (o .:? "ascii") (pure . Just))
         <*> o .:? "passable_dirs" .!= []
 
 -- | Sandbox zone as authored in YAML.
@@ -1966,7 +1969,11 @@ instance FromJSON AActionOutcome where
                     Bool True -> pure (AOBlock Nothing False)
                     Bool False -> pure (AOBlock Nothing False)
                     Object bObj -> do
-                        mMsg <- bObj .:? "msg" <|> bObj .:? "message" <|> bObj .:? "text"
+                        -- FIX-12: alias chain (`.:?` succeeds with Nothing,
+                        -- a bare `<|>` would never read the alias).
+                        mMsg <- bObj .:? "msg"
+                                >>= maybe (bObj .:? "message") (pure . Just)
+                                >>= maybe (bObj .:? "text") (pure . Just)
                         turn <- bObj .:? "turn" .!= False
                         pure (AOBlock mMsg turn)
                     _ -> fail "block must be string, bool, or object")

@@ -115,10 +115,12 @@ instance ToJSON TacticalCombat where
 
 instance FromJSON TacticalCombat where
     parseJSON = withObject "TacticalCombat" $ \o -> TacticalCombat
-        <$> (o .:? "initiative"      <|> o .:? "tcInitiative")      .!= PlayerFirst
-        <*> (o .:? "flee_allowed"    <|> o .:? "tcFleeAllowed")     .!= True
-        <*> (o .:? "max_rounds"      <|> o .:? "tcMaxRounds")       .!= 100
-        <*> (o .:? "speed_attribute" <|> o .:? "tcSpeedAttribute")  .!= "speed"
+        -- FIX-12: alias chain (`.:?` succeeds with Nothing, so `.:? "a" <|>
+        -- .:? "b"` never reads the legacy `tc*` name).
+        <$> (o .:? "initiative"      >>= maybe (o .:? "tcInitiative")     (pure . Just)) .!= PlayerFirst
+        <*> (o .:? "flee_allowed"    >>= maybe (o .:? "tcFleeAllowed")    (pure . Just)) .!= True
+        <*> (o .:? "max_rounds"      >>= maybe (o .:? "tcMaxRounds")      (pure . Just)) .!= 100
+        <*> (o .:? "speed_attribute" >>= maybe (o .:? "tcSpeedAttribute") (pure . Just)) .!= "speed"
 
 -- | Initiative order within a tactical round.
 --   `BySpeed` is defined for forward-compatibility (A3) but falls back to

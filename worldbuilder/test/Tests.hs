@@ -960,6 +960,52 @@ testStepMsgAlias = do
             Aeson.Success other -> expectTrue ("expected msg form, got: " ++ show other) False
     pure (r1 && r2 && r3)
 
+-- | Regression FIX-12: Alias-Felder waren tot (die FIX-11-Klasse) —
+--   `.:? "a" <|> .:? "b"` liest `b` nie, weil `.:?` bei fehlendem Key
+--   erfolgreich `Nothing` liefert. Exit-`message:`, `block:`-`message:`/
+--   `text:` und Biome-`ascii:` werden wieder gelesen; bei doppeltem Key
+--   gewinnt die Hauptform.
+testAliasFallbacks :: IO Bool
+testAliasFallbacks = do
+    let decA s = case decode1 (BLC.pack s) of
+            Left err -> Left (show err)
+            Right val -> case (Aeson.fromJSON (val :: Aeson.Value) :: Aeson.Result AActionOutcome) of
+                Aeson.Success out -> Right out
+                Aeson.Error err   -> Left err
+        decExit s = case decode1 (BLC.pack s) of
+            Left err -> Left (show err)
+            Right val -> case (Aeson.fromJSON (val :: Aeson.Value) :: Aeson.Result AExitRef) of
+                Aeson.Success out -> Right out
+                Aeson.Error err   -> Left err
+        decBiome s = case decode1 (BLC.pack s) of
+            Left err -> Left (show err)
+            Right val -> case (Aeson.fromJSON (val :: Aeson.Value) :: Aeson.Result ABiomeTemplate) of
+                Aeson.Success out -> Right out
+                Aeson.Error err   -> Left err
+        expectRes label ok got = case got of
+            Left err -> do
+                putStrLn ("  " ++ label ++ " parse failed: " ++ err)
+                pure False
+            Right v  -> expectEqual ok v
+    r1 <- expectRes "exit message alias"
+            (AExitRef "loc_1" Nothing Nothing False (Just "Zu."))
+            (decExit "{to: loc_1, message: 'Zu.'}")
+    r2 <- expectRes "exit msg main form"
+            (AExitRef "loc_1" Nothing Nothing False (Just "Zu."))
+            (decExit "{to: loc_1, msg: 'Zu.'}")
+    r3 <- expectRes "block message alias" (AOBlock (Just "Zu.") False)
+            (decA "{block: {message: 'Zu.'}}")
+    r4 <- expectRes "block text alias" (AOBlock (Just "Zu.") False)
+            (decA "{block: {text: 'Zu.'}}")
+    r5 <- expectRes "block msg wins over text" (AOBlock (Just "A.") False)
+            (decA "{block: {msg: 'A.', text: 'B.'}}")
+    r6 <- case decBiome "{id: b, ascii: 'Bild'}" of
+        Left err -> do
+            putStrLn ("  biome ascii alias parse failed: " ++ err)
+            pure False
+        Right bt -> expectEqual (Just (AAscii (ACondText "Bild" []) [] 0 [] Nothing)) (abtAsciiArt bt)
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
 -- | `pursuit:` compiles to one `on: turn` trigger per pursuer, emitted in
 --   npc-id order; unknown pursuers and unknown `ignores:` values are errors.
 testPursuitSection :: IO Bool
@@ -4405,6 +4451,7 @@ tests =
     -- Pursuit (Tür IV)
     , ("pursuit: step_toward/step_away_from sugar compiles", testPursuitSugar)
     , ("pursuit: step_toward/step_away_from message: alias (FIX-11)", testStepMsgAlias)
+    , ("alias fallbacks: exit/block/biome aliases are read again (FIX-12)", testAliasFallbacks)
     , ("mass ops: damage/move/reveal/consume/set_state sugar (B3)", testMassOpSugar)
     , ("pursuit: section emits sorted on:turn triggers; checks", testPursuitSection)
     -- 5.3: include:

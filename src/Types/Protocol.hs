@@ -493,7 +493,9 @@ instance FromJSON ChoiceSnapshot where
     parseJSON = withObject "ChoiceSnapshot" $ \o -> ChoiceSnapshot
         <$> o .: "index"
         <*> o .: "text"
-        <*> (o .:? "next_node" <|> o .:? "nextNode")
+        <*> (o .:? "next_node" >>= maybe (o .:? "nextNode") (pure . Just))
+        -- FIX-12: alias chain (`.:?` succeeds with Nothing, so
+        -- `.:? "next_node" <|> .:? "nextNode"` never read the camelCase alias).
 
 -- | Active dialogue state (choices and prompt).
 data DialogueSnapshot = DialogueSnapshot
