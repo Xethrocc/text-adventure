@@ -330,7 +330,10 @@ parseSimpleCommandWith env defs tokens input = case tokens of
     []                     -> Unknown ""
     ["go", dir]            -> parseDirection env dir input
     ["go", "to", dir]      -> parseDirection env dir input
-    ["move", dir]          -> parseDirection env dir input
+    -- `move <thing>` is not movement: only a real direction (or pack alias)
+    -- claims it; anything else falls through to the verb registry, where an
+    -- adventure may declare a custom `move` (Zork: `move rug`).
+    ["move", dir] | Just _ <- directionOf env dir -> parseDirection env dir input
     ["walk", dir]          -> parseDirection env dir input
     -- Bare direction shorthand (canonical words plus pack aliases, 4.3).
     [d] | Just dir <- directionOf env d -> Go dir

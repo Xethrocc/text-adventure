@@ -4726,6 +4726,17 @@ testGenreVerbFromRegistry = do
     let reg = Map.fromList [("swim", VerbDef "swim" [])]
     expectEqual (Interact (VCustom "swim") "") (parseCommandWith reg "swim")
 
+-- | Zork C2: `move <direction>` stays movement, `move <thing>` reaches an
+--   adventure-declared custom `move` verb (`move rug`); without the
+--   declaration it is still an unknown sentence.
+testMoveThingIsCustomVerb :: IO Bool
+testMoveThingIsCustomVerb = do
+    let reg = Map.fromList [("move", VerbDef "move" [])]
+    r1 <- expectEqual (Go North) (parseCommandWith reg "move north")
+    r2 <- expectEqual (Interact (VCustom "move") "rug") (parseCommandWith reg "move rug")
+    r3 <- expectEqual (Unknown "move rug") (parseCommandWith Map.empty "move rug")
+    pure (and [r1, r2, r3])
+
 -- | P2-2: `executeCommand Restart` used to return `emptyGameState`, wiping the
 --   loaded world. It must leave the state alone (the loop handles Restart via
 --   `lsInitial`).
@@ -12496,6 +12507,7 @@ main = do
         -- P1-13: Genre-Verben nicht mehr im Kern
         , runTest "genre verbs are not core verbs (P1-13)" testGenreVerbsNotCoreVerbs
         , runTest "genre verb comes from the registry (P1-13)" testGenreVerbFromRegistry
+        , runTest "move <thing> reaches a declared custom verb (Zork C2)" testMoveThingIsCustomVerb
         -- Phase V: frontend abstraction
         , runTest "loop runs on a canned (non-Haskeline) frontend" testLoopRunsOnCannedFrontend
         -- Phase 1A: Arithmetic expressions (Expr) & ComputeValue

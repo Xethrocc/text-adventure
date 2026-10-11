@@ -1272,6 +1272,10 @@ tagVehicleAr r = r { arTags = "vehicle" : arTags r }
 
 -- | Reserved words the runtime interprets as core verbs; these cannot be
 --   redeclared as custom verbs.
+--
+--   `move` is deliberately *not* reserved: the parser only claims the form
+--   `move <direction>` (`Go`); `move <thing>` falls through to the generic verb
+--   registry, so an adventure can declare `move` for `move rug` (Zork C2).
 reservedVerbWords :: [String]
 reservedVerbWords =
     [ "take", "pick", "grab", "get", "drop", "put"
@@ -1279,7 +1283,7 @@ reservedVerbWords =
     , "use", "activate"
     , "talk", "speak", "chat"
     , "attack", "hit", "kill", "search"
-    , "go", "move", "walk", "north", "south", "east", "west", "up", "down"
+    , "go", "walk", "north", "south", "east", "west", "up", "down"
     , "enter", "board", "exit", "drive", "wait", "refuel", "repair"
     , "equip", "wear", "wield", "unequip", "remove"
     , "look", "inventory", "inv", "i", "stats", "journal", "quests"

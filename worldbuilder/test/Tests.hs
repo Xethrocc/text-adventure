@@ -2952,7 +2952,11 @@ testReadAndCustomVerbCompilation = do
     reserved <- case compileAdventure (adv { advVerbs = [AVerb "read" []] }) of
         Left errs -> expectContains "ReservedVerbName" (issuesText errs)
         Right _ -> expectTrue "read remains reserved" False
-    pure (compiled && reserved)
+    -- Zork C2: `move <thing>` needs a declarable custom `move` verb.
+    moveDeclarable <- case compileAdventure (adv { advVerbs = advVerbs adv ++ [AVerb "move" []] }) of
+        Left errs -> expectTrue ("move is declarable: " ++ issuesText errs) False
+        Right _ -> pure True
+    pure (compiled && reserved && moveDeclarable)
 
 -- | Any `faction.<id>` reference (standing outcome / predicate) must point at a
 --   declared faction once the `factions:` segment is present.

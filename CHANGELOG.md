@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### `move <thing>` als Custom-Verb (Zork-Port C2)
+
+`move rug` (Zork: Teppich verschieben, Weg zur Falltür) war nicht ausdrückbar:
+der Parser hat jedes Zwei-Wort-`move` als Bewegung gelesen und bei Nicht-Richtungen
+`Unknown` geliefert, und `move` stand auf der `ReservedVerbName`-Liste.
+
+- **Parser:** `move <x>` ist nur noch Bewegung, wenn `<x>` eine Richtung (oder ein
+  Pack-Alias) ist; sonst läuft es durch die Verb-Registry. Ohne Deklaration bleibt
+  `move rug` ein unbekannter Satz.
+- **Worldbuilder:** `move` ist nicht mehr reserviert und kann in `verbs:` deklariert
+  werden. `go`/`walk` bleiben reserviert.
+- Tests: `testMoveThingIsCustomVerb` (Engine), erweiterter Verb-Test (Worldbuilder).
+
 ### OPEN-11: Dynamische Ziele — `to: {here}` / `to: {room_of: <npc>}`
 
 `place:`, `move_npc:` und `move_all: … to:` verlangten **literale** Ziele — damit
