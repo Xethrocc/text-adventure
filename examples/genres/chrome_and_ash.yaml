@@ -1,0 +1,610 @@
+# Chrome & Ash (Cyberpunk) — Das Infiltrations-Komplott
+#
+# Demonstriert die Verzahnung von:
+#   - Cyberpunk-Kern: Custom-Verb 'hack' (Aliase: crack, breach, hacken),
+#     Variable 'heat' (0..10) mit Eskalations-Regeln (on: turn + compare_var).
+#   - Score-System: 'score' (0..350) mit Rangliste (score_rankings) und
+#     Punktevergabe fuer Meilensteine, Hacking, Wissensentdeckung und Exfiltration.
+#   - Fraktions- & Reputationssystem: Faction 'syndicate' (Schattensyndikat)
+#     mit Standing-Stufen (neutral, verbuendet, ehrenmitglied).
+#   - K11 Rezept- und Craftingsystem: Hardware-Synthese am Schwarzmarkt-Terminal
+#     (interactions.item: military_icebreaker aus cyberdeck + bypass_chip).
+#   - W1 / K9 Wissensmodell: facts:, statements: und Notizbuch (journal: notes).
+#   - Dynamische Welt: Tueren und Schleusen via locked_by / set_state ('unlocked').
+#   - Multiple Enden: Exfiltration (Sieg an Fixerin Jax oder Verrat am Syndikat)
+#     sowie Game Over bei voller Heat-Eskalation (heat >= 10).
+
+name: Chrome & Ash
+start_room: street_corner
+
+language: de
+
+title_art: |
+  =============================================================
+         C H R O M E   &   A S H   ( C Y B E R P U N K )
+       --- Das Infiltrations-Komplott im Neon-Schatten ---
+  =============================================================
+
+end_art:
+  victory: |
+    =============================================================
+         S I E G   I M   N E O N - D I C H T I C H T
+    =============================================================
+    Die Extraktion ist geglueckt! Der verschluesselte Datenkern
+    der Blackwood Corporation befindet sich in deinen Haenden.
+    Waehrend die Alarmsirenen des Megatowers die regennasse Nacht
+    zerreissen, tauchst du im Schattensyndikat der Unterstadt unter.
+    Dein Ruf als Meister-Runner ist fuer immer in Chrom gegossen!
+  death: |
+    =============================================================
+         G A M E   O V E R   --   L I Q U I D I E R T
+    =============================================================
+    Zu viel Laerm im Netz, zu viel Hitze auf den Strassen.
+    Das Blackwood-Einsatzkommando hat dich eingekreist.
+    Grelles Muendungsfeuer schneidet durch den Nieselregen.
+    Deine Cyberware brennt durch -- du wirst zu Asche im Rinnstein.
+
+verbs:
+  - name: hack
+    aliases: [crack, breach, hacken]
+  - name: bilanz
+    aliases: [konto, creds, status, credits]
+
+variables:
+  - name: heat
+    type: int
+    initial: 0
+    min: 0
+    max: 10
+  - name: creds
+    type: int
+    initial: 25
+    min: 0
+  - name: score
+    type: int
+    initial: 0
+    max: 350
+    score_rankings:
+      - { at: 0,   title: "Script-Kiddie" }
+      - { at: 100, title: "Street-Runner" }
+      - { at: 200, title: "Net-Infiltrator" }
+      - { at: 300, title: "Cyber-Legende" }
+  - name: alarm_stufe
+    type: int
+    initial: 0
+  - name: back_door_offen
+    type: int
+    initial: 0
+  - name: vault_offen
+    type: int
+    initial: 0
+  - name: craft_done
+    type: int
+    initial: 0
+
+factions:
+  - id: syndicate
+    name: Schattensyndikat
+    initial: 0
+    levels:
+      - { at: 0,  name: "neutral" }
+      - { at: 15, name: "verbuendet" }
+      - { at: 30, name: "ehrenmitglied" }
+
+journal: notes
+
+facts:
+  - id: blackwood_protokoll
+    keys: [protokoll]
+    text: "Das Blackwood-Forschungsprojekt 'Projekt Asche' loescht digitale Identitaeten."
+    source: "Buero-Terminal des Megatowers"
+    tag: beweise
+    learn_msg: "Du laedst das geheime Forschungsprotokoll in dein Implantat."
+
+statements:
+  - id: fixer_warnung
+    speaker: fixer
+    claims: blackwood_protokoll
+    truth: true
+    text: "Jax warnt: 'Blackwood laesst jeden Runner verschwinden. Wenn der Alarm schlaegt, bist du tot.'"
+    tag: kontakte
+
+rooms:
+  - id: street_corner
+    name: Neonkreuzung
+    desc: >
+      Neonlicht spiegelt sich in oeligen Pfuetzen auf dem geborstenen Asphalt.
+      Dichter Smog und saurer Nieselregen liegen ueber der Kreuzung.
+      Im Osten dampft eine belebte Nudelbar, nach Norden fuehrt eine duestere
+      Hintergasse in den Schatten des Megatowers. Im Westen liegt ein verlassener
+      Ladehof mit rostigen Zaeunen.
+    exits:
+      east: { to: noodle_bar }
+      north: { to: alley }
+      west: { to: escape_yard }
+
+  - id: noodle_bar
+    name: Nudelbar
+    desc: >
+      Dichter Dampf steigt aus brodelnden Kochtoepfen empor. Das Summen alter
+      Hologrammwerbung mischt sich mit dem Klappern von Essstaebchen. Hinter der
+      fettigen Theke steht Koch Chen und beobachtet jeden Gast mit stoischer
+      Ruhe. Im Westen liegt die Strassenkreuzung, im Norden der Nachtmarkt.
+    exits:
+      west: { to: street_corner }
+      north: { to: market }
+
+  - id: market
+    name: Nachtmarkt
+    desc: >
+      Unter zerschlissenen Planen draengen sich Stotterer, Schmuggler und
+      Schwarzhaendler. Modifizierte Cyberware, illegale Software-Subroutinen
+      und heisse Schaltkreise werden im Halbdunkel feilgeboten. Im Westen
+      fuehrt eine schwere Tuer in das Hinterzimmer der Fixerin. Im Osten
+      fuehrt eine Rolltreppe hinab zur U-Bahn-Station. Nach Sueden geht es
+      zurueck zur Nudelbar.
+    exits:
+      south: { to: noodle_bar }
+      west: { to: fixer_den }
+      east: { to: subway }
+
+  - id: fixer_den
+    name: Hinterzimmer der Fixerin
+    desc: >
+      Ein schallisolierter Raum, nur erhellt vom flackernden Schein dreier
+      holografischer Monitore. Fixerin Jax lehnt laessig im Kunstledersessel
+      und laesst einen gravierten Cred-Chip zwischen ihren kybernetischen
+      Fingern kreisen. Nach Osten fuehrt die Panzertuer zurueck zum Nachtmarkt.
+    exits:
+      east: { to: market }
+
+  - id: subway
+    name: U-Bahn-Gleis
+    desc: >
+      Die Gleise liegen verlassen und rostzerfressen im flackernden Notlicht.
+      Kein Zug faehrt mehr auf dieser Ebene. Ein dunkler Wartungsschacht
+      klafft im Norden wie ein Schlund in die Fundamente des Megatowers.
+      Nach Westen geht es hinauf zum Nachtmarkt.
+    exits:
+      west: { to: market }
+      north: { to: tunnel }
+
+  - id: tunnel
+    name: Versorgungstunnel
+    desc: >
+      Dicke Hochspannungskabel und optische Glasfaserleitungen ziehen sich wie
+      Adern ueber die feuchte Betondecke. Am Ende des Tunnels fuehrt eine
+      vertikale Steigleiter hinauf zur Service-Schleuse der Konzern-Lobby.
+      Nach Sueden fuehrt der Tunnel zurueck zum Gleis.
+    exits:
+      south: { to: subway }
+      up: { to: corp_entrance }
+
+  - id: alley
+    name: Hintergasse
+    desc: >
+      Ueberquellende Muellcontainer, zersprungene Neonroehren und modriger Dampf
+      aus Lueftungsgittern bestimmen das Bild. Im Norden ragt die Rueckwand des
+      Blackwood-Towers auf. Eine stahlverstaerkte Service-Tuer mit einem
+      Kartenleser versperrt dort den Zugang. Nach Sueden gelangst du zurueck
+      zur Kreuzung.
+    exits:
+      south: { to: street_corner }
+      north: { to: back_door }
+
+  - id: back_door
+    name: Personalzugang des Towers
+    desc: >
+      Eine massive Panzertuer fuehrt in den Tower. Neben dem Schloss blinkt ein
+      Kartenleser mit roter Bereitschafts-LED. Dahinter liegt die Konzern-Lobby.
+      Nach Sueden geht es zurueck in die Hintergasse.
+    exits:
+      south: { to: alley }
+      east:
+        to: corp_entrance
+        locked_by: back_door_lock
+        msg: "Die Sicherheitstuer ist verriegelt! Das Schloss verlangt Autorisierung."
+
+  - id: corp_entrance
+    name: Konzern-Lobby
+    desc: >
+      Polierter Marmor, glanzvolles Chrom und kuehle Eleganz. Leise Synthesizer-
+      Klaenge beruhigen scheinbar die Nerven, waehrend eine bewaffnete
+      Sicherheitsdrohne lautlos ueber dem Empfangsthresen kreist. Im Westen
+      liegt die Service-Tuer, eine Bodenluke fuehrt hinab in den Tunnel, und im
+      Osten steht ein Express-Fahrstuhl bereit.
+    exits:
+      west: { to: back_door }
+      down: { to: tunnel }
+      east: { to: elevator }
+
+  - id: elevator
+    name: Express-Fahrstuhl
+    desc: >
+      Spiegelnde Waende, gedimmtes Licht und sanfte Fahrstuhlmusik. Die
+      Bedientafel bietet Tasten fuer die Buerotage und die oberen Ebenen.
+      Nach Westen trittst du wieder in die Lobby, nach oben faehrt die
+      Kabine in die Buerotage.
+    exits:
+      west: { to: corp_entrance }
+      up: { to: office_floor }
+
+  - id: office_floor
+    name: Buerotage
+    desc: >
+      Endlose Reihen verwaister Glasschreibtische baden im blaeulichen Schein von
+      Standby-Monitoren. Auf dem Hauptschreibtisch im Zentrum summt ein
+      hochmodernes Buero-Terminal. Im Westen geht es zum Fahrstuhl, waehrend eine
+      Glastuer im Osten auf das windige Dach fuehrt.
+    exits:
+      west: { to: elevator }
+      east: { to: rooftop }
+
+  - id: rooftop
+    name: Tower-Dach
+    desc: >
+      Eisiger Wind reisst an deiner Kleidung. Unter dir erstreckt sich die
+      gewaltige Metropole wie ein leuchtender Schaltkreis aus Neon und Nebel.
+      Ein vergitterter Wartungsschacht fuehrt nach unten direkt in den
+      Serverraum des Towers. Nach Westen geht es zurueck in die Buerotage.
+    exits:
+      west: { to: office_floor }
+      down: { to: server_room }
+
+  - id: server_room
+    name: Serverraum
+    desc: >
+      Arktische Kaelte schlaegt dir entgegen. Schrankwaende voller Prozessoren
+      und Kuehlfluessigkeitsleitungen pulsieren mit unheimlichem Summen. Eine
+      zentrale Server-Konsole kontrolliert die Firewall des Tresors. Im Osten
+      liegt der hermetisch abgeriegelte Datensafe. Nach oben fuehrt der Schacht
+      aufs Dach.
+    exits:
+      up: { to: rooftop }
+      east:
+        to: vault
+        locked_by: vault_lock
+        msg: "Die schwere Tresortuer ist versiegelt. Das ICE-Sicherheitssystem blockiert den Durchgang."
+
+  - id: vault
+    name: Daten-Tresor
+    desc: >
+      Ein steriler Raum, geschuetzt gegen jede Form elektromagnetischer Strahlung.
+      Auf einem schwarzen Sockel im Zentrum schwebt in einem Kraftefeld der
+      schwarze Datenkern von Blackwood. Nach Westen fuehrt der Ausgang zurueck in
+      den Serverraum.
+    exits:
+      west: { to: server_room }
+
+  - id: escape_yard
+    name: Ladehof der Unterstadt
+    desc: >
+      Ein verfallener Ladehof hinter rostigen Containern. Ein Loch im Maschendrahtzaun
+      oeffnet den Fluchtweg in die dichten Menschenmassen der Slums. Nach Osten
+      fuehrt der Schotterweg zurueck zur Kreuzung.
+    exits:
+      east: { to: street_corner }
+
+items:
+  # --- Hack-Tools & Cyberware ---
+  - id: cred_chip
+    name: Cred-Chip
+    desc: Ein verschluesselter Chip mit 50 Schattenc особое-Credits.
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [chip, credchip, creds, geld]
+    location: fixer_den
+    on_take:
+      - msg: "Du nimmst den Cred-Chip von Jax' Schreibtisch an dich. (+50 Punkte)"
+      - add_var: { var: score, delta: 50 }
+
+  - id: cyberdeck
+    name: Militaer-Cyberdeck
+    desc: Ein modifiziertes Deck mit Hochleistungs-Kuehlung fuer tiefes ICE-Breaching.
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [cyberdeck, deck, terminal]
+    location: market
+    on_take:
+      - msg: "Du schnappst dir das Cyberdeck vom Tech-Stand. Eine exzellente Hacker-Basis!"
+
+  - id: bypass_chip
+    name: Bypass-Chip
+    desc: Ein kleiner Logik-Baustein zum Ueberbruecken von ICE-Sicherheitsprotokollen.
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [bypass, bypass_chip, baustein]
+    location: noodle_bar
+    on_take:
+      - msg: "Du findest den verlorenen Bypass-Chip unter einer Nudelschuessel."
+
+  - id: icebreaker
+    name: ICE-Breaker-Tool
+    desc: Ein hochentwickeltes Programm zur sofortigen Deaktivierung militaerischer ICE-Firewalls.
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [icebreaker, tool, programm, ice]
+    location: nowhere
+
+  # --- Die Beute ---
+  - id: datashard
+    name: Datenkern
+    desc: Ein tiefschwarzer, matter Datensplitter mit den streng geheimen Blackwood-Protokollen.
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [datenkern, shard, splitters, daten]
+    location: vault
+    verb_map:
+      instead:take,intact:
+        - give: datashard
+        - {set_flag: shard_taken, val: "true"}
+        - add_var: { var: heat, delta: 4 }
+        - add_var: { var: score, delta: 100 }
+        - msg: "Du reisst den Datenkern aus dem Sockel! Rote Alarmlampen blitzen auf. Sirenen heulen durch den Tower! (+4 Heat, +100 Punkte)"
+
+  # --- Terminals & Schloesser ---
+  - id: back_door_terminal
+    name: Kartenleser
+    desc: Ein roter optischer Kartenleser an der Sicherheitstuer.
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [kartenleser, leser, terminal]
+    location: back_door
+    portable: false
+    verb_map:
+      hack,intact:
+        - if: { compare_var: { name: back_door_offen, op: eq, value: 0 } }
+          then:
+            - set_var: { var: back_door_offen, value: 1 }
+            - {set_state: back_door_lock, to: unlocked}
+            - add_var: { var: heat, delta: 2 }
+            - add_var: { var: score, delta: 30 }
+            - msg: "Du hackst den Kartenleser. Ein kurzer Funkenregen -- das Schloss springt mit einem Klacken auf! (+2 Heat, +30 Punkte)"
+          else:
+            - msg: "Der Kartenleser ist bereits ueberbrueckt und leuchtet gruen."
+
+  - id: office_terminal
+    name: Buero-Terminal
+    desc: Ein aktives Arbeitsplatz-Terminal mit direktem Zugriff auf das Intranet.
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [buero_terminal, terminal, konsole, rechner]
+    location: office_floor
+    portable: false
+    verb_map:
+      hack,intact:
+        - if: { not: { has_flag: office_hacked } }
+          then:
+            - {set_flag: office_hacked, val: "true"}
+            - learn: blackwood_protokoll
+            - add_var: { var: heat, delta: 2 }
+            - add_var: { var: score, delta: 40 }
+            - advance_quest: blackwood_job
+            - msg: "Du ueberwindest die Passwort-Sperre des Terminals. Bauplaene und das Forschungsprotokoll 'Projekt Asche' fliessen in dein Deck! (+2 Heat, +40 Punkte)"
+          else:
+            - msg: "Das Terminal ist bereits leergesaugt. Keine weiteren Daten vorhanden."
+
+  - id: server_terminal
+    name: Server-Konsole
+    desc: Das zentrale Steuerterminal fuer das ICE-Sicherheitsgitter des Tresors.
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [server_konsole, konsole, terminal, server]
+    location: server_room
+    portable: false
+    verb_map:
+      hack,intact:
+        - if: { compare_var: { name: vault_offen, op: eq, value: 0 } }
+          then:
+            - if: { has_item: icebreaker }
+              then:
+                - set_var: { var: vault_offen, value: 1 }
+                - {set_state: vault_lock, to: unlocked}
+                - add_var: { var: heat, delta: 1 }
+                - add_var: { var: score, delta: 50 }
+                - advance_quest: blackwood_job
+                - msg: "Dein gecrafteter ICE-Breaker zerfetzt die Blackwood-Firewall wie Butter! Die massive Tresortuer zischt und schwingt auf! (+1 Heat, +50 Punkte)"
+              else:
+                - add_var: { var: heat, delta: 3 }
+                - msg: "Du versuchst einen manuellen Hack, doch das ICE schlaegt brutal zurueck! Dein Puls rast vor Gegenfeuer. (+3 Heat! Tipp: Du brauchst ein spezialisiertes ICE-Breaker-Tool!)"
+          else:
+            - msg: "Die Server-Konsole bestaetigt: Das Tresortor ist bereits geoeffnet."
+
+npcs:
+  - id: koch_chen
+    name: Koch Chen
+    desc: Ein wortkarger aelterer Mann mit kybernetischem Wok-Arm und einer Narbe ueber dem Auge.
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [chen, koch, wirt]
+    location: noodle_bar
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "Was willst du, Runner? Nudeln kosten 5 Creds. Wer keinen Hunger hat, sollte nicht im Weg stehen."
+            choices:
+              - text: "Hast du etwas Auffaelliges am Tower bemerkt?"
+                next: tower_info
+              - text: "Ich suche nach Hardware."
+                next: hardware_info
+              - text: "Ich bin schon wieder weg."
+                next: null
+          tower_info:
+            text: "Die Wachdrohnen wurden verdoppelt. Hinten an der Hintergasse flackert der Leser -- eine Schwachstelle fuer einen faehigen Hacker."
+            choices:
+              - text: "Danke fuer den Tipp, Chen."
+                next: null
+          hardware_info:
+            text: "Auf dem Nachtmarkt verkauft Tarek Decks. Und sieh dir den Boden hier an -- die Kundschaft verliert staendig Chips."
+            choices:
+              - text: "Ich sehe mich um."
+                next: null
+
+  - id: fixer
+    name: Fixerin Jax
+    desc: Eine beruechtigte Informantin im Chromledermantel mit verspiegelter Cyber-Brille.
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [jax, fixerin, fixer]
+    location: fixer_den
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "Du willst den Blackwood-Job? Der Datenkern zahlt meine Rente -- und deinen Aufstieg zur Legende. Hast du meinen Cred-Chip?"
+            choices:
+              - text: "Hier ist dein Cred-Chip. Wir haben einen Deal."
+                next: deal_made
+                visible_when: { has_item: cred_chip }
+                outcomes:
+                  - {set_flag: gang_ally, val: "true"}
+                  - add_var: { var: syndicate.standing, delta: 20 }
+                  - add_var: { var: score, delta: 30 }
+                  - msg: "Jax grinst zufrieden. 'Willkommen im Syndikat, Runner.' (+20 Syndikat-Standing, +30 Punkte)"
+              - text: "Was erwartet mich im Tower?"
+                next: tower_details
+              - text: "Ich brauche noch etwas Vorbereitung."
+                next: null
+          deal_made:
+            text: "Perfekt. Ich habe die Frequenzen fuer die Hintergasse freigeschaltet. Aber pass auf: Je lauter du hackst, desto heisser wird die Luft."
+            choices:
+              - text: "Verstanden. Ich hole den Kern."
+                next: null
+          tower_details:
+            text: "Der Tresor im Untergeschoss ist durch schweres ICE gesichert. Mit einem einfachen Deck kommst du da nicht durch -- baue dir einen ICE-Breaker!"
+            choices:
+              - text: "Guter Hinweis."
+                next: null
+
+  - id: drone
+    name: Sicherheitsdrohne
+    desc: Eine schwebende Patrouillendrohne mit panzerbrechendem Maschinengewehr.
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [drohne, sicherheitsdrohne, drone, wache]
+    location: corp_entrance
+    max_hp: 20
+    attack: 5
+    defense: 2
+
+quests:
+  - id: blackwood_job
+    name: Der Blackwood-Coup
+    desc: Infiltriere den Megatower der Blackwood Corporation und bringe den geheimen Datenkern nach draussen.
+    stages:
+      - id: recon
+        desc: Verschaffe dir Zugang zum Tower und ueberwinde die Service-Tuer.
+      - id: infiltrate
+        desc: Verschaffe dir die Zugangsdaten im Buerostock und oeffne den Datensafe.
+      - id: exfil
+        desc: Extrahiere den Datenkern und entkomme ueber den Fluchthof.
+    reward:
+      - msg: "Der Coup des Jahrhunderts ist geglueckt! Dein Name wird in den Clubs der Unterstadt gefeiert."
+
+interactions:
+  entity: []
+  item:
+    # Synthese: Cyberdeck + Bypass-Chip = Militaerischer ICE-Breaker
+    - id: icebreaker_synthese
+      ingredients: [cyberdeck, bypass_chip]
+      result: icebreaker
+      effects:
+        - msg: "Du loetest den Bypass-Chip auf die Platine des Cyberdecks. Ein massiver Militaer-ICE-Breaker entsteht! (+50 Punkte)"
+        - consume: cyberdeck
+        - consume: bypass_chip
+        - give: icebreaker
+        - add_var: { var: score, delta: 50 }
+
+rules:
+  # Quest-Start
+  - id: job_starten
+    on: enter market
+    once: true
+    effects:
+      - start_quest: blackwood_job
+      - msg: "Auftrag erfasst: 'Der Blackwood-Coup' wurde gestartet!"
+
+  # Heat-Eskalation Stufe 1: Warnung bei Heat >= 7
+  - id: heat_warnung
+    on: turn
+    once: true
+    when: { compare_var: { name: heat, op: gte, value: 7 } }
+    effects:
+      - {set_flag: corp_alert, val: "true"}
+      - msg: "WARNUNG: Netz-Sicherheit schlaegt an! Konzern-Drohnen scannen deinen Standort. Bewege dich vorsichtig!"
+
+  # Heat-Eskalation Stufe 2: Todes-Fail-Pfad bei Heat >= 10
+  - id: heat_game_over
+    on: turn
+    when: { compare_var: { name: heat, op: gte, value: 10 } }
+    effects:
+      - msg: "KATASTROPHE: Deine Hitze hat das Maximum ueberschritten (Heat 10)! Ein Blackwood-Strike-Team stuermt deine Position!"
+      - game_end: death
+      - msg: "GAME OVER — Das Blackwood-Einsatzkommando hat dich liquidiert. Dein Signal erlischt fuer immer."
+
+  # Sieg-Bedingung: Mit dem Datenkern den Fluchthof erreichen
+  - id: sieg_exfiltration
+    on: enter escape_yard
+    when: { has_flag: shard_taken }
+    effects:
+      - complete_quest: blackwood_job
+      - add_var: { var: score, delta: 50 }
+      - msg: "Du schluepfst durch das Zaunloch in die brodelnde Masse der Slums. Die Sirenen verhallen in der Ferne."
+      - game_end: victory
+      - msg: "SIEG — Du hast den Blackwood-Datenkern erfolgreich extrahiert! Endstand: {score}/350 Punkte."
+
+tests:
+  - name: cyberpunk_victory_walkthrough
+    input:
+      - "east"
+      - "north"
+      - "west"
+      - "take chip"
+      - "talk to jax"
+      - "1"
+      - "1"
+      - "east"
+      - "take cyberdeck"
+      - "south"
+      - "take bypass"
+      - "craft icebreaker"
+      - "west"
+      - "north"
+      - "north"
+      - "hack kartenleser"
+      - "east"
+      - "east"
+      - "up"
+      - "hack terminal"
+      - "east"
+      - "down"
+      - "hack konsole"
+      - "east"
+      - "take datenkern"
+      - "west"
+      - "up"
+      - "west"
+      - "west"
+      - "down"
+      - "west"
+      - "west"
+      - "south"
+      - "south"
+      - "west"
+    expect:
+      - "Dichter Dampf steigt aus brodelnden Kochtoepfen empor"
+      - "Auftrag erfasst: 'Der Blackwood-Coup' wurde gestartet!"
+      - "Du nimmst den Cred-Chip von Jax' Schreibtisch an dich"
+      - "Willkommen im Syndikat, Runner."
+      - "Du schnappst dir das Cyberdeck vom Tech-Stand"
+      - "Du findest den verlorenen Bypass-Chip unter einer Nudelschuessel"
+      - "Ein massiver Militaer-ICE-Breaker entsteht!"
+      - "Du hackst den Kartenleser"
+      - "Du laedst das geheime Forschungsprotokoll in dein Implantat"
+      - "Dein gecrafteter ICE-Breaker zerfetzt die Blackwood-Firewall wie Butter!"
+      - "Du reisst den Datenkern aus dem Sockel!"
+      - "WARNUNG: Netz-Sicherheit schlaegt an!"
+      - "SIEG — Du hast den Blackwood-Datenkern erfolgreich extrahiert! Endstand: 350/350 Punkte."

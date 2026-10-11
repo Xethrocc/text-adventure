@@ -12762,6 +12762,11 @@ main = do
         , runTest "steal/swap_inventory JSON round-trips (OPEN-15/OPEN-20)" testStealSwapJsonRoundTrip
         -- FIX-12: JSON-Alias-Fallbacks
         , runTest "JSON aliases: tc*/nextNode legacy names are read again (FIX-12)" testJsonAliasFallbacks
+        -- OPEN-17: generische Item-Timer (fuel:)
+        , runTest "fuel: counts down per turn, milestones and on_empty fire (OPEN-17)" testItemFuelTicking
+        , runTest "fuel: ticks_when pauses and resumes the counter (OPEN-17)" testItemFuelTicksWhen
+        , runTest "fuel: set_fuel/add_fuel clamp and fire on_empty (OPEN-17)" testItemFuelSetAdd
+        , runTest "fuel: missing counter falls back to fuel.start (OPEN-17)" testItemFuelFallbackRead
         ]
     when (not (and results)) exitFailure
 
@@ -12943,6 +12948,99 @@ testJsonAliasFallbacks = do
             (tac "{\"initiative\":\"player_first\",\"flee_allowed\":true,\"max_rounds\":100,\"speed_attribute\":\"speed\"}")
     r6 <- expectEqual (Just (TacticalCombat PlayerFirst True 100 "speed")) (tac "{}")
     pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | OPEN-17: der Zähler läuft pro Zug herunter; ein Meilenstein feuert, wenn
+--   ein Tick-Dekrement ihn genau auf seinen Wert setzt, `on_empty` beim
+--   Erreichen von 0. Nach 0 tickt nichts mehr.
+testItemFuelTicking :: IO Bool
+testItemFuelTicking = do
+    let lampe = (mkTestItem "lampe" "Lampe")
+            { itemFuel = Just (FuelDef 3 Nothing
+                [FuelWarn 2 (SendMessage "lampe wird schwach")]
+                (Just (SendMessage "lampe aus"))) }
+        st0 = mstate [mkTestRoom "halle" "Halle"] [(lampe, InRoom "halle")]
+        (st1, m1) = tickItemFuels st0
+    r1 <- expectEqual 2 (fuelValueOf "lampe" st1)
+    r2 <- expectEqual "lampe wird schwach" (renderEvents (concat m1))
+    let (st2, m2) = tickItemFuels st1
+    r3 <- expectEqual 1 (fuelValueOf "lampe" st2)
+    r4 <- expectEqual "" (renderEvents (concat m2))
+    let (st3, m3) = tickItemFuels st2
+    r5 <- expectEqual 0 (fuelValueOf "lampe" st3)
+    r6 <- expectEqual "lampe aus" (renderEvents (concat m3))
+    let (st4, m4) = tickItemFuels st3
+    r7 <- expectEqual 0 (fuelValueOf "lampe" st4)
+    r8 <- expectEqual "" (renderEvents (concat m4))
+    -- Items außerhalb des Spiels (Removed) brennen nicht weiter.
+    let st5 = relocateItem "lampe" Removed st3 { save = (save st3) { itemStates = Map.adjust
+                (\is -> is { itemProps = Map.insert "fuel" 2 (itemProps is) })
+                "lampe" (itemStates (save st3)) } }
+        (st6, _) = tickItemFuels st5
+    r9 <- expectEqual 2 (fuelValueOf "lampe" st6)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9)
+
+-- | OPEN-17: `ticks_when` hält den Zähler an, solange der Item-Status nicht
+--   passt (`extinguish` pausiert wie `DISABLE`); der Zustandswechsel lässt ihn
+--   weiterlaufen.
+testItemFuelTicksWhen :: IO Bool
+testItemFuelTicksWhen = do
+    let lampe = (mkTestItem "lampe" "Lampe")
+            { itemFuel = Just (FuelDef 5 (Just "lit") [] Nothing) }
+        st0 = mstate [mkTestRoom "halle" "Halle"] [(lampe, InRoom "halle")]
+        (st1, _) = tickItemFuels st0
+    r1 <- expectEqual 5 (fuelValueOf "lampe" st1)
+    let stLit = setEntityState "lampe" "lit" st1
+        (st2, _) = tickItemFuels stLit
+    r2 <- expectEqual 4 (fuelValueOf "lampe" st2)
+    let stOut = setEntityState "lampe" "unlit" st2
+        (st3, _) = tickItemFuels stOut
+    r3 <- expectEqual 4 (fuelValueOf "lampe" st3)
+    pure (r1 && r2 && r3)
+
+-- | OPEN-17: `set_fuel`/`add_fuel` klammern bei 0 und feuern `on_empty`, wenn
+--   der Zähler dabei *wird* (nicht: schon war). Meilensteine gehören zum
+--   Abbrennen und feuern bei Sprüngen bewusst nicht. Items ohne `fuel:`-Def
+--   sind ein No-op mit Diagnose.
+testItemFuelSetAdd :: IO Bool
+testItemFuelSetAdd = do
+    let lampe = (mkTestItem "lampe" "Lampe")
+            { itemFuel = Just (FuelDef 5 (Just "lit")
+                [FuelWarn 3 (SendMessage "warn!")] (Just (SendMessage "leer"))) }
+        stein = mkTestItem "stein" "Stein"
+        st0 = mstate [mkTestRoom "halle" "Halle"]
+                [(lampe, CarriedBy ActorPlayer), (stein, CarriedBy ActorPlayer)]
+        (st1, msg1) = applyOutcome (SetFuel "lampe" 0) "" st0
+    r1 <- expectEqual "leer" msg1
+    r2 <- expectEqual 0 (fuelValueOf "lampe" st1)
+    let (st2, msg2) = applyOutcome (SetFuel "lampe" 0) "" st1
+    r3 <- expectEqual "" msg2
+    r4 <- expectEqual 0 (fuelValueOf "lampe" st2)
+    let (st3, msg3) = applyOutcome (AddFuel "lampe" (-7)) "" st0
+    r5 <- expectEqual "leer" msg3
+    r6 <- expectEqual 0 (fuelValueOf "lampe" st3)
+    let (st4, msg4) = applyOutcome (SetFuel "lampe" 3) "" st0
+    r7 <- expectEqual "" msg4
+    r8 <- expectEqual 3 (fuelValueOf "lampe" st4)
+    let (st5, msg5) = applyOutcome (SetFuel "stein" 5) "" st0
+    r9 <- expectEqual "" msg5
+    r10 <- expectEqual 0 (fuelValueOf "stein" st5)
+    r11 <- expectTrue "set_fuel ohne fuel:-Def erzeugt eine Diagnose"
+            (any ("no fuel definition" `isInfixOf`) (diagnostics st5))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11)
+
+-- | OPEN-17: fehlt der gespeicherte Zähler (älteres Save, handgeschriebenes
+--   JSON), liest sich der Startwert aus der Definition — Tick und
+--   `item.<id>.fuel` sind sich einig.
+testItemFuelFallbackRead :: IO Bool
+testItemFuelFallbackRead = do
+    let lampe = (mkTestItem "lampe" "Lampe") { itemFuel = Just (FuelDef 7 Nothing [] Nothing) }
+        st0 = mstate [mkTestRoom "halle" "Halle"] [(lampe, InRoom "halle")]
+        st1 = st0 { save = (save st0)
+            { itemStates = Map.adjust (\is -> is { itemProps = Map.empty })
+                            "lampe" (itemStates (save st0)) } }
+    r1 <- expectEqual 7 (fuelValueOf "lampe" st1)
+    r2 <- expectEqual 7 (resolveValueRef (VRItemProp "lampe" "fuel") st1)
+    pure (r1 && r2)
 
 -- | K16b.1: Classic — CAAbility runs ability effects, consumes the round,
 --   and the NPC strikes back (same Rache-Schlag as CAAttack).

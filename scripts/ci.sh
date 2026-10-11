@@ -106,7 +106,7 @@ run_e2e() {
     [ "$failed" -eq 0 ] || exit 1
 }
 
-for name in thefog pure-if fantasy cyberpunk space-opera detective horror economy_hamurabi deckbuilder_spire sandbox_wilderness vn_letter clock_pendulum roguelike_dungeon board_nim idle_manufaktur krypta_der_verdammten alchemie_werkstatt factions trade encounters survival stealth patrol combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state combat-screen dark-feelable bomb waechter traglast disambiguation procedures gespraeche npc-besitz npc-interaktion npc-massen npc-ausruestung npc-tod quest-kette karte stroeme phasen sprache wuerfel fantasy-de ketten npc-zustaende zuneigung zyklen rezeptwissen score; do
+for name in thefog pure-if fantasy cyberpunk space-opera detective horror economy_hamurabi deckbuilder_spire sandbox_wilderness vn_letter clock_pendulum roguelike_dungeon board_nim idle_manufaktur krypta_der_verdammten alchemie_werkstatt chrome_and_ash neon_phantom factions trade encounters survival stealth patrol combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state combat-screen dark-feelable bomb waechter traglast disambiguation procedures gespraeche npc-besitz npc-interaktion npc-massen npc-ausruestung npc-tod quest-kette karte stroeme phasen sprache wuerfel fantasy-de ketten npc-zustaende zuneigung zyklen rezeptwissen score; do
     case "$name" in
         thefog)             src=examples/thefog.yaml ;;
         vn_letter)          src=examples/genres/vn_letter.yaml ;;
@@ -151,7 +151,7 @@ echo "== 4b. author content tests (B1) =="
 # Content tests as data: the `tests:` section of an adventure runs through
 # `worldbuilder test` (ordered markers). Extend the list as adventures grow
 # their own tests.
-for name in procedures wissen kapitel krypta quest_rpg pursuit include_demo mengen massen behaelter stroeme phasen sprache npc-interaktion npc-massen npc-ausruestung npc-tod quest-kette karte wuerfel ketten npc-zustaende zuneigung zyklen rezeptwissen score roguelike_dungeon board_nim idle_manufaktur krypta_der_verdammten alchemie_werkstatt; do
+for name in procedures wissen kapitel krypta quest_rpg pursuit include_demo mengen massen behaelter stroeme phasen sprache npc-interaktion npc-massen npc-ausruestung npc-tod quest-kette karte wuerfel ketten npc-zustaende zuneigung zyklen rezeptwissen score roguelike_dungeon board_nim idle_manufaktur krypta_der_verdammten alchemie_werkstatt chrome_and_ash neon_phantom; do
     case "$name" in
         procedures) src="examples/fixtures/procedures.yaml" ;;
         wissen)     src="examples/fixtures/wissen.yaml" ;;
@@ -184,6 +184,8 @@ for name in procedures wissen kapitel krypta quest_rpg pursuit include_demo meng
         idle_manufaktur) src="examples/genres/idle_manufaktur.yaml" ;;
         krypta_der_verdammten) src="examples/genres/krypta_der_verdammten.yaml" ;;
         alchemie_werkstatt) src="examples/genres/alchemie_werkstatt.yaml" ;;
+        chrome_and_ash) src="examples/genres/chrome_and_ash.yaml" ;;
+        neon_phantom) src="examples/genres/neon_phantom.yaml" ;;
     esac
     "${WORLDBUILDER[@]}" test "$src" || exit 1
 done
@@ -212,7 +214,7 @@ echo "== 5. e2e non-victory paths =="
 # `patrol-attack` and `patrol-death` are not failures either but *behaviour*
 # paths: they pin that a patrolling NPC actually closes in, warns, bites — and
 # that its damage can kill (turn-consuming commands only; `look` is free).
-for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss-fail combo-fail combat-tactical-fail ship-duel-fail combat-tactical-defend patrol-attack patrol-death combat-screen-round disambiguation-fallback vn_letter-ignorance-fail vn_letter-trust-fail clock_pendulum-timeout-fail clock_pendulum-flood-fail roguelike_dungeon-death-fail roguelike_dungeon-ironman-fail board_nim-defeat-fail board_nim-invalid-fail idle_manufaktur-early-fail krypta_der_verdammten-death-fail alchemie_werkstatt-pleite-fail; do
+for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss-fail combo-fail combat-tactical-fail ship-duel-fail combat-tactical-defend patrol-attack patrol-death combat-screen-round disambiguation-fallback vn_letter-ignorance-fail vn_letter-trust-fail clock_pendulum-timeout-fail clock_pendulum-flood-fail roguelike_dungeon-death-fail roguelike_dungeon-ironman-fail board_nim-defeat-fail board_nim-invalid-fail idle_manufaktur-early-fail krypta_der_verdammten-death-fail alchemie_werkstatt-pleite-fail chrome_and_ash-heat-fail neon_phantom-trace-fail; do
     case "$name" in
         vn_letter-ignorance-fail|vn_letter-trust-fail) src=examples/genres/vn_letter.yaml ;;
         clock_pendulum-timeout-fail|clock_pendulum-flood-fail) src=examples/genres/clock_pendulum.yaml ;;
@@ -221,6 +223,8 @@ for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss
         idle_manufaktur-early-fail) src=examples/genres/idle_manufaktur.yaml ;;
         krypta_der_verdammten-death-fail) src=examples/genres/krypta_der_verdammten.yaml ;;
         alchemie_werkstatt-pleite-fail) src=examples/genres/alchemie_werkstatt.yaml ;;
+        chrome_and_ash-heat-fail) src=examples/genres/chrome_and_ash.yaml ;;
+        neon_phantom-trace-fail) src=examples/genres/neon_phantom.yaml ;;
         trade-fail)        src=examples/modules/trade.yaml ;;
         disambiguation-fallback) src="examples/fixtures/disambiguation.yaml" ;;
         combat-off-fail)   src=examples/modules/combat-off.yaml ;;

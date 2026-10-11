@@ -1,0 +1,11 @@
+take multitool
+use multitool
+north
+jack
+scan camera_node
+overload camera_node
+north
+breach firewall_core
+breach firewall_core
+breach firewall_core
+quit

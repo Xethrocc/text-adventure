@@ -1,0 +1,28 @@
+take multitool
+use multitool
+north
+jack
+scan camera_node
+overload camera_node
+disconnect
+north
+east
+open spind
+take keychip from spind
+jack
+north
+overload door_subsystem
+breach firewall_core
+north
+overload quantum_matrix
+disconnect
+west
+north
+north
+take chimera
+south
+south
+south
+south
+west
+quit

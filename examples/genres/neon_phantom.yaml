@@ -1,0 +1,815 @@
+# ============================================================================
+# Neon Phantom / SubNet Infiltration — Cross-Reality Cyberpunk Benchmark
+# ============================================================================
+#
+# Demonstriert die nahtlose Verzahnung von physischer Realitaet und Cyberspace:
+#   - Option A (Cyberspace als virtuelle Raeume):
+#     Mit 'jack' (Alias: einklinken) betritt das Bewusstsein das SubNet
+#     (SubNet-Gateway, ICE-Bastion, Zentraler Mainframe).
+#     Mit 'disconnect' (Alias: trennen) kehrt der Runner an den physischen
+#     Klinkenort zurueck.
+#   - Ressourcenbasiertes Hacking:
+#     'ram' (0..6) limitiert gleichzeitige Software-Operationen.
+#     'trace' (0..100) misst die feindliche Gegenaufklaerung.
+#     Programme: scan/ping (1 RAM), overload (2 RAM), breach (3 RAM).
+#     Cyberdeck-Kuehlung regeneriert 1 RAM pro Zug.
+#   - Cross-Reality-Wirkungsketten:
+#     1) Netz -> Physisch: 'overload camera_node' schaltet die Deckenkameras
+#        im Sicherheitskorridor dauerhaft ab.
+#     2) Physisch -> Netz: Der im Wachraum geborgene 'kurosawa_keychip' liefert
+#        den Entschluesselungsvektor; ohne ihn scheitert 'breach firewall_core'.
+#     3) Netz -> Physisch: 'overload door_subsystem' entriegelt das Panzerschott
+#        zum Serverraum.
+#     4) Netz -> Physisch: 'overload quantum_matrix' im Mainframe deaktiviert
+#        das Eindämmungsfeld im Quantentresor.
+#   - Stealth & Patrouille:
+#     Kurosawa-Sicherheitsdrohne patrouilliert mit Modul 'patrol:'.
+#     Lueftungsschacht dient als sicheres Versteck und Klinkenbasis.
+#   - Zork-Score (0..350) mit Rangliste von Script-Kiddie bis Legende.
+#   - Taktiler Fail-Pfad: Trace >= 100 loest toedliches Black-ICE aus.
+
+name: Neon Phantom
+start_room: neon_alley
+
+language: de
+
+title_art: |
+  ============================================================================
+       N E O N   P H A N T O M   //   S U B N E T   I N F I L T R A T I O N
+        --- Cross-Reality Heist im Megatower von Kurosawa Cybernetics ---
+  ============================================================================
+
+end_art:
+  victory: |
+    ============================================================================
+              S I E G   //   E X T R A K T I O N   E R F O L G R E I C H
+    ============================================================================
+    Du wirfst dich in den Beifahrersitz von Nixies schwebendem AV-Fluggleiter.
+    Die Turbinen heulen auf, als das Gefaehrt mit Hoellengeschwindigkeit in die
+    neonflimmernde Schlucht zwischen den Megatuermen eintaucht.
+    Auf deinem Cyberdeck flackert die Bestaetigung:
+    >> PROJEKT CHIMERA: 100 % EXTRAHIERT - SIGNATUR GELÖSCHT <<
+    Kurosawas Sicherheitssysteme suchen ein Phantom. Dein Name ist Legende!
+  death: |
+    ============================================================================
+           G A M E   O V E R   //   L I Q U I D I E R T   I M   N E T Z
+    ============================================================================
+    Der Trace-Pegel hat das Maximum ueberschritten. Kurosawas toedliches
+    Black-ICE brennt sich erbarmungslos durch dein Schnittstellenkabel.
+    Gleichzeitig riegeln Panzerschotten alle Ausgaenge ab und das bewaffnete
+    Einsatzkommando stuermt deine Position.
+    Deine Cyberware schmilzt, deine Neuronen verglimmen zu statischem Rauschen.
+    Ein weiteres namenloses Opfer in den Schatten der Megakonzerne.
+
+verbs:
+  - name: jack
+    aliases: [einklinken, klinken, verbinden]
+  - name: disconnect
+    aliases: [trennen, ausklinken, abmelden]
+  - name: scan
+    aliases: [ping, scannen]
+  - name: overload
+    aliases: [ueberlasten]
+  - name: breach
+    aliases: [crack, hacken]
+  - name: hud
+    aliases: [deck, cyberdeck, status]
+
+variables:
+  - name: ram
+    type: int
+    initial: 6
+    min: 0
+    max: 6
+  - name: trace
+    type: int
+    initial: 0
+    min: 0
+    max: 100
+  - name: score
+    type: int
+    initial: 0
+    max: 350
+    score_rankings:
+      - { at: 0,   title: "Script-Kiddie" }
+      - { at: 100, title: "Street-Runner" }
+      - { at: 200, title: "Cyberspace-Phantom" }
+      - { at: 300, title: "Legende des Untergrunds" }
+  - name: jack_origin
+    type: int
+    initial: 0
+  - name: vent_open
+    type: int
+    initial: 0
+
+player:
+  max_hp: 20
+  attack: 4
+  defense: 2
+
+patrol:
+  hostiles:
+    - npc: kurosawa_drone
+      path: [service_entrance, security_corridor]
+      start_index: 0
+      warn: "WARNUNG: Das grelle rote Suchlicht der Kurosawa-Sicherheitsdrohne tastet den Boden ab!"
+      attack:
+        - { msg: "Die Drohne erfasst deine Silhouette! Ein Schockblitz trifft dich und treibt den Alarm-Trace nach oben!" }
+        - { damage: 4 }
+        - add_var: { var: trace, delta: 15 }
+
+journal: notes
+
+facts:
+  - id: chimera_architektur
+    keys: [chimera, architektur, projekt]
+    text: "Projekt Chimera ist eine militaerische Quanten-KI, gesichert durch eine netzwerkgesteuerte Eindämmungsmatrix."
+    source: "Kurosawa SubNet-Gateway"
+    tag: netzwerk
+    learn_msg: "Technische Spezifikationen zu Projekt Chimera im Cyberdeck archiviert."
+
+  - id: sato_schluessel_vektor
+    keys: [vektor, schluessel, chip]
+    text: "Der Kurosawa-Schluesselchip enthaelt den kryptografischen Primärvektor zur Ueberwindung der Aegis-Firewall."
+    source: "Sicherheitsspind im Wachraum"
+    tag: sicherheit
+    learn_msg: "Der Entschluesselungsvektor synchronisiert sich mit deinem ICE-Decompiler."
+
+statements:
+  - id: nixie_briefing
+    speaker: nixie
+    claims: chimera_architektur
+    truth: true
+    text: "Nixie warnt: 'Kurosawas Quanten-ICE kennt kein Erbarmen. Behalte deinen Trace im Auge, Phantom!'"
+    tag: kontakte
+
+quests:
+  - id: heist_chimera
+    name: SubNet-Infiltration
+    desc: Dringe in den Megatower von Kurosawa Cybernetics ein, sabotiere das Sicherheitsnetz und extrahiere Projekt Chimera.
+    stages:
+      - id: perimeter
+        desc: Verschaffe dir ueber den Lueftungsschacht Zugang zum Sicherheitskorridor.
+      - id: subnet_sabotage
+        desc: Klinke dich ins SubNet ein, deaktiviere die Kameras und ueberwinde die Aegis-Firewall.
+      - id: exfiltration
+        desc: Berge Projekt Chimera aus dem Quantentresor und entkomme zum Extraktionspunkt.
+    reward:
+      - msg: "Projekt Chimera gesichert! Der Heist des Jahrzehnts ist geglueckt."
+
+rooms:
+  - id: neon_alley
+    name: Neon-Gasse (Perimeter)
+    desc: >
+      Saurer Nieselregen tropft von gewaltigen Betontraegern des Kurosawa-Komplexes.
+      Flackernde Hologramme tauchen oelige Asphaltpfuetzen in grelles Cyan und Magenta.
+      Im Westen wartet eine verlassene Ladezone mit Nixies schwebendem AV-Fluggleiter.
+      Im Osten summen toedliche Laserschranken vor dem offiziellen Service-Eingang.
+      Direkt vor dir an der noerdlichen Betonwand fuehrt ein Lueftungsschacht nach oben,
+      dessen schweres Schutzgitter fest verschraubt ist.
+    exits:
+      west: { to: extraction_point }
+      east:
+        to: service_entrance
+        blocked: true
+        msg: "Summende rote Laserschranken riegeln den Service-Eingang ab. Ein Durchschreiten waere toedlich."
+      north:
+        to: vent_shaft
+        locked_by: vent_lock
+        msg: "Ein schweres Lueftungsgitter versperrt den Schacht nach Norden. Die Schrauben sitzen fest (Tipp: benutze das Multitool)."
+
+  - id: extraction_point
+    name: Extraktionszone (Ladehof)
+    desc: >
+      Ein duesterer Ladehof hinter rostigen Containern. Der Nieselregen perlt von
+      der mattschwarzen Panzerung von Nixies modifiziertem AV-Fluggleiter ab.
+      Die Turbinen laufen im lautlosen Standby, bereit zum sofortigen Abheben.
+      Nach Osten fuehrt der Weg zurueck in die Neon-Gasse.
+    exits:
+      east: { to: neon_alley }
+
+  - id: vent_shaft
+    name: Lueftungsschacht
+    desc: >
+      Eine enge, von warmem Oeldampf erfuellte Roehre oberhalb der Versorgungstrakte.
+      Durch ein Lamellengitter im Boden hast du perfekten Einblick in den
+      Sicherheitskorridor darunter -- die Patrouillendrohne kann dich hier oben
+      nicht erfassen! An der Schachtwand blinkt eine Klinkenbuchse fuer Wartungszwecke.
+      Nach Norden fuehrt der Schacht hinab in den Korridor, nach Sueden zurueck in die Gasse.
+    exits:
+      south: { to: neon_alley }
+      north: { to: security_corridor }
+      down:
+        to: subnet_gateway
+        blocked: true
+        msg: "Die Klinkenbuchse blinkt im Bereitschaftsmodus. Tippe 'jack' (oder 'einklinken'), um das SubNet zu betreten."
+
+  - id: service_entrance
+    name: Service-Zugang
+    desc: >
+      Ein kahler Betonhof unter freiem Himmel mit Lieferrampen und Panzerglas.
+      Warnleuchten blinken rhythmisch. Nach Westen fuehrt der Weg zur Neon-Gasse,
+      nach Norden gelangst du in das Innere des Sicherheitskorridors.
+    exits:
+      west: { to: neon_alley }
+      north: { to: security_corridor }
+
+  - id: security_corridor
+    name: Sicherheitskorridor
+    desc: >
+      Glatter schwarzer Synth-Marmor, grelle Lichtstreifen und das leise Surren
+      von Servomotoren. An der Decke haengt eine Kurosawa-Optikueberwachung mit
+      Weitwinkelobjektiv. Eine bewaffnete Patrouillendrohne zieht hier ihre Bahnen.
+      Nach Sueden fuehrt der Weg zum Service-Zugang und hinauf in den Lueftungsschacht.
+      Im Osten liegt der Wachraum, und im Norden ragt ein massives Panzerschott auf,
+      das den Zugang zum Serverraum hermetisch verriegelt.
+    exits:
+      south: { to: vent_shaft }
+      east: { to: guard_room }
+      north:
+        to: server_room
+        locked_by: server_door_lock
+        msg: "Das Panzerschott zum Serverraum ist verriegelt. Ein elektromagnetisches Magnetschloss blockiert die Tuer."
+
+  - id: guard_room
+    name: Wachzentrale
+    desc: >
+      Flackernde Holo-Monitore zeigen Sensorberichte und leere Korridore.
+      Wachoffizier Sato starrt gebannt auf ein fehlerhaftes Monitor-Array und nimmt
+      dich im Halbdunkel kaum wahr. An der Wand steht ein massiver Sicherheitsspind.
+      Neben der Hauptkonsole blinkt eine Hochgeschwindigkeits-Klinkenbuchse fuer
+      autorisierte Decks. Im Westen geht es zurueck in den Korridor.
+    exits:
+      west: { to: security_corridor }
+
+  - id: server_room
+    name: Serverraum
+    desc: >
+      Arktische Kaelte und das Aroma von fluessigem Stickstoff schlagen dir entgegen.
+      Meterhohe Server-Racks mit pulsierenden Glasfaserleitungen stehen wie Monolithen
+      in der Dunkelheit. An der Wand blinkt eine Konsolenbuchse fuer direktes Root-Jacking.
+      Im Norden fuehrt ein schweres Panzertor in den abgeriegelten Quantentresor.
+      Nach Sueden geht es zurueck in den Sicherheitskorridor.
+    exits:
+      south: { to: security_corridor }
+      north: { to: quantum_vault }
+
+  - id: quantum_vault
+    name: Quantentresor
+    desc: >
+      Ein hermetisch isolierter Raum ohne externe Kabelverbindungen.
+      Im Zentrum der Kammer schwebt ueber einem schwarzen Sockel ein Kraftefeld.
+      Darin gefangen rotiert der Quellcode-Datenkern 'Projekt Chimera'.
+      Nach Sueden fuehrt der einzige Ausgang zurueck in den Serverraum.
+    exits:
+      south: { to: server_room }
+
+  # --- Cyberspace / SubNet ---
+  - id: subnet_gateway
+    name: SubNet // Gateway-Knoten
+    desc: >
+      Du schwebst in einem weiten digitalen Raum aus pechschwarzem Vakuum,
+      durchzogen von leuchtenden Cyan-Gitterlinien. Vor dir pulsiert der camera_node --
+      die Routing-Einheit fuer das lokale Ueberwachungsnetz. Nach Norden fliesst
+      ein dicker roter Datenstrom zur ICE-Bastion. Tippe 'disconnect' (oder 'trennen'),
+      um sofort in deinen physischen Koerper zurueckzukehren.
+    exits:
+      north: { to: ice_bastion }
+      up:
+        to: vent_shaft
+        blocked: true
+        msg: "Tippe 'disconnect' (oder 'trennen'), um die Verbindung zum SubNet zu beenden."
+
+  - id: ice_bastion
+    name: SubNet // ICE-Bastion
+    desc: >
+      Waende aus flammend rotem Abwehrcode ragen auf wie die Zinnen einer Festung.
+      Im Zentrum regelt das door_subsystem die physischen Schleusen des Megatowers.
+      Davor rotiert der bedrohliche firewall_core -- die militaerische Kurosawa
+      Aegis-Firewall, die den noerdlichen Datenstrom blockiert. Nach Sueden fuehrt
+      der Pfad zurueck zum Gateway-Knoten.
+    exits:
+      south: { to: subnet_gateway }
+      north:
+        to: central_mainframe
+        locked_by: firewall_gate
+        msg: "Die Aegis-Firewall brennt mit toedlichem Black-ICE und versperrt den Datenpfad nach Norden (Befehl: breach firewall_core)."
+
+  - id: central_mainframe
+    name: SubNet // Zentraler Mainframe
+    desc: >
+      Ein erhabener digitaler Kathedralenraum aus gleissendem weissem Code.
+      Hier laufen die geheimsten Rechenoperationen von Kurosawa Cybernetics zusammen.
+      Vor dir schwebt die gewaltige quantum_matrix, deren Energie das physische
+      Eindämmungsfeld des Tresors speist. Nach Sueden fuehrt der Weg zurueck zur ICE-Bastion.
+    exits:
+      south: { to: ice_bastion }
+
+containers:
+  - id: spind
+    name: Sicherheitsspind
+    desc: Ein staehlerner Spind mit elektronischem Zahlenschloss, bereits angelehnt.
+    keys: [spind, schrank, sicherheitsspind]
+    location: guard_room
+    capacity: 2
+    locked: false
+
+items:
+  # --- Physische Ausruestung & Beute ---
+  - id: multitool
+    name: Kybernetisches Multitool
+    desc: Ein multifunktionales Runner-Werkzeug mit hochpraezisem Laserschneider und Drehmomentaufsatz.
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [multitool, werkzeug, schrauber]
+    location: neon_alley
+    verb_map:
+      use,intact:
+        - if: { at: player, room: neon_alley }
+          then:
+            - if: { compare_var: { name: vent_open, op: eq, value: 0 } }
+              then:
+                - roll_dice: { pool: 2, die: 6 }
+                - if: { compare_var: { name: dice.highest, op: gte, value: 3 } }
+                  then:
+                    - set_var: { var: vent_open, value: 1 }
+                    - { set_state: vent_lock, to: unlocked }
+                    - add_var: { var: score, delta: 25 }
+                    - msg: "Du setzt das Multitool am Lueftungsgitter an. Mit einem schnellen Ruck loesen sich die Schrauben! (Wuerfel: {var: dice.last_roll}). Der Schacht nach Norden ist nun offen! (+25 Punkte)"
+                  else:
+                    - msg: "Das Multitool rutscht ab. Versuche es noch einmal!"
+              else:
+                - msg: "Das Lueftungsgitter ist bereits vollstaendig geloest."
+          else:
+            - msg: "Hier gibt es keine mechanische Verriegelung fuer dein Multitool."
+
+  - id: keychip
+    name: Kurosawa-Schluesselchip
+    desc: Ein gravierter Hochsicherheits-Chip mit autorisiertem Level-5-Kryptoschluesselelement.
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [keychip, schluesselchip, chip, schluessel]
+    in_container: spind
+    on_take:
+      - set_flag: has_keychip
+      - learn: sato_schluessel_vektor
+      - add_var: { var: score, delta: 30 }
+      - msg: "Du nimmst den Kurosawa-Schluesselchip an dich. Er enthaelt den primaeren Vektor zur Entschluesselung der Aegis-Firewall! (+30 Punkte)"
+
+  - id: chimera_shard
+    name: Projekt Chimera
+    desc: Ein wuerfelfoermiger Quanten-Datenkern aus schwarzem Kristall. Der Prototyp enthaelt Kurosawas adaptive Super-KI.
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [chimera, projekt_chimera, datenkern, prototyp, kern]
+    location: quantum_vault
+    verb_map:
+      instead:take,intact:
+        - if: { has_flag: containment_disabled }
+          then:
+            - if: { not: { has_flag: chimera_acquired } }
+              then:
+                - give: chimera_shard
+                - set_flag: chimera_acquired
+                - advance_quest: heist_chimera
+                - add_var: { var: trace, delta: 15 }
+                - add_var: { var: score, delta: 50 }
+                - msg: >
+                    Du greifst durch das erloschene Kraftefeld und reisst den warmen Quantenkern an dich!
+                    Grelle rote Alarmblitze schneiden durch den Tresor. Schrille Sirenen erwecken den Megatower!
+                    Konzern-Sicherheit riegelt den Komplex ab (+15 % Trace, +50 Punkte).
+                    Fliehe sofort zurueck zum Extraktionspunkt!
+              else:
+                - msg: "Du hast Projekt Chimera bereits sicher verstaut."
+          else:
+            - msg: "Das summende blaue Quanten-Eindaemmungsfeld verbrennt fast deine Hand! Du musst die Matrix zuerst im SubNet ueberlasten ('overload quantum_matrix')."
+
+  # --- Virtuelle SubNet-Knoten ---
+  - id: camera_node
+    name: Optik-Routingknoten
+    desc: Der zentrale I/O-Knoten fuer die Ueberwachungskameras des Sicherheitskorridors.
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [camera_node, node, knoten, kamera_knoten]
+    location: subnet_gateway
+    portable: false
+    verb_map:
+      scan,intact:
+        - if: { compare_var: { name: ram, op: gte, value: 1 } }
+          then:
+            - add_var: { var: ram, delta: -1 }
+            - add_var: { var: trace, delta: 5 }
+            - learn: chimera_architektur
+            - add_var: { var: score, delta: 25 }
+            - msg: >
+                [PROGRAMM: SCAN/PING] Signal an camera_node gesendet.
+                Optik-Hub identifiziert: Kurosawa Argus-Eye v4.
+                Verwundbarkeit: Instabiler Puffer! Kann mit 'overload camera_node' ueberlastet werden.
+                [CYBERDECK] RAM: {ram}/6 | TRACE: {trace} %
+          else:
+            - msg: "FEHLER: Nicht genuegend Speicher! Scan erfordert 1 RAM (verfuegbar: {ram}/6)."
+      overload,intact:
+        - if: { compare_var: { name: ram, op: gte, value: 2 } }
+          then:
+            - if: { not: { has_flag: camera_offline } }
+              then:
+                - add_var: { var: ram, delta: -2 }
+                - add_var: { var: trace, delta: 10 }
+                - set_flag: camera_offline
+                - add_var: { var: score, delta: 50 }
+                - msg: >
+                    [PROGRAMM: OVERLOAD] Datenueberlastung an camera_node uebertragen!
+                    Die Optik-Subroutine kollabiert mit einem digitalen Aufschrei.
+                    Physische Wirkung: Die Deckenkamera im Sicherheitskorridor ist DAUERHAFT OFFLINE!
+                    [CYBERDECK] RAM: {ram}/6 | TRACE: {trace} %
+              else:
+                - msg: "camera_node ist bereits zerstoert und sendet nur noch statisches Rauschen."
+          else:
+            - msg: "FEHLER: Nicht genuegend Speicher! Overload erfordert 2 RAM (verfuegbar: {ram}/6)."
+
+  - id: door_subsystem
+    name: Schleusen-Steuerung
+    desc: Ein logischer Kontrollblock fuer die elektromagnetischen Tuerschloesser des Towers.
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [door_subsystem, schleuse, tuer_steuerung, subsystem]
+    location: ice_bastion
+    portable: false
+    verb_map:
+      scan,intact:
+        - if: { compare_var: { name: ram, op: gte, value: 1 } }
+          then:
+            - add_var: { var: ram, delta: -1 }
+            - add_var: { var: trace, delta: 5 }
+            - msg: >
+                [PROGRAMM: SCAN/PING] Schleusenprotokoll abgefragt.
+                Status: Panzerschott zum Serverraum elektronisch verriegelt.
+                Verwundbar durch Spannungsimpuls: Befehl 'overload door_subsystem'.
+                [CYBERDECK] RAM: {ram}/6 | TRACE: {trace} %
+          else:
+            - msg: "FEHLER: Nicht genuegend Speicher! Scan erfordert 1 RAM (verfuegbar: {ram}/6)."
+      overload,intact:
+        - if: { compare_var: { name: ram, op: gte, value: 2 } }
+          then:
+            - if: { not: { has_flag: server_door_unlocked } }
+              then:
+                - add_var: { var: ram, delta: -2 }
+                - add_var: { var: trace, delta: 10 }
+                - set_flag: server_door_unlocked
+                - { set_state: server_door_lock, to: unlocked }
+                - add_var: { var: score, delta: 40 }
+                - msg: >
+                    [PROGRAMM: OVERLOAD] Ueberstrom jagt durch das Schaltnetz!
+                    Ein tiefes metallisches Klacken bestaetigt den physischen Erfolg:
+                    Die Panzertuer zum Serverraum im Sicherheitskorridor ist ENTRIEGELT!
+                    [CYBERDECK] RAM: {ram}/6 | TRACE: {trace} %
+              else:
+                - msg: "Die Schleusensteuerung ist bereits ueberbrueckt und die Tuer geoeffnet."
+          else:
+            - msg: "FEHLER: Nicht genuegend Speicher! Overload erfordert 2 RAM (verfuegbar: {ram}/6)."
+
+  - id: firewall_core
+    name: Aegis-Firewallkern
+    desc: Ein gigantischer Wuerfel aus rotem Code, bestueckt mit aggressivem Black-ICE.
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [firewall_core, firewall, kern, aegis]
+    location: ice_bastion
+    portable: false
+    verb_map:
+      scan,intact:
+        - if: { compare_var: { name: ram, op: gte, value: 1 } }
+          then:
+            - add_var: { var: ram, delta: -1 }
+            - add_var: { var: trace, delta: 5 }
+            - msg: >
+                [PROGRAMM: SCAN/PING] Aegis-Firewall Klasse 4 analysiert.
+                Sicherheitshinweis: Konventionelle ICE-Breaker prallen ab.
+                Erfordert zwingend den Entschluesselungsvektor eines Kurosawa-Schluesselchips!
+                Befehl: 'breach firewall_core'.
+                [CYBERDECK] RAM: {ram}/6 | TRACE: {trace} %
+          else:
+            - msg: "FEHLER: Nicht genuegend Speicher! Scan erfordert 1 RAM (verfuegbar: {ram}/6)."
+      breach,intact:
+        - if: { compare_var: { name: ram, op: gte, value: 3 } }
+          then:
+            - if: { has_flag: firewall_breached }
+              then:
+                - msg: "Die Aegis-Firewall ist bereits neutralisiert."
+              else:
+                - if: { has_item: keychip }
+                  then:
+                    - add_var: { var: ram, delta: -3 }
+                    - add_var: { var: trace, delta: 15 }
+                    - set_flag: firewall_breached
+                    - { set_state: firewall_gate, to: unlocked }
+                    - add_var: { var: score, delta: 50 }
+                    - msg: >
+                        [PROGRAMM: ICE-BREAKER] Entschluesselungsvektor des Schluesselchips eingespeist!
+                        Die Kurosawa Aegis-Firewall loest sich in einer Kaskade gruener Nullstellen auf!
+                        Der Datenkorridor nach Norden zum Zentralen Mainframe ist FREIGESCHALTET!
+                        [CYBERDECK] RAM: {ram}/6 | TRACE: {trace} %
+                  else:
+                    - add_var: { var: ram, delta: -1 }
+                    - add_var: { var: trace, delta: 30 }
+                    - msg: >
+                        [ALARM: ICE-GEGENFEUER] Zugriff verweigert!
+                        Ohne den Entschluesselungsvektor des physischen Schluesselchips schlaegt das ICE brutal zurueck!
+                        Eine Rueckkopplung trifft dein Deck (+30 % Trace)!
+                        Tipp: Beschaffe zuerst den Kurosawa-Schluesselchip aus dem Wachraum!
+                        [CYBERDECK] RAM: {ram}/6 | TRACE: {trace} %
+          else:
+            - msg: "FEHLER: Nicht genuegend Speicher! ICE-Breach erfordert 3 RAM (verfuegbar: {ram}/6)."
+
+  - id: quantum_matrix
+    name: Quanten-Tresormatrix
+    desc: Ein pulsierendes Fraktal-Gebilde, das das Eindämmungsfeld im physischen Tresor speist.
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [quantum_matrix, matrix, quantenmatrix, tresormatrix]
+    location: central_mainframe
+    portable: false
+    verb_map:
+      scan,intact:
+        - if: { compare_var: { name: ram, op: gte, value: 1 } }
+          then:
+            - add_var: { var: ram, delta: -1 }
+            - add_var: { var: trace, delta: 5 }
+            - msg: >
+                [PROGRAMM: SCAN/PING] Quanten-Schutzmatrix vermessen.
+                Feldstatus: Aktiv. Stabilisiert das physische Kraftfeld um Projekt Chimera.
+                Schwachstelle: Frequenz-Resonanz! Kann mit 'overload quantum_matrix' zusammenbrechen.
+                [CYBERDECK] RAM: {ram}/6 | TRACE: {trace} %
+          else:
+            - msg: "FEHLER: Nicht genuegend Speicher! Scan erfordert 1 RAM (verfuegbar: {ram}/6)."
+      overload,intact:
+        - if: { compare_var: { name: ram, op: gte, value: 2 } }
+          then:
+            - if: { not: { has_flag: containment_disabled } }
+              then:
+                - add_var: { var: ram, delta: -2 }
+                - add_var: { var: trace, delta: 10 }
+                - set_flag: containment_disabled
+                - add_var: { var: score, delta: 40 }
+                - msg: >
+                    [PROGRAMM: OVERLOAD] Phasenverschiebung injiziert!
+                    Die Quanten-Matrix blinkt grell auf und erlischt vollstaendig!
+                    Physische Wirkung: Das Kraftfeld um 'Projekt Chimera' im Quantentresor ist DEAKTIVIERT!
+                    [CYBERDECK] RAM: {ram}/6 | TRACE: {trace} %
+              else:
+                - msg: "Die Quanten-Matrix ist bereits kollabiert."
+          else:
+            - msg: "FEHLER: Nicht genuegend Speicher! Overload erfordert 2 RAM (verfuegbar: {ram}/6)."
+
+npcs:
+  - id: nixie
+    name: Fixerin Nixie
+    desc: Eine abgebruehte Untergrund-Maklerin mit leuchtenden Tattoos und verspiegelter Brille.
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [nixie, fixerin, fixer]
+    location: neon_alley
+    dialogue:
+      alive:
+        entry: mission_brief
+        nodes:
+          mission_brief:
+            text: "Bist du bereit, Phantom? Kurosawa Cybernetics schlaeft nie, aber heute Nacht ist ihre Wachablaufloesung. Bring mir Projekt Chimera aus dem Quantentresor!"
+            choices:
+              - text: "Wie komme ich am besten hinein?"
+                next: infiltration_tip
+              - text: "Was weisst du ueber das SubNet im Tower?"
+                next: subnet_tip
+              - text: "Ich bin unterwegs."
+                next: null
+          infiltration_tip:
+            text: "Ueber den Haupteingang hast du keine Chance -- die Laserschranken roesten dich. Nimm den Lueftungsschacht oben an der Gasse. Von dort hast du Zugriff auf den Sicherheitskorridor."
+            choices:
+              - text: "Verstanden."
+                next: null
+          subnet_tip:
+            text: "Das Kurosawa-SubNet ist toedlich. Jeder Hack verbraucht RAM deines Cyberdecks und treibt den Trace-Pegel. Wenn der Trace 100 erreicht, brennt dich ihr Black-ICE lebendig durch!"
+            choices:
+              - text: "Ich behalte den Trace im Auge."
+                next: null
+
+  - id: kurosawa_drone
+    name: Kurosawa-Sicherheitsdrohne
+    desc: Eine schwebende Patrouillendrohne mit gepanzertem Rumpf und rotem Suchscheinwerfer.
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [drohne, sicherheitsdrohne, sentinel, patrol]
+    location: service_entrance
+    state: alive
+    max_hp: 15
+    attack: 4
+    defense: 2
+
+  - id: sato
+    name: Sicherheitschef Sato
+    desc: Ein abgekaempfter Kurosawa-Offizier mit kybernetischem Okular, vertieft in Statusberichte.
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [sato, chef, offizier, wache]
+    location: guard_room
+    dialogue:
+      alive:
+        entry: greeting
+        nodes:
+          greeting:
+            text: "Was zum... Wer bist du?! Bleib stehen oder das Wachkommando schiesst!"
+            choices:
+              - text: "Ganz ruhig, Sato. Ich bin nur fuer die Systeme hier."
+                next: null
+
+rules:
+  # Quest-Start
+  - id: quest_start
+    on: enter vent_shaft
+    once: true
+    effects:
+      - start_quest: heist_chimera
+      - msg: "Auftrag erfasst: 'SubNet-Infiltration' gestartet! Ziel: Projekt Chimera bergen."
+
+  # Quest-Fortschritt bei Betreten des Trakts
+  - id: quest_stage_subnet
+    on: enter security_corridor
+    once: true
+    effects:
+      - advance_quest: heist_chimera
+
+  # Schluesselchip geborgen
+  - id: keychip_geborgen
+    on: turn
+    once: true
+    when:
+      has_item: keychip
+    effects:
+      - set_flag: has_keychip
+      - learn: sato_schluessel_vektor
+      - add_var: { var: score, delta: 30 }
+      - msg: "Kurosawa-Schluesselchip geborgen! Der kryptografische Vektor synchronisiert sich mit deinem Decompiler (+30 Punkte)."
+
+  # Optik-Kamera im Sicherheitskorridor schlaegt an, wenn online
+  - id: camera_detection
+    on: enter security_corridor
+    when:
+      not: { has_flag: camera_offline }
+    effects:
+      - add_var: { var: trace, delta: 25 }
+      - msg: >
+          ALARM: Die Kurosawa-Optikueberwachung an der Decke schlaegt an!
+          Ein roter Laserstrahl scannt deinen Koerper. Der Trace-Pegel steigt drastisch an (+25 % Trace)!
+          Tipp: Klinke dich im Lueftungsschacht ins SubNet ein und ueberlaste 'camera_node'!
+
+  # Einklinken ins SubNet (an gueltigen Anschluessen)
+  - id: jack_in_cmd
+    on: command jack
+    effects:
+      - if:
+          any:
+            - { at: player, room: vent_shaft }
+            - { at: player, room: guard_room }
+            - { at: player, room: server_room }
+        then:
+          - if: { at: player, room: vent_shaft }
+            then:
+              - set_var: { var: jack_origin, value: 1 }
+          - if: { at: player, room: guard_room }
+            then:
+              - set_var: { var: jack_origin, value: 2 }
+          - if: { at: player, room: server_room }
+            then:
+              - set_var: { var: jack_origin, value: 3 }
+          - move: subnet_gateway
+          - msg: >
+              Du stoepselst das Monokabel deines Cyberdecks in die Datenbuchse...
+              Dein Bewusstsein loest sich vom Fleisch. Ein Vektorgitter aus gleissendem
+              Cyan und Schwarz spannt sich um dich auf. Willkommen im Kurosawa-SubNet!
+        else:
+          - msg: "Hier gibt es keine Klinkenbuchse fuer dein Cyberdeck. Suche ein Terminal oder einen Wartungsanschluss!"
+
+  # Ausklinken aus dem SubNet zurueck in den physischen Koerper
+  - id: disconnect_cmd
+    on: command disconnect
+    effects:
+      - if:
+          any:
+            - { at: player, room: subnet_gateway }
+            - { at: player, room: ice_bastion }
+            - { at: player, room: central_mainframe }
+        then:
+          - if: { compare_var: { name: jack_origin, op: eq, value: 1 } }
+            then:
+              - move: vent_shaft
+          - if: { compare_var: { name: jack_origin, op: eq, value: 2 } }
+            then:
+              - move: guard_room
+          - if: { compare_var: { name: jack_origin, op: eq, value: 3 } }
+            then:
+              - move: server_room
+          - msg: >
+              Notfall-Klinkentrennung! Ein stechender Ruck faehrt durch deine Synapsen,
+              als das digitale Gitter kollabiert. Deine Augen oeffnen sich wieder in der
+              physischen Realitaet.
+        else:
+          - msg: "Du bist derzeit in kein Netzwerk eingeklinkt."
+
+  # Cyberdeck-HUD
+  - id: cyberdeck_hud
+    on: command hud
+    effects:
+      - msg: >
+          =============================================================
+          [CYBERDECK HUD] Onyx-Phantom Custom Deck (Militaer-Spezifikation)
+          =============================================================
+          RAM-SPEICHER : {ram}/6 Bloecke (1 Block regeneriert pro Zug)
+          TRACE-PEGEL  : {trace} % (Kritisch ab 70 %, Lockdown bei 100 %)
+          HEIST-SCORE  : {score}/350 Punkte
+          =============================================================
+
+  # RAM-Regeneration: Jede Runde kuehlt das Deck 1 RAM ab (bis max 6)
+  - id: ram_regen
+    on: turn
+    when:
+      compare_var: { name: ram, op: lt, value: 6 }
+    effects:
+      - add_var: { var: ram, delta: 1 }
+
+  # Trace-Warnung bei >= 70%
+  - id: trace_warnung
+    on: turn
+    once: true
+    when:
+      compare_var: { name: trace, op: gte, value: 70 }
+    effects:
+      - msg: "KRITISCHE WARNUNG: Trace-Pegel bei {trace} %! Kurosawa Black-ICE lokalisiert deine Neuro-Signatur!"
+
+  # Trace Game Over bei >= 100%
+  - id: trace_game_over
+    on: turn
+    when:
+      compare_var: { name: trace, op: gte, value: 100 }
+    effects:
+      - msg: >
+          KATASTROPHALER LOCKDOWN: Trace hat 100 % erreicht!
+          Toedliches Kurosawa Black-ICE flutet deine neuralen Implantate.
+          Gleichzeitig riegeln Schotten das Gebaeude ab und schwer bewaffnete
+          Sicherheitskraefte eroeffnen das Feuer. Dein Gehirn kocht -- dein Signal erlischt.
+      - game_end: death
+      - msg: "GAME OVER — Neuro-Schock durch Black-ICE. Du wurdest im Netz verbrannt."
+
+  # Sieg-Bedingung: Extraktion mit Projekt Chimera
+  - id: sieg_extraktion
+    on: enter extraction_point
+    when:
+      has_flag: chimera_acquired
+    effects:
+      - complete_quest: heist_chimera
+      - add_var: { var: score, delta: 40 }
+      - msg: "Du schluepfst in Nixies AV-Gleiter. Die Triebwerke zuenden und ihr taucht im Neonmeer unter!"
+      - game_end: victory
+      - msg: "SIEG — Heist erfolgreich abgeschlossen! Endstand: {score}/350 Punkte."
+
+tests:
+  - name: neon_phantom_victory_walkthrough
+    input:
+      - "take multitool"
+      - "use multitool"
+      - "north"
+      - "jack"
+      - "scan camera_node"
+      - "overload camera_node"
+      - "disconnect"
+      - "north"
+      - "east"
+      - "open spind"
+      - "take keychip from spind"
+      - "jack"
+      - "north"
+      - "overload door_subsystem"
+      - "breach firewall_core"
+      - "north"
+      - "overload quantum_matrix"
+      - "disconnect"
+      - "west"
+      - "north"
+      - "north"
+      - "take chimera"
+      - "south"
+      - "south"
+      - "south"
+      - "south"
+      - "west"
+    expect:
+      - "Du setzt das Multitool am Lueftungsgitter an."
+      - "Willkommen im Kurosawa-SubNet!"
+      - "Die Deckenkamera im Sicherheitskorridor ist DAUERHAFT OFFLINE!"
+      - "Notfall-Klinkentrennung!"
+      - "Kurosawa-Schluesselchip geborgen! Der kryptografische Vektor synchronisiert sich mit deinem Decompiler"
+      - "Die Panzertuer zum Serverraum im Sicherheitskorridor ist ENTRIEGELT!"
+      - "Die Kurosawa Aegis-Firewall loest sich in einer Kaskade gruener Nullstellen auf!"
+      - "Das Kraftfeld um 'Projekt Chimera' im Quantentresor ist DEAKTIVIERT!"
+      - "Du greifst durch das erloschene Kraftefeld und reisst den warmen Quantenkern an dich!"
+      - "KRITISCHE WARNUNG: Trace-Pegel bei 80 %!"
+      - "SIEG — Heist erfolgreich abgeschlossen! Endstand: 350/350 Punkte."

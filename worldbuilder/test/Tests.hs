@@ -4612,6 +4612,8 @@ tests =
     , ("in: {container, item} predicate compiles and validates (Z-03)", testContainerHasPredicateCompiles)
     , ("steal:/swap_inventory: outcome shapes parse (OPEN-15/OPEN-20)", testStealSwapOutcomeParsing)
     , ("steal:/swap_inventory: compile and validate actor refs (OPEN-15/OPEN-20)", testStealSwapCompilesAndValidates)
+    , ("fuel: compiles, seeds the counter and compiles set_fuel/add_fuel (OPEN-17)", testFuelCompiles)
+    , ("fuel: bad start/threshold shapes are compile errors (OPEN-17)", testFuelValidation)
     ]
 
 -- ---------------------------------------------------------------------------
@@ -9727,6 +9729,93 @@ testStealSwapCompilesAndValidates = do
                 pure (a && b)
             Right _ -> expectTrue "bad actor refs must fail to compile" False
     pure (r1 && r2)
+
+-- | OPEN-17: `fuel:` kompiliert zur Timer-Definition, der Zähler startet in
+--   `itemProps["fuel"]` (ein explizites `props: {fuel: …}` gewinnt),
+--   `set_fuel:`/`add_fuel:` kompilieren zu den Engine-Effekten.
+testFuelCompiles :: IO Bool
+testFuelCompiles = do
+    let yaml = unlines
+            [ "name: Fuel Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: A test room."
+            , "items:"
+            , "  - id: lampe"
+            , "    name: Lampe"
+            , "    location: loc_0"
+            , "    state: lit"
+            , "    fuel:"
+            , "      start: 3"
+            , "      ticks_when: lit"
+            , "      warn:"
+            , "        - at: 2"
+            , "          effects: [ msg: 'wird schwach' ]"
+            , "      on_empty:"
+            , "        - msg: 'lampe aus'"
+            , "  - id: oel"
+            , "    name: Oel"
+            , "    location: loc_0"
+            , "    props: {fuel: 9}"
+            , "    fuel:"
+            , "      start: 4"
+            , "rules:"
+            , "  - id: dreh"
+            , "    on: turn"
+            , "    effects:"
+            , "      - set_fuel: {item: lampe, to: 5}"
+            , "      - add_fuel: {item: lampe, delta: -1}"
+            ]
+    compileYamlForTest yaml $ \cr -> do
+        a <- expectEqual
+                (Just (E.FuelDef 3 (Just "lit")
+                    [E.FuelWarn 2 (E.SendMessage "wird schwach")]
+                    (Just (E.SendMessage "lampe aus"))))
+                (E.itemFuel =<< Map.lookup "lampe" (E.itemDefs (crWorld cr)))
+        let fuelOf i = Map.lookup "fuel" =<< (E.itemProps <$> Map.lookup i (E.itemStates (crSave cr)))
+        b <- expectEqual (Just 3) (fuelOf "lampe")
+        c <- expectEqual (Just 9) (fuelOf "oel")
+        d <- case find ((== "dreh") . E.trId) (E.triggerDefs (crWorld cr)) of
+            Nothing -> expectTrue "rule 'dreh' missing" False
+            Just t -> expectEqual [E.SetFuel "lampe" 5, E.AddFuel "lampe" (-1)] (E.trEffects t)
+        e <- expectTrue ("zero warnings, got: " ++ show (crWarnings cr)) (null (crWarnings cr))
+        pure (a && b && c && d && e)
+
+-- | OPEN-17: Form-Checks der Timer-Definition — `start` nicht negativ,
+--   Schwellen positiv (InvalidFuelStart/InvalidFuelThreshold).
+testFuelValidation :: IO Bool
+testFuelValidation = do
+    let badYaml = unlines
+            [ "name: Fuel Bad Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: A test room."
+            , "items:"
+            , "  - id: lampe"
+            , "    name: Lampe"
+            , "    location: loc_0"
+            , "    fuel:"
+            , "      start: -1"
+            , "      warn:"
+            , "        - at: 0"
+            , "          effects: [ msg: 'x' ]"
+            ]
+    case decode1 (BLC.pack badYaml) of
+        Left err -> do
+            putStrLn ("  yaml decode failed: " ++ show err)
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                a <- expectTrue ("InvalidFuelStart, got: " ++ issuesText errs)
+                        (any (\i -> ciCode i == "InvalidFuelStart") errs)
+                b <- expectTrue ("InvalidFuelThreshold, got: " ++ issuesText errs)
+                        (any (\i -> ciCode i == "InvalidFuelThreshold") errs)
+                pure (a && b)
+            Right _ -> expectTrue "bad fuel shape must fail to compile" False
 
 -- | OPEN-06 (W-02): `blocked: true` kompiliert zur blocked-Form
 --   (`Guarded (PNot PTrue)`) mit eigener Meldung und erzeugt keinen

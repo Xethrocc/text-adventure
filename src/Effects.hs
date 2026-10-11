@@ -1378,13 +1378,19 @@ fuelChange iId f state salt = case fuelDefOf iId state of
 -- | OPEN-17: the item timers (`fuel:`) tick once per consumed turn — every
 --   counter whose `ticks_when` state matches (or that declares none) counts
 --   down, so `extinguish` pauses a lamp like the original `DISABLE <INT …>`.
---   A burn milestone fires when a tick decrement lands the counter exactly on
---   its `at:` value (a `set_fuel` jump skips milestones on purpose); reaching
---   0 runs `on_empty`.
+--   Items outside the game (Removed/Dormant) do not burn down — the counter
+--   freezes where it is and can be brought back later. A burn milestone fires
+--   when a tick decrement lands the counter exactly on its `at:` value (a
+--   `set_fuel` jump skips milestones on purpose); reaching 0 runs `on_empty`.
 tickItemFuels :: GameState -> (GameState, [[OutputEvent]])
 tickItemFuels state = foldl' step (state, []) timers
   where
-    timers = [ (itemId def, fd) | def <- Map.elems (itemDefs (world state)), Just fd <- [itemFuel def] ]
+    timers =
+        [ (iId, fd)
+        | (iId, is) <- Map.toList (itemStates (save state))
+        , itemLocation is `notElem` [Removed, Dormant]
+        , Just def <- [Map.lookup iId (itemDefs (world state))]
+        , Just fd <- [itemFuel def] ]
     step (st, msgs) (iId, fd) =
         let old = fuelValueOf iId st
         in if old <= 0 || not (ticksNow iId fd st)
