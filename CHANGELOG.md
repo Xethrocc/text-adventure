@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+## [0.11.0.0] — 2026-10-11
+
+Zork I Port, 5 Genre-Benchmark-Adventures, vollständige CI-E2E-Pipeline,
+Wissens-/Rezeptmechaniken (K11a–K11e), Score-System (K17), dynamische
+Ziele (OPEN-11) sowie Parser- und Container-Erweiterungen.
+
+### Added
+- **5 Genre-Benchmark-Adventures** (`examples/genres/`):
+  - *Visual Novel* (`vn_letter.yaml`): Verzweigte Dialoge, Beziehungs- und Zuneigungswerte, Briefinspektion und multiple Enden.
+  - *Clock-Driven* (`clock_pendulum.yaml`): Taktender Zeitmechanismus, steigender Wasserpegel und Pendelfallen-Interaktionen.
+  - *Roguelike / Dungeon* (`roguelike_dungeon.yaml`): Dungeon-Crawl mit Ironman-Savezone-Mechanik, Permadeath und taktischem Kampfsystem.
+  - *Board Game Adapter* (`board_nim.yaml`): Vollständiges mathematisches Nim-Strategiespiel, realisiert rein über deklarative YAML-Regeln und Variablen.
+  - *Idle / Incremental Clicker* (`idle_manufaktur.yaml`): Ressourcen-Generierung, Automatisierungs-Upgrades, Multiplikatoren und Prestige-Reset-Mechanik.
+  - Vollständige CI- und E2E-Abdeckung (Erfolgs- und Abbruchpfade) für alle 5 Genres in `ci/e2e/genres/` und `scripts/ci.sh`.
+- **Zork I Vollportierung & Mechaniken** (`examples/zork1.yaml`):
+  - Port des Infocom-Klassikers (110 Räume, Schätze, Dieb, Trophäenvitrine).
+  - Fackel als permanente Lichtquelle (`torch state: lit + tags_when`).
+  - Verben `move`, `raise`, `lower`, `kick`, `kiss` für Flüche und Teppich-Interaktionen.
+  - Befund- und Architekturdokumentation (`docs/befunde-text-adventure-engine.md`, `docs/plan-zork-mechanik-entscheidungen.md`).
+- **Lizenz- und Rechtsdokumentation**:
+  - `THIRD_PARTY_LICENSES.md`: Lizenzübersicht für Upstream- und Drittkomponenten.
+  - `examples/zork1.LICENSE`: MIT-Lizenzhinweis für den Zork-I-Port.
+
 ### `move <thing>` als Custom-Verb (Zork-Port C2)
 
 `move rug` (Zork: Teppich verschieben, Weg zur Falltür) war nicht ausdrückbar:
