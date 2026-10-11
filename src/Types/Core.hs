@@ -1150,6 +1150,11 @@ data Effect
     | RevealAll CountSpec                     -- ^ B3: reveal every hidden item in the set
     | ConsumeAll CountSpec                    -- ^ B3: remove every member of the set
     | SetStateAll CountSpec String            -- ^ B3: set the state of every member
+    | StealItem ItemID ActorRef ActorRef (Maybe String)
+        -- ^ OPEN-15: targeted theft — take exactly this item from one actor's
+        --   holdings (hands, worn, nested container) into another's hands
+        --   (item, from, to, optional author message for the success case)
+    | SwapInventory ActorRef ActorRef         -- ^ OPEN-20: atomarer Tausch zweier Inventare (getragen + ausgerüstet)
     | Noop                                        -- ^ Do nothing
     deriving (Show, Eq, Generic)
 

@@ -1,4 +1,4 @@
--- | Generated from lang/de.json (sha256: dda83e4dffeecc70e17b8aa08ffe5dffd3d75633f8f85d088a54dedf2f6f3628) by scripts/gen-lang-pack.py.
+-- | Generated from lang/de.json (sha256: 4c375b5e2a3bb977f8f6323c8eb11b5f5117c1b3e5c49ca9670bf4e69338d72c) by scripts/gen-lang-pack.py.
 --   DO NOT EDIT by hand - rerun the generator after changing the JSON.
 --
 --   Language-pack data (Phase 4.3): message templates keyed like the
@@ -68,6 +68,9 @@ langDe =
       , ("take.ok", "Du nimmst {article_acc} {item}.")
       , ("drop.ok", "Du legst {article_acc} {item} ab.")
       , ("drop.nothing", "Du hast nichts abzulegen.")
+      , ("steal.from_you", "{npc_article_nom} {npc} nimmt {item_article_acc} {item} von dir.")
+      , ("steal.taken", "{npc_article_nom} {npc} nimmt {item_article_acc} {item} von {from_article_dat} {from}.")
+      , ("steal.no_item", "Du hast {article_acc} {item} nicht.")
       , ("use.not_carried", "Dazu musst du '{item}' bei dir haben.")
       , ("use.unreachable", "Du kommst von hier nicht an '{entity}' heran.")
       , ("use.ok", "Du benutzt {article_acc} {item}. {msg}")

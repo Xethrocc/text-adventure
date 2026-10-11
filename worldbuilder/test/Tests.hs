@@ -4530,6 +4530,8 @@ tests =
     , ("place: compiles and engine validation catches bad refs (E-02)", testPlaceCompilesAndValidates)
     , ("blocked: true compiles clean with no DeadExit (W-02)", testBlockedExitCompilesClean)
     , ("in: {container, item} predicate compiles and validates (Z-03)", testContainerHasPredicateCompiles)
+    , ("steal:/swap_inventory: outcome shapes parse (OPEN-15/OPEN-20)", testStealSwapOutcomeParsing)
+    , ("steal:/swap_inventory: compile and validate actor refs (OPEN-15/OPEN-20)", testStealSwapCompilesAndValidates)
     ]
 
 -- ---------------------------------------------------------------------------
@@ -9556,6 +9558,93 @@ testPlaceCompilesAndValidates = do
         c <- expectTrue ("InvalidContainer bank, got: " ++ show errs)
                 (InvalidContainer "kiste" "bank" `elem` errs)
         pure (a && b && c)
+    pure (r1 && r2)
+
+-- | OPEN-15/OPEN-20: `steal:`/`swap_inventory:`-Outcome-Formen — `to:`
+--   defaultet auf den Spieler (wie `give:`), `msg:` steht im Objekt oder als
+--   Geschwister-Key (die `game_end`-Konvention); `steal:` ohne `from:` ist ein
+--   Parse-Fehler.
+testStealSwapOutcomeParsing :: IO Bool
+testStealSwapOutcomeParsing = do
+    let dec s = Aeson.eitherDecode (BLC.pack s) :: Either String AActionOutcome
+        expectFailure s = case dec s of
+            Left _  -> pure True
+            Right o -> expectTrue ("expected parse failure, got " ++ show o) False
+    r1 <- expectEqual (Right (AOStealItem "gold" "player" "dieb" Nothing))
+            (dec "{\"steal\":{\"item\":\"gold\",\"from\":\"player\",\"to\":\"dieb\"}}")
+    r2 <- expectEqual (Right (AOStealItem "gold" "dieb" "player" Nothing))
+            (dec "{\"steal\":{\"item\":\"gold\",\"from\":\"dieb\"}}")
+    r3 <- expectEqual (Right (AOStealItem "gold" "player" "dieb" (Just "Psst!")))
+            (dec "{\"steal\":{\"item\":\"gold\",\"from\":\"player\",\"to\":\"dieb\",\"msg\":\"Psst!\"}}")
+    r4 <- expectEqual (Right (AOStealItem "gold" "player" "dieb" (Just "Psst!")))
+            (dec "{\"steal\":{\"item\":\"gold\",\"from\":\"player\",\"to\":\"dieb\"},\"msg\":\"Psst!\"}")
+    r5 <- expectEqual (Right (AOSwapInventory "player" "dieb"))
+            (dec "{\"swap_inventory\":{\"source\":\"player\",\"target\":\"dieb\"}}")
+    r6 <- expectFailure "{\"steal\":{\"item\":\"gold\"}}"
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | OPEN-15/OPEN-20: `steal:`/`swap_inventory:` kompilieren zu den
+--   Engine-Effekten; Aktor-Tippfehler sind der Compile-Fehler `UnknownNpc`
+--   (derselbe Vertrag wie `give: {to:}`), unbekannte Items fängt die
+--   Engine-Validierung.
+testStealSwapCompilesAndValidates :: IO Bool
+testStealSwapCompilesAndValidates = do
+    let yaml = unlines
+            [ "name: Steal Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: A test room."
+            , "    on_enter:"
+            , "      - steal: {item: gold, from: player, to: dieb, msg: \"Psst!\"}"
+            , "      - swap_inventory: {source: player, target: dieb}"
+            , "items:"
+            , "  - id: gold"
+            , "    name: Gold"
+            , "    location: loc_0"
+            , "npcs: [ {id: dieb, name: Dieb, desc: D, location: loc_0} ]"
+            ]
+        badYaml = unlines
+            [ "name: Steal Bad Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: A test room."
+            , "    on_enter:"
+            , "      - steal: {item: gold, from: player, to: phantom}"
+            , "      - swap_inventory: {source: player, target: spuk}"
+            , "items:"
+            , "  - id: gold"
+            , "    name: Gold"
+            , "    location: loc_0"
+            , "npcs: [ {id: dieb, name: Dieb, desc: D, location: loc_0} ]"
+            ]
+    r1 <- compileYamlForTest yaml $ \cr -> case E.roomOnEnter =<< Map.lookup "loc_0" (E.rooms (crWorld cr)) of
+        Nothing -> expectTrue "on_enter effects missing" False
+        Just effs -> do
+            let flattened = case effs of
+                    E.Sequence es -> es
+                    e             -> [e]
+            a <- expectEqual
+                    [ E.StealItem "gold" E.ActorPlayer (E.ActorNPC "dieb") (Just "Psst!")
+                    , E.SwapInventory E.ActorPlayer (E.ActorNPC "dieb") ] flattened
+            let errs = validateWorld (crWorld cr) ++ validateGameState (crWorld cr) (crSave cr)
+            b <- expectTrue ("world must validate clean, got: " ++ show errs) (null errs)
+            pure (a && b)
+    r2 <- case decode1 (BLC.pack badYaml) of
+        Left err -> do
+            putStrLn $ "  yaml decode failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                a <- expectTrue ("steal.to is UnknownNpc, got: " ++ issuesText errs)
+                        (any (\i -> ciCode i == "UnknownNpc" && ciPath i == "outcomes.steal.to") errs)
+                b <- expectTrue ("swap_inventory.target is UnknownNpc, got: " ++ issuesText errs)
+                        (any (\i -> ciCode i == "UnknownNpc" && ciPath i == "outcomes.swap_inventory.target") errs)
+                pure (a && b)
+            Right _ -> expectTrue "bad actor refs must fail to compile" False
     pure (r1 && r2)
 
 -- | OPEN-06 (W-02): `blocked: true` kompiliert zur blocked-Form

@@ -418,6 +418,7 @@ idsFromOutcomeItem outcome = case outcome of
         | otherwise            -> [iId]
     Mount iId _                  -> [iId]
     Unmount iId                  -> [iId]
+    StealItem iId _ _ _          -> [iId]
     SetValue (VRItemProp iId _) _ -> [iId]
     ModifyValue (VRItemProp iId _) _ -> [iId]
     ComputeValue (VRItemProp iId _) _ -> [iId]
@@ -434,6 +435,8 @@ idsFromOutcomeNPC outcome = case outcome of
         | otherwise            -> [nId] ++ destNpcRefs dest
     PlaceItem _ dest           -> destNpcRefs dest
     MoveAll _ dest             -> whereNpcRefs dest
+    StealItem _ fromA toA _    -> actorNpcRefs fromA ++ actorNpcRefs toA
+    SwapInventory src tgt      -> actorNpcRefs src ++ actorNpcRefs tgt
     Sequence os                  -> concatMap idsFromOutcomeNPC os
     RandomChoice os              -> concatMap (idsFromOutcomeNPC . snd) os
     RandomChoiceOn _ os          -> concatMap (idsFromOutcomeNPC . snd) os
@@ -450,6 +453,13 @@ destNpcRefs _                    = []
 whereNpcRefs :: CountWhere -> [String]
 whereNpcRefs (CountInRoomOf (ActorNPC n)) = [n]
 whereNpcRefs _                            = []
+
+-- | OPEN-15/OPEN-20: actor references (`steal: from:/to:`,
+--   `swap_inventory: source:/target:`) — only NPC ids need checking, the
+--   player actor is built in.
+actorNpcRefs :: ActorRef -> [String]
+actorNpcRefs (ActorNPC n) = [n]
+actorNpcRefs _            = []
 
 -- | Collect entity IDs referenced via VRActorProp (item state / NPC state /
 --   generic property writes). These are checked against itemDefs ∪ npcDefs.

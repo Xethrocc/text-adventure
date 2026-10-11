@@ -3481,6 +3481,12 @@ compileAActionOutcome ao = case ao of
     AOPlace i loc -> E.PlaceItem i loc
     AOGiveItem i -> E.MoveEntity i (E.CarriedBy E.ActorPlayer)
     AOGiveTo i tgt -> E.MoveEntity i (E.CarriedBy (compileActorRef tgt))
+    -- OPEN-15: gezielter Diebstahl — nur dieses Item, und nur wenn die Quelle
+    --   es wirklich bei sich hat.
+    AOStealItem i fromA toA mMsg ->
+        E.StealItem i (compileActorRef fromA) (compileActorRef toA) mMsg
+    -- OPEN-20: atomarer Tausch zweier Inventare.
+    AOSwapInventory src tgt -> E.SwapInventory (compileActorRef src) (compileActorRef tgt)
     -- B9: NPC equipment. The engine keeps the slot in the item's own
     -- definition (`itemEquipSlot`, YAML `slot:`), so no new SaveState field is needed; the
     -- actor comes from the same `to` field as the B7 give-sugar.
@@ -4357,6 +4363,14 @@ checkNpcPossessionRefs adv =
         [ ciError "outcomes.give.to" "UnknownNpc"
             ("give target '" ++ tgt ++ "' is not 'player' or an existing npc id")
         | bad tgt ]
+    -- OPEN-15/OPEN-20: `steal: from:/to:` and `swap_inventory: source:/target:`
+    --   name actors too — a typo there would silently no-op at runtime.
+    outcomeGo (AOStealItem _ fromA toA _) =
+        actorErr "outcomes.steal.from" "steal source" fromA
+        ++ actorErr "outcomes.steal.to" "steal target" toA
+    outcomeGo (AOSwapInventory src tgt) =
+        actorErr "outcomes.swap_inventory.source" "swap_inventory source" src
+        ++ actorErr "outcomes.swap_inventory.target" "swap_inventory target" tgt
     -- OPEN-11: `to: {room_of: <npc>}` / `in: {room_of: <npc>}` name an actor
     -- too — a typo there would silently no-op at runtime.
     outcomeGo (AOMoveNPC _ dest) = roomOfErr "outcomes.move_npc.to" dest
@@ -4372,6 +4386,10 @@ checkNpcPossessionRefs adv =
             ("dynamic target 'room_of: " ++ E.actorId a
              ++ "' is not 'player' or an existing npc id")
         | E.RoomOf a <- [dest], bad (E.actorId a) ]
+    actorErr path label a =
+        [ ciError path "UnknownNpc"
+            (label ++ " '" ++ a ++ "' is not 'player' or an existing npc id")
+        | bad a ]
 
 -- | B9: both halves of an `interactions: npc:` entry must resolve. A typo in
 --   the item id would silently fall through to the attack fallback, so both

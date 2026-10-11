@@ -43,6 +43,7 @@ module Game
     , getNPCsInRoom
     , hasItem
     , actorHasItem
+    , actorHoldsItem
     , playerHasTaggedItem
     , effectiveItemTags
     , isLivingNPCInRoom
@@ -57,6 +58,8 @@ module Game
     , recipeDisplayName
     , placeItem
     , relocateItem
+    , stealItemTo
+    , swapInventories
     , normalizeText
       -- * Inventory and equipment
     , pickupItem
@@ -571,6 +574,25 @@ actorHasItem actor iId state = case Map.lookup iId (itemStates (save state)) of
 hasItem :: ItemID -> GameState -> Bool
 hasItem iId state = actorHasItem ActorPlayer iId state
 
+-- | OPEN-15: does the actor hold this item — directly (carried or worn) or
+--   inside a container the actor carries (A3: "Taschen-Gegenstaende"). Unlike
+--   'isReachableForConsume' the open/closed state of the container chain is
+--   deliberately irrelevant: a thief takes from closed bags too. The cycle
+--   guard is paranoia against malformed saves ('containerChainOpen'
+--   precedent).
+actorHoldsItem :: ActorRef -> ItemID -> GameState -> Bool
+actorHoldsItem actor iId state = go (0 :: Int) iId
+  where
+    go n x
+        | n >= (64 :: Int) = False
+        | otherwise = case Map.lookup x (itemStates (save state)) of
+            Nothing  -> False
+            Just is -> case itemLocation is of
+                CarriedBy a   -> actorId a == actorId actor
+                EquippedBy a  -> actorId a == actorId actor
+                InContainer c -> go (n + 1) c
+                _             -> False
+
 -- | Check if an item is currently equipped
 isEquipped :: ItemID -> GameState -> Bool
 isEquipped iId state = iId `elem` Map.elems (equipment (save state))
@@ -952,6 +974,57 @@ relocateItem iId newLoc state
     in clampHealthToMax st'
   where
     currentLoc = itemLocation <$> Map.lookup iId (itemStates (save state))
+
+-- | OPEN-15: targeted theft (`steal:`) — take one item out of an actor's
+--   holdings (directly carried/worn or inside a carried container chain, A3)
+--   and put it into the thief's hands. 'Nothing' when the source does not hold
+--   the item: the effect stays a no-op and the caller reports
+--   `steal.no_item`.
+stealItemTo :: ItemID -> ActorRef -> ActorRef -> GameState -> Maybe GameState
+stealItemTo iId fromActor toActor state
+    | actorHoldsItem fromActor iId state = Just (relocateItem iId (CarriedBy toActor) state)
+    | otherwise                          = Nothing
+
+-- | OPEN-20: atomarer Tausch zweier Inventare (`swap_inventory:`). Everything
+--   an actor carries or wears switches to the other actor in one closed step;
+--   worn gear stays worn. Representation follows the target's convention
+--   (B9): the player wears through the `equipment` slot map (the item stays
+--   `CarriedBy` so it still shows in the inventory), an NPC wears through the
+--   `EquippedBy` location. The player's slot map is rebuilt from the incoming
+--   worn items, so no stale slots survive the swap. Container contents travel
+--   with their container (Z-10) and are therefore not listed here. Edge case:
+--   two incoming worn items fighting over one slot keep the later one
+--   ('Map.fromList'); worn items without an `equip_slot` land as plain
+--   carried.
+swapInventories :: ActorRef -> ActorRef -> GameState -> GameState
+swapInventories a b state
+    | actorId a == actorId b = state
+    | otherwise =
+        let moves = [ (itemId i, b, isWornByActor a (itemId i) state) | i <- holdingsOf a ]
+                 ++ [ (itemId i, a, isWornByActor b (itemId i) state) | i <- holdingsOf b ]
+            st1 = foldl' (\s (iId, tgt, worn) -> relocateItem iId (destination tgt worn) s) state moves
+            newSlots = Map.fromList
+                [ (slot, iId)
+                | (iId, tgt, True) <- moves
+                , actorId tgt == "player"
+                , Just def <- [lookupItem iId state]
+                , Just slot <- [itemEquipSlot def] ]
+        in st1 { save = (save st1) { equipment = newSlots } }
+  where
+    holdingsOf x = itemsAtLoc (CarriedBy x) state ++ itemsAtLoc (EquippedBy x) state
+    destination tgt worn
+        | worn, actorId tgt /= "player" = EquippedBy tgt
+        | otherwise                     = CarriedBy tgt
+
+-- | Worn gear of an actor: an NPC wears through the `EquippedBy` location, the
+--   player through the `equipment` slot map (B9) — the single source of
+--   "that item is worn", mirroring 'wornInSlot'.
+isWornByActor :: ActorRef -> ItemID -> GameState -> Bool
+isWornByActor actor iId state =
+    case Map.lookup iId (itemStates (save state)) of
+        Nothing -> False
+        Just is -> itemLocation is == EquippedBy actor
+            || (actorId actor == "player" && iId `elem` Map.elems (equipment (save state)))
 
 -- | Clamp current health to effective max health (e.g. after losing a maxhp bonus)
 clampHealthToMax :: GameState -> GameState

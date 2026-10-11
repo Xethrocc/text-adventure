@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### OPEN-15 & OPEN-20: `steal:` und `swap_inventory:`
+
+Zwei neue Effekte aus den Zork-Mechanik-Entscheidungen (A3 „NPC-Diebstahl + Rückgabe",
+F1 „Spiegel-Inventar-Vertauschung") — Details in `docs/adventure-schema.md`
+(*Gezielter Diebstahl & Inventartausch*).
+
+- **`steal: {item, from, to?, msg?}`** (`StealItem`, OPEN-15): nimmt genau dieses
+  Item aus den Beständen von `from:` (getragen, ausgerüstet **oder** im
+  mitgeführten Container — auch geschlossen) und legt es in die Hände von `to:`
+  (Default `player`). Ohne Fund bleibt alles unverändert (`steal.no_item`/
+  `npc.no_item`); `msg:` (im Objekt oder als Geschwister-Key) ersetzt die
+  Erfolgs-Meldung. Rollen-Meldungen wie im ganzen Katalog: Spieler als Dieb →
+  `npc.took_from`, als Opfer → `steal.from_you`, NPC ↔ NPC → `steal.taken`.
+  `from: == to:` ist ein stiller No-op.
+- **`swap_inventory: {source, target}`** (`SwapInventory`, OPEN-20): geschlossener
+  Tausch von getragen + ausgerüstet, getragene Ausrüstung bleibt getragen.
+  Darstellung je Ziel-Akteur (B9): Spieler = `equipment`-Slot-Map + `CarriedBy`
+  (Map wird nach dem Tausch konsistent neu aufgebaut), NPC = `EquippedBy`.
+  Bewusst still wie `give:`; Container-Inhalte ziehen automatisch mit (Z-10).
+- **Validierung:** Aktor-Referenzen (`from:`/`to:`/`source:`/`target:`) sind der
+  Compile-Fehler `UnknownNpc` (Vertrag wie `give: {to:}`); unbekannte Item-IDs
+  meldet `validateWorld` (`MissingItem`).
+- **Neue Meldungen:** `steal.from_you`, `steal.taken`, `steal.no_item` (+ Einträge
+  im deutschen Sprachpak); `npc.took_from`/`npc.no_item` werden wiederverwendet.
+
 ### OPEN-16: Parser-Default-Ziel bei eineindeutigem Scope
 
 Bare Verben ohne Objekt (`attack`, `take`, `open`, `talk`, …) lösen jetzt automatisch

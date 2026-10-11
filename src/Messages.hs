@@ -143,6 +143,7 @@ templateGrammarKeys = filter isGrammarArgKey . templateSlots
 itemGrammarMsgKeys :: [MsgId]
 itemGrammarMsgKeys =
     [ "take.ok", "take.already", "take.not_portable", "drop.ok", "use.ok"
+    , "steal.from_you", "steal.taken", "steal.no_item"
     , "item.cant_do", "search.nothing_item", "search.reveal"
     , "equip.ok", "unequip.ok", "unequip.not_equipped"
     , "npc.took_from", "npc.gave_to"
@@ -157,7 +158,8 @@ itemGrammarMsgKeys =
 -- | The catalog keys whose call sites attach NPC grammar args.
 npcGrammarMsgKeys :: [MsgId]
 npcGrammarMsgKeys =
-    [ "search.nothing_npc", "npc.no_item", "npc.took_from", "npc.gave_to" ]
+    [ "search.nothing_npc", "npc.no_item", "npc.took_from", "npc.gave_to"
+    , "steal.from_you", "steal.taken" ]
 
 -- | A catalog message as a structured payload: key, args and the rendered
 --   text (byte-identical to 'renderMsg'). Phase 1.2.
@@ -241,6 +243,12 @@ catalogEntries =
     , ("take.ok",             "You take the {item}.")
     , ("drop.ok",             "You drop the {item}.")
     , ("drop.nothing",        "You're not carrying anything to drop.")
+    -- -- steal (OPEN-15) -----------------------------------------------------
+    -- Role dispatch like every other catalog message: the player is "you" in
+    -- the template (see 'stealTakenMsg'/'stealNoItemMsg' in Effects.hs).
+    , ("steal.from_you",      "{npc} takes the {item} from you.")
+    , ("steal.taken",         "{npc} takes the {item} from {from}.")
+    , ("steal.no_item",       "You have no {item}.")
     , ("use.not_carried",     "You need to be carrying '{item}' to use it.")
     , ("use.unreachable",     "You can't reach '{entity}' from here.")
     , ("use.ok",              "You use the {item}. {msg}")

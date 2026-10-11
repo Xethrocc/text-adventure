@@ -12751,6 +12751,13 @@ main = do
         -- OPEN-11: dynamische Ziele (to: {here} / to: {room_of: <npc>})
         , runTest "dynamic targets: here/room_of resolve at apply time (OPEN-11)" testDynamicTargetsResolve
         , runTest "dynamic targets: unresolvable room_of is a no-op with message (OPEN-11)" testDynamicTargetsUnresolvable
+        -- OPEN-15/OPEN-20: steal: + swap_inventory:
+        , runTest "steal: takes exactly this item from the victim's holdings (OPEN-15)" testStealItemMechanics
+        , runTest "steal: role dispatch picks the catalog line (OPEN-15)" testStealItemMessages
+        , runTest "steal: msg overrides the success line only (OPEN-15)" testStealItemMsgOverride
+        , runTest "swap_inventory: exchanges both inventories in one step (OPEN-20)" testSwapInventoriesMechanics
+        , runTest "swap_inventory: worn gear stays worn, player slots rebuilt (OPEN-20)" testSwapInventoriesKeepsWorn
+        , runTest "steal/swap_inventory JSON round-trips (OPEN-15/OPEN-20)" testStealSwapJsonRoundTrip
         ]
     when (not (and results)) exitFailure
 
@@ -12796,6 +12803,121 @@ testDynamicTargetsUnresolvable = do
     r4 <- expectTrue ("message shown: " ++ msg2)
             ("Cannot resolve the dynamic target" `isInfixOf` msg2)
     pure (r1 && r2 && r3 && r4)
+
+-- | OPEN-15: `steal:` nimmt genau dieses Item aus den Beständen der Quelle —
+--   direkt getragen, ausgerüstet oder im mitgeführten Container (A3:
+--   „Taschen-Gegenstände“) — und legt es in die Hände des Ziels. Fehlt es,
+--   bleibt alles unverändert.
+testStealItemMechanics :: IO Bool
+testStealItemMechanics = do
+    let gold = mkTestItem "gold" "gold"
+        beutel = (mkTestItem "beutel" "bag") { itemCapacity = Just 5 }
+        st0 = mstate [mkTestRoom "halle" "Halle"]
+                [(gold, CarriedBy ActorPlayer), (beutel, CarriedBy ActorPlayer)]
+        itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+        (st1, _) = applyOutcome (StealItem "gold" ActorPlayer (ActorNPC "dieb") Nothing) "" st0
+    r1 <- expectEqual (Just (CarriedBy (ActorNPC "dieb"))) (itemLoc "gold" st1)
+    -- A3: auch aus einem (hier geschlossenen!) Container der Quelle.
+    let stC = st0 { save = (save st0)
+            { itemStates = Map.adjust (\is -> is { itemLocation = InContainer "beutel" })
+                            "gold" (itemStates (save st0)) } }
+        (st2, _) = applyOutcome (StealItem "gold" ActorPlayer (ActorNPC "dieb") Nothing) "" stC
+    r2 <- expectEqual (Just (CarriedBy (ActorNPC "dieb"))) (itemLoc "gold" st2)
+    -- Nicht bei der Quelle: kein Diebstahl, nichts bewegt.
+    let stR = mstate [mkTestRoom "halle" "Halle"] [(gold, InRoom "halle")]
+        (st3, msg3) = applyOutcome (StealItem "gold" ActorPlayer (ActorNPC "dieb") Nothing) "" stR
+    r3 <- expectEqual (Just (InRoom "halle")) (itemLoc "gold" st3)
+    r4 <- expectEqual "You have no gold." msg3
+    -- from == to ist ein stiller No-op.
+    let (st4, msg4) = applyOutcome (StealItem "gold" ActorPlayer ActorPlayer Nothing) "" st0
+    r5 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "gold" st4)
+    r6 <- expectEqual "" msg4
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | OPEN-15: die Meldung folgt der Spieler-Rolle wie der ganze Katalog
+--   („You …“): Spieler als Dieb → `npc.took_from`, Spieler als Opfer →
+--   `steal.from_you`, NPC gegen NPC → `steal.taken`, Fehlschlag →
+--   `steal.no_item`/`npc.no_item`.
+testStealItemMessages :: IO Bool
+testStealItemMessages = do
+    let gold = mkTestItem "gold" "gold"
+        st0 = mstate [mkTestRoom "halle" "Halle"] [(gold, CarriedBy (ActorNPC "troll"))]
+        itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+        (st1, msg1) = applyOutcome (StealItem "gold" (ActorNPC "troll") ActorPlayer Nothing) "" st0
+    r1 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "gold" st1)
+    r2 <- expectEqual "You take the gold from troll." msg1
+    let (st2, msg2) = applyOutcome (StealItem "gold" (ActorNPC "troll") (ActorNPC "dieb") Nothing) "" st0
+    r3 <- expectEqual (Just (CarriedBy (ActorNPC "dieb"))) (itemLoc "gold" st2)
+    r4 <- expectEqual "dieb takes the gold from troll." msg2
+    let (st3, msg3) = applyOutcome (StealItem "gold" (ActorNPC "troll") ActorPlayer Nothing) "" st1
+    r5 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "gold" st3)
+    r6 <- expectEqual "You find no gold on troll." msg3
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+-- | OPEN-15: `msg:` ersetzt die Erfolgs-Meldung (formatiert wie `msg:`),
+--   beim Fehlschlag bleibt die Katalog-Meldung stehen.
+testStealItemMsgOverride :: IO Bool
+testStealItemMsgOverride = do
+    let gold = mkTestItem "gold" "gold"
+        st0 = mstate [mkTestRoom "halle" "Halle"] [(gold, CarriedBy ActorPlayer)]
+        (st1, msg1) = applyOutcome (StealItem "gold" ActorPlayer (ActorNPC "dieb") (Just "Psst!")) "" st0
+        (_, msg2) = applyOutcome (StealItem "gold" (ActorNPC "dieb") ActorPlayer (Just "Psst!")) "" st0
+    r1 <- expectEqual "Psst!" msg1
+    r2 <- expectEqual "You find no gold on dieb." msg2
+    r3 <- expectEqual (Just (CarriedBy (ActorNPC "dieb")))
+            (fmap itemLocation (Map.lookup "gold" (itemStates (save st1))))
+    pure (r1 && r2 && r3)
+
+-- | OPEN-20: `swap_inventory:` tauscht beide Inventare geschlossen —
+--   bewusst still wie `give:`, die Inszenierung macht ein eigenes `msg:`.
+testSwapInventoriesMechanics :: IO Bool
+testSwapInventoriesMechanics = do
+    let gold = mkTestItem "gold" "gold"
+        juwel = mkTestItem "juwel" "jewel"
+        schluessel = mkTestItem "schluessel" "key"
+        st0 = mstate [mkTestRoom "halle" "Halle"]
+                [ (gold, CarriedBy ActorPlayer), (juwel, CarriedBy ActorPlayer)
+                , (schluessel, CarriedBy (ActorNPC "dieb")) ]
+        itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+        (st1, msg1) = applyOutcome (SwapInventory ActorPlayer (ActorNPC "dieb")) "" st0
+    r1 <- expectEqual (Just (CarriedBy (ActorNPC "dieb"))) (itemLoc "gold" st1)
+    r2 <- expectEqual (Just (CarriedBy (ActorNPC "dieb"))) (itemLoc "juwel" st1)
+    r3 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "schluessel" st1)
+    r4 <- expectEqual "" msg1
+    -- Mit sich selbst ist der Tausch ein No-op.
+    let (st2, _) = applyOutcome (SwapInventory ActorPlayer ActorPlayer) "" st0
+    r5 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "gold" st2)
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | OPEN-20: getragene Ausrüstung bleibt getragen. Der Spieler trägt „getragen“
+--   als `equipment`-Slot-Map bei `CarriedBy` (B9), der NPC als `EquippedBy`-Ort
+--   — nach dem Tausch gilt für beide wieder die konventionelle Darstellung.
+testSwapInventoriesKeepsWorn :: IO Bool
+testSwapInventoriesKeepsWorn = do
+    let schwert = (mkTestItem "schwert" "sword") { itemEquipSlot = Just Weapon }
+        ruestung = (mkTestItem "ruestung" "armor") { itemEquipSlot = Just Body }
+        stBase = mstate [mkTestRoom "halle" "Halle"]
+                [(schwert, CarriedBy ActorPlayer), (ruestung, EquippedBy (ActorNPC "dieb"))]
+        st0 = stBase { save = (save stBase) { equipment = Map.singleton Weapon "schwert" } }
+        itemLoc i st = fmap itemLocation (Map.lookup i (itemStates (save st)))
+        (st1, _) = applyOutcome (SwapInventory ActorPlayer (ActorNPC "dieb")) "" st0
+    r1 <- expectEqual (Just (CarriedBy ActorPlayer)) (itemLoc "ruestung" st1)
+    r2 <- expectEqual (Map.singleton Body "ruestung") (equipment (save st1))
+    r3 <- expectEqual (Just (EquippedBy (ActorNPC "dieb"))) (itemLoc "schwert" st1)
+    pure (r1 && r2 && r3)
+
+-- | OPEN-15/OPEN-20: die neuen Effekte überstehen JSON-Roundtrips (der
+--   generische Effekt-Codec ist der world.json-Vertrag).
+testStealSwapJsonRoundTrip :: IO Bool
+testStealSwapJsonRoundTrip = do
+    let rt e = (Aeson.decode (Aeson.encode e) :: Maybe Effect) == Just e
+    r1 <- expectTrue "StealItem with msg round-trips"
+            (rt (StealItem "gold" ActorPlayer (ActorNPC "dieb") (Just "Psst!")))
+    r2 <- expectTrue "StealItem without msg round-trips"
+            (rt (StealItem "gold" (ActorNPC "dieb") ActorPlayer Nothing))
+    r3 <- expectTrue "SwapInventory round-trips"
+            (rt (SwapInventory ActorPlayer (ActorNPC "dieb")))
+    pure (r1 && r2 && r3)
 
 -- | K16b.1: Classic — CAAbility runs ability effects, consumes the round,
 --   and the NPC strikes back (same Rache-Schlag as CAAttack).

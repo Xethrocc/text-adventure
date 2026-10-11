@@ -536,6 +536,8 @@ items:
 | `{ consume: item_id }` | MoveEntity Removed (Ort-Regel K15.0: nur erreichbare Items im Inventar, ausgerüstet oder im Raum; geschützte Items in Containern oder bei NPCs werden mit `consume.not_reachable` verweigert; unterstützt dynamische Referenzen `"{item1}"` / `"{item2}"` in `interactions.item`) |
 | `{ place: {item: id, in: room_id} }` | PlaceItem (E-02) — setzt genau dieses Item in den Raum (auch aus `location: nowhere`). Prüft Item/Raum, Kapazität und Zyklen; Portabilität, Sichtbarkeit und Container-Schlösser werden bewusst ignoriert (Autoren-Setzung). Genau ein Ziel: `in:` **oder** `in_container:`. `in:` nimmt neben der Raum-ID auch die dynamischen Ziele `in: {here}` / `in: {room_of: <npc>}` (OPEN-11, s. u.) |
 | `{ place: {item: id, in_container: cid} }` | PlaceItem (E-02) — setzt genau dieses Item in den Container (auch Plain-Items ohne `capacity:`, die dann unbegrenzt fassen) |
+| `{ steal: {item: id, from: actor, to?: actor, msg?: "…"} }` | StealItem (OPEN-15) — nimmt genau dieses Item aus den Beständen von `from:` (getragen, ausgerüstet oder im mitgeführten Container) und legt es in die Hände von `to:` (Default `player`, wie `give:`). Fehlt das Item bei `from:`, bleibt alles unverändert (Katalog-Meldung) — Details s. u. |
+| `{ swap_inventory: {source: actor, target: actor} }` | SwapInventory (OPEN-20) — atomarer Tausch zweier Inventare (getragen + ausgerüstet), getragene Ausrüstung bleibt getragen; bewusst still wie `give:` — Details s. u. |
 | `{ set_flag: name, val: "true" }` | SetValue (VRFlag name) "true" |
 | `{ set_var: { var: name, value: N } }` | SetValue (VRVariable name) N — ganzzahlige Variable setzen |
 | `{ set_var: { var: name, value: "text" } }` | SetValue (VRVariable name) "text" — Textvariable setzen (K6; intern `AOSetTextVar`) |
@@ -599,6 +601,54 @@ effects:
   `validateWorld` die NPC-Referenz mit.
 - **Literale bleiben literal:** `to: <room_id>` bzw. `in: <room_id>` — ein Raum
   darf `here` heißen. Dynamisch ist nur die Objektform `{here}`/`{room_of: …}`.
+
+### Gezielter Diebstahl & Inventartausch (OPEN-15 / OPEN-20)
+
+```yaml
+effects:
+  - steal: {item: edelstein, from: player, to: dieb}          # der Dieb klaut
+  - steal: {item: edelstein, from: dieb, msg: "…"}            # zurückstehlen (to: = player)
+  - swap_inventory: {source: player, target: spiegelbild}     # Rollentausch
+  - msg: "Die Welt kippt."
+```
+
+**`steal:`** (OPEN-15, `StealItem`) — gezielter Diebstahl statt `move_all`-Panzer (A3):
+
+- Nimmt **genau dieses Item** aus den Beständen von `from:` und legt es in die
+  Hände von `to:`. „Bestände“ heißt: direkt getragen, ausgerüstet **oder** in
+  einem mitgeführten Container („Taschen-Gegenstände“ des Opfers) — auch wenn
+  der Container geschlossen ist (anders als `consume:`, siehe E-03).
+- **Bedingung:** `from:` muss das Item wirklich bei sich haben. Sonst ist der
+  Effekt ein No-op mit einer Katalog-Meldung — nie wortloses Verschwinden.
+  `from: == to:` ist ein stiller No-op.
+- **Meldungen** (Spieler-Rolle wie im ganzen Katalog, „You …“): Spieler als Dieb
+  → `npc.took_from`, Spieler als Opfer → `steal.from_you`, NPC ↔ NPC →
+  `steal.taken`; Fehlschlag → `steal.no_item` (Quelle = Spieler) bzw.
+  `npc.no_item`. `msg:` (im Objekt oder als Geschwister-Key wie `game_end`)
+  **ersetzt** die Erfolgs-Meldung und wird wie `msg:` formatiert (`{var}`);
+  der Fehlschlag bleibt bei der Katalog-Meldung.
+- **Validierung:** `from:`/`to:` müssen `player` oder eine NPC-ID sein
+  (`UnknownNpc`, derselbe Vertrag wie `give: {to:}`); eine unbekannte Item-ID
+  meldet `validateWorld` (`MissingItem`). Dynamische Item-Referenzen
+  (`{item1}`) sind hier bewusst nicht unterstützt.
+
+**`swap_inventory:`** (OPEN-20, `SwapInventory`) — atomarer Tausch zweier
+Inventare (F1: Charakterwechsel, Drohnensteuerung, Parallelwelten):
+
+- Tauscht **beide Inventare geschlossen**: alles, was `source` und `target` bei
+  sich haben (getragen + ausgerüstet), wechselt in einem Schritt den Besitzer;
+  getragene Ausrüstung **bleibt getragen**. Container-Inhalte ziehen automatisch
+  mit (Z-10) und zählen nicht selbst zum Tausch.
+- **Darstellung je Ziel-Akteur** (B9): der Spieler trägt „getragen“ als
+  `equipment`-Slot-Map bei `CarriedBy` (das Item bleibt sichtbar), NPCs als
+  `EquippedBy`-Ort. Nach dem Tausch gilt für beide wieder die konventionelle
+  Darstellung; die Slot-Map des Spielers wird konsistent neu aufgebaut. Rand:
+  zwei getragene Items auf demselben Slot behalten das spätere
+  (`Map.fromList`), ein getragenes Item ohne `equip_slot` landet ungetragen.
+- Bewusst **still** wie `give:`/`move_all` — die Inszenierung steht als eigenes
+  `msg:` daneben (s. Beispiel). `source: == target:` ist ein No-op.
+- **Validierung:** `source:`/`target:` müssen `player` oder eine NPC-ID sein
+  (`UnknownNpc`).
 
 ### Item-Status-Synchronisation (OPEN-02 / Z-01)
 

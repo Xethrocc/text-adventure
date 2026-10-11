@@ -33,7 +33,7 @@ module Effects
 
 import Types
 import Game
-import Messages (evMsg)
+import Messages (evMsg, grammarArgs)
 import Quests (canStartQuest, startQuest, advanceQuest, completeQuestWith)
 import Vehicles (vehicleConditionTickWith)
 import Data.List (intercalate, foldl', find, sort, stripPrefix)
@@ -380,6 +380,38 @@ applyOutcomeWith depth salt outcome targetId state
             Right st'   -> (st', [], salt)
     MoveEntity _ (InContainer _) ->
         (state, evMsg "container.move_refused" [], salt)
+
+    -- OPEN-15 (A3): targeted theft — exactly this item, and only when the
+    --   source really holds it (directly or inside a carried container).
+    --   Stealing from yourself is a silent no-op. The catalog line follows the
+    --   player role like every other engine message ("You …"): the player as
+    --   thief reuses 'npc.took_from', the player as victim is
+    --   'steal.from_you', two NPCs share 'steal.taken'.
+    StealItem iId fromActor toActor mMsg
+        | actorId fromActor == actorId toActor -> (state, [], salt)
+        | otherwise -> case stealItemTo iId fromActor toActor state of
+            Nothing
+                | isPlayerActor fromActor ->
+                    (state, evMsg "steal.no_item" (stealItemArgs iId state), salt)
+                | otherwise ->
+                    (state, evMsg "npc.no_item"
+                        (stealItemArgs iId state ++ stealActorArgs "npc" fromActor state), salt)
+            Just st' ->
+                let body = case mMsg of
+                        Just m  -> evRaw (formatWithVars m st')
+                        Nothing
+                            | isPlayerActor fromActor ->
+                                evMsg "steal.from_you" (stealTakenArgs iId fromActor toActor st')
+                            | isPlayerActor toActor ->
+                                evMsg "npc.took_from" (stealTakenArgs iId fromActor toActor st')
+                            | otherwise ->
+                                evMsg "steal.taken" (stealTakenArgs iId fromActor toActor st')
+                in (st', body, salt)
+
+    -- OPEN-20 (F1): atomarer Tausch zweier Inventare (getragen +
+    --   ausgerüstet) — bewusst still wie `give:`, der Autor stellt die
+    --   Inszenierung mit einem eigenen `msg:` daneben.
+    SwapInventory src tgt -> (swapInventories src tgt state, [], salt)
 
     QuestOp StartQuest qId ->
         if canStartQuest qId state
@@ -920,6 +952,49 @@ applyOutcome :: Effect -> ItemID -> GameState -> CommandResult
 applyOutcome outcome targetId state =
     let (st, evs) = applyOutcomeEv outcome targetId state
     in (st, renderEvents evs)
+
+-- | OPEN-15: message args for the `steal` success lines — the item plus the
+--   actor slot the template names. The player as thief names the victim in
+--   'npc.took_from''s {npc} slot, the player as victim names the thief, and
+--   two NPCs get both slots (`steal.taken`).
+stealTakenArgs :: ItemID -> ActorRef -> ActorRef -> GameState -> [(String, String)]
+stealTakenArgs iId fromActor toActor state = case (isPlayerActor fromActor, isPlayerActor toActor) of
+    (False, True)  -> itemArgs ++ stealActorArgs "npc" fromActor state
+    (True,  False) -> itemArgs ++ stealActorArgs "npc" toActor state
+    _              -> itemArgs ++ stealActorArgs "npc" toActor state ++ stealActorArgs "from" fromActor state
+  where
+    itemArgs = stealItemArgs iId state
+
+-- | OPEN-15: `steal` message args for the item — display name plus the item
+--   grammar slots (the `steal.*` keys live in 'itemGrammarMsgKeys'); the raw
+--   id as fallback for a runtime id without definition.
+stealItemArgs :: ItemID -> GameState -> [(String, String)]
+stealItemArgs iId state = case lookupItem iId state of
+    Nothing -> [("item", iId)]
+    Just d  -> ("item", itemName d) : grammarArgs True "item" (itemGrammar d)
+
+-- | OPEN-15: one actor slot of a `steal` line — display name plus the grammar
+--   articles (empty for the player and non-NPC actors).
+stealActorArgs :: String -> ActorRef -> GameState -> [(String, String)]
+stealActorArgs slot a state = (slot, actorDisplayName a state) : actorGrammarArgs slot a state
+
+-- | How an actor is named in engine messages: "you" for the player, the
+--   NPC's display name otherwise (the id as fallback).
+actorDisplayName :: ActorRef -> GameState -> String
+actorDisplayName ActorPlayer _      = "you"
+actorDisplayName (ActorNPC n) state = maybe n npcName (Map.lookup n (npcDefs (world state)))
+actorDisplayName a _                = actorId a
+
+-- | Grammar articles of an actor message slot — empty for the player and
+--   non-NPC actors (they render like any actor without `article:` data).
+actorGrammarArgs :: String -> ActorRef -> GameState -> [(String, String)]
+actorGrammarArgs slot (ActorNPC n) state =
+    maybe [] (grammarArgs False slot . npcGrammar) (Map.lookup n (npcDefs (world state)))
+actorGrammarArgs _ _ _ = []
+
+isPlayerActor :: ActorRef -> Bool
+isPlayerActor ActorPlayer = True
+isPlayerActor _           = False
 
 -- | Join two message fragments, dropping the empty ones (string idiom, kept
 --   for the compatibility paths).

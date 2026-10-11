@@ -1670,6 +1670,9 @@ data AActionOutcome
     | AOUnmount String                 -- ^ unmount: <item> (W4)
     | AOGainXp Int                     -- ^ gain_xp: <amount> (W2)
     | AOPlace String E.Location        -- ^ place: {item, in|in_container}
+    | AOStealItem String String String (Maybe String)
+      -- ^ steal: {item: <item>, from: <actor>, to: <actor>, msg?: <text>} (OPEN-15)
+    | AOSwapInventory String String    -- ^ swap_inventory: {source, target} (OPEN-20)
     | AOForget String String           -- ^ forget: <fact> - same shapes (W1)
     deriving (Show, Eq, Generic)
 
@@ -1797,6 +1800,23 @@ instance FromJSON AActionOutcome where
                 AOConsumeAll <$> parseJSON (Object o'))
         <|> (do o' <- o .: "set_state_all" :: Parser Object
                 AOSetStateAll <$> parseJSON (Object o') <*> o' .: "state")
+        -- OPEN-15: gezielter Diebstahl — nur dieses Item, und nur wenn die
+        --   Quelle es wirklich bei sich hat (direkt oder im mitgefuehrten
+        --   Container). `to:` defaultet auf den Spieler (wie `give:`);
+        --   `msg:` (im Objekt oder als Geschwister-Key, wie `game_end`)
+        --   ersetzt die Standard-Meldung des Erfolgsfalls.
+        <|> (do so <- o .: "steal" :: Parser Object
+                AOStealItem <$> so .: "item"
+                            <*> so .: "from"
+                            <*> so .:? "to" .!= "player"
+                            -- `.:?` succeeds with Nothing for a missing key, so
+                            -- the three sources must be united at the Maybe
+                            -- level (an `<|>` chain would never reach them).
+                            <*> ((\a b c -> a <|> b <|> c)
+                                <$> so .:? "msg" <*> so .:? "message" <*> o .:? "msg"))
+        -- OPEN-20: atomarer Tausch zweier Inventare (getragen + ausgeruestet).
+        <|> (do so <- o .: "swap_inventory" :: Parser Object
+                AOSwapInventory <$> so .: "source" <*> so .: "target")
         <|> (AOSetInventoryLimit <$> o .: "set_inventory_limit")
         <|> (AOSayNode <$> o .: "say_node")
         <|> (o .: "dialog_end" >>= \b -> if b :: Bool then pure AODialogEnd else empty)
