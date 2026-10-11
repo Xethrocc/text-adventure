@@ -3697,7 +3697,7 @@ testTakeEventOnlyOnSuccess = do
     let base = initSampleGame
         nonPortable = ItemDef "statue" "statue" (plainText "A heavy stone statue.")
                           ["statue"] Set.empty Nothing [] False Nothing False
-                          (Just "The statue will not budge.") Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
+                          (Just "The statue will not budge.") Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty Nothing
         st0 = base { world = (world base)
                          { itemDefs = Map.insert "statue" nonPortable (itemDefs (world base)) }
                    , save  = (save base)
@@ -3918,7 +3918,7 @@ testOnUseTriggerMultiWordAlias = do
         w = (world sample)
             { itemDefs = Map.insert "oil_can"
                 (ItemDef "oil_can" "oil can" (plainText "A dented oil can.") ["oil", "can"]
-                         Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty)
+                         Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty Nothing)
                 (itemDefs (world sample))
             , triggerDefs =
                 [ TriggerDef "light_lantern" (OnUse "oil_can") Nothing
@@ -3949,7 +3949,7 @@ testTakeWithOnTakePicksUp = do
             { itemDefs = Map.insert "token"
                 (ItemDef "token" "token" (plainText "A token.") ["token"] Set.empty
                          Nothing [] False Nothing True Nothing
-                         (Map.singleton (PhaseAfter, VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))) Nothing emptyAscii emptyGrammar False True Nothing Map.empty)
+                         (Map.singleton (PhaseAfter, VTake, "intact") (SetValue (VRFlag "took") (EVString "true"))) Nothing emptyAscii emptyGrammar False True Nothing Map.empty Nothing)
                 (itemDefs (world sample)) }
         here = currentRoom (save sample)
         st = sample { world = w
@@ -3970,7 +3970,7 @@ testTakeNonPortableFails = do
             { itemDefs = Map.insert "statue"
                 (ItemDef "statue" "statue" (plainText "A statue.") ["statue"] Set.empty
                          Nothing [] False Nothing False (Just "Too heavy to lift.")
-                         Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty)
+                         Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty Nothing)
                 (itemDefs (world sample)) }
         here = currentRoom (save sample)
         st = sample { world = w
@@ -3988,7 +3988,7 @@ testTakeNonPortableFails = do
 -- Helper: an equippable item placed in the player's inventory.
 invItem :: String -> ItemDef
 invItem iid = ItemDef iid iid (plainText "x") [iid] Set.empty
-    (Just Weapon) [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
+    (Just Weapon) [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty Nothing
 
 -- | Equipped items are always also carried.
 testEquippedImpliesCarried :: IO Bool
@@ -4578,7 +4578,7 @@ tradeWorld stock credits =
                 (ItemDef "rope" "rope" (plainText "A coil of rope.")
                     ["rope"] Set.empty Nothing [] False Nothing True Nothing
                     (Map.singleton (PhaseAfter, VCustom "buy", "intact") buyEff
-                        `Map.union` Map.singleton (PhaseAfter, VCustom "sell", "intact") sellEff) Nothing emptyAscii emptyGrammar False True Nothing Map.empty)
+                        `Map.union` Map.singleton (PhaseAfter, VCustom "sell", "intact") sellEff) Nothing emptyAscii emptyGrammar False True Nothing Map.empty Nothing)
             , verbDefs = Map.singleton "buy" (VerbDef "buy" ["purchase"])
                 `Map.union` Map.singleton "sell" (VerbDef "sell" ["pawn"])
             }
@@ -4763,7 +4763,7 @@ testVisitedAcceptsBool = do
 testItemWithoutStateIsReported :: IO Bool
 testItemWithoutStateIsReported = do
     let lamp = ItemDef "lamp" "lamp" (plainText "A brass lamp.") ["lamp"] Set.empty
-                    Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
+                    Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty Nothing
         gw = (world initSampleGame)
                 { itemDefs = Map.insert "lamp" lamp (itemDefs (world initSampleGame)) }
     r1 <- expectTrue "MissingItemState is reported"
@@ -6552,7 +6552,7 @@ mkTestRoom rId name = Room rId name (plainText name) Map.empty Set.empty Nothing
 --   helper without devices.
 mkTestItem :: String -> String -> ItemDef
 mkTestItem i n =
-    ItemDef i n (plainText n) [i] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
+    ItemDef i n (plainText n) [i] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty Nothing
 
 mstate :: [Room] -> [(ItemDef, Location)] -> GameState
 mstate rms its =
@@ -6634,9 +6634,9 @@ dstate rms its devs =
 testActorHasPredicate :: IO Bool
 testActorHasPredicate = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
-        it2 = ItemDef "schluessel" "Schlüssel" (plainText "Ein Schlüssel.") ["schluessel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
-        it3 = ItemDef "kristall" "Kristall" (plainText "Ein Kristall.") ["kristall"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
+        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty Nothing
+        it2 = ItemDef "schluessel" "Schlüssel" (plainText "Ein Schlüssel.") ["schluessel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty Nothing
+        it3 = ItemDef "kristall" "Kristall" (plainText "Ein Kristall.") ["kristall"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty Nothing
         dev1 = DeviceDef "halterung" "Halterung" ["halterung"] "krypta" (Just "Eine Halterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [ (it1, InRoom "krypta")
                           , (it2, CarriedBy (ActorNPC "guard"))
@@ -6652,7 +6652,7 @@ testActorHasPredicate = do
 testMountAndUnmountEffects :: IO Bool
 testMountAndUnmountEffects = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
+        it1 = ItemDef "fackel" "Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty Nothing
         dev1 = DeviceDef "halterung" "Halterung" ["halterung"] "krypta" (Just "Eine Halterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [(it1, InRoom "krypta")] [dev1]
     let (st1, _, _) = applyOutcomeWith 0 0 (Mount "fackel" (ActorEntity "halterung")) "" st0
@@ -6666,7 +6666,7 @@ testMountAndUnmountEffects = do
 testDeviceInteractionExamine :: IO Bool
 testDeviceInteractionExamine = do
     let r1 = mkTestRoom "krypta" "Krypta"
-        it1 = ItemDef "fackel" "brennende Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty
+        it1 = ItemDef "fackel" "brennende Fackel" (plainText "Eine Fackel.") ["fackel"] Set.empty Nothing [] False Nothing True Nothing Map.empty Nothing emptyAscii emptyGrammar False True Nothing Map.empty Nothing
         dev1 = DeviceDef "halterung" "Fackelhalterung" ["halterung"] "krypta" (Just "Eine Wandhalterung.") Nothing [] Nothing Nothing [] [] Nothing [] Map.empty
         st0 = dstate [r1] [(it1, CarriedBy (ActorEntity "halterung"))] [dev1]
         cmd = parseCommandWith Map.empty "examine halterung"
@@ -8830,6 +8830,7 @@ mkTestKey iid name = ItemDef
     , itemSearchable = True
     , itemHomeLocation = Nothing
     , itemTagsWhen = Map.empty
+    , itemFuel = Nothing
     }
 
 -- | Phase 0.1: Test central resolveTarget for Item, NPC, Vehicle, Bare, NotFound, and Ambiguous
@@ -9079,6 +9080,7 @@ mkTestEquip iid name slot = ItemDef
     , itemSearchable = True
     , itemHomeLocation = Nothing
     , itemTagsWhen = Map.empty
+    , itemFuel = Nothing
     }
 
 -- | Phase 0.2: Direct test of search order and preferInventoryTarget predicate

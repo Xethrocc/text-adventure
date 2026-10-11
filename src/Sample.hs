@@ -126,6 +126,7 @@ initSampleGame = GameState
                 , itemSearchable = True
                 , itemHomeLocation = Nothing
                 , itemTagsWhen = Map.empty
+                , itemFuel = Nothing
                 })
             , ("key", ItemDef
                 { itemId = "key"
@@ -149,6 +150,7 @@ initSampleGame = GameState
                 , itemSearchable = True
                 , itemHomeLocation = Nothing
                 , itemTagsWhen = Map.empty
+                , itemFuel = Nothing
                 })
             , ("gold", ItemDef
                 { itemId = "gold"
@@ -169,6 +171,7 @@ initSampleGame = GameState
                 , itemSearchable = True
                 , itemHomeLocation = Nothing
                 , itemTagsWhen = Map.empty
+                , itemFuel = Nothing
                 })
             , ("jewel", ItemDef
                 { itemId = "jewel"
@@ -189,6 +192,7 @@ initSampleGame = GameState
                 , itemSearchable = True
                 , itemHomeLocation = Nothing
                 , itemTagsWhen = Map.empty
+                , itemFuel = Nothing
                 })
             , ("potion_healing", ItemDef
                 { itemId = "potion_healing"
@@ -213,6 +217,7 @@ initSampleGame = GameState
                 , itemSearchable = True
                 , itemHomeLocation = Nothing
                 , itemTagsWhen = Map.empty
+                , itemFuel = Nothing
                 })
             -- Equipment examples
             , ("sword_rusty", ItemDef
@@ -234,6 +239,7 @@ initSampleGame = GameState
                 , itemSearchable = True
                 , itemHomeLocation = Nothing
                 , itemTagsWhen = Map.empty
+                , itemFuel = Nothing
                 })
             , ("leather_armor", ItemDef
                 { itemId = "leather_armor"
@@ -254,6 +260,7 @@ initSampleGame = GameState
                 , itemSearchable = True
                 , itemHomeLocation = Nothing
                 , itemTagsWhen = Map.empty
+                , itemFuel = Nothing
                 })
             , ("ring_vigor", ItemDef
                 { itemId = "ring_vigor"
@@ -274,6 +281,7 @@ initSampleGame = GameState
                 , itemSearchable = True
                 , itemHomeLocation = Nothing
                 , itemTagsWhen = Map.empty
+                , itemFuel = Nothing
                 })
             -- Hidden item, found via `search`
             , ("note_old", ItemDef
@@ -295,6 +303,7 @@ initSampleGame = GameState
                 , itemSearchable = True
                 , itemHomeLocation = Nothing
                 , itemTagsWhen = Map.empty
+                , itemFuel = Nothing
                 })
             -- Vehicle demo (Phase 3)
             , ("carriage", ItemDef
@@ -316,6 +325,7 @@ initSampleGame = GameState
                 , itemSearchable = True
                 , itemHomeLocation = Nothing
                 , itemTagsWhen = Map.empty
+                , itemFuel = Nothing
                 })
             , ("hay", ItemDef
                 { itemId = "hay"
@@ -336,6 +346,7 @@ initSampleGame = GameState
                 , itemSearchable = True
                 , itemHomeLocation = Nothing
                 , itemTagsWhen = Map.empty
+                , itemFuel = Nothing
                 })
             ]
         , npcDefs = Map.fromList

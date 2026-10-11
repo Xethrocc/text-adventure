@@ -103,6 +103,10 @@ module Types.Core
       -- * Items
     , ItemDef (..)
     , ItemState (..)
+    , FuelDef (..)
+    , FuelWarn (..)
+    , fuelDefEffects
+    , fuelPropKey
     , itemTagsWith
     , itemTagsAnyState
       -- * Dialogue
@@ -1155,6 +1159,8 @@ data Effect
         --   holdings (hands, worn, nested container) into another's hands
         --   (item, from, to, optional author message for the success case)
     | SwapInventory ActorRef ActorRef         -- ^ OPEN-20: atomarer Tausch zweier Inventare (getragen + ausgerüstet)
+    | SetFuel ItemID Int                      -- ^ OPEN-17: Item-Timer auf N setzen (wird 0 → `on_empty`)
+    | AddFuel ItemID Int                      -- ^ OPEN-17: Item-Timer um N ändern, geklammert bei 0 (wird 0 → `on_empty`)
     | Noop                                        -- ^ Do nothing
     deriving (Show, Eq, Generic)
 
@@ -1665,6 +1671,58 @@ parseArticleForms (Just v)          = withObject "article"
 -- ---------------------------------------------------------------------------
 
 -- | Static item definition (loaded from JSON)
+-- | OPEN-17: generischer Item-Timer (`fuel:`). The counter itself lives in
+--   `itemProps["fuel"]` (persisted, readable via `item.<id>.fuel`), this is
+--   the *definition*: how it starts, when it ticks down and what happens at
+--   the milestones.
+data FuelDef = FuelDef
+    { fuelStart     :: Int                 -- ^ Startwert des Zählers
+    , fuelTicksWhen :: Maybe String        -- ^ optional: der Zähler tickt nur in diesem Item-Status (`extinguish` pausiert)
+    , fuelWarn      :: [FuelWarn]          -- ^ Schwellen-Meldungen/-Effekte beim Abbrennen
+    , fuelOnEmpty   :: Maybe Effect        -- ^ Effekte, wenn der Zähler 0 erreicht
+    } deriving (Show, Eq, Generic)
+
+-- | One burn milestone: fire once when a tick decrement lands the counter on
+--   `fwAt` (set_fuel/add_fuel jumps deliberately do not fire milestones —
+--   those are narrated by the author).
+data FuelWarn = FuelWarn
+    { fwAt     :: Int
+    , fwEffects :: Effect
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON FuelDef where
+    toJSON fd = object $
+        [ "start" .= fuelStart fd ]
+        ++ maybe [] (\s -> ["ticks_when" .= s]) (fuelTicksWhen fd)
+        ++ (if null (fuelWarn fd) then [] else ["warn" .= fuelWarn fd])
+        ++ maybe [] (\e -> ["on_empty" .= e]) (fuelOnEmpty fd)
+
+instance FromJSON FuelDef where
+    parseJSON = withObject "FuelDef" $ \o -> FuelDef
+        <$> o .: "start"
+        <*> o .:? "ticks_when"
+        <*> o .:? "warn" .!= []
+        <*> o .:? "on_empty"
+
+instance ToJSON FuelWarn where
+    toJSON fw = object [ "at" .= fwAt fw, "effects" .= fwEffects fw ]
+
+instance FromJSON FuelWarn where
+    parseJSON = withObject "FuelWarn" $ \o -> FuelWarn
+        <$> o .: "at"
+        <*> o .: "effects"
+
+-- | OPEN-17: every effect reachable from a fuel definition (milestones and
+--   the empty handler) — used wherever effect trees are traversed.
+fuelDefEffects :: FuelDef -> [Effect]
+fuelDefEffects fd = map fwEffects (fuelWarn fd) ++ maybe [] pure (fuelOnEmpty fd)
+
+-- | OPEN-17: the item-timer counter (`itemProps["fuel"]`, seeded from
+--   `fuel.start`). A missing entry falls back to the definition's start value,
+--   so saves written before the feature (or hand-written) behave sanely.
+fuelPropKey :: String
+fuelPropKey = "fuel"
+
 data ItemDef = ItemDef
     { itemId            :: ItemID
         , itemName          :: String
@@ -1685,6 +1743,7 @@ data ItemDef = ItemDef
         , itemSearchable    :: Bool                  -- ^ Search may discover this item (default True).
         , itemHomeLocation  :: Maybe RoomID          -- ^ K15: authored starting room for repeatable lookup/respawn
         , itemTagsWhen      :: Map.Map String (Set.Set String) -- ^ tags that only apply while `itemStatus` matches the map key (`tags_when:`)
+        , itemFuel          :: Maybe FuelDef      -- ^ OPEN-17: generischer Item-Timer (`fuel:`)
         } deriving (Show, Eq)
 
 instance ToJSON ItemDef where
@@ -1708,6 +1767,7 @@ instance ToJSON ItemDef where
           ++ (if itemRepeatable def then ["itemRepeatable" .= True] else [])
           ++ (if itemRepeatable def then maybe [] (\h -> ["itemHomeLocation" .= h]) (itemHomeLocation def) else [])
           ++ (if Map.null (itemTagsWhen def) then [] else ["itemTagsWhen" .= itemTagsWhen def])
+          ++ maybe [] (\f -> ["itemFuel" .= f]) (itemFuel def)
 
 instance FromJSON ItemDef where
     parseJSON = withObject "ItemDef" $ \o -> ItemDef
@@ -1730,6 +1790,7 @@ instance FromJSON ItemDef where
         <*> o .:? "itemSearchable"   .!= True
         <*> o .:? "itemHomeLocation" .!= Nothing
         <*> o .:? "itemTagsWhen"     .!= Map.empty
+        <*> o .:? "itemFuel"         .!= Nothing
 
 -- | Dynamic item state
 data ItemState = ItemState

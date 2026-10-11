@@ -91,6 +91,9 @@ module Game
     , syncInventory
     , discoverItem
     , modifyItemProp
+    , fuelDefOf
+    , fuelValueOf
+    , setFuelValue
       -- * NPCs, skills and the party
     , updateNPCState
     , modifyNPCProp
@@ -1041,6 +1044,25 @@ modifyItemProp iId prop delta state = state
         in s { itemProps = Map.insert prop (currentVal + delta) (itemProps s) }
         ) iId (itemStates (save state)) } }
 
+-- | OPEN-17: the fuel definition of an item (`fuel:`), if it declares one.
+fuelDefOf :: ItemID -> GameState -> Maybe FuelDef
+fuelDefOf iId state = itemFuel =<< lookupItem iId state
+
+-- | OPEN-17: the current fuel counter — `itemProps["fuel"]`, with the
+--   definition's start value as read default when the entry is missing (saves
+--   written before the definition existed, or hand-written ones; the K15.1
+--   read-default precedent). Single source of truth: the tick, `set_fuel`/
+--   `add_fuel` and the `item.<id>.fuel` read all go through here.
+fuelValueOf :: ItemID -> GameState -> Int
+fuelValueOf iId state = resolveValueRef (VRItemProp iId fuelPropKey) state
+
+-- | OPEN-17: write the fuel counter (`itemProps["fuel"]`).
+setFuelValue :: ItemID -> Int -> GameState -> GameState
+setFuelValue iId n state = state
+    { save = (save state) { itemStates = Map.adjust
+        (\s -> s { itemProps = Map.insert fuelPropKey n (itemProps s) })
+        iId (itemStates (save state)) } }
+
 -- | Reveal a hidden item
 discoverItem :: ItemID -> GameState -> GameState
 discoverItem iId state = state
@@ -1848,7 +1870,13 @@ resolveValueRef (VRFlag f) st =
         Nothing      -> 0
 resolveValueRef (VRItemProp iId prop) st =
     case Map.lookup iId (itemStates (save st)) of
-        Just is -> Map.findWithDefault 0 prop (itemProps is)
+        Just is -> case Map.lookup prop (itemProps is) of
+            Just v  -> v
+            Nothing
+                -- OPEN-17: the fuel counter falls back to `fuel.start` when
+                -- the entry is missing (see 'fuelValueOf').
+                | prop == fuelPropKey -> maybe 0 fuelStart (fuelDefOf iId st)
+                | otherwise           -> 0
         Nothing -> 0
 resolveValueRef (VRActorProp ActorPlayer PHealth) st =
     playerHealth (player (save st))

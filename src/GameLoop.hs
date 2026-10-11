@@ -261,8 +261,9 @@ applyLoopCommandCore command loopState =
                            else lsHistory loopState
                 stateWithTurn = incrementTurnCount stBlocked
                 (stateAfterTick, tickMsgs) = tickConditions stateWithTurn
-                (stateAfterVehicleTick, vehicleTickMsg) = vehicleConditionTick stateAfterTick
-                allTickMsgs = tickMsgs ++ (if null (renderEvents vehicleTickMsg) then [] else [vehicleTickMsg])
+                (stateAfterFuel, fuelMsgs) = tickItemFuels stateAfterTick
+                (stateAfterVehicleTick, vehicleTickMsg) = vehicleConditionTick stateAfterFuel
+                allTickMsgs = tickMsgs ++ fuelMsgs ++ (if null (renderEvents vehicleTickMsg) then [] else [vehicleTickMsg])
                 tickText = unlinesEv allTickMsgs
                 (stateAfterTurnTriggers, turnTrigMsg) = fireTriggers OnTurn stateAfterVehicleTick
                 -- W3 auto-gate: at most one chapter switch per turn, checked
@@ -287,8 +288,9 @@ applyLoopCommandCore command loopState =
                                else lsHistory loopState
                     stateWithTurn = incrementTurnCount stAfterBefore
                     (stateAfterTick, tickMsgs) = tickConditions stateWithTurn
-                    (stateAfterVehicleTick, vehicleTickMsg) = vehicleConditionTick stateAfterTick
-                    allTickMsgs = tickMsgs ++ (if null (renderEvents vehicleTickMsg) then [] else [vehicleTickMsg])
+                    (stateAfterFuel, fuelMsgs) = tickItemFuels stateAfterTick
+                    (stateAfterVehicleTick, vehicleTickMsg) = vehicleConditionTick stateAfterFuel
+                    allTickMsgs = tickMsgs ++ fuelMsgs ++ (if null (renderEvents vehicleTickMsg) then [] else [vehicleTickMsg])
                     tickText = unlinesEv allTickMsgs
                 in if gameOver (save stateAfterVehicleTick)
                    then

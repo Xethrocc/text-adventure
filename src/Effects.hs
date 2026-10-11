@@ -26,6 +26,7 @@ module Effects
     , currentChapterId
     , chapterVisited
     , tickConditions
+    , tickItemFuels
     , completeQuestWithMsg
     , vehicleConditionTick
     , joinMessages
@@ -412,6 +413,12 @@ applyOutcomeWith depth salt outcome targetId state
     --   ausgerüstet) — bewusst still wie `give:`, der Autor stellt die
     --   Inszenierung mit einem eigenen `msg:` daneben.
     SwapInventory src tgt -> (swapInventories src tgt state, [], salt)
+
+    -- OPEN-17: Item-Timer (`fuel:`) schreiben. Wird der Zähler dabei 0, läuft
+    --   `on_empty`; Items ohne `fuel:`-Definition sind Autoren-Fehler (No-op
+    --   + Diagnose statt eines stillen Schein-Zählers).
+    SetFuel iId n -> fuelChange iId (const (max 0 n)) state salt
+    AddFuel iId d -> fuelChange iId (\cur -> max 0 (cur + d)) state salt
 
     QuestOp StartQuest qId ->
         if canStartQuest qId state
@@ -1349,6 +1356,58 @@ fireTriggerList depth triggers state =
 
 -- | Advance one turn: tick all conditions, fire tick outcomes, remove expired
 --   ones and fire their end outcomes.
+-- | OPEN-17: shared `set_fuel`/`add_fuel` step — clamp at 0, fire `on_empty`
+--   when the counter *becomes* 0 (from a positive value). The burn milestones
+--   (`warn`) deliberately do not fire here: they belong to the tick, a set
+--   value is narrated by the author.
+fuelChange :: ItemID -> (Int -> Int) -> GameState -> Int -> (GameState, [OutputEvent], Int)
+fuelChange iId f state salt = case fuelDefOf iId state of
+    Nothing ->
+        ( addDiagnostic ("[engine] fuel: item '" ++ iId ++ "' has no fuel definition") state
+        , [], salt )
+    Just fd ->
+        let old = fuelValueOf iId state
+            new = f old
+            st1 = setFuelValue iId new state
+        in if old > 0 && new == 0
+           then case fuelOnEmpty fd of
+               Nothing -> (st1, [], salt)
+               Just e  -> let (st2, m) = applyOutcomeEv e iId st1 in (st2, m, salt)
+           else (st1, [], salt)
+
+-- | OPEN-17: the item timers (`fuel:`) tick once per consumed turn — every
+--   counter whose `ticks_when` state matches (or that declares none) counts
+--   down, so `extinguish` pauses a lamp like the original `DISABLE <INT …>`.
+--   A burn milestone fires when a tick decrement lands the counter exactly on
+--   its `at:` value (a `set_fuel` jump skips milestones on purpose); reaching
+--   0 runs `on_empty`.
+tickItemFuels :: GameState -> (GameState, [[OutputEvent]])
+tickItemFuels state = foldl' step (state, []) timers
+  where
+    timers = [ (itemId def, fd) | def <- Map.elems (itemDefs (world state)), Just fd <- [itemFuel def] ]
+    step (st, msgs) (iId, fd) =
+        let old = fuelValueOf iId st
+        in if old <= 0 || not (ticksNow iId fd st)
+           then (st, msgs)
+           else
+             let new = old - 1
+                 st1 = setFuelValue iId new st
+                 warnEffects = [ e | FuelWarn at e <- fuelWarn fd, at == new ]
+                 (st2, warnMsgs) = foldl' (fire iId) (st1, []) warnEffects
+                 (st3, emptyMsgs) = if new == 0
+                     then maybe (st2, []) (fireOne iId st2) (fuelOnEmpty fd)
+                     else (st2, [])
+             in (st3, msgs ++ warnMsgs ++ emptyMsgs)
+    fire iId (st, acc) e =
+        let (st', m) = applyOutcomeEv e iId st
+        in (st', if null (renderEvents m) then acc else acc ++ [m])
+    fireOne iId st e =
+        let (st', m) = applyOutcomeEv e iId st
+        in (st', if null (renderEvents m) then [] else [m])
+    ticksNow iId fd st = case fuelTicksWhen fd of
+        Nothing -> True
+        Just s  -> evalPredicate (EntityHasState iId s) st
+
 tickConditions :: GameState -> (GameState, [[OutputEvent]])
 tickConditions state = foldl' step (state, []) (Map.toList (conditions (save state)))
   where

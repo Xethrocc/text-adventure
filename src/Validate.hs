@@ -351,6 +351,9 @@ allOutcomes gw = concat
     [ concatMap (\r -> catMaybes [roomOnEnter r, roomOnLook r, roomOnExit r, roomSearchOutcome r])
         (Map.elems (rooms gw))
     , concatMap (\(_, o) -> [o]) (concatMap (Map.toList . itemVerbMap) (Map.elems (itemDefs gw)))
+    -- OPEN-17: the effect trees of item timers (`fuel:` milestones and the
+    --   `on_empty` handler) carry references like any other outcome tree.
+    , concatMap fuelDefEffects [ fd | def <- Map.elems (itemDefs gw), Just fd <- [itemFuel def] ]
     , map recipeOutcome (Map.elems (itemInteractions gw))
     , concatMap (\(_, o) -> [o]) (concatMap (Map.toList . npcVerbMap) (Map.elems (npcDefs gw)))
     , catMaybes (map questReward (Map.elems (questDefs gw)))
@@ -419,6 +422,8 @@ idsFromOutcomeItem outcome = case outcome of
     Mount iId _                  -> [iId]
     Unmount iId                  -> [iId]
     StealItem iId _ _ _          -> [iId]
+    SetFuel iId _                -> [iId]
+    AddFuel iId _                -> [iId]
     SetValue (VRItemProp iId _) _ -> [iId]
     ModifyValue (VRItemProp iId _) _ -> [iId]
     ComputeValue (VRItemProp iId _) _ -> [iId]
