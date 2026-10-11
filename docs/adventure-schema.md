@@ -538,6 +538,8 @@ items:
 | `{ place: {item: id, in_container: cid} }` | PlaceItem (E-02) — setzt genau dieses Item in den Container (auch Plain-Items ohne `capacity:`, die dann unbegrenzt fassen) |
 | `{ steal: {item: id, from: actor, to?: actor, msg?: "…"} }` | StealItem (OPEN-15) — nimmt genau dieses Item aus den Beständen von `from:` (getragen, ausgerüstet oder im mitgeführten Container) und legt es in die Hände von `to:` (Default `player`, wie `give:`). Fehlt das Item bei `from:`, bleibt alles unverändert (Katalog-Meldung) — Details s. u. |
 | `{ swap_inventory: {source: actor, target: actor} }` | SwapInventory (OPEN-20) — atomarer Tausch zweier Inventare (getragen + ausgerüstet), getragene Ausrüstung bleibt getragen; bewusst still wie `give:` — Details s. u. |
+| `{ set_fuel: {item: id, to: N} }` | SetFuel (OPEN-17) — setzt den Item-Timer auf N (klammert bei 0; wird 0 von positiv → `on_empty`) — Details s. u. |
+| `{ add_fuel: {item: id, delta: N} }` | AddFuel (OPEN-17) — ändert den Item-Timer um N, geklammert bei 0 (wird 0 von positiv → `on_empty`) — Details s. u. |
 | `{ set_flag: name, val: "true" }` | SetValue (VRFlag name) "true" |
 | `{ set_var: { var: name, value: N } }` | SetValue (VRVariable name) N — ganzzahlige Variable setzen |
 | `{ set_var: { var: name, value: "text" } }` | SetValue (VRVariable name) "text" — Textvariable setzen (K6; intern `AOSetTextVar`) |
@@ -649,6 +651,55 @@ Inventare (F1: Charakterwechsel, Drohnensteuerung, Parallelwelten):
   `msg:` daneben (s. Beispiel). `source: == target:` ist ein No-op.
 - **Validierung:** `source:`/`target:` müssen `player` oder eine NPC-ID sein
   (`UnknownNpc`).
+
+### Item-Timer / Brenndauer (OPEN-17)
+
+```yaml
+items:
+  - id: lampe
+    name: Lampe
+    state: lit
+    fuel:
+      start: 385
+      ticks_when: lit
+      warn:
+        - at: 185
+          effects: [ msg: "Die Lampe scheint etwas schwächer." ]
+        - at: 85
+          effects: [ msg: "Die Lampe flackert." ]
+        - at: 15
+          effects: [ msg: "Die Lampe flackert bedrohlich." ]
+      on_empty:
+        - set_state: {entity: lampe, to: unlit}
+        - msg: "Die Lampe erlischt."
+effects:
+  - set_fuel: {item: lampe, to: 100}      # neue Batterie
+  - add_fuel: {item: lampe, delta: -10}   # verbrennen (klammert bei 0)
+```
+
+**`fuel:`** (OPEN-17) — generischer Item-Timer (Fackel, Batterielampe, Kerzen,
+Matchbook, abkühlende Glocke — B2/D6). Der Zähler selbst lebt in
+`itemProps["fuel"]` (gespeichert), die Definition erklärt Start, Tick-Bedingung
+und die Meilensteine:
+
+| Feld | Bedeutung |
+|---|---|
+| `start: N` | Startwert des Zählers (≥ 0); wird beim Kompilieren als `props: {fuel: N}` gesetzt — ein explizites `props: {fuel: …}` gewinnt |
+| `ticks_when: <state>` | optional: der Zähler tickt nur in diesem Item-Status — `extinguish` pausiert wie das Original (`DISABLE <INT I-LANTERN>`) |
+| `warn: [{at: N, effects: […]}]` | Meilensteine: feuern, wenn ein **Tick-Dekrement** den Zähler genau auf `at` setzt (at > 0). Ein Sprung per `set_fuel`/`add_fuel` überspringt Meilensteine bewusst — das Nachfüllen erzählt der Autor selbst |
+| `on_empty: [effekte]` | läuft, wenn der Zähler *wird* 0 (Tick oder Sprung) |
+
+- **Ticks:** ein Tick pro verbrauchtem Zug (neben den `condition`-Timern).
+  Items außerhalb des Spiels (`Removed`/`Dormant`) frieren ihr Guthaben ein und
+  können später weiterbrennen.
+- **Lesen:** `item.<id>.fuel` in Ausdrücken (`compute_var`) und Prädikaten
+  (`compare: {lhs: item.lampe.fuel, op: lte, rhs: 20}`); ein fehlender
+  gespeicherter Zähler liest sich als `start` (ältere Saves).
+- **Schreiben:** `set_fuel`/`add_fuel` (klammert bei 0) an einem Item **ohne**
+  `fuel:`-Definition ist ein No-op mit Engine-Diagnose; sonstige `props`-Pfade
+  (`set_var` auf `item.<id>.fuel`) funktionieren weiter wie bei jedem Item-Prop.
+- **Validierung:** unbekannte Item-IDs → `MissingItem`; `start` negativ →
+  `InvalidFuelStart`, `warn.at` ≤ 0 → `InvalidFuelThreshold` (Compile-Fehler).
 
 ### Item-Status-Synchronisation (OPEN-02 / Z-01)
 

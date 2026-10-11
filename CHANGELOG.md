@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### OPEN-17: generische Item-Timer (`fuel:`) — Brenndauer, Batterien, Verbrauch
+
+Der Wunsch aus den Zork-Mechanik-Entscheidungen (B2/D6): Zähler/Verbrauch für
+Fackeln, Batterielampen, Kerzen, Matchbook und abkühlende Glocken — generisch
+statt ~6 Regel-Paare pro Lichtquelle. Details in `docs/adventure-schema.md`
+(*Item-Timer / Brenndauer*).
+
+- **`fuel:` am Item** (`FuelDef`): `start` (≥ 0), `ticks_when: <state>` (der
+  Zähler tickt nur in diesem Item-Status — `extinguish` pausiert wie das
+  Original `DISABLE`), `warn: [{at, effects}]` (Meilensteine: feuern, wenn ein
+  Tick-Dekrement den Zähler genau auf `at` setzt), `on_empty: [effekte]` (beim
+  Werden-0).
+- **Zähler:** `itemProps["fuel"]` (persistiert, wird beim Kompilieren aus
+  `start` gesetzt — ein explizites `props: {fuel: …}` gewinnt). Lesbar als
+  `item.<id>.fuel` in Ausdrücken und `compare:`-Prüfungen; ein fehlender
+  gespeicherter Eintrag liest sich als `start` (ältere Saves).
+- **Tick** pro verbrauchtem Zug (`tickItemFuels` neben `tickConditions`);
+  `Removed`/`Dormant`-Items frieren ihr Guthaben ein. Sprünge per `set_fuel`/
+  `add_fuel` überspringen Meilensteine bewusst (das Nachfüllen erzählt der
+  Autor), `set_fuel`/`add_fuel` klammern bei 0 und feuern `on_empty` nur, wenn
+  der Zähler dabei *wird* 0. Ein `set_fuel`/`add_fuel` an einem Item ohne
+  `fuel:`-Definition ist ein No-op mit Engine-Diagnose.
+- **Validierung:** unbekannte Item-IDs → `MissingItem`; Form-Checks
+  `InvalidFuelStart` (start < 0) und `InvalidFuelThreshold` (warn.at ≤ 0);
+  die Effekt-Bäume aus `warn`/`on_empty` hängen am Outcome-Surface-Vertrag.
+
 ### FIX-12: Alias-Fallbacks waren überall tot (`message:`, `text:`, `ascii:`, `tc*`, `nextNode`)
 
 Die FIX-11-Klasse steckte an sieben weiteren Stellen: überall stand
