@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### OPEN-18: Zufallsauswahl in `messages:` (Zork `PICK-ONE`)
+
+Ein `messages:`-Wert darf jetzt statt eines einzelnen Textes eine **Liste von
+Varianten** sein (C3: „A valiant attempt.“ & Co.). Details in
+`docs/adventure-schema.md` (*Sprachpakete: `language:` und `messages:`*).
+
+- **Auswahl:** die Varianten rotieren deterministisch durch Salz (Zugzahl) +
+  Vorkommen des Schluessels im Batch (`localizeEventsWith`, am Output-Edge in
+  `applyLoopCommand`/`executeCommand` via `localizeEventsForSalted`): gleiche
+  Zugfolge = gleiche Ausgabe (W-01), wiederholte Versuche zeigen die naechste
+  Variante; `take all` zeigt pro Item verschiedene Zeilen.
+- **Pool-Einträge sind volle Templates** (`{var}`-Platzhalter wie ueberall).
+  Ein Einzel-Wert (oder Ein-Eintrag-Pool) verhaelt sich wie bisher; leere
+  Listen/Einträge sind weiter `EmptyMessageOverride`.
+- **Byte-Vertrag:** `worldMessages` ist jetzt `Map MsgId [String]`; in
+  `world.json` kodiert ein Einzelwert weiter als plain String (alle
+  bestehenden Welten bleiben byte-identisch), ein Pool als Array — beide
+  Formen dekodieren (`messageMapToJSON`/`messageMapFromJSON`).
+- YAML: `messages:` akzeptiert String oder Liste pro Schluessel (eine
+  Parser-Instanz, `E.messageMapFromJSON`).
+
 ### OPEN-17: generische Item-Timer (`fuel:`) — Brenndauer, Batterien, Verbrauch
 
 Der Wunsch aus den Zork-Mechanik-Entscheidungen (B2/D6): Zähler/Verbrauch für

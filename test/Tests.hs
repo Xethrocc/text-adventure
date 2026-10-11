@@ -33,7 +33,8 @@ import GameLoop (LoopState (..), initLoopState, PendingDisambiguation (..),
                  transitionVictoryInput, advanceNarrative)
 import Frontend (Frontend (..), commandCompletion)
 import Messages (renderMsg, formatStringWith, catalogEntries, defaultCatalog,
-                renderMsgIn, msgPayload, localizeEvents, localizeEventsFor,
+                renderMsgIn, msgPayload, evMsg, localizeEvents, localizeEventsFor,
+                localizeEventsForSalted,
                 translateTerms, renderMsgFor,
                 effectiveCatalog, langPacks, knownLanguages, LangPack (..),
                 grammarArgs, templateGrammarKeys, isGrammarArgKey)
@@ -11793,7 +11794,7 @@ testVerbMapPhasesOnNpc = do
 --   template (never the loud <msg:...> form).
 testLangPackCatalogLayers :: IO Bool
 testLangPackCatalogLayers = do
-    let cat = effectiveCatalog (Just "de") (Map.singleton "move.ok" "Eigen: {dir}.")
+    let cat = effectiveCatalog (Just "de") (Map.singleton "move.ok" ["Eigen: {dir}."])
     r1 <- expectTrue "the de pack is registered" (Map.member "de" langPacks)
     r2 <- expectEqual (Just "Eigen: {dir}.") (Map.lookup "move.ok" cat)
     r3 <- expectEqual (Just "Die Tür ist verschlossen.") (Map.lookup "move.door_locked" cat)
@@ -11828,7 +11829,7 @@ testGameWorldLanguageJson = do
     let plainJs = BLC.unpack (Aeson.encode emptyGameWorld)
         full = emptyGameWorld
             { worldLanguage = Just "de"
-            , worldMessages = Map.fromList [("move.ok", "Los geht's.")]
+            , worldMessages = Map.fromList [("move.ok", ["Los geht's."])]
             }
         fullText = BLC.unpack (Aeson.encode full)
     r1 <- expectTrue "plain world.json omits language and messages"
@@ -11860,6 +11861,53 @@ testLocalizeEventsPass = do
     r5 <- expectTrue "emptyGameWorld is the identity"
              (localizeEventsFor emptyGameWorld evs == evs)
     pure (and [r1, r2, r3, r4, r5])
+
+-- | OPEN-18: `messages:`-Werte dürfen Pool-Listen sein (Zorks `PICK-ONE`) —
+--   die Auswahl rotiert deterministisch über Salz + Vorkommen im Batch:
+--   gleiche Zugfolge = gleiche Ausgabe (W-01), wiederholte Versuche laufen
+--   durch den Pool. Einzel-Werte bleiben Einzel-Werte, Pool-Einträge sind
+--   Templates und bekommen die Args substituiert.
+testMessagePools :: IO Bool
+testMessagePools = do
+    let w = emptyGameWorld
+            { worldMessages = Map.fromList
+                [ ("quip", ["a", "b", "c"])
+                , ("one", ["only"])
+                , ("take.ok", ["Nimm {item}.", "Nee {item}."])
+                ] }
+        textsAt salt evs = [mpText p | EvMessage p <- localizeEventsForSalted salt w evs]
+        one = evMsg "quip" []
+        picks = concat [textsAt s one | s <- [0, 1, 2]]
+    a <- expectEqual 3 (length picks)
+    b <- expectTrue ("rotation covers the pool: " ++ show picks)
+            (all (`elem` ["a", "b", "c"]) picks && all (`elem` picks) ["a", "b", "c"])
+    c <- expectEqual (textsAt 7 one) (textsAt 7 one)
+    d <- expectEqual ["only"] (textsAt 0 (evMsg "one" []))
+    e <- expectEqual ["only"] (textsAt 9 (evMsg "one" []))
+    let g = textsAt 0 (evMsg "take.ok" [("item", "Stein")])
+    f <- expectTrue ("pool templates get args: " ++ show g)
+            (case g of [t] -> "Stein" `isInfixOf` t; _ -> False)
+    let both = textsAt 0 (evMsg "quip" [] ++ evMsg "quip" [])
+    h <- expectTrue ("batch variety: " ++ show both)
+            (case both of [x, y] -> x /= y; _ -> False)
+    pure (and [a, b, c, d, e, f, h])
+
+-- | OPEN-18: world.json-Vertrag — ein Einzel-Wert kodiert weiter als plain
+--   String (byte-identisch für alle bestehenden Welten), ein Pool als Array;
+--   beide Formen dekodieren wieder zurück.
+testMessagePoolJson :: IO Bool
+testMessagePoolJson = do
+    let single = emptyGameWorld { worldMessages = Map.fromList [("move.ok", ["Los."])] }
+        pool   = emptyGameWorld { worldMessages = Map.fromList [("quip", ["a", "b"])] }
+        singleJs = BLC.unpack (Aeson.encode single)
+        poolJs   = BLC.unpack (Aeson.encode pool)
+    r1 <- expectTrue ("singleton as plain string: " ++ singleJs)
+            ("\"messages\":{\"move.ok\":\"Los.\"}" `isInfixOf` singleJs)
+    r2 <- expectTrue ("pool as array: " ++ poolJs)
+            ("\"messages\":{\"quip\":[\"a\",\"b\"]}" `isInfixOf` poolJs)
+    r3 <- expectEqual (Just single) (Aeson.decode (Aeson.encode single))
+    r4 <- expectEqual (Just pool) (Aeson.decode (Aeson.encode pool))
+    pure (r1 && r2 && r3 && r4)
 
 -- | Phase 4.3: term slots translate enumerable arg values (case-insensitive
 --   slot.value lookup); non-slot args pass through unchanged.
@@ -12639,6 +12687,9 @@ main = do
         , runTest "lang pack: template keys are catalog keys (4.3)" testLangPackKeysAreKnown
         , runTest "lang pack: world.json language/messages M2 invariant (4.3)" testGameWorldLanguageJson
         , runTest "lang pack: localization pass re-renders keyed messages (4.3)" testLocalizeEventsPass
+        -- OPEN-18: Zufallsauswahl in messages:
+        , runTest "message pools: deterministic rotation per salt and batch (OPEN-18)" testMessagePools
+        , runTest "message pools: world.json keeps singles as strings (OPEN-18)" testMessagePoolJson
         , runTest "lang pack: term slots translate enumerable args (4.3)" testTranslateTermsSlots
         , runTest "lang pack: renderMsgFor uses the world catalog (4.3)" testRenderMsgForWorld
         , runTest "lang pack: card type labels are terms (4.3)" testCardTypeLabelTerms

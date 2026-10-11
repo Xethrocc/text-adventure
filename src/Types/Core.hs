@@ -91,6 +91,8 @@ module Types.Core
     , verbStateMapToJSON
     , verbStateMapFromJSON
     , verbStateMapFromLegacyJSON
+    , messageMapToJSON
+    , messageMapFromJSON
     , tupleMapToJSON
     , tupleMapFromJSON
     , tupleMapFromLegacyJSON
@@ -1573,6 +1575,24 @@ verbStateMapFromLegacyJSON v = do
         Right parsedPairs -> pure $ Map.fromList parsedPairs
         Left err    -> fail err
 
+-- | OPEN-18: `messages:` values — one template, or a pool of alternatives
+--   (Zork's PICK-ONE). JSON: a single entry encodes back to the plain string
+--   (byte contract — every existing world.json stays identical), two or more
+--   entries as an array. Both shapes decode.
+messageMapToJSON :: Map.Map String [String] -> Value
+messageMapToJSON m = toJSON (Map.map entry m)
+  where
+    entry [s] = toJSON s
+    entry xs  = toJSON xs
+
+messageMapFromJSON :: Value -> Parser (Map.Map String [String])
+messageMapFromJSON v = do
+    m <- parseJSON v :: Parser (Map.Map String Value)
+    Map.traverseWithKey (\_ val -> entry val) m
+  where
+    entry (String s) = pure [T.unpack s]
+    entry other      = parseJSON other
+
 -- | Encode a Map with (String, String) tuple keys as objects.
 tupleMapToJSON :: Map.Map (String, String) (String, String) -> Value
 tupleMapToJSON m =
@@ -2514,7 +2534,7 @@ data GameWorld = GameWorld
     , progressionDef     :: Maybe ProgressionDef                     -- ^ Player progression (W2); Nothing omitted from world.json
     , startRoom          :: Maybe RoomID                             -- ^ Start room compiled from YAML `start_room:`; Nothing = arbitrary fallback
     , worldLanguage      :: Maybe String                             -- ^ `language:` (4.3): language pack code ("de" …); Nothing = plain English default
-    , worldMessages      :: Map.Map String String                    -- ^ `messages:` (4.3): per-adventure catalog overrides (non-empty values only); empty map omitted from world.json
+    , worldMessages      :: Map.Map String [String]                  -- ^ `messages:` (4.3): per-adventure catalog overrides (non-empty values only); empty map omitted from world.json. OPEN-18: a value may be a pool of alternatives — encoded as an array, a single entry stays a plain string (byte contract).
     , factions           :: Map.Map FactionID [FactionLevel]         -- ^ Faction standing levels (G9a); empty map is omitted from world.json
     } deriving (Show, Eq)
 
@@ -2584,7 +2604,7 @@ instance ToJSON GameWorld where
         -- Phase 4.3 (D4): language + message overrides only when set, so every
         -- existing world.json stays bit-identical (same contract as procDefs).
         langPair = [ "language" .= l | Just l <- [worldLanguage gw] ]
-        msgPair  = [ "messages" .= worldMessages gw | not (Map.null (worldMessages gw)) ]
+        msgPair  = [ "messages" .= messageMapToJSON (worldMessages gw) | not (Map.null (worldMessages gw)) ]
         -- B9: item-on-NPC outcomes share the (item, target) -> outcome shape of
         -- `itemInteractions`; the field is omitted when empty so world.json of
         -- every existing adventure stays bit-identical (same contract as
@@ -2674,7 +2694,7 @@ instance FromJSON GameWorld where
         <*> o .:? "progressionDef" .!= Nothing
         <*> o .:? "startRoom" .!= Nothing
         <*> o .:? "language" .!= Nothing
-        <*> o .:? "messages" .!= Map.empty
+        <*> (o .:? "messages" >>= maybe (pure Map.empty) messageMapFromJSON)
         <*> o .:? "factions" .!= Map.empty
 
 -- | Encode item-on-item outcomes as objects (P2-9, K11c).

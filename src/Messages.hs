@@ -20,10 +20,12 @@ module Messages
     , translateTerms
     , effectiveTerms
     , localizeEvents
+    , localizeEventsWith
     , effectiveCatalogFor
     , effectiveTermsFor
     , langPackFor
     , localizeEventsFor
+    , localizeEventsForSalted
     , renderMsgFor
     , catalogEntries
     , defaultCatalog
@@ -47,9 +49,10 @@ module Messages
     , npcGrammarMsgKeys
     ) where
 
-import Data.Char (isDigit, isSpace, isAlphaNum, toLower)
-import Data.List (intercalate, isPrefixOf, isSuffixOf)
-import qualified Data.List as List (lookup)
+import Data.Char (isDigit, isSpace, isAlphaNum, toLower, ord)
+import Data.List (intercalate, isPrefixOf, isSuffixOf, foldl')
+import qualified Data.List as List (lookup, mapAccumL)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Text.Read (readMaybe)
@@ -79,11 +82,15 @@ renderMsgIn :: MsgCatalog -> MsgId -> [(String, String)] -> String
 renderMsgIn catalog key args =
     case Map.lookup key catalog of
         Nothing  -> "<msg:" ++ key ++ ">"
-        Just tmpl -> formatStringWith tmpl lookupArg
+        Just tmpl -> renderTemplate tmpl args
+
+-- | Render one message template with the message-arg lookup rules. Grammar
+--   placeholders (4.3.5) render as an empty string when their arg is missing:
+--   deterministic, never the literal placeholder and never <error: …>.
+--   Everything else keeps 'formatStringWith' behaviour.
+renderTemplate :: String -> [(String, String)] -> String
+renderTemplate tmpl args = formatStringWith tmpl lookupArg
   where
-    -- Grammar placeholders (4.3.5) render as an empty string when their arg
-    -- is missing: deterministic, never the literal placeholder and never
-    -- <error: …>. Everything else keeps 'formatStringWith' behaviour.
     lookupArg k = case List.lookup k args of
         Just v  -> Just v
         Nothing | isGrammarArgKey k -> Just ""
@@ -580,10 +587,13 @@ knownLanguages = "en" : Map.keys langPacks
 --   A key missing from the pack falls back to the English template (never to
 --   the loud @\<msg:...\>@ form); a missing language has no pack and renders
 --   plain English.
-effectiveCatalog :: Maybe String -> Map.Map MsgId String -> MsgCatalog
+effectiveCatalog :: Maybe String -> Map.Map MsgId [String] -> MsgCatalog
 effectiveCatalog mLang overrides =
     let pack = maybe Map.empty lpTemplates (mLang >>= (`Map.lookup` langPacks))
-    in Map.unions [overrides, pack, defaultCatalog]
+        -- OPEN-18: pools merge as their first entry (the pool pick itself lives
+        -- in 'localizeEventsWith'); single overrides behave exactly as before.
+        singles = Map.fromList [(k, t) | (k, t:_) <- Map.toList overrides]
+    in Map.unions [singles, pack, defaultCatalog]
 
 -- | Unpack a generated pack module's flat tuple into a 'LangPack'.
 packFromTuple :: ( String, [(String, String)], [(String, String)]
@@ -640,12 +650,42 @@ effectiveTerms mLang = maybe Map.empty lpTerms (mLang >>= (`Map.lookup` langPack
 --   compiler enforces this ('EmptyMessageOverride'), the packs are generated
 --   non-empty.
 localizeEvents :: MsgCatalog -> Map.Map String String -> [OutputEvent] -> [OutputEvent]
-localizeEvents cat terms = map go
+localizeEvents cat terms = localizeEventsWith 0 Map.empty cat terms
+
+-- | OPEN-18 (C3): the localization pass with message pools — a @messages:@
+--   value may be a pool of alternatives (Zork's @PICK-ONE@). The pick is a
+--   deterministic rotation by @salt + occurrence@ from a key-specific offset:
+--   the same command sequence renders byte-identically (W-01), while repeated
+--   attempts walk through the pool. @salt@ is the turn counter at the output
+--   edge; @occurrence@ counts the key within the batch (so `take all` shows
+--   different quips). Pool entries are templates and go through the same arg
+--   lookup as catalog templates; a pool for an unknown catalog key renders
+--   (not @<msg:key>@).
+localizeEventsWith :: Int -> Map.Map MsgId [String] -> MsgCatalog -> Map.Map String String
+                   -> [OutputEvent] -> [OutputEvent]
+localizeEventsWith salt pools cat terms = snd . List.mapAccumL go Map.empty
   where
-    go ev = case ev of
+    go seen ev = case ev of
         EvMessage p | Just key <- mpKey p ->
-            EvMessage (msgPayloadIn cat key (translateTerms terms (mpArgs p)))
-        _ -> ev
+            let n = Map.findWithDefault 0 key seen
+                args = translateTerms terms (mpArgs p)
+                txt = case Map.lookup key pools of
+                    Just entries@(_:_) -> renderTemplate (pickPoolEntry key salt n entries) args
+                    _                  -> renderMsgIn cat key args
+            in (Map.insert key (n + 1) seen, EvMessage (MsgPayload (Just key) args txt))
+        _ -> (seen, ev)
+
+-- | OPEN-18: deterministic pool pick — rotate @salt + occurrence@ steps from a
+--   key-specific offset (so different keys do not march in lockstep). Pure and
+--   platform-stable, no hashing dependency; empty pools render empty (the
+--   compiler rejects them with 'EmptyMessageOverride').
+pickPoolEntry :: MsgId -> Int -> Int -> [String] -> String
+pickPoolEntry key salt occurrence entries = case entries of
+    [] -> ""
+    _  -> fromMaybe "" (listToMaybe
+            (drop ((keyOffset + salt + occurrence) `mod` length entries) entries))
+  where
+    keyOffset = foldl' (\acc c -> (acc * 31 + ord c) `mod` 65521) 17 key
 
 -- | The effective catalog of a world (Phase 4.3).
 effectiveCatalogFor :: GameWorld -> MsgCatalog
@@ -661,7 +701,15 @@ langPackFor w = worldLanguage w >>= (`Map.lookup` langPacks)
 
 -- | 'localizeEvents' with a world's effective catalog and terms.
 localizeEventsFor :: GameWorld -> [OutputEvent] -> [OutputEvent]
-localizeEventsFor w = localizeEvents (effectiveCatalogFor w) (effectiveTermsFor w)
+localizeEventsFor = localizeEventsForSalted 0
+
+-- | OPEN-18: 'localizeEventsFor' with the variance salt the pool pick rotates
+--   by — the output-edge call sites ('applyLoopCommand', 'executeCommand')
+--   pass the current turn counter, so repeated attempts vary while the same
+--   command sequence stays byte-identical (W-01).
+localizeEventsForSalted :: Int -> GameWorld -> [OutputEvent] -> [OutputEvent]
+localizeEventsForSalted salt w =
+    localizeEventsWith salt (worldMessages w) (effectiveCatalogFor w) (effectiveTermsFor w)
 
 -- | 'renderMsgIn' with a world's effective catalog (Phase 4.3: the chrome
 --   lines the loop and 'SaveLoad' print outside the event stream).

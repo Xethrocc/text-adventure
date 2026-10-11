@@ -60,7 +60,7 @@ module Parser
 
 import Types
 import Game
-import Messages (renderMsg, renderMsgFor, evMsg, grammarArgs, renderMsgIn, localizeEventsFor,
+import Messages (renderMsg, renderMsgFor, evMsg, grammarArgs, renderMsgIn, localizeEventsForSalted,
                 MsgCatalog, defaultCatalog, LangPack (..), langPackFor)
 import Vehicles
 import Effects
@@ -2992,7 +2992,7 @@ executeTacticalAction action state =
 executeCommand :: Command -> GameState -> CommandResult
 executeCommand cmd state =
     let (st', evs) = executeCommandEv cmd state
-    in (st', renderEvents (localizeEventsFor (world state) evs))
+    in (st', renderEvents (localizeEventsForSalted (turnCount (save st')) (world state) evs))
 
 -- ---------------------------------------------------------------------------
 -- Help text

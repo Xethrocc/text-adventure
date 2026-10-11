@@ -3929,6 +3929,10 @@ language: de                 # Sprachpaket waehlen (en = Default, de = Deutsch)
 messages:                    # einzelne Engine-Meldungen ueberschreiben
   move.ok: "Du gehst nach {dir}."
   take.ok: "Du steckst {name} ein."
+  take.not_portable:         # OPEN-18: Pool statt Einzelwert (Zork PICK-ONE)
+    - "Ein wackerer Versuch."
+    - "Das brauchst du nicht."
+    - "Eine interessante Idee, aber nein."
 ```
 
 - **`language:`** waehlt das eingebaute Sprachpaket. Bekannt: `en` (Standard,
@@ -3942,6 +3946,18 @@ messages:                    # einzelne Engine-Meldungen ueberschreiben
   **leerer Wert** ist ein harter Fehler (`EmptyMessageOverride` — leere
   Vorlagen wuerden das Verhalten der Ausgabe-Fragmentierung still aendern).
   `{var}`-Platzhalter funktionieren wie in allen Texten.
+- **`messages:`-Pools (OPEN-18):** ein Wert darf statt eines einzelnen Textes
+  eine **Liste von Varianten** sein (Zorks `PICK-ONE`-Spott-Meldungen u. a.).
+  Beim Rendern rotiert die Auswahl deterministisch durch den Pool:
+  gleiche Zugfolge = gleiche Ausgabe (W-01), wiederholte Versuche zeigen aber
+  laufend die naechste Variante (aehnlich wie mehrere gleiche Meldungen in
+  einem Zug — z. B. `take all` — verschiedene Eintraege bekommen).
+  - Pool-Einträge sind volle Templates (`{var}`-Platzhalter funktionieren).
+  - Ein Pool mit **einem** Eintrag verhaelt sich wie ein Einzelwert; leere
+    Listen/Einträge sind `EmptyMessageOverride`.
+  - In `world.json` kodiert ein Einzelwert weiter als **plain String**
+    (byte-identisch fuer alle bestehenden Welten), ein Pool als Array —
+    beide Formen dekodieren wieder.
 - **Eingabe-Aliase:** Ein Sprachpaket bringt auch Eingabe-Vokabel mit — als
   Alias-Tabellen zum kanonischen englischen Token:
   - `verbs`: Verben (`nimm` -> `take`, `gib` -> `give`, `benutze` -> `use`, ...)

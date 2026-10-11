@@ -70,7 +70,7 @@ data Adventure = Adventure
     , advInclude          :: [String]                    -- ^ include: library files (5.3, merged first-own-then-includes)
     , advAssets           :: [String]                    -- ^ B6: extra asset files for the export bundle (game-root-relative)
     , advLanguage         :: Maybe String                -- ^ 4.3: language pack code ("de" …); Nothing = plain English default
-    , advMessages         :: Map.Map String String       -- ^ 4.3: per-adventure message-catalog overrides (non-empty values)
+    , advMessages         :: Map.Map String [String]   -- ^ 4.3: per-adventure message-catalog overrides (non-empty values). OPEN-18: a value may be one template or a pool of alternatives (string or list in YAML)
     , advRawValue         :: Maybe Value                 -- ^ raw parsed JSON/YAML value for schema validation
     } deriving (Show, Eq, Generic)
 
@@ -157,7 +157,9 @@ instance FromJSON Adventure where
         <*> o .:? "include" .!= []
         <*> o .:? "assets"  .!= []
         <*> o .:? "language"
-        <*> o .:? "messages" .!= Map.empty
+        -- OPEN-18: `messages:` values are one template (string) or a pool of
+        --   alternatives (list) — the engine-side codec knows both shapes.
+        <*> (o .:? "messages" >>= maybe (pure Map.empty) E.messageMapFromJSON)
         <*> pure (Just v)
     parseJSON _ = fail "Expected Adventure to be an object"
 

@@ -47,7 +47,7 @@ module GameLoop
 
 import Types
 import Game
-import Messages (evMsg, renderMsgFor, renderMsgIn, localizeEventsFor, effectiveCatalogFor, MsgCatalog, defaultCatalog)
+import Messages (evMsg, renderMsgFor, renderMsgIn, localizeEventsForSalted, effectiveCatalogFor, MsgCatalog, defaultCatalog)
 import Effects
 import Parser
 import Verbs (verbCanonicalName)
@@ -363,7 +363,8 @@ sideEvents before after = concat
 applyLoopCommand :: Command -> LoopState -> (LoopState, String)
 applyLoopCommand cmd loopState =
     let (ls', evs) = applyLoopCommandEv cmd loopState
-    in (ls', renderEvents (localizeEventsFor (world (lsCurrent loopState)) evs))
+    in (ls', renderEvents
+            (localizeEventsForSalted (turnCount (save (lsCurrent ls'))) (world (lsCurrent ls')) evs))
 
 -- | Rogue (Empfehlung 3, pure): a restart begins a fresh run with a freshly
 --   derived rngState — carrying the old stream over would replay identical

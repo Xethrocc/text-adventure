@@ -4560,6 +4560,7 @@ tests =
     -- Phase 4.3: language packs (D4)
     , ("lang pack: language and messages compile into the world (4.3)", testLanguagePackCompile)
     , ("lang pack: message override key/value checks (4.3)", testMessageOverrideChecks)
+    , ("messages: pools of alternatives compile (OPEN-18)", testMessagePoolsYaml)
     , ("lang pack: language and messages are known keys (4.3)", testLanguageKnownKeysClean)
     , ("grammar: article/gender compile into the world (4.3.5)", testGrammarFieldsCompile)
     , ("grammar: YAML forms and knownKeys clean (4.3.5)", testGrammarYamlKnownKeysClean)
@@ -4627,12 +4628,12 @@ testLanguagePackCompile :: IO Bool
 testLanguagePackCompile = do
     let base = (minAdventure (minRoom "loc_0"))
             { advLanguage = Just "de"
-            , advMessages = Map.fromList [("move.ok", "Eigen: {dir}.")] }
+            , advMessages = Map.fromList [("move.ok", ["Eigen: {dir}."])] }
     r1 <- case compileAdventure base of
             Left errs -> expectTrue ("language compiles, got: " ++ issuesText errs) False
             Right cr -> do
                 a <- expectEqual (Just "de") (E.worldLanguage (crWorld cr))
-                b <- expectEqual (Map.fromList [("move.ok", "Eigen: {dir}.")]) (E.worldMessages (crWorld cr))
+                b <- expectEqual (Map.fromList [("move.ok", ["Eigen: {dir}."])]) (E.worldMessages (crWorld cr))
                 c <- expectTrue "world.json carries the language field"
                         ("\"language\"" `isInfixOf` BLC.unpack (Aeson.encode (crWorld cr)))
                 d <- expectTrue "world.json carries the messages field"
@@ -4653,7 +4654,8 @@ testLanguagePackCompile = do
 --   ('EmptyMessageOverride' — an empty template would change engine behaviour).
 testMessageOverrideChecks :: IO Bool
 testMessageOverrideChecks = do
-    let withMsgs m = (minAdventure (minRoom "loc_0")) { advMessages = Map.fromList m }
+    let withMsgs m = (minAdventure (minRoom "loc_0"))
+            { advMessages = Map.fromList [(k, [v]) | (k, v) <- m] }
     r1 <- case compileAdventure (withMsgs [("no.such.key", "x")]) of
             Left errs -> expectTrue ("unknown key must warn, not fail: " ++ issuesText errs) False
             Right cr -> expectTrue "unknown key warns with UnknownMsgKey"
@@ -4666,6 +4668,37 @@ testMessageOverrideChecks = do
             Right cr -> expectTrue "a valid override produces no warnings"
                             (null (filter (\i -> ciCode i `elem` ["UnknownMsgKey", "EmptyMessageOverride"])
                                           (crWarnings cr)))
+    pure (r1 && r2 && r3)
+
+-- | OPEN-18: `messages:` nimmt Einzel-Strings **und** Pool-Listen (Zork
+--   `PICK-ONE`); leere Pool-Einträge sind wie leere Einzel-Werte ein
+--   Compile-Fehler ('EmptyMessageOverride').
+testMessagePoolsYaml :: IO Bool
+testMessagePoolsYaml = do
+    let yaml = unlines
+            [ "name: Pool Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Halle"
+            , "    desc: Eine Halle."
+            , "messages:"
+            , "  quip: [\"A valiant attempt.\", \"You can't have that.\"]"
+            , "  move.ok: \"Eigen: {dir}.\""
+            ]
+    r1 <- compileYamlForTest yaml $ \cr ->
+        expectEqual (Map.fromList
+                [("quip", ["A valiant attempt.", "You can't have that."])
+                , ("move.ok", ["Eigen: {dir}."])])
+            (E.worldMessages (crWorld cr))
+    r2 <- case compileAdventure ((minAdventure (minRoom "loc_0"))
+                { advMessages = Map.fromList [("quip", ["a", ""])] }) of
+            Left errs -> expectContains "EmptyMessageOverride" (issuesText errs)
+            Right _   -> expectTrue "an empty pool entry must fail" False
+    r3 <- case compileAdventure ((minAdventure (minRoom "loc_0"))
+                { advMessages = Map.fromList [("quip", [])] }) of
+            Left errs -> expectContains "EmptyMessageOverride" (issuesText errs)
+            Right _   -> expectTrue "an empty pool must fail" False
     pure (r1 && r2 && r3)
 
 -- | `language:` and `messages:` are known top-level keys — no UnknownYamlKey.

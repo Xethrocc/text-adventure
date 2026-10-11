@@ -112,8 +112,8 @@ checkLanguageFields adv = (langErrs ++ emptyErrs, unknownKeyWarns)
         | Just l <- [advLanguage adv], l `notElem` Msg.knownLanguages ]
     emptyErrs =
         [ ciError ("messages." ++ k) "EmptyMessageOverride"
-            "message override values must not be empty (an empty template would change engine behaviour)"
-        | (k, v) <- Map.toList (advMessages adv), null v ]
+            "message override values must not be empty (an empty template or pool entry would change engine behaviour)"
+        | (k, v) <- Map.toList (advMessages adv), null v || any null v ]
     unknownKeyWarns =
         [ ciWarning ("messages." ++ k) "UnknownMsgKey"
             ("'" ++ k ++ "' is not an engine message key (this override does nothing)")
