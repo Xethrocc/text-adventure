@@ -1320,6 +1320,7 @@ emitAdventure t plan seed =
                     , aiGrammar = E.emptyGrammar
                     , aiRepeatable = Nothing
                     , aiFuel = Nothing
+                    , aiLocations = []
                     })
             _ -> Nothing
 

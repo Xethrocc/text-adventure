@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+### OPEN-19: Multi-Raum-Objekte (`locations:`) — ein Item in mehreren Räumen
+
+Zork-`LOCAL-GLOBALS` für die Engine: ein Item ist in mehreren Räumen gleich-
+zeitig sichtbar und bedienbar, mit **einem** geteilten Zustand. Details in
+`docs/adventure-schema.md` (*Multi-Raum-Objekte*).
+
+- **`locations: [raum, …]`** am Item (Startplatzierung statt `location:`) →
+  `InRooms [RoomID]` als neues `Location`-Konstrukt (JSON nur, wenn benutzt;
+  bestehende Welten/Saves bleiben byte-identisch).
+- **`locationMatches`** (Types.Core) entscheidet ab jetzt alle Item-Orts-
+  Abfragen (`getItemsInLocation`, `itemsAtLoc`, Search-Reveal, Lichtquellen,
+  Entity-at-Prädikate, `isReachableForConsume`): `InRooms` beantwortet jede
+  enthaltene `InRoom`-Abfrage.
+- **Take/Drop:** ein Objekt — `take` entfernt es aus allen Räumen, `drop`
+  legt es als normalen Einzel-Raum-Item ab; `portable: false` hält Szenerie
+  fest (Autoren-Entscheidung). Effekt-Ziele bleiben Single-Raum
+  (`InRooms`-MoveEntity-Ziel wird wie `Dormant` abgelehnt).
+- **Worldbuilder:** `locations:` am Item (knownKeys), `itemRoomsOf` für die
+  Keyword-/Dunkelheits-Prüfungen, Home = erster Raum (K15-`repeatable`
+  regeneriert dort — dokumentierte Einschränkung), Compile-Fehler
+  `LocationsConflict` bei `in_container:`/`carried_by:`/`location: nowhere`;
+  unbekannte Räume meldet der Validator als `InvalidItemLocation`.
+- **Zork-Port:** `grating` + `grating-bottom` sind wieder **ein** Gitter
+  (`locations: [grating-clearing, grating-room]`) — eine `verb_map` statt zwei
+  identischer Kopien, Seiten-Texte per `at: player, room:`, `portable: false`.
+- **Tests:** 1 Engine- (Sichtbarkeit je Raum, shared state, take/drop,
+  JSON/Byte-Vertrag), 1 Worldbuilder- (InRooms-Kompilat, Konflikte,
+  Validator), `examples/fixtures/multiraum.yaml` (7 Marker, inkl. Z-06-
+  Fallstricke `instead:push,intact/aktiv`); CI (4b + E2E). Docs: Schema,
+  Befunde OPEN-19, Plan D1.
+
 ### OPEN-14: `wander:` — zielloses Umherstreifen mit Run-Seed-Hash & Kontakt-Kopplung
 
 Der Wunsch aus den Zork-Mechanik-Entscheidungen (A1/A2): NPCs streifen ziellos

@@ -3510,83 +3510,27 @@ items:
         - give: bauble
         else:
         - msg: The canary chirps blithely, if somewhat tinnily, for a short time.
+# OPEN-19: das Gitter ist EIN Objekt in BEIDEN Raeumen (Multi-Raum-Objekt,
+# Original: LOCAL-GLOBALS in 1dungeon.zil). Frueher zwei Duplikate
+# (`grating` + `grating-bottom`) mit zwei identischen verb_map-Kopien, die
+# ueber die Flags grate-unlocked/grate-open synchronisiert wurden — jetzt
+# ein geteilter Zustand, Seiten-Texte via `at: player, room:`.
 - id: grating
   name: grating
-  description: A heavy iron grating blocks the way down into the darkness.
-  keys:
-  - grating
-  - grate
-  tags:
-  - scenery
-  location: grating-clearing
-  verb_map:
-    instead:unlock:
-    - if:
-        all:
-        - at: player
-          room: grating-room
-        - actor_has:
-            actor: player
-            item: keys
-      then:
-      - msg: The grate is unlocked.
-      - set_flag: grate-unlocked
-        val: 'true'
-      else:
-      - if:
-          all:
-          - at: player
-            room: grating-clearing
-          - actor_has:
-              actor: player
-              item: keys
-        then:
-        - msg: You can't reach the lock from here.
-        else:
-        - msg: Can you unlock a grating with that?
-    instead:lock:
-    - if:
+  description:
+    default: A heavy iron grating blocks the way down into the darkness.
+    variants:
+    - when:
         at: player
         room: grating-room
-      then:
-      - msg: The grate is locked.
-      - set_flag: grate-unlocked
-        val: 'false'
-      else:
-      - msg: You can't lock it from this side.
-    instead:open:
-    - if:
-        has_flag: grate-unlocked
-      then:
-      - if:
-          at: player
-          room: grating-clearing
-        then:
-        - msg: The grating opens.
-        else:
-        - msg: The grating opens to reveal trees above you.
-      - set_flag: grate-open
-        val: 'true'
-      else:
-      - msg: The grating is locked.
-    instead:close:
-    - if:
-        has_flag: grate-unlocked
-      then:
-      - msg: The grating is closed.
-      - set_flag: grate-open
-        val: 'false'
-      else:
-      - msg: The grating is locked.
-- id: grating-bottom
-  name: grating
-  description: A heavy iron grating is set into the ceiling.
+      text: A heavy iron grating is set into the ceiling.
   keys:
   - grating
   - grate
   tags:
   - scenery
-  location: grating-room
+  locations: [grating-clearing, grating-room]
+  portable: false
   verb_map:
     instead:unlock:
     - if:

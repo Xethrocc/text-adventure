@@ -2528,7 +2528,7 @@ searchRoom state = case getCurrentRoom state of
             -- hidden items currently in this room
             hidden = [ iId
                      | (iId, st) <- Map.toList (itemStates (save state))
-                     , itemLocation st == InRoom rId
+                     , locationMatches (itemLocation st) (InRoom rId)
                      , Just def <- [Map.lookup iId (itemDefs (world state))]
                      , itemHidden def
                      , itemSearchable def

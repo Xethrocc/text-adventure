@@ -1656,6 +1656,7 @@ minItem iid = AItem
     , aiGrammar = E.emptyGrammar
     , aiRepeatable = Nothing
     , aiFuel = Nothing
+    , aiLocations = []
     }
 
 advWithItem :: AItem -> Adventure
@@ -3663,6 +3664,51 @@ testWanderFixtureCompiles = do
                         r2 <- expectEqual [] (validateGameState (crWorld cr) (crSave cr))
                         pure (r1 && r2)
 
+-- | OPEN-19: `locations:` compiles to one shared object in several rooms
+--   (InRooms) with the first room as its K15 home; conflicting placements are
+--   compile errors and unknown room refs surface through the engine validator.
+testItemLocations :: IO Bool
+testItemLocations = do
+    let item = (minItem "paneel") { aiLocations = ["loc_1", "loc_2"] }
+        base = (minAdventure (minRoom "loc_0"))
+            { advRooms = [minRoom "loc_0", minRoom "loc_1", minRoom "loc_2"]
+            , advItems = [item] }
+    r1 <- case compileAdventure base of
+            Left errs -> do
+                putStrLn $ "  compile errors: " ++ show errs
+                pure False
+            Right cr -> do
+                let st = Map.lookup "paneel" (E.itemStates (crSave cr))
+                    def = Map.lookup "paneel" (E.itemDefs (crWorld cr))
+                q1 <- expectEqual (Just (E.InRooms ["loc_1", "loc_2"])) (E.itemLocation <$> st)
+                q2 <- expectEqual (Just (Just "loc_1")) (E.itemHomeLocation <$> def)
+                pure (q1 && q2)
+    -- a single `location:` loses against `locations:`
+    r2 <- case compileAdventure base { advItems = [item { aiLocation = "loc_0" }] } of
+            Left _ -> expectTrue "locations wins over location" False
+            Right cr ->
+                expectEqual (Just (E.InRooms ["loc_1", "loc_2"]))
+                    (E.itemLocation <$> Map.lookup "paneel" (E.itemStates (crSave cr)))
+    -- conflicting placements are refused
+    r3 <- case compileAdventure base { advItems = [item { aiCarriedBy = Just "player" }] } of
+            Left errs -> expectContains "LocationsConflict" (issuesText errs)
+            Right _   -> expectTrue "expected LocationsConflict (carried_by)" False
+    r4 <- case compileAdventure base { advItems = [item { aiInContainer = Just "kiste" }] } of
+            Left errs -> expectContains "LocationsConflict" (issuesText errs)
+            Right _   -> expectTrue "expected LocationsConflict (in_container)" False
+    r5 <- case compileAdventure base { advItems = [item { aiLocation = "nowhere" }] } of
+            Left errs -> expectContains "LocationsConflict" (issuesText errs)
+            Right _   -> expectTrue "expected LocationsConflict (nowhere)" False
+    -- unknown room refs: the engine validator (same code as single rooms)
+    r6 <- case compileAdventure base { advItems = [item { aiLocations = ["loc_1", "nope"] }] } of
+            Left errs -> do
+                putStrLn $ "  compile errors: " ++ show errs
+                pure False
+            Right cr ->
+                expectContains "InvalidItemLocation"
+                    (show (validateGameState (crWorld cr) (crSave cr)))
+    pure (and [r1, r2, r3, r4, r5, r6])
+
 -- | The 7i mini-fixture compiles and validates clean.
 testPatrolFixtureCompiles :: IO Bool
 testPatrolFixtureCompiles = do
@@ -4527,6 +4573,8 @@ tests =
     , ("wander compiles to mode/step/chase triggers", testWanderCompiles)
     , ("wander validation (npc / room / pace / notice / var clash)", testWanderValidation)
     , ("wander fixture compiles + validates", testWanderFixtureCompiles)
+    -- OPEN-19: multi-room items
+    , ("item locations: InRooms compile, conflicts, validator (OPEN-19)", testItemLocations)
     -- Phase 7f: combat profiles
     , ("combat segment compiles (default/off/narrative/tactical)", testCombatCompiles)
     , ("combat fixtures compile + validate", testCombatFixturesCompile)
@@ -7084,6 +7132,7 @@ minItemKey iid = AItem
     , aiGrammar = E.emptyGrammar
     , aiRepeatable = Nothing
     , aiFuel = Nothing
+    , aiLocations = []
     }
 
 -- | Minimal usable ANPC for pool entries. Map.empty

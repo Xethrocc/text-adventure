@@ -77,6 +77,7 @@ module Types.Core
     , noopEffect
     , EffectValue (..)
     , Location (..)
+    , locationMatches
     , QuestOp (..)
       -- * Text and Art
     , TextVariant (..)
@@ -1273,6 +1274,7 @@ instance FromJSON EffectValue
 -- | Typed location for MoveEntity.
 data Location
     = InRoom RoomID
+    | InRooms [RoomID]        -- ^ OPEN-19: one object visible in several rooms at once
     | CarriedBy ActorRef
     | InContainer EntityID
     | EquippedBy ActorRef
@@ -1284,6 +1286,7 @@ data Location
 
 instance ToJSON Location where
     toJSON (InRoom r)       = object [ "tag" .= ("InRoom" :: T.Text), "contents" .= r ]
+    toJSON (InRooms rs)     = object [ "tag" .= ("InRooms" :: T.Text), "contents" .= rs ]
     toJSON (CarriedBy a)    = object [ "tag" .= ("CarriedBy" :: T.Text), "contents" .= toJSON a ]
     toJSON (InContainer c)  = object [ "tag" .= ("InContainer" :: T.Text), "contents" .= c ]
     toJSON (EquippedBy a)   = object [ "tag" .= ("EquippedBy" :: T.Text), "contents" .= toJSON a ]
@@ -1301,6 +1304,7 @@ instance FromJSON Location where
             tag <- o .: "tag" :: Parser T.Text
             case tag of
                 "InRoom"      -> InRoom <$> o .: "contents"
+                "InRooms"     -> InRooms <$> o .: "contents"
                 "CarriedBy"   -> do
                     c <- o .: "contents"
                     CarriedBy <$> parseJSON c
@@ -1315,6 +1319,18 @@ instance FromJSON Location where
                     c <- o .: "contents"
                     RoomOf <$> parseJSON c
                 _             -> fail ("Unknown Location tag: " ++ T.unpack tag))) v
+
+-- | OPEN-19: does the stored location answer the query location? The one
+--   place where "in this room" is decided: 'InRooms' answers every 'InRoom'
+--   query it contains (a multi-room object is really in each of its rooms),
+--   everything else answers only itself. Item-location queries
+--   ('Game.getItemsInLocation', 'Game.itemsAtLoc', search, light sources,
+--   entity-at predicates) compare through this instead of '==' — an object
+--   that moves (take/drop/place) leaves the multi-room state for a single
+--   location and behaves like any other item again.
+locationMatches :: Location -> Location -> Bool
+locationMatches (InRooms rs) (InRoom r) = r `elem` rs
+locationMatches a b                     = a == b
 
 -- ---------------------------------------------------------------------------
 -- Conditionally selected text (Phase 3g)

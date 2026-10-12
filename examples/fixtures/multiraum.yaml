@@ -1,0 +1,71 @@
+name: Multi-Raum-Fixture
+start_room: halle
+
+rooms:
+  - id: halle
+    name: Halle
+    desc: Die Halle. An der Wand sitzt ein grosses Paneel.
+    exits:
+      east: kammer
+  - id: kammer
+    name: Kammer
+    desc: Die Kammer. Hier ist das Paneel von der anderen Seite zu sehen.
+    exits:
+      west: halle
+
+verbs:
+  - name: push
+
+items:
+  # OPEN-19: ein Objekt, zwei Räume — sichtbar und bedienbar in beiden,
+  # mit EINEM geteilten Zustand (der Grating-Ersatz aus dem Zork-Port).
+  - id: paneel
+    name: Wandpaneel
+    keys: [paneel, wandpaneel]
+    description:
+      default: Ein mattes Paneel aus Metall.
+      variants:
+      - when:
+          state: paneel
+          is: aktiv
+        text: Das Paneel leuchtet gedimmt.
+    locations: [halle, kammer]
+    portable: true
+    # Z-06: ein `verb_map`-Eintrag ohne Status-Suffix matcht nur
+    # `itemStatus == "intact"` — der Default-Status also.
+    state: intact
+    verb_map:
+      # Seiten-Logik wie beim Original-Gitter: dieselbe Reaktion, aber je
+      # Raum ein eigener Text (at: player, room:). Und Z-06 in Reinform:
+      # `instead:push` ohne Status-Suffix matcht nur `intact`, deshalb pro
+      # Status ein eigener Eintrag (intact und aktiv).
+      instead:push,intact:
+      - if:
+          at: player
+          room: halle
+        then:
+        - msg: Das Paneel brummt.
+        else:
+        - msg: Das Paneel brummt von der anderen Seite.
+      - set_state: paneel
+        to: aktiv
+      instead:push,aktiv:
+      - if:
+          at: player
+          room: halle
+        then:
+        - msg: Das Paneel brummt.
+        else:
+        - msg: Das Paneel brummt von der anderen Seite.
+
+tests:
+  - name: "ein objekt in zwei Raeumen"
+    input: [look, push paneel, east, examine paneel, push paneel, take paneel, drop paneel, west, push paneel]
+    expect:
+      - "Wandpaneel"
+      - "Das Paneel brummt."
+      - "Das Paneel leuchtet gedimmt."
+      - "Das Paneel brummt von der anderen Seite."
+      - "You take the Wandpaneel."
+      - "You drop the Wandpaneel."
+      - "You don't see 'paneel' here."

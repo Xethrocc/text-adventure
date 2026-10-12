@@ -487,6 +487,54 @@ items:
 - `reveal_all: {what: items, in: nowhere, tag: <tag>}` deckt auch noch nicht
   plazierte versteckte Items auf (die B2/B3-Mengen sehen `in: nowhere`).
 
+### Multi-Raum-Objekte: `locations:` (OPEN-19)
+
+Ein Item, das in **mehreren Räumen gleichzeitig** sichtbar und bedienbar ist —
+die Zork-Idee der `LOCAL-GLOBALS` (Gitter oben/unten, Fenster, Terminals). Es
+ist **ein** Objekt mit **einem** Zustand: was in einem Raum passiert, gilt in
+allen:
+
+```yaml
+items:
+  - id: gitter
+    name: Gitter
+    keys: [gitter]
+    locations: [lichtung, gitterraum]   # statt `location:`
+    portable: false                     # klassische Szenerie (optional)
+    verb_map:
+      instead:unlock,intact:
+      - if:
+          at: player
+          room: gitterraum
+        then: [ { msg: "Das Schloss klickt." } ]
+        else: [ { msg: "Von hier kommt man nicht an das Schloss." } ]
+```
+
+- **Ein Objekt, ein Zustand:** `set_state:`, Flags und `verb_map` gelten für
+  alle Räume — kein Synchronisieren von Duplikaten mehr (der Zork-Port hatte
+  zwei Gitter-Items mit zwei identischen `verb_map`-Kopien, die über
+  Flags abgeglichen wurden; seit OPEN-19 ist es ein Item).
+- **Sichtbar & adressierbar** aus jedem gelisteten Raum: `look`, `examine`,
+  `verb_map`, Prädikate (`at: <item>, room: X`), die Zählfamilie (`in: <raum>`
+  sieht es in *jedem* seiner Räume), Dunkelheit/Lichtquellen und `search`.
+  Seiten-Logik („von hier aus nicht erreichbar") bleibt Autorensache über
+  `at: player, room:` im `verb_map`.
+- **`take`/`drop`:** normal bedienbar — `take` nimmt das **eine** Objekt aus
+  *allen* Räumen ins Inventar, `drop` legt es in den aktuellen Raum (dann
+  wieder Einzel-Raum-Item). Mit `portable: false` bleibt feste Szenerie fest.
+- **Effekt-Ziele bleiben Single-Raum:** `place:`, `move:`, `give:` und
+  `move_all:` setzen ein einzelnes Ziel und verlassen dabei die
+  Multi-Raum-Platzierung; ein MoveEntity-Ziel `InRooms` wird wie `Dormant`
+  abgelehnt („only an initial item location"). `locations:` ist eine
+  **Startplatzierung**.
+- **Konflikte sind Compile-Fehler** (`LocationsConflict`): `locations:` zusammen
+  mit `in_container:`, `carried_by:` oder `location: nowhere`. Steht zusätzlich
+  ein einzelnes `location:`, gewinnt `locations:`.
+- **Validierung:** unbekannte Räume in `locations:` prüft dieselbe Stelle wie
+  bei `location:` (`InvalidItemLocation`).
+- **Eingeschränkt:** `repeatable:`-Items (K15) regenerieren nur im *ersten*
+  gelisteten Raum (ihrem Home).
+
 ### Zustandsabhängige Tags (`tags_when`)
 
 Tags sind normalerweise statisch. Mit `tags_when:` gelten zusätzliche Tags nur,

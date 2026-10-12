@@ -464,7 +464,7 @@ getItemsInLocation loc state =
                 direct =
                     [ def
                     | (iId, st) <- Map.toList (itemStates (save state))
-                    , itemLocation st == loc
+                    , locationMatches (itemLocation st) loc
                     , Just def <- [Map.lookup iId (itemDefs (world state))]
                     , not (itemHidden def) || itemDiscovered st
                     ]
@@ -490,7 +490,7 @@ getItemsInLocation loc state =
         _ ->
             [ def
             | (iId, st) <- Map.toList (itemStates (save state))
-            , itemLocation st == loc
+            , locationMatches (itemLocation st) loc
             , Just def <- [Map.lookup iId (itemDefs (world state))]
             , not (itemHidden def) || itemDiscovered st
             ]
@@ -952,6 +952,7 @@ isReachableForConsume iId state =
     case Map.lookup iId (itemStates (save state)) of
         Just is -> case itemLocation is of
             InRoom _              -> True
+            InRooms _             -> True   -- OPEN-19: reachable from any of its rooms
             CarriedBy ActorPlayer -> True
             EquippedBy _          -> True
             -- Original V-EAT: "You're not holding that" ist auch erfuellt,
@@ -1184,7 +1185,7 @@ itemsAtLoc :: Location -> GameState -> [ItemDef]
 itemsAtLoc loc state =
     [ def
     | (iId, is) <- Map.toList (itemStates (save state))
-    , itemLocation is == loc
+    , locationMatches (itemLocation is) loc
     , Just def <- [Map.lookup iId (itemDefs (world state))] ]
 
 -- | Equip an item the player is carrying.
@@ -1834,7 +1835,7 @@ evalPredicate (Location actor rId) st = case actor of
         case Map.lookup eId (npcStates (save st)) of
             Just ns -> npcLocation ns == InRoom rId
             Nothing -> case Map.lookup eId (itemStates (save st)) of
-                Just is -> itemLocation is == InRoom rId
+                Just is -> locationMatches (itemLocation is) (InRoom rId)
                 Nothing -> False
 evalPredicate (CompareVar name op n) st =
     case getVariable name st of

@@ -57,7 +57,7 @@ import qualified Data.Set as Set
 import Data.Char (toLower, isDigit, isSpace)
 import Data.List (nub, stripPrefix, isPrefixOf, isInfixOf, minimumBy, intercalate, sortOn, find, (\\))
 import Data.Ord (comparing)
-import Data.Maybe (mapMaybe, fromMaybe, catMaybes, isNothing, isJust)
+import Data.Maybe (mapMaybe, fromMaybe, catMaybes, isNothing, isJust, listToMaybe)
 import Data.Either (partitionEithers)
 import Control.Applicative ((<|>))
 import Text.Read (readMaybe)
@@ -3285,8 +3285,12 @@ compileItemDefSafe registry i =
                 , E.itemGrammar = aiGrammar i
                 , E.itemRepeatable = fromMaybe False (aiRepeatable i)
                 -- `location: nowhere` (OPEN-04) is a holding pen, not a room —
-                -- it must never be a repeatable home.
-                , E.itemHomeLocation = if aiLocation i `elem` ["", "nowhere"] then Nothing else Just (aiLocation i)
+                -- it must never be a repeatable home. OPEN-19: a multi-room
+                -- object's home is its first room (K15 repeatable regrows
+                -- there; documented limitation).
+                , E.itemHomeLocation =
+                    if not (null (aiLocations i)) then listToMaybe (nub (aiLocations i))
+                    else if aiLocation i `elem` ["", "nowhere"] then Nothing else Just (aiLocation i)
                 , E.itemFuel = fuel
                 })
 
@@ -3327,12 +3331,22 @@ compileItemStateSafe i
     | isJust (aiInContainer i), isJust (aiCarriedBy i) =
         Left [ ciError ("items." ++ aiId i) "CarriedByConflict"
                 ("item '" ++ aiId i ++ "' sets both 'in_container' and 'carried_by' — it can only start in one place") ]
+    -- OPEN-19: `locations:` is a room placement; it cannot also start inside a
+    --   container, on an actor or in the nowhere holding pen.
+    | not (null (aiLocations i))
+        , isJust (aiInContainer i) || isJust (aiCarriedBy i) || aiLocation i == "nowhere" =
+        Left [ ciError ("items." ++ aiId i) "LocationsConflict"
+                ("item '" ++ aiId i ++ "' sets 'locations:' and also '"
+                    ++ (if isJust (aiInContainer i) then "in_container"
+                        else if isJust (aiCarriedBy i) then "carried_by" else "location: nowhere")
+                    ++ "' — a multi-room object starts in its rooms") ]
     | otherwise = Right (aiId i, E.ItemState
         { E.itemLocation = case aiInContainer i of
             Just cid -> E.InContainer cid
             Nothing  -> case aiCarriedBy i of
                 Just a  -> E.CarriedBy (compileActorRef a)
-                Nothing | aiLocation i == "nowhere" -> E.Dormant
+                Nothing | not (null (aiLocations i)) -> E.InRooms (nub (aiLocations i))
+                        | aiLocation i == "nowhere" -> E.Dormant
                         | otherwise -> E.InRoom (aiLocation i)
         , E.itemStatus = aiState i
         , E.itemProps = seedFuelProp (aiFuel i) (aiProps i)
@@ -4953,14 +4967,25 @@ checkQuestRefs adv =
                 ("on_complete references unknown quest '" ++ next ++ "'") ]
         _ -> []
 
+-- | OPEN-19: the rooms an item starts in — `locations:` when set (one object
+--   visible in each of them), otherwise the single `location:`. Items that
+--   start in a container, on an actor, in "inventory" or in the "nowhere"
+--   holding pen have no room footprint here.
+itemRoomsOf :: AItem -> [String]
+itemRoomsOf i
+    | not (null (aiLocations i)) = nub (aiLocations i)
+    | isJust (aiInContainer i) || isJust (aiCarriedBy i) = []
+    | aiLocation i `elem` ["inventory", "nowhere"] = []
+    | otherwise = [aiLocation i]
+
 checkKeywordCollisions :: Adventure -> [CompileIssue]
 checkKeywordCollisions adv =
     let roomItems =
-            [ (aiLocation i, "item '" ++ aiId i ++ "'", kw)
+            [ (r, "item '" ++ aiId i ++ "'", kw)
             | i <- advItems adv
-            , aiLocation i `notElem` ["inventory", "nowhere"]
             , isNothing (aiInContainer i)
             , isNothing (aiCarriedBy i)
+            , r <- itemRoomsOf i
             , kw <- nub (map (map toLower . trimSpaces) (aiKeywords i))
             , not (null kw)
             ]
@@ -5323,25 +5348,22 @@ checkDarkRoomDeadEnds adv =
             any (\i -> aiLocation i == "inventory" && "lightsource" `elem` aiTagsAnyState i) items
 
         canPickUpLightsource item =
-            case Map.lookup (aiLocation item) roomMap of
-                Nothing -> False
-                Just rm -> "dark" `notElem` arTags rm
+            case [ rm | r <- itemRoomsOf item, Just rm <- [Map.lookup r roomMap] ] of
+                [] -> False
+                rms -> any (\rm -> "dark" `notElem` arTags rm
                            || "feelable" `elem` aiTagsAnyState item
-                           || maybe False (not . null) (arLightFlag rm)
+                           || maybe False (not . null) (arLightFlag rm)) rms
 
         hasReachableLightsource =
             carriedLightsource ||
             any (\i -> "lightsource" `elem` aiTagsAnyState i
-                       && aiLocation i /= "inventory"
-                       && isNothing (aiInContainer i)
-                       && isNothing (aiCarriedBy i)
-                       && aiLocation i `Set.member` reachable
+                       && any (`Set.member` reachable) (itemRoomsOf i)
                        && canPickUpLightsource i) items
 
         checkRoom r
             | "dark" `elem` arTags r =
                 let rId = arId r
-                    rItems = [ i | i <- items, aiLocation i == rId, isNothing (aiInContainer i), isNothing (aiCarriedBy i) ]
+                    rItems = [ i | i <- items, rId `elem` itemRoomsOf i ]
                     hasItems = not (null rItems)
                     hasFeelable = any (\i -> "feelable" `elem` aiTagsAnyState i) rItems
                     hasLightFlag = maybe False (not . null) (arLightFlag r)

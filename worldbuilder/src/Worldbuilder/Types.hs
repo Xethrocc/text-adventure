@@ -628,6 +628,7 @@ data AItem = AItem
     , aiGrammar :: E.Grammar         -- ^ 4.3.5: article:/gender: grammar metadata (empty = none)
     , aiRepeatable :: Maybe Bool     -- ^ K15: repeatable world object (default: False)
     , aiFuel :: Maybe AFuelDef       -- ^ OPEN-17: generischer Item-Timer (`fuel:`)
+    , aiLocations :: [String]        -- ^ OPEN-19: `locations:` — one object in several rooms at once
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AItem where
@@ -657,6 +658,7 @@ instance FromJSON AItem where
         <*> E.grammarFromJSONFields o
         <*> o .:? "repeatable"
         <*> o .:? "fuel"
+        <*> o .:? "locations" .!= []
 
 -- | OPEN-17: `fuel:` on an item — a generic item timer. The counter itself
 --   lives in `itemProps["fuel"]`; this is the definition: how it starts, when
@@ -2210,7 +2212,7 @@ knownKeys EntItem = Set.fromList
     [ "id", "name", "desc", "description", "ascii", "keys", "tags", "tags_when"
     , "location", "state", "slot", "effects", "hidden", "searchable", "discover"
     , "props", "on_take", "verb_map", "portable", "take_failure", "in_container"
-    , "capacity", "carried_by", "article", "gender", "repeatable", "fuel"
+    , "capacity", "carried_by", "article", "gender", "repeatable", "fuel", "locations"
     ]
 knownKeys EntNPC = Set.fromList
     [ "id", "name", "desc", "description", "ascii", "keys", "location"

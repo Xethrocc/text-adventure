@@ -626,7 +626,7 @@ validateGameState gw st = concat
         [ InvalidItemLocation iId rId
         | (iId, is) <- Map.toList (itemStates st)
         , let loc = itemLocation is
-        , (rId) <- case loc of { InRoom r -> [r]; _ -> [] }
+        , (rId) <- case loc of { InRoom r -> [r]; InRooms rs -> rs; _ -> [] }
         , rId `notElem` roomKeys ]
 
     -- P2-8: item lookup scans `itemStates`, so an `ItemDef` that is placed

@@ -6571,6 +6571,53 @@ testWanderStepEffects = do
     r8 <- expectTrue "non-wanderer refused with a diagnostic" (not (null (diagnostics st5)))
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
 
+-- | OPEN-19: one object in several rooms (Zork LOCAL-GLOBALS). It is visible
+--   and addressable in each of them, shares ONE state, and moving it (take or
+--   drop) turns it back into an ordinary single-room item.
+testMultiRoomItems :: IO Bool
+testMultiRoomItems = do
+    let paneel = (mkTestItem "paneel" "Wandpaneel") { itemTags = Set.fromList ["paneel"] }
+        st0 = mstate [mkTestRoom "halle" "Halle", mkTestRoom "kammer" "Kammer", mkTestRoom "gang" "Gang"]
+                [(paneel, InRooms ["halle", "kammer"])]
+        idsIn loc s = map itemId (getItemsInLocation loc s)
+    -- visible in every listed room, not in any other
+    r1 <- expectEqual ["paneel"] (idsIn (InRoom "halle") st0)
+    r2 <- expectEqual ["paneel"] (idsIn (InRoom "kammer") st0)
+    r3 <- expectEqual [] (idsIn (InRoom "gang") st0)
+    -- count sets see it in each room (it really is in both)
+    r4 <- expectEqual ["paneel"] (map itemId (itemsAtLoc (InRoom "halle") st0))
+    r5 <- expectEqual ["paneel"] (map itemId (itemsAtLoc (InRoom "kammer") st0))
+    -- the entity-at predicate agrees from either room
+    r6 <- expectTrue "entity-at sees the object in halle"
+            (evalPredicate (Location (ActorEntity "paneel") "halle") st0)
+    r7 <- expectTrue "entity-at sees the object in kammer"
+            (evalPredicate (Location (ActorEntity "paneel") "kammer") st0)
+    -- one shared state: a status change is visible from both sides
+    let stState = setEntityState "paneel" "aktiv" st0
+    r8 <- expectEqual (Just "aktiv") (getEntityState "paneel" stState)
+    -- take: ONE object — gone from every room, now carried
+    let st1 = relocateItem "paneel" (CarriedBy ActorPlayer) st0
+    r9 <- expectEqual [] (idsIn (InRoom "halle") st1)
+    r10 <- expectEqual [] (idsIn (InRoom "kammer") st1)
+    r11 <- expectTrue "carried after take"
+            ("paneel" `elem` map itemId (getItemsInLocation (CarriedBy ActorPlayer) st1))
+    -- drop: back to an ordinary single-room item
+    let st2 = relocateItem "paneel" (InRoom "kammer") st1
+    r12 <- expectEqual [] (idsIn (InRoom "halle") st2)
+    r13 <- expectEqual ["paneel"] (idsIn (InRoom "kammer") st2)
+    -- save round-trip and byte contract (InRooms written only when used)
+    let loc0 = itemLocation <$> Map.lookup "paneel" (itemStates (save st0))
+        locBack = do
+            loaded <- Aeson.decode (Aeson.encode (save st0)) :: Maybe SaveState
+            itemLocation <$> Map.lookup "paneel" (itemStates loaded)
+    r14 <- expectEqual (Just (InRooms ["halle", "kammer"])) loc0
+    r15 <- expectEqual loc0 locBack
+    r16 <- expectTrue "InRooms is written to the save"
+            ("InRooms" `isInfixOf` BLC.unpack (Aeson.encode (save st0)))
+    r17 <- expectTrue "plain saves keep the historical encoding"
+            (not ("InRooms" `isInfixOf` BLC.unpack (Aeson.encode (save st2))))
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17])
+
 -- | B3: the five closed mass operations over a count set (B2 dimensions).
 testMassOps :: IO Bool
 testMassOps = do
@@ -12504,6 +12551,7 @@ main = do
         , runTest "pursuit save/load recomputes the identical step (Tür IV)" testPursuitSaveLoad
         , runTest "wander core: run-seed hash, filters, save encoding (OPEN-14)" testWanderCore
         , runTest "wander step effects: messages, silence, seeker contract (OPEN-14)" testWanderStepEffects
+        , runTest "multi-room items: visibility, shared object, save encoding (OPEN-19)" testMultiRoomItems
         , runTest "tag predicates: actor carries / room holds tagged item (B2)" testTaggedItemPredicates
         , runTest "count family: items/npcs/alive, room or carried, tags (B2)" testCountSpec
         , runTest "mass ops: damage/move/reveal/consume/set_state (B3)" testMassOps

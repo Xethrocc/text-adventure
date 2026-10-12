@@ -360,6 +360,10 @@ applyOutcomeWith depth salt outcome targetId state
         withResolvedDest depth salt targetId (RoomOf actor) (MoveEntity eid) state
     MoveEntity _ Dormant ->
         (state, evRaw "Dormant is only an initial item location.", salt)
+    MoveEntity _ (InRooms _) ->
+        -- OPEN-19: multi-room placement is an initial location (`locations:`),
+        --   not an effect target — effects move objects to a single place.
+        (state, evRaw "InRooms is only an initial item location.", salt)
     MoveEntity eid (InRoom room) ->
         let state' = moveEntityToRoom eid room state
         in (state', [], salt)
