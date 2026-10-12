@@ -1,0 +1,32 @@
+east
+north
+attack schattenkriecher
+attack schattenkriecher
+capture seele
+use hebel
+south
+west
+opfern seele
+down
+rasten
+east
+north
+attack eisen_ghul
+attack eisen_ghul
+attack eisen_ghul
+capture seele
+use runenschalter
+south
+west
+opfern seele
+down
+rasten
+north
+attack seelenfresser
+attack seelenfresser
+attack seelenfresser
+attack seelenfresser
+capture weltenherz_seele
+south
+opfern seele
+quit

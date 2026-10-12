@@ -1,0 +1,552 @@
+# Soul Collector — Echoes of the Monolith
+#
+# Genre: Dark Fantasy Dungeon Crawler / Soulslike Rogue-Lite
+#
+# Demonstriert die Verzahnung von:
+#   - OPEN-19 Multi-Raum-Objekte (locations: [...]):
+#       - 'schwarzer_monolith' reicht vertikal durch alle drei Ebenen
+#         (locations: [ebene1_schrein, ebene2_schrein, ebene3_schrein]).
+#       - Ein geteiltes Objekt, ein Zustand.
+#       - Der Raum mit dem Monolithen ist stets ein sicherer Hafen (Safe-Space)
+#         zum Rasten und Opfern der gesammelten Seelen.
+#   - OPEN-18 Zufallsauswahl im messages:-Katalog (Zork PICK-ONE Pools):
+#       - 'examine.monolith', 'attack.monolith', 'attack.cant_here' rotieren
+#         durch unheimliche Fluesterstimmen und Echos.
+#   - Seelenfaenger-Mechanik (Soul Collection Loop):
+#       - Besiegte Gegner hinterlassen Seelenessenzen:
+#         Ebene 1: Schattenkriecher -> schattenseele
+#         Ebene 2: Eisen-Ghul -> eisen_ghul_seele
+#         Ebene 3: Seelenfresser (Boss) -> weltenherz_seele
+#       - Nach dem Kampf faengt man die Essenz mit 'capture <seele>' (oder 'take <seele>').
+#       - Am Schwarzen Monolithen bringt man sie mit 'opfern <seele>' dar:
+#         Schattenseele gewaehrt +2 Angriff ('bonus.attack')!
+#         Eisen-Ghul-Seele gewaehrt +2 Abwehr ('bonus.defense')!
+#         Weltenherz-Seele fuehrt zur finalen Transzendenz und zum SIEG!
+#   - Classic Combat Profil (Attack, Defense, HP, Trefferberechnung):
+#       - Spieler startet mit HP 30/30, Atk 4, Def 1.
+#       - 'rasten' im Schrein heilt auf volle Lebenskraft.
+#   - Etagen-Progression & Raetsel:
+#       - Ebene 1: Verfallene Katakomben -> Kryptahebel oeffnet Pforte zur Tiefe.
+#       - Ebene 2: Kerkertiefen -> Runensiegel-Schalter entriegelt den Abgrund.
+#       - Ebene 3: Weltenkern -> Finaler Showdown am Sockel des Monolithen.
+#   - Deutsche Grammatik:
+#       - Alle Gegenstaende mit gender: (m, f, n) und vollstaendigen article:-Formen.
+
+name: Soul Collector
+start_room: ebene1_schrein
+
+language: de
+
+combat:
+  profile: classic
+  screen:
+    bar_width: 20
+    scene: ">> KAMPF IM SCHATTEN DES SCHWARZEN MONOLITHEN <<"
+
+player:
+  max_hp: 30
+  attack: 4
+  defense: 1
+
+title_art: |
+  =============================================================
+             S O U L   C O L L E C T O R
+        --- Echoes of the Black Monolith ---
+  =============================================================
+
+end_art:
+  victory: |
+    =============================================================
+          T R A N S Z E N D E N Z   D E R   S E E L E N
+    =============================================================
+    Du opferst das Weltenherz dem uralten Monolithen.
+    Ein blendender Impuls aus reinem Astrallicht durchfaehrt den
+    gesamten Dungeon. Die gefallenen Geister finden ihren ewigen
+    Frieden, und dein Bewusstsein verschmilzt mit der Unendlichkeit.
+    Du hast die Tiefen des Abyss bezwungen und bist der Herr der Seelen!
+  death: |
+    =============================================================
+            I M   A B Y S S   V E R L O R E N
+    =============================================================
+    Deine Lebenskraft versiegt. Dein Koerper stuerzt leblos auf den
+    kalten Steinboden, waehrend deine eigene Seele dem finsteren
+    Fluestern des Monolithen zum Opfer faellt.
+    Ein weiteres Echo in der ewigen Verdammnis...
+
+verbs:
+  - name: touch
+    aliases: [beruehren, anfassen]
+  - name: capture
+    aliases: [fangen, einfangen, binden, sammeln]
+  - name: opfern
+    aliases: [sacrifice, weihen, darbringen]
+  - name: rasten
+    aliases: [rest, ausruhen, erholen]
+
+variables:
+  - name: tiefe
+    type: int
+    initial: 1
+    min: 1
+    max: 3
+  - name: seelen_geopfert
+    type: int
+    initial: 0
+  - name: score
+    type: int
+    initial: 0
+    max: 350
+    score_rankings:
+      - { at: 0,   title: "Verirrter Geist" }
+      - { at: 100, title: "Seelenfaenger" }
+      - { at: 200, title: "Wanderer der Tiefen" }
+      - { at: 300, title: "Meister des Monolithen" }
+
+progression:
+  levels:
+    - level: 1
+      name: "Seelenfaenger"
+      xp: 0
+    - level: 2
+      name: "Meister des Monolithen"
+      xp: 1000
+
+messages:
+  take.not_portable:
+    - "Du greifst danach, doch das gewaltige Bauwerk ist tief im Berg verankert."
+    - "Der Monolith widersteht jeglicher irdischer Kraft. Er laesst sich nicht bewegen."
+    - "Eine eiskalte Vibration laehmt deine Finger. Der Monolith gehoert diesem Ort."
+  attack.cant_here:
+    - "Die heilige Aura des Schreins unterbindet jede Gewalt. Deine Waffe bleibt stumm."
+    - "Im Angesicht des Monolithen erlischt jeder Kampfrausch zu dumpfer Ehrfurcht."
+    - "Eine unsichtbare Macht haelt deinen Arm zurueck. Hier herrscht Waffenruhe."
+
+rooms:
+  # ============================================================================
+  # Ebene 1: Verfallene Katakomben
+  # ============================================================================
+  - id: ebene1_schrein
+    name: "Schrein der Schatten (Ebene 1)"
+    desc: >
+      Eine erhabene Kammer aus verwittertem Kalkstein. In der Mitte thront der
+      Schwarze Monolith, dessen polierte Oberflaeche matt im Zwielicht glimmt.
+      Hier fuehlst du dich vollkommen sicher und kannst dich ausruhen ('rasten').
+      Ein Torbogen im Osten fuehrt tiefer in die verfallenen Katakomben.
+      Eine steinerne Wendeltreppe nach unten ist von einem Eisengitter versperrt.
+    exits:
+      east: { to: ebene1_katakomben }
+      down:
+        to: ebene2_schrein
+        blocked: true
+        msg: "Ein massives Eisengitter versperrt den Abstieg zu Ebene 2. Ein Mechanismus in der Gruft koennte es oeffnen."
+
+  - id: ebene1_katakomben
+    name: "Verfallene Katakomben"
+    desc: >
+      Modrige Gruftgaenge ziehen sich durch das Gewoelbe. Von den Decken tropft
+      kaltes Sickerwasser. Im Westen geht es zurueck zum Schrein der Schatten.
+      Im Norden fuehrt ein schmaler Gang in die Gruftkammer des Schattenkriechers.
+    exits:
+      west: { to: ebene1_schrein }
+      north: { to: ebene1_gruft }
+
+  - id: ebene1_gruft
+    name: "Gruftkammer"
+    desc: >
+      Eine duestere Begraebnisstaette mit offenen Steinsarkophagen.
+      An der Nordwand ragt ein rostiger Kryptahebel aus dem Mauerwerk.
+      Nach Sueden gelangst du zurueck in die Katakomben.
+    exits:
+      south: { to: ebene1_katakomben }
+
+  # ============================================================================
+  # Ebene 2: Kerkertiefen
+  # ============================================================================
+  - id: ebene2_schrein
+    name: "Schrein der Ketten (Ebene 2)"
+    desc: >
+      Der Schwarze Monolith durchbricht auch hier die feuchte Steindecke und
+      steigt ungebrochen hinab in die Schwaerze. Kerzenstummel brennen auf
+      kleinen Felsvorspruengen. Hier bist du sicher und kannst rasten.
+      Eine Treppe fuehrt nach oben zu Ebene 1. Im Osten zweigt der Kerkertrakt ab.
+      Ein finsterer Schlund fuehrt nach unten, gesichert durch eine Runenpforte.
+    exits:
+      up: { to: ebene1_schrein }
+      east: { to: ebene2_kerker }
+      down:
+        to: ebene3_schrein
+        blocked: true
+        msg: "Magische Runenketten riegeln die Schlundstiege nach Ebene 3 hermetisch ab. Das Siegel muss erst gebrochen werden."
+
+  - id: ebene2_kerker
+    name: "Vergessener Kerkertrakt"
+    desc: >
+      Ehemalige Folterkammern und verrostete Kaefige saeumen diesen finsteren Flur.
+      Im Westen liegt der sichere Schrein der Ketten.
+      Nach Norden fuehrt der Weg zur Folterkammer des Eisen-Ghuls.
+    exits:
+      west: { to: ebene2_schrein }
+      north: { to: ebene2_folterkammer }
+
+  - id: ebene2_folterkammer
+    name: "Folterkammer der Verdammnis"
+    desc: >
+      Schwere Eisenketten haengen von der gewoelbten Decke. Ein Altar aus
+      blutbeflecktem Stein traegt einen geheimnisvollen Runenschalter.
+      Nach Sueden fuehrt der Weg zurueck in den Kerkergang.
+    exits:
+      south: { to: ebene2_kerker }
+
+  # ============================================================================
+  # Ebene 3: Weltenkern & Abyss
+  # ============================================================================
+  - id: ebene3_schrein
+    name: "Heiligtum des Weltenkerns (Ebene 3)"
+    desc: >
+      Hier, im tiefsten Abgrund der Erde, erreicht der Schwarze Monolith sein
+      monumentales Fundament. Der Stein pulsiert in einem rhythmischen,
+      beruhigenden Takt. Die Schutzaura dieses heiligen Ortes erlaubt dir zu rasten.
+      Eine Treppe fuehrt hinauf zu Ebene 2.
+      Im Norden oeffnet sich eine weite Felsenkluft: der Thron des Seelenfressers!
+    exits:
+      up: { to: ebene2_schrein }
+      north: { to: ebene3_thron }
+
+  - id: ebene3_thron
+    name: "Thron des Seelenfressers"
+    desc: >
+      Ein gewaltiger Basaltthron ragt ueber einem See aus kochender Schattenessenz.
+      Hier lauert der uralte Schrecken dieser Welt. Nach Sueden geht es
+      zurueck zum Heiligtum des Weltenkerns.
+    exits:
+      south: { to: ebene3_schrein }
+
+items:
+  # ============================================================================
+  # Das Multi-Raum-Objekt (OPEN-19)
+  # ============================================================================
+  - id: schwarzer_monolith
+    name: Schwarzer Monolith
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [monolith, saule, monoliths, pfeiler, obsidian]
+    locations:
+      - ebene1_schrein
+      - ebene2_schrein
+      - ebene3_schrein
+    portable: false
+    description:
+      default: >
+        Eine gewaltige, fugenlose Saeule aus makellosem, tiefschwarzem Obsidian.
+        Sie reicht ununterbrochen durch saemtliche Ebenen des Dungeons. Runen
+        fliessen ueber ihre Oberflaeche wie kaltes Quecksilber. Du spuerst das
+        Verlangen des Steins nach gefallenen Seelen ('opfern <seele>').
+    verb_map:
+      touch,intact:
+        - msg: >
+            Du legst deine Hand auf die spiegelglatte Oberflaeche des Monolithen.
+            Ein Schauer reinster Energie faehrt durch deine Knochen. Du vernimmst
+            das leise Echo von Tausenden Geistern, die auf Erloesung warten.
+
+  # ============================================================================
+  # Interaktive Raetsel-Objekte
+  # ============================================================================
+  - id: hebel_ebene1
+    name: Kryptahebel
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [hebel, kryptahebel, schalter]
+    location: ebene1_gruft
+    portable: false
+    desc: Ein schwerer Eisenhebel, verankert im Felsgestein.
+    verb_map:
+      use,intact:
+        - if: { not: { has_flag: tor_ebene1_offen } }
+          then:
+            - set_flag: tor_ebene1_offen
+            - set_exit:
+                from: ebene1_schrein
+                dir: down
+                to: ebene2_schrein
+            - add_var: { var: score, delta: 50 }
+            - msg: >
+                Du ziehst den Kryptahebel mit beiden Haenden nach unten!
+                Ein dumpfes Grollen erschuettert die Decke: Im Schrein der
+                Schatten hebt sich das schwere Eisengitter zur zweiten Ebene!
+          else:
+            - msg: "Der Hebel ist bereits umgelegt. Das Gitter steht offen."
+
+  - id: runenschalter_ebene2
+    name: Runenschalter
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [runenschalter, schalter, rune, runenstein]
+    location: ebene2_folterkammer
+    portable: false
+    desc: Ein gravierter Schalter aus rotem Basalt, verziert mit Bann-Runen.
+    verb_map:
+      use,intact:
+        - if: { not: { has_flag: siegel_ebene2_gebrochen } }
+          then:
+            - set_flag: siegel_ebene2_gebrochen
+            - set_exit:
+                from: ebene2_schrein
+                dir: down
+                to: ebene3_schrein
+            - add_var: { var: score, delta: 50 }
+            - msg: >
+                Du drueckst den Runenschalter fest in den Altar!
+                Mit einem hellen Klirren zerbersten die magischen Ketten:
+                Der Abstieg zum Heiligtum des Weltenkerns ist frei!
+          else:
+            - msg: "Der Runenschalter ist bereits aktiviert. Das Siegel ist gebrochen."
+
+  # ============================================================================
+  # Seelen (Gefallene Essenzen)
+  # ============================================================================
+  - id: schattenseele
+    name: Schattenseele
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [schattenseele, seele, essenz]
+    location: ebene1_gruft
+    portable: true
+    desc: Eine blaeulich flackernde Seelenessenz, geborgen aus den Resten des Schattenkriechers.
+    verb_map:
+      capture,intact:
+        - msg: "Du streckst deine Hand aus und bindest die Schattenseele an dein Geistergefaess!"
+
+  - id: eisen_ghul_seele
+    name: Eisen-Ghul-Seele
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [eisen_ghul_seele, ghulseele, seele, essenz]
+    location: ebene2_folterkammer
+    portable: true
+    desc: Eine dichte, stahlgrau pulsierende Seele, getraenkt mit der Zaehigkeit des Eisen-Ghuls.
+    verb_map:
+      capture,intact:
+        - msg: "Du fokussierst deinen Willen und schliesst die Eisen-Ghul-Seele sicher ein!"
+
+  - id: weltenherz_seele
+    name: Weltenherz-Seele
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [weltenherz_seele, weltenherz, seele, essenz, herz]
+    location: ebene3_thron
+    portable: true
+    desc: Eine gewaltige, sonnenhelle Essenz von unermesslicher Macht. Das Herz des gefallenen Abyss.
+    verb_map:
+      capture,intact:
+        - msg: "Du hebst die leuchtende Weltenherz-Seele ehrfurchtsvoll an dich!"
+
+npcs:
+  # ============================================================================
+  # Gegner Ebene 1: Schattenkriecher
+  # ============================================================================
+  - id: schattenkriecher
+    name: Schattenkriecher
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    desc: Ein schemenhafter Daemon mit gluehenden Augen, der aus dem Boden waechst.
+    keys: [schattenkriecher, kriecher, schatten, feind, daemon]
+    location: ebene1_gruft
+    state: alive
+    max_hp: 8
+    attack: 3
+    defense: 0
+
+  # ============================================================================
+  # Gegner Ebene 2: Eisen-Ghul
+  # ============================================================================
+  - id: eisen_ghul
+    name: Eisen-Ghul
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    desc: Eine verrottete Bestie in rostbeschlagener Plattenruestung mit gewaltigen Klauen.
+    keys: [eisen_ghul, ghul, bestie, feind]
+    location: ebene2_folterkammer
+    state: alive
+    max_hp: 14
+    attack: 4
+    defense: 2
+
+  # ============================================================================
+  # Gegner Ebene 3 (Boss): Seelenfresser
+  # ============================================================================
+  - id: seelenfresser
+    name: Seelenfresser
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    desc: Eine gigantische Monstrositaet aus wirbelnden Schattenfratzen und Knochenstacheln.
+    keys: [seelenfresser, boss, fuerst, fresser, schrecken]
+    location: ebene3_thron
+    state: alive
+    max_hp: 22
+    attack: 6
+    defense: 3
+
+rules:
+  # ============================================================================
+  # Rasten (Heilung im Schrein)
+  # ============================================================================
+  - id: cmd_rasten
+    "on": "command rasten"
+    effects:
+      - if:
+          any:
+            - at: player
+              room: ebene1_schrein
+            - at: player
+              room: ebene2_schrein
+            - at: player
+              room: ebene3_schrein
+        then:
+          - heal: 30
+          - msg: "Du kniest am Sockel des Schwarzen Monolithen nieder. Die heilige Schutzaura erfrischt deinen Geist und schliesst all deine Wunden (volle Lebenskraft wiederhergestellt)!"
+        else:
+          - msg: "Hier ist es zu gefaehrlich zum Rasten! Nur im sicheren Schrein des Schwarzen Monolithen kannst du zur Ruhe kommen."
+
+  # ============================================================================
+  # Seelen-Opferung am Monolithen (Befehl: opfern)
+  # ============================================================================
+  - id: cmd_opfern
+    "on": "command opfern"
+    effects:
+      - if:
+          not:
+            any:
+              - at: player
+                room: ebene1_schrein
+              - at: player
+                room: ebene2_schrein
+              - at: player
+                room: ebene3_schrein
+        then:
+          - msg: "Du kannst Seelen nur in der Gegenwart des Schwarzen Monolithen in einem der Schreine opfern!"
+        else:
+          - if: { has_item: weltenherz_seele }
+            then:
+              - consume: weltenherz_seele
+              - add_var: { var: seelen_geopfert, delta: 1 }
+              - add_var: { var: score, delta: 125 }
+              - game_end: victory
+              - msg: >
+                  VICTORY — Das Weltenherz vereint sich mit dem Sockel des Monolithen!
+                  Der Fluch der Tiefe ist gebrochen! Endstand: 350/350 Punkte.
+            else:
+              - if: { has_item: eisen_ghul_seele }
+                then:
+                  - consume: eisen_ghul_seele
+                  - set_var:
+                      var: bonus.defense
+                      val: 2
+                  - add_var: { var: seelen_geopfert, delta: 1 }
+                  - add_var: { var: score, delta: 75 }
+                  - msg: >
+                      Du bringst die Eisen-Ghul-Seele dar. Der Monolith summt tief und erhaben.
+                      Ein eiserner Schutzfilm legt sich ueber deinen Koerper: Deine Abwehr steigt dauerhaft um +2!
+                else:
+                  - if: { has_item: schattenseele }
+                    then:
+                      - consume: schattenseele
+                      - set_var:
+                          var: bonus.attack
+                          val: 2
+                      - add_var: { var: seelen_geopfert, delta: 1 }
+                      - add_var: { var: score, delta: 50 }
+                      - msg: >
+                          Du haeltst die Schattenseele an den Monolithen. Mit einem sanften
+                          Aufleuchten saugt der Obsidian die Essenz auf!
+                          Dunkle Staerke stroemt durch deine Adern: Dein Angriff steigt dauerhaft um +2!
+                    else:
+                      - msg: "Du traegst keine gefallene Seele bei dir, die du dem Monolithen darbringen koenntest."
+
+  # ============================================================================
+  # Seelen binden (Befehl: capture)
+  # ============================================================================
+  - id: cmd_capture
+    "on": "command capture"
+    effects:
+      - if:
+          all:
+            - at: player
+              room: ebene1_gruft
+            - at: schattenseele
+              room: ebene1_gruft
+        then:
+          - give: schattenseele
+          - msg: "Du streckst deine Hand aus und bindest die Schattenseele an dein Geistergefaess!"
+        else:
+          - if:
+              all:
+                - at: player
+                  room: ebene2_folterkammer
+                - at: eisen_ghul_seele
+                  room: ebene2_folterkammer
+            then:
+              - give: eisen_ghul_seele
+              - msg: "Du fokussierst deinen Willen und schliesst die Eisen-Ghul-Seele sicher ein!"
+            else:
+              - if:
+                  all:
+                    - at: player
+                      room: ebene3_thron
+                    - at: weltenherz_seele
+                      room: ebene3_thron
+                then:
+                  - give: weltenherz_seele
+                  - msg: "Du hebst die leuchtende Weltenherz-Seele ehrfurchtsvoll an dich!"
+                else:
+                  - msg: "Hier schwebt keine ungebundene Seele, die du einfangen koenntest."
+
+tests:
+  - name: "vollstaendiger siegeszug durch alle 3 ebenen"
+    input:
+      - east
+      - north
+      - attack schattenkriecher
+      - attack schattenkriecher
+      - capture seele
+      - use hebel
+      - south
+      - west
+      - opfern seele
+      - down
+      - rasten
+      - east
+      - north
+      - attack eisen_ghul
+      - attack eisen_ghul
+      - attack eisen_ghul
+      - capture seele
+      - use runenschalter
+      - south
+      - west
+      - opfern seele
+      - down
+      - rasten
+      - north
+      - attack seelenfresser
+      - attack seelenfresser
+      - attack seelenfresser
+      - attack seelenfresser
+      - capture weltenherz_seele
+      - south
+      - opfern seele
+    expect:
+      - "Du triffst für 4, es trifft dich für 2."
+      - "Du streckst deine Hand aus und bindest die Schattenseele an dein Geistergefaess!"
+      - "Im Schrein der Schatten hebt sich das schwere Eisengitter zur zweiten Ebene!"
+      - "Dein Angriff steigt dauerhaft um +2!"
+      - "Der Schwarze Monolith durchbricht auch hier die feuchte Steindecke"
+      - "Du kniest am Sockel des Schwarzen Monolithen nieder."
+      - "Du triffst für 4, es trifft dich für 3."
+      - "Du fokussierst deinen Willen und schliesst die Eisen-Ghul-Seele sicher ein!"
+      - "Der Abstieg zum Heiligtum des Weltenkerns ist frei!"
+      - "Deine Abwehr steigt dauerhaft um +2!"
+      - "Hier, im tiefsten Abgrund der Erde, erreicht der Schwarze Monolith"
+      - "Du kniest am Sockel des Schwarzen Monolithen nieder."
+      - "Du triffst für 3, es trifft dich für 3."
+      - "Du hebst die leuchtende Weltenherz-Seele ehrfurchtsvoll an dich!"
+      - "VICTORY — Das Weltenherz vereint sich mit dem Sockel des Monolithen!"
