@@ -17,6 +17,7 @@
 module Pursuit
     ( directionPriority
     , bfsDistances
+    , sortCandidates
     , stepToward
     , stepAway
     ) where
@@ -63,6 +64,8 @@ bfsDistances edges goal = go (Map.singleton goal 0) [goal]
 
 -- | Deterministic candidate order: smallest target room id first (a key
 --   from the data, stable under any refactor), then 'directionPriority'.
+--   Shared by the pursuit steps and the wander pick (OPEN-14) so both see
+--   the same stable edge order.
 sortCandidates :: [(Direction, RoomID)] -> [(Direction, RoomID)]
 sortCandidates = sortOn (\(dir, to) -> (to, priorityIndex dir))
 

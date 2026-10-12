@@ -508,6 +508,7 @@ initSampleGame = GameState
         , exitOverrides  = Map.empty
         , deckState      = Nothing
         , dynamicRooms   = Map.empty
+        , runSeed        = initialRngState
         }
     , pendingNarrative = Nothing
     , pendingAnimation = Nothing

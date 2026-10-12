@@ -89,7 +89,10 @@ launcherSh = unlines
     , "  done"
     , "fi"
     , ""
-    , "exec \"$ENGINE\" --world world.json --save save.json \"$@\""
+    , "# run without --save: the bundled save.json is picked up as the sibling"
+    , "# of world.json, and the game draws a fresh run seed (wandering NPC"
+    , "# routes differ every play). Pass --save save.json to pin the run."
+    , "exec \"$ENGINE\" --world world.json \"$@\""
     ]
 
 -- | Windows launcher (same shape as the release ZIP's play.bat).
@@ -111,10 +114,13 @@ launcherBat = unlines
     , "    )"
     , ")"
     , ""
+    , "rem run without --save: the bundled save.json is picked up as the sibling"
+    , "rem of world.json, and the game draws a fresh run seed (wandering NPC"
+    , "rem routes differ every play). Pass --save save.json to pin the run."
     , "if exist \"%~dp0bin\\text-adventure.exe\" ("
-    , "    \"%~dp0bin\\text-adventure.exe\" --world \"%~dp0world.json\" --save \"%~dp0save.json\" %*"
+    , "    \"%~dp0bin\\text-adventure.exe\" --world \"%~dp0world.json\" %*"
     , ") else ("
-    , "    text-adventure --world \"%~dp0world.json\" --save \"%~dp0save.json\" %*"
+    , "    text-adventure --world \"%~dp0world.json\" %*"
     , ")"
     ]
 

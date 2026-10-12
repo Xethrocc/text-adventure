@@ -3,7 +3,7 @@
 -- | Main module for the Haskell text adventure game
 module Main where
 
-import GameLoop (runGameWithFrontend)
+import GameLoop (runGameWithFrontend, initRunSeed)
 import Frontend (haskelineFrontend, Frontend(..))
 import Audio (discoverAudio, playSfx, noAudio, newMusicHandle, startMusic, stopMusic)
 import Ansi (ansiFilter)
@@ -15,6 +15,8 @@ import Types (GameState, world, save, worldName, worldTitleArt, isEmptyAscii)
 import Validate (validateWorld, validateGameState)
 import System.Environment (getArgs, setEnv)
 import System.Exit (exitFailure)
+import Data.Word (Word64)
+import Text.Read (readMaybe)
 import System.IO (hIsTerminalDevice, hSetEncoding, stdout, stderr, stdin, utf8)
 
 #if defined(mingw32_HOST_OS)
@@ -90,6 +92,8 @@ usage = unlines
     , ""
     , "  --world FILE      Load a GameWorld from a JSON file (produced by the worldbuilder)."
     , "  --save FILE       Load an initial SaveState from a JSON file."
+    , "  --seed N          Pin the run seed (wandering NPC routes). Without it a fresh"
+    , "                    game draws a new seed; an explicit --save keeps its stored one."
     , "  --allow-invalid   Start even if the world has validation issues."
     , "  --saves-dir DIR   Redirect in-game saves (saves/<slot>.json) to DIR. Wins over"
     , "                    the TA_SAVES_DIR environment variable (Rogue Phase 0)."
@@ -110,6 +114,7 @@ usage = unlines
 data CliOptions = CliOptions
     { coWorld        :: Maybe FilePath
     , coSave         :: Maybe FilePath
+    , coSeed         :: Maybe Word64
     , coAllowInvalid :: Bool
     , coNoColor      :: Bool
     , coTui          :: Bool
@@ -120,12 +125,15 @@ data CliOptions = CliOptions
 
 -- | Minimal flag parser
 parseArgs :: [String] -> Maybe CliOptions
-parseArgs args = go args (CliOptions Nothing Nothing False False False Nothing False Nothing)
+parseArgs args = go args (CliOptions Nothing Nothing Nothing False False False Nothing False Nothing)
   where
     go [] opts = Just opts
     go ("--help" : _) _ = Nothing
     go ("--world" : p : rest) opts = go rest opts { coWorld = Just p }
     go ("--save" : p : rest) opts = go rest opts { coSave = Just p }
+    go ("--seed" : p : rest) opts = case readMaybe p of
+        Just n  -> go rest opts { coSeed = Just n }
+        Nothing -> Nothing
     go ("--allow-invalid" : rest) opts = go rest opts { coAllowInvalid = True }
     go ("--saves-dir" : p : rest) opts = go rest opts { coSavesDir = Just p }
     go ("--no-color" : rest) opts = go rest opts { coNoColor = True }
@@ -175,6 +183,10 @@ main = do
             -- wins over TA_SAVES_DIR because it is applied later; tests and CI
             -- set the variable directly.
             maybe (pure ()) (setEnv "TA_SAVES_DIR") (coSavesDir opts)
+            -- OPEN-14: the run seed — `--seed` pins it, an explicit `--save`
+            -- keeps its stored seed (scripted runs stay reproducible), every
+            -- other start draws a fresh one (human play varies per game).
+            let prep st = initRunSeed (coSave opts /= Nothing) (coSeed opts) st
             tty <- hIsTerminalDevice stdout
             -- W3: on Windows, VT processing must be on for escapes to render.
             -- It is attempted once here; when it fails (old conhost), colour is
@@ -183,11 +195,12 @@ main = do
             vt <- initConsoleColor
             let outFilter = ansiFilter (tty && vt) (coNoColor opts)
             case coWorld opts of
-                Nothing ->
+                Nothing -> do
+                    sampleState <- prep initSampleGame
                     if coTui opts
-                        then startTui initSampleGame
+                        then startTui sampleState
                         else do
-                            putStrLn (outFilter (titleBanner initSampleGame))
+                            putStrLn (outFilter (titleBanner sampleState))
                             putStrLn "Type 'help' for available commands."
                             putStrLn "----------------------------"
                             audioCfg <- if coNoAudio opts then pure noAudio else discoverAudio (coAudioHelper opts)
@@ -197,7 +210,7 @@ main = do
                                     , feStartMusic = startMusic audioCfg musicH
                                     , feStopMusic  = stopMusic musicH
                                     }
-                            runGameWithFrontend fe initSampleGame
+                            runGameWithFrontend fe sampleState
                 Just worldPath -> do
                     savePath <- case coSave opts of
                         Just s  -> pure (Just s)
@@ -207,7 +220,8 @@ main = do
                         Left err -> do
                             putStrLn ("Failed to load adventure: " ++ err)
                             exitFailure
-                        Right state -> do
+                        Right loaded -> do
+                            state <- prep loaded
                             let valErrors = validateWorld (world state)
                                             ++ validateGameState (world state) (save state)
                             if not (null valErrors)

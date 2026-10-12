@@ -6484,6 +6484,93 @@ testPursuitSaveLoad = do
                 r2 <- expectEqual (step st) (step stLoaded)
                 pure (r1 && r2)
 
+-- | OPEN-14: the wander pick is a pure hash over (run seed, turn count, actor
+--   id) — deterministic, independent of 'rngState', and filtered by the
+--   wander options. And the run seed itself survives save/load while keeping
+--   the historical save encoding when it is the default.
+testWanderCore :: IO Bool
+testWanderCore = do
+    let st0 = pstate
+            [ ("start", [(North, Open "a"), (South, Open "b")])
+            , ("a", [(South, Open "start")])
+            , ("b", [(North, Open "start")])
+            ] [("wolf", "start")]
+        st = st0 { save = (save st0) { currentRoom = "a" } }
+        withSeed sd s = s { save = (save s) { runSeed = sd } }
+        roomOf s = fmap snd (wanderStep defaultWanderOptions s (ActorNPC "wolf"))
+        roomWith opts s = fmap snd (wanderStep opts s (ActorNPC "wolf"))
+    -- determinism: the same (seed, turn) always picks the same edge
+    r1 <- expectEqual (roomOf st) (roomOf st)
+    -- the hash spreads over the candidates across turns
+    r2 <- expectTrue "hash spreads over the candidates"
+            (let picks = [ roomOf (atTurn st t) | t <- [0 .. 19 :: Int] ]
+             in Just "a" `elem` picks && Just "b" `elem` picks)
+    -- avoid: the filtered room is never picked
+    let avoidOpts = defaultWanderOptions { woAvoid = ["a"] }
+    r3 <- expectTrue "avoid filter holds"
+            (all (== Just "b")
+                [ roomWith avoidOpts (atTurn st t) | t <- [0 .. 19 :: Int] ])
+    -- stay_in: only the listed rooms are picked
+    let stayOpts = defaultWanderOptions { woStayIn = ["a"] }
+    r4 <- expectTrue "stay_in filter holds"
+            (all (== Just "a")
+                [ roomWith stayOpts (atTurn st t) | t <- [0 .. 19 :: Int] ])
+    -- a different run seed wanders a different route
+    r5 <- expectTrue "run seed changes the route"
+            ([ roomOf (withSeed 1 (atTurn st t))  | t <- [0 .. 9 :: Int] ]
+                /= [ roomOf (withSeed 2 (atTurn st t)) | t <- [0 .. 9 :: Int] ])
+    -- no allowed exit at all: 'Nothing', not a wrong room
+    let boxedOpts = defaultWanderOptions { woStayIn = ["sealed"] }
+    r6 <- expectEqual Nothing (roomWith boxedOpts st)
+    -- the run seed round-trips through the save and is only written when it
+    -- differs from the default (M2 byte contract for existing saves)
+    let sv1 = (save st) { runSeed = 12345 }
+    r7 <- expectEqual (runSeed sv1) (maybe 0 runSeed (Aeson.decode (Aeson.encode sv1)))
+    r8 <- expectTrue "non-default runSeed is written"
+            ("runSeed" `isInfixOf` BLC.unpack (Aeson.encode sv1))
+    r9 <- expectTrue "default runSeed keeps the historical encoding"
+            (not ("runSeed" `isInfixOf` BLC.unpack (Aeson.encode (save emptyGameState))))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9)
+
+-- | OPEN-14: the wander step effect — catalog line, author message override,
+--   silent empty message, silent no-op when boxed in, seeker-type contract.
+testWanderStepEffects :: IO Bool
+testWanderStepEffects = do
+    let st0 = pstate
+            [ ("start", [(North, Open "a"), (South, Open "b")])
+            , ("a", [(South, Open "start")])
+            , ("b", [(North, Open "start")])
+            ] [("wolf", "start")]
+        st = st0 { save = (save st0) { currentRoom = "a" } }
+        wolfRoom s = Map.lookup "wolf" (npcStates (save s)) >>= \ns ->
+            case npcLocation ns of InRoom r -> Just r; _ -> Nothing
+        silent evs = all null (lines (renderEvents evs))
+        (st1, evs1, _) =
+            applyOutcomeWith 0 0 (WanderStep (ActorNPC "wolf") defaultWanderOptions Nothing) "" st
+    r1 <- expectTrue "catalog wander message" ("wolf wanders to" `isInfixOf` renderEvents evs1)
+    r2 <- expectTrue "wolf moved to a neighbour" (wolfRoom st1 `elem` [Just "a", Just "b"])
+    -- the author message replaces the catalog line
+    let (st2, evs2, _) =
+            applyOutcomeWith 0 0 (WanderStep (ActorNPC "wolf") defaultWanderOptions
+                                    (Just "Der Wolf streift umher.")) "" st1
+    r3 <- expectTrue "author message shown" ("Der Wolf streift umher." `isInfixOf` renderEvents evs2)
+    -- an empty author message silences the step
+    let (st3, evs3, _) =
+            applyOutcomeWith 0 0 (WanderStep (ActorNPC "wolf") defaultWanderOptions (Just "")) "" st2
+    r4 <- expectTrue "empty message is silent" (silent evs3)
+    r5 <- expectTrue "silent step still moves" (wolfRoom st3 `elem` [Just "a", Just "b"])
+    -- boxed in: state unchanged, no output (unlike pursuit's no_path report)
+    let boxedOpts = defaultWanderOptions { woStayIn = ["sealed"] }
+        (st4, evs4, _) =
+            applyOutcomeWith 0 0 (WanderStep (ActorNPC "wolf") boxedOpts Nothing) "" st3
+    r6 <- expectEqual (wolfRoom st3) (wolfRoom st4)
+    r7 <- expectTrue "boxed-in wander is silent" (silent evs4)
+    -- only NPCs and ships wander
+    let (st5, _, _) =
+            applyOutcomeWith 0 0 (WanderStep ActorPlayer defaultWanderOptions Nothing) "" st4
+    r8 <- expectTrue "non-wanderer refused with a diagnostic" (not (null (diagnostics st5)))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
 -- | B3: the five closed mass operations over a count set (B2 dimensions).
 testMassOps :: IO Bool
 testMassOps = do
@@ -12415,6 +12502,8 @@ main = do
         , runTest "pursuit step effects: messages, override, seeker contract (Tür IV)" testPursuitStepEffects
         , runTest "pursuit fairness: locked door stops the pursuer (Tür IV)" testPursuitFairness
         , runTest "pursuit save/load recomputes the identical step (Tür IV)" testPursuitSaveLoad
+        , runTest "wander core: run-seed hash, filters, save encoding (OPEN-14)" testWanderCore
+        , runTest "wander step effects: messages, silence, seeker contract (OPEN-14)" testWanderStepEffects
         , runTest "tag predicates: actor carries / room holds tagged item (B2)" testTaggedItemPredicates
         , runTest "count family: items/npcs/alive, room or carried, tags (B2)" testCountSpec
         , runTest "mass ops: damage/move/reveal/consume/set_state (B3)" testMassOps

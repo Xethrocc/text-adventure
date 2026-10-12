@@ -637,6 +637,7 @@ applyOutcomeWith depth salt outcome targetId state
 
     StepToward seeker target opts mMsg   -> pursuitMove True seeker target opts mMsg state salt
     StepAwayFrom seeker target opts mMsg -> pursuitMove False seeker target opts mMsg state salt
+    WanderStep seeker opts mMsg          -> wanderMove seeker opts mMsg state salt
 
     -- B3: closed mass operations over a count set (never a user-supplied
     -- effect list as loop body — that is the G1 line).
@@ -1199,6 +1200,34 @@ setSeekerRoom (ActorShip v) room state =
         { vehicleStates = Map.adjust (\vs -> vs { vsCurrentStop = room }) v
                         (vehicleStates (save state)) } }
 setSeekerRoom _ _ state = state
+
+-- | OPEN-14: one aimless step of a wanderer — the pick itself is the
+--   deterministic run-seed hash in 'Game.wanderStep'. Only NPCs and ships may
+--   wander (same seeker contract as pursuit). Like 'pursuitMove', the
+--   optional author message replaces the catalog line; an empty message
+--   silences the step. A wanderer with no allowed exit is a normal condition
+--   (boxed in, single-room territory) and is therefore silent — unlike the
+--   pursuit 'no_path' report.
+wanderMove :: ActorRef -> WanderOptions -> Maybe String
+            -> GameState -> Int -> (GameState, [OutputEvent], Int)
+wanderMove seeker opts mMsg state salt =
+    case seeker of
+        ActorNPC _  -> walk
+        ActorShip _ -> walk
+        _ -> ( addDiagnostic "[engine] wander: only NPCs and ships can wander" state
+             , [], salt )
+  where
+    walk = case wanderStep opts state seeker of
+        Just (dir, room) ->
+            let st' = setSeekerRoom seeker room state
+                evs = case mMsg of
+                    Just m  -> evRaw (formatWithVars m st')
+                    Nothing -> evMsg "wander.step"
+                                    [ ("name", actorId seeker), ("room", room)
+                                    , ("dir", show dir) ]
+            in (st', evs, salt)
+        Nothing ->
+            (state, [], salt)
 
 -- | B3: the Location a count where maps to. `in: nowhere` maps to the dormant
 --   holding pen (`location: nowhere`, OPEN-04), so `to: {in: nowhere}` takes an

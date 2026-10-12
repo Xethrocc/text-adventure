@@ -8,6 +8,7 @@ module Main where
 
 import TextAdventure.Tui (runTui)
 import Game (resolveAsciiArt)
+import GameLoop (initRunSeed)
 import Sample (initSampleGame)
 import Types (GameState, world, save, worldName, worldTitleArt, isEmptyAscii)
 import Validate (validateWorld, validateGameState)
@@ -15,13 +16,17 @@ import World (loadGame, siblingSavePath)
 import System.Environment (getArgs, setEnv)
 import System.Exit (exitFailure)
 import System.IO (hSetEncoding, stdout, stderr, stdin, utf8)
+import Data.Word (Word64)
+import Text.Read (readMaybe)
 
 usage :: String
 usage = unlines
-    [ "Usage: text-adventure-tui [--world FILE] [--save FILE] [--allow-invalid] [--saves-dir DIR] [--help]"
+    [ "Usage: text-adventure-tui [--world FILE] [--save FILE] [--seed N] [--allow-invalid] [--saves-dir DIR] [--help]"
     , ""
     , "  --world FILE      Load a GameWorld from a JSON file (produced by the worldbuilder)."
     , "  --save FILE       Load an initial SaveState from a JSON file."
+    , "  --seed N          Pin the run seed (wandering NPC routes). Without it a fresh"
+    , "                    game draws a new seed; an explicit --save keeps its stored one."
     , "  --allow-invalid   Start even if the world has validation issues."
     , "  --saves-dir DIR   Redirect in-game saves (saves/<slot>.json) to DIR. Wins over"
     , "                    the TA_SAVES_DIR environment variable (Rogue Phase 0)."
@@ -34,17 +39,21 @@ usage = unlines
 data CliOptions = CliOptions
     { coWorld        :: Maybe FilePath
     , coSave         :: Maybe FilePath
+    , coSeed         :: Maybe Word64
     , coAllowInvalid :: Bool
     , coSavesDir     :: Maybe FilePath
     }
 
 parseArgs :: [String] -> Maybe CliOptions
-parseArgs args = go args (CliOptions Nothing Nothing False Nothing)
+parseArgs args = go args (CliOptions Nothing Nothing Nothing False Nothing)
   where
     go [] opts = Just opts
     go ("--help" : _) _ = Nothing
     go ("--world" : p : rest) opts = go rest opts { coWorld = Just p }
     go ("--save" : p : rest) opts = go rest opts { coSave = Just p }
+    go ("--seed" : p : rest) opts = case readMaybe p of
+        Just n  -> go rest opts { coSeed = Just n }
+        Nothing -> Nothing
     go ("--allow-invalid" : rest) opts = go rest opts { coAllowInvalid = True }
     go ("--saves-dir" : p : rest) opts = go rest opts { coSavesDir = Just p }
     go ("--no-audio" : rest) opts = go rest opts
@@ -71,8 +80,11 @@ main = do
             -- Rogue Phase 0: redirect the save directory on request (wins
             -- over TA_SAVES_DIR, same rule as the main CLI).
             maybe (pure ()) (setEnv "TA_SAVES_DIR") (coSavesDir opts)
+            -- OPEN-14: the run seed — `--seed` pins it, an explicit `--save`
+            -- keeps its stored seed, every other start draws a fresh one.
+            let prep st = initRunSeed (coSave opts /= Nothing) (coSeed opts) st
             case coWorld opts of
-                Nothing -> start initSampleGame
+                Nothing -> prep initSampleGame >>= start
                 Just worldPath -> do
                     savePath <- case coSave opts of
                         Just s  -> pure (Just s)
@@ -82,7 +94,8 @@ main = do
                         Left err -> do
                             putStrLn ("Failed to load adventure: " ++ err)
                             exitFailure
-                        Right state -> do
+                        Right loaded -> do
+                            state <- prep loaded
                             let valErrors = validateWorld (world state)
                                             ++ validateGameState (world state) (save state)
                             if not (null valErrors)

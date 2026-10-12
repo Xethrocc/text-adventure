@@ -1389,6 +1389,7 @@ emitAdventure t plan seed =
             , advJournal           = Nothing
             , advChapters          = []
             , advPursuit           = []
+            , advWander            = []
             , advContainers        = []
             , advInclude           = []
             , advFacts             = []

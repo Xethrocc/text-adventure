@@ -1,4 +1,4 @@
--- | Generated from lang/de.json (sha256: 4c375b5e2a3bb977f8f6323c8eb11b5f5117c1b3e5c49ca9670bf4e69338d72c) by scripts/gen-lang-pack.py.
+-- | Generated from lang/de.json (sha256: f5f436a55a00a29c3991d7a0b62ff632eeb9baa1709dc668fbcbb9e94ba7376c) by scripts/gen-lang-pack.py.
 --   DO NOT EDIT by hand - rerun the generator after changing the JSON.
 --
 --   Language-pack data (Phase 4.3): message templates keyed like the
@@ -211,6 +211,7 @@ langDe =
       , ("pursuit.step", "{name} bewegt sich nach {room}.")
       , ("pursuit.flee", "{name} flieht nach {room}.")
       , ("pursuit.no_path", "{name} findet keinen Weg.")
+      , ("wander.step", "{name} wandert nach {room}.")
       , ("container.not_a_container", "{target} ist kein Behälter.")
       , ("container.opened_reveals", "Öffnen von {article_dat} {name} zeigt {items}.")
       , ("container.dark_now", "Es ist jetzt stockdunkel.")

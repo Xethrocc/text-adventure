@@ -2,6 +2,49 @@
 
 ## Unreleased
 
+### OPEN-14: `wander:` — zielloses Umherstreifen mit Run-Seed-Hash & Kontakt-Kopplung
+
+Der Wunsch aus den Zork-Mechanik-Entscheidungen (A1/A2): NPCs streifen ziellos
+und wechseln bei Sicht-/Hörkontakt auf Verfolgung oder Flucht — plus
+Patrouillen-Modi (`mode: loop|pingpong|random`). Details in
+`docs/adventure-schema.md` (*Wandern: `wander:`*, *Patrol*).
+
+- **`wander:`-Sektion** pro NPC: `stay_in` (Raum-Liste/`{tag:}`), `avoid`,
+  `pace` (ein Schritt alle n Züge), `ignores: [locked, guarded]`, `notice: R`
+  (Kontakt-Radius in Hops), `on_notice: pursue|flee|hold`, `lose_after`, `msg`.
+  Kompiliert zu `on: turn`-Triggern (Mode/Step/Chase) mit den reservierten
+  Variablen `wander.<npc>.mode`/`.lost` (`WanderVariableClash`); Fehler
+  `UnknownWanderNPC`, `UnknownWanderRoom`, `BadWanderPace`, `BadWanderNotice`.
+- **Effekt `wander:`** (`WanderStep`): ein zielloser Schritt in einen zufällig
+  gewählten erlaubten Nachbarn. Meldungs-Vertrag wie `step_toward` (Katalog
+  `wander.step`, `msg: ""` = still); ein Wanderer ohne Ausgang bleibt still
+  (kein `no_path`-Spam). Nur NPCs und Schiffe.
+- **Determinismus:** die Schritt-Wahl ist ein Hash aus (Run-Seed, Zugzahl,
+  NPC-ID) über die stabil sortierten Kanten (`Pursuit.sortCandidates`) — kein
+  `rngState`-Verbrauch, stateless, speicher-stabil.
+- **Run-Seed (`save.runSeed`, neues SaveState-Feld):** wird beim Start gesetzt
+  und überlebt Save/Load. Explizites `--save` behält den gespeicherten Seed
+  (Tests/E2E/Fuzz/`test-open16.py` bleiben byte-identisch reproduzierbar);
+  `--seed N` (neue CLI-Flagge, CLI + TUI) setzt ihn ausdrücklich; ein Start
+  ohne `--save` zieht einen Uhr-Seed (`initRunSeed`, Clock in der IO-Schicht) —
+  pro Spiel andere Wanderrouten. Roguelike-Restart (`reseedRng`) und
+  `worldbuilder run`/`generate` leiten ihn wie `rngState` ab. **Byte-Vertrag:**
+  `runSeed` wird nur geschrieben, wenn ≠ `initialRngState` — bestehende Saves
+  bleiben bit-identisch. Launcher (`play.sh`/`play.bat`,
+  `packaging/windows/play.bat`) starten bewusst ohne `--save` (gleicher
+  Startzustand über den Sibling-Save, aber frischer Seed).
+- **Patrol-Modi** (`mode:` am `patrol.hostiles`-Eintrag): `loop` (Default,
+  byte-identisch), `pingpong` (Hin- und Her, Richtung in
+  `patrol.<npc>.dir`), `random` (Nachbar auf dem Pfad-Ring, Strom
+  `patrol.<npc>`). Fehler `BadPatrolMode`; Einträge ohne `warn`/`attack` sind
+  friedliche Wanderer.
+- **Zork-Port:** `thief-wanders` (7/10-Dauerverfolgung) ersetzt durch
+  `wander:`-Eintrag — originalgetreue Ausschlüsse (37 `SACREDBIT`-Räume +
+  Nicht-Land aus `1dungeon.zil`), Hinterhalt-Verhalten (`notice: 2`,
+  `on_notice: pursue`), `thief-steals` prüft jetzt direkt
+  `distance.thief.player`, neu `thief-footsteps` als Fussstapfen-Flavour.
+  `win.py` verliert den Früh-Kill-Block (nicht mehr nötig/notwendig).
+
 ### OPEN-18: Zufallsauswahl in `messages:` (Zork `PICK-ONE`)
 
 Ein `messages:`-Wert darf jetzt statt eines einzelnen Textes eine **Liste von

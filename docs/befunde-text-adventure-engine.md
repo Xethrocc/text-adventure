@@ -5,6 +5,8 @@ Stufen A–F · **Vollständige Fassung** zu `plan-zork-port.md` §5 ·
 **Update 2026-10-08:** `OPEN-01`..`OPEN-09` sind umgesetzt (Commits in §7) ·
 **Update 2026-10-11:** `OPEN-14`..`OPEN-23` aus `plan-zork-mechanik-entscheidungen.md` eingetragen ·
 **Update 2026-10-11 (spät):** `OPEN-15` (`steal:`) und `OPEN-20` (`swap_inventory:`) umgesetzt
+**Update 2026-10-12:** `OPEN-14` (`wander:`) umgesetzt — inkl. Run-Seed (`save.runSeed`),
+Patrol-Modi `mode: pingpong|random` und Dieb-Umbau im Zork-Port (`thief-wanders` → `wander:`)
 
 **Zweck:** Alles, was beim Bauen von Abenteuern und Regeln stolpert oder gestolpert hat —
 Laufzeit-Semantik, Workarounds, behobene Engine-Bugs und offene Engine-Punkte. Kein
@@ -146,7 +148,7 @@ keinen Zielraum, `FIX-07`).
 
 | ID | Status | Befund |
 |---|---|---|
-| `W-01` | ⚙️ | **Die Engine-RNG ist deterministisch *und* der Seed ist fest verdrahtet:** `rngState` steht als Konstante im initialen Save (zork1: `11400714819323198485`), nicht als Uhrzeit-Zufall. Gleiche Befehlsfolge = **byte-identische** Ausgabe (per `md5sum` verifiziert). ⚠️ Nicht zubverbrauchende Befehle (`look`, `inventory`, `stats`) ziehen **keinen** Slot — nur Zug-Befehle. Zufalls-Events (Troll-Würfel, Dieb-Steal) testet man also über die **Zugzahl/-folge**, nicht über „Lauf"-Wiederholungen. Sehr nützlich: `rngState` im Save überschreiben (`seed.py rng=42`), um eine ganze Zugfolge festzuzurren. |
+| `W-01` | ⚙️ | **Die Engine-RNG ist deterministisch *und* der Seed ist fest verdrahtet:** `rngState` steht als Konstante im initialen Save (zork1: `11400714819323198485`), nicht als Uhrzeit-Zufall. Gleiche Befehlsfolge = **byte-identische** Ausgabe (per `md5sum` verifiziert). ⚠️ Nicht zubverbrauchende Befehle (`look`, `inventory`, `stats`) ziehen **keinen** Slot — nur Zug-Befehle. Zufalls-Events (Troll-Würfel, Dieb-Steal) testet man also über die **Zugzahl/-folge**, nicht über „Lauf"-Wiederholungen. Sehr nützlich: `rngState` im Save überschreiben (`seed.py rng=42`), um eine ganze Zugfolge festzuzurren. ⚠️ **Ergänzt 2026-10-12 (OPEN-14):** der *Wander*-Zufall hängt nicht an `rngState`, sondern am neuen `save.runSeed` — der bei einem Spielstart **ohne** explizites `--save` von der Uhr gezogen wird (und bei Roguelike-Restarts neu ist). Byte-identische Läufe brauchen deshalb wie gehabt `--save` (Seed im Save) oder die neue `--seed N`-Flagge; beides ist in CI/E2E so gesetzt. |
 | `W-02` | ✅ | **~35 `DeadExit`-Warnungen** von `worldbuilder validate` kommen vom Muster `when: {not: {'true': true}}` für absichtlich blockierte Ausgänge — funktional korrekt, aber Rauschen. Schön wäre eine eigene „blocked"-Syntax (`Wunsch: OPEN-06`). |
 | `W-03` | ⚙️ | **Punkte zählen im Port bei Erstnahme**, nicht über die Vitrine (Original: `OTVAL-FROB`). Dokumentierte Abweichung, `plan-k17-score.md` §7.4. |
 | `W-04` | 🔧 | **Engine-Nummerierung uneinheitlich:** Score-System heißt Plan/Code „K17", der Commit „K11e" — vereinheitlichen. |
@@ -195,7 +197,7 @@ keinen Zielraum, `FIX-07`).
 | `OPEN-11` | **Ziele „aktueller Raum" / „Raum des NPCs"** | `place:`, `move_npc:`, `move_all … to: {in: X}` verlangen ein **literales** Ziel. Damit ist nicht ausdrückbar: „Item fällt vor die Füße" (Glocke/Kerzen, Dieb-Beute), „Dieb lässt Kram in *seinem* Raum liegen" (`DROP-JUNK`), „NPC zieht zum Spieler". Workaround im Port: `give:` (Landet in den Händen) bzw. der Zielraum ist durch die Regel selbst bestimmt. | ✅ 2026-10-09 — Dynamische Ziele `{here}`, `{room_of: <npc>}` in `worldbuilder` & Engine umgesetzt. |
 | `OPEN-12` | **Zustandsabhängige Item-Tags** | „Die Kerze ist nur, solange sie brennt, `lightsource`" — Tags waren statisch, die Dunkelheitsprüfung beleuchtete Räume auch mit ausgegangener Lampe. | ✅ 2026-10-09 (`tags_when`, Stufe E) — `tags_when: {<zustand>: [tags]}`, effektive Tags = `tags` ∪ `tags_when[status]`; alle Tag-Prüfungen (Dunkelheit, `feelable`, B2, `reveal_all`) und die Validierung (`itemTagsAnyState`) ziehen mit. JSON nur bei Befüllung (Byte-Vertrag). |
 | `OPEN-13` | **Dunkelheit & Zielauflösung an `LIT?`/Parser angeglichen** | Drei Kleinteile aus Stufe E: (a) ein `dark`-Raum blieb dunkel, obwohl eine brennende Fackel *darin lag* (Original `LIT?` sieht Raum-Objekte); (b) `drink water`/`eat lunch` fanden Items nicht, die in einem *getragenen* Container liegen; (c) `consume` dort mit `consume.not_reachable` scheiterte. | ✅ 2026-10-09 — `isDark` sieht Raum-Lichtquellen, `resolveTarget` glättet getragene Container (`visibleItemsAt`), `isReachableForConsume` folgt der Containerkette. Regressionstests in den jeweiligen Suiten. |
-| `OPEN-14` | **Patrouillen & Wandern (mit Pursuit-Kopplung)** | NPCs bewegen sich auf Patrouillenrouten oder wandern zufällig durch Nachbarräume; wechselt bei Sicht-/Hörkontakt dynamisch auf `StepToward` / `pursuit` (A1/A2). | 📋 Geplant (2026-10-11) |
+| `OPEN-14` | **Patrouillen & Wandern (mit Pursuit-Kopplung)** | NPCs bewegen sich auf Patrouillenrouten oder wandern zufällig durch Nachbarräume; wechselt bei Sicht-/Hörkontakt dynamisch auf `StepToward` / `pursuit` (A1/A2). | ✅ 2026-10-12 — `wander:`-Sektion + `WanderStep`-Effekt: zielloser Schritt als Hash aus (Run-Seed, Zug, NPC-ID) über die stabil sortierten Kanten (stateless, kein `rngState`-Verbrauch), `stay_in`/`avoid`/`ignores`/`pace`; `notice:`/`on_notice: pursue|flee|hold`/`lose_after` koppeln an `StepToward`/`StepAwayFrom` (Variablen `wander.<npc>.mode`/`.lost`, reserviert). Run-Seed als neues `save.runSeed` (nur bei ≠ Default im JSON — Byte-Vertrag): explizites `--save` behält ihn (Tests reproduzierbar), `--seed N` setzt ihn, menschlicher Start ohne `--save` zieht einen Uhr-Seed. Patrol zusätzlich `mode: loop|pingpong|random` (`BadPatrolMode`). |
 | `OPEN-15` | **`steal_item`-Aktion/Effekt** | Zielgerichteter Diebstahl von Items für NPCs und Spieler (z. B. `steal: {from: <actor>, item: <item>}`), statt pauschalem `move_all` (A3). | ✅ 2026-10-11 — `steal: {item, from, to?, msg?}` (`StealItem`): nimmt genau dieses Item aus den Beständen von `from:` (getragen, ausgerüstet **oder** im mitgeführten Container — A3 „Taschen-Gegenstände“, auch geschlossen) nach `to:` (Default `player`). Ohne Fund No-op mit `steal.no_item`/`npc.no_item`; `msg:` ersetzt die Erfolgs-Meldung. Rollen-Meldungen wie im ganzen Katalog: Spieler als Dieb → `npc.took_from`, als Opfer → `steal.from_you`, NPC ↔ NPC → `steal.taken`. `from: == to:` stiller No-op. |
 | `OPEN-16` | **Parser Default-Ziel bei eineindeutigem Scope** | Bei transitiven Verben (`attack`, `open`, etc.) ohne angegebenes Objekt automatisch das einzige passende Ziel im Raum anvisieren (A5). | ✅ 2026-10-11 — `bareVerbCandidates` + `interactEntityById` + `containerCandidates`; bare `open`/`close`/`lock`/`unlock`/`use`/`look at` werden erkannt; Custom-Verben mit `on: command`-Trigger behalten altes Verhalten. |
 | `OPEN-17` | **Generische Item-Timer (`fuel` / `burn_time`)** | Zähler/Verbrauch für Gegenstände (Fackeln, Batterien, Kerzen, abkühlende Glocken) analog zum Fuel-System von Fahrzeugen (B2/D6). | ✅ 2026-10-11 — `fuel: {start, ticks_when, warn, on_empty}` am Item (`FuelDef`): Zähler in `itemProps["fuel"]` (persistiert, lesbar als `item.<id>.fuel`), Tick pro verbrauchtem Zug (`tickItemFuels` neben `tickConditions`), `ticks_when` pausiert („extinguish“ wie `DISABLE`), Meilensteine feuern bei Tick-Dekrementen auf ihren Wert (Sprünge überspringen sie), `on_empty` beim Werden-0. Effekte `set_fuel: {item, to}` / `add_fuel: {item, delta}` (klammert bei 0; Item ohne `fuel:` → No-op + Diagnose). Removed/Dormant-Items frieren ein. |
@@ -255,6 +257,24 @@ in Regeln).
   (Original: `HELD?` + `ONBIT` für candles/torch/match — **die Lampe ist sicher**).
 - Leck: `use putty on leak` statt `put putty`/`plug leak with putty`; `squeeze tube` entfällt.
 - Maschine: **Dumbwaiter-Kette (Kohlegrube ↔ Schatzkammer) fehlt noch.**
+
+**Stufe D — Dieb:**
+- **Dieb-Wanderung (seit OPEN-14, 2026-10-12):** `thief-wanders` (die alte
+  7/10-Dauerverfolgung über `step_toward`/`step_away`) ist durch einen
+  `wander:`-Eintrag ersetzt. Recherchenbefund zur Wahrheit: das Original
+  wandert **nicht zufällig** — `I-THIEF` (1actions.zil:3890) schiebt den Dieb
+  jede Runde eine Position in der Raumliste weiter (`NEXT?` über den
+  `ROOMS`-Baum) und überspringt dabei alles mit `SACREDBIT` sowie alles
+  Nicht-Land (`RLANDBIT`). Die Ausschlüsse sind als `avoid:` originalgetreu
+  übernommen (37 `SACREDBIT`-Räume + `reservoir`/`in-stream`); die geordnete
+  Rundreise ist bewusst durch zielloseres Streifen ersetzt (Auftraggeber-
+  Entscheidung „Hinterhalter"). Kontakt bei Distanz ≤ 2 → Verfolgung
+  (`notice: 2, on_notice: pursue, lose_after: 2`), still (`msg: ''`), Flavour
+  liegt in `thief-footsteps`/`thief-steals`. Bewusste Abweichung: die
+  Ausschluss-Räume gelten nur fürs Streifen, die Verfolgung ignoriert sie.
+  ⚠️ `win.py`-Check: die Früh-Kill-Strategie (30 × `attack thief` in der
+  living-room) beruhte auf der alten Dauerverfolgung und ist gestrichen —
+  der Dieb kommt nicht mehr von allein, Diebstahl wird entsprechend seltener.
 
 **Stufe E — Licht & Alltag:**
 - **Brenndauern exakt nach den Original-Tabellen:** Lampe 385 Züge ab Entzünden

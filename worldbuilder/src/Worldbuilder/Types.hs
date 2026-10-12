@@ -60,6 +60,7 @@ data Adventure = Adventure
     , advJournal          :: Maybe String                -- ^ journal: notes | messages (W1; default: messages = no notes command)
     , advChapters         :: [AChapterDef]               -- ^ chapters (W3, narrative order)
     , advPursuit          :: [APursuitEntry]             -- ^ pursuit (Tür IV): per-pursuer chase config
+    , advWander           :: [AWanderEntry]              -- ^ wander (OPEN-14): aimless NPCs with notice/pursuit coupling
     , advContainers       :: [AContainerDef]             -- ^ stationary containers (4.4)
     , advFacts            :: [AFactDef]                  -- ^ knowledge facts (W1)
     , advStatements       :: [AStatement]                -- ^ knowledge statements (K9)
@@ -147,6 +148,7 @@ instance FromJSON Adventure where
         <*> o .:? "journal"      .!= Nothing
         <*> o .:? "chapters"   .!= []
         <*> o .:? "pursuit"    .!= []
+        <*> o .:? "wander"     .!= []
         <*> o .:? "containers" .!= []
         <*> o .:? "facts"      .!= []
         <*> parseStatementsField o
@@ -1266,6 +1268,7 @@ data AHostile = AHostile
     , ahGuardian   :: Bool
     , ahWarn       :: Maybe String
     , ahAttack     :: [AActionOutcome]
+    , ahMode       :: String              -- ^ "loop" (default) | "pingpong" | "random"
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AHostile where
@@ -1276,6 +1279,7 @@ instance FromJSON AHostile where
         <*> o .:? "guardian"    .!= False
         <*> o .:? "warn"
         <*> o .:? "attack"      .!= []
+        <*> o .:? "mode"        .!= "loop"
 
 -- ---------------------------------------------------------------------------
 -- Combat (Phase 7f): authored combat profile
@@ -1547,6 +1551,67 @@ instance FromJSON APursuitEntry where
         <*> o .:? "ignores" .!= []
         <*> o .:? "msg"     .!= Nothing
 
+-- | OPEN-14: one wanderer authored under `wander:`. Aimless movement whose
+--   step is the deterministic run-seed hash pick of the engine; `notice:`
+--   couples it to the pursuit vocabulary — within `notice` hops of the target
+--   the NPC switches to `on_notice` (pursue | flee | hold) and returns to
+--   wandering `lose_after` turns after contact is lost.
+data AWanderEntry = AWanderEntry
+    { aweNpc       :: String             -- ^ the wandering NPC
+    , aweStayIn    :: [String]           -- ^ optional room list: step only into these rooms
+    , aweStayInTag :: Maybe String       -- ^ optional: step only into rooms carrying this tag
+    , aweAvoid     :: [String]           -- ^ optional room list: never step into these rooms
+    , awePace      :: Int                -- ^ one step every nth turn-consuming turn (default 1)
+    , aweIgnores   :: [String]           -- ^ "locked" / "guarded" exits passable
+    , aweNotice    :: Maybe Int          -- ^ contact radius in hops (no contact logic when absent)
+    , aweOnNotice  :: String             -- ^ "pursue" (default) | "flee" | "hold"
+    , aweLoseAfter :: Int                -- ^ turns without contact before wandering resumes (default 1)
+    , aweMsg       :: Maybe String       -- ^ optional per-step message (default: catalog line)
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AWanderEntry where
+    parseJSON = withObject "AWanderEntry" $ \o -> do
+        npc <- o .: "npc"
+        opts <- parseWanderOptions (Object o)
+        AWanderEntry npc (E.woStayIn opts) (E.woStayInTag opts) (E.woAvoid opts)
+            <$> o .:? "pace"       .!= 1
+            <*> o .:? "ignores"    .!= []
+            <*> o .:? "notice"
+            <*> o .:? "on_notice"  .!= "pursue"
+            <*> o .:? "lose_after" .!= 1
+            <*> (o .:? "msg" >>= maybe (o .:? "message") (pure . Just))
+
+-- | OPEN-14: the YAML shape of one wander option set. `stay_in:` is a room
+--   list, a bare tag string or `{tag: <tag>}` / `{rooms: [...]}`; `avoid:` a
+--   room list; `ignores:` the same values the `pursuit:` section knows.
+--   Shared by the `wander:` section and the `wander:` effect.
+parseWanderOptions :: Value -> Parser E.WanderOptions
+parseWanderOptions = withObject "wander options" $ \o -> do
+    (stayRooms, stayTag) <- o .:? "stay_in" >>= parseStayIn
+    avoid   <- o .:? "avoid"   .!= ([] :: [String])
+    ignores <- o .:? "ignores" .!= ([] :: [String])
+    if all (`elem` ["locked", "guarded"]) ignores
+        then pure ()
+        else fail "wander: ignores must be 'locked' or 'guarded'"
+    pure E.WanderOptions
+        { E.woStayIn        = stayRooms
+        , E.woStayInTag     = stayTag
+        , E.woAvoid         = avoid
+        , E.woIgnoreLocked  = "locked"  `elem` ignores
+        , E.woIgnoreGuarded = "guarded" `elem` ignores
+        }
+  where
+    parseStayIn Nothing                = pure ([], Nothing)
+    parseStayIn (Just (String t))      = pure ([], Just (T.unpack t))
+    parseStayIn (Just v@(Array _))     = do
+        rs <- parseJSON v :: Parser [String]
+        pure (rs, Nothing)
+    parseStayIn (Just (Object so))     = do
+        rs <- so .:? "rooms" .!= []
+        t  <- so .:? "tag"
+        pure (rs, maybe Nothing (Just . T.unpack) t)
+    parseStayIn (Just _)               = fail "stay_in: expected a room list or {tag: ...}"
+
 -- | 4.4: a stationary container (chest, coffin, cabinet) authored under
 --   `containers:`. Portable containers are items with `capacity:`.
 data AContainerDef = AContainerDef
@@ -1696,6 +1761,8 @@ data AActionOutcome
       -- ^ step_toward: [seeker, target, msg?] — one edge toward (Tür IV)
     | AOStepAwayFrom String E.DistanceTarget (Maybe String)
       -- ^ step_away_from: [seeker, target, msg?] — one edge away (Tür IV)
+    | AOWander String E.WanderOptions (Maybe String)
+      -- ^ wander: [npc, options?, msg?] — one aimless step (OPEN-14)
     | AODamageAll E.CountSpec Int           -- ^ damage_all: {what, in|by, tag?, amount}
     | AOMoveAll E.CountSpec E.CountWhere    -- ^ move_all: {what, in|by, tag?, to: {in|by}}
     | AORevealAll E.CountSpec               -- ^ reveal_all: {what, in|by, tag?}
@@ -1828,6 +1895,22 @@ instance FromJSON AActionOutcome where
                         mMsg   <- so .:? "msg" >>= maybe (so .:? "message") (pure . Just)
                         pure (AOStepAwayFrom seeker target mMsg)
                     _ -> fail "step_away_from: expected list or object")
+        <|> (do wdv <- o .: "wander"
+                case wdv of
+                    String n -> pure (AOWander (T.unpack n) E.defaultWanderOptions Nothing)
+                    Array _ -> do
+                        t <- parseJSON wdv :: Parser [Value]
+                        case t of
+                            [a]       -> AOWander <$> parseJSON a <*> pure E.defaultWanderOptions <*> pure Nothing
+                            [a, p]    -> AOWander <$> parseJSON a <*> parseWanderOptions p <*> pure Nothing
+                            [a, p, m] -> AOWander <$> parseJSON a <*> parseWanderOptions p <*> (Just <$> parseJSON m)
+                            _         -> fail "wander: expected [npc, options?, msg?]"
+                    Object wo -> do
+                        npc <- wo .: "npc"
+                        opts <- parseWanderOptions (Object wo)
+                        mMsg <- wo .:? "msg" >>= maybe (wo .:? "message") (pure . Just)
+                        pure (AOWander npc opts mMsg)
+                    _ -> fail "wander: expected npc, list or object")
         -- B3: closed mass operations (the count-set language of B2 plus an
         -- operation-specific parameter; never a user effect list).
         <|> (do o' <- o .: "damage_all" :: Parser Object
@@ -2113,7 +2196,7 @@ knownKeys EntAdventure = Set.fromList
     , "encounter_tables", "environment", "stealth", "patrol", "combat"
     , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
     , "handLimit", "hand_limit", "sandbox_zones", "procedures", "tests", "include"
-    , "facts", "statements", "combine", "combine_verb", "journal", "chapters", "devices", "pursuit", "containers"
+    , "facts", "statements", "combine", "combine_verb", "journal", "chapters", "devices", "pursuit", "wander", "containers"
     , "progression", "assets", "language", "messages"
     ]
 knownKeys EntRoom = Set.fromList

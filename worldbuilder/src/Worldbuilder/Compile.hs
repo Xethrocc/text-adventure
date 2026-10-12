@@ -630,12 +630,19 @@ compileAdventure adv =
         (patrolConflictErrs, patrolAllVarDefs, patrolAllVarInitials) =
             mergePatrolVars stealthAllVarDefs stealthAllVarInitials patrolVarDefs patrolVarInitials
 
+        -- OPEN-14: `wander:` laesst NPCs ziellos umherziehen (deterministischer
+        -- Run-Seed-Hash); `notice:` schaltet bei Kontakt auf Verfolgung/Flucht.
+        (wanderErrs, wanderTriggerDefs, wanderVarDefs, wanderVarInitials) =
+            compileWander (advWander adv) (Map.keys npcDefsWithParty) (Map.keys allRooms)
+        (wanderConflictErrs, wanderAllVarDefs, wanderAllVarInitials) =
+            mergeWanderVars patrolAllVarDefs patrolAllVarInitials wanderVarDefs wanderVarInitials
+
         -- Phase 7g: `party:` blocks declare the follow variable party.<npcId>
         -- and one order verb that toggles membership.
         (partyErrs, partyVerbEntries, partyVarDefs, partyVarInitials) =
             compileParty verbRegistry (advNPCs adv)
         (partyConflictErrs, partyAllVarDefs, partyAllVarInitials) =
-            mergePartyVars patrolAllVarDefs patrolAllVarInitials partyVarDefs partyVarInitials
+            mergePartyVars wanderAllVarDefs wanderAllVarInitials partyVarDefs partyVarInitials
         npcDefsWithParty = Map.mapWithKey (addPartyVerbEntry partyVerbEntries) npcDefs
 
         -- Phase 7h: ship systems (VarMap) + station verbs per interior room
@@ -651,7 +658,7 @@ compileAdventure adv =
         gainXpWarns = checkGainXpWithoutProgression adv
 
         allTriggerDefs = triggerDefs ++ encounterDefs ++ envTriggerDefs ++ stealthTriggerDefs
-                        ++ pursuitTriggers
+                        ++ pursuitTriggers ++ wanderTriggerDefs
             ++ patrolTriggerDefs ++ shipTriggerDefs
             ++ knowledgeTriggers ++ journalTriggers ++ deviceTriggers
         -- W1/W4: inject the generated combine/notes/device verbs into the registry so
@@ -858,6 +865,7 @@ compileAdventure adv =
                     ++ knownVarErrs
                     ++ chapterErrs
                     ++ pursuitErrs
+                    ++ wanderErrs ++ wanderConflictErrs
                     ++ containerErrs
                     ++ knowledgeClashErrs
                     ++ journalErrs
@@ -917,6 +925,7 @@ compileAdventure adv =
                                   })
                               Nothing        -> Nothing
                         , E.dynamicRooms = Map.empty
+                        , E.runSeed = E.initialRngState
                         }
                 yamlKeyWarns = case advRawValue adv of
                     Just v  -> checkUnknownYamlKeys v
@@ -1609,31 +1618,81 @@ compilePatrol roomIds npcIds (Just p) =
         walkers = [ h | h <- hostiles, not (ahGuardian h) ]
         movedVar h = "patrol." ++ ahNPC h ++ ".moved"
         indexVar h = "patrol." ++ ahNPC h ++ ".index"
-        varDefs = Map.union
-            (Map.fromList [ (movedVar h, E.VarDef (movedVar h) (E.VTInt Nothing Nothing) (E.VVInt 0) [] [])
-                          | h <- walkers ])
-            (Map.fromList [ (indexVar h, E.VarDef (indexVar h) (E.VTInt Nothing Nothing) (E.VVInt (ahStartIndex h)) [] [])
-                          | h <- walkers ])
-        initials = Map.union
-            (Map.fromList [ (movedVar h, E.VVInt 0) | h <- walkers ])
-            (Map.fromList [ (indexVar h, E.VVInt (ahStartIndex h)) | h <- walkers ])
+        dirVar h = "patrol." ++ ahNPC h ++ ".dir"
+        varDefs = Map.unions
+            [ Map.fromList [ (movedVar h, E.VarDef (movedVar h) (E.VTInt Nothing Nothing) (E.VVInt 0) [] [])
+                          | h <- walkers ]
+            , Map.fromList [ (indexVar h, E.VarDef (indexVar h) (E.VTInt Nothing Nothing) (E.VVInt (ahStartIndex h)) [] [])
+                          | h <- walkers ]
+            , Map.fromList [ (dirVar h, E.VarDef (dirVar h) (E.VTInt Nothing Nothing) (E.VVInt 1) [] [])
+                          | h <- walkers, ahMode h == "pingpong", length (ahPath h) >= 2 ]
+            ]
+        initials = Map.unions
+            [ Map.fromList [ (movedVar h, E.VVInt 0) | h <- walkers ]
+            , Map.fromList [ (indexVar h, E.VVInt (ahStartIndex h)) | h <- walkers ]
+            , Map.fromList [ (dirVar h, E.VVInt 1) | h <- walkers, ahMode h == "pingpong", length (ahPath h) >= 2 ]
+            ]
 
         clearTrig h =
             E.TriggerDef ("patrol.clear." ++ ahNPC h) E.OnTurn Nothing
                 [ E.SetValue (E.VRVariable (movedVar h)) (E.EVInt 0) ] False 0 1 [] []
 
-        stepTrigs h = [ stepTrig h i | i <- [0 .. length (ahPath h) - 1] ]
+        stepTrigs h =
+            case ahMode h of
+                -- loop (default) keeps the historical round trip byte for
+                -- byte; pingpong/random need at least two path rooms.
+                "pingpong" | len >= 2 -> [ pingTrig h i | i <- [0 .. len - 1] ]
+                "random"   | len >= 2 -> [ randTrig h i | i <- [0 .. len - 1] ]
+                _                     -> [ stepTrig h i | i <- [0 .. len - 1] ]
+          where len = length (ahPath h)
+
+        stepGuard h i =
+            E.PAll [ E.PNot (E.EntityHasState (ahNPC h) "dead")
+                   , E.CompareVar (indexVar h) E.CEq i
+                   , E.CompareVar (movedVar h) E.CEq 0 ]
+
+        -- | Total move to path index `next` (callers take it modulo the path
+        --   length, so `roomAt` always finds the room; the filtered-out move
+        --   only keeps this helper total). `dir` sets the pingpong direction.
+        moveEffects h next dir =
+            [ E.MoveEntity (ahNPC h) (E.InRoom r) | Just r <- [roomAt h next] ]
+            ++ [ E.SetValue (E.VRVariable (indexVar h)) (E.EVInt next)
+               , E.SetValue (E.VRVariable (movedVar h)) (E.EVInt 1) ]
+            ++ [ E.SetValue (E.VRVariable (dirVar h)) (E.EVInt d) | Just d <- [dir] ]
+        roomAt h i = case drop i (ahPath h) of
+            (r:_) -> Just r
+            []    -> Nothing
+
+        -- loop (default): one step forward along the round trip.
         stepTrig h i =
             E.TriggerDef ("patrol.step." ++ ahNPC h ++ "." ++ show i) E.OnTurn
-                (Just (E.PAll
-                    [ E.PNot (E.EntityHasState (ahNPC h) "dead")
-                    , E.CompareVar (indexVar h) E.CEq i
-                    , E.CompareVar (movedVar h) E.CEq 0 ]))
-                [ E.MoveEntity (ahNPC h) (E.InRoom (ahPath h !! next))
-                , E.SetValue (E.VRVariable (indexVar h)) (E.EVInt next)
-                , E.SetValue (E.VRVariable (movedVar h)) (E.EVInt 1)
+                (Just (stepGuard h i))
+                (moveEffects h ((i + 1) `mod` length (ahPath h)) Nothing)
+                False 0 1 [] []
+
+        -- pingpong: bounce between the ends of the path (dir = ±1).
+        pingTrig h i =
+            E.TriggerDef ("patrol.step." ++ ahNPC h ++ "." ++ show i) E.OnTurn
+                (Just (stepGuard h i))
+                [ E.Conditional (E.CompareVar (dirVar h) E.CEq 1)
+                    (E.Sequence (if i == len - 1
+                                 then moveEffects h (i - 1) (Just (-1))
+                                 else moveEffects h (i + 1) Nothing))
+                    (E.Sequence (if i == 0
+                                 then moveEffects h 1 (Just 1)
+                                 else moveEffects h (i - 1) Nothing))
                 ] False 0 1 [] []
-          where next = (i + 1) `mod` length (ahPath h)
+          where len = length (ahPath h)
+
+        -- random: step to either neighbour on the path ring (B8 stream).
+        randTrig h i =
+            E.TriggerDef ("patrol.step." ++ ahNPC h ++ "." ++ show i) E.OnTurn
+                (Just (stepGuard h i))
+                [ E.RandomChoiceOn ("patrol." ++ ahNPC h)
+                    [ (1, E.Sequence (moveEffects h ((i + 1) `mod` len) Nothing))
+                    , (1, E.Sequence (moveEffects h ((i - 1 + len) `mod` len) Nothing)) ]
+                ] False 0 1 [] []
+          where len = length (ahPath h)
 
         warnTrigs h
             | Just txt <- ahWarn h = [ sharedTrig "warn" (E.SendMessage txt) h ]
@@ -1670,7 +1729,11 @@ compilePatrol roomIds npcIds (Just p) =
             [ ciError ("patrol.hostiles." ++ ahNPC h ++ ".path") "UnknownPatrolRoom"
                 ("patrol room '" ++ r ++ "' is not a declared room")
             | h <- hostiles, r <- ahPath h, r `notElem` roomIds ]
-    in ( unknownNpc ++ emptyPath ++ unknownRooms
+        badMode =
+            [ ciError ("patrol.hostiles." ++ ahNPC h) "BadPatrolMode"
+                ("patrol mode '" ++ ahMode h ++ "' is not a movement mode (use 'loop', 'pingpong' or 'random')")
+            | h <- hostiles, ahMode h `notElem` ["loop", "pingpong", "random"] ]
+    in ( unknownNpc ++ emptyPath ++ unknownRooms ++ badMode
        , concatMap trigs hostiles
        , varDefs, initials )
 
@@ -1686,6 +1749,149 @@ mergePatrolVars varDefs varInitials patrolDefs patrolInitials =
             | name <- Map.keys varDefs
             , name `Map.member` patrolDefs ]
     in (clashErrs, Map.union patrolDefs varDefs, Map.union patrolInitials varInitials)
+
+-- | Merge the wander variables into the declared ones, rejecting a clash
+--   (the author must not declare `wander.<npc>.*` under `variables:`).
+mergeWanderVars :: Map.Map String E.VarDef -> Map.Map String E.VariableValue
+                -> Map.Map String E.VarDef -> Map.Map String E.VariableValue
+                -> ([CompileIssue], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+mergeWanderVars varDefs varInitials wanderDefs wanderInitials =
+    let clashErrs =
+            [ ciError ("variables." ++ name) "WanderVariableClash"
+                ("'" ++ name ++ "' is a wander variable; declare it under 'wander:' instead")
+            | name <- Map.keys varDefs
+            , name `Map.member` wanderDefs ]
+    in (clashErrs, Map.union wanderDefs varDefs, Map.union wanderInitials varInitials)
+
+-- ---------------------------------------------------------------------------
+-- Wander (OPEN-14)
+-- ---------------------------------------------------------------------------
+
+-- | OPEN-14: `wander:` entries become movement triggers plus the mode
+--   machinery of the notice coupling. Per NPC:
+--
+--   * `wander.<npc>.mode` (0 = wander, 1 = pursue, 2 = flee, 3 = hold) and
+--     `wander.<npc>.lost` (turns since contact was lost) — both reserved like
+--     `patrol.<npc>.*`. Without `notice:` the mode stays 0.
+--   * one `on: turn` mode trigger (contact = `distance.<npc>.player` within
+--     the radius), one aimless step trigger ('E.WanderStep', paced by the
+--     trigger cooldown) and, for pursue/flee, one chase trigger. The triggers
+--     are emitted in npc-id order and mode-before-step, so contact is
+--     answered in the same turn.
+--
+--   Checks: UnknownWanderNPC, UnknownWanderRoom, BadWanderPace,
+--   BadWanderNotice; the reserved-name clash is 'mergeWanderVars'.
+compileWander :: [AWanderEntry] -> [String] -> [String]
+              -> ([CompileIssue], [E.TriggerDef], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+compileWander entries knownNpcs knownRooms = (errs, concatMap trigs sorted, varDefs, initials)
+  where
+    sorted = sortOn aweNpc entries
+    modeVar e = "wander." ++ aweNpc e ++ ".mode"
+    lostVar e = "wander." ++ aweNpc e ++ ".lost"
+    distVar e = "distance." ++ aweNpc e ++ ".player"
+    varDefs = Map.fromList
+        ( concat [ [ (modeVar e, E.VarDef (modeVar e) (E.VTInt Nothing Nothing) (E.VVInt 0) [] [])
+                  , (lostVar e, E.VarDef (lostVar e) (E.VTInt Nothing Nothing) (E.VVInt 0) [] []) ]
+                 | e <- sorted ])
+    initials = Map.fromList
+        ( concat [ [ (modeVar e, E.VVInt 0), (lostVar e, E.VVInt 0) ] | e <- sorted ])
+
+    paceCooldown e = max 0 (awePace e - 1)
+    alive e = E.PNot (E.EntityHasState (aweNpc e) "dead")
+    pursOpts e = E.PursuitOptions ("locked" `elem` aweIgnores e) ("guarded" `elem` aweIgnores e)
+
+    onNoticeCode "flee" = 2
+    onNoticeCode "hold" = 3
+    onNoticeCode _      = 1
+
+    trigs e = modeTrigs e ++ [stepTrig e] ++ chaseTrigs e
+
+    -- contact handling: switch to the on_notice mode on contact, count the
+    -- turns without contact, resume wandering after `lose_after` (0 = the
+    -- same turn contact is lost).
+    modeTrigs e = case aweNotice e of
+        Nothing -> []
+        Just r  ->
+            [ E.TriggerDef ("wander.mode." ++ aweNpc e) E.OnTurn
+                (Just (alive e))
+                [ E.Conditional
+                    (E.PAll [ E.CompareVar (distVar e) E.CGte 0
+                            , E.CompareVar (distVar e) E.CLte r ])
+                    (E.Sequence [ E.SetValue (E.VRVariable (modeVar e))
+                                    (E.EVInt (onNoticeCode (aweOnNotice e)))
+                                , E.SetValue (E.VRVariable (lostVar e)) (E.EVInt 0) ])
+                    loseStep ]
+                False 0 1 [] [] ]
+      where
+        resetEffects =
+            [ E.SetValue (E.VRVariable (modeVar e)) (E.EVInt 0)
+            , E.SetValue (E.VRVariable (lostVar e)) (E.EVInt 0) ]
+        activeGuard = E.PNot (E.CompareVar (modeVar e) E.CEq 0)
+        loseStep
+            | aweLoseAfter e <= 0 =
+                E.Sequence [ E.Conditional activeGuard (E.Sequence resetEffects) E.Noop ]
+            | otherwise =
+                E.Sequence
+                    [ E.Conditional activeGuard
+                        (E.Sequence
+                            [ E.ModifyValue (E.VRVariable (lostVar e)) 1
+                            , E.Conditional (E.CompareVar (lostVar e) E.CGte (aweLoseAfter e))
+                                (E.Sequence resetEffects) E.Noop ])
+                        E.Noop ]
+
+    stepTrig e =
+        E.TriggerDef ("wander.step." ++ aweNpc e) E.OnTurn
+            (Just (E.PAll [ alive e, E.CompareVar (modeVar e) E.CEq 0 ]))
+            [ E.WanderStep (E.ActorNPC (aweNpc e)) (optionsFor e) (aweMsg e) ]
+            False (paceCooldown e) 1 [] []
+
+    -- pursue chases while the player is at least one hop away (at distance 0
+    -- the step would be a no-op with a noisy no_path line); flee walks away
+    -- as long as the player is reachable at all.
+    chaseTrigs e = case aweNotice e of
+        Nothing -> []
+        Just _  -> case aweOnNotice e of
+            "pursue" ->
+                [ moveTrig e "chase" 1 (E.CompareVar (distVar e) E.CGt 0)
+                    (\m -> E.StepToward (E.ActorNPC (aweNpc e)) (E.DTActor E.ActorPlayer) (pursOpts e) m) ]
+            "flee" ->
+                [ moveTrig e "flee" 2 (E.CompareVar (distVar e) E.CGte 0)
+                    (\m -> E.StepAwayFrom (E.ActorNPC (aweNpc e)) (E.DTActor E.ActorPlayer) (pursOpts e) m) ]
+            _ -> []   -- hold: the NPC stands its ground while in contact
+
+    moveTrig e name modeCode extraCond mk =
+        E.TriggerDef ("wander." ++ name ++ "." ++ aweNpc e) E.OnTurn
+            (Just (E.PAll [ alive e, E.CompareVar (modeVar e) E.CEq modeCode, extraCond ]))
+            [ mk (aweMsg e) ]
+            False (paceCooldown e) 1 [] []
+
+    optionsFor e = E.WanderOptions
+        { E.woStayIn        = aweStayIn e
+        , E.woStayInTag     = aweStayInTag e
+        , E.woAvoid         = aweAvoid e
+        , E.woIgnoreLocked  = "locked"  `elem` aweIgnores e
+        , E.woIgnoreGuarded = "guarded" `elem` aweIgnores e
+        }
+
+    errs =
+        [ ciError ("wander." ++ aweNpc e) "UnknownWanderNPC"
+            ("wander references npc '" ++ aweNpc e
+                ++ "', which is not declared under 'npcs:'")
+        | e <- sorted, aweNpc e `notElem` knownNpcs ]
+        ++
+        [ ciError ("wander." ++ aweNpc e) "UnknownWanderRoom"
+            ("wander room '" ++ r ++ "' is not a declared room")
+        | e <- sorted, r <- aweStayIn e ++ aweAvoid e, r `notElem` knownRooms ]
+        ++
+        [ ciError ("wander." ++ aweNpc e) "BadWanderPace"
+            ("wander pace must be at least 1 (got " ++ show (awePace e) ++ ")")
+        | e <- sorted, awePace e < 1 ]
+        ++
+        [ ciError ("wander." ++ aweNpc e) "BadWanderNotice"
+            ("wander notice must be a non-negative radius and on_notice one of pursue/flee/hold")
+        | e <- sorted
+        , maybe False (< 0) (aweNotice e)
+            || aweOnNotice e `notElem` ["pursue", "flee", "hold"] ]
 
 -- ---------------------------------------------------------------------------
 -- Party (Phase 7g)
@@ -2705,7 +2911,7 @@ checkGainXpWithoutProgression adv =
 --   `stealth.`). Procedure parameters must not shadow them.
 reservedVarPrefixes :: [String]
 reservedVarPrefixes =
-    ["bonus.", "chapter.", "cmd.", "combat.", "env.", "faction.", "known.", "level.", "party.", "patrol.", "ship.", "stealth.", "xp."]
+    ["bonus.", "chapter.", "cmd.", "combat.", "env.", "faction.", "known.", "level.", "party.", "patrol.", "ship.", "stealth.", "wander.", "xp."]
 
 -- | Compile `procedures:` entries. Duplicate ids and parameter names in
 --   engine-owned variable namespaces are rejected here.
@@ -3559,6 +3765,8 @@ compileAActionOutcome ao = case ao of
         E.StepToward (compileActorRef seeker) target E.defaultPursuitOptions mMsg
     AOStepAwayFrom seeker target mMsg ->
         E.StepAwayFrom (compileActorRef seeker) target E.defaultPursuitOptions mMsg
+    AOWander seeker opts mMsg ->
+        E.WanderStep (compileActorRef seeker) opts mMsg
     AODamageAll cs amount -> E.DamageAll cs amount
     AOMoveAll cs dest -> E.MoveAll cs dest
     AORevealAll cs -> E.RevealAll cs

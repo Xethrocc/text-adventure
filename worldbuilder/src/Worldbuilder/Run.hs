@@ -138,6 +138,7 @@ prepareRun cfg = do
                                                         }
                                                     saveInit = (crSave cr)
                                                         { E.rngState = deriveRuntimeSeed seed
+                                                        , E.runSeed = deriveRuntimeSeed seed
                                                         , E.variables = Map.insert "meta.runs" (E.VVInt (fromIntegral (runIndex - 1))) (E.variables (crSave cr))
                                                         }
                                                 createDirectoryIfMissing True runDir

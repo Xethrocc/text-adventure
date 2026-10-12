@@ -1,6 +1,6 @@
 # Engine-Message-Katalog (Phase 1.1)
 
-**Stand:** 2026-09-28 · **Kataloggröße: 257 Keys** (`src/Messages.hs`, `catalogEntries`)
+**Stand:** 2026-09-28 · **Kataloggröße: 258 Keys** (`src/Messages.hs`, `catalogEntries`)
 
 ## Was diese Stufe leistet
 
@@ -347,11 +347,12 @@ Rang: {rank}}` |
 | 249 | `vehicle.warning` | `Warning: {list}!` | `Warnung: {list}!` |
 | 250 | `verb.no_target` | `What do you want to {verb}?` | `Was möchtest du {verb}?` |
 | 251 | `victory.title` | `  VICTORY!` | `  SIEG!` |
-| 252 | `watch.nothing` | `There is nothing to watch about {label}.` | `Über {label} gibt es nichts zu beobachten.` |
-| 253 | `watch.start` | `Watching {label}...` | `Du beobachtest {label}...` |
-| 254 | `watch.void` | `You're in a void. There's nothing to watch.` | `Du befindest dich im Nichts. Hier gibt es nichts zu beobachten.` |
-| 255 | `world.file_unreadable` | `Could not read world file '{path}': {err}` | `Weltdatei '{path}' konnte nicht gelesen werden: {err}` |
-| 256 | `world.save_unreadable` | `Could not read save file '{path}': {err}` | `Speicherdatei '{path}' konnte nicht gelesen werden: {err}` |
-| 257 | `xp.clamped` | `XP cannot drop below 0.` | `XP können nicht unter 0 fallen.` |
+| 252 | `wander.step` | `{name} wanders to {room}.` | `{name} wandert nach {room}.` |
+| 253 | `watch.nothing` | `There is nothing to watch about {label}.` | `Über {label} gibt es nichts zu beobachten.` |
+| 254 | `watch.start` | `Watching {label}...` | `Du beobachtest {label}...` |
+| 255 | `watch.void` | `You're in a void. There's nothing to watch.` | `Du befindest dich im Nichts. Hier gibt es nichts zu beobachten.` |
+| 256 | `world.file_unreadable` | `Could not read world file '{path}': {err}` | `Weltdatei '{path}' konnte nicht gelesen werden: {err}` |
+| 257 | `world.save_unreadable` | `Could not read save file '{path}': {err}` | `Speicherdatei '{path}' konnte nicht gelesen werden: {err}` |
+| 258 | `xp.clamped` | `XP cannot drop below 0.` | `XP können nicht unter 0 fallen.` |
 
 <!-- END GENERATED -->

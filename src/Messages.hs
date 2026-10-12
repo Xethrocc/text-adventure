@@ -410,6 +410,7 @@ catalogEntries =
     , ("pursuit.step",            "{name} moves to {room}.")
     , ("pursuit.flee",            "{name} flees to {room}.")
     , ("pursuit.no_path",         "{name} can find no way.")
+    , ("wander.step",             "{name} wanders to {room}.")
     , ("container.not_a_container", "{target} is not a container.")
     , ("container.opened",        "{name} is open now.")
     , ("container.opened_reveals", "Opening the {name} reveals {items}.")

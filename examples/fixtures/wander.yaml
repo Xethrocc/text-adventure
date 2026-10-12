@@ -1,0 +1,67 @@
+name: Wander Fixture
+start_room: halle
+
+rooms:
+  - id: halle
+    name: Halle
+    desc: Die Halle.
+    exits:
+      north: mittel
+  - id: mittel
+    name: Mittelgang
+    desc: Der Mittelgang.
+    exits:
+      south: halle
+      north: ende
+  - id: ende
+    name: Ende
+    desc: Das Ende des Ganges.
+    exits:
+      south: mittel
+      west: kammer
+  - id: kammer
+    name: Kammer
+    desc: Die Kammer. Nur ein Ausgang.
+    exits:
+      east: ende
+
+items:
+  - id: kiesel
+    name: Kiesel
+    keys: [kiesel]
+    desc: Ein Kiesel.
+    location: halle
+
+npcs:
+  - id: bummler
+    name: Bummler
+    location: kammer
+    keys: [bummler]
+  - id: streuner
+    name: Streuner
+    location: ende
+    keys: [streuner]
+
+# OPEN-14: zwei Wanderer.
+#   * bummler: ziellos, ohne Kontaktlogik. Sein erster Schritt ist
+#     deterministisch (kammer hat nur den Ausgang ende) — die spaeteren
+#     waehlt der Run-Seed-Hash aus, die Tests markieren nur den ersten.
+#   * streuner: notice 2 / on_notice pursue / lose_after 1. Ab dem ersten
+#     Zug hat er Sichtkontakt und verfolgt den Spieler — die Verfolgung ist
+#     deterministisch (BFS + Tie-Break "kleinste Ziel-Raum-ID").
+wander:
+  - npc: bummler
+  - npc: streuner
+    stay_in: [halle, mittel, ende]
+    avoid: [kammer]
+    notice: 2
+    on_notice: pursue
+    lose_after: 1
+
+tests:
+  - name: "wandern und verfolgen"
+    input: [take kiesel, drop kiesel, take kiesel]
+    expect:
+      - "bummler wanders to ende."
+      - "streuner moves to mittel."
+      - "streuner moves to halle."

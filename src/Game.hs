@@ -23,6 +23,7 @@ module Game
     , actorRoom
     , distanceTo
     , pursuitStep
+    , wanderStep
     , countItemMembers
     , countNpcMembers
     , itemsAtLoc
@@ -181,7 +182,7 @@ module Game
     ) where
 
 import Types
-import Pursuit (bfsDistances, stepToward, stepAway)
+import Pursuit (bfsDistances, stepToward, stepAway, sortCandidates)
 import Messages (formatStringWith, renderMsg, renderMsgFor, trimStr)
 import Data.List (find, foldl', isPrefixOf, nub, stripPrefix, sortOn)
 import Data.Bits (shiftR)
@@ -263,6 +264,7 @@ emptyGameState = GameState
         , exitOverrides      = Map.empty
         , deckState          = Nothing
         , dynamicRooms       = Map.empty
+        , runSeed            = initialRngState
         }
     , pendingNarrative = Nothing
     , pendingAnimation = Nothing
@@ -805,6 +807,63 @@ pursuitStep toward opts st seeker target =
                then stepToward edges dists from
                else stepAway edges dists from
         _ -> Nothing
+
+-- ---------------------------------------------------------------------------
+-- Wander (OPEN-14): aimless steps with a deterministic run-seed hash
+-- ---------------------------------------------------------------------------
+
+-- | One aimless step into a random allowed neighbour room. The pick is a
+--   pure hash over (run seed, turn count, actor id) into the stable candidate
+--   order of 'sortCandidates' — no 'rngState' draw, nothing stored in the
+--   save. The same run at the same turn always picks the same edge; a
+--   different run seed (fresh game, roguelike restart) gives a different
+--   route. 'Nothing' when the seeker has no room or no allowed exit — the
+--   caller decides whether that is worth a message.
+wanderStep :: WanderOptions -> GameState -> ActorRef -> Maybe (Direction, RoomID)
+wanderStep opts st seeker =
+    case actorRoom st seeker of
+        Just from ->
+            let candidates =
+                    [ edge
+                    | edge@(_, to) <- sortCandidates
+                        (Map.findWithDefault [] from (pursuitEdges (wanderPursuitOpts opts) st))
+                    , wanderRoomAllowed opts st to ]
+            in case drop (wanderIndex st seeker (length candidates)) candidates of
+                (c:_) -> Just c
+                []    -> Nothing
+        Nothing -> Nothing
+
+-- | The wander filters narrow the same passable-edge graph the seeker uses.
+wanderPursuitOpts :: WanderOptions -> PursuitOptions
+wanderPursuitOpts o = PursuitOptions (woIgnoreLocked o) (woIgnoreGuarded o)
+
+-- | OPEN-14: room filters of one wander step — avoid list, room list and
+--   room tag (a dynamic room counts through 'lookupRoom').
+wanderRoomAllowed :: WanderOptions -> GameState -> RoomID -> Bool
+wanderRoomAllowed opts st to =
+    to `notElem` woAvoid opts
+    && (null (woStayIn opts) || to `elem` woStayIn opts)
+    && case woStayInTag opts of
+        Nothing -> True
+        Just t  -> maybe False (Set.member t . roomTags) (lookupRoom to st)
+
+-- | Index of the wander pick: stable hash, uniform over the candidate count.
+wanderIndex :: GameState -> ActorRef -> Int -> Int
+wanderIndex st seeker n
+    | n <= 1    = 0
+    | otherwise = fromIntegral (h `mod` fromIntegral n)
+  where
+    h = wanderHash (runSeed (save st)) (turnCount (save st)) (actorId seeker)
+
+-- | SplitMix64-mixed hash over (seed, turn, name) for the wander pick. Kept
+--   local and dependency-free so the value is stable across platforms and
+--   refactors (same contract as 'Pursuit': deterministic runs).
+wanderHash :: Word64 -> Int -> String -> Word64
+wanderHash seed turn name =
+    splitMix64Mix (splitMix64Mix (seed + fromIntegral turn * 0x9E3779B97F4A7C15)
+                    + nameHash)
+  where
+    nameHash = foldl' (\h c -> h * 31 + fromIntegral (fromEnum c)) 5381 name
 
 -- ---------------------------------------------------------------------------
 -- Items

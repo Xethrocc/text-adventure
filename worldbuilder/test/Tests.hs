@@ -114,6 +114,7 @@ minSave = E.SaveState
     , exitOverrides = Map.empty
     , deckState = Nothing
     , dynamicRooms = Map.empty
+    , runSeed = E.initialRngState
     }
 
 runTest :: String -> IO Bool -> IO Bool
@@ -220,7 +221,7 @@ minAdventure room = Adventure
     , advCombineVerb = Nothing
     , advJournal = Nothing
     , advChapters = []
-    , advPursuit = [], advContainers = []
+    , advPursuit = [], advWander = [], advContainers = []
     , advInclude = []
     , advFacts = []
     , advStatements = []
@@ -3385,6 +3386,7 @@ testPatrolCompiles = do
     let hostile = AHostile "wolf" ["loc_1", "loc_2"] 0 False
                     (Just "A wolf is nearby!")
                     [ AOMessage "The wolf bites!", AODamagePlayer 2 ]
+                    "loop"
         adv = (minAdventure (minRoom "loc_0"))
             { advRooms = [minRoom "loc_0", minRoom "loc_1", minRoom "loc_2"]
             , advPatrol = Just (APatrol [hostile])
@@ -3445,7 +3447,7 @@ testPatrolCompiles = do
 -- | A guardian stays put: no clear/step triggers, only warn/attack.
 testPatrolGuardian :: IO Bool
 testPatrolGuardian = do
-    let hostile = AHostile "wolf" ["loc_1"] 0 True Nothing [ AOMessage "The guardian strikes!" ]
+    let hostile = AHostile "wolf" ["loc_1"] 0 True Nothing [ AOMessage "The guardian strikes!" ] "loop"
         adv = (minAdventure (minRoom "loc_0"))
             { advRooms = [minRoom "loc_0", minRoom "loc_1"]
             , advPatrol = Just (APatrol [hostile])
@@ -3465,22 +3467,201 @@ testPatrolValidation = do
     let base extraRooms npcList = (minAdventure (minRoom "loc_0"))
             { advRooms = minRoom "loc_0" : extraRooms
             , advNPCs = npcList }
-    r1 <- case compileAdventure (base [] []) { advPatrol = Just (APatrol [AHostile "ghost" ["loc_0"] 0 False Nothing []]) } of
+    r1 <- case compileAdventure (base [] []) { advPatrol = Just (APatrol [AHostile "ghost" ["loc_0"] 0 False Nothing [] "loop"]) } of
             Left errs -> expectContains "UnknownPatrolNPC" (issuesText errs)
             Right _   -> expectTrue "expected UnknownPatrolNPC" False
-    r2 <- case compileAdventure (base [] [ wolfNPC "loc_0" ]) { advPatrol = Just (APatrol [AHostile "wolf" [] 0 False Nothing []]) } of
+    r2 <- case compileAdventure (base [] [ wolfNPC "loc_0" ]) { advPatrol = Just (APatrol [AHostile "wolf" [] 0 False Nothing [] "loop"]) } of
             Left errs -> expectContains "EmptyPatrolPath" (issuesText errs)
             Right _   -> expectTrue "expected EmptyPatrolPath" False
     r3 <- case compileAdventure (base [ minRoom "loc_1" ] [ wolfNPC "loc_1" ])
-                { advPatrol = Just (APatrol [AHostile "wolf" ["loc_1", "nope"] 0 False Nothing []]) } of
+                { advPatrol = Just (APatrol [AHostile "wolf" ["loc_1", "nope"] 0 False Nothing [] "loop"]) } of
             Left errs -> expectContains "UnknownPatrolRoom" (issuesText errs)
             Right _   -> expectTrue "expected UnknownPatrolRoom" False
     r4 <- case compileAdventure (base [ minRoom "loc_1" ] [ wolfNPC "loc_1" ])
-                { advPatrol = Just (APatrol [AHostile "wolf" ["loc_1"] 0 False Nothing []])
+                { advPatrol = Just (APatrol [AHostile "wolf" ["loc_1"] 0 False Nothing [] "loop"])
                 , advVariables = [ AVariable "patrol.wolf.moved" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] [] ] } of
             Left errs -> expectContains "PatrolVariableClash" (issuesText errs)
             Right _   -> expectTrue "expected PatrolVariableClash" False
     pure (or [r1, r2, r3, r4] && and [r1, r2, r3, r4])
+
+-- | The `wander:` segment (OPEN-14) compiles to the mode machinery plus one
+--   step trigger (and a chase trigger with `notice:`). The step trigger is
+--   paced by the trigger cooldown, the mode trigger runs first so contact is
+--   answered in the same turn.
+testWanderCompiles :: IO Bool
+testWanderCompiles = do
+    let entry = AWanderEntry "wolf" ["loc_1", "loc_2"] Nothing ["loc_0"] 2 ["locked"]
+                    (Just 2) "pursue" 2 (Just "Der Wolf streift.")
+        adv = (minAdventure (minRoom "loc_0"))
+            { advRooms = [minRoom "loc_0", minRoom "loc_1", minRoom "loc_2"]
+            , advWander = [entry]
+            , advNPCs = [ wolfNPC "loc_1" ] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let trs = E.triggerDefs (crWorld cr)
+                byId want = [ t | t <- trs, E.trId t == want ]
+                mode  = byId "wander.mode.wolf"
+                step  = byId "wander.step.wolf"
+                chase = byId "wander.chase.wolf"
+                expectOpts = E.WanderOptions ["loc_1", "loc_2"] Nothing ["loc_0"] True False
+                dVar = "distance.wolf.player"
+                loseStep =
+                    E.Sequence
+                        [ E.Conditional (E.PNot (E.CompareVar "wander.wolf.mode" E.CEq 0))
+                            (E.Sequence
+                                [ E.ModifyValue (E.VRVariable "wander.wolf.lost") 1
+                                , E.Conditional (E.CompareVar "wander.wolf.lost" E.CGte 2)
+                                    (E.Sequence [ E.SetValue (E.VRVariable "wander.wolf.mode") (E.EVInt 0)
+                                                , E.SetValue (E.VRVariable "wander.wolf.lost") (E.EVInt 0) ])
+                                    E.Noop ])
+                            E.Noop ]
+            r1 <- expectEqual ["wander.mode.wolf", "wander.step.wolf", "wander.chase.wolf"]
+                    (map E.trId trs)
+            r2 <- expectEqual (Just (E.VVInt 0)) (Map.lookup "wander.wolf.mode" (variables (crSave cr)))
+            r3 <- expectEqual (Just (E.VVInt 0)) (Map.lookup "wander.wolf.lost" (variables (crSave cr)))
+            -- pace 2: one step every second turn (cooldown = pace - 1)
+            r4 <- expectEqual (Just 1) (E.trCooldown <$> listToMaybe step)
+            r5 <- expectEqual [ E.WanderStep (E.ActorNPC "wolf") expectOpts (Just "Der Wolf streift.") ]
+                    (concatMap E.trEffects step)
+            r6 <- expectEqual (Just (E.PNot (E.EntityHasState "wolf" "dead")))
+                    (E.trCondition =<< listToMaybe mode)
+            r7 <- expectEqual [ E.Conditional
+                    (E.PAll [ E.CompareVar dVar E.CGte 0, E.CompareVar dVar E.CLte 2 ])
+                    (E.Sequence [ E.SetValue (E.VRVariable "wander.wolf.mode") (E.EVInt 1)
+                                , E.SetValue (E.VRVariable "wander.wolf.lost") (E.EVInt 0) ])
+                    loseStep ]
+                    (concatMap E.trEffects mode)
+            r8 <- expectEqual (Just (E.PAll
+                    [ E.PNot (E.EntityHasState "wolf" "dead")
+                    , E.CompareVar "wander.wolf.mode" E.CEq 1
+                    , E.CompareVar dVar E.CGt 0 ]))
+                    (E.trCondition =<< listToMaybe chase)
+            r9 <- expectEqual [ E.StepToward (E.ActorNPC "wolf") (E.DTActor E.ActorPlayer)
+                                    (E.PursuitOptions True False) (Just "Der Wolf streift.") ]
+                    (concatMap E.trEffects chase)
+            -- without notice: only the aimless step trigger (mode stays 0)
+            let plain = AWanderEntry "wolf" [] Nothing [] 1 [] Nothing "pursue" 1 Nothing
+                adv2 = adv { advWander = [plain] }
+            r10 <- case compileAdventure adv2 of
+                Left errs -> do
+                    putStrLn $ "  compile errors: " ++ show errs
+                    pure False
+                Right cr2 -> do
+                    q1 <- expectEqual ["wander.step.wolf"] (map E.trId (E.triggerDefs (crWorld cr2)))
+                    q2 <- expectEqual [ E.WanderStep (E.ActorNPC "wolf") E.defaultWanderOptions Nothing ]
+                            (concatMap E.trEffects (E.triggerDefs (crWorld cr2)))
+                    pure (q1 && q2)
+            pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10])
+
+-- | Wander validation (OPEN-14): unknown NPC and room, bad pace and notice,
+--   and the reserved `wander.<npc>.*` namespace.
+testWanderValidation :: IO Bool
+testWanderValidation = do
+    let base extraRooms npcList = (minAdventure (minRoom "loc_0"))
+            { advRooms = minRoom "loc_0" : extraRooms
+            , advNPCs = npcList }
+        entry = AWanderEntry "wolf" [] Nothing [] 1 [] Nothing "pursue" 1 Nothing
+    r1 <- case compileAdventure (base [] []) { advWander = [ entry { aweNpc = "ghost" } ] } of
+            Left errs -> expectContains "UnknownWanderNPC" (issuesText errs)
+            Right _   -> expectTrue "expected UnknownWanderNPC" False
+    r2 <- case compileAdventure (base [] [ wolfNPC "loc_0" ])
+                { advWander = [ entry { aweStayIn = ["nope"] } ] } of
+            Left errs -> expectContains "UnknownWanderRoom" (issuesText errs)
+            Right _   -> expectTrue "expected UnknownWanderRoom" False
+    r3 <- case compileAdventure (base [] [ wolfNPC "loc_0" ])
+                { advWander = [ entry { aweAvoid = ["nope"] } ] } of
+            Left errs -> expectContains "UnknownWanderRoom" (issuesText errs)
+            Right _   -> expectTrue "expected UnknownWanderRoom (avoid)" False
+    r4 <- case compileAdventure (base [] [ wolfNPC "loc_0" ])
+                { advWander = [ entry { awePace = 0 } ] } of
+            Left errs -> expectContains "BadWanderPace" (issuesText errs)
+            Right _   -> expectTrue "expected BadWanderPace" False
+    r5 <- case compileAdventure (base [] [ wolfNPC "loc_0" ])
+                { advWander = [ entry { aweNotice = Just (-1) } ] } of
+            Left errs -> expectContains "BadWanderNotice" (issuesText errs)
+            Right _   -> expectTrue "expected BadWanderNotice" False
+    r6 <- case compileAdventure (base [] [ wolfNPC "loc_0" ])
+                { advWander = [ entry { aweNotice = Just 1, aweOnNotice = "bogus" } ] } of
+            Left errs -> expectContains "BadWanderNotice" (issuesText errs)
+            Right _   -> expectTrue "expected BadWanderNotice (on_notice)" False
+    r7 <- case compileAdventure (base [] [ wolfNPC "loc_0" ])
+                { advWander = [entry]
+                , advVariables = [ AVariable "wander.wolf.mode" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] [] ] } of
+            Left errs -> expectContains "WanderVariableClash" (issuesText errs)
+            Right _   -> expectTrue "expected WanderVariableClash" False
+    pure (and [r1, r2, r3, r4, r5, r6, r7])
+
+-- | Patrol movement modes (OPEN-14): pingpong bounces with a direction
+--   variable, random steps to a path-ring neighbour on its own B8 stream,
+--   and an unknown mode is a compile error.
+testPatrolModes :: IO Bool
+testPatrolModes = do
+    let mk mode path = (minAdventure (minRoom "loc_0"))
+            { advRooms = [minRoom "loc_0", minRoom "loc_1", minRoom "loc_2", minRoom "loc_3"]
+            , advPatrol = Just (APatrol [AHostile "wolf" path 0 False Nothing [] mode])
+            , advNPCs = [ wolfNPC "loc_1" ] }
+    r1 <- case compileAdventure (mk "pingpong" ["loc_1", "loc_2"]) of
+            Left errs -> do
+                putStrLn $ "  compile errors: " ++ show errs
+                pure False
+            Right cr -> do
+                q1 <- expectEqual (Just (E.VVInt 1)) (Map.lookup "patrol.wolf.dir" (variables (crSave cr)))
+                -- at the path end (index 1) going forward: bounce back and flip dir
+                let step1 = [ t | t <- E.triggerDefs (crWorld cr), E.trId t == "patrol.step.wolf.1" ]
+                q2 <- expectEqual [ E.Conditional (E.CompareVar "patrol.wolf.dir" E.CEq 1)
+                        (E.Sequence [ E.MoveEntity "wolf" (E.InRoom "loc_1")
+                                    , E.SetValue (E.VRVariable "patrol.wolf.index") (E.EVInt 0)
+                                    , E.SetValue (E.VRVariable "patrol.wolf.moved") (E.EVInt 1)
+                                    , E.SetValue (E.VRVariable "patrol.wolf.dir") (E.EVInt (-1)) ])
+                        (E.Sequence [ E.MoveEntity "wolf" (E.InRoom "loc_1")
+                                    , E.SetValue (E.VRVariable "patrol.wolf.index") (E.EVInt 0)
+                                    , E.SetValue (E.VRVariable "patrol.wolf.moved") (E.EVInt 1) ]) ]
+                        (concatMap E.trEffects step1)
+                pure (q1 && q2)
+    r2 <- case compileAdventure (mk "random" ["loc_1", "loc_2", "loc_3"]) of
+            Left errs -> do
+                putStrLn $ "  compile errors: " ++ show errs
+                pure False
+            Right cr -> do
+                let step0 = [ t | t <- E.triggerDefs (crWorld cr), E.trId t == "patrol.step.wolf.0" ]
+                expectEqual [ E.RandomChoiceOn "patrol.wolf"
+                        [ (1, E.Sequence [ E.MoveEntity "wolf" (E.InRoom "loc_2")
+                                         , E.SetValue (E.VRVariable "patrol.wolf.index") (E.EVInt 1)
+                                         , E.SetValue (E.VRVariable "patrol.wolf.moved") (E.EVInt 1) ])
+                        , (1, E.Sequence [ E.MoveEntity "wolf" (E.InRoom "loc_3")
+                                         , E.SetValue (E.VRVariable "patrol.wolf.index") (E.EVInt 2)
+                                         , E.SetValue (E.VRVariable "patrol.wolf.moved") (E.EVInt 1) ]) ] ]
+                        (concatMap E.trEffects step0)
+    r3 <- case compileAdventure (mk "hop" ["loc_1"]) of
+            Left errs -> expectContains "BadPatrolMode" (issuesText errs)
+            Right _   -> expectTrue "expected BadPatrolMode" False
+    pure (and [r1, r2, r3])
+
+-- | The OPEN-14 wander mini-fixture compiles and validates clean.
+testWanderFixtureCompiles :: IO Bool
+testWanderFixtureCompiles = do
+    mbPath <- findExample "wander.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  examples/fixtures/wander.yaml not found"
+            pure False
+        Just path -> do
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse examples/fixtures/wander.yaml: " ++ err
+                    pure False
+                Right adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  compile errors: " ++ show errs
+                        pure False
+                    Right cr -> do
+                        r1 <- expectEqual [] (validateWorld (crWorld cr))
+                        r2 <- expectEqual [] (validateGameState (crWorld cr) (crSave cr))
+                        pure (r1 && r2)
 
 -- | The 7i mini-fixture compiles and validates clean.
 testPatrolFixtureCompiles :: IO Bool
@@ -4341,6 +4522,11 @@ tests =
     , ("patrol guardian stays put", testPatrolGuardian)
     , ("patrol validation (npc / path / room / variable clash)", testPatrolValidation)
     , ("patrol fixture compiles + validates", testPatrolFixtureCompiles)
+    , ("patrol movement modes (loop/pingpong/random)", testPatrolModes)
+    -- OPEN-14: wander
+    , ("wander compiles to mode/step/chase triggers", testWanderCompiles)
+    , ("wander validation (npc / room / pace / notice / var clash)", testWanderValidation)
+    , ("wander fixture compiles + validates", testWanderFixtureCompiles)
     -- Phase 7f: combat profiles
     , ("combat segment compiles (default/off/narrative/tactical)", testCombatCompiles)
     , ("combat fixtures compile + validate", testCombatFixturesCompile)

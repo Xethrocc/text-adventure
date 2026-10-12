@@ -49,6 +49,8 @@ module Types.Core
     , DistanceTarget (..)
     , PursuitOptions (..)
     , defaultPursuitOptions
+    , WanderOptions (..)
+    , defaultWanderOptions
     , parseDistanceRef
     , CountWhat (..)
     , CountWhere (..)
@@ -522,6 +524,25 @@ instance FromJSON PursuitOptions
 -- | Default seeker behaviour: exactly like the player.
 defaultPursuitOptions :: PursuitOptions
 defaultPursuitOptions = PursuitOptions False False
+
+-- | OPEN-14: which rooms one aimless 'WanderStep' may enter. The filters
+--   narrow the same edge set a seeker could walk ('Game.pursuitEdges'): a
+--   candidate is allowed when it is not avoided, is in 'woStayIn' (when that
+--   list is non-empty) and carries 'woStayInTag' (when set).
+data WanderOptions = WanderOptions
+    { woStayIn        :: [RoomID]     -- ^ non-empty: step only into these rooms
+    , woStayInTag     :: Maybe String -- ^ Just tag: step only into rooms carrying it
+    , woAvoid         :: [RoomID]     -- ^ never step into these rooms
+    , woIgnoreLocked  :: Bool         -- ^ pass locked exits as if they were open
+    , woIgnoreGuarded :: Bool         -- ^ pass guarded exits regardless of the guard
+    } deriving (Show, Eq, Generic)
+
+instance ToJSON WanderOptions
+instance FromJSON WanderOptions
+
+-- | Default wander behaviour: any exit the player could walk.
+defaultWanderOptions :: WanderOptions
+defaultWanderOptions = WanderOptions [] Nothing [] False False
 
 -- | B2: what a count query counts.
 data CountWhat
@@ -1151,6 +1172,7 @@ data Effect
     | GainXp Int                                   -- ^ W2: add XP (clamped at 0), run level loop
     | StepToward ActorRef DistanceTarget PursuitOptions (Maybe String)   -- ^ pursuit: one edge toward the target (opt. author msg)
     | StepAwayFrom ActorRef DistanceTarget PursuitOptions (Maybe String) -- ^ pursuit: one edge away (opt. author msg)
+    | WanderStep ActorRef WanderOptions (Maybe String)                   -- ^ OPEN-14: one aimless step into a random allowed neighbour (opt. author msg)
     | DamageAll CountSpec Int                 -- ^ B3: damage every NPC in the set
     | MoveAll CountSpec CountWhere            -- ^ B3: move every member of the set to
     | RevealAll CountSpec                     -- ^ B3: reveal every hidden item in the set
@@ -2827,6 +2849,12 @@ data SaveState = SaveState
         -- ^ save's encoding bit-identical).
     , deckState          :: Maybe DeckState                  -- ^ Runtime deckbuilder state (Genre 5)
     , dynamicRooms       :: Map.Map RoomID Room              -- ^ Dynamically generated runtime rooms (Genre 3)
+    , runSeed            :: Word64
+        -- ^ OPEN-14: fixed per-run seed for the deterministic wander hash
+        --   (runSeed, turn count, actor id). Unlike 'rngState' it never
+        --   advances during play — it is set at run start and survives
+        --   save/load unchanged. Written only when it differs from
+        --   'initialRngState' (M2: existing saves stay bit-identical).
     } deriving (Show, Eq, Generic)
 
 instance ToJSON SaveState where
@@ -2852,7 +2880,7 @@ instance ToJSON SaveState where
         , "rngState"        .= rngState ss
         , "variables"       .= variables ss
         , "triggerStates"   .= triggerStates ss
-        ] ++ exitOverridePair ++ deckPair ++ dynamicRoomsPair
+        ] ++ exitOverridePair ++ deckPair ++ dynamicRoomsPair ++ runSeedPair
       where
         -- Rogue Phase 3 (M2): only emitted when non-empty — the encoding of
         -- untouched adventures stays bit-identical.
@@ -2865,6 +2893,11 @@ instance ToJSON SaveState where
         dynamicRoomsPair =
             [ "dynamicRooms" .= dynamicRooms ss
             | not (Map.null (dynamicRooms ss)) ]
+        -- OPEN-14: same pattern — deterministic runs (runSeed == default)
+        -- keep the historical encoding.
+        runSeedPair =
+            [ "runSeed" .= runSeed ss
+            | runSeed ss /= initialRngState ]
 
 instance FromJSON SaveState where
     parseJSON = withObject "SaveState" $ \o -> SaveState
@@ -2892,6 +2925,7 @@ instance FromJSON SaveState where
         <*> (o .:? "exitOverrides" >>= maybe (pure Map.empty) parseExitOverrides)
         <*> o .:? "deckState"
         <*> o .:? "dynamicRooms"   .!= Map.empty
+        <*> o .:? "runSeed"        .!= initialRngState
 
 -- | Encode exit overrides as a list of {room, dir, exit} objects — the same
 --   shape as 'itemInteractionsToJSON': tuple-keyed maps have no JSON object

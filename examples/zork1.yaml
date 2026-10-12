@@ -3839,6 +3839,68 @@ patrol:
     - troll-room
     warn: A nasty-looking troll, brandishing a bloody axe, blocks all passages out of the room.
 
+# --- Stufe D: Dieb wandert (Original: I-THIEF "Move to next room, and hack",
+#     1actions.zil:3890 - der Raeuber rueckt jede Runde eine Position in der
+#     Raumliste weiter und überspringt dabei alles mit SACREDBIT und alles
+#     Nicht-Land (RLANDBIT-Pruefung, 1dungeon.zil)) ---
+# Abweichung (2026-10-12, OPEN-14 `wander:`): statt der geordneten Rundreise
+# ueber die ROOMS-Baumreihenfolge streift der Dieb ziellos ueber die erlaubten
+# Raeume (deterministischer Run-Seed-Hash). Die Ausschluesse sind
+# originalgetreu: die 37 SACREDBIT-Raeume plus die Nicht-Land-Raeume RESERVOIR
+# und IN-STREAM. Bei Sichtkontakt (notice: 2) nimmt er die Verfolgung auf —
+# im Original die "wandered through"-Begegnung — und streift nach zwei Zuegen
+# ohne Kontakt weiter. Auf Distanz 0 bleibt er (im Original "loert" er) und
+# klaubt ueber `thief-steals`; die Schritte selbst sind still (`msg: ''`),
+# die Texte liegen wie vorher beim Diebstahl. Bewusste Abweichung: die
+# Ausschluss-Raume gelten nur fuer das Streifen, die Verfolgung folgt dem
+# Spieler ueberallhin (Port-Konzept des lauernden Diebs, siehe win.py).
+wander:
+  - npc: thief
+    avoid:
+    - west-of-house
+    - stone-barrow
+    - north-of-house
+    - south-of-house
+    - east-of-house
+    - forest-1
+    - forest-2
+    - mountains
+    - forest-3
+    - path
+    - up-a-tree
+    - grating-clearing
+    - clearing
+    - kitchen
+    - attic
+    - living-room
+    - north-temple
+    - south-temple
+    - dam-base
+    - river-1
+    - river-2
+    - river-3
+    - river-4
+    - river-5
+    - white-cliffs-north
+    - white-cliffs-south
+    - shore
+    - sandy-beach
+    - aragain-falls
+    - on-rainbow
+    - canyon-bottom
+    - cliff-middle
+    - canyon-view
+    - bat-room
+    - gas-room
+    - timber-room
+    - lower-shaft
+    - reservoir
+    - in-stream
+    notice: 2
+    on_notice: pursue
+    lose_after: 2
+    msg: ''
+
 rules:
 - id: score-skull
   on: take skull
@@ -5328,14 +5390,9 @@ rules:
   - set_flag: thief-fighting
     val: 'false'
 
-# --- Stufe D: Dieb wandert (Original: I-THIEF "Move to next room, and hack",
-#     1actions.zil:3890 - er zieht durch alle begehbaren, nicht-geheiligten Raeume) ---
-# Abweichung: statt Rundkurs eine gestaffelte Verfolgung (step_toward/step_away):
-# der Dieb bleibt dem Spieler auf den Fersen (7/10 Richtung Spieler), zieht sich
-# gelegentlich zurueck (1/10) oder lauert (2/10). Auf Distanz 0 loert er im Raum
-# und verlaesst ihn bald wieder (5/10 Abgang), wie der Original-Raeuber zwischen
-# seinen Einbruechen.
-- id: thief-wanders
+# Fern-Geraeusche: Ersatz fuer die alte 2/10-Fussstapfen-Meldung der
+# thief-wanders-Regel. Der Dieb ist irgendwo in der Naehe unterwegs.
+- id: thief-footsteps
   on: turn
   when:
     all:
@@ -5344,38 +5401,18 @@ rules:
         is: dead
     - not:
         has_flag: thief-fighting
-  effects:
-  - compute_var:
-      var: thief_dist
-      expr: distance.thief.player
-  - if:
-      compare_var:
-        name: thief_dist
+    - compare_var:
+        name: distance.thief.player
         op: gt
         value: 0
-    then:
-    - random:
-        stream: thief
-        choices:
-        - - 7
-          - - step_toward: [thief, player]
-        - - 1
-          - - step_away_from: [thief, player]
-        - - 2
-          - - msg: 'You hear the soft scrape of footsteps somewhere in the dark.'
-  - if:
-      compare_var:
-        name: thief_dist
-        op: eq
-        value: 0
-    then:
-    - random:
-        stream: thief
-        choices:
-        - - 5
-          - - step_away_from: [thief, player]
-        - - 5
-          - - msg: ''
+  effects:
+  - random:
+      stream: thief
+      choices:
+      - - 2
+        - - msg: 'You hear the soft scrape of footsteps somewhere in the dark.'
+      - - 8
+        - - msg: ''
 
 # Stehlen: der Dieb räumt dem Spieler die Schätze ab (Original: ROB/THIEF-VS-ADVENTURER).
 - id: thief-steals
@@ -5388,7 +5425,7 @@ rules:
     - not:
         has_flag: thief-fighting
     - compare_var:
-        name: thief_dist
+        name: distance.thief.player
         op: eq
         value: 0
     - actor_has_tag:

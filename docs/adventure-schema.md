@@ -2363,6 +2363,15 @@ patrol:
 - Ein toter Feind zieht nicht und greift nicht an.
 - `guardian: true` lässt den NPC stehen; `path` listet dann nur die Räume, in
   denen er warnt/zuschlägt.
+- Ein Eintrag **ohne** `warn`/`attack` ist ein friedlicher Wanderer — beides
+  ist optional.
+- **Bewegungs-Modi** (`mode:`, OPEN-14, Default `loop`):
+  - `loop` — der historische Rundkurs (`path !! ((i+1) mod n)`);
+  - `pingpong` — Hin- und Herweg zwischen den Pfadenden (Richtung in
+    `patrol.<npc>.dir`, ±1);
+  - `random` — Schritt zum vorderen oder hinteren Nachbarn auf dem Pfad-Ring,
+    gewürfelt auf dem benannten Strom `patrol.<npc>` (B8).
+  Modi brauchen mind. zwei Pfad-Räume; sonst gilt `loop`.
 - Der Rundkurs lebt in Variablen: `patrol.<npc>.index` (Position) und
   `patrol.<npc>.moved` (Zug-Gate). Beide sind **reserviert** und dürfen nicht
   unter `variables:` deklariert werden (`PatrolVariableClash`). Ein Wächter hat
@@ -2372,7 +2381,7 @@ patrol:
   sie würden alle zutreffenden Schritte im selben Zug feuern und der NPC seinen
   ganzen Rundkurs in einem Zug abreißen.
 - **Fehler:** `UnknownPatrolNPC`, `EmptyPatrolPath`, `UnknownPatrolRoom`,
-  `PatrolVariableClash`.
+  `BadPatrolMode`, `PatrolVariableClash`.
 
 ---
 
@@ -3142,7 +3151,7 @@ rules:
 - **Weitere Checks:** `UnknownProc` (unbekannter Name), `ProcArity` (falsche
   Argumentanzahl), `DuplicateProc` (doppelte `id`), `ProcParamReserved` (Parameter in
   engine-eigenen Namensräumen: `cmd.`, `combat.`, `env.`, `faction.`, `party.`,
-  `patrol.`, `ship.`, `stealth.`).
+  `patrol.`, `ship.`, `stealth.`, `wander.`).
 - **Veto:** `block` im Prozedurkörper stoppt die restlichen Körpereffekte **und** die
   restlichen Effekte des Aufrufers — dieselbe Semantik wie in einer `effects:`-Liste.
 
@@ -3873,6 +3882,60 @@ rules:
 - **Stateless und rein:** kein Feld im Save, kein `rngState`-Verbrauch — speichern/laden
   mitten in der Verfolgung rechnet identisch weiter.
 - **`-1` ist der einzige Unerreichbar-Sentinel** (dokumentiert und getestet).
+
+---
+
+## Wandern: `wander:` und der `wander`-Effekt (OPEN-14)
+
+Zielloses Umherstreifen mit deterministischer Schritt-Wahl und optionaler
+Kontakt-Kopplung an die Verfolgungs-Vokabel — der Ambient-Fall für NPCs, die
+irgendwo unterwegs sein sollen (Räuber, Tiere, Tiere im Gehege). Das Original
+ist hier bewusst *kein* Vorbild: solche „Wanderer“ sind in alten Engines
+entweder starre Rundkurse oder Zufallsmodule.
+
+```yaml
+wander:
+  - npc: dieb
+    stay_in: [keller, gang]     # optional: nur in diese Räume (Liste, {rooms: [...]} oder {tag: <tag>})
+    avoid: [kapelle, strand]    # optional: nie in diese Räume
+    pace: 2                     # optional: ein Schritt alle n Züge (Default 1)
+    ignores: [locked, guarded]  # optional: verschlossene/bewachte Ausgänge passierbar
+    notice: 2                   # optional: Kontakt-Radius in Hops
+    on_notice: pursue           # pursue (Default) | flee | hold
+    lose_after: 1               # Züge ohne Kontakt, bis wieder gestreift wird (0 = sofort)
+    msg: ""                      # Schrittmeldung; Default = Katalog `wander.step`; "" = still
+```
+
+- **Schritt-Wahl:** ein reiner Hash aus (Run-Seed, Zugzahl, NPC-ID) über die
+  stabil sortierten Nachbarn (`Pursuit.sortCandidates`) — kein `rngState`-Zug,
+  kein Zustand im Save außer dem Run-Seed. Gleicher Lauf bei gleicher
+  Eingabefolge = gleiche Route; ein anderer Run-Seed ergibt eine andere Route.
+- **Run-Seed (`save.runSeed`):** wird beim Spielstart gesetzt und überlebt
+  Save/Load unverändert. Explizites `--save` behält den gespeicherten Seed
+  (Tests, Replays, Fuzz bleiben reproduzierbar); `--seed N` setzt ihn
+  ausdrücklich; ein Spielstart ohne `--save` (Mensch, Launcher) zieht einen
+  Uhr-Seed — pro Spiel also andere Wanderrouten. Roguelike-Restarts und
+  `worldbuilder run` leiten den Seed wie gewohnt ab.
+- **Erlaubte Ziele:** dieselben passierbaren Kanten wie bei `pursuit:` (Default
+  „wie der Spieler"), gefiltert durch `stay_in`/`avoid` (dynamic rooms zählen
+  über `lookupRoom`).
+- **Kontakt-Kopplung:** mit `notice: R` wechselt der NPC bei
+  `0 ≤ distance.<npc>.player ≤ R` auf `on_notice`: `pursue` = eine Kante näher
+  (bei Distanz 0 bleibt er stehen), `flee` = eine Kante weg, `hold` = bleibt.
+  Nach `lose_after` Zügen ohne Kontakt streift er weiter. Der Zustand lebt in
+  `wander.<npc>.mode` (0 = streifen, 1 = jagen, 2 = fliehen, 3 = halten) und
+  `wander.<npc>.lost` — **reserviert** wie `patrol.*`, `variables:`-Deklaration
+  ist `WanderVariableClash`. ⚠️ Die Verfolgung selbst kennt die
+  `stay_in`/`avoid`-Filter **nicht** — sie folgt dem Spieler überallhin.
+- **Meldungen:** wie `step_toward` — ohne `msg` gilt der Katalog
+  (`wander.step`), eigener Text ersetzt ihn, `msg: ""` macht den Schritt
+  still. Ein Wanderer ohne erlaubten Ausgang ist eine Normalbedingung und
+  meldet sich **nicht** (anders als `pursuit.no_path`).
+- **Effekt in Regeln:** `wander: <npc>`, `wander: [npc, optionen?, msg?]` oder
+  `wander: {npc: …, stay_in: …, msg: …}` — ein einzelner zielloser Schritt
+  (`WanderStep`); nur NPCs und Schiffe dürfen Wanderer sein.
+- **Fehler:** `UnknownWanderNPC`, `UnknownWanderRoom`, `BadWanderPace`,
+  `BadWanderNotice`, `WanderVariableClash`.
 
 ## Spiel-Export: `assets:` und `worldbuilder export` (B6)
 

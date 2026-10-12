@@ -674,7 +674,8 @@ generateCmd path rest = do
                     Right cr0 -> do
                         -- runtime rngState derived from the generation seed
                         let cr = cr0 { crSave = (crSave cr0)
-                            { E.rngState = deriveRuntimeSeed seed } }
+                            { E.rngState = deriveRuntimeSeed seed
+                            , E.runSeed = deriveRuntimeSeed seed } }
                         unless (null genWarns) $ do
                             putStrLn "Generator warnings:"
                             printCompileIssues path genWarns

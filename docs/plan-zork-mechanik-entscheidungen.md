@@ -20,8 +20,8 @@ YAML-Task in `zork1.yaml` — siehe Abschnitt „Offene YAML-Tasks“) / ✅ (be
 
 | # | Mechanik | Original (Zork I) | Port-Workaround | Grenze des Workarounds | DEC | ADR / Notiz |
 |---|---|---|---|---|---|---|
-| A1 | NPC-Wandering (Thief/Troll) | NPC bewegt sich zufällig durch zusammenhängende Räume | `on: turn`-Trigger mit `random:`-Auswahl über `move_npc` mit literalem Ziel (Zork ~L5184–5330) | `move_npc` braucht **literales** Ziel — pro NPC ~35 Zweige; kein „wander in any direction" (Befunde OPEN-11) | Ja | Eigene Engine-Funktion für Patrouillen & Wandern |
-| A2 | NPC-Follow-Player (Thief betritt den Raum des Spielers) | Thief „wandered through the room" genau dort, wo der Spieler ist | Workaround-Konstrukt: `random:`-Zweig `move_npc: thief` + Meldung „wandered through" | Pfadlogik „betritt den Raum, in dem gerade der Spieler ist" nicht ausdrückbar | Ja | Kombiniert mit Patrol/Wander: Wechsel auf Pursuit bei Kontakt/Sicht |
+| A1 | NPC-Wandering (Thief/Troll) | Recherchenbefund (1actions.zil:3890): **kein Zufall** — `I-THIEF` schiebt den Dieb jede Runde eine Position in der Raumliste weiter und überspringt `SACREDBIT`/Nicht-Land | alt: `on: turn` mit `random:`/`move_npc` (oder 7/10-`step_toward`-Dauerverfolgung) | (alt) literales `move_npc`-Ziel, ~35 Zweige; kein „wander in any direction“ | Ja → ✅ umgesetzt 2026-10-12 | `OPEN-14`: `wander:`-Sektion — zielloser Schritt als Run-Seed-Hash über die erlaubten Kanten (`stay_in`/`avoid`/`ignores`/`pace`); im Zork-Port als Dieb-`avoid:`-Liste mit den originalgetreuen Ausschlüssen (37 `SACREDBIT`-Räume + `reservoir`/`in-stream`) |
+| A2 | NPC-Follow-Player (Thief betritt den Raum des Spielers) | Thief „wandered through the room“ genau dort, wo der Spieler ist | alt: Workaround-Konstrukt `random:` + `move_npc: thief` + Meldung | (alt) Pfadlogik „betritt den Raum, in dem gerade der Spieler ist“ nicht ausdrückbar | Ja → ✅ umgesetzt 2026-10-12 | `OPEN-14`: `notice: R` / `on_notice: pursue|flee|hold` / `lose_after` — Kontakt (`distance.<npc>.player ≤ R`) schaltet auf `StepToward`/`StepAwayFrom` um. Port: Hinterhalter `notice: 2` (Auftraggeber-Entscheidung), still + `thief-footsteps`; ⚠️ `win.py`-Früh-Kill gestrichen (beruhte auf der alten Dauerverfolgung) |
 | A3 | NPC-Diebstahl + Rückgabe | Thief stiehlt Taschen-Gegenstände (bringt Werte + Gauntlet), bei Tod Rückgabe | `move_all` (Tag `schatz`) → Thief; bei Tod `move_all` zurück | „Abstrakte" Meldung nur als Text; Thief kann auf dem Weg nicht unterbrochen werden | Ja → ✅ umgesetzt 2026-10-11 | `OPEN-15`: `steal: {item, from, to?, msg?}` — gezielter Diebstahl inkl. Container-Inhalt des Opfers („Taschen-Gegenstände"), Meldungen rollenbasiert (`steal.*`, `npc.*`) plus `msg:`-Override |
 | A4 | NPC-Kill → Zustand `dead` | NPC stirbt, Meldung + Gegenstand fällt | **Engine-Fix 2026-10-09:** `src/Combat.hs` setzt `SetValue (VRActorProp … PState) (EVString "dead")` bei Todesstoß — abgeschlossen | — (erledigt) | ✅ | Bereits erledigt |
 | A5 | `attack` ohne Objekt | Original: `ATTACK` greift das NPC im Raum an („You can't see any such thing" nur ohne NPC) | Port: bare `attack`/`kill`/`hit` → **stille Nicht-Reaktion** (keine Meldung, Befehl zählt als gescheitert, der Zug läuft trotzdem weiter; geprüft 2026-10-11); nur `attack troll` funktioniert | Kein Kontext-Objekt-Fallback für Verben ohne Objekt | Ja → ✅ umgesetzt 2026-10-11 | `OPEN-16`: bare Verben lösen das einzige passende Ziel automatisch auf; bei mehreren Zielen Disambiguation-Frage, bei keinem Ziel verb-spezifische Meldung. |
@@ -94,8 +94,7 @@ YAML-Task in `zork1.yaml` — siehe Abschnitt „Offene YAML-Tasks“) / ✅ (be
 2. Bei **Ja**: Mini-Ticket im `befunde-text-adventure-engine.md` (§7 OPEN) eintragen und Engine-Patch planen — ✅ **Erledigt (`OPEN-14` bis `OPEN-23` eingetragen)**.
 3. Bei **Nein**: Verweis auf den konkreten Workaround (Datei + Regel-ID) im Plan behalten. — ✅ **Erledigt (2026-10-11)**, siehe Spalte „ADR / Notiz“.
    Bei **Gestrichen**: Eintrag in „Offene YAML-Tasks“ (unten) — ✅ **Erledigt (2026-10-11)**.
-4. Nach dem Durchgang: `win.py` auf den finalen Stand anpassen (Thief-Vorweg-Kill, Torch-Relight,
-   `low_tide`-Hack entfernen, falls B1/E2 per Engine gelöst werden).
+4. Nach dem Durchgang: `win.py` auf den finalen Stand anpassen — Thief-Vorweg-Kill ✅ **erledigt (2026-10-12)**: Block gestrichen, der Hinterhalter-Dieb kommt nicht mehr von allein. Offen: Torch-Relight, `low_tide`-Hack entfernen (falls B1/E2 per Engine gelöst werden).
 
 ---
 
@@ -132,4 +131,7 @@ Damit wäre der Thief **kein** `random:`-Konstrukt, sondern ein Pursuit-Eintrag 
 **Fazit:** Für den Thief ist Pursuit semantisch **richtiger** (er jagt aktiv den Spieler),
 für den Troll aber nicht (der bleibt in seinem Raum und blockiert nur). Ein Mischmodus
 („wander + nur zu Spieler-Reise-Pfaden") wäre ein eigener Engine-Punkt, der Pursuit mit
-Wandern kombiniert.
+Wandern kombiniert. — **Umgesetzt 2026-10-12 (OPEN-14):** der Mischmodus existiert als
+`wander:`-Sektion mit `notice:`-Kopplung (streifen bis Kontakt, dann Verfolgung). Die
+„Spieler-Reise-Pfade"-Einschränkung ist dabei nicht Teil des Features — die Verfolgung
+folgt dem Spieler überallhin.

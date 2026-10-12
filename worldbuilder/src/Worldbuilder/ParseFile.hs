@@ -189,6 +189,7 @@ duplicateSections adv =
     , ("encounter_tables", map ertId (advEncounterTables adv))
     , ("factions", map afId (advFactions adv))
     , ("pursuit", map apeNpc (advPursuit adv))
+    , ("wander", map aweNpc (advWander adv))
     , ("initial_flags", Map.keys (advInitialFlags adv))
     , ("initial_variables", Map.keys (advInitialVariables adv))
     , ("end_art", Map.keys (advEndArt adv))
@@ -238,6 +239,7 @@ mergeSources ((_, main) : incls) = foldl mergeOne main { advInclude = [] } incls
         , advProcedures      = advProcedures acc ++ advProcedures inc
         , advChapters        = advChapters acc ++ advChapters inc
         , advPursuit         = advPursuit acc ++ advPursuit inc
+        , advWander          = advWander acc ++ advWander inc
         , advFacts           = advFacts acc ++ advFacts inc
         , advStatements      = advStatements acc ++ advStatements inc
         , advCombines        = advCombines acc ++ advCombines inc

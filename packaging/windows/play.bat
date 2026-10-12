@@ -49,5 +49,8 @@ if not exist "worlds\%~1\world.json" (
     echo   check.bat %~1
     goto :eof
 )
-bin\text-adventure.exe --world "worlds\%~1\world.json" --save "worlds\%~1\save.json"
+rem without --save the bundled save.json is picked up as the sibling of
+rem world.json, and the game draws a fresh run seed (wandering NPC routes
+rem differ every play). Pass --save "worlds\%~1\save.json" to pin the run.
+bin\text-adventure.exe --world "worlds\%~1\world.json"
 goto :eof

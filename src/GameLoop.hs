@@ -24,6 +24,7 @@ module GameLoop
   , carryMetaVars
   , persistMeta
   , reseedRng
+  , initRunSeed
   , bumpMetaRuns
   , SessionRequest (..)
   , IoRequest
@@ -370,9 +371,26 @@ applyLoopCommand cmd loopState =
 --   derived rngState — carrying the old stream over would replay identical
 --   "randomness" in every run, which is fatal for a roguelike. The IO path
 --   derives the seed from the system clock and injects it here (M6-style:
---   pure core, clock in the IO path only).
+--   pure core, clock in the IO path only). OPEN-14: the wander run seed moves
+--   with it, so every run wanders differently.
 reseedRng :: Word64 -> GameState -> GameState
-reseedRng seed st = st { save = (save st) { rngState = seed } }
+reseedRng seed st = st { save = (save st) { rngState = seed, runSeed = seed } }
+
+-- | OPEN-14: decide the run seed of a fresh session (the clock stays in the
+--   IO path, M6). A supplied seed pins it (the `--seed` flag); without one, a
+--   state that was loaded from an explicit save file keeps the run seed
+--   stored there — scripted runs (tests, replays, fuzz) stay reproducible —
+--   while a plain human start draws a fresh seed, so wandering NPCs take a
+--   different route every game.
+initRunSeed :: Bool -> Maybe Word64 -> GameState -> IO GameState
+initRunSeed fromExplicitSave mSeed st =
+    case mSeed of
+        Just seed -> pure st { save = (save st) { runSeed = seed } }
+        Nothing
+            | fromExplicitSave -> pure st
+            | otherwise -> do
+                seed <- newRngSeedIO
+                pure st { save = (save st) { runSeed = seed } }
 
 -- | Rogue Phase 2 (Zusatz-Empfehlung 4, pure): `meta.runs` counts fresh runs.
 --   Bumped at run start and on every restart (a restart is a new run). Only
