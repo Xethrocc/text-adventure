@@ -3759,6 +3759,8 @@ verbs:
 - name: out
 - name: deflate
 - name: shout
+- name: echo
+- name: bug
 - name: wave
 - name: tie
 - name: pray
@@ -4907,23 +4909,105 @@ rules:
         msg: It already is.
 
 # --- Stufe C: Loud Room (Original: LOUD-ROOM-FCN, 1actions.zil:1660) ---
+# Seit OPEN-22 (`cmd.raw`, 2026-10-13) hoert der Raum die getippte Zeile mit:
+# das Original uebernimmt in diesem Raum die Eingabeschleife — nur
+# Richtungswoerter, `bug`, `echo` (und save/restore/quit) werden angenommen,
+# jedes andere Wort wird per V-ECHO echo't. Der Laut-Zustand ist
+# originalgetreu an die Wasserlogik gekoppelt: die Eingabeschleife ist nur
+# aktiv, wenn GATES-OPEN == LOW-TIDE (XNOR) — bei offenem Damm wird man
+# stattdessen ausgeworfen (loud-room-eject), bei niedrigem Wasser ist der
+# Raum bereits still. Abweichung: V-ECHO wiederholt im Original das LETZTE
+# Wort; die Engine hat keine String-Operationen, also echart wir die ganze
+# Zeile (`{cmd.raw}`) zweimal + "...". Bekannte Verben laufen im Port normal
+# (kein per-Verb-Veto); das Mitlesen gilt fuer unbekannte Wörter.
 - id: loud-room-echo
   on: command shout
   when:
     all:
     - at: player
       room: loud-room
-    - any:
-      - var: cmd.arg1
-        is: echo
-      - var: cmd.raw_args
-        is: echo
     - not:
         has_flag: loud-flag
+    - any:
+      - all:
+        - has_flag: gates-open
+        - has_flag: low_tide
+      - all:
+        - not:
+            has_flag: gates-open
+        - not:
+            has_flag: low_tide
   effects:
   - msg: The acoustics of the room change subtly.
   - set_flag: loud-flag
     val: 'true'
+- id: loud-room-echo-word
+  on: before echo
+  when:
+    all:
+    - at: player
+      room: loud-room
+    - not:
+        has_flag: loud-flag
+    - any:
+      - all:
+        - has_flag: gates-open
+        - has_flag: low_tide
+      - all:
+        - not:
+            has_flag: gates-open
+        - not:
+            has_flag: low_tide
+  effects:
+  - set_flag: loud-flag
+    val: 'true'
+  - block: The acoustics of the room change subtly.
+- id: loud-room-bug
+  on: before bug
+  when:
+    all:
+    - at: player
+      room: loud-room
+    - not:
+        has_flag: loud-flag
+    - any:
+      - all:
+        - has_flag: gates-open
+        - has_flag: low_tide
+      - all:
+        - not:
+            has_flag: gates-open
+        - not:
+            has_flag: low_tide
+  effects:
+  - block: That's only your opinion.
+- id: loud-room-echo-words
+  on: before unknown
+  when:
+    all:
+    - at: player
+      room: loud-room
+    - not:
+        has_flag: loud-flag
+    - any:
+      - all:
+        - has_flag: gates-open
+        - has_flag: low_tide
+      - all:
+        - not:
+            has_flag: gates-open
+        - not:
+            has_flag: low_tide
+  effects:
+  - block: '{cmd.raw} {cmd.raw} ...'
+- id: echo-verb
+  on: command echo
+  effects:
+  - msg: '{cmd.raw} {cmd.raw} ...'
+- id: bug-verb
+  on: command bug
+  effects:
+  - msg: Bug? Not in a flawless program like this! (Cough, cough).
 - id: loud-room-shout
   on: command shout
   when:
@@ -4932,6 +5016,15 @@ rules:
       room: loud-room
     - not:
         has_flag: loud-flag
+    - any:
+      - all:
+        - has_flag: gates-open
+        - has_flag: low_tide
+      - all:
+        - not:
+            has_flag: gates-open
+        - not:
+            has_flag: low_tide
   effects:
   - msg: The sound of your voice is lost in the noise.
 # Wenn hinter dem Damm das Wasser laeuft, wird der Raum unertraeglich laut.
