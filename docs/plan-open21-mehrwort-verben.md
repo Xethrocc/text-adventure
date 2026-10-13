@@ -12,7 +12,8 @@
 - `../examples/zork1.yaml` — Abnahme-Abenteuer
 - `adventure-schema.md` — Doku-Ziel (*Parametrisierte Befehle*, `verbs:`)
 
-**Status:** 📋 geplant · **Aufwandsschätzung:** A+B je ~1 Tag, C+D ~½ Tag, E ~½ Tag
+**Status:** 📋 geplant · **Entscheidungen D1–D4:** ✅ entschieden 2026-10-13 (§4)
+· **Aufwandsschätzung:** A+B je ~1 Tag, C+D ~½ Tag, E ~½ Tag
 
 ---
 
@@ -29,7 +30,9 @@
 
 **Nicht-Ziel:**
 - Keine echte Zork-Grammatik (OBJ-SPEC-Parser, `ONBIT`-Grammatikflags usw.).
-- Keine Änderung an Kern-Befehlen außer `put X on Y` (Arbeitspaket B4).
+- Keine Änderung an Kern-Befehlen: `put X in Y` / `put X down` bleiben wie sie
+  sind; `put X on Y` ist mit D2 eine **Pattern-Deklaration** des Abenteuers,
+  kein neuer Core-Zweig.
 - Kein neuer `verb_map`-Phasen-Mechanismus; die bestehenden Phasen
   (`before:`/`instead:`/`after:`) + Zustands-Keys bleiben wie sie sind.
 
@@ -106,10 +109,12 @@ Gegen das kompilierte `zork1.yaml` (`parseCommandFor`):
    derselben Quelle — Kommentar dort: „Keep the two in step").
 4. **Edge Cases:** Compound (`take lamp and put out torch` — Split an `and`,
    beide Teile phrase-matchen), bare Form (`put out` ohne Objekt →
-   `ITBareVerb`-Pfad, OPEN-16), `take all`-Massenformen (`put out all`? —
-   **Entscheidung D4**: bewusst `Unknown`/Ziel-Auflösung überlassen),
-   Disambiguierung, Sprach-Pack-Aliase (aeHead-Phrasen + `verbs:`-Phrasen
-   zusammen: longest over both).
+   `ITBareVerb`-Pfad, OPEN-16), Disambiguierung, Sprach-Pack-Aliase
+   (aeHead-Phrasen + `verbs:`-Phrasen zusammen: longest over both).
+5. **Massenformen (D4 entschieden):** `put out all` wendet das Verb auf
+   alle passenden Ziele im Scope an — Massen-Dispatch wie `take all`,
+   `cmd.succeeded` ist die Konjunktion aller Teile (wie bei Sammelkommandos,
+   `take sword and lamp`).
 
 ### B — Präpositionalphrasen mit Rollen (Engine)
 
@@ -123,21 +128,32 @@ Gegen das kompilierte `zork1.yaml` (`parseCommandFor`):
      (`VVText`, Roh-String; `cmd.tool_kind` analog `cmd.target_kind` optional).
    - `bindCommandVars`/`extractCommandArgs` erweitern (2. Argument),
      `cmd.raw_args` bleibt die volle Phrase.
-3. **Werkzeug-Matching in `verb_map`** (Entscheidung D1): Vorschlag —
-   optionaler Zusatz-Schlüssel `verb,tool:<id>` bzw. ein `tool:`-Feld am
-   Entry; Default: Tool nur lesbar, kein Match-Kriterium (klein, kompatibel).
-4. **`put X on Y` als Core-Zweig** (Entscheidung D2):
-   - Variante *Core-Zweig* (Vorschlag): `"put" : rest | splitPrep (prepsOf env "on")`
-     → `PutOnCmd X Y` (Dispatch wie `use X on Y`: `verb_map` auf Y,
-     Rollen: X = Item, Y = Unterstützer).
-   - Variante *Pattern-Syntax*: `- name: put`, `pattern: "<x> on <y>"` —
-     deckt auch `fill X with Y`, `plug X with Y` generisch ab (größer,
-     aber ein Mechanismus).
-5. **Kollision `put X in Y` vs. `put X on Y` vs. `put X down`:** Split am
-   ersten Präpositionstoken; `put down X`/`put X down` (Drop) zuerst,
-   danach `in`, dann `on`. Durch `splitPrep` am ersten Treffer gegeben;
-   Regressionstests nötig (`put gem in box on table` — Edge Case,
-   dokumentieren).
+3. **Werkzeug-Matching in `verb_map` (D1 entschieden: Lesbarkeit + Match-
+   Kriterium):** `cmd.tool`/`cmd.tool_kind` sind lesbar **und**
+   `verb_map`-Einträge dürfen auf dem Werkzeug matchen — Vorschlag als
+   Zusatz-Schlüssel `verb,tool:<id>` am Entry (analog `wind,intact` aus
+   `Z-06`); Validierung: unbekanntes Tool in `tool:`-Keys → B4-Warnung.
+4. **Grammatik-Erweiterung (D2 entschieden: generische Pattern-Syntax):**
+   `verbs:` bekommt `pattern:`, z. B.:
+   ```yaml
+   - name: put out
+     aliases: [blow out]
+   - name: put
+     pattern: "<x> on <y>"        # Zork PUT ON (PUT PUTTY ON LEAK)
+   - name: fill
+     pattern: "<x> with <y>"      # FILL X WITH Y
+   ```
+   Der Parser matched Pattern-Formen **vor** der Core-Auflösung (längste
+   Phrase + Shape zuerst); nicht passende Eingaben fallen wie gehabt durch
+   (`put gem in box` hat kein `on` → Core `PutInCmd` bleibt).
+   - **D2-Nachtrag (Kollision reservierter Wörter):** `pattern:`-Deklarationen
+     auf ein Core-/reserviertes Wort (`- name: put`) gelten als
+     **Erweiterung** (der Shape `put X on Y` wird ergänzt, `put X in Y`/
+     `put X down` bleiben Core) — nicht als Kollision. Die D3-Warnung trifft
+     nur `name: put` **ohne** `pattern:` (würde durch Core-Union nie matchen).
+5. **Rollensplit:** Pattern-Gruppen (`<x>`, `<y>`) + Präpositionstoken
+   (`on`/`with`/`in`/`from`/`to`/`about` + Pack-Aliase) →
+   `InteractWith (VCustom v) X Y`; Stopwörter auf beiden Seiten strippen.
 
 ### C — Tests
 
@@ -172,15 +188,15 @@ Gegen das kompilierte `zork1.yaml` (`parseCommandFor`):
 
 ## 4. Offene Entscheidungen
 
-| # | Frage | Vorschlag | Status |
+| # | Frage | **Entscheid (2026-10-13)** | Status |
 |---|---|---|---|
-| D1 | Werkzeug-Y in `verb_map`: nur lesbar (`cmd.tool`) oder Match-Kriterium (`verb,tool:<id>`) | erst lesbar, Match-Kriterium optional nachreichen | ☐ offen |
-| D2 | `put X on Y` / `fill X with Y`: Core-Zweig (`PutOnCmd`) oder generische Pattern-Syntax (`pattern: "<x> on <y>"`) | Pattern-Syntax (ein Mechanismus für alle C1-Fälle) | ☐ offen |
-| D3 | Phrase mit reserviertem Einzelwort (`put out` enthält `put`) erlauben? | ja (Longest-Match schützt), Warnung nur bei exakter Kollision | ☐ offen |
-| D4 | Massenformen mit Phrase-Verben (`put out all`) | bewusst unsupported → `Unknown`; Ziel-Auflösung über OPEN-16, wo sinnvoll | ☐ offen |
+| D1 | Werkzeug-Y in `verb_map` | **Lesbar + Match-Kriterium** — `cmd.tool`/`cmd.tool_kind` lesbar, `verb_map`-Entries matchen zusätzlich auf dem Werkzeug (`verb,tool:<id>`), Validierung wie `Z-06` | ✅ |
+| D2 | `put X on Y` / `fill X with Y` | **Generische Pattern-Syntax** (`pattern: "<x> on <y>"`), Core-Formen (`put X in Y`, `put X down`) bleiben unberührt; Pattern-Deklaration auf reservierte Wörter = Erweiterung (D2-Nachtrag, s. B4) | ✅ |
+| D3 | Phrase mit reserviertem Einzelwort (`put out` enthält `put`) | **Ja, aber mit Warnung** — Phrase erlaubt (Longest-Match), Compiler-Warnung (B4-Kanal); exakte Kollision (`name: put` ohne `pattern:`) ebenfalls Warnung | ✅ |
+| D4 | Massenformen mit Phrase-Verben (`put out all`) | **Masse + `cmd.succeeded`-Konjunktion** — alle Ziele im Scope, Erfolg nur wenn alle Teile gelingen (wie Sammelkommandos) | ✅ |
 
-**Ablauf:** D1–D4 festklopfen → A → B → C → D → E (E als Abnahme; Port-Texte
-wie gehabt gegen `1actions.zil` spiegeln).
+**Ablauf:** A → B → C → D → E (E als Abnahme; Port-Texte wie gehabt gegen
+`1actions.zil` spiegeln).
 
 ---
 
@@ -189,7 +205,9 @@ wie gehabt gegen `1actions.zil` spiegeln).
 1. `put out candle` / `blow out candles` / `fill bottle with water` /
    `put putty on leak` parsen zu den in §2 genannten *korrekten* Commands und
    feuern `verb_map`/Trigger mit Phrase in `cmd.verb`.
-2. Zork-Port: Kerzen/Fackel per `put out`, Leck per `put putty on leak`,
-   `fill X with Y` spielbar; `worldbuilder validate` sauber.
-3. Alle Regressionstests grün, `scripts/ci.sh` ohne FAIL; Byte-Vertrag gehalten.
-4. Befunde/Plan/Schema-Doku aktualisiert (`OPEN-21` ✅).
+2. `verb_map`-Entries matchen auf dem Werkzeug (`verb,tool:<id>`) und
+   `put out all` arbeitet als Masse mit `cmd.succeeded`-Konjunktion (D1/D4).
+3. Zork-Port: Kerzen/Fackel per `put out`, Leck per `put putty on leak`,
+   `fill X with Y` spielbar; `worldbuilder validate` sauber (inkl. D3-Warnungen).
+4. Alle Regressionstests grün, `scripts/ci.sh` ohne FAIL; Byte-Vertrag gehalten.
+5. Befunde/Plan/Schema-Doku aktualisiert (`OPEN-21` ✅).
