@@ -1457,7 +1457,13 @@ dispatchCommandCoreEv DropAll state =
 dispatchCommandCoreEv (CompoundCommand cmds) state =
     foldl' (\(s, msgs) cmd ->
         let (s', msg) = executeCommandEv cmd s
-        in (retainCommandFailure s s', joinEv msgs msg)
+            -- OPEN-21: every part fires its own `on: command <verb>` trigger
+            -- (rule-driven verbs like `put out lamp` must answer inside
+            -- `take lamp and put out lamp` too). The whole compound keeps
+            -- raising `on: command compound` at the outer pipeline level.
+            (partVerb, _, _) = extractCommandArgs cmd
+            (s'', trigMsg) = fireTriggers (OnCommand partVerb) s'
+        in (retainCommandFailure s s'', joinEv (joinEv msgs msg) trigMsg)
     ) (state, []) cmds
 
 dispatchCommandCoreEv (SearchCmd maybeTarget) state = case getCurrentRoom state of

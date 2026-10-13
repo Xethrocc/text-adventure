@@ -12201,7 +12201,15 @@ testOpen21Dispatch = do
         (ls9, _) = applyLoopCommandEv (Interact (VCustom "put out") "all") (initLoopState failGame)
     r9 <- expectTrue "one failing part fails the mass command"
             (getVariable "cmd.succeeded" (lsCurrent ls9) == Just (VVBool False))
-    pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9])
+    -- OPEN-21: compound parts fire their own on: command triggers (a
+    -- rule-driven verb must answer inside `take x and put out y` too).
+    let compoundGame = game { world = (world game) { triggerDefs =
+            [TriggerDef "t_ext" (OnCommand "extinguish") Nothing [SendMessage "EXTINGUISHED"] False 0 1 [] []] } }
+        (_, out10) = run (CompoundCommand [Interact VTake "sword", Interact (VCustom "extinguish") "potion"])
+                        compoundGame
+    r10 <- expectTrue ("compound parts fire on: command: " ++ out10)
+            ("EXTINGUISHED" `isInfixOf` out10)
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10])
 
 -- | Like 'withPotionVerbMap', but for any number of items.
 withVerbMaps :: [(String, Map.Map (VerbPhase, Verb, String) Effect)] -> GameState -> GameState
