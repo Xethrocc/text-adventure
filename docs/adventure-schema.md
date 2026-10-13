@@ -1366,8 +1366,60 @@ automatisch temporäre Variablen in den Spielzustand:
   als ganzzahlige `VTInt` typisiert, Wörter als `VTText`.
 - `cmd.count`: Anzahl der übergebenen Argumente (als `VTInt`).
 - `cmd.raw_args`: Der gesamte unzerlegte Rest-String nach dem Verb.
+- `cmd.raw`: Die getippte Eingabezeile, **normalisiert** (kleingeschrieben,
+  Whitespace kollabiert) — siehe *Rohes Spielerkommando (`cmd.raw`)*.
 - `cmd.succeeded`: Ergebnis des Kommandos (`"true"`/`"false"`) — siehe Abschnitt
   *Command-Ergebnis: `cmd.succeeded`*.
+
+#### Rohes Spielerkommando (`cmd.raw`) (OPEN-22)
+
+`cmd.raw` enthält die Eingabezeile so, wie der Spieler sie getippt hat —
+normalisiert auf Kleinschreibung und zusammengefassten Whitespace, aber mit
+Verb **und** Argumenten (davon unterscheidet sich `cmd.raw_args`, das nur den
+Rest nach dem Verb trägt). Die Bindung passiert am Eingabe-Loop (vor jedem
+Spielkommando), nicht im Kommando-Dispatch selbst:
+
+- **Alle Phasen sehen denselben Wert:** `on: before` (Veto), der Dispatch
+  selbst und `on: command` / `on: turn` desselben Zugs.
+- **Meta-Befehle** (`save`, `load`, `help`, …) lassen den Wert unverändert —
+  wie alle `cmd.*`-Variablen bleibt der des letzten Spielkommandos stehen.
+- **Disambiguierung:** die Antwort ("Which do you mean?") überschreibt den
+  Wert nicht; der wiederegesetzte Befehl behält die ursprüngliche (mehrdeutige)
+  Zeile.
+- **Test-/Skriptpfade**, die Kommandos direkt ausführen (ohne Eingabe-Loop),
+  binden `cmd.raw` nicht — der Wert bleibt dann ungesetzt bzw. beim letzten
+  Stand.
+
+Anwendungsfall sind Echo-Rätsel wie der Zork-Loud-Room: unerkannte Eingabe
+feuert die Trigger-Verben `unknown` (`on: before unknown` / `on: command
+unknown`), die mit `cmd.raw` die getippten Wörter lesen und z. B. per
+`block: '{cmd.raw} {cmd.raw} ...'` zurückechen können:
+
+```yaml
+rules:
+  - id: loud-room-echo-words
+    on: before unknown
+    when:
+      all:
+        - at: player
+          room: loud-room
+        - not:
+            has_flag: loud-flag
+    effects:
+      - block: '{cmd.raw} {cmd.raw} ...'
+  - id: loud-room-echo-word
+    on: before echo        # getipptes `echo` stellt den Raum still
+    when:
+      all:
+        - at: player
+          room: loud-room
+        - not:
+            has_flag: loud-flag
+    effects:
+      - set_flag: loud-flag
+        val: 'true'
+      - block: The acoustics of the room change subtly.
+```
 
 Für Custom-Verben mit `verb_map` wird bei `X with Y` oder `X to Y` nur
 **X** als primäres Ziel aufgelöst; die vollständige Wortgruppe bleibt erhalten
@@ -1635,6 +1687,12 @@ Before a command is executed, the engine automatically extracts arguments and re
 - `cmd.target_kind` — The type of the resolved target: `"item"`, `"npc"`, `"vehicle"`, `"room"`, `"choice"`, `"all"`, `"ambiguous"`, or `"none"`.
 - `cmd.verb` — The canonical verb name (e.g. `"take"`, `"go"`, `"use"`).
 - `cmd.raw_args` — The unparsed arguments string following the verb.
+- `cmd.raw` — The player's raw input line, normalized (lowercased,
+  whitespace-collapsed). Bound by the input loop before every gameplay
+  command, so all phases (`on: before`, dispatch, `on: command`, `on: turn`)
+  see the same value; meta commands leave it untouched. Unrecognized input
+  fires the `unknown` trigger verbs — see the German section *Rohes
+  Spielerkommando (`cmd.raw`)* (OPEN-22).
 - `cmd.count` — The number of argument tokens (integer).
 - `cmd.arg1..N` — Individual argument tokens (integer if numeric, otherwise text).
 - `cmd.succeeded` — The command result as a boolean value (`"true"`/`"false"`);

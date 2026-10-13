@@ -5213,7 +5213,8 @@ checkUnknownPlaceholders adv varDefs =
         , "room.id", "current_room.id", "room"
         ]
     commandVars = Set.fromList
-        [ "cmd.verb", "cmd.count", "cmd.raw_args", "cmd.target", "cmd.target_kind" ]
+        [ "cmd.verb", "cmd.count", "cmd.raw_args", "cmd.target", "cmd.target_kind"
+        , "cmd.raw" ]
 
     extractPlaceholders [] = []
     extractPlaceholders ('\\':'{':cs) = extractPlaceholders cs

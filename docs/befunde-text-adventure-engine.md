@@ -9,6 +9,8 @@ Stufen A–F · **Vollständige Fassung** zu `plan-zork-port.md` §5 ·
 Patrol-Modi `mode: pingpong|random` und Dieb-Umbau im Zork-Port (`thief-wanders` → `wander:`)
 **Update 2026-10-12 (spät):** `OPEN-19` (Multi-Raum-Objekte, `locations:`) umgesetzt —
 `grating`/`grating-bottom` im Zork-Port wieder zu einem Gitter verschmolzen
+**Update 2026-10-13:** `OPEN-22` (`cmd.raw`) umgesetzt — der Loud Room hört mit
+(echo/bug/Mitlesen unbekannter Wörter), die Wasserkopplung (XNOR) ist originalgetreu
 
 **Zweck:** Alles, was beim Bauen von Abenteuern und Regeln stolpert oder gestolpert hat —
 Laufzeit-Semantik, Workarounds, behobene Engine-Bugs und offene Engine-Punkte. Kein
@@ -207,7 +209,7 @@ keinen Zielraum, `FIX-07`).
 | `OPEN-19` | **Multi-Raum-Objekte (`locations: [...]`)** | Ein Item/Scenery-Objekt ist in mehreren Räumen gleichzeitig sichtbar und manipulierbar (Gitter oben/unten, Fenster, Sci-Fi-Terminals) (D1). | ✅ 2026-10-12 — `locations: [raum, …]` am Item → `InRooms` (neues `Location`-Konstrukt, JSON nur bei Benutzung). Alle Orts-Abfragen laufen über `locationMatches` (Sichtbarkeit je Raum, Zählfamilie, Search, Lichtquellen, Entity-at). **Ein** Objekt mit **einem** geteilten Zustand; `take` nimmt es aus allen Räumen, `drop` legt es als Einzel-Raum-Item ab, `portable: false` hält Szenerie fest. Effekt-Ziele bleiben Single-Raum; Konflikte (`in_container:`/`carried_by:`/`nowhere`) = `LocationsConflict`. Einschränkung: `repeatable:`-Home = erster Raum. Port: `grating` + `grating-bottom` verschmolzen (eine `verb_map`, Seiten-Texte via `at: player, room:`). |
 | `OPEN-20` | **`swap_inventory`-Effekt** | Atomarer Tausch zweier Inventare (`swap_inventory: {source, target}`) für Charakterwechsel, Drohnensteuerung und Parallelwelten (F1). | ✅ 2026-10-11 — `swap_inventory: {source, target}` (`SwapInventory`): geschlossener Tausch von getragen + ausgerüstet, getragene Ausrüstung bleibt getragen. Darstellung je Ziel (B9): Spieler = `equipment`-Slot-Map + `CarriedBy` (Map wird konsistent neu aufgebaut), NPC = `EquippedBy`. Still wie `give:` (Inszenierung als eigenes `msg:`), Container-Inhalte ziehen mit (Z-10), `source: == target:` No-op. |
 | `OPEN-21` | **Mehrwort-Verben & Präpositionalphrasen** | Parser-Unterstützung für Verben wie `fill <x> with <y>`, `put out` (C1). | ⏳ Backlog / Später |
-| `OPEN-22` | **Rohes Spielerkommando in Bedingungen (`cmd.raw`)** | Zugriff auf den Original-Eingabestring für wörtliche Echo-Rätsel wie den Loud Room (C4). | ⏳ Backlog / Später |
+| `OPEN-22` | **Rohes Spielerkommando in Bedingungen (`cmd.raw`)** | Zugriff auf den Original-Eingabestring für wörtliche Echo-Rätsel wie den Loud Room (C4). | ✅ 2026-10-13 — der Eingabe-Loop reicht die getippte Zeile (normalisiert: Kleinbuchstaben, Whitespace kollabiert) über `LoopState.lsRawInput` an `applyLoopCommandCore`, das sie **vor `checkBeforeVeto`** bindet: alle Phasen sehen denselben Wert, `bindCommandVars` löscht sie nicht. Meta-Befehle lassen den Wert unverändert, der Disambiguierungs-Replay (`runCommandNoTurn`) behält die ursprüngliche Zeile. Unerkannte Eingabe feuert die Trigger-Verben `unknown` (`on: before`/`on: command unknown`). Port: Loud Room mit `echo`/`bug`/Mitlesen (§8), globale `echo`/`bug`-Verben (`V-ECHO`/`V-BUG`). |
 | `OPEN-23` | **Dynamisches Gezeiten-/Wasserstands-System** | Kontinuierlicher Pegelstand für Tide/Reservoir mit mitgeschwemmten Objekten (E2). | ⏳ Backlog / Später |
 
 Commits: `0f2f5b1` (OPEN-08/09) · `bc01829` (OPEN-03..07) · `5d7fecd` (OPEN-01/02) —
@@ -250,8 +252,12 @@ in Regeln).
 - Kohle: `put coal in machine` **oder** bloßes Mitführen genügt; die Kohle wird über
   `place: {item: coal, in: machine-room}` + `consume: coal` verbraucht (E-03-Workaround,
   weiter gültig — seit 2026-10-09 ginge auch `consume:` direkt aus dem Container).
-- Loud Room: das Mitlesen der Kommandos (`P-CONT`-Reset) entfällt, der Rauswurf läuft über
-  `on: turn` statt `M-END`.
+- Loud Room: **seit `OPEN-22` (2026-10-13) hört der Raum mit** — bare `echo` stellt still,
+  `bug` antwortet mit der Original-Zeile, unbekannte Wörter werden echo't (`{cmd.raw}`;
+  Näherung: V-ECHO wiederholt im Original das *letzte* Wort, der Port die ganze Zeile).
+  Bekannte Verben laufen normal (kein per-Verb-Veto — die eigentliche Eingabe-Schleifen-
+  Übernahme bleibt außen vor), der Rauswurf läuft weiter über `on: turn` statt `M-END`,
+  jetzt mit originalgetreuer Wasserkopplung (Schleife nur bei `GATES-OPEN == LOW-TIDE`).
 - Spiegel: nur der Spieler wechselt den Raum, das Vertauschen des Inventars beider Räume
   (`MIRROR-MIRROR`) entfällt; `LUCKY` gibt es nicht, nur `mirror-mung`.
 - Spiegel-Mechanik ist **`rub`**, nicht `push` (die alte Planzeile war hier ebenfalls falsch).

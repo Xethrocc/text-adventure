@@ -2479,7 +2479,7 @@ testMetaProgressionPreservedOnRestart = do
                 [ ("meta.souls", VVInt 7)
                 , ("meta.unlocked_class", VVText "mage")
                 , ("gold", VVInt 9) ] } }
-        loop = LoopState mid [] pristine (Just "checkpoint") Nothing
+        loop = LoopState mid [] pristine (Just "checkpoint") Nothing ""
         (l2, msg) = applyLoopCommand Restart loop
     -- The fresh run starts from `lsInitial` (gold absent there); meta.souls=7
     -- and meta.unlocked_class survive, gold does not leak.
@@ -2512,7 +2512,7 @@ testMetaRunsCounter = do
     -- restart path: the carried counter increments once per restart
     let mid = pristine { save = (save pristine)
             { variables = Map.fromList [("meta.souls", VVInt 3), ("meta.runs", VVInt 5)] } }
-        loop2 = LoopState mid [] pristine Nothing Nothing
+        loop2 = LoopState mid [] pristine Nothing Nothing ""
         (l3, _) = applyLoopCommand Restart loop2
     r2 <- expectTrue "pure restart branch carries meta.runs (IO path bumps)"
         (Map.lookup "meta.runs" (variables (save (lsCurrent l3))) == Just (VVInt 1))
@@ -11846,6 +11846,49 @@ testCustomVerbPrimaryTarget = do
         ("MAP:rub|healing|potion|to|silver|spoon|5|healing potion to silver spoon|potion_healing|item" `isInfixOf` directOutput)
     pure (and results && plain && npc && direct)
 
+-- | OPEN-22: `cmd.raw` — the input loop binds the (normalized) raw input
+--   line; it reaches every phase (`on: before`, dispatch, `on: command`),
+--   survives the internal `bindCommandVars` rebinding, unknown input fires
+--   the `unknown` trigger with the verbatim words (Loud-Room echo), and meta
+--   commands leave the last value standing.
+testCmdRaw :: IO Bool
+testCmdRaw = do
+    let base = initSampleGame
+        -- Loud-Room style: an unrecognized line is echoed back (veto), and a
+        -- `on: command` rule reads the same raw line after the dispatch.
+        echoWorld = base { world = (world base) { triggerDefs =
+            [ TriggerDef "loud_echo" (OnBefore "unknown")
+                (Just (VarIs "cmd.raw" "echo echo"))
+                [Block (Just "The room echoes: {cmd.raw}.") False] False 0 1 [] []
+            , TriggerDef "cmd_probe" (OnCommand "take")
+                (Just (VarIs "cmd.raw" "take torch"))
+                [SendMessage "RAW:{cmd.raw}"] False 0 1 [] [] ] } }
+    -- 1. The loop binds cmd.raw normalized: trimmed, lowercased, collapsed.
+    let (ls1, _) = applyLoopCommandEv (parseCommand "take torch")
+            ((initLoopState base) { lsRawInput = "  TAKE   Torch " })
+    r1 <- expectEqual (Just (VVText "take torch")) (getVariable "cmd.raw" (lsCurrent ls1))
+    -- 2. Unknown input fires `on: before unknown` with the raw line; the veto
+    --    keeps the default parse.unknown refusal out.
+    let (ls2, out2) = applyLoopCommand (Unknown "echo echo")
+            ((initLoopState echoWorld) { lsRawInput = "echo echo" })
+    r2 <- expectTrue "unknown input echoes the raw line"
+            ("The room echoes: echo echo." `isInfixOf` out2)
+    r3 <- expectTrue "veto suppresses parse.unknown"
+            (not ("I don't understand" `isInfixOf` out2))
+    -- 3. The `on: command` phase sees the same raw line.
+    let (ls3, out3) = applyLoopCommand (Interact VTake "torch")
+            ((initLoopState echoWorld) { lsRawInput = "take torch" })
+    r4 <- expectTrue "command phase reads cmd.raw" ("RAW:take torch" `isInfixOf` out3)
+    -- 4. A known verb does not fire the unknown trigger.
+    r5 <- expectTrue "known verb skips the unknown rule"
+            (not ("The room echoes" `isInfixOf` out3))
+    -- 5. Meta commands leave cmd.raw untouched (like all cmd.* variables).
+    let (lsB, _) = applyLoopCommandEv (Interact VTake "torch")
+            ((initLoopState base) { lsRawInput = "take torch" })
+        (lsC, _) = applyLoopCommandEv Help lsB
+    r6 <- expectEqual (Just (VVText "take torch")) (getVariable "cmd.raw" (lsCurrent lsC))
+    pure (and [r1, r2, r3, r4, r5, r6])
+
 -- | OPEN-09: read has a canonical event distinct from examine, while legacy
 --   examine/read verb_map entries still handle the actual interaction.
 testReadCommandEvents :: IO Bool
@@ -12818,6 +12861,7 @@ main = do
         , runTest "verb_map: phase JSON encoding (4.2)" testVerbMapPhaseJson
         , runTest "verb_map: NPC phases (4.2)" testVerbMapPhasesOnNpc
         , runTest "custom verb_map resolves prepositional primary targets (OPEN-08)" testCustomVerbPrimaryTarget
+        , runTest "cmd.raw raw input line binding (OPEN-22)" testCmdRaw
         , runTest "read command events preserve examine verb_map aliases (OPEN-09)" testReadCommandEvents
         -- Phase 4.3: language packs (D4)
         , runTest "lang pack: catalog layering and fallback (4.3)" testLangPackCatalogLayers

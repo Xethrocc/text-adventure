@@ -80,6 +80,12 @@ data LoopState = LoopState
     , lsInitial :: GameState   -- ^ pristine initial state, used by Restart
     , lsSaveSlot :: Maybe String
     , lsPendingDisambiguation :: Maybe PendingDisambiguation
+    -- | OPEN-22: the player's raw input line, bound to the `cmd.raw` variable
+    --   (normalized: lowercased, whitespace-collapsed) before every gameplay
+    --   command. Empty means "not set" — commands executed without the input
+    --   loop (unit tests, scripted runners, internal rebinds) leave `cmd.raw`
+    --   untouched, like the other loop-level bindings.
+    , lsRawInput :: String
     } deriving (Show, Eq)
 
 -- | An open disambiguation question (Phase 2.3).
@@ -89,7 +95,7 @@ data PendingDisambiguation = PendingDisambiguation
     } deriving (Show, Eq)
 
 initLoopState :: GameState -> LoopState
-initLoopState state = LoopState state [] state Nothing Nothing
+initLoopState state = LoopState state [] state Nothing Nothing ""
 
 maxUndoHistory :: Int
 maxUndoHistory = 50
@@ -246,7 +252,15 @@ applyLoopCommandCore (Save _) loopState = (loopState, [])
 applyLoopCommandCore (Load _) loopState = (loopState, [])
 applyLoopCommandCore ListSaves loopState = (loopState, [])
 applyLoopCommandCore command loopState =
-    let curSt = (lsCurrent loopState) { lastVeto = Nothing }
+    let curSt0 = (lsCurrent loopState) { lastVeto = Nothing }
+        -- OPEN-22: the raw input line reaches every phase of this command —
+        -- `on: before` (veto), the dispatch itself and `on: command`/`on: turn`.
+        -- Only gameplay commands reach this branch; meta commands (save/load/…)
+        -- leave `cmd.*` untouched, and the disambiguation replay runs through
+        -- 'runCommandNoTurn', so `cmd.raw` keeps the original ambiguous line.
+        curSt = case lsRawInput loopState of
+            "" -> curSt0
+            raw -> setVariable "cmd.raw" (VVText (unwords (words (map toLower raw)))) curSt0
     in case checkBeforeVeto command curSt of
         Left (stBlocked, msgs, False) ->
             -- Vetoed without turn consumption (Phase 2.2 default)
@@ -687,7 +701,13 @@ loopGame fe loopState
                         feEmitLine fe (helpTextIn (effectiveCatalogFor (world state)))
                         loopGame fe loopState
                     command -> do
-                        let (loopState', message) = applyLoopCommand command loopState
+                        -- OPEN-22: carry the raw input line into this gameplay
+                        -- command (normalized at bind time: lowercase, white-
+                        -- space collapsed). Meta commands above never set it —
+                        -- `cmd.raw` then stays at the last gameplay command's
+                        -- value, like all `cmd.*`.
+                        let (loopState', message) =
+                                applyLoopCommand command loopState { lsRawInput = input }
                         emitNewDiagnostics fe (lsCurrent loopState) (lsCurrent loopState')
                         -- Message first, then any queued cutscene (Phase H/H4:
                         -- played once at the clip's own rate), then the other

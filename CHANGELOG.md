@@ -2,7 +2,51 @@
 
 ## Unreleased
 
+### OPEN-22: `cmd.raw` — das rohe Spielerkommando
+
+Der Eingabe-Loop bindet die getippte Zeile als Variable `cmd.raw` — normalisiert
+(Kleinschreibung, Whitespace kollabiert), aber mit Verb **und** Argumenten
+(`cmd.raw_args` trägt nur den Rest nach dem Verb). Damit sind Echo-Rätsel wie
+der Zork-Loud-Room ausdrückbar.
+
+- **Bindung am Loop** (`LoopState.lsRawInput` → `applyLoopCommandCore`),
+  **vor** `checkBeforeVeto`: alle Phasen desselben Kommandos sehen denselben
+  Wert (`on: before` inkl. Veto, Dispatch, `on: command`, `on: turn`);
+  `bindCommandVars` löscht `cmd.raw` nicht.
+- **Meta-Befehle** (`save`/`load`/`help`/…) lassen den Wert unverändert (wie
+  alle `cmd.*`); der **Disambiguierungs-Replay** behält die ursprüngliche,
+  mehrdeutige Zeile; Test-/Skriptpfade ohne Eingabe-Loop binden nichts.
+- **Unerkannte Eingabe** feuert die Trigger-Verben `unknown`
+  (`on: before unknown` / `on: command unknown`) — bisher gab es für die
+  Original-Eingabezeile keinen Hook.
+- **Worldbuilder:** `cmd.raw` in der `cmd.*`-Variablen-Allowlist.
+- **Zork-Port (Loud Room, C4):** bare `echo` stellt den Raum still (`loud-
+  flag`), `bug` antwortet mit „That's only your opinion.", unbekannte Wörter
+  werden echo't (`block: '{cmd.raw} {cmd.raw} ...'`). Die Laut-Schaltung ist
+  jetzt originalgetreu an die Wasserlogik gekoppelt (Eingabeschleife nur bei
+  `GATES-OPEN == LOW-TIDE`); `shout echo` bleibt als `SAY`-Variante. Neu:
+  globale Verben `echo` (`echo echo ...`) und `bug` („Not in a flawless
+  program …") wie im Original (`V-ECHO`/`V-BUG`). Abweichungen dokumentiert:
+  V-ECHO wiederholt im Original das letzte Wort, der Port die ganze Zeile;
+  bekannte Verben laufen normal (keine Eingabe-Schleifen-Übernahme).
+- **Tests:** `cmd.raw raw input line binding (OPEN-22)` (Bindung, `unknown`
+  -Trigger, Meta-Befehle).
+
+### K4-Rest: `resource_full` / `resource_empty` Prädikate & `endTurn` Zyklen-Integration
+
+- **Ressourcen-Prädikate (`ResourceFull String`, `ResourceEmpty String`):**
+  Zwei neue Prädikate zur einfachen Abfrage von Variablenwerten gegen ihre deklarierten
+  Grenzwerte (`resource_full: <var>` und `resource_empty: <var>` bzw. Objektform `{resource_full: {var: <var>}}`).
+  - `resource_full`: Wahr genau dann, wenn `var >= max` der `variables:`-Deklaration.
+  - `resource_empty`: Wahr genau dann, wenn `var <= min` der `variables:`-Deklaration (bei `min: 2` ist 2 leer).
+  - Fallback: Ohne Deklaration oder ohne `max`/`min` evaluieren beide Prädikate strikt zu `False`.
+  - Compiler-Validierung: B4-Warnkanal emittiert `UnknownVariable`, wenn ein Ressourcen-Prädikat auf einer nicht deklarierten Variable verwendet wird.
+- **`endTurn`-Energie-Reset über Zyklen-Vokabel (K7/K4.2-Rest):**
+  - Wenn `energy` (oder `player.energy`) unter `variables:` mit `reset_on` oder `refill_per_turn` deklariert ist, wird der hartcodierte Fallback in `endTurn` unterdrückt und die generische `OnTurn`-Trigger-Pipeline übernimmt die Handhabung.
+  - Ohne Zyklus-Deklaration bleibt das historische Bestandsverhalten als Fallback aktiv (Byte-Vertrag: `deckbuilder_spire` bleibt 100 % byte-identisch).
+
 ### OPEN-19: Multi-Raum-Objekte (`locations:`) — ein Item in mehreren Räumen
+
 
 Zork-`LOCAL-GLOBALS` für die Engine: ein Item ist in mehreren Räumen gleich-
 zeitig sichtbar und bedienbar, mit **einem** geteilten Zustand. Details in
