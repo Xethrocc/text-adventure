@@ -890,6 +890,8 @@ testAllPredicateRoundtrip = do
             , ("HasTaggedItem(npc)", HasTaggedItem (ActorNPC "guard") "weapon")
             , ("HasTaggedItem(ship)", HasTaggedItem (ActorShip "kestrel") "weapon")
             , ("RoomHasTaggedItem", RoomHasTaggedItem "room1" "treasure")
+            , ("ResourceFull", ResourceFull "mana")
+            , ("ResourceEmpty", ResourceEmpty "stamina")
             ]
     results <- mapM runSingle testCases
     pure (and results)
@@ -11701,6 +11703,114 @@ testVariableOnOverflowGenuine = do
 
     pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9])
 
+-- | K4: resource_full evaluates true if var >= max declared; false if below, no max, or undeclared.
+testPredicateResourceFull :: IO Bool
+testPredicateResourceFull = do
+    let vdWithMax = VarDef "ap" (VTInt (Just 0) (Just 10)) (VVInt 10) [] []
+        vdNoMax   = VarDef "ap" (VTInt (Just 0) Nothing) (VVInt 10) [] []
+        gwWithMax = (world initSampleGame) { varDefs = Map.singleton "ap" vdWithMax }
+        gwNoMax   = (world initSampleGame) { varDefs = Map.singleton "ap" vdNoMax }
+        stFull    = initSampleGame { world = gwWithMax, save = (save initSampleGame) { variables = Map.singleton "ap" (VVInt 10) } }
+        stOver    = initSampleGame { world = gwWithMax, save = (save initSampleGame) { variables = Map.singleton "ap" (VVInt 12) } }
+        stNotFull = initSampleGame { world = gwWithMax, save = (save initSampleGame) { variables = Map.singleton "ap" (VVInt 9) } }
+        stNoMax   = initSampleGame { world = gwNoMax, save = (save initSampleGame) { variables = Map.singleton "ap" (VVInt 10) } }
+        stUndecl  = initSampleGame
+    r1 <- expectTrue "full at max (10 >= 10)" (evalPredicate (ResourceFull "ap") stFull)
+    r2 <- expectTrue "full above max (12 >= 10)" (evalPredicate (ResourceFull "ap") stOver)
+    r3 <- expectTrue "not full below max (9 < 10)" (not (evalPredicate (ResourceFull "ap") stNotFull))
+    r4 <- expectTrue "no max declaration is false" (not (evalPredicate (ResourceFull "ap") stNoMax))
+    r5 <- expectTrue "undeclared variable is false" (not (evalPredicate (ResourceFull "ap") stUndecl))
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | K4: resource_empty evaluates true if var <= min declared (min: 2 means 2 is empty!); false if above, no min, or undeclared.
+testPredicateResourceEmpty :: IO Bool
+testPredicateResourceEmpty = do
+    let vdWithMin0 = VarDef "ap" (VTInt (Just 0) (Just 10)) (VVInt 0) [] []
+        vdWithMin2 = VarDef "ap" (VTInt (Just 2) (Just 10)) (VVInt 2) [] []
+        vdNoMin    = VarDef "ap" (VTInt Nothing (Just 10)) (VVInt 0) [] []
+        gwWithMin0 = (world initSampleGame) { varDefs = Map.singleton "ap" vdWithMin0 }
+        gwWithMin2 = (world initSampleGame) { varDefs = Map.singleton "ap" vdWithMin2 }
+        gwNoMin    = (world initSampleGame) { varDefs = Map.singleton "ap" vdNoMin }
+        stEmpty0   = initSampleGame { world = gwWithMin0, save = (save initSampleGame) { variables = Map.singleton "ap" (VVInt 0) } }
+        stNotEmpty0= initSampleGame { world = gwWithMin0, save = (save initSampleGame) { variables = Map.singleton "ap" (VVInt 1) } }
+        stEmpty2   = initSampleGame { world = gwWithMin2, save = (save initSampleGame) { variables = Map.singleton "ap" (VVInt 2) } }
+        stBelow2   = initSampleGame { world = gwWithMin2, save = (save initSampleGame) { variables = Map.singleton "ap" (VVInt 1) } }
+        stAbove2   = initSampleGame { world = gwWithMin2, save = (save initSampleGame) { variables = Map.singleton "ap" (VVInt 3) } }
+        stNoMin    = initSampleGame { world = gwNoMin, save = (save initSampleGame) { variables = Map.singleton "ap" (VVInt 0) } }
+        stUndecl   = initSampleGame
+    r1 <- expectTrue "empty at min 0 (0 <= 0)" (evalPredicate (ResourceEmpty "ap") stEmpty0)
+    r2 <- expectTrue "not empty above min 0 (1 > 0)" (not (evalPredicate (ResourceEmpty "ap") stNotEmpty0))
+    r3 <- expectTrue "empty at min 2 (2 is empty!)" (evalPredicate (ResourceEmpty "ap") stEmpty2)
+    r4 <- expectTrue "empty below min 2 (1 <= 2)" (evalPredicate (ResourceEmpty "ap") stBelow2)
+    r5 <- expectTrue "not empty above min 2 (3 > 2)" (not (evalPredicate (ResourceEmpty "ap") stAbove2))
+    r6 <- expectTrue "no min declaration is false" (not (evalPredicate (ResourceEmpty "ap") stNoMin))
+    r7 <- expectTrue "undeclared variable is false" (not (evalPredicate (ResourceEmpty "ap") stUndecl))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | K7+K4.2: endTurn respects variables declaration with reset_on/refill_per_turn.
+--   When energy is declared with reset_on/refill, endTurn suppresses its hardcoded
+--   fallback reset so the generic OnTurn trigger pipeline performs the update.
+testEndTurnWithDeclaredCycles :: IO Bool
+testEndTurnWithDeclaredCycles = do
+    let ds = defaultDeckState
+            { hand = ["h1", "h2"]
+            , drawPile = ["d1", "d2", "d3", "d4", "d5", "d6"]
+            , discardPile = []
+            }
+        -- Case A: energy declared with reset_on: turn (max 5)
+        vdEnergy5 = VarDef "energy" (VTInt (Just 0) (Just 5)) (VVInt 5) [] []
+        trReset = TriggerDef "var.energy.reset" OnTurn Nothing [SetValue (VRVariable "energy") (EVInt 5)] False 0 1 [] []
+        gwReset = (world initSampleGame)
+            { varDefs = Map.singleton "energy" vdEnergy5
+            , triggerDefs = [trReset]
+            }
+        st0Reset = initSampleGame
+            { world = gwReset
+            , save = (save initSampleGame)
+                { deckState = Just ds
+                , variables = Map.fromList [("energy", VVInt 0), ("player.block", VVInt 10)]
+                }
+            }
+        (st1Reset, _msgReset) = endTurn st0Reset
+        energyBeforeTurn = getVariable "energy" st1Reset
+        (st2Reset, _) = fireTriggers OnTurn st1Reset
+        energyAfterTurn = getVariable "energy" st2Reset
+
+        -- Case B: energy declared with refill_per_turn: 2 (no reset_on)
+        trRefill = TriggerDef "var.energy.refill" OnTurn Nothing [ModifyValue (VRVariable "energy") 2] False 0 1 [] []
+        gwRefill = (world initSampleGame)
+            { varDefs = Map.singleton "energy" (VarDef "energy" (VTInt (Just 0) (Just 10)) (VVInt 10) [] [])
+            , triggerDefs = [trRefill]
+            }
+        st0Refill = initSampleGame
+            { world = gwRefill
+            , save = (save initSampleGame)
+                { deckState = Just ds
+                , variables = Map.fromList [("energy", VVInt 1), ("player.block", VVInt 10)]
+                }
+            }
+        (st1Refill, _) = endTurn st0Refill
+        energyRefillBefore = getVariable "energy" st1Refill
+        (st2Refill, _) = fireTriggers OnTurn st1Refill
+        energyRefillAfter = getVariable "energy" st2Refill
+
+        -- Case C: undeclared energy (legacy fallback)
+        st0Legacy = initSampleGame
+            { save = (save initSampleGame)
+                { deckState = Just ds
+                , variables = Map.fromList [("energy", VVInt 0), ("player.max_energy", VVInt 3)]
+                }
+            }
+        (st1Legacy, _) = endTurn st0Legacy
+        energyLegacy = getVariable "energy" st1Legacy
+
+    r1 <- expectEqual (Just (VVInt 0)) energyBeforeTurn
+    r2 <- expectEqual (Just (VVInt 5)) energyAfterTurn
+    r3 <- expectEqual (Just (VVInt 1)) energyRefillBefore
+    r4 <- expectEqual (Just (VVInt 3)) energyRefillAfter
+    r5 <- expectEqual (Just (VVInt 3)) energyLegacy
+    pure (r1 && r2 && r3 && r4 && r5)
+
 -- ---------------------------------------------------------------------------
 -- Phase 4.2: verb_map phases (before:/instead:)
 -- ---------------------------------------------------------------------------
@@ -12989,6 +13099,9 @@ main = do
         , runTest "variable cycles: reset_on acts BEFORE refill_per_turn (K7.1/K4)" testVariableResetBeforeRefillOrder
         , runTest "variable cycles: reset_on: combat_start fires only on first combat command (K7.2)" testVariableResetOnCombatStart
         , runTest "variable cycles: on_overflow fires ONLY on genuine overflow beyond max (K4.3)" testVariableOnOverflowGenuine
+        , runTest "predicate: resource_full evaluates true only when var >= declared max (K4)" testPredicateResourceFull
+        , runTest "predicate: resource_empty evaluates true only when var <= declared min (K4)" testPredicateResourceEmpty
+        , runTest "card endTurn: respects declared energy reset_on and refill_per_turn (K7/K4.2)" testEndTurnWithDeclaredCycles
         -- K7+K4 / Opus-Review: OnCombatStart lifecycle, deduplication, and determinism
         , runTest "combat start: OnCombatStart fires exactly once across 3 attacks in classic/narrative/tactical" testCombatStartExactlyOnceThreeAttacksAllProfiles
         , runTest "combat start: once: true does not fire in subsequent combat" testCombatStartOnceRule

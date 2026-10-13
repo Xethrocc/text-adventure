@@ -170,7 +170,7 @@ Jede Stufe: **erst Haskell komplett**, dann UI am Stück.
 | Stufe | Inhalt |
 |---|---|
 | 5.1 | **WASM-Build** (nur bei positivem Spike aus 1.0): Kern-Library von IO-Abhängigkeiten (`process`, `directory`, `haskeline`) trennen; GHC-WASM-Backend; gleiches Protokoll wie 1.4 → Web-Export eines Adventures als statische Seite. |
-| 5.2 | **Synth-Tab:** zuerst Designphase (Sounds/Musik als Daten im Adventure? Rendern im Browser vs. Export als Datei für CLI/TUI?), dann Umsetzung über die vorhandene Audio-Abstraktion (`PlaySfx`/`PlayMusic`). |
+| 5.2 | **Synth-Tab:** zuerst Designphase (Sounds/Musik als Daten im Adventure? Rendern im Browser vs. Export als Datei für CLI/TUI?), dann Umsetzung über die vorhandene Audio-Abstraktion (`PlaySfx`/`PlayMusic`). → **Ausgearbeitet in `docs/plan-synth.md`** (Stufen 5.2a–f). |
 | 5.3 | **Include & Pakete:** `include:` für YAML, Procedure-Bibliotheken und Sprachpakete als wiederverwendbare Pakete. |
 
 ### Phase 6 — Autorenwerkzeuge & Nachweise (B-Reihe)
@@ -242,5 +242,5 @@ Haltepunkte, an denen neu entschieden wird statt weiterzubauen:
 - 1.2: Styling-Modell der `OutputEvent`s (Spans/Tags statt eingebetteter ANSI-Codes)
 - 3.0: Frontend-Stack, Server-Bibliothek, Packaging
 - ~~4.6: YAML-Schreibstrategie der Editoren (Kommentarerhalt) vs. W5 Stufe 2~~ — **entschieden 2026-10-03**: **beides, in einem Schritt**. Exakte Positionen aus dem YAML-Knotenbaum (`decode1 @Node Pos`), Schreiber ersetzt/insertiert positionstreu und verweigert statt zu raten; Locate bleibt als dokumentierter Fallback. Grund: exakte Positionen allein lösen die Frage nicht, und ein Schreiber ohne Positionen ist blind.
-- 5.2: Datenmodell und Render-Ort des Synths
+- 5.2: Datenmodell und Render-Ort des Synths — **entschieden 2026-10-13** — `docs/plan-synth.md` (Abschnitte 2 + 6)
 

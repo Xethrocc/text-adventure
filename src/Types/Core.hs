@@ -953,6 +953,8 @@ data Predicate
     | ActorHas ActorRef ItemID          -- ^ W4: does the actor (player, NPC, device) carry/hold this item?
     | HasTaggedItem ActorRef String     -- ^ B2: does the actor carry an item with this tag?
     | RoomHasTaggedItem RoomID String   -- ^ B2: does the room hold an item with this tag?
+    | ResourceFull String               -- ^ K4: variable is at or above declared max
+    | ResourceEmpty String              -- ^ K4: variable is at or below declared min
     deriving (Show, Eq, Generic)
 
 -- | Serialize to the same compact object shape that FromJSON accepts
@@ -979,6 +981,8 @@ instance ToJSON Predicate where
         KnowsRecipe a r    -> object [ "knows_recipe" .= actorId a, "id" .= r ]
         HasTaggedItem a t  -> object [ "actor_has_tag" .= object ["actor" .= actorId a, "tag" .= t ] ]
         RoomHasTaggedItem r t -> object [ "room" .= r, "has_item_tag" .= t ]
+        ResourceFull v     -> object [ "resource_full" .= v ]
+        ResourceEmpty v    -> object [ "resource_empty" .= v ]
 
 -- | Stable string form of a comparator, used in YAML/JSON predicates.
 comparatorName :: Comparator -> String
@@ -1112,6 +1116,17 @@ instance FromJSON Predicate where
                         pure (PAll [EntityHasState c "in_hand" | c <- cs])
                     String s -> pure (EntityHasState (T.unpack s) "in_hand")
                     _        -> fail "Expected card id or list of card ids for combo")
+        -- K4: resource_full / resource_empty predicates
+        <|> (do v <- o .: "resource_full"
+                case v of
+                    String s  -> pure (ResourceFull (T.unpack s))
+                    Object ro -> ResourceFull <$> (ro .: "var" <|> ro .: "name")
+                    _         -> fail "Expected string or object for resource_full")
+        <|> (do v <- o .: "resource_empty"
+                case v of
+                    String s  -> pure (ResourceEmpty (T.unpack s))
+                    Object ro -> ResourceEmpty <$> (ro .: "var" <|> ro .: "name")
+                    _         -> fail "Expected string or object for resource_empty")
         <|> fail "Unknown predicate"
 
 -- | Exit connection between rooms

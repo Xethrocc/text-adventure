@@ -4867,6 +4867,7 @@ tests =
     , ("variable cycles: sugar triggers compiled in correct order; clean without cycle fields (K7.1/K7.2)", testVarCyclesSugarTriggers)
     , ("variable cycles: YAML parsing and knownKeys clean (K7/K4)", testVarCyclesYamlParsingAndKnownKeys)
     , ("variable cycles: static validation for reset_on, on_overflow and refill (K7/K4)", testVarCyclesValidation)
+    , ("resource predicates: YAML parsing and UnknownVariable warning (K4)", testResourcePredicatesYamlAndValidation)
     -- K11a: Crafting verbraucht seine Zutaten
     , ("crafting: compile of valid recipe with consume {item1}/{item2} (K11a)", testCraftingCompileValidForm)
     , ("crafting: unbound dynamic ref {item9} produces hard compile error (K11a)", testCraftingUnboundRefRejected)
@@ -8886,6 +8887,79 @@ testVarCyclesValidation = do
                 Right _   -> False)
 
     pure (and [r1, r2, r3, r4])
+
+-- | K4: YAML parsing and UnknownVariable warning for resource_full / resource_empty predicates.
+testResourcePredicatesYamlAndValidation :: IO Bool
+testResourcePredicatesYamlAndValidation = do
+    let yamlWithDecl = unlines
+            [ "name: Resource Predicates Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Room 0"
+            , "    desc: Room"
+            , "variables:"
+            , "  - name: ap"
+            , "    type: int"
+            , "    initial: 6"
+            , "    min: 0"
+            , "    max: 6"
+            , "rules:"
+            , "  - id: r_full"
+            , "    on: turn"
+            , "    when:"
+            , "      resource_full: ap"
+            , "    effects:"
+            , "      - msg: 'Full!'"
+            , "  - id: r_empty"
+            , "    on: turn"
+            , "    when:"
+            , "      resource_empty: ap"
+            , "    effects:"
+            , "      - msg: 'Empty!'"
+            ]
+    case decode1 (BLC.pack yamlWithDecl) of
+        Left err -> do
+            putStrLn $ "  yaml decode failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  unexpected compile error: " ++ show errs
+                pure False
+            Right cr -> do
+                let warns = crWarnings cr
+                    uvWarns = filter (\w -> ciCode w == "UnknownVariable") warns
+                r1 <- expectTrue "zero UnknownVariable warnings when variable declared" (null uvWarns)
+
+                -- Now test undeclared variable produces UnknownVariable warning
+                let yamlUndecl = unlines
+                        [ "name: Undeclared Var Test"
+                        , "start_room: loc_0"
+                        , "rooms:"
+                        , "  - id: loc_0"
+                        , "    name: Room 0"
+                        , "    desc: Room"
+                        , "rules:"
+                        , "  - id: r_undecl"
+                        , "    on: turn"
+                        , "    when:"
+                        , "      resource_full: ghost_energy"
+                        , "    effects:"
+                        , "      - msg: 'Ghost full!'"
+                        ]
+                case decode1 (BLC.pack yamlUndecl) of
+                    Left errU -> do
+                        putStrLn $ "  yaml decode failed: " ++ show errU
+                        pure False
+                    Right (advU :: Adventure) -> case compileAdventure advU of
+                        Left errsU -> do
+                            putStrLn $ "  unexpected compile error: " ++ show errsU
+                            pure False
+                        Right crU -> do
+                            let warnsU = crWarnings crU
+                                hasUv = any (\w -> ciCode w == "UnknownVariable" && "ghost_energy" `isInfixOf` ciMessage w) warnsU
+                            r2 <- expectTrue "emits UnknownVariable warning when variable undeclared" hasUv
+                            pure (r1 && r2)
 
 -- ---------------------------------------------------------------------------
 -- K11a: Crafting verbraucht seine Zutaten ({item1}, {item2})

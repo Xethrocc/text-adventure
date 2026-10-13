@@ -1881,6 +1881,26 @@ evalPredicate (Compare lhs op rhs) st =
     in case compareValues op lval rval of
         Just b  -> b
         Nothing -> False
+-- K4: resource_full / resource_empty evaluate against declared min/max in varDefs.
+-- Undeclared variables or variables without max/min fall back to False.
+evalPredicate (ResourceFull name) st =
+    case Map.lookup name (varDefs (world st)) of
+        Just vd -> case vdVarType vd of
+            VTInt _ (Just hi) ->
+                case getVariable name st <|> Just (vdVarInitial vd) of
+                    Just (VVInt v) -> v >= hi
+                    _              -> False
+            _ -> False
+        Nothing -> False
+evalPredicate (ResourceEmpty name) st =
+    case Map.lookup name (varDefs (world st)) of
+        Just vd -> case vdVarType vd of
+            VTInt (Just lo) _ ->
+                case getVariable name st <|> Just (vdVarInitial vd) of
+                    Just (VVInt v) -> v <= lo
+                    _              -> False
+            _ -> False
+        Nothing -> False
 
 -- | Resolve a ValueRef to an Int for comparisons.
 resolveValueRef :: ValueRef -> GameState -> Int

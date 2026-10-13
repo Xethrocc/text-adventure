@@ -26,6 +26,7 @@ import Game
 import Messages (renderMsgFor, evMsg, effectiveTermsFor)
 import Effects (applyOutcomeEv)
 import Ansi (stripAnsi)
+import Control.Applicative ((<|>))
 import Data.Char (toLower)
 import Data.List (foldl', intercalate, isInfixOf)
 import qualified Data.Map.Strict as Map
@@ -147,10 +148,22 @@ playCard idx mTarget st = case deckState (save st) of
                                            allMsg = joinEv headerFrags effectMsgs
                                        in (stFinal, allMsg)
 
+-- | K7+K4.2: Check if energy or player.energy has an authored cycle trigger (reset_on / refill_per_turn).
+hasEnergyCycleDeclaration :: GameState -> Bool
+hasEnergyCycleDeclaration st =
+    any (\t -> trId t `elem` [ "var.energy.reset"
+                             , "var.player.energy.reset"
+                             , "var.energy.refill"
+                             , "var.player.energy.refill"
+                             , "var.energy.combatreset"
+                             , "var.player.energy.combatreset"
+                             ])
+        (triggerDefs (world st))
+
 -- | End the player's turn:
 --   - Discards remaining hand cards
 --   - Resets player.block to 0
---   - Restores energy to player.max_energy (default: 3)
+--   - Restores energy to declared max / player.max_energy (if not governed by cycle triggers)
 --   - Draws cards (default: 5 or player.draw_per_turn)
 endTurn :: GameState -> (GameState, [OutputEvent])
 endTurn st = case deckState (save st) of
@@ -165,11 +178,17 @@ endTurn st = case deckState (save st) of
                 Just (VVInt m) -> m
                 _ -> case getVariable "max_energy" st2 of
                     Just (VVInt m) -> m
-                    _              -> 3
-            st3 = setVariableChecked "player.energy" (VVInt maxE)
-                    (if Map.member "energy" (variables (save st2))
-                     then setVariableChecked "energy" (VVInt maxE) st2
-                     else st2)
+                    _ -> case Map.lookup "energy" (varDefs (world st2)) <|> Map.lookup "player.energy" (varDefs (world st2)) of
+                        Just vd -> case vdVarType vd of
+                            VTInt _ (Just hi) -> hi
+                            _                 -> 3
+                        Nothing -> 3
+            st3 = if hasEnergyCycleDeclaration st2
+                  then st2
+                  else setVariableChecked "player.energy" (VVInt maxE)
+                         (if Map.member "energy" (variables (save st2))
+                          then setVariableChecked "energy" (VVInt maxE) st2
+                          else st2)
             drawCount = case getVariable "player.draw_per_turn" st3 of
                 Just (VVInt d) -> d
                 _ -> case getVariable "draw_per_turn" st3 of

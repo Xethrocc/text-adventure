@@ -1258,6 +1258,9 @@ variables:
 4. **Klammerung (`clampToVarDef`):**
    Die Wertebegrenzung über `min`/`max` (`clampToVarDef` in `src/Game.hs`) galt schon immer und bleibt eine reine Funktion. `on_overflow` hängt an den auflösenden Effekt-Einstiegspunkten (`applySetValue` und `modifyValueProp`) und ist über `applyOutcomeWith` gegen Endlosrekursion geschützt (Tiefenbegrenzung `maxOutcomeDepth`).
 
+5. **Deck-Energie (`endTurn` respektiert Zyklen):**
+   Die Zyklen-Vokabel gilt auch für Deck-Energie: Deklariert ein Abenteuer `energy` (oder `player.energy`) unter `variables:` mit `reset_on` oder `refill_per_turn`, greift der generische Zyklen-Pfad (`endTurn` respektiert `reset_on`/`refill_per_turn` der Deklaration und überlässt den Reset/Refill der generischen `OnTurn`-Trigger-Pipeline). Der hartcodierte Fallback von `endTurn` läuft nur noch, wenn keine solche Deklaration vorliegt (Bestandsverhalten für Abenteuer ohne Variablen-Zyklen bleibt byte-identisch bewahrt).
+
 ### Punkte-/Score-System und Ranglisten (K17)
 
 Für klassische Interactive-Fiction-Geschichten (wie Zork I) existiert ein freier Punktezähler mit optionaler Rangliste. Score ist **kein eigener Engine-Block** — das Sammeln von Punkten bleibt Autorenarbeit über reguläre Trigger-Effekte (`add_var` bei `on: take <item>`, `on: enter <room>`, `on: learn_recipe <id>`, `on: state <entity>` etc.).
@@ -1326,7 +1329,32 @@ when: { compare_var: { name: gold, op: ">=", var: kosten } }
   `{ compare: { lhs, op, rhs } }` mit `ValueRef`s; `compare_var … var:` ist der
   Zucker darauf.
 
+### Ressourcen-Prädikate (`resource_full`, `resource_empty`) (K4)
+
+Prüft, ob eine deklarierte Variable ihren maximalen bzw. minimalen Pol erreicht hat,
+ohne dass Grenzwerte hart in Regeln dupliziert werden müssen:
+
+```yaml
+# Kompakte Syntax (String)
+when: { resource_full: mana }
+when: { resource_empty: mana }
+
+# Objekt-Syntax
+when: { resource_full: { var: mana } }
+when: { resource_empty: { var: mana } }
+```
+
+- **Auswertung gegen Deklaration:**
+  - `resource_full`: Wahr genau dann, wenn der aktuelle Wert `>= max` der `variables:`-Deklaration ist.
+  - `resource_empty`: Wahr genau dann, wenn der aktuelle Wert `<= min` der `variables:`-Deklaration ist.
+    *Min-Pol-Konvention:* Wenn `min: 2` deklariert ist, gilt der Wert `2` als leer (`resource_empty`).
+- **Fallback:**
+  - Ist die Variable nicht deklariert oder hat sie kein `max` (für `resource_full`) bzw. kein `min` (für `resource_empty`), wertet das Prädikat strikt zu `False` aus (kein stilles `True`).
+- **Compiler-Validierung (B4-Warnkanal):**
+  - Wird `resource_full` oder `resource_empty` auf einem Variablennamen verwendet, der nicht unter `variables:` deklariert ist, emittiert der Worldbuilder die Warnung `UnknownVariable`.
+
 ### Formeln & dynamische Berechnungen (`compute_var`)
+
 
 Mit `compute_var` können Variablen zur Laufzeit durch mathematische Formeln berechnet
 und aktualisiert werden:

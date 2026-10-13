@@ -936,6 +936,7 @@ compileAdventure adv =
                     Nothing -> []
                 keywordWarns = checkKeywordCollisions adv
                 placeholderWarns = checkUnknownPlaceholders adv allVarDefs
+                resourceVarWarns = checkUnknownResourceVars adv gwResolved allVarDefs
                 toolKeyWarns = checkUnknownVerbTools adv
                 darkRoomWarns = checkDarkRoomDeadEnds adv
                 deadContentWarns = checkUnreachableTriggers adv ++ checkUnsatisfiableConditions adv
@@ -943,7 +944,7 @@ compileAdventure adv =
                                 ++ checkQuestProgress adv
                 standingChangeWarns = checkStandingChangeTriggers (advFactions adv) (advTriggers adv)
                 recipeResultWarns = checkRecipeResults adv
-                allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ toolKeyWarns ++ verbSoftWarns ++ darkRoomWarns
+                allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ resourceVarWarns ++ toolKeyWarns ++ verbSoftWarns ++ darkRoomWarns
                           ++ varWarns
                           ++ chapterWarns
                           ++ deviceWarns
@@ -5473,3 +5474,39 @@ checkDarkRoomDeadEnds adv =
                         newQ = rest ++ filter (`Set.notMember` visited) validTargets
                     in go (Set.insert curr visited) newQ
         in go Set.empty [start]
+
+-- | K4: warn when a resource_full / resource_empty predicate references an undeclared variable.
+checkUnknownResourceVars :: Adventure -> E.GameWorld -> Map.Map String E.VarDef -> [CompileIssue]
+checkUnknownResourceVars adv gw varDefs =
+    let declared = Map.keysSet varDefs
+        sites = predicateSites adv
+            ++ [ ("rooms." ++ arId r ++ ".exits." ++ dir, p)
+               | r <- advRooms adv
+               , (dir, ex) <- Map.toList (arExits r)
+               , Just p <- [aeWhen ex]
+               ]
+        siteIssues =
+            [ ciWarning path "UnknownVariable"
+                ("resource predicate references undeclared variable '" ++ v ++ "'")
+            | (path, p) <- sites
+            , v <- resourceVarsIn p
+            , v `Set.notMember` declared
+            ]
+        seenVars = Set.fromList [ v | (_, p) <- sites, v <- resourceVarsIn p ]
+        worldIssues =
+            [ ciWarning "predicates.resource" "UnknownVariable"
+                ("resource predicate references undeclared variable '" ++ v ++ "'")
+            | p <- allWorldPredicates gw
+            , v <- resourceVarsIn p
+            , v `Set.notMember` declared
+            , v `Set.notMember` seenVars
+            ]
+    in siteIssues ++ worldIssues
+  where
+    resourceVarsIn p = case p of
+        E.ResourceFull v  -> [v]
+        E.ResourceEmpty v -> [v]
+        E.PNot q          -> resourceVarsIn q
+        E.PAll qs         -> concatMap resourceVarsIn qs
+        E.PAny qs         -> concatMap resourceVarsIn qs
+        _                 -> []

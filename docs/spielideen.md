@@ -4,10 +4,30 @@ Sammlung von Ideen für weitere Beispiel-Spiele in `examples/`, um die Engine zu
 testen und vorzuführen. Bereits vorhanden (und daher hier ausgelassen): die
 Genre-Fixtures in `examples/genres/` (Fantasy, Horror, Cyberpunk, Detektiv,
 Space Opera, Pure IF, Visual Novel, Roguelike, Survival, Wirtschaft, Idle,
-Deckbuilder, Nim, Pendel, Alchemie, Sandbox), die Modul-Fixtures in
-`examples/modules/` sowie der Zork-I-Port.
+Deckbuilder, Nim, Pendel, Alchemie, Sandbox, **Krypta der Verdammten,
+Neon Phantom & Chrome & Ash (Cyberpunk-Benchmarks), Soul Collector,
+Survival-Expedition**), die Modul-Fixtures in `examples/modules/` sowie der
+Zork-I-Port.
 
 **Status-Legende:** `[ ]` offen · `[~]` in Arbeit · `[x]` umgesetzt · `[-]` verworfen
+
+**Stand der Engine-Deckung (2026-10-12, am Code geprüft; Details und
+Umsetzungsplan: `~/workspace/plan-spielideen-umsetzung.md`):**
+
+- **Sofort baubar (nur Content):** Zeitschleife ⭐ (`meta.*` + Runden-Trigger +
+  Wissen), Spielbuch-Port (K1-Würfelpool), Gerichtsdrama (Dialogbäume + Wissensmodell),
+  U-Boot (Vehicle-`systems:`, OPEN-17-`fuel:` als Sauerstoff-Timer, `remove_exit`),
+  Whodunit mit Zufallstäter (`random:` am Start + deterministische RNG `W-01`),
+  Grenzposten (Zyklen + `random:` + `compare_var` + Fraktions-`standing:`),
+  alle Mechanik-Experimente (§3) und ASCII-Showcases (§4 — nur Content).
+- **Braucht einen Engine-Rest:** Bauernhof (Zuneigung geht, aber
+  Schwellen-Ereignisse/Konsequenzketten = G9-Rest), Oregon Trail (alle Module da,
+  Aufwand = Content), FTL-Lite (Schiffsduelle 7h2 + Party + Worldgen da;
+  Sektoren-Ketten = Content).
+- **Braucht eine Engine-Entscheidung:** Monster sammeln — der Fangen/Opfern-Loop
+  ist durch `soul_collector.yaml` belegt (`[~]`), aber **Team-Wechsel +
+  Pro-Monster-XP** im taktischen Kampf fehlt (§9.2 des Kandidaten-Dokuments,
+  Compiler-Pass).
 
 ---
 
@@ -67,9 +87,12 @@ Tagesregeln ab und stempelst.
 Tage und Jahreszeiten, Saat und Ernte, Markt, Zuneigung zu Dorfbewohnern.
 - **Zeigt:** Zyklen, Mengen, Handel, Zuneigung
 
-### [ ] Monster sammeln – Pokémon-Lite
+### [~] Monster sammeln – Pokémon-Lite
 Kreaturen per Custom-Verb `fangen` ins Team holen und taktisch kämpfen lassen.
 - **Zeigt:** Party, Kampffähigkeiten, Begegnungstabellen
+- **Stand:** `[~]` — `soul_collector.yaml` belegt den Fangen-/Opfern-/Stats-Loop.
+  Offen: Team-Wechsel + Pro-Monster-XP im taktischen Kampf (Kandidaten-Dokument
+  §9.2, Compiler-Pass) — erst nach dem K16-Abgleich entscheiden.
 
 ### [ ] Spielbuch-Port – à la *Fighting Fantasy*
 Abschnitte als Räume, Würfelkämpfe und Glücksproben.
@@ -187,8 +210,14 @@ gezeigt, und die Einschränkung „alles ist Text“ wird zum Stilmittel.
 
 ## Empfohlene Reihenfolge
 
-1. **Das Theater der Schatten**: bester ASCII-/TUI-Showcase
-2. **Zeitschleife**: zeigt die Rogue-Plattform als Erzählmittel
-3. **Oregon Trail**: bekanntes Vorbild, viele Module in einem Spiel
+**Nachtrag 2026-10-12 (Engine-Deckung geprüft):** Zeitschleife vor dem Theater —
+sie testet die Rogue-Plattform (`meta.*`) hart als Erzählmittel, während das
+Theater reine Präsentation ist und keine Engine-Grenze aufdeckt. Details:
+`~/workspace/plan-spielideen-umsetzung.md`.
+
+1. **Zeitschleife**: Rogue-Plattform als Erzählmittel (`meta.*`, Runden-Trigger)
+2. **Das Theater der Schatten**: bester ASCII-/TUI-Showcase
+3. **Oregon Trail**: bekanntes Vorbild, viele Module in einem Spiel (nur Content)
 4. Mechanik-Experimente als kleine Fixtures nebenbei (Tamagotchi, Escape Room,
    Mastermind, Minesweeper)
+5. **Monster sammeln** erst nach der Team-Wechsel-Entscheidung (§9.2)
