@@ -1,0 +1,164 @@
+# Plan: `hazards:` — generalisierte Gefahrenlagen (Alternativentwurf zu OPEN-23)
+
+**Stand:** 2026-10-13 · **Status:** Entscheidungen getroffen, Machbarkeit am Code geprüft, **nichts umgesetzt** ·
+Wiederhergestellt am 2026-10-13 (die erste Fassung ging beim Repo-Wechsel durch eine parallele Sitzung verloren).
+
+> **Verhältnis zum Unwettermodul:** `/root/workspace/plan-unwettermodul.md` (HEAD `b4c38be`) hat OPEN-23 inzwischen
+> als Erweiterung von 7d (`environment.severe:` mit `level:`/`flood_levels:`/Wirktypen) umgeplant.
+> Dieses Dokument ist der **Alternativ-/Ergänzungsentwurf**: ein eigenständiges, allgemeineres Segment `hazards:`
+> (Verlauf × Ausdehnung × Wirkung) für Wasser, Lava, Feuer, Sturm, Einsturz. Die hier getroffenen Entscheidungen
+> (E1–E7) und Code-Funde (§3) sind unabhängig davon gültig und können in das Unwettermodul übernommen werden.
+> Welcher Entwurf gebaut wird, ist **noch nicht entschieden** (siehe §10).
+
+Herkunft: `plan-zork-mechanik-entscheidungen.md` E2 (Tide/Reservoir) · Befunde-Ticket `OPEN-23`.
+
+## 1. Ziel
+
+Kein „Wasserstandsmodul", sondern **ein** Segment `hazards:`, mit dem Autoren zeitabhängige, räumlich begrenzte Gefahren beschreiben:
+Wasser/Flut, Lava, Feuer, Sturm, Erdrutsch, einstürzende Höhle/Haus, Gas, Seuche …
+
+Jede Gefahr = **Verlauf × Ausdehnung × Wirkung**:
+
+| Achse | Frage | Wasser/Lava | Feuer | Sturm/Wetter | Einsturz/Erdrutsch |
+|---|---|---|---|---|---|
+| **Verlauf** (`track`) | Wie entwickelt sie sich über Züge? | Pegel steigt/fällt | Intensität wächst | Zustände wechseln | Countdown mit Phasen |
+| **Ausdehnung** (`footprint`) | Welche Räume sind betroffen? | Schwelle je Raum | per Ausbreitung (Stufe 2) | Raum-Tag `outdoor` | feste Liste je Phase |
+| **Wirkung** (`hooks`) | Was passiert? | Meldungen, Schaden, Treibgut, Ausgänge | Schaden, Items brennen | Text, Sicht | Raum blockiert, Items verschüttet |
+
+## 2. Entscheidungen (vom Nutzer getroffen, 2026-10-13)
+
+| # | Frage | Entscheidung |
+|---|---|---|
+| E1 | Reversibel? | **Beides** — `target` + `rate`: Pegel steigt *und* fällt, Feuer kann gelöscht werden |
+| E2 | Spieler in der Zone | **Nur frei per Effekt** — die Engine macht nichts automatisch; Schaden/Tod/Schutz schreibt der Autor in die Hooks (Schutz = Prädikat im `when:`) |
+| E3 | `environment.weather` | **Langfristig in `hazards:` aufgehen** (Alias/Ersatz); Bestandsabenteuer dürfen nicht brechen |
+| E4 | Umfang Stufe 1 | **Verlauf + Footprint `elevation`/`list`/`tag` + Hooks**, reines Worldbuilder-Sugar (~3–4 d) |
+| E5 | Zork (OPEN-23a) | **Wartet auf `hazards:`** — der Dam wird erster Anwendungsfall; der `low_tide`-Hack bleibt bis dahin |
+| E6 | Umkehr (D3) | **Restdistanz (`continue`)** — Level läuft vom aktuellen Stand zurück. Zork weicht damit minimal vom Original ab (dort startet jede Umkehr einen frischen 8-Zug-Timer). Optionales `track.reverse: restart` bleibt später additiv möglich |
+| E7 | Raumhöhe (D2) | **Option A: Tabelle im Footprint** (`rooms: {raum: schwelle}`). Ein Raumfeld `elevation:` wäre nur bei echtem Engine-Vorteil sinnvoll (der Kern kennt keine Höhe) → nicht jetzt; additiv nachrüstbar (die Tabelle würde dann Override) |
+
+## 3. Verifizierte Grundlagen (Code-Check)
+
+| Frage | Befund | Beleg |
+|---|---|---|
+| Lässt sich ein Segment ohne Kern-Eingriff bauen? | **Ja.** `environment:` kompiliert zu Variable `env.weather` + `on: turn`-Triggern (`TriggerDef … OnTurn`); Stealth (7e) expandiert sogar **pro Raum** Trigger. | `worldbuilder/src/Worldbuilder/Compile.hs` `compileEnvironment` (~1478), `compileWeather`, `compileStealth` (~1555) |
+| Reservierter Namensraum + Fehler | `env.*` reserviert, `EnvironmentVariableClash`, `UnknownWeatherState`, `UnknownDrainVariable`; `mergeEnvironmentVars` | `Compile.hs` ~1495–1545 |
+| `when:`-Prüfungen des Segments | werden in einer Sammelliste zur Prädikat-Validierung registriert (B4) | `Compile.hs` ~355–370 |
+| Pro-Zug-Takt | `OnTurn` feuert in `GameLoop.hs` nach Fahrzeug-Tick (Z. 283); Trigger haben Cooldown-/Max-Fires-Felder | `GameLoop.hs` 283, `TriggerDef … False 0 1 [] []` |
+| Zug-Timer mit End-Effekt | `ApplyCondition name turns tick end hidden` / `ClearCondition`, im Save (`conditions`), `tickConditions` | `Types/Core.hs` 1171, `Effects.hs` ~1450, `Core.hs` 2880 |
+| Raum-Eigenschaften | `Room` hat `roomTags` (statisch), `roomFloor :: Maybe Int`, **kein** `elevation`, **keine** Raum-Variablen, **kein** Laufzeit-Tag-Effekt | `Types/Core.hs` 2208 |
+| Raum-Prädikate | `RoomHasTag`, `Location actor room`, `RoomHasTaggedItem`, `CompareVar` | `Core.hs` 943–957 |
+| Massen-Effekte | `CountSpec{what, where, tag}`; `where` = `in: <raum>` / `here` / `room_of` / `by` / `in_container` — **nur ein Raum**, kein Raum-Set | `Core.hs` 570–599 |
+| Ausgänge zur Laufzeit | `SetExit`/`RemoveExit` existieren (Rogue Phase 3); alternativ `Guarded`-Exit mit Prädikat (statisch, bevorzugt) | `Core.hs` 63–64, `Exit` 15–17 |
+| Spieler-/NPC-Schaden | `ModifyValue VRPlayerHealth`, `DamageAll CountSpec n`, `GameEnd`, `MoveEntity`, `MoveAll` | `Core.hs` 47, 87–91, 57 |
+| Zustandslose Zufallsentscheidung | `wanderHash seed turn name` (stateless, `save.runSeed`) in `Game.hs` 861; `RandomChoiceOn <stream>` (deterministisch über `rng.<name>`) | `Game.hs` 856–862, `Core.hs` 45 |
+| BFS/Distanz | `bfsDistances :: Map Room [(Dir,Room)] -> Room -> Map Room Int` | `Pursuit.hs` 48 |
+| Text je Zustand | `CondText`-Varianten mit `compare_var` (so schon beim Wetter, z. B. Eispass-Kamm) | `examples/modules/survival.yaml` 89 |
+| Kern-Wettermodul? | **Nein.** Nur Modul 7d `environment:` (Worldbuilder-Sugar), `grep weather` in `src/` ohne Treffer | `docs/modules.md` §7d |
+
+**Folgerungen:**
+
+1. **Alles geht als Compile-Time-Expansion**, weil der Raumgraph beim Kompilieren feststeht (Stealth macht es vor). Kein neuer Kern-Typ nötig für Stufe 1.
+2. Mass-Effekte müssen **pro betroffenem Raum expandiert** werden (`move_all … in: <raum>`), nicht über ein Raum-Set. Für generierte Räume (Sandbox-Worldgen, zur Laufzeit) greift das nicht → **ausdrücklich außerhalb des Umfangs**.
+3. **Spread (Stufe 2) ist ebenfalls ohne Kern machbar:** pro Kante `(r → n)` ein Trigger „r brennt ∧ n nicht → `RandomChoiceOn "hazard.<id>"` setzt Raum-Variable `hazard.<id>.zone.<n>`". Ein stateless `wanderHash`-artiger Effekt wäre nur eleganter (kein `rngState`-Verbrauch) — Kern-Eingriff optional.
+4. **Raum-Höhe:** `elevation` existiert nicht → Tabelle im Footprint (E7).
+
+## 4. Autoren-Syntax (Entwurf)
+
+```yaml
+hazards:
+  reservoir:                              # Wasser (Zork-Dam)
+    track:
+      max: 8                              # Level 0..8
+      start: 8
+      rate: 1                             # Schritte pro Takt (Richtung folgt target)
+      every: 1                            # Takt in Zügen
+      target: 8                           # Autor-Effekt hazard_target setzt es um
+      when: {...}                         # optional: Pause-Bedingung
+    footprint:
+      by: elevation                       # elevation | list | tag
+      rooms: { reservoir: 0, reservoir-north: 3, reservoir-south: 3 }  # Zone wenn level >= Schwelle
+    stages:                               # Hooks beim ERREICHEN eines Levels (egal ob rauf/runter)
+      0: [ { msg: "Der Pegel ist jetzt niedrig." }, { reveal: trunk } ]
+      8: [ { msg: "Das Wasser hat seinen Höchststand erreicht." } ]
+    on_zone:                              # je Takt für Räume in der Zone (freie Effekte, E2)
+      - if: { at: player, room: reservoir } then: [ ... ]
+    telegraph:                            # Meldung, wenn der Spieler in/neben der Zone ist
+      adjacent: "Du hörst Wasser rauschen."
+```
+
+Autor-Effekte (neu, im Worldbuilder-Vokabular): `hazard_target: {hazard, to}` · `hazard_jump: {hazard, to}` (setzt Level hart) · `hazard_pause`/`hazard_resume`.
+Autor-Prädikate (Sugar): `hazard_level: {hazard, gte|lte|eq: n}` · `in_hazard: {hazard, room: <id>|here}`.
+
+Footprint-Varianten:
+- `by: elevation` — `zone(r) ⇔ level ≥ schwelle(r)` (Wasser, Lava, Gas, Nebel).
+- `by: list` — `stages_rooms: {1: [halle], 2: [halle, schiff]}` (Einsturz, Erdrutsch).
+- `by: tag` — alle Räume mit Raum-Tag (z. B. `outdoor`), aktiv sobald `level > 0` (Sturm).
+- `by: spread` *(Stufe 2)* — `from:`, `via: exits`, `chance:`, `needs_tag:`; Raum-Variable je Raum.
+
+## 5. Kompilierung (Sugar → vorhandene Primitive)
+
+| Autor-Konstrukt | Erzeugt |
+|---|---|
+| `track` | Variablen `hazard.<id>.level`, `.target`, `.clock`, `.prev` (Int, `hazard.*` reserviert, `HazardVariableClash`); Trigger `hazard.<id>.tick` (`on: turn`): `clock++`, bei `clock mod every == 0 ∧ ¬paused` → Level um `rate` Richtung `target`, geklammert |
+| `stages` | Trigger `hazard.<id>.stage` **nach** `tick`: je Level n `when level==n ∧ prev≠n` → Hook-Effekte; danach `prev := level` (fängt auch `hazard_jump` ab) |
+| `footprint` + `on_zone` | pro Zonenraum ein `on: turn`-Trigger: `at:player room r ∧ zone(r)` → Hook-Effekte (Stealth-Muster) |
+| Mass-Items (Treibgut, Verbrennen) | `move_all`/`consume_all`/`set_state_all` je Raum aus `stages`/`on_zone` expandiert (`tag:` + `in:`) |
+| Ausgänge | `Guarded`-Exit mit `hazard_level` (statisch), kein Laufzeit-Rewire nötig |
+| Raumtexte | `CondText`-Varianten mit `hazard_level` → `compare_var` |
+| `hazard_target`/`_jump` | `SetValue` auf `.target`/`.level` (`.prev` bleibt, damit Hooks feuern) |
+
+Validierung: `UnknownHazard`, `HazardLevelOutOfRange`, `HazardUnknownRoom`, `HazardFootprintEmpty`, `HazardVariableClash`, Hook-`when:` über die B4-Sammelliste. Byte-Vertrag: `hazards:` nur bei Benutzung serialisieren.
+
+## 6. Arbeitspakete Stufe 1 (E4) — ca. 3–4 Tage
+
+| AP | Inhalt | Aufwand |
+|---|---|---|
+| A | Typen + JSON (`AHazard`, `ATrack`, `AFootprint`, Stages/Hooks) in `Worldbuilder/Types.hs`, Feld `advHazards` (+ `Generate.hs` `Nothing`) | 0,5 d |
+| B | `compileHazards`: Variablen, `tick`/`stage`-Trigger, Reservierung/Merge (analog `mergeEnvironmentVars`), B4-Registrierung | 1 d |
+| C | Footprint `elevation`/`list`/`tag` + `on_zone`/`telegraph` + Autor-Effekte/-Prädikate | 1 d |
+| D | Validierung + Fehlercodes + Fuzz-/Locate-Anbindung | 0,5 d |
+| E | Tests (Worldbuilder + Engine-Golden: steigen, fallen, Umkehr mitten im Verlauf, `hazard_jump`, Save/Load), Fixture `examples/modules/hazards.yaml` (Wasser + Sturm + Einsturz), Performance-Messung (D6) | 1 d |
+| F | Docs: `adventure-schema.md` („Hazards"), `modules.md`, CHANGELOG, Befunde-Ticket | 0,5 d |
+
+**Stufe 2 (nicht beschlossen):** `spread` (~2 d), Item-Helfer wie `flow:`/`burn:` (~1–2 d). Wettermigration (E3) separat, siehe §8.
+
+## 7. Zork-Anwendungsfall (E5)
+
+`hazards.reservoir`: `max: 8`, `target: 8` (zu) bzw. `0` (offen), `every: 1`, `rate: 1` ergibt einen 8-Zug-Verlauf — **mit gestaffelten Zwischenmeldungen gratis**. `stages` ersetzen `I-REMPTY`/`I-RFILL`; ortsabhängige Meldungen/Tod/Boot/Loud-Room in den Hooks (`if: at: player room: …`). `bolt`: `set_flag low_tide` → `hazard_target`; `low_tide` bleibt als abgeleitetes Prädikat (`hazard_level lte 0`), damit die ~53 Fundstellen im Port unverändert weiterlaufen.
+
+**Original-Verhalten zum Vergleich (`zork1/1actions.zil`, `BOLT-F`):** Zudrehen nach 3 von 8 Zügen bricht `I-REMPTY` ab (`QUEUE I-REMPTY 0`) und startet `I-RFILL` mit frischen 8 Zügen; `LOW-TIDE` wurde nie gesetzt (nur am Ende von `I-REMPTY`), es gibt also keinen Zwischenzustand — nur eine ortsabhängige, teils unpassende Meldung nach 8 Zügen. Entscheidung E6: das Level-Modell läuft stattdessen in der Restdistanz zurück.
+
+## 8. Wetter-Migration (E3)
+
+`environment.weather` bleibt zunächst unverändert. Spätere Zusammenführung als **Alias**: `environment.weather` kompiliert intern zu einem `hazards`-Eintrag vom Typ „Zustandsliste", Variable heißt weiter `env.weather`, Fehlercodes (`UnknownWeatherState`, `EnvironmentVariableClash`) bleiben, Golden-Tests (`survival.yaml`) ändern sich nicht. Voraussetzung: `track` kann **Zustandsnamen + bedingte Übergänge** (nicht nur Zahlen) — ein eigener Schritt nach Stufe 1 (~1 d + Regressionslauf).
+
+## 9. Offene Detailfragen
+
+| # | Frage | Stand |
+|---|---|---|
+| D1 | Name: `hazards:` | Empfehlung `hazards:` (englische Schema-Keys wie `environment:`) |
+| D2 | ~~Raumhöhe~~ | ✅ entschieden → E7 (Tabelle im Footprint) |
+| D3 | ~~Zork-Fidelity bei Umkehr~~ | ✅ entschieden → E6 (`continue`) |
+| D4 | Mehrere Gefahren gleichzeitig: Reihenfolge der Effekte | Deklarationsreihenfolge; Doku-Hinweis |
+| D5 | Generierte Räume (Sandbox-Worldgen) | außerhalb Stufe 1; `tag`-Footprint könnte später Laufzeit-Räume erfassen |
+| D6 | Performance | `N Räume × M Gefahren` Trigger je Zug; Stealth hat dasselbe Muster. Messung mit Fixture (~500 Trigger) im AP E |
+
+## 10. Abgleich mit dem Unwettermodul — offene Grundsatzentscheidung
+
+| Aspekt | `plan-unwettermodul.md` | dieser Plan (`hazards:`) |
+|---|---|---|
+| Architektur | Sub-Block `environment.severe:` an 7d | eigenes Segment `hazards:`; 7d später als Alias (E3) |
+| Verlauf | Int-Variable `level:` mit min/max, `flood:{delta/set}` | `track` mit Ziel/Rate/Takt (selbstlaufend), reversibel |
+| Ausdehnung | `flood_levels:` je Raum (Schwellen) | `footprint`: `elevation`-Tabelle / `list` / `tag` / `spread` |
+| Wirkung | vordefinierte Wirktypen (`flood:`, `landslide:`, `damage:`) + freie Effekte | freie Hooks (E2), Wirktypen als späteres Sugar |
+| Auslösung | `when:` **und** zufällig per RNG-Stream/Periode | `when`/Pause am Track; Zufall nur über `spread`/freie `random_choice` |
+| Treibgut | `place:`/`move_all:` in Schwellen-Effekten | `move_all` je Zonenraum in `stages` |
+
+**Gemeinsamer Kern:** Compile-Time-Sugar, Pegel/Level als Variable, Schwellen-Hooks, Treibgut über vorhandene Effekte, Zork-`low_tide` als erster Ablösefall. **Unterschiede:** selbstlaufender Verlauf mit Ziel/Rate (hier) vs. ereignisgetriebenes Pegelheben (Unwettermodul); Footprint-Typen für Feuer/Einsturz/Sturm (hier) vs. Zufallsereignisse und vordefinierte Wirktypen (dort).
+
+Mögliche Wege (offen): (a) Unwettermodul bauen und die Ergänzungen **E6, Footprint `list`/`tag`/`spread`, selbstlaufendes `track`** hineinziehen; (b) `hazards:` als allgemeines Fundament bauen und die Unwetter-Wirktypen/Zufallsauslösung als Sugar darüber legen; (c) getrennt halten.
+
+## 11. Reihenfolge / Konsequenzen
+
+1. Grundsatzentscheidung §10. 2. Stufe 1 (AP A–F). 3. Zork-Dam umbauen (OPEN-23a, wartet laut E5). 4. Stufe 2 (`spread`, Item-Helfer) nach erstem Autoreneinsatz. 5. Wetter-Alias (E3).
