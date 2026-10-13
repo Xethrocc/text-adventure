@@ -70,7 +70,7 @@ YAML-Task in `zork1.yaml` — siehe Abschnitt „Offene YAML-Tasks“) / ✅ (be
 | # | Mechanik | Original | Port-Workaround | Grenze | DEC | ADR / Notiz |
 |---|---|---|---|---|---|---|
 | E1 | Boot-State-Maschine | Deflated/Inflated/Punctured, `LAUNCH`, `LAND`, Drift | Flags `in-boat`/`boat-inflated`/`boat-punctured`; `land` fasst `LAND` + `V-DISEMBARK`; Vehicles.hs bewusst nicht benutzt | Kein Drift (I-RIVER); Fluss-Räume werden manuell per `down` durchfahren | Gestrichen | Kein Echtzeit-Drift; schrittweiser Drift pro Zug/User-Input ist per YAML (`on: turn` + `move: <room>`) voll abbildbar |
-| E2 | Tide / Reservoir-Wasserstand | Tide-Maschine (FLOOR-MODE): Wasserstand steigt/fällt, `low_tide`-Zyklus | Flag `low_tide` + Raum-Varianten/Ausgangs-`when`; Schalter am Dam toggelt | Kein echter Wasserstand; Kein „Objekt schwimmt mit" | Später | Ticket für dynamischen Wasserstand |
+| E2 | Tide / Reservoir-Wasserstand | Tide-Maschine (FLOOR-MODE): Wasserstand steigt/fällt, `low_tide`-Zyklus | Flag `low_tide` + Raum-Varianten/Ausgangs-`when`; Schalter am Dam toggelt | Kein echter Wasserstand; Kein „Objekt schwimmt mit" | Umgeplant | `OPEN-23` ersetzt durch **Gefahrenlagen** (`docs/plan-hazards.md`, Segment `hazards:` mit Pegel/`track`/Schwellen); `low_tide`-Hack bleibt bis zur Umsetzung |
 | E3 | Pumpe/Dam-Wasser | `release`/`press yellow` → Wasserstand | über Flag-Toggle | Passt | Nein | Item `bolt` (~L2332, `verb_map: turn`), `yellow-button` (~L2480), Flags `gate-flag`/`gates-open`/`low_tide` |
 
 ---

@@ -1,14 +1,12 @@
-# Plan: `hazards:` — generalisierte Gefahrenlagen (Alternativentwurf zu OPEN-23)
+# Plan: `hazards:` — generalisierte Gefahrenlagen (OPEN-23)
 
 **Stand:** 2026-10-13 · **Status:** Entscheidungen getroffen, Machbarkeit am Code geprüft, **nichts umgesetzt** ·
-Wiederhergestellt am 2026-10-13 (die erste Fassung ging beim Repo-Wechsel durch eine parallele Sitzung verloren).
+**Gültig:** Das ist **der** Plan zu `OPEN-23` (Entscheidung 2026-10-13). Zunächst als Analyse entstanden,
+nach einem Wechsel des Repo-Stands wiederhergestellt.
 
-> **Verhältnis zum Unwettermodul:** `/root/workspace/plan-unwettermodul.md` (HEAD `b4c38be`) hat OPEN-23 inzwischen
-> als Erweiterung von 7d (`environment.severe:` mit `level:`/`flood_levels:`/Wirktypen) umgeplant.
-> Dieses Dokument ist der **Alternativ-/Ergänzungsentwurf**: ein eigenständiges, allgemeineres Segment `hazards:`
-> (Verlauf × Ausdehnung × Wirkung) für Wasser, Lava, Feuer, Sturm, Einsturz. Die hier getroffenen Entscheidungen
-> (E1–E7) und Code-Funde (§3) sind unabhängig davon gültig und können in das Unwettermodul übernommen werden.
-> Welcher Entwurf gebaut wird, ist **noch nicht entschieden** (siehe §10).
+> **Zum Unwettermodul:** `/root/workspace/plan-unwettermodul.md` (Zwischenentwurf einer parallelen Sitzung)
+> ist **abgelöst** durch dieses Dokument. Brauchbare Ideen daraus (gewichtete Zufallsereignisse per RNG-Stream,
+> vordefinierte Wirktypen) sind als Option für Stufe 2 in §10 notiert.
 
 Herkunft: `plan-zork-mechanik-entscheidungen.md` E2 (Tide/Reservoir) · Befunde-Ticket `OPEN-23`.
 
@@ -144,21 +142,13 @@ Validierung: `UnknownHazard`, `HazardLevelOutOfRange`, `HazardUnknownRoom`, `Haz
 | D5 | Generierte Räume (Sandbox-Worldgen) | außerhalb Stufe 1; `tag`-Footprint könnte später Laufzeit-Räume erfassen |
 | D6 | Performance | `N Räume × M Gefahren` Trigger je Zug; Stealth hat dasselbe Muster. Messung mit Fixture (~500 Trigger) im AP E |
 
-## 10. Abgleich mit dem Unwettermodul — offene Grundsatzentscheidung
+## 10. Übernommenes aus dem Unwettermodul (abgelöst, Stufe-2-Optionen)
 
-| Aspekt | `plan-unwettermodul.md` | dieser Plan (`hazards:`) |
-|---|---|---|
-| Architektur | Sub-Block `environment.severe:` an 7d | eigenes Segment `hazards:`; 7d später als Alias (E3) |
-| Verlauf | Int-Variable `level:` mit min/max, `flood:{delta/set}` | `track` mit Ziel/Rate/Takt (selbstlaufend), reversibel |
-| Ausdehnung | `flood_levels:` je Raum (Schwellen) | `footprint`: `elevation`-Tabelle / `list` / `tag` / `spread` |
-| Wirkung | vordefinierte Wirktypen (`flood:`, `landslide:`, `damage:`) + freie Effekte | freie Hooks (E2), Wirktypen als späteres Sugar |
-| Auslösung | `when:` **und** zufällig per RNG-Stream/Periode | `when`/Pause am Track; Zufall nur über `spread`/freie `random_choice` |
-| Treibgut | `place:`/`move_all:` in Schwellen-Effekten | `move_all` je Zonenraum in `stages` |
+Das Zwischenentwurf-Unwettermodul (`environment.severe:` an 7d) löst OPEN-23 anders: ereignisgetriebenes Pegelheben (`flood:{delta/set}`), vordefinierte Wirktypen (`flood:`, `landslide:`, `damage:`), Zufallsereignisse per RNG-Stream/Periode. **Entschieden ist: `hazards:` ist der gültige Plan.** Zwei Ideen daraus bleiben wertvoll und sind für Stufe 2 notiert:
 
-**Gemeinsamer Kern:** Compile-Time-Sugar, Pegel/Level als Variable, Schwellen-Hooks, Treibgut über vorhandene Effekte, Zork-`low_tide` als erster Ablösefall. **Unterschiede:** selbstlaufender Verlauf mit Ziel/Rate (hier) vs. ereignisgetriebenes Pegelheben (Unwettermodul); Footprint-Typen für Feuer/Einsturz/Sturm (hier) vs. Zufallsereignisse und vordefinierte Wirktypen (dort).
-
-Mögliche Wege (offen): (a) Unwettermodul bauen und die Ergänzungen **E6, Footprint `list`/`tag`/`spread`, selbstlaufendes `track`** hineinziehen; (b) `hazards:` als allgemeines Fundament bauen und die Unwetter-Wirktypen/Zufallsauslösung als Sugar darüber legen; (c) getrennt halten.
+- **Zufallsereignisse** (`every: {period, stream, choices}` nach `RandomChoiceOn`) für nicht vorhersagbare Gefahren (Erdrutsch, Sturmböen) — passend neben `spread`.
+- **Vordefinierte Wirktypen** als späteres Sugar über den freien Hooks (E2), z. B. `flood:`, `landslide:`, `damage:` als Compiler-Kürzel auf `move_all`/`SetExit`/`ModifyValue VRPlayerHealth`.
 
 ## 11. Reihenfolge / Konsequenzen
 
-1. Grundsatzentscheidung §10. 2. Stufe 1 (AP A–F). 3. Zork-Dam umbauen (OPEN-23a, wartet laut E5). 4. Stufe 2 (`spread`, Item-Helfer) nach erstem Autoreneinsatz. 5. Wetter-Alias (E3).
+1. Stufe 1 (AP A–F). 2. Zork-Dam umbauen (OPEN-23a, wartet laut E5). 3. Stufe 2 (`spread`, Item-Helfer, Zufallsereignisse nach §10) nach erstem Autoreneinsatz. 4. Wetter-Alias (E3).
