@@ -219,6 +219,7 @@ catalogEntries =
     , ("stats.defense",       "Defense: {def} (base {base})")
     , ("stats.progression",     "Level {level} — {name} ({xp}/{next} XP)")
     , ("stats.progression_max", "Level {level} — {name} ({xp} XP)")
+    , ("stats.companion_xp",    "Companion {name}: Level {level} ({xp} XP)")
     , ("levelup.default",       "You reached level {level}: {name}!")
     , ("xp.clamped",            "XP cannot drop below 0.")
     -- -- undo / quit / parse ------------------------------------------------

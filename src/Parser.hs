@@ -1295,10 +1295,30 @@ dispatchCommandCoreEv StatsCmd state =
                             , ("name", lvlTitle)
                             , ("xp", show curXp)
                             ]
+        companionDesc =
+            let vars = variables (save state)
+                defs = npcDefs (world state)
+                compLines =
+                    [ evMsg "stats.companion_xp"
+                        [ ("name", maybe nId npcName (Map.lookup nId defs))
+                        , ("level", show l)
+                        , ("xp", show x)
+                        ]
+                    | (k, VVInt x) <- Map.toList vars
+                    , "party." `isPrefixOf` k
+                    , ".xp" `isSuffixOf` k
+                    , let nId = take (length k - 3 - length "party.") (drop (length "party.") k)
+                    , not (null nId)
+                    , let l = case Map.lookup ("party." ++ nId ++ ".level") vars of
+                                Just (VVInt lvl) -> lvl
+                                _                -> 1
+                    ]
+            in if null compLines then Nothing else Just (unlinesEv compLines)
         -- Byte-identical to the former unlines: every line gets its "\n" —
         -- including the last, and the 4th piece concatenates without one.
         msg = unlinesEv $ catMaybes
             [ if null progDesc then Nothing else Just progDesc
+            , companionDesc
             , Just (evMsg "stats.health" [("hp", show (playerHealth p)), ("max", show (effectiveMaxHealth state))])
             , Just (evMsg "stats.attack" [("atk", show (effectiveAttack state)), ("base", show (playerAttack p))])
             , Just (evMsg "stats.defense" [("def", show (effectiveDefense state)), ("base", show (playerDefense p))])

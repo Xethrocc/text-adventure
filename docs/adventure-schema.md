@@ -2766,12 +2766,29 @@ npcs:
 | `hp_tracked` | Bool | `true` | Begleiter-HP wird geführt (verlangt `max_hp`) |
 | `follow_msg` | String | generisch | Meldung beim Anwerben |
 | `stay_msg` | String | generisch | Meldung beim Entlassen |
+| `combat_slot` | Int | `null` | Aktive Kampfposition pro Verbündeten (1..N). Erzeugt `party.<id>.slot` und `party.slot.active`. (C4) |
+| `switch_verb` | String | `"switch"` | Verb zum Einwechseln der Kampfposition. Erzeugt Wechsel-Effekt oder `switch`-Kommando. (C4) |
+| `xp_table` | Liste | `null` | Pro-Monster-XP-Tabelle (`[ { level, xp, name, msg, effects } ]`). Erzeugt `party.<id>.xp`, `party.<id>.level` und Level-Up-Regeln. (C4) |
 
 - **Mitgliedschaft = `VarMap`-Eintrag `party.<npcId>`** (1 = folgt). Der
   Compiler deklariert die Variable aus dem Block; sie darf **nicht** selbst
   unter `variables:` stehen (`PartyVariableClash`) — genau wie `faction.<id>`
   (7a) und `env.*` (7d). Kein neues Save-Feld: der Roster überlebt Save/Load
   automatisch.
+- **Combat Slots & Team-Wechsel (C4):** Wenn `combat_slot:` deklariert ist,
+  erzeugt der Compiler `party.<id>.slot` und initialisiert `party.slot.active`
+  auf den niedrigsten deklarierten Slot. Ein optionaler `switch_verb:` (oder
+  das generierte `switch`-Verb) erlaubt das Umschalten des aktiven Begleiters.
+  Der aktive Slot ist im Protokoll-Snapshot (`NpcSummary.combat_slot`) sichtbar.
+  Validierung: `PartyInvalidCombatSlot` (Slot <= 0), `PartyDuplicateCombatSlot`
+  (gleicher Slot doppelt vergeben).
+- **Pro-Monster-XP & Level (C4):** `xp_table:` definiert Stufen für das
+  jeweilige Monster. Der Compiler erzeugt `party.<id>.xp` (Startwert 0) und
+  `party.<id>.level` (Startwert 1) sowie `on: turn`-Trigger für jeden Stufenaufstieg.
+  Stufe und XP sind für den Spieler im `stats`-Befehl und im Wire-Protokoll-Snapshot
+  (`NpcSummary.xp`, `NpcSummary.level`) sichtbar.
+  Validierung: `PartyInvalidXpTable` (Stufe 1 muss `xp: 0` haben), `PartyNonMonotonicXp`
+  (streng monoton steigende Schwellen).
 - **Order-Verb:** ein Toggle. Derselbe Befehl (`folgen alwin`) setzt die
   Variable auf 1, ein zweiter Aufruf auf 0. Autoren können denselben
   `verb_map`-Schlüssel zusätzlich belegen; ihre Effekte laufen zuerst, der
@@ -2790,7 +2807,8 @@ npcs:
   `damage_npc`.
 - **Fehler:** `PartyOrderVerbUnknown` (Verb nicht deklariert oder Core-Verb),
   `PartyHealthMissing` (`hp_tracked` ohne `max_hp`), `PartyVariableClash`,
-  `UnknownDamageNPC` (`damage_npc` auf unbekannten NPC).
+  `PartyInvalidCombatSlot`, `PartyDuplicateCombatSlot`, `PartyInvalidXpTable`,
+  `PartyNonMonotonicXp`, `PartySwitchVerbClash`, `UnknownDamageNPC` (`damage_npc` auf unbekannten NPC).
 
 Fixture: `examples/modules/party.yaml` („Der Knappenzug") — anwerben mit
 `folgen alwin`, Wolfskampf mit zwei Aktoren, Steinschlag tötet den Knappen,

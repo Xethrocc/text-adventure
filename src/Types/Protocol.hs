@@ -305,11 +305,14 @@ instance FromJSON ItemSummary where
 
 -- | NPC summary in the current room.
 data NpcSummary = NpcSummary
-    { nsId      :: NPCID
-    , nsName    :: String
-    , nsAlive   :: Bool
-    , nsCarried :: [ItemSummary]  -- ^ B7: carried items (omitted in JSON when empty)
-    , nsEquipped :: [ItemSummary] -- ^ B9: worn equipment (omitted in JSON when empty)
+    { nsId         :: NPCID
+    , nsName       :: String
+    , nsAlive      :: Bool
+    , nsCarried    :: [ItemSummary]  -- ^ B7: carried items (omitted in JSON when empty)
+    , nsEquipped   :: [ItemSummary]  -- ^ B9: worn equipment (omitted in JSON when empty)
+    , nsXp         :: Maybe Int      -- ^ C4: per-monster XP (omitted in JSON when Nothing)
+    , nsLevel      :: Maybe Int      -- ^ C4: per-monster Level (omitted in JSON when Nothing)
+    , nsCombatSlot :: Maybe Int      -- ^ C4: combat slot (omitted in JSON when Nothing)
     } deriving (Show, Eq, Generic)
 
 instance ToJSON NpcSummary where
@@ -317,8 +320,11 @@ instance ToJSON NpcSummary where
         [ "id"    .= nsId ns
         , "name"  .= nsName ns
         , "alive" .= nsAlive ns
-        ] ++ [ "carried"  .= nsCarried ns  | not (null (nsCarried ns))  ]
-          ++ [ "equipped" .= nsEquipped ns | not (null (nsEquipped ns)) ]
+        ] ++ [ "carried"     .= nsCarried ns     | not (null (nsCarried ns))  ]
+          ++ [ "equipped"    .= nsEquipped ns    | not (null (nsEquipped ns)) ]
+          ++ [ "xp"          .= x                | Just x <- [nsXp ns] ]
+          ++ [ "level"       .= l                | Just l <- [nsLevel ns] ]
+          ++ [ "combat_slot" .= s                | Just s <- [nsCombatSlot ns] ]
 
 instance FromJSON NpcSummary where
     parseJSON = withObject "NpcSummary" $ \o -> NpcSummary
@@ -327,6 +333,9 @@ instance FromJSON NpcSummary where
         <*> o .:? "alive" .!= True
         <*> o .:? "carried" .!= []
         <*> o .:? "equipped" .!= []
+        <*> o .:? "xp"
+        <*> o .:? "level"
+        <*> o .:? "combat_slot"
 
 -- | Condition (status effect) summary.
 data ConditionSnapshot = ConditionSnapshot
@@ -806,13 +815,23 @@ makeSnapshot state = Snapshot
                           , itemLocation st == InRoom curRoomId
                           , Just def <- [Map.lookup iId (itemDefs gw)]
                           , not (itemHidden def) || itemDiscovered st ]
-        , rsNpcs        = [ NpcSummary (npcId def) (npcName def) (npcAlive st) (carriedOf nId) (equippedOf nId)
+        , rsNpcs        = [ NpcSummary (npcId def) (npcName def) (npcAlive st) (carriedOf nId) (equippedOf nId) (npcXpOf nId) (npcLevelOf nId) (npcSlotOf nId)
                           | (nId, st) <- Map.toList (npcStates ss)
                           , npcLocation st == InRoom curRoomId
                           , Just def <- [Map.lookup nId (npcDefs gw)] ]
         , rsVehicle     = currentVehicle ss
         }
     npcAlive st = maybe "alive" npcStatus (Just st) /= "dead"
+    -- C4: per-monster XP, level, and combat slot from variables
+    npcXpOf nId = case Map.lookup ("party." ++ nId ++ ".xp") (variables ss) of
+        Just (VVInt x) -> Just x
+        _              -> Nothing
+    npcLevelOf nId = case Map.lookup ("party." ++ nId ++ ".level") (variables ss) of
+        Just (VVInt l) -> Just l
+        _              -> Nothing
+    npcSlotOf nId = case Map.lookup ("party." ++ nId ++ ".slot") (variables ss) of
+        Just (VVInt s) -> Just s
+        _              -> Nothing
     -- B7: items an NPC carries (hidden ones need discovery, like everywhere)
     carriedOf nId = itemSummaryAt (CarriedBy (ActorNPC nId))
     -- B9: items an NPC wears (same visibility rule as the carried list)

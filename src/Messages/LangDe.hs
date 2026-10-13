@@ -1,4 +1,4 @@
--- | Generated from lang/de.json (sha256: f5f436a55a00a29c3991d7a0b62ff632eeb9baa1709dc668fbcbb9e94ba7376c) by scripts/gen-lang-pack.py.
+-- | Generated from lang/de.json (sha256: 7cdbbd542ac4257ff0504d2238f4dfe2cfcea6eefd7607110f716feefe2f45a3) by scripts/gen-lang-pack.py.
 --   DO NOT EDIT by hand - rerun the generator after changing the JSON.
 --
 --   Language-pack data (Phase 4.3): message templates keyed like the
@@ -41,6 +41,7 @@ langDe =
       , ("stats.defense", "Verteidigung: {def} (Basis {base})")
       , ("stats.progression", "Stufe {level} — {name} ({xp}/{next} XP)")
       , ("stats.progression_max", "Stufe {level} — {name} ({xp} XP)")
+      , ("stats.companion_xp", "Begleiter {name}: Stufe {level} ({xp} XP)")
       , ("levelup.default", "Du erreichst Stufe {level}: {name}!")
       , ("xp.clamped", "XP können nicht unter 0 fallen.")
       , ("undo.nothing", "Nichts rückgängig zu machen.")

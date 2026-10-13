@@ -2,7 +2,7 @@
 module Main where
 
 import Control.Monad (when)
-import Data.List (intercalate, isInfixOf, isPrefixOf, isSuffixOf)
+import Data.List (intercalate, isInfixOf, isPrefixOf, isSuffixOf, find)
 import Data.Aeson ((.=))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as AesonKey
@@ -599,6 +599,48 @@ testPartyRosterSaveLoadRoundTrip = do
             r1 <- expectEqual (Just (VVInt 1)) (Map.lookup "party.squire" (variables ss))
             r2 <- expectEqual (Just (InRoom "hallway")) (npcLocation <$> Map.lookup "squire" (npcStates ss))
             pure (r1 && r2)
+
+-- | C4: companion XP and level are visible in stats and snapshot, and level-up trigger fires.
+testPartyCompanionStatsAndLeveling :: IO Bool
+testPartyCompanionStatsAndLeveling = do
+    let base = partyGameInHallway True
+        lvlTrig = TriggerDef "party.squire.lvl.2" OnTurn
+            (Just (PAll [ CompareVar "party.squire.xp" CGte 50
+                        , CompareVar "party.squire.level" CLt 2 ]))
+            [ SetValue (VRVariable "party.squire.level") (EVInt 2)
+            , SendMessage "Knappe squire reaches level 2!"
+            ]
+            True 0 1 [] []
+        st0 = base
+            { world = (world base) { triggerDefs = lvlTrig : triggerDefs (world base) }
+            , save = (save base)
+                { variables = Map.insert "party.squire.xp" (VVInt 25)
+                            $ Map.insert "party.squire.level" (VVInt 1)
+                            $ Map.insert "party.squire.slot" (VVInt 1)
+                            $ Map.insert "party.slot.active" (VVInt 1)
+                            (variables (save base))
+                }
+            }
+    -- 1. Check stats command displays companion XP
+    let (_, statsMsg) = executeCommand StatsCmd st0
+    r1 <- expectTrue "companion XP shown in stats" (isInfixOf "Companion squire: Level 1 (25 XP)" statsMsg)
+
+    -- 2. Add XP to 60 and execute a turn (WaitCmd) through GameLoop to trigger level up
+    let (st1, _) = applyOutcome (ModifyValue (VRVariable "party.squire.xp") 35) "" st0
+        (ls1, turnMsg) = applyLoopCommand WaitCmd (initLoopState st1)
+        st2 = lsCurrent ls1
+    r2 <- expectEqual (Just (VVInt 60)) (Map.lookup "party.squire.xp" (variables (save st2)))
+    r3 <- expectEqual (Just (VVInt 2)) (Map.lookup "party.squire.level" (variables (save st2)))
+    r4 <- expectTrue "level up message fired" (isInfixOf "Knappe squire reaches level 2!" turnMsg)
+
+    -- 3. Verify Snapshot contains companion XP/level/slot
+    let snap = makeSnapshot st2
+        squireSummary = find (\ns -> nsId ns == "squire") (rsNpcs (snapRoom snap))
+    r5 <- expectEqual (Just (Just 60)) (nsXp <$> squireSummary)
+    r6 <- expectEqual (Just (Just 2)) (nsLevel <$> squireSummary)
+    r7 <- expectEqual (Just (Just 1)) (nsCombatSlot <$> squireSummary)
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
 
 -- | An `OnStateChange` rule's message must reach the player when the NPC dies
 --   from HP damage: the interpreter threads the death-event messages instead
@@ -12690,6 +12732,7 @@ main = do
         , runTest "party regression: no companion, classic output" testPartyNoCompanionUnchanged
         , runTest "party: dead companion inactive + event" testPartyDeadCompanionInactive
         , runTest "party roster survives save/load" testPartyRosterSaveLoadRoundTrip
+        , runTest "party C4: companion stats, snapshot and level-up" testPartyCompanionStatsAndLeveling
         , runTest "npc death event message reaches the player" testNPCDeathEventMessageShown
         -- P0-Regressionen
         , runTest "P0-1 defaultSaveState initialises all fields" testDefaultSaveStateFieldsInitialised

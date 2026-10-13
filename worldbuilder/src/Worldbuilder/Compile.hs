@@ -55,7 +55,7 @@ import qualified Messages as Msg
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Char (toLower, isDigit, isSpace)
-import Data.List (nub, stripPrefix, isPrefixOf, isInfixOf, minimumBy, intercalate, sortOn, find, (\\))
+import Data.List (nub, stripPrefix, isPrefixOf, isInfixOf, minimumBy, intercalate, sortOn, find, (\\), foldl')
 import Data.Ord (comparing)
 import Data.Maybe (mapMaybe, fromMaybe, catMaybes, isNothing, isJust, listToMaybe)
 import Data.Either (partitionEithers)
@@ -641,13 +641,13 @@ compileAdventure adv =
         (wanderConflictErrs, wanderAllVarDefs, wanderAllVarInitials) =
             mergeWanderVars patrolAllVarDefs patrolAllVarInitials wanderVarDefs wanderVarInitials
 
-        -- Phase 7g: `party:` blocks declare the follow variable party.<npcId>
-        -- and one order verb that toggles membership.
-        (partyErrs, partyVerbEntries, partyVarDefs, partyVarInitials) =
+        -- Phase 7g / C4: `party:` blocks declare the follow variable party.<npcId>
+        -- and one order verb that toggles membership, plus combat_slot and xp_table.
+        (partyErrs, partyVerbEntries, partyVarDefs, partyVarInitials, partyTriggerDefs, partySwitchVerbs) =
             compileParty verbRegistry (advNPCs adv)
         (partyConflictErrs, partyAllVarDefs, partyAllVarInitials) =
             mergePartyVars wanderAllVarDefs wanderAllVarInitials partyVarDefs partyVarInitials
-        npcDefsWithParty = Map.mapWithKey (addPartyVerbEntry partyVerbEntries) npcDefs
+        npcDefsWithParty = Map.mapWithKey (addPartyVerbEntries partyVerbEntries) npcDefs
 
         -- Phase 7h: ship systems (VarMap) + station verbs per interior room
         (shipErrs, shipTriggerDefs, shipVarDefs, shipVarInitials) =
@@ -664,11 +664,16 @@ compileAdventure adv =
         allTriggerDefs = triggerDefs ++ encounterDefs ++ envTriggerDefs ++ stealthTriggerDefs
                         ++ pursuitTriggers ++ wanderTriggerDefs
             ++ patrolTriggerDefs ++ shipTriggerDefs
+            ++ partyTriggerDefs
             ++ knowledgeTriggers ++ journalTriggers ++ deviceTriggers
-        -- W1/W4: inject the generated combine/notes/device verbs into the registry so
+        -- W1/W4/C4: inject the generated combine/notes/device/party-switch verbs into the registry so
         -- `parseCommandWith` understands them like any custom verb.
-        verbRegistryFull = Map.unions [verbRegistry, knowledgeVerb, journalVerb, deviceVerbs]
-        knowledgeClashErrs = knowledgeVerbCollisions ++ journalVerbCollisions ++ deviceVerbCollisions
+        verbRegistryFull = Map.unions [verbRegistry, knowledgeVerb, journalVerb, deviceVerbs, partySwitchVerbs]
+        partyVerbCollisions =
+            [ ciError ("verbs." ++ v) "PartySwitchVerbClash"
+                ("'" ++ v ++ "' collides with generated party switch verb")
+            | v <- Map.keys verbRegistry, v `Map.member` partySwitchVerbs ]
+        knowledgeClashErrs = knowledgeVerbCollisions ++ journalVerbCollisions ++ deviceVerbCollisions ++ partyVerbCollisions
 
         -- Rogue Phase 1: the authored `game:` policy. Savezone rooms must
         -- exist (MissingRoom); ironman without savezones is a warning (legal
@@ -1154,7 +1159,18 @@ checkZoneNested zonePath o =
 
 checkNpcNested :: String -> Aeson.Object -> [CompileIssue]
 checkNpcNested npcPath o =
-    case KM.lookup "ai" o of
+    (case KM.lookup "party" o of
+        Just (Aeson.Object partyObj) ->
+            checkKeys (npcPath ++ ".party") EntParty (KM.keys partyObj)
+            ++ case KM.lookup "xp_table" partyObj of
+                Just (Aeson.Array arr) ->
+                    concat [ case item of
+                                Aeson.Object lvlObj -> checkKeys (npcPath ++ ".party.xp_table[" ++ show i ++ "]") EntLevel (KM.keys lvlObj)
+                                _                   -> []
+                           | (i, item) <- zip [0 :: Int ..] (Foldable.toList arr) ]
+                _ -> []
+        _ -> [])
+    ++ case KM.lookup "ai" o of
         Just (Aeson.Object aiObj) ->
             checkKeys (npcPath ++ ".ai") EntNPC (KM.keys aiObj)
             ++ case KM.lookup "states" aiObj of
@@ -1906,29 +1922,166 @@ compileWander entries knownNpcs knownRooms = (errs, concatMap trigs sorted, varD
 -- | Phase 7g: compile the `party:` blocks on NPCs. Each recruitable NPC gets
 --   the follow variable `party.<npcId>` (a plain VarMap entry — no new
 --   SaveState field, no NPCState field) and one order-verb entry in its
---   compiled verb map that toggles membership. The returned per-NPC entries
---   are merged by `addPartyVerbEntry`.
+-- | Phase 7g / C4: compile the `party:` blocks on NPCs. Each recruitable NPC gets
+--   the follow variable `party.<npcId>` (a plain VarMap entry — no new
+--   SaveState field, no NPCState field) and one order-verb entry in its
+--   compiled verb map that toggles membership.
+--   When `combat_slot:` is authored, generates `party.<npcId>.slot`,
+--   `party.slot.active`, and optional `switch_verb:` action or command verb.
+--   When `xp_table:` is authored, generates `party.<npcId>.xp`,
+--   `party.<npcId>.level`, and level-up TriggerDefs with level effects and messages.
 compileParty :: Map.Map String E.VerbDef -> [ANPC]
              -> ( [CompileIssue]
-                , Map.Map E.NPCID ((E.VerbPhase, E.Verb, String), E.Effect)
+                , Map.Map E.NPCID [((E.VerbPhase, E.Verb, String), E.Effect)]
                 , Map.Map String E.VarDef
-                , Map.Map String E.VariableValue )
+                , Map.Map String E.VariableValue
+                , [E.TriggerDef]
+                , Map.Map String E.VerbDef )
 compileParty registry npcs =
     let parties = [(n, p) | n <- npcs, Just p <- [anParty n], aptCanJoin p]
         varName n = "party." ++ anId n
-        varDefs = Map.fromList
+        followDefs = Map.fromList
             [ (varName n, E.VarDef (varName n) (E.VTInt (Just 0) (Just 1)) (E.VVInt 0) [] [])
             | (n, _) <- parties ]
-        initials = Map.fromList [(varName n, E.VVInt 0) | (n, _) <- parties]
+        followInitials = Map.fromList [(varName n, E.VVInt 0) | (n, _) <- parties]
+
+        -- Combat slots (C4)
+        slotParties = [ (n, p, s) | (n, p) <- parties, Just s <- [aptCombatSlot p] ]
+        slotNumbers = [ s | (_, _, s) <- slotParties ]
+        invalidSlotErrs =
+            [ ciError ("npcs." ++ anId n ++ ".party.combat_slot") "PartyInvalidCombatSlot"
+                ("combat_slot must be positive (>= 1), got " ++ show s)
+            | (n, _, s) <- slotParties, s <= 0 ]
+        duplicateSlotErrs =
+            let findDups [] = []
+                findDups ((n1, _, s1) : rest) =
+                    [ ciError ("npcs." ++ anId n1 ++ ".party.combat_slot") "PartyDuplicateCombatSlot"
+                        ("combat_slot " ++ show s1 ++ " is also used by npc '" ++ anId n2 ++ "'")
+                    | (n2, _, s2) <- rest, s1 == s2 ] ++ findDups rest
+            in findDups slotParties
+
+        slotDefs = Map.fromList
+            [ ("party." ++ anId n ++ ".slot", E.VarDef ("party." ++ anId n ++ ".slot") (E.VTInt (Just 1) Nothing) (E.VVInt s) [] [])
+            | (n, _, s) <- slotParties ]
+        slotInitials = Map.fromList
+            [ ("party." ++ anId n ++ ".slot", E.VVInt s)
+            | (n, _, s) <- slotParties ]
+        activeSlotDefs = if null slotParties then Map.empty else
+            let minSlot = minimum slotNumbers
+            in Map.singleton "party.slot.active" (E.VarDef "party.slot.active" (E.VTInt (Just 1) Nothing) (E.VVInt minSlot) [] [])
+        activeSlotInitials = if null slotParties then Map.empty else
+            let minSlot = minimum slotNumbers
+            in Map.singleton "party.slot.active" (E.VVInt minSlot)
+
+        -- Switch verbs (C4)
+        switchEntries =
+            [ (anId n, ((E.PhaseAfter, E.VCustom v, anState n),
+                        E.Sequence [ E.SetValue (E.VRVariable "party.slot.active") (E.EVInt s)
+                                   , E.SendMessage (anName n ++ " takes combat slot " ++ show s ++ ".") ]))
+            | (n, p, s) <- slotParties
+            , Just v <- [aptSwitchVerb p]
+            , Just _ <- [resolveOrderVerb registry v]
+            ]
+        switchVerbsGenerated =
+            if not (null slotParties) && all (\(_, p, _) -> isNothing (aptSwitchVerb p)) slotParties
+            then Map.singleton "switch" (E.VerbDef "switch" ["wechsel", "wechseln"] [])
+            else Map.empty
+        switchTriggersGenerated =
+            if not (null slotParties) && all (\(_, p, _) -> isNothing (aptSwitchVerb p)) slotParties
+            then
+                [ E.TriggerDef
+                    { E.trId        = "party.switch." ++ anId n
+                    , E.trEvent     = E.OnCommand "switch"
+                    , E.trCondition = Just (E.PAll
+                        [ E.Location (E.ActorNPC (anId n)) "current"
+                        , E.CompareVar ("party." ++ anId n) E.CGte 1
+                        ])
+                    , E.trEffects   =
+                        [ E.SetValue (E.VRVariable "party.slot.active") (E.EVInt s)
+                        , E.SendMessage (anName n ++ " takes combat slot " ++ show s ++ ".")
+                        ]
+                    , E.trOnce      = False
+                    , E.trCooldown  = 0
+                    , E.trWeight    = 1
+                    , E.trRequires  = []
+                    , E.trChainsTo  = []
+                    }
+                | (n, _, s) <- slotParties
+                ]
+            else []
+
+        -- XP table validation and trigger generation (C4)
+        xpParties = [ (n, p, tbl) | (n, p) <- parties, Just tbl <- [aptXpTable p] ]
+        xpTableErrs = concat
+            [ let emptyErrs = if null tbl
+                              then [ ciError ("npcs." ++ anId n ++ ".party.xp_table") "PartyInvalidXpTable"
+                                      ("xp_table of npc '" ++ anId n ++ "' must define at least one level") ]
+                              else []
+                  firstXpErrs = case tbl of
+                      (l:_) | alXp l /= 0 -> [ ciError ("npcs." ++ anId n ++ ".party.xp_table.0") "PartyInvalidXpTable"
+                                              ("the first level in xp_table of npc '" ++ anId n ++ "' must have xp: 0") ]
+                      _                   -> []
+                  monoErrs = [ ciError ("npcs." ++ anId n ++ ".party.xp_table." ++ show idx) "PartyNonMonotonicXp"
+                                  ("npc '" ++ anId n ++ "' level " ++ show idx ++ " xp (" ++ show (alXp l2)
+                                   ++ ") must be strictly greater than level " ++ show (idx - 1)
+                                   ++ " xp (" ++ show (alXp l1) ++ ")")
+                             | (idx, (l1, l2)) <- zip [2 :: Int ..] (zip tbl (drop 1 tbl))
+                             , alXp l2 <= alXp l1
+                             ]
+              in emptyErrs ++ firstXpErrs ++ monoErrs
+            | (n, _, tbl) <- xpParties
+            ]
+        xpDefs = Map.fromList $ concat
+            [ [ ("party." ++ anId n ++ ".xp",    E.VarDef ("party." ++ anId n ++ ".xp") (E.VTInt (Just 0) Nothing) (E.VVInt 0) [] [])
+              , ("party." ++ anId n ++ ".level", E.VarDef ("party." ++ anId n ++ ".level") (E.VTInt (Just 1) Nothing) (E.VVInt 1) [] [])
+              ]
+            | (n, _, _) <- xpParties
+            ]
+        xpInitials = Map.fromList $ concat
+            [ [ ("party." ++ anId n ++ ".xp",    E.VVInt 0)
+              , ("party." ++ anId n ++ ".level", E.VVInt 1)
+              ]
+            | (n, _, _) <- xpParties
+            ]
+        xpTriggers = concat
+            [ [ E.TriggerDef
+                  { E.trId        = "party." ++ anId n ++ ".lvl." ++ show lvlNum
+                  , E.trEvent     = E.OnTurn
+                  , E.trCondition = Just (E.PAll
+                      [ E.CompareVar ("party." ++ anId n ++ ".xp") E.CGte (alXp l)
+                      , E.CompareVar ("party." ++ anId n ++ ".level") E.CLt lvlNum
+                      ])
+                  , E.trEffects   =
+                      [ E.SetValue (E.VRVariable ("party." ++ anId n ++ ".level")) (E.EVInt lvlNum)
+                      , E.SendMessage (fromMaybe (anName n ++ " reached level " ++ show lvlNum ++ ": " ++ alName l ++ "!") (alMsg l))
+                      ] ++ map compileAActionOutcome (alEffects l)
+                  , E.trOnce      = True
+                  , E.trCooldown  = 0
+                  , E.trWeight    = 1
+                  , E.trRequires  = []
+                  , E.trChainsTo  = []
+                  }
+              | (lvlNum, l) <- zip [2 :: Int ..] (drop 1 tbl)
+              ]
+            | (n, _, tbl) <- xpParties
+            , not (null tbl)
+            ]
+
+        allVarDefs = Map.unions [followDefs, slotDefs, activeSlotDefs, xpDefs]
+        allInitials = Map.unions [followInitials, slotInitials, activeSlotInitials, xpInitials]
+        allTriggers = switchTriggersGenerated ++ xpTriggers
+
         toggle n p = E.Conditional (E.CompareVar (varName n) E.CGte 1)
             (E.Sequence [ E.SendMessage (fromMaybe (anName n ++ " stays behind.") (aptStayMsg p))
                         , E.SetValue (E.VRVariable (varName n)) (E.EVInt 0) ])
             (E.Sequence [ E.SendMessage (fromMaybe (anName n ++ " falls in behind you.") (aptFollowMsg p))
                         , E.SetValue (E.VRVariable (varName n)) (E.EVInt 1) ])
-        entries = Map.fromList
+        orderEntries =
             [ (anId n, ((E.PhaseAfter, E.VCustom verb, anState n), toggle n p))
             | (n, p) <- parties
             , Just verb <- [resolveOrderVerb registry (aptOrderVerb p)] ]
+        entries = Map.fromListWith (++) [ (nid, [entry]) | (nid, entry) <- switchEntries ++ orderEntries ]
+
         errors = concat
             [ (if resolveOrderVerb registry (aptOrderVerb p) == Nothing
                then [ ciError ("npcs." ++ anId n ++ ".party.order_verb") "PartyOrderVerbUnknown"
@@ -1939,7 +2092,10 @@ compileParty registry npcs =
                             ("party npc '" ++ anId n ++ "' tracks hp but declares no max_hp") ]
                   else [])
             | (n, p) <- parties ]
-    in (errors, entries, varDefs, initials)
+            ++ invalidSlotErrs
+            ++ duplicateSlotErrs
+            ++ xpTableErrs
+    in (errors, entries, allVarDefs, allInitials, allTriggers, switchVerbsGenerated)
 
 -- | Canonical custom-verb name for an order verb. It must resolve to a
 --   *declared* adventure verb: a core verb is rejected, because it would
@@ -1949,14 +2105,16 @@ resolveOrderVerb registry w = case Verbs.resolveVerb registry w of
     Just (E.VCustom name) -> Just name
     _                     -> Nothing
 
--- | Merge an NPC's compiled party order verb into its def. An authored entry
---   with the same `(verb, state)` key runs first; the membership toggle runs
+-- | Merge an NPC's compiled party order / switch verbs into its def. An authored entry
+--   with the same `(verb, state)` key runs first; the party verb runs
 --   after it.
-addPartyVerbEntry :: Map.Map E.NPCID ((E.VerbPhase, E.Verb, String), E.Effect) -> E.NPCID -> E.NPCDef -> E.NPCDef
-addPartyVerbEntry entries nId def = case Map.lookup nId entries of
+addPartyVerbEntries :: Map.Map E.NPCID [((E.VerbPhase, E.Verb, String), E.Effect)] -> E.NPCID -> E.NPCDef -> E.NPCDef
+addPartyVerbEntries entries nId def = case Map.lookup nId entries of
     Nothing -> def
-    Just (key, eff) -> def
-        { E.npcVerbMap = Map.insertWith (\new old -> E.Sequence [old, new]) key eff (E.npcVerbMap def) }
+    Just pairs -> foldl' applyEntry def pairs
+  where
+    applyEntry d (key, eff) =
+        d { E.npcVerbMap = Map.insertWith (\new old -> E.Sequence [old, new]) key eff (E.npcVerbMap d) }
 
 -- | Merge the party follow variables into the declared variables, rejecting a
 --   clash (the author must not declare them themselves, e.g. under
@@ -1967,7 +2125,7 @@ mergePartyVars :: Map.Map String E.VarDef -> Map.Map String E.VariableValue
 mergePartyVars varDefs varInitials partyDefs partyInitials =
     let clashErrs =
             [ ciError ("variables." ++ name) "PartyVariableClash"
-                ("'" ++ name ++ "' is a party follow variable; it comes from the 'party:' block of that NPC")
+                ("'" ++ name ++ "' is owned by the party system; it comes from the 'party:' block of an NPC (7g/C4)")
             | name <- Map.keys varDefs
             , name `Map.member` partyDefs ]
     in (clashErrs, Map.union partyDefs varDefs, Map.union partyInitials varInitials)

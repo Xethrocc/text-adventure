@@ -3918,6 +3918,10 @@ partySquire party
     = ANPC "squire" "Knappe" (ACondText "Knappe" []) (AAscii (ACondText "" []) [] 0 [] Nothing) [] "loc_0" "alive"
         (Just 20) 3 1 Map.empty Map.empty party Map.empty [] Nothing False E.emptyGrammar Nothing
 
+partySimple :: Bool -> String -> Bool -> Maybe String -> Maybe String -> AParty
+partySimple canJoin orderVerb hpTracked followMsg stayMsg =
+    AParty canJoin orderVerb hpTracked followMsg stayMsg Nothing Nothing Nothing
+
 followVerb :: AVerb
 followVerb = AVerb "follow" ["escort"] []
 
@@ -3935,7 +3939,7 @@ testPartyCompiles :: IO Bool
 testPartyCompiles = do
     let adv = (minAdventure (minRoom "loc_0"))
             { advVerbs = [followVerb]
-            , advNPCs = [partySquire (Just (AParty True "follow" True Nothing Nothing))] }
+            , advNPCs = [partySquire (Just (partySimple True "follow" True Nothing Nothing))] }
     case compileAdventure adv of
         Left errs -> do
             putStrLn $ "  compile errors: " ++ show errs
@@ -3955,7 +3959,7 @@ testPartyCanJoinFalseIsInert :: IO Bool
 testPartyCanJoinFalseIsInert = do
     let adv = (minAdventure (minRoom "loc_0"))
             { advVerbs = [followVerb]
-            , advNPCs = [ partySquire (Just (AParty False "follow" True Nothing Nothing))
+            , advNPCs = [ partySquire (Just (partySimple False "follow" True Nothing Nothing))
                         , (partySquire Nothing) { anId = "plainnpc" } ] }
     case compileAdventure adv of
         Left errs -> do
@@ -3973,32 +3977,108 @@ testPartyValidation :: IO Bool
 testPartyValidation = do
     -- the order verb is not declared under `verbs:`
     let advNoVerb = (minAdventure (minRoom "loc_0"))
-            { advNPCs = [partySquire (Just (AParty True "follow" True Nothing Nothing))] }
+            { advNPCs = [partySquire (Just (partySimple True "follow" True Nothing Nothing))] }
     r1 <- case compileAdventure advNoVerb of
             Left errs -> expectContains "PartyOrderVerbUnknown" (issuesText errs)
             Right _   -> expectTrue "expected PartyOrderVerbUnknown" False
     -- a core verb would shadow the built-in behaviour -> rejected as well
     let advCoreVerb = (minAdventure (minRoom "loc_0"))
-            { advNPCs = [partySquire (Just (AParty True "look" True Nothing Nothing))] }
+            { advNPCs = [partySquire (Just (partySimple True "look" True Nothing Nothing))] }
     r2 <- case compileAdventure advCoreVerb of
             Left errs -> expectContains "PartyOrderVerbUnknown" (issuesText errs)
             Right _   -> expectTrue "expected PartyOrderVerbUnknown for core verb" False
     -- hp_tracked needs a max_hp
     let advNoHp = (minAdventure (minRoom "loc_0"))
             { advVerbs = [followVerb]
-            , advNPCs = [(partySquire (Just (AParty True "follow" True Nothing Nothing))) { anMaxHealth = Nothing }] }
+            , advNPCs = [(partySquire (Just (partySimple True "follow" True Nothing Nothing))) { anMaxHealth = Nothing }] }
     r3 <- case compileAdventure advNoHp of
             Left errs -> expectContains "PartyHealthMissing" (issuesText errs)
             Right _   -> expectTrue "expected PartyHealthMissing" False
     -- the follow variable is module-owned
     let advClash = (minAdventure (minRoom "loc_0"))
             { advVerbs = [followVerb]
-            , advNPCs = [partySquire (Just (AParty True "follow" True Nothing Nothing))]
+            , advNPCs = [partySquire (Just (partySimple True "follow" True Nothing Nothing))]
             , advVariables = [ AVariable "party.squire" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] [] ] }
     r4 <- case compileAdventure advClash of
             Left errs -> expectContains "PartyVariableClash" (issuesText errs)
             Right _   -> expectTrue "expected PartyVariableClash" False
     pure (r1 && r2 && r3 && r4)
+
+-- | C4: combat_slot and xp_table validation (positive slot, duplicate slot,
+--   xp table starting at 0, strictly monotonic xp).
+testPartyC4Validation :: IO Bool
+testPartyC4Validation = do
+    -- Invalid combat slot <= 0
+    let advBadSlot = (minAdventure (minRoom "loc_0"))
+            { advVerbs = [followVerb]
+            , advNPCs = [partySquire (Just (AParty True "follow" True Nothing Nothing (Just 0) Nothing Nothing))] }
+    r1 <- case compileAdventure advBadSlot of
+            Left errs -> expectContains "PartyInvalidCombatSlot" (issuesText errs)
+            Right _   -> expectTrue "expected PartyInvalidCombatSlot" False
+
+    -- Duplicate combat slot between two NPCs
+    let n1 = (partySquire (Just (AParty True "follow" True Nothing Nothing (Just 1) Nothing Nothing))) { anId = "mon1" }
+        n2 = (partySquire (Just (AParty True "follow" True Nothing Nothing (Just 1) Nothing Nothing))) { anId = "mon2" }
+        advDupSlot = (minAdventure (minRoom "loc_0"))
+            { advVerbs = [followVerb]
+            , advNPCs = [n1, n2] }
+    r2 <- case compileAdventure advDupSlot of
+            Left errs -> expectContains "PartyDuplicateCombatSlot" (issuesText errs)
+            Right _   -> expectTrue "expected PartyDuplicateCombatSlot" False
+
+    -- XP table first level not xp: 0
+    let badXpTbl1 = [ALevelDef (Just 1) 10 "Baby" Nothing []]
+        advBadXp1 = (minAdventure (minRoom "loc_0"))
+            { advVerbs = [followVerb]
+            , advNPCs = [partySquire (Just (AParty True "follow" True Nothing Nothing Nothing Nothing (Just badXpTbl1)))] }
+    r3 <- case compileAdventure advBadXp1 of
+            Left errs -> expectContains "PartyInvalidXpTable" (issuesText errs)
+            Right _   -> expectTrue "expected PartyInvalidXpTable" False
+
+    -- XP table non-monotonic
+    let badXpTbl2 = [ALevelDef (Just 1) 0 "Baby" Nothing [], ALevelDef (Just 2) 50 "Adult" Nothing [], ALevelDef (Just 3) 40 "Elder" Nothing []]
+        advBadXp2 = (minAdventure (minRoom "loc_0"))
+            { advVerbs = [followVerb]
+            , advNPCs = [partySquire (Just (AParty True "follow" True Nothing Nothing Nothing Nothing (Just badXpTbl2)))] }
+    r4 <- case compileAdventure advBadXp2 of
+            Left errs -> expectContains "PartyNonMonotonicXp" (issuesText errs)
+            Right _   -> expectTrue "expected PartyNonMonotonicXp" False
+
+    pure (r1 && r2 && r3 && r4)
+
+-- | C4: combat_slot and xp_table compilation produces slots, switch verb/trigger,
+--   per-monster XP variables, and level-up triggers.
+testPartyCombatSlotAndXpCompiles :: IO Bool
+testPartyCombatSlotAndXpCompiles = do
+    let xpTbl = [ ALevelDef (Just 1) 0 "Whelp" Nothing []
+                , ALevelDef (Just 2) 100 "Drake" (Just "Whelp evolves to Drake!") [AOHealPlayer 10]
+                ]
+        partyDef = AParty True "follow" True Nothing Nothing (Just 1) Nothing (Just xpTbl)
+        adv = (minAdventure (minRoom "loc_0"))
+            { advVerbs = [followVerb]
+            , advNPCs = [partySquire (Just partyDef)] }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  compile errors: " ++ show errs
+            pure False
+        Right cr -> do
+            let vars = variables (crSave cr)
+                vDefs = E.varDefs (crWorld cr)
+                trigs = E.triggerDefs (crWorld cr)
+                vReg = E.verbDefs (crWorld cr)
+            -- Slots
+            r1 <- expectEqual (Just (E.VVInt 1)) (Map.lookup "party.squire.slot" vars)
+            r2 <- expectEqual (Just (E.VVInt 1)) (Map.lookup "party.slot.active" vars)
+            r3 <- expectTrue "slot vars declared" (Map.member "party.squire.slot" vDefs && Map.member "party.slot.active" vDefs)
+            -- Generated default switch verb
+            r4 <- expectTrue "switch verb in registry" (Map.member "switch" vReg)
+            r5 <- expectTrue "switch trigger generated" (any (\t -> E.trId t == "party.switch.squire") trigs)
+            -- XP table
+            r6 <- expectEqual (Just (E.VVInt 0)) (Map.lookup "party.squire.xp" vars)
+            r7 <- expectEqual (Just (E.VVInt 1)) (Map.lookup "party.squire.level" vars)
+            r8 <- expectTrue "xp vars declared" (Map.member "party.squire.xp" vDefs && Map.member "party.squire.level" vDefs)
+            r9 <- expectTrue "level trigger generated" (any (\t -> E.trId t == "party.squire.lvl.2") trigs)
+            pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9)
 
 -- | `damage_npc: { npc: X, amount: N }` is sugar over the existing NPC-HP
 --   effect, and an unknown target is a compile error.
@@ -4640,6 +4720,8 @@ tests =
     , ("party block compiles to follow var + order verb", testPartyCompiles)
     , ("party block with can_join false is inert", testPartyCanJoinFalseIsInert)
     , ("party validation (verb / hp / variable clash)", testPartyValidation)
+    , ("party C4 validation (combat_slot / xp_table)", testPartyC4Validation)
+    , ("party C4 combat slot and per-monster XP compile", testPartyCombatSlotAndXpCompiles)
     , ("damage_npc compiles and validates its target", testDamageNpcCompiles)
     , ("party fixture compiles + validates", testPartyFixtureCompiles)
     -- Phase 7h: ship systems + stations

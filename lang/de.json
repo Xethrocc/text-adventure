@@ -26,6 +26,7 @@
     "stats.defense": "Verteidigung: {def} (Basis {base})",
     "stats.progression": "Stufe {level} — {name} ({xp}/{next} XP)",
     "stats.progression_max": "Stufe {level} — {name} ({xp} XP)",
+    "stats.companion_xp": "Begleiter {name}: Stufe {level} ({xp} XP)",
     "levelup.default": "Du erreichst Stufe {level}: {name}!",
     "xp.clamped": "XP können nicht unter 0 fallen.",
     "undo.nothing": "Nichts rückgängig zu machen.",

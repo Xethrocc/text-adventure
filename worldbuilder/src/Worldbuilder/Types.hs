@@ -731,20 +731,26 @@ data ANPC = ANPC
 --   Compiles to the follow variable `party.<npcId>` plus one order verb that
 --   toggles membership — no engine-side party state of its own.
 data AParty = AParty
-    { aptCanJoin   :: Bool    -- ^ false: never recruitable (the block is inert)
-    , aptOrderVerb :: String  -- ^ custom verb that toggles follow / stay
-    , aptHpTracked :: Bool    -- ^ true: companion HP is tracked (needs max_hp)
-    , aptFollowMsg :: Maybe String  -- ^ message when the companion joins
-    , aptStayMsg   :: Maybe String  -- ^ message when the companion stays behind
+    { aptCanJoin    :: Bool    -- ^ false: never recruitable (the block is inert)
+    , aptOrderVerb  :: String  -- ^ custom verb that toggles follow / stay
+    , aptHpTracked  :: Bool    -- ^ true: companion HP is tracked (needs max_hp)
+    , aptFollowMsg  :: Maybe String  -- ^ message when the companion joins
+    , aptStayMsg    :: Maybe String  -- ^ message when the companion stays behind
+    , aptCombatSlot :: Maybe Int     -- ^ active combat slot (1..N) (C4)
+    , aptSwitchVerb :: Maybe String  -- ^ custom switch verb (defaults to order_verb or "switch") (C4)
+    , aptXpTable    :: Maybe [ALevelDef] -- ^ per-monster level / XP table (C4)
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AParty where
     parseJSON = withObject "AParty" $ \o -> AParty
-        <$> o .:? "can_join"   .!= True
-        <*> o .:? "order_verb" .!= "follow"
-        <*> o .:? "hp_tracked" .!= True
+        <$> o .:? "can_join"    .!= True
+        <*> o .:? "order_verb"  .!= "follow"
+        <*> o .:? "hp_tracked"  .!= True
         <*> o .:? "follow_msg"
         <*> o .:? "stay_msg"
+        <*> o .:? "combat_slot"
+        <*> o .:? "switch_verb"
+        <*> o .:? "xp_table"
 
 instance FromJSON ANPC where
     parseJSON = withObject "ANPC" $ \o -> ANPC
@@ -2192,6 +2198,7 @@ data EntityType
     | EntStatement
     | EntStandingChange
     | EntScoreRanking
+    | EntParty
     deriving (Show, Eq, Ord, Enum, Bounded)
 
 -- | Single source of truth for allowed YAML mapping keys per entity type,
@@ -2296,3 +2303,7 @@ knownKeys EntRollDice = Set.fromList
     [ "pool", "die", "stream", "keep" ]
 knownKeys EntStatement = Set.fromList
     [ "id", "speaker", "claims", "truth", "text", "when", "tag" ]
+knownKeys EntParty = Set.fromList
+    [ "can_join", "order_verb", "hp_tracked", "follow_msg", "stay_msg"
+    , "combat_slot", "switch_verb", "xp_table"
+    ]
