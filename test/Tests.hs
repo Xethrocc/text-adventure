@@ -9913,6 +9913,25 @@ testFeelableUseOnInDark = do
     r2 <- expectEqual defaultDarkMessage msgNpc
     pure (r1 && r2)
 
+-- | Phase 2.5: 'use <room-item> on <target>' in darkness obeys feelable tagging for the subject.
+testFeelableUseOnRoomSubjectInDark :: IO Bool
+testFeelableUseOnRoomSubjectInDark = do
+    let st = pickupItem "potion_healing" feelableHallwayState
+    -- 1. Untagged room item as subject in the dark: blocked (darkRoomEv / defaultDarkMessage)
+    let (_, msgUntaggedSubject) = executeCommand (InteractWith VUseOn "relic" "potion_healing") st
+    r1 <- expectEqual defaultDarkMessage msgUntaggedSubject
+
+    -- 2. Feelable room item as subject in the dark on carried target: not blocked
+    let (_, msgFeelSubject) = executeCommand (InteractWith VUseOn "iron key" "potion_healing") st
+    r2 <- expectTrue "feelable room item as subject is not blocked in dark"
+            (msgFeelSubject /= defaultDarkMessage)
+
+    -- 3. Feelable room item as subject on untagged room target: blocked by target
+    let (_, msgUntaggedTarget) = executeCommand (InteractWith VUseOn "iron key" "relic") st
+    r3 <- expectEqual defaultDarkMessage msgUntaggedTarget
+
+    pure (r1 && r2 && r3)
+
 -- | Phase 0.3 (B3): ambiguity is resolved in the dark only when every candidate is
 --   reachable (carried or feelable).
 testFeelableAmbiguityInDark :: IO Bool
@@ -10502,6 +10521,63 @@ testItemOnItemConsumeDynamicResolvesOrder = do
     r8 <- expectEqual (Just (VVText "mortar")) (getVariable "item2" stFwd)
 
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8)
+
+-- | Phase 2.5: 'use <room-item> on <target>' allows a room item as subject.
+testUseOnRoomItemAsSubject :: IO Bool
+testUseOnRoomItemAsSubject = do
+    let sample = initSampleGame
+        w = (world sample)
+            { itemDefs = Map.insert "herb" (invItem "herb")
+                       $ Map.insert "mortar" (invItem "mortar") (itemDefs (world sample))
+            , itemInteractions = recipeEntry1 (RecipePair Nothing False Nothing "herb" "mortar")
+                                              (SendMessage "Salve made!")
+            }
+        -- Both items in the player's current room (neither carried)
+        stBothInRoom = sample
+            { world = w
+            , save = (save sample)
+                { itemStates = Map.insert "herb" (ItemState (InRoom (currentRoom (save sample))) "normal" Map.empty False)
+                             $ Map.insert "mortar" (ItemState (InRoom (currentRoom (save sample))) "normal" Map.empty False)
+                             $ itemStates (save sample)
+                }
+            }
+
+    -- 1. Subject in room without take: effect fires
+    let (st1, msg1) = executeCommand (parseCommand "use herb on mortar") stBothInRoom
+    r1 <- expectEqual "Salve made!" msg1
+    r2 <- expectEqual (Just (VVText "herb")) (getVariable "item1" st1)
+    r3 <- expectEqual (Just (VVText "mortar")) (getVariable "item2" st1)
+
+    -- 2. Gegentest with take: byte-identical message output
+    let (stTaken, _) = executeCommand (parseCommand "take herb") stBothInRoom
+        (_, msgTaken) = executeCommand (parseCommand "use herb on mortar") stTaken
+    r4 <- expectEqual msg1 msgTaken
+
+    -- 3. Reverse order with both in room: 'use mortar on herb' fires
+    let (stRev, msgRev) = executeCommand (parseCommand "use mortar on herb") stBothInRoom
+    r5 <- expectEqual "Salve made!" msgRev
+    r6 <- expectEqual (Just (VVText "herb")) (getVariable "item1" stRev)
+    r7 <- expectEqual (Just (VVText "mortar")) (getVariable "item2" stRev)
+
+    -- 4. Subject in another room: refused with use.not_carried
+    let stOtherRoom = sample
+            { world = w
+            , save = (save sample)
+                { itemStates = Map.insert "herb" (ItemState (InRoom "other_room") "normal" Map.empty False)
+                             $ Map.insert "mortar" (ItemState (InRoom (currentRoom (save sample))) "normal" Map.empty False)
+                             $ itemStates (save sample)
+                }
+            }
+        (_, msgOther) = executeCommand (parseCommand "use herb on mortar") stOtherRoom
+    r8 <- expectTrue "subject in other room emits use.not_carried"
+            ("carrying 'herb'" `isInfixOf` msgOther || "carrying" `isInfixOf` msgOther)
+
+    -- 5. Missing subject: refused with use.not_carried
+    let (_, msgMissing) = executeCommand (parseCommand "use crystal on mortar") stBothInRoom
+    r9 <- expectTrue "missing subject emits use.not_carried"
+            ("carrying 'crystal'" `isInfixOf` msgMissing || "carrying" `isInfixOf` msgMissing)
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9)
 
 -- ---------------------------------------------------------------------------
 -- K11c: ingredients: — Rezepte mit mehr als zwei Zutaten
@@ -11988,14 +12064,14 @@ testCmdRaw = do
     r1 <- expectEqual (Just (VVText "take torch")) (getVariable "cmd.raw" (lsCurrent ls1))
     -- 2. Unknown input fires `on: before unknown` with the raw line; the veto
     --    keeps the default parse.unknown refusal out.
-    let (ls2, out2) = applyLoopCommand (Unknown "echo echo")
+    let (_, out2) = applyLoopCommand (Unknown "echo echo")
             ((initLoopState echoWorld) { lsRawInput = "echo echo" })
     r2 <- expectTrue "unknown input echoes the raw line"
             ("The room echoes: echo echo." `isInfixOf` out2)
     r3 <- expectTrue "veto suppresses parse.unknown"
             (not ("I don't understand" `isInfixOf` out2))
     -- 3. The `on: command` phase sees the same raw line.
-    let (ls3, out3) = applyLoopCommand (Interact VTake "torch")
+    let (_, out3) = applyLoopCommand (Interact VTake "torch")
             ((initLoopState echoWorld) { lsRawInput = "take torch" })
     r4 <- expectTrue "command phase reads cmd.raw" ("RAW:take torch" `isInfixOf` out3)
     -- 4. A known verb does not fire the unknown trigger.
@@ -12540,6 +12616,7 @@ main = do
         , runTest "take all in the dark picks up only feelable items (Phase 0.3)" testTakeAllInDarkTakesOnlyFeelable
         , runTest "search in the dark: room and untagged blocked, feelable allowed (Phase 0.3)" testSearchFeelableTargetInDark
         , runTest "use on a feelable room entity in the dark (Phase 0.3)" testFeelableUseOnInDark
+        , runTest "use on with room subject in the dark honours feelable (Phase 2.5)" testFeelableUseOnRoomSubjectInDark
         , runTest "ambiguity in the dark needs all candidates reachable (Phase 0.3)" testFeelableAmbiguityInDark
         -- Stufe E: state-conditional tags (`tags_when`)
         , runTest "tags_when: a lantern lights the dark only while lit (Stufe E)" testTagsWhenLightsource
@@ -13120,6 +13197,7 @@ main = do
         -- K11a: Crafting verbraucht seine Zutaten ({item1}, {item2})
         , runTest "crafting: use A on B binds item1/item2; neither exists before (K11a.1)" testItemOnItemBindsVars
         , runTest "crafting: consume {item1} eats correct item regardless of order (K11a.2)" testItemOnItemConsumeDynamicResolvesOrder
+        , runTest "crafting: use on allows room item as subject (Phase 2.5)" testUseOnRoomItemAsSubject
         -- K11c: ingredients: — Rezepte mit mehr als zwei Zutaten
         , runTest "crafting: ingredients recipe fires when all reachable and binds {ingredient1..N} (K11c.1)" testIngredientsRecipeFiresWithUseXOnY
         , runTest "crafting: ingredients recipe fails when ingredient missing (K11c.2)" testIngredientsRecipeFailsWhenIngredientMissing

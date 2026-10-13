@@ -1932,6 +1932,16 @@ interactions:
 Schluessel oeffnet), `item:` ist freie Effektliste (Crafting), `npc:` ist
 freie Effektliste mit einer Figur als Ziel (B9).
 
+**Erreichbarkeit von Subjekt und Ziel (`use <item> on <ziel>`):**
+Sowohl das Subjekt (`<item>`) als auch das Ziel (`<ziel>`) können sich entweder im
+Spielerinventar oder im selben Raum wie die Spielfigur befinden (Phase 2.5).
+Stationäre Gegenstände im Raum (z. B. Mörser, Schalter, Kisten oder Puzzleteile)
+können somit direkt an Ort und Stelle als Subjekt oder Ziel verwendet werden,
+ohne sie vorher aufnehmen zu müssen (`take`). Befindet sich der Gegenstand weder im
+Inventar noch im aktuellen Raum, meldet die Engine `use.not_carried`. In unbeleuchteten
+Räumen greift die Dunkel-Regel: Nicht getragene Gegenstände im Raum müssen mit
+dem Tag `feelable` markiert sein, um im Dunkeln benutzt werden zu können.
+
 ### Dynamische Variablen `{item1}` und `{item2}` beim Crafting (K11a)
 
 Innerhalb der `effects:` eines `interactions.item`-Rezepts bindet die Engine die

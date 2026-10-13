@@ -1753,19 +1753,19 @@ dispatchCommandCoreEv (InteractWith VUseOn itemStr entityStr) state =
     let itemTarget = normalizeText itemStr
         entityTarget = normalizeText entityStr
         inventoryItems = getItemsInLocation (CarriedBy ActorPlayer) state
-        maybeItem = find (matchesItemTarget itemTarget) inventoryItems
+        roomItems = getItemsInLocation (InRoom (currentRoom (save state))) state
+        maybeItem = find (matchesItemTarget itemTarget) (inventoryItems ++ roomItems)
         maybeVehicle = findVehicle entityStr state
         entityInInventory = any (matchesItemTarget entityTarget) inventoryItems
         -- Phase 0.3 (B3): a feelable room entity stays usable in the dark.
-        entityIsFeelable = any (\i -> matchesItemTarget entityTarget i && itemIsFeelable state i)
-                               (getItemsInLocation (InRoom (currentRoom (save state))) state)
+        entityIsFeelable = any (\i -> matchesItemTarget entityTarget i && itemIsFeelable state i) roomItems
     in case maybeItem of
         Nothing -> (state, evMsg "use.not_carried" [("item", itemStr)])
         Just item
             | Just room <- getCurrentRoom state
             , isDark room state
-            , not entityInInventory
-            , not entityIsFeelable ->
+            , (not (hasItem (itemId item) state) && not (itemIsFeelable state item))
+              || (not entityInInventory && not entityIsFeelable) ->
                 (commandFailed state, darkRoomEv room)
             | otherwise ->
                 if entityTarget `elem` reachableEntityAliases state
