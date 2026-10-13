@@ -252,6 +252,7 @@ The `Snapshot` record is constructed purely from `GameState` via `makeSnapshot :
         "attack": 12,
         "defense": 6,
         "gold": 25,
+        "score": null,
         "conditions": [
             {
                 "name": "Poison",

@@ -1962,14 +1962,23 @@ testProtocolMakeSnapshot = do
     r2 <- expectEqual 100 (psMaxHealth (snapPlayer snap))
     r3 <- expectEqual 10 (psAttack (snapPlayer snap))
     r4 <- expectEqual 5 (psDefense (snapPlayer snap))
-    r5 <- expectEqual "start" (rsId (snapRoom snap))
-    r6 <- expectEqual 3 (length (rsExits (snapRoom snap)))
-    r7 <- expectEqual False (csEngaged (snapCombat snap))
-    r8 <- expectEqual Nothing (snapDialogue snap)
-    r9 <- expectEqual Nothing (snapGameOver snap)
-    r10 <- expectEqual 0 (snapTurn snap)
-    r11 <- expectEqual [] (snapVisitedRooms snap)
-    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11)
+    r5 <- expectEqual Nothing (psGold (snapPlayer snap))
+    r6 <- expectEqual Nothing (psScore (snapPlayer snap))
+    r7 <- expectEqual "start" (rsId (snapRoom snap))
+    r8 <- expectEqual 3 (length (rsExits (snapRoom snap)))
+    r9 <- expectEqual False (csEngaged (snapCombat snap))
+    r10 <- expectEqual Nothing (snapDialogue snap)
+    r11 <- expectEqual Nothing (snapGameOver snap)
+    r12 <- expectEqual 0 (snapTurn snap)
+    r13 <- expectEqual [] (snapVisitedRooms snap)
+    let stWithVars = setVariable "score" (VVInt 42) (setVariable "gold" (VVInt 100) initSampleGame)
+        snapWithVars = makeSnapshot stWithVars
+    r14 <- expectEqual (Just 100) (psGold (snapPlayer snapWithVars))
+    r15 <- expectEqual (Just 42) (psScore (snapPlayer snapWithVars))
+    let encoded = encodeSorted snapWithVars
+        decoded = Aeson.decode encoded :: Maybe Snapshot
+    r16 <- expectEqual (Just snapWithVars) decoded
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16])
 
 testValidateTypoInPredicateLocation :: IO Bool
 testValidateTypoInPredicateLocation = do
@@ -13951,7 +13960,22 @@ testScoreRankingSelection = do
         (_, outHighRank) = executeCommand ScoreCmd stHighRank
     r12 <- expectTrue "score below lowest threshold has no Rank line" (not (isInfixOf "Rank:" outHighRank))
 
-    pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12])
+    -- 9. Template-Variable {turns}: benutzerdefiniertes score.show Template mit {turns}
+    let wCustom = (world initSampleGame)
+            { varDefs = Map.insert "score" vdWithMax (varDefs (world initSampleGame))
+            , worldMessages = Map.singleton "score.show" ["Score: {score} in {turns} moves{if rank|\nRank: {rank}}"]
+            }
+        stCustom = (initSampleGame { world = wCustom })
+            { save = (save initSampleGame)
+                { variables = Map.singleton "score" (VVInt 100)
+                , turnCount = 17
+                }
+            }
+        (_, outCustom) = executeCommand ScoreCmd stCustom
+    r13 <- expectTrue "score template interpolates {turns}" (isInfixOf "Score: 100/350 in 17 moves" outCustom)
+    r14 <- expectTrue "score template retains rank line" (isInfixOf "Rank: Novice" outCustom)
+
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14])
 
 -- ---------------------------------------------------------------------------
 -- OPEN-03..07 (Z-04, Z-05, E-02, W-02, Z-03)

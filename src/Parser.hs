@@ -2979,7 +2979,7 @@ showScore state = case getVariable "score" state of
                    , ("score_num", show scoreInt)
                    , ("max", maybe "" show mMax)
                    , ("rank", fromMaybe "" mRankTitle)
-                   , ("rank_part", maybe "" (\t -> "\nRank: " ++ t) mRankTitle)
+                   , ("turns", show (turnCount (save state)))
                    ]
         in (state, evMsg "score.show" args)
 

@@ -13,7 +13,8 @@
             "gold": null,
             "health": 100,
             "inventory": [],
-            "max_health": 100
+            "max_health": 100,
+            "score": null
         },
         "quests": {
             "active": [],

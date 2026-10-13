@@ -1291,6 +1291,12 @@ variables:
    - Ist die Variable `score` deklariert, zeigt der Befehl `Score: N/max` (bzw. `Score: N`, falls kein `max` deklariert ist) an.
    - Ist zusätzlich `score_rankings` definiert, wird der Titel für den **höchsten Schwellenwert mit `at <= score`** in einer Folgezeile (`Rank: <title>`) ausgegeben. Liegt der Score unterhalb der kleinsten Schwelle oder ist keine Rangliste definiert, entfällt die Rangzeile.
    - Ist die Variable `score` im Abenteuer **nicht** deklariert, gibt der Befehl die hilfreiche Meldung `score.no_score` aus (*„This story does not use a score. Authors: declare a `score` variable (and optionally `score_rankings`) and award points via triggers."*).
+   - **Template-Variablen für `score.show`:** Die Ausgabe kann via `messages:` überschrieben werden (z. B. für das Zork-Originalformat `in {turns} moves`). Der Befehl übergibt folgende Template-Variablen:
+     - `{score}`: formatierter Punktestand (`N/max` bzw. `N`)
+     - `{score_num}`: numerischer Punktestand (`N`)
+     - `{max}`: deklarierter Maximalwert (oder leer, falls kein Maximum)
+     - `{rank}`: aktueller Rangtitel aus `score_rankings` (oder leer)
+     - `{turns}`: aktuelle Zuganzahl / Spielrunden (`turnCount`), ermöglicht Originalformate wie *„Score: {score} in {turns} moves"* bzw. *„Your score is {score} [total of {max} points], in {turns} moves."*
 
 2. **TUI-Statuszeilen-Konvention:**
    - Existiert eine Variable mit dem Namen `score`, hängt die TUI-Statuszeile automatisch `| Score: N` an den Raumtitel des Status-Panels an (`[Status] West of House | Score: N`).

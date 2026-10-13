@@ -352,6 +352,7 @@ data PlayerSnapshot = PlayerSnapshot
     , psAttack     :: Int
     , psDefense    :: Int
     , psGold       :: Maybe Int
+    , psScore      :: Maybe Int
     , psConditions :: [ConditionSnapshot]
     , psEquipment  :: [(String, ItemID)]
     , psInventory  :: [ItemSummary]
@@ -364,6 +365,7 @@ instance ToJSON PlayerSnapshot where
         , "attack"     .= psAttack ps
         , "defense"    .= psDefense ps
         , "gold"       .= psGold ps
+        , "score"      .= psScore ps
         , "conditions" .= psConditions ps
         , "equipment"  .= [ object ["slot" .= slot, "item" .= iId] | (slot, iId) <- psEquipment ps ]
         , "inventory"  .= psInventory ps
@@ -376,11 +378,12 @@ instance FromJSON PlayerSnapshot where
         atk <- o .: "attack"
         def <- o .: "defense"
         g <- o .:? "gold"
+        sc <- o .:? "score"
         conds <- o .:? "conditions" .!= []
         eqPairs <- o .:? "equipment" .!= []
         eq <- mapM parseEqPair eqPairs
         inv <- o .:? "inventory" .!= []
-        pure (PlayerSnapshot h mh atk def g conds eq inv)
+        pure (PlayerSnapshot h mh atk def g sc conds eq inv)
       where
         parseEqPair (Object obj) = (,) <$> obj .: "slot" <*> obj .: "item"
         parseEqPair (Array arr) | [String s, String i] <- F.toList arr = pure (T.unpack s, T.unpack i)
@@ -740,6 +743,9 @@ makeSnapshot state = Snapshot
         , psDefense    = calcDefense
         , psGold       = case Map.lookup "gold" (variables ss) of
             Just (VVInt g) -> Just g
+            _              -> Nothing
+        , psScore      = case Map.lookup "score" (variables ss) of
+            Just (VVInt s) -> Just s
             _              -> Nothing
         , psConditions = [ ConditionSnapshot (condName c) (condRemaining c)
                          | c <- Map.elems (conditions ss)
