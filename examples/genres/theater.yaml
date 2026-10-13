@@ -1,0 +1,590 @@
+# Das Theater der Schatten — Ein Puppentheater-Adventure
+#
+# Genre: ASCII-/TUI-Showcase & Puppentheater
+# Benchmark: C7 (Content-Benchmark Das Theater der Schatten)
+#
+# Feature-Mapping (gemaess docs/spielideen.md §3 & plan-theater-der-schatten.md):
+#   - Vorhang auf/zu: Zwischensequenzen (clips) beim Betreten der Buehnenraeume
+#   - Kulissen: Wechsel ueber CondText (variants mit when), gesteuert durch Spielaktionen
+#   - Puppen: NPCs als Hotspots auf der Buehne (look at <n>, talk to <n>)
+#   - Akte / Szenen: Ambient-Loops im Hintergrund (flackernde Kerzen, fallender Schnee, Wind)
+#   - Titel und Ende: Theaterplakate aus text2ascii (title_art / end_art victory & abbruch)
+#   - Siegpfad (Finale) + Fail-Pfad (Vorhang faellt vorzeitig)
+#
+# Aufbau:
+#   Akt I:   Das Vorspiel (Buehne 1 — Der Marktplatz der Schatten)
+#            Clip: vorhang_auf_akt1
+#            Ambient: Flackernde Laternen / Fackelschein
+#            Hotspots: Puppe Pierrot [P], Requisitenkiste [K]
+#            Aufgabe: Requisite 'Laterne' entzuenden und Pierrot uebergeben.
+#   Akt II:  Das Hauptstueck (Buehne 2 — Der Winterwald)
+#            Clip: vorhang_auf_akt2
+#            Ambient: Fallender Schnee
+#            Hotspots: Puppe Jaeger [J], Kristallbaum [B]
+#            Aufgabe: Silberpfeil schnitzen / einsetzen, um den Waldpfad zu klaeren.
+#   Akt III: Das Finale (Buehne 3 — Der Spiegelsaal)
+#            Clip: vorhang_auf_akt3
+#            Ambient: Zirkulierender Schattenwind
+#            Hotspots: Schattenkoenigin [Q], Schattenspiegel [S]
+#            Aufgabe: Zauberspiegel mit der Laterne erleuchten und das Meisterwerk auffuehren.
+#            Fail-Option: Am Seilzug ziehen oder Vorhang zerreissen -> vorzeitiger Abbruch!
+
+name: Das Theater der Schatten
+start_room: buehne1
+language: de
+
+title_art: |
+  ##### #   # #####  ###  ##### ##### ####      ####  ##### ####       ####  #### #   #  ###  ##### ##### ##### #   #
+    #   #   # #     #   #   #   #     #   #     #   # #     #   #     #     #     #   # #   #   #     #   #     ##  #
+    #   ##### ####  #####   #   ####  ####      #   # ####  ####       ###  #     ##### #####   #     #   ####  # # #
+    #   #   # #     #   #   #   #     #  #      #   # #     #  #          # #     #   # #   #   #     #   #     #  ##
+    #   #   # ##### #   #   #   ##### #   #     ####  ##### #   #     ####   #### #   # #   #   #     #   ##### #   #
+
+end_art:
+  victory: |
+    ========================================================================
+    ##### ### #   #  ###  #     #####
+    #      #  ##  # #   # #     #    
+    ####   #  # # # ##### #     #### 
+    #      #  #  ## #   # #     #    
+    #     ### #   # #   # ##### #####
+     ###  ####  ####  #      ###  #   #  ####
+    #   # #   # #   # #     #   # #   # #    
+    ##### ####  ####  #     ##### #   #  ### 
+    #   # #     #     #     #   # #   #     #
+    #   # #     #     ##### #   #  ###  #### 
+    ========================================================================
+    Das Finale ist vollbracht! Tosender Beifall brandet auf!
+    Die Marionetten verbeugen sich tief im Scheinwerferlicht.
+    Du hast das Theater der Schatten zur Vollendung gebracht!
+  abbruch: |
+    ========================================================================
+     ###  ####  ####  ####  #   #  #### #   #
+    #   # #   # #   # #   # #   # #     #   #
+    ##### ####  ####  ####  #   # #     #####
+    #   # #   # #   # #  #  #   # #     #   #
+    #   # ####  ####  #   #  ###   #### #   #
+    #   #  ###  ####  #   #  ###  #   #  ####     ##### #   #
+    #   # #   # #   # #   # #   # ##  # #            #  #   #
+    #   # #   # ####  ##### ##### # # # #  ##       #   #   #
+     # #  #   # #  #  #   # #   # #  ## #   #      #    #   #
+      #    ###  #   # #   # #   # #   #  ####     #####  ### 
+    ========================================================================
+    Ein Ruck geht durch die Seilzuege! Der schwere Samtvorhang
+    stuerzt herab und begraebt die Szene in Dunkelheit!
+    Pfiffe und Buhrufe ertoenen im Saal. Die Vorstellung platzt!
+clips:
+  - id: vorhang_auf_akt1
+    fps: 4
+    frames:
+      - |
+        +=============================================+
+        | ########################################### |
+        | ########################################### |
+        | ########################################### |
+        |            [ VORHANG GESCHLOSSEN ]          |
+        +=============================================+
+      - |
+        +=============================================+
+        | ######                               ###### |
+        | #########                         ######### |
+        | ############                   ############ |
+        |            [ VORHANG OEFFNET SICH ]         |
+        +=============================================+
+      - |
+        +=============================================+
+        | ##                                       ## |
+        | ####        AKT I: DAS VORSPIEL        #### |
+        | ######                               ###### |
+        |               [ VORHANG OFFEN ]             |
+        +=============================================+
+
+  - id: vorhang_auf_akt2
+    fps: 4
+    frames:
+      - |
+        +=============================================+
+        | ########################################### |
+        | ########################################### |
+        |            [ VORHANG GESCHLOSSEN ]          |
+        +=============================================+
+      - |
+        +=============================================+
+        | ######                               ###### |
+        | ####        AKT II: DAS HAUPTSTUECK    #### |
+        | ##                                       ## |
+        |               [ VORHANG OFFEN ]             |
+        +=============================================+
+
+  - id: vorhang_auf_akt3
+    fps: 4
+    frames:
+      - |
+        +=============================================+
+        | ########################################### |
+        | ########################################### |
+        |            [ VORHANG GESCHLOSSEN ]          |
+        +=============================================+
+      - |
+        +=============================================+
+        | ######                               ###### |
+        | ####          AKT III: DAS FINALE      #### |
+        | ##                                       ## |
+        |               [ VORHANG OFFEN ]             |
+        +=============================================+
+
+verbs:
+  - name: ziehen
+    aliases: [ziehe, yank, pull]
+  - name: schnitzen
+    aliases: [schnitze, carve]
+  - name: zuenden
+    aliases: [zuende, anzuenden, entzuenden, entzuende, light]
+  - name: uebergeben
+    aliases: [uebergib, reichen, reiche]
+
+rooms:
+  - id: buehne1
+    name: Buehne Akt I - Der Marktplatz der Schatten
+    description:
+      default: |
+        Die Holzbohlen knarren leise im Schein der Pappmaché-Haeuser.
+        Der Marktplatz liegt in duesteren Schatten, waehrend im Saal
+        gespanntes Fluestern herrscht. Vorne steht Pierrot mit haengenden
+        Faeden. Am Rand wartet eine schwere Requisitenkiste.
+        Oben haengt eine auffaellige rote Kordel am Seilzug.
+        Ein beleuchtetes Portal fuehrt nach Norden zu Akt II.
+      variants:
+        - when: { has_flag: pierrot_gluecklich }
+          text: |
+            Der Marktplatz erstrahlt in goldenem Papp-Laternenlicht!
+            Pierrot tanzt an seinen Seidenfaeden und deutet mit einem
+            Laecheln auf das geoeffnete Portal nach Norden.
+    intro: vorhang_auf_akt1
+    ascii:
+      default: |
+        +-----------------------------------------------+
+        |  [Akt I: Marktplatz]                (Seilzug) |
+        |      /===\      .---.                  [!]    |
+        |     |     |     | P | Puppe Pierrot           |
+        |    /=======\    '---'                         |
+        |   | [K]iste |     |                           |
+        +-----------------------------------------------+
+      variants:
+        - when: { has_flag: pierrot_gluecklich }
+          text: |
+            +-----------------------------------------------+
+            |  [Akt I: Erleuchteter Marktplatz]   (Seilzug) |
+            |      /===\      \o/  Goldenes Licht! [!]  |
+            |     | (o) |      |   Laterne leuchtet     |
+            |    /=======\    / \                       |
+            |   | [K]iste |                             |
+            +-----------------------------------------------+
+      hotspots:
+        - { glyph: "P", target: pierrot }
+        - { glyph: "K", target: requsitenkiste }
+        - { glyph: "!", target: kordel }
+      ambient:
+        fps: 2
+        frames:
+          - |
+            ( )  Fackelschein zuckt ueber die Papphaeuschen...
+             |
+          - |
+            (*)  Fackelschein flackert lebendig im Zugwind...
+             |
+          - |
+            (.)  Fackelschein daemmert geheimnisvoll...
+             |
+    exits:
+      north:
+        to: buehne2
+        when: { has_flag: pierrot_gluecklich }
+        msg: "Der Inspizient raunt aus der Kulisse: 'Akt I ist noch nicht beendet! Pierrot braucht sein Licht!'"
+
+  - id: buehne2
+    name: Buehne Akt II - Der Winterwald
+    description:
+      default: |
+        Bemooste Kulissenbaeume aus Sperrholz und weisse Papierflocken
+        erzeugen eine eisige Winterlandschaft. Am Wegesrand steht die
+        stolze Jaeger-Puppe mit gespanntem Bogen, doch ihre Sehne ist
+        leer. Neben ihr ragt ein schneebedeckter Kristallbaum empor.
+        Nach Sueden geht es zurueck zu Akt I, nach Norden zu Akt III.
+      variants:
+        - when: { has_flag: jaeger_zufrieden }
+          text: |
+            Der Winterwald wirkt verwandelt! Der Jaeger haelt den
+            eingesetzten Silberpfeil schussbereit empor. Der Pfad
+            zum Palastsaal nach Norden ist vollstaendig freigegeben.
+    intro: vorhang_auf_akt2
+    ascii:
+      default: |
+        +-----------------------------------------------+
+        |  [Akt II: Winterwald]                         |
+        |     *  .  *       .---.                       |
+        |    / \   / \      | J | Puppe Jaeger          |
+        |   /___\ /___\     '---'                       |
+        |     |  [B]aum      /|                         |
+        +-----------------------------------------------+
+      variants:
+        - when: { has_flag: jaeger_zufrieden }
+          text: |
+            +-----------------------------------------------+
+            |  [Akt II: Befreiter Winterwald]               |
+            |     *  *  *     \o/   Pfeil schussbereit! |
+            |    / \   / \     |==>                     |
+            |   /___\ /___\   / \                       |
+            |     |  [B]aum                             |
+            +-----------------------------------------------+
+      hotspots:
+        - { glyph: "J", target: jaeger }
+        - { glyph: "B", target: kristallbaum }
+      ambient:
+        fps: 2
+        frames:
+          - |
+            *  .  *  .  Schneeflocken rieseln leise auf die Buehne...
+          - |
+            .  *  .  *  Sanfter Papierwinter tanzt durch die Kulissen...
+          - |
+            *  *  .  .  Flocken wirbeln lautlos im Rampenlicht...
+    exits:
+      south:
+        to: buehne1
+      north:
+        to: buehne3
+        when: { has_flag: jaeger_zufrieden }
+        msg: "Ein Schneesturm-Vorhang aus feiner Gaze versperrt den Weg. Der Jaeger muss erst das Zeichen geben!"
+
+  - id: buehne3
+    name: Buehne Akt III - Der Spiegelsaal
+    description:
+      default: |
+        Groteske Spiegel aus Zinnfolie saeumen die praechtige Kulisse
+        des Palastes. In der Mitte thront die Schattenkoenigin — eine
+        hochgewachsene Marionette mit samtenem Schleier und Krone.
+        In der Raummitte steht ein grosser, dunkler Schattenspiegel.
+        Dies ist der Schauplatz fuer das grosse Finale der Tragikomoedie!
+        Ein Notseil am linken Portal droht die Szene zu kappen.
+      variants:
+        - when: { has_flag: finale_bereit }
+          text: |
+            Der Spiegelsaal erstrahlt in tausend bunten Lichtreflexen!
+            Die Schattenkoenigin hat ihren Schleier gelueftet und hebt
+            die Arme zur Schlusspose. Alles ist bereit fuer den letzten Applaus.
+    intro: vorhang_auf_akt3
+    ascii:
+      default: |
+        +-----------------------------------------------+
+        |  [Akt III: Spiegelsaal]             (Notseil) |
+        |     |~~~|        .---.                 [!]    |
+        |    [S]piegel     | Q | Schattenkoenigin       |
+        |     |___|        '---'                        |
+        |                   /|\                         |
+        +-----------------------------------------------+
+      variants:
+        - when: { has_flag: finale_bereit }
+          text: |
+            +-----------------------------------------------+
+            |  [Akt III: Finale des Lichts]       (Notseil) |
+            |     |\o/|      \o/   Glanz des Finales!   |
+            |    [S]pieg      |    Publikum haelt Atem  |
+            |     |/ \|      / \                        |
+            +-----------------------------------------------+
+      hotspots:
+        - { glyph: "Q", target: koenigin }
+        - { glyph: "S", target: schattenspiegel }
+        - { glyph: "!", target: notseil }
+      ambient:
+        fps: 3
+        frames:
+          - |
+            ~ ~ ~ Schatten fluestern und wehen durch den Spiegelsaal...
+          - |
+            ( ( ( Ein geheimnisvoller Hauch bewegt die Zinnspiegel...
+          - |
+            ) ) ) Zarte Glaeserklaenge zittern in der Theaterluft...
+    exits:
+      south:
+        to: buehne2
+
+items:
+  - id: laterne
+    name: Puppen-Laterne
+    description:
+      default: Eine winzige Requisiten-Laterne aus Messingblech mit einem unangezuendeten Docht.
+      variants:
+        - when: { has_flag: laterne_entzuendet }
+          text: Eine winzige Requisiten-Laterne, deren Docht in warmem, goldenem Licht strahlt.
+    gender: f
+    article:
+      nom: die
+      gen: der
+      dat: der
+      acc: die
+    keys: [laterne, lampe, leuchte]
+    in_container: requsitenkiste
+    verb_map:
+      zuenden,intact:
+        - set_flag: laterne_entzuendet
+        - msg: "Du entzuendest den Docht der Requisiten-Laterne. Ein helles goldenes Leuchten erhellt die Buehne!"
+
+  - id: kordel
+    name: Seilzug-Kordel
+    description: Eine dicke, rote Kordel, die direkt mit den Gegengewichten des Hauptvorhangs verbunden ist.
+    gender: f
+    article:
+      nom: die
+      gen: der
+      dat: der
+      acc: die
+    keys: [kordel, seilzug, seil]
+    location: buehne1
+    portable: false
+    verb_map:
+      ziehen,intact:
+        - game_end: abbruch
+        - msg: "Mit voller Kraft reisst du an der roten Kordel! Die Riemen springen aus der Fuehrung!"
+
+  - id: kristallbaum
+    name: Kristallbaum
+    description: Eine Kletterkulisse aus funkelndem Silberholz. Ein duennes Aestchen laesst sich leicht abbrechen.
+    gender: m
+    article:
+      nom: der
+      gen: des
+      dat: dem
+      acc: den
+    keys: [kristallbaum, baum]
+    location: buehne2
+    portable: false
+
+  - id: silberaestchen
+    name: Silberästchen
+    description: Ein gerader, spitzer Zweig aus silbrig schimmerndem Holz. Perfekt geeignet, um einen Pfeil daraus zu schnitzen.
+    gender: n
+    article:
+      nom: das
+      gen: des
+      dat: dem
+      acc: das
+    keys: [silberaestchen, aestchen, zweig, ast]
+    location: buehne2
+    verb_map:
+      schnitzen,intact:
+        - set_flag: pfeil_geschnitzt
+        - { set_state: silberaestchen, to: geschnitzt }
+        - msg: "Mit geschickten Fingern schnitzt du das Silberaestchen zu einem makellosen Silberpfeil!"
+    ascii:
+      default: |
+        ~--~--~
+      variants:
+        - when: { has_flag: pfeil_geschnitzt }
+          text: |
+            >----->
+
+  - id: schattenspiegel
+    name: Schattenspiegel
+    description:
+      default: Ein huefthoher Spiegel, dessen Oberflaeche matt und duester bleibt.
+      variants:
+        - when: { has_flag: spiegel_erleuchtet }
+          text: Der Schattenspiegel bricht das Laternenlicht in funkelnden Regenbogenfarben ueber die gesamte Buehne!
+    gender: m
+    article:
+      nom: der
+      gen: des
+      dat: dem
+      acc: den
+    keys: [spiegel, schattenspiegel]
+    location: buehne3
+    portable: false
+    verb_map:
+      use,intact:
+        - if: { has_flag: laterne_entzuendet }
+          then:
+            - set_flag: spiegel_erleuchtet
+            - set_flag: finale_bereit
+            - msg: "Du richtest die brennende Laterne auf den Schattenspiegel! Lichtkaskaden fluten den Saal!"
+          else:
+            - msg: "Der Spiegel braucht helles Licht, um seine Magie zu entfalten."
+
+  - id: notseil
+    name: Notfall-Seilzug
+    description: Eine Warnleine fuer den Inspizienten, um bei Theaterpausen oder Unfaellen den Vorhang fallen zu lassen.
+    gender: n
+    article:
+      nom: das
+      gen: des
+      dat: dem
+      acc: das
+    keys: [notseil, leine, notleine]
+    location: buehne3
+    portable: false
+    verb_map:
+      ziehen,intact:
+        - game_end: abbruch
+        - msg: "Du betaetigst das Notseil! Die Sperrklinke klickt laut!"
+
+  - id: requsitenkiste
+    name: Requisitenkiste
+    description: Eine schwere Holzkiste voller Theaterzubehoer, Peruecken und Schnueren.
+    gender: f
+    article:
+      nom: die
+      gen: der
+      dat: der
+      acc: die
+    keys: [kiste, requisitenkiste, box]
+    location: buehne1
+    portable: false
+    capacity: 5
+
+npcs:
+  - id: pierrot
+    name: Pierrot
+    description: Eine melancholische Gliederpuppe im weissen Gewand, deren Kopf traurig vornueberkippt.
+    gender: m
+    article:
+      nom: der
+      gen: des
+      dat: dem
+      acc: den
+    keys: [pierrot, puppe, harlekin]
+    location: buehne1
+    ascii:
+      frames:
+        - |
+          .---.   Pierrot senkt den Kopf melancholisch.
+          | P |
+          '---'
+            |
+        - |
+          .---.   Pierrot hebt den Kopf und lauscht ins Publikum.
+          | P |
+          '---'
+           /|
+        - |
+          \o/     Pierrot bewegt die Glieder an den Faeden!
+           |
+          / \
+      every: 2
+    dialogue:
+      alive:
+        entry: anfang
+        nodes:
+          anfang:
+            text: "Ach, die Premiere beginnt, doch meine Laterne fehlt! Ohne Licht kann ich die Nachtszene nicht spielen..."
+            choices:
+              - text: "Hier ist deine brennende Laterne, Pierrot!"
+                next: danke
+                visible_when: { has_flag: laterne_entzuendet }
+                outcomes:
+                  - set_flag: pierrot_gluecklich
+                  - msg: "Pierrot nimmt erfreut das Licht entgegen!"
+              - text: "Ich werde mich nach Requisiten umsehen."
+                next: null
+          danke:
+            text: "O wundervoll! Seht nur, wie der Marktplatz erstrahlt! Weiter nach Norden, das Stueck geht weiter!"
+            choices:
+              - text: "Viel Erfolg bei Akt I!"
+                next: null
+
+  - id: jaeger
+    name: Jäger
+    description: Ein stattlicher Holzjaeger im gruenen Wams. Sein Bogen ist gespannt, doch ihm fehlt die passende Munition.
+    gender: m
+    article:
+      nom: der
+      gen: des
+      dat: dem
+      acc: den
+    keys: [jaeger, schuetze]
+    location: buehne2
+    dialogue:
+      alive:
+        entry: anfang
+        nodes:
+          anfang:
+            text: "Der Schattenwolf lauert im Gehölz! Ich brauche einen geschnitzten Silberpfeil, um die Bestie zu bannen!"
+            choices:
+              - text: "Hier, nimm diesen geschnitzten Silberpfeil!"
+                next: sieg_jaeger
+                visible_when: { has_flag: pfeil_geschnitzt }
+                outcomes:
+                  - set_flag: jaeger_zufrieden
+                  - msg: "Der Jaeger legt den Silberpfeil an die Sehne!"
+              - text: "Halte die Stellung, ich suche Holz."
+                next: null
+          sieg_jaeger:
+            text: "Treffer mitten ins Schwarze! Der Winterwald ist frei, der Weg zum Palast der Schattenkoenigin steht offen!"
+            choices:
+              - text: "Waidmannsheil!"
+                next: null
+
+  - id: koenigin
+    name: Schattenkönigin
+    description: Die erhabene Hauptdarstellerin des Stueckes, gekleidet in nachtblauen Samt.
+    gender: f
+    article:
+      nom: die
+      gen: der
+      dat: der
+      acc: die
+    keys: [koenigin, schattenkoenigin]
+    location: buehne3
+    dialogue:
+      alive:
+        entry: anfang
+        nodes:
+          anfang:
+            text: "Willkommen im Herzen meines Reichs. Nur wer den Schattenspiegel erleuchtet, fuehrt die Geschichte zum erhabenen Finale."
+            choices:
+              - text: "Der Spiegel strahlt bereits! Lass uns die Schlussszene spielen!"
+                next: finale_node
+                visible_when: { has_flag: finale_bereit }
+              - text: "Ich bereite den Spiegel vor, Eure Hoheit."
+                next: null
+          finale_node:
+            text: "So sei es! Musik erschallt, das Schicksal wendet sich zum Guten. Verbeugt euch vor dem Publikum!"
+            choices:
+              - text: "Verbeugung vor dem applaudierenden Saal!"
+                outcomes:
+                  - game_end: victory
+                  - msg: "VICTORY — Das Theater der Schatten feiert einen triumphalen Erfolg!"
+                next: null
+
+tests:
+  - name: "vorspiel requisition und dialog"
+    input:
+      - look at 2
+      - take laterne
+      - zuende laterne
+      - look at 1
+      - talk to 1
+      - "1"
+      - look
+    expect:
+      - "Eine schwere Holzkiste voller Theaterzubehoer"
+      - "Du nimmst die Puppen-Laterne."
+      - "Ein helles goldenes Leuchten erhellt die Buehne!"
+      - "Eine melancholische Gliederpuppe im weissen Gewand"
+      - "Pierrot: \"Ach, die Premiere beginnt"
+      - "Pierrot nimmt erfreut das Licht entgegen!"
+      - "Der Marktplatz erstrahlt in goldenem Papp-Laternenlicht!"
+  - name: "schnitzen und jaeger hilfe"
+    input:
+      - take laterne
+      - zuende laterne
+      - talk to pierrot
+      - "1"
+      - north
+      - take silberaestchen
+      - schnitze silberaestchen
+      - talk to jaeger
+      - "1"
+      - north
+    expect:
+      - "Der Jaeger legt den Silberpfeil an die Sehne!"
+      - "Groteske Spiegel aus Zinnfolie"

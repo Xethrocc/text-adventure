@@ -193,7 +193,7 @@ Minimap mit `map:`-Positionen und mehreren Ebenen, `img2ascii`, `text2ascii`,
   bis zur Spitze mit Sonnenaufgang in Farbe.
 - Titel-Banner aus `text2ascii`, das Ende-Bild ist ein Panorama.
 
-### ⭐ Favorit: „Das Theater der Schatten“
+### [x] ⭐ Favorit: „Das Theater der Schatten“
 
 Ein ganzes Spiel als **Puppentheater**. Jeder Raum ist eine Bühne, das
 Art-Panel ist der Bühnenausschnitt.
@@ -208,6 +208,10 @@ Art-Panel ist der Bühnenausschnitt.
 
 Damit wird praktisch **jedes** ASCII-Feature in einem stimmigen Rahmen
 gezeigt, und die Einschränkung „alles ist Text“ wird zum Stilmittel.
+
+- **Stand (2026-10-13):** Benchmark gebaut — `examples/genres/theater.yaml`
+  (590 Z., 3 Akte: Vorhang-`clip`, `CondText`-Kulissen, Puppen-Hotspots,
+  Ambient-Loops, `text2ascii`-Plakate), E2E `theater` + `theater-abort-fail`.
 
 ---
 
