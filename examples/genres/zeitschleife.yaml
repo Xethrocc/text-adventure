@@ -1,0 +1,597 @@
+# Sonnenendzeit — Die Zeitschleife von Astraea
+#
+# Genre: Sci-Fi / Outer-Wilds-artige Zeitschleife
+# Benchmark: C5 (Content-Benchmark Zeitschleife)
+#
+# Demonstriert die Verzahnung von:
+#   - Outer-Wilds-artiger Zeitschleifen-Mechanik:
+#       - Ein planetarer Riesenstern detoniert alle SCHLEIFEN_LAENGE (30) Zuege in eine Supernova.
+#       - Loop-Ende fuehrt deterministisch zu 'game_end: death' mit 'permadeath: true'.
+#       - Der Tod bietet ausschliesslich [R]estart / [Q]uit — 'r' startet nahtlos Loop N+1.
+#       - 'meta.runs' zaehlt automatisch die Zyklen.
+#   - Wissensmodell W1 & Meta-Spiegel:
+#       - Fakten (facts:), Faktenkombination (combine:) und Journal (journal: notes).
+#       - Da Run-Variablen beim Neustart zurueckgesetzt werden, spiegeln 'on: learn <fact>'-Trigger
+#         Erkenntnisse in 'meta.*'-Variablen ('meta.wiss_*').
+#       - Beim Loop-Start (Turn 1) stellen dedizierte Trigger das Wissen wieder her ('learn: <fact>'),
+#         sodass das Notizbuch gefuellt bleibt und die combine:-Kaskade automatisch feuert.
+#   - Abkuerzungen & NPC-Reaktivitaet ueber Schleifen hinweg:
+#       - Ein in Loop 1 entsicherter Nothebel speichert 'meta.abkuerzung = 1'.
+#       - Ab Loop 2 oeffnet der Loop-Start-Trigger sofort den Wartungsschacht direkt
+#         vom Kontrollmodul zur Generatorkammer.
+#       - NPC Orion erkennt biometrische Fluktuationen ab 'meta.runs >= 2' und reagiert
+#         auf das Vorwissen des Spielers.
+#   - Deterministische Zeitanzeige:
+#       - Statuszeile '[Chronometer: Zug {turn.count}/30 | Schleife {meta.runs}]' in jedem Zug.
+#       - Fruehwarnungen bei Zug 15 und Zug 25.
+#       - Supernova-Detonation bei Zug 30.
+
+name: Sonnenendzeit
+start_room: habitat
+language: de
+
+game:
+  permadeath: true
+  meta_slug: zeitschleife
+  allow_undo: false
+
+journal: notes
+
+title_art: |
+  =============================================================
+              S O N N E N E N D Z E I T
+       --- Die Zeitschleife von Astraea ---
+  =============================================================
+
+end_art:
+  victory: |
+    =============================================================
+         D I E   S C H L E I F E   I S T   G E B R O C H E N
+    =============================================================
+    Der Zeitanker pulsiert mit unendlicher Energie!
+    Das angesammelte Wissen ueber unzaehlige Tode hinweg fuehrte
+    dich zur Wahrheit des Planeten Astraea. Die Zeitschleife
+    kollabiert in einer Kaskade aus purem Licht.
+    Du hast das Schicksal bezwungen und die Zeit besiegt!
+  death: |
+    =============================================================
+           S U P E R N O V A   -   S O N N E N T O D
+    =============================================================
+    Die Sonne erreicht ihre kritische Masse und explodiert.
+    Eine unaufhaltsame Wand aus Plasma verschlingt den Planeten
+    und loescht jegliches Leben in Sekundenbruchteilen aus.
+    Deine Augen schliessen sich...
+    Doch das Echo deines Geistes hallt weiter durch die Zeit.
+
+verbs:
+  - name: warten
+    aliases: [wait, rasten, verharren]
+  - name: eingeben
+    aliases: [tippe, enter, ziffern]
+
+variables:
+  - name: meta.runs
+    type: int
+    initial: 0
+  - name: meta.wiss_schleuse
+    type: int
+    initial: 0
+  - name: meta.wiss_ort_pick
+    type: int
+    initial: 0
+  - name: meta.wiss_signatur
+    type: int
+    initial: 0
+  - name: meta.wiss_tunnel
+    type: int
+    initial: 0
+  - name: meta.abkuerzung
+    type: int
+    initial: 0
+
+facts:
+  - id: fakt_schleusencode
+    keys: [schleuse, code, "7319"]
+    text: "Der Zugangscode fuer die Hauptschleuse lautet 7319."
+    source: "Notiztafel im Labor"
+    tag: codes
+    learn_msg: "Notiztafel gelesen: Der Zugangscode fuer die Schleuse lautet 7319."
+
+  - id: fakt_ort_pick
+    keys: [pick, quantenpick, resonator]
+    text: "Der Quanten-Phasenpick befindet sich in der Generatorkammer."
+    source: "Logbuch im Labor"
+    tag: ausruestung
+    learn_msg: "Logbuch studiert: Der Quanten-Pick liegt in der Generatorkammer."
+
+  - id: fakt_sonnensignatur
+    keys: [signatur, frequenz, resonanz, sonne]
+    text: "Die Resonanzfrequenz der solaren Eruption liegt bei 432 Hertz."
+    source: "Spektrometer im Observatorium"
+    tag: analyse
+    learn_msg: "Spektralanalyse: Die Resonanzfrequenz der Sonne betraegt 432 Hz."
+
+  - id: fakt_tunneldrehung
+    keys: [drehung, tunnel, wirbel]
+    text: "Die Plasmawirbel im Tunnel stabilisieren sich bei Drehung gegen den Uhrzeigersinn."
+    source: "Drohne Orion"
+    tag: navigation
+    learn_msg: "Orion berichtet: Plasmawirbel rotieren stabil gegen den Uhrzeigersinn."
+
+  - id: fakt_kern_polaritaet
+    keys: [polaritaet, inversion]
+    text: "Die 432-Hz-Resonanz bei Linksdrehung invertiert das Phasenfeld."
+    tag: synthese
+
+  - id: fakt_schacht_zugang
+    keys: [schacht, zugang, kernschacht]
+    text: "Phasenfeld-Inversion und Schleusencode 7319 entriegeln den Kernschacht."
+    tag: durchbruch
+
+combine:
+  - facts: [fakt_sonnensignatur, fakt_tunneldrehung]
+    yields: fakt_kern_polaritaet
+    msg: "Synthese: Mit der 432-Hz-Signatur und Linksdrehung laesst sich das Phasenfeld invertieren!"
+
+  - facts: [fakt_kern_polaritaet, fakt_schleusencode]
+    yields: fakt_schacht_zugang
+    msg: "Durchbruch: Phasenfeld-Inversion kombiniert mit Autorisierungscode 7319 bricht das Kraftfeld des Kernschachts!"
+
+rooms:
+  - id: habitat
+    name: "Kontrollmodul (Habitat)"
+    description:
+      default: "Das zentrale Wohn- und Kontrollmodul der Forschungsstation Helios-7. Bildschirme flackern mit hektischen Warnmeldungen ueber ansteigende Sonneneruptionen. Nach Osten fuehrt ein Schott ins Forschungslabor, nach Norden liegt die versiegelte Aussenschleuse. Im Westen befindet sich die Luke zum Wartungsschacht."
+      variants:
+        - when:
+            compare:
+              lhs: meta.runs
+              op: ">="
+              rhs: 2
+          text: "Das vertraute Kontrollmodul der Forschungsstation Helios-7. Ein unheimliches Deja-vu liegt in der Luft — du hast dieses Erwachen schon einmal erlebt! Nach Osten fuehrt das Schott ins Forschungslabor, nach Norden die Aussenschleuse. Im Westen fuehrt die entsicherte Luke des Wartungsschachts direkt zur Generatorkammer."
+    exits:
+      east: labor
+      north: luftschleuse
+
+  - id: labor
+    name: "Forschungslabor"
+    desc: "Praezisionsinstrumente und Holo-Projektoren saeumen den Raum. An der Wand haengt eine digitale Notiztafel mit Diensthinweisen. Auf einem Schreibtisch liegt das Logbuch von Stationsleiter Dr. Varek. Nach Westen geht es zurueck zum Kontrollmodul, nach Sueden fuehrt ein Gang zur Observatoriumskuppel."
+    exits:
+      west: habitat
+      south: observatorium
+
+  - id: observatorium
+    name: "Observatoriumskuppel"
+    desc: "Eine transparente Kuppel gibt den Blick frei auf das bedrohliche Spektakel am Himmel: Der blaue Riesenstern Astraea pulsiert unruhig in grellen Magentatoenen. In der Mitte des Raums steht das Hauptspektrometer. Nach Norden fuehrt der Gang zurueck zum Forschungslabor."
+    exits:
+      north: labor
+
+  - id: luftschleuse
+    name: "Aussenschleuse"
+    desc: "Eine massive Druckkammer. Nach Norden versperrt ein gepanzertes Schleusentor den Ausgang zur Oberflaeche und den Ringtunneln. Ein elektronisches Tastenfeld steuert den Verriegelungsmechanismus. Nach Sueden fuehrt der Weg zurueck ins Kontrollmodul."
+    exits:
+      south: habitat
+
+  - id: tunnel_west
+    name: "Westlicher Ringtunnel"
+    desc: "Ein unterirdischer Gang aus erstarrtem Basalt, der den Planetenkern umrundet. Durch Felsrisse schimmert gluehendes Plasma. Nach Norden geht es zur Generatorkammer, nach Sueden zurueck zur Luftschleuse. Hier verweilt die schwebende Erkundungsdrohne Orion."
+    exits:
+      south: luftschleuse
+      north: generatorkammer
+
+  - id: generatorkammer
+    name: "Generatorkammer"
+    desc: "Gewaltige Generatoren surren tief in den Basaltfundamenten. Im Osten blockiert ein knisterndes violettes Kraftfeld den Zugang zum Kernschacht. An der Wand befindet sich die Luke des Wartungsschachts mit einem gelben Nothebel. Auf einer Werkbank liegt technisches Geraet. Nach Sueden fuehrt der Ringtunnel zurueck."
+    exits:
+      south: tunnel_west
+
+  - id: zeitanker
+    name: "Der Zeitanker (Kernschacht)"
+    desc: "Ein riesiger kreisfoermiger Schacht im Herzen des Planeten. Im Zentrum rotiert eine schimmernde temporale Singularitaet."
+    on_enter:
+      - msg: "Du betrittst den Schacht und aktivierst die Singularitaet des Zeitankers! Eine Welle aus kohaerenten Tachyonen huellt die Station ein, bricht die Kausalitaetsschleife und katapultiert dich in Sicherheit, Augenblicke bevor die Sonne im Hintergrund als Supernova verglueht!"
+      - game_end: victory
+
+items:
+  - id: tafel
+    name: digitale Notiztafel
+    gender: f
+    article:
+      nom: die
+      gen: der
+      dat: der
+      acc: die
+    keys: [tafel, notiztafel, notiz, hinweis]
+    desc: "Auf der Notiztafel leuchtet eine gelbe Nachricht: 'Achtung: Neuer Zugangscode fuer Aussenschleuse zu den Tunneln: 7319.'"
+    location: labor
+    on_take:
+      - msg: "Die Tafel ist fest an der Wand montiert."
+    verb_map:
+      examine,intact:
+        - learn: fakt_schleusencode
+        - msg: "Du liest die Notiztafel: 'Achtung: Neuer Zugangscode fuer Aussenschleuse zu den Tunneln: 7319.'"
+
+  - id: logbuch
+    name: Dr. Vareks Logbuch
+    gender: n
+    article:
+      nom: das
+      gen: des
+      dat: dem
+      acc: das
+    keys: [logbuch, buch, varek, tagebuch]
+    desc: "Ein ledergebundenes Datenpad mit persoenlichen Eintraegen von Dr. Varek."
+    location: labor
+    verb_map:
+      examine,intact:
+        - learn: fakt_ort_pick
+        - msg: "Du blaetterst im Logbuch: '...der Quanten-Phasenpick wurde zur Rekalibrierung in die Generatorkammer gebracht. Ohne ihn koennen Phasenbarrieren nicht moduliert werden.'"
+
+  - id: spektrometer
+    name: Hauptspektrometer
+    gender: n
+    article:
+      nom: das
+      gen: des
+      dat: dem
+      acc: das
+    keys: [spektrometer, teleskop, instrument, scanner]
+    desc: "Ein maechtiges optisch-subatomares Messgeraet zur Analyse solarer Frequenzen."
+    location: observatorium
+    verb_map:
+      examine,intact:
+        - learn: fakt_sonnensignatur
+        - msg: "Die Spektralanzeige flackert: 'Solare Resonanzfrequenz der bevorstehenden Supernova gemessen: exakt 432 Hz.'"
+      use,intact:
+        - learn: fakt_sonnensignatur
+        - msg: "Du kalibrierst das Spektrometer neu: Die solare Eruption schwingt stabil auf 432 Hz."
+
+  - id: tastenfeld
+    name: elektronisches Tastenfeld
+    gender: n
+    article:
+      nom: das
+      gen: des
+      dat: dem
+      acc: das
+    keys: [tastenfeld, konsole, ziffernblock, feld, tastatur]
+    desc: "Ein beleuchtetes Ziffernfeld neben dem Schleusentor."
+    location: luftschleuse
+    verb_map:
+      use,intact:
+        - if:
+            knows: fakt_schleusencode
+          then:
+            - set_state: { entity: schleusentor, to: open }
+            - set_exit: { from: luftschleuse, dir: north, to: tunnel_west }
+            - msg: "Du gibst den Code 7319 ein. Mit leisem Summen entriegeln die Hydraulikklammern und das Schleusentor oeffnet sich nach Norden!"
+          else:
+            - msg: "Das Tastenfeld verlangt einen vierstelligen Autorisierungscode. Du kennst die Kombination nicht."
+
+  - id: schleusentor
+    name: gepanzertes Schleusentor
+    gender: n
+    article:
+      nom: das
+      gen: des
+      dat: dem
+      acc: das
+    keys: [schleusentor, tor, pforte, tuer]
+    desc: "Ein tonnenschweres Schleusentor aus Titanlegierung. Es schuetzt die Station vor der toedlichen Atmosphaere."
+    location: luftschleuse
+    verb_map:
+      examine,intact:
+        - if:
+            state: schleusentor
+            is: open
+          then:
+            - msg: "Das Schleusentor steht weit offen."
+          else:
+            - msg: "Das Tor ist fest verriegelt. Der Zugang wird ueber das Tastenfeld gesteuert."
+
+  - id: nothebel
+    name: gelber Nothebel
+    gender: m
+    article:
+      nom: der
+      gen: des
+      dat: dem
+      acc: den
+    keys: [hebel, nothebel, schalter]
+    desc: "Ein massiver Hebel zur mechanischen Notoeffnung des Wartungsschachts zurueck ins Kontrollmodul."
+    location: generatorkammer
+    verb_map:
+      use,intact:
+        - if:
+            compare:
+              lhs: meta.abkuerzung
+              op: "="
+              rhs: 0
+          then:
+            - set_var: { var: meta.abkuerzung, value: 1 }
+            - set_exit: { from: generatorkammer, dir: west, to: habitat }
+            - set_exit: { from: habitat, dir: west, to: generatorkammer }
+            - msg: "RUMMS! Du reisst den Hebel nach unten. Die Verriegelungsbolzen der Wartungsluke schiessen zurueck! Der Durchgang nach Westen direkt ins Habitat ist dauerhaft entriegelt!"
+          else:
+            - msg: "Der Nothebel ist bereits umgelegt. Die Wartungsluke steht offen."
+
+  - id: quanten_pick
+    name: Quanten-Phasenpick
+    gender: m
+    article:
+      nom: der
+      gen: des
+      dat: dem
+      acc: den
+    keys: [pick, quantenpick, phasenpick, resonator, werkzeug]
+    desc: "Ein handlicher Phasenmodulator, der Schwingungsfelder kohaerent manipulieren kann."
+    location: generatorkammer
+    verb_map:
+      use,intact:
+        - if:
+            at: player
+            room: generatorkammer
+          then:
+            - if:
+                knows: fakt_schacht_zugang
+              then:
+                - set_exit: { from: generatorkammer, dir: east, to: zeitanker }
+                - msg: "Du richtest den Phasenpick auf das Kraftfeld, modulierst die Frequenz auf 432 Hz mit Linksdrehung und Autorisierung 7319. Das Feld flackert auf und bricht mit einem lauten Knall in sich zusammen! Der Weg nach Osten zum Kernschacht ist frei!"
+              else:
+                - msg: "Du schaltest den Quanten-Pick ein, doch ohne die korrekten Inversionsparameter und Autorisierungsdaten bleibt das Kraftfeld stabil."
+          else:
+            - msg: "Hier gibt es kein Phasenfeld, auf das du den Pick anwenden koenntest."
+
+  - id: kraftfeld
+    name: violettes Kraftfeld
+    gender: n
+    article:
+      nom: das
+      gen: des
+      dat: dem
+      acc: das
+    keys: [kraftfeld, feld, schutzfeld, barriere, schacht]
+    desc: "Eine undurchdringliche Energiebarriere vor dem Durchgang nach Osten zum Kernschacht."
+    location: generatorkammer
+    verb_map:
+      use,intact:
+        - if:
+            has_item: quanten_pick
+          then:
+            - if:
+                knows: fakt_schacht_zugang
+              then:
+                - set_exit: { from: generatorkammer, dir: east, to: zeitanker }
+                - msg: "Du modulierst den Quanten-Pick auf 432 Hz, Linksdrehung und Code 7319. Das Kraftfeld bricht mit einem blendenden Funkenregen zusammen! Der Weg nach Osten ist frei!"
+              else:
+                - msg: "Dir fehlen die genauen theoretischen Parameter, um das Feld mit dem Pick zu destabilisieren."
+          else:
+            - msg: "Das Kraftfeld stoesst dich mit einem schmerzhaften Blitz zurueck! Du benoetigst ein Spezialwerkzeug wie den Quanten-Pick."
+
+npcs:
+  - id: orion
+    name: Erkundungsdrohne Orion
+    gender: f
+    article:
+      nom: die
+      gen: der
+      dat: der
+      acc: die
+    keys: [orion, drohne, roboter, bot]
+    desc: "Eine zylinderfoermige Forschungsdrohne mit beschaedigtem Repulsorantrieb. Ihre optischen Linsen fokussieren dich."
+    location: tunnel_west
+    dialogue:
+      alive:
+        entry: start
+        nodes:
+          start:
+            text: "Orion piept: 'Sensordaten: Instabile Plasmawirbel im Ringtunnel. Stabilisierung nur bei Feldrotation gegen den Uhrzeigersinn (Linksdrehung) moeglich.'"
+            choices:
+              - text: "Sensordaten erfassen."
+                outcomes:
+                  - learn: fakt_tunneldrehung
+                  - dialog_end
+
+rules:
+  # --- Verbbefehle ---
+  - id: regel_warten
+    on: "command warten"
+    effects:
+      - msg: "Du verharrst und blickst auf die unerbittlich verstreichende Zeit."
+
+  - id: regel_tippe_code
+    on: "command eingeben"
+    when:
+      at: player
+      room: luftschleuse
+    effects:
+      - if:
+          any:
+            - var: cmd.arg1
+              is: "7319"
+            - knows: fakt_schleusencode
+        then:
+          - set_state: { entity: schleusentor, to: open }
+          - set_exit: { from: luftschleuse, dir: north, to: tunnel_west }
+          - msg: "Du gibst den Code 7319 ein. Mit einem hydraulischen Zischen entriegelt das Schleusentor!"
+        else:
+          - msg: "Falscher Code! Die rote Warnleuchte blinkt abweisend."
+
+  # --- Meta-Spiegel: Lernen -> Meta-Variable ---
+  - id: spiegel_schleuse
+    on: learn fakt_schleusencode
+    effects:
+      - set_var: { var: meta.wiss_schleuse, value: 1 }
+
+  - id: spiegel_ort_pick
+    on: learn fakt_ort_pick
+    effects:
+      - set_var: { var: meta.wiss_ort_pick, value: 1 }
+
+  - id: spiegel_signatur
+    on: learn fakt_sonnensignatur
+    effects:
+      - set_var: { var: meta.wiss_signatur, value: 1 }
+
+  - id: spiegel_tunneldrehung
+    on: learn fakt_tunneldrehung
+    effects:
+      - set_var: { var: meta.wiss_tunnel, value: 1 }
+
+  # --- Loop-Start Wiederherstellung ---
+  - id: loop_init_info
+    on: turn
+    once: true
+    when:
+      compare:
+        lhs: turn.count
+        op: "="
+        rhs: 1
+    effects:
+      - if:
+          compare:
+            lhs: meta.runs
+            op: ">="
+            rhs: 2
+        then:
+          - msg: ">> ZEITSCHLEIFE: Du erwachst keuchend im Kontrollmodul. Deine Erinnerungen an fruehere Schleifen sind noch lebendig! <<"
+        else:
+          - msg: ">> ZEITSCHLEIFE: Die Sirenen heulen. Das Chronometer beginnt zu laufen — 30 Zuege bis zur Supernova! <<"
+
+  - id: restore_schleuse
+    on: turn
+    once: true
+    when:
+      all:
+        - compare:
+            lhs: meta.wiss_schleuse
+            op: ">="
+            rhs: 1
+        - not:
+            knows: fakt_schleusencode
+    effects:
+      - learn: fakt_schleusencode
+
+  - id: restore_ort_pick
+    on: turn
+    once: true
+    when:
+      all:
+        - compare:
+            lhs: meta.wiss_ort_pick
+            op: ">="
+            rhs: 1
+        - not:
+            knows: fakt_ort_pick
+    effects:
+      - learn: fakt_ort_pick
+
+  - id: restore_signatur
+    on: turn
+    once: true
+    when:
+      all:
+        - compare:
+            lhs: meta.wiss_signatur
+            op: ">="
+            rhs: 1
+        - not:
+            knows: fakt_sonnensignatur
+    effects:
+      - learn: fakt_sonnensignatur
+
+  - id: restore_tunnel
+    on: turn
+    once: true
+    when:
+      all:
+        - compare:
+            lhs: meta.wiss_tunnel
+            op: ">="
+            rhs: 1
+        - not:
+            knows: fakt_tunneldrehung
+    effects:
+      - learn: fakt_tunneldrehung
+
+  - id: restore_abkuerzung
+    on: turn
+    once: true
+    when:
+      compare:
+        lhs: meta.abkuerzung
+        op: ">="
+        rhs: 1
+    effects:
+      - set_exit: { from: habitat, dir: west, to: generatorkammer }
+      - set_exit: { from: generatorkammer, dir: west, to: habitat }
+
+  # --- Zeitanzeige & Countdown ---
+  - id: zeitanzeige
+    on: turn
+    effects:
+      - msg: "[Chronometer: Zug {turn.count}/30 | Schleife {meta.runs}]"
+
+  - id: warnung_halbzeit
+    on: turn
+    when:
+      compare:
+        lhs: turn.count
+        op: "="
+        rhs: 15
+    effects:
+      - msg: "[WARNUNG] T-15 Zuege: Die Sonnenaktivitaet steigt drastisch an! Das Licht verfaerbt sich unheimlich violett."
+
+  - id: warnung_endspurt
+    on: turn
+    when:
+      compare:
+        lhs: turn.count
+        op: "="
+        rhs: 25
+    effects:
+      - msg: "[ALARMSTUFE ROT] T-5 Zuege: Gravitationswellen zerreissen die oberen Atmosphaereschichten!"
+
+  - id: sonnenkollaps
+    on: turn
+    when:
+      compare:
+        lhs: turn.count
+        op: ">="
+        rhs: 30
+    effects:
+      - msg: "Ein blendendes, weissgluehendes Licht flutet den Horizont! Die Sonne detoniert in einer gewaltigen Supernova — die Plasmawelle verschlingt den Planeten!"
+      - game_end: death
+
+tests:
+  - name: "fakten sammeln im ersten loop"
+    input:
+      - east
+      - examine tafel
+      - examine logbuch
+      - south
+      - examine spektrometer
+      - notizen
+    expect:
+      - "Notiztafel gelesen: Der Zugangscode fuer die Schleuse lautet 7319."
+      - "Logbuch studiert: Der Quanten-Pick liegt in der Generatorkammer."
+      - "Spektralanalyse: Die Resonanzfrequenz der Sonne betraegt 432 Hz."
+      - "Deine Notizen:"
+      - "Der Zugangscode fuer die Hauptschleuse lautet 7319."
+      - "Der Quanten-Phasenpick befindet sich in der Generatorkammer."
+      - "Die Resonanzfrequenz der solaren Eruption liegt bei 432 Hertz."
+  - name: "kraftfeld versperrt ohne synthese"
+    input:
+      - east
+      - examine tafel
+      - west
+      - north
+      - eingeben 7319
+      - north
+      - north
+      - take pick
+      - use pick
+    expect:
+      - "Du gibst den Code 7319 ein."
+      - "Du nimmst den Quanten-Phasenpick."
+      - "ohne die korrekten Inversionsparameter und Autorisierungsdaten bleibt das Kraftfeld stabil"

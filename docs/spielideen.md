@@ -60,12 +60,15 @@ Ein beschädigtes U-Boot, der Sauerstoff wird knapp, Abteile laufen voll.
 
 ## 2. Neue Genres
 
-### [ ] Zeitschleife – à la *Outer Wilds* / *Täglich grüßt das Murmeltier*
+### [x] Zeitschleife – à la *Outer Wilds* / *Täglich grüßt das Murmeltier*
 Jede Schleife dauert N Züge. Wissen bleibt über `meta.*` erhalten, die Welt
 wird zurückgesetzt.
 - **Zeigt:** Die Rogue-Plattform (Permadeath + Meta-Progression) als
   Erzählmittel, außerdem Runden-Trigger und Wissen
 - **Warum:** Eine der originellsten Ideen für diese Engine. ⭐
+- **Stand (2026-10-13):** Benchmark gebaut — `examples/genres/zeitschleife.yaml`
+  (30-Züge-Supernova, Wissensspiegel via `meta.*`, Sieg in Schleife 2), E2E
+  `zeitschleife` + `zeitschleife-timeout-fail` in `ci/e2e/`.
 
 ### [ ] Whodunit mit zufälligem Täter
 Beim Start wählt `RandomChoice` den Mörder, die Indizien passen sich an.
