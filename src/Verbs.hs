@@ -5,6 +5,7 @@ module Verbs
     ( coreVerbDefs
     , verbAliasMap
     , resolveVerb
+    , resolveVerbPhrase
     , verbCanonicalName
     , isReadVerb
     , isExamineLike
@@ -16,19 +17,20 @@ import Types
 import qualified Data.Map.Strict as Map
 import Data.Char (toLower)
 import Data.List (nub)
+import Data.Maybe (listToMaybe)
 
 -- | Default verb definitions shipped with the engine — the canonical verb-map
 --   verbs that the parser recognises. Each entry maps a canonical name to its
 --   input aliases.
 coreVerbDefs :: [VerbDef]
 coreVerbDefs =
-    [ VerbDef "take"    ["pick", "grab", "get"]
-    , VerbDef "drop"    ["put"]
-    , VerbDef "examine" ["inspect", "look", "read"]
-    , VerbDef "use"     ["activate"]
-    , VerbDef "talk"    ["speak", "chat"]
-    , VerbDef "attack"  ["hit", "kill"]
-    , VerbDef "search"  []
+    [ VerbDef "take"    ["pick", "grab", "get"] []
+    , VerbDef "drop"    ["put"] []
+    , VerbDef "examine" ["inspect", "look", "read"] []
+    , VerbDef "use"     ["activate"] []
+    , VerbDef "talk"    ["speak", "chat"] []
+    , VerbDef "attack"  ["hit", "kill"] []
+    , VerbDef "search"  [] []
     ]
 
 -- | Build an alias → canonical-name lookup table from a map of VerbDefs.
@@ -54,6 +56,19 @@ resolveVerb customDefs w =
     allDefs = Map.fromList [(vdName d, d) | d <- coreVerbDefs]
               `Map.union` customDefs
     allAliases = verbAliasMap allDefs
+
+-- | OPEN-21 (A): resolve a multi-word verb phrase — the longest prefix of the
+--   token list that the registry (core + custom) knows. Phrase matches beat
+--   single-word matches even when the single word is a core alias: with
+--   `put out` declared, `put out candle` is `put out` + `candle`, never
+--   `put`(drop) + `out candle`. Returns the verb plus the remaining tokens.
+resolveVerbPhrase :: Map.Map String VerbDef -> [String] -> Maybe (Verb, [String])
+resolveVerbPhrase defs toks = listToMaybe
+    [ (v, rest)
+    | n <- [length toks, length toks - 1 .. 1]
+    , let (phrase, rest) = splitAt n toks
+    , Just v <- [resolveVerb defs (unwords phrase)]
+    ]
 
 -- | Map canonical core verb names to their Verb constructors.
 canonicalToVerb :: String -> Maybe Verb

@@ -2729,7 +2729,7 @@ testReservedTriggerIdFails = do
 testGenreVerbDeclarable :: IO Bool
 testGenreVerbDeclarable = do
     let adv = (minAdventure (minRoom "loc_0"))
-            { advVerbs = [AVerb "swim" [], AVerb "game" []] }
+            { advVerbs = [AVerb "swim" [] [], AVerb "game" [] []] }
     case compileAdventure adv of
         Right cr -> expectTrue "swim/game compile as custom verbs"
                         (Map.member "swim" (E.verbDefs (crWorld cr))
@@ -2986,7 +2986,7 @@ replaceIn content n old new =
 testKnownCommandVerbCompiles :: IO Bool
 testKnownCommandVerbCompiles = do
     let adv = (minAdventure (minRoom "loc_0"))
-            { advVerbs = [AVerb "sneak" []]
+            { advVerbs = [AVerb "sneak" [] []]
             , advTriggers =
                 [ ATrigger "t_core"   "command examine" Nothing [AOMessage "a"] False 0 1 [] []
                 , ATrigger "t_custom" "command sneak"   Nothing [AOMessage "b"] False 0 1 [] [] ] }
@@ -3001,7 +3001,7 @@ testKnownCommandVerbCompiles = do
 testReadAndCustomVerbCompilation :: IO Bool
 testReadAndCustomVerbCompilation = do
     let adv = (minAdventure (minRoom "loc_0"))
-            { advVerbs = [AVerb "rub" []]
+            { advVerbs = [AVerb "rub" [] []]
             , advItems = [(minItem "book") { aiName = "old book", aiVerbMap = Map.fromList
                 [("read,intact", [AOMessage "legacy read"])
                 ,("rub,intact", [AOMessage "MAP:{cmd.raw_args}:{cmd.target}:{cmd.arg1}:{cmd.arg2}:{cmd.arg3}:{cmd.arg4}:{cmd.count}"])] }]
@@ -3029,14 +3029,67 @@ testReadAndCustomVerbCompilation = do
                     , "MAP:old book to cloth:book:old:book:to:cloth:4"])
                 (crWorld cr) (crSave cr))
             pure (and [r1, r2, r3, r4])
-    reserved <- case compileAdventure (adv { advVerbs = [AVerb "read" []] }) of
+    reserved <- case compileAdventure (adv { advVerbs = [AVerb "read" [] []] }) of
         Left errs -> expectContains "ReservedVerbName" (issuesText errs)
         Right _ -> expectTrue "read remains reserved" False
     -- Zork C2: `move <thing>` needs a declarable custom `move` verb.
-    moveDeclarable <- case compileAdventure (adv { advVerbs = advVerbs adv ++ [AVerb "move" []] }) of
+    moveDeclarable <- case compileAdventure (adv { advVerbs = advVerbs adv ++ [AVerb "move" [] []] }) of
         Left errs -> expectTrue ("move is declarable: " ++ issuesText errs) False
         Right _ -> pure True
     pure (compiled && reserved && moveDeclarable)
+
+-- | OPEN-21 (A/B/D1/D3): phrase verbs, input patterns, tool keys and the
+--   D3 warnings compile as specified (fixture exercises the YAML shapes
+--   `pattern:` / `patterns:` and `verb_map` tool keys).
+testOpen21FixtureCompiles :: IO Bool
+testOpen21FixtureCompiles = do
+    mbPath <- findExample "open21.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  open21.yaml not found"
+            pure False
+        Just path -> do
+            advResult <- parseAdventureFile path
+            case advResult of
+                Left err -> do
+                    putStrLn $ "  failed to parse open21.yaml: " ++ err
+                    pure False
+                Right adv -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  compile errors: " ++ issuesText errs
+                        pure False
+                    Right cr -> do
+                        let defs = E.verbDefs (crWorld cr)
+                            kerze = Map.lookup "kerze" (E.itemDefs (crWorld cr))
+                            keys = maybe [] (Map.keys . E.itemVerbMap) kerze
+                        r1 <- expectTrue "phrase verb compiled"
+                            (Map.lookup "put out" defs == Just (E.VerbDef "put out" ["blow out"] []))
+                        r2 <- expectTrue "pattern compiled"
+                            (maybe [] E.vdPatterns (Map.lookup "fill" defs) == ["fill <x> with <y>"])
+                        r3 <- expectTrue "two patterns on one verb"
+                            (maybe [] E.vdPatterns (Map.lookup "turn off" defs)
+                                == ["turn off <x>", "turn <x> off"])
+                        r4 <- expectTrue "tool key compiles to the tool state key"
+                            ((E.PhaseAfter, E.VCustom "fill", "intact,tool:wasser") `elem` keys)
+                        r5 <- expectTrue "plain key stays plain"
+                            ((E.PhaseAfter, E.VCustom "fill", "intact") `elem` keys)
+                        r6 <- expectTrue "phrase verb_map key compiles"
+                            ((E.PhaseAfter, E.VCustom "put out", "intact") `elem` keys)
+                        let codes = map ciCode (crWarnings cr)
+                        r7 <- expectTrue ("ReservedVerbPhrase warned: " ++ show codes)
+                            ("ReservedVerbPhrase" `elem` codes)
+                        r8 <- expectTrue ("UnknownVerbTool warned: " ++ show codes)
+                            ("UnknownVerbTool" `elem` codes)
+                        pure (and [r1, r2, r3, r4, r5, r6, r7, r8])
+
+-- | OPEN-21 (B): templates need a literal word and at most two slots.
+testOpen21BadPatterns :: IO Bool
+testOpen21BadPatterns = do
+    let adv = (minAdventure (minRoom "loc_0"))
+            { advVerbs = [AVerb "klopfe" [] ["<x> <y>", "klopfe <x> <y> <z>"]] }
+    case compileAdventure adv of
+        Right _ -> expectTrue "bad patterns are rejected" False
+        Left errs -> expectContains "BadVerbPattern" (issuesText errs)
 
 -- | Any `faction.<id>` reference (standing outcome / predicate) must point at a
 --   declared faction once the `factions:` segment is present.
@@ -3866,7 +3919,7 @@ partySquire party
         (Just 20) 3 1 Map.empty Map.empty party Map.empty [] Nothing False E.emptyGrammar Nothing
 
 followVerb :: AVerb
-followVerb = AVerb "follow" ["escort"]
+followVerb = AVerb "follow" ["escort"] []
 
 -- | The expected membership toggle for `squire`.
 expectedToggle :: E.Effect
@@ -3955,10 +4008,10 @@ testDamageNpcCompiles = do
             { anId = "trapper"
             , anVerbMap = Map.fromList [("stab,alive", [AODamageNPC target 25])] }
         advOk = (minAdventure (minRoom "loc_0"))
-            { advVerbs = [AVerb "stab" []]
+            { advVerbs = [AVerb "stab" [] []]
             , advNPCs = [partySquire Nothing, stabber "squire"] }
         advBad = (minAdventure (minRoom "loc_0"))
-            { advVerbs = [AVerb "stab" []]
+            { advVerbs = [AVerb "stab" [] []]
             , advNPCs = [partySquire Nothing, stabber "ghost"] }
     r1 <- case compileAdventure advOk of
             Left errs -> do
@@ -4063,7 +4116,7 @@ testShipSystemsCompile = do
             { avStations = [ AStation "kestrel_guns" "feuern" [AOMessage "Die Waffen feuern."] Nothing ] }
         adv = (minAdventure (minRoom "loc_0"))
             { advVehicles = [ship]
-            , advVerbs = [AVerb "feuern" []] }
+            , advVerbs = [AVerb "feuern" [] []] }
     case compileAdventure adv of
         Left errs -> do
             putStrLn $ "  compile errors: " ++ show errs
@@ -4095,7 +4148,7 @@ testShipSystemsValidation = do
     -- unknown interior room
     let advRoom = (minAdventure (minRoom "loc_0"))
             { advVehicles = [withStation (AStation "nowhere" "feuern" [] Nothing) (minShip "kestrel")]
-            , advVerbs = [AVerb "feuern" []] }
+            , advVerbs = [AVerb "feuern" [] []] }
     r1 <- case compileAdventure advRoom of
             Left errs -> expectContains "UnknownStationRoom" (issuesText errs)
             Right _   -> expectTrue "expected UnknownStationRoom" False
@@ -4513,6 +4566,8 @@ tests =
     , ("space-oxygen fixture compiles with variables", testSpaceOxygenFixtureCompiles)
     -- Phase 3f: trigger fixture
     , ("trigger-test fixture compiles with rules", testTriggerFixtureCompiles)
+    , ("OPEN-21: phrase verbs, patterns and tool keys compile", testOpen21FixtureCompiles)
+    , ("OPEN-21: bad input patterns are rejected", testOpen21BadPatterns)
     -- Phase 4d: player config fixture
     , ("player-config fixture compiles with stats/flags/quests", testPlayerConfigFixtureCompiles)
     -- Phase 5h: containers + conditional outcomes

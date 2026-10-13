@@ -328,15 +328,21 @@ instance FromJSON AAdventurePlayer where
         <*> o .:? "inventory_limit"
 
 -- | A declared adventure verb: canonical name + input aliases (Phase 3a).
+--   OPEN-21: `avbPatterns` holds full-line input templates ("put <x> on <y>",
+--   "turn <x> off") — from `pattern:` (one) or `patterns:` (list, or both).
 data AVerb = AVerb
-    { avbName    :: String
-    , avbAliases :: [String]
+    { avbName     :: String
+    , avbAliases  :: [String]
+    , avbPatterns :: [String]
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AVerb where
     parseJSON = withObject "AVerb" $ \o -> AVerb
         <$> o .:  "name"
         <*> o .:? "aliases" .!= []
+        <*> (do one  <- o .:? "pattern"
+                many <- o .:? "patterns" .!= []
+                pure (maybe [] (: []) one ++ many))
 
 -- | Phase G9c: A standing change trigger configuration
 data AStandingChange = AStandingChange
@@ -2253,7 +2259,7 @@ knownKeys EntVariable = Set.fromList
 knownKeys EntScoreRanking = Set.fromList
     [ "at", "title" ]
 knownKeys EntVerb = Set.fromList
-    [ "name", "aliases" ]
+    [ "name", "aliases", "pattern", "patterns" ]
 knownKeys EntFaction = Set.fromList
     [ "id", "name", "initial", "levels" ]
 knownKeys EntEncounterTable = Set.fromList

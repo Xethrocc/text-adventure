@@ -69,11 +69,11 @@ import Cards
 import Combat (CombatActor (..), CombatTarget (..), ShipSystems (..), combatScreenLines, resolveCombatEv, targetShipSystems, tacticalAbilityIn)
 import Control.Applicative ((<|>))
 import Data.Char (toLower, isDigit)
-import Data.List (find, intercalate, nub, foldl', dropWhileEnd, isPrefixOf, isSuffixOf)
+import Data.List (find, intercalate, nub, foldl', dropWhileEnd, isPrefixOf, isSuffixOf, sortOn)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe, isJust, catMaybes, listToMaybe)
+import Data.Maybe (fromMaybe, isJust, catMaybes, listToMaybe, mapMaybe)
 import qualified Data.Set as Set
-import Verbs (resolveVerb, verbCanonicalName, isReadVerb, isExamineLike, verbMapLookupKeys)
+import Verbs (resolveVerb, resolveVerbPhrase, verbCanonicalName, isReadVerb, isExamineLike, verbMapLookupKeys)
 
 -- | Parsed command structure
 data Command
@@ -203,7 +203,13 @@ parseCompoundCommandWith env defs tokens@(v : rest) =
     in case splitOnLastAnd targetParts of
         Just (_, after) ->
             let cmd1 = parseSimpleCommandWith env defs (v : rest `takeWhileNotLast` "and") (unwords tokens)
-                cmd2 = parseSimpleCommandWith env defs (v : after) (unwords (v : after))
+                -- OPEN-21: a second part that carries its own verb is parsed
+                -- as its own command ("take lamp and put out torch"); only a
+                -- bare noun part repeats the first verb's phrase ("take sword
+                -- and lamp").
+                cmd2 = if partHasOwnVerb after
+                       then parseSimpleCommandWith env defs after (unwords after)
+                       else parseSimpleCommandWith env defs (vPhrase ++ after) (unwords (vPhrase ++ after))
             in CompoundCommand [cmd1, cmd2]
         Nothing -> parseSimpleCommandWith env defs tokens (unwords tokens)
   where
@@ -213,6 +219,13 @@ parseCompoundCommandWith env defs tokens@(v : rest) =
         in case indices of
             [] -> ts
             _  -> take (last indices) ts
+    -- The verb phrase of the whole input ("put out A and B" repeats
+    -- "put out", not just "put"); a single word otherwise.
+    vPhrase = case resolveVerbPhrase defs tokens of
+        Just (_, phraseRest) -> take (length tokens - length phraseRest) tokens
+        Nothing              -> [v]
+    partHasOwnVerb ts = isJust (matchVerbTemplates defs ts)
+                        || isJust (resolveVerbPhrase defs ts)
 parseCompoundCommandWith _ _ [] = Unknown ""
 
 -- | Parse a single (non-compound) command with the verb registry
@@ -326,7 +339,13 @@ directionOf :: AliasEnv -> String -> Maybe Direction
 directionOf env w = directionWord w <|> Map.lookup w (aeDirs env)
 
 parseSimpleCommandWith :: AliasEnv -> Map.Map String VerbDef -> [String] -> String -> Command
-parseSimpleCommandWith env defs tokens input = case tokens of
+parseSimpleCommandWith env defs tokens input
+    -- OPEN-21: explicit templates ("put <x> on <y>") win over everything,
+    -- then declared multi-word verb phrases ("put out") win over single-word
+    -- resolution (even core aliases — longest match).
+    | Just cmd <- matchVerbTemplates defs tokens = cmd
+    | Just cmd <- matchVerbPhraseMulti defs tokens = cmd
+    | otherwise = case tokens of
     []                     -> Unknown ""
     ["go", dir]            -> parseDirection env dir input
     ["go", "to", dir]      -> parseDirection env dir input
@@ -488,6 +507,79 @@ parseSimpleCommandWith env defs tokens input = case tokens of
     [v] | Just rawVerb <- parseVerbWith defs v -> Interact (verbForInputWord v rawVerb) ""
     _ -> Unknown input
 
+
+-- ---------------------------------------------------------------------------
+-- OPEN-21: multi-word verb phrases and declarative input templates
+-- ---------------------------------------------------------------------------
+
+-- | OPEN-21 (B): one template token — a literal word or a `<x>`/`<y>` slot.
+data TplTok = TplLit String | TplSlot
+    deriving (Show, Eq)
+
+-- | Parse a template string like @"put <x> on <y>"@ (the full line, verb word
+--   included) into tokens. Anything in angle brackets is a slot; slots are
+--   positional: the first is the primary target, the second the tool.
+parseTemplate :: String -> [TplTok]
+parseTemplate s = map tok (words (map toLower s))
+  where
+    tok w = case w of
+        '<' : _ | last w == '>' -> TplSlot
+        _                       -> TplLit w
+
+-- | Match template tokens against input tokens; slot values come back in
+--   declaration order (one string per slot). A slot takes one or more words
+--   (stop words stripped); the first complete match wins.
+matchTemplate :: [TplTok] -> [String] -> Maybe [String]
+matchTemplate [] [] = Just []
+matchTemplate [] _  = Nothing
+matchTemplate (TplLit l : ts) (i : is)
+    | l == i    = matchTemplate ts is
+    | otherwise = Nothing
+matchTemplate (TplLit _ : _) [] = Nothing
+matchTemplate (TplSlot : ts) is =
+    listToMaybe
+        [ cap : more
+        | k <- [1 .. length is]
+        , let (taken, rest) = splitAt k is
+        , let cap = unwords (safeStripStopWords taken)
+        , not (null cap)
+        , Just more <- [matchTemplate ts rest]
+        ]
+
+-- | OPEN-21 (B): the declared input templates (`pattern:`/`patterns:` in
+--   `verbs:`), most literal tokens first (the most specific shape wins). One
+--   slot yields 'Interact', two slots 'InteractWith' (target, tool).
+matchVerbTemplates :: Map.Map String VerbDef -> [String] -> Maybe Command
+matchVerbTemplates defs toks = listToMaybe (mapMaybe tryTpl ordered)
+  where
+    ordered = sortOn (negate . countLits . snd)
+              [ (vdName d, t) | d <- Map.elems defs, t <- vdPatterns d ]
+    countLits t = length [ () | TplLit _ <- parseTemplate t ]
+    tryTpl (name, tpl) = do
+        slots <- matchTemplate (parseTemplate tpl) toks
+        let verb = VCustom name
+        return $ case slots of
+            []          -> Interact verb ""
+            [x]         -> Interact verb x
+            (x : y : _) -> InteractWith verb x y
+
+-- | OPEN-21 (A): a declared multi-word verb phrase at the head of the input
+--   ("put out candle"). Single-word matches are left to the core pattern
+--   matrix below (which knows `put X in Y`, `take X from Y`, …).
+matchVerbPhraseMulti :: Map.Map String VerbDef -> [String] -> Maybe Command
+matchVerbPhraseMulti defs toks = do
+    (verb, phraseRest) <- resolveVerbPhrase defs toks
+    let phraseLen = length toks - length phraseRest
+    if phraseLen < 2 then Nothing else Just (verbCommand verb phraseRest)
+  where
+    verbCommand verb rest =
+        let cleanParts = safeStripStopWords rest
+        in case (isCustomVerb verb && not (isReadVerb verb), cleanParts) of
+            (True, [])       -> Interact verb ""
+            (True, [single]) -> Interact verb single
+            (True, parts)    -> ActionWithArgs verb parts
+            (False, [])      -> Interact verb ""
+            (False, _)       -> Interact verb (unwords cleanParts)
 
 parseDirection :: AliasEnv -> String -> String -> Command
 parseDirection env dir input = case directionOf env dir of
@@ -668,17 +760,41 @@ bindCommandVars cmd st =
                    , ("cmd.target", VVText targetVal)
                    , ("cmd.target_kind", VVText targetKindVal)
                    ]
+        -- OPEN-21 (B): the tool role of `V X PREP Y` (cmd.tool) — cleared for
+        --   every other command like the cmd.argN slots.
+        toolVars = case resolveCmdTool cmd st of
+            ("", "none") -> []
+            (t, k)       -> [("cmd.tool", VVText t), ("cmd.tool_kind", VVText k)]
         argVars = [ ("cmd.arg" ++ show i, parseArgVal tok)
                   | (i, tok) <- zip [1 :: Int ..] argTokens
                   ]
-        allNewCmdVars = baseVars ++ argVars
-        cleanedVars = Map.filterWithKey (\k _ -> not ("cmd.arg" `isPrefixOf` k)) (variables (save st))
+        allNewCmdVars = baseVars ++ toolVars ++ argVars
+        cleanedVars = Map.filterWithKey (\k _ -> not ("cmd.arg" `isPrefixOf` k)
+                                             && k /= "cmd.tool" && k /= "cmd.tool_kind")
+                      (variables (save st))
         finalVars = foldl' (\vm (k, v) -> Map.insert k v vm) cleanedVars allNewCmdVars
     in st { save = (save st) { variables = finalVars } }
   where
     parseArgVal s = case reads s of
         [(n, [])] -> VVInt n
         _         -> VVText s
+
+-- | OPEN-21 (B): the resolved tool role — the Y of `InteractWith verb x y`
+--   (`cmd.tool`/`cmd.tool_kind`). The tactical `use-ability` shape carries
+--   its target in the second argument and has no tool role.
+resolveCmdTool :: Command -> GameState -> (String, String)
+resolveCmdTool (InteractWith verb _ yStr) st
+    | VCustom vn <- verb, vn `elem` ["use-ability", "ability"] = ("", "none")
+    | otherwise =
+        case resolveTarget verb yStr st of
+            ResolvedItem iid    -> (iid, "item")
+            ResolvedNPC nid     -> (nid, "npc")
+            ResolvedVehicle vid -> (vid, "vehicle")
+            ResolvedDevice did  -> (did, "device")
+            Ambiguous _         -> (yStr, "ambiguous")
+            NotFound missing    -> (missing, "none")
+            BareVerb            -> ("", "none")
+resolveCmdTool _ _ = ("", "none")
 
 -- | Extract canonical verb name, raw argument string, and token list from a command.
 --
@@ -1080,7 +1196,7 @@ containerCommand verb target standard state
     | Just chosen <- chosenTarget state =
         let vm = maybe Map.empty itemVerbMap (Map.lookup chosen (itemDefs (world state)))
             currentStatus = maybe "intact" itemStatus (Map.lookup chosen (itemStates (save state)))
-        in runVerbMapEntry vm verb currentStatus chosen (standard chosen) state
+        in runVerbMapEntry vm verb currentStatus Nothing chosen (standard chosen) state
     -- OPEN-16: bare container verb → default target resolution.
     | null (words target) =
         case containerCandidates verb state of
@@ -1088,7 +1204,7 @@ containerCommand verb target standard state
             [cid] ->
                 let vm = maybe Map.empty itemVerbMap (Map.lookup cid (itemDefs (world state)))
                     currentStatus = maybe "intact" itemStatus (Map.lookup cid (itemStates (save state)))
-                in runVerbMapEntry vm verb currentStatus cid (standard cid) state
+                in runVerbMapEntry vm verb currentStatus Nothing cid (standard cid) state
             ids   -> interactAmbiguous ids state
     | otherwise =
         case findContainerRef target state of
@@ -1096,7 +1212,7 @@ containerCommand verb target standard state
             Just cid ->
                 let vm = maybe Map.empty itemVerbMap (Map.lookup cid (itemDefs (world state)))
                     currentStatus = maybe "intact" itemStatus (Map.lookup cid (itemStates (save state)))
-                in runVerbMapEntry vm verb currentStatus cid (standard cid) state
+                in runVerbMapEntry vm verb currentStatus Nothing cid (standard cid) state
 
 -- | The `{name}` message args of a container (with its grammar articles).
 containerNameArgs :: String -> GameState -> [(String, String)]
@@ -1341,13 +1457,13 @@ dispatchCommandCoreEv (SearchCmd maybeTarget) state = case getCurrentRoom state 
                         Just item ->
                             let iId = itemId item
                                 currentStatus = maybe "unknown" itemStatus (Map.lookup iId (itemStates (save state)))
-                            in runVerbMapEntry (itemVerbMap item) VSearch currentStatus iId
+                            in runVerbMapEntry (itemVerbMap item) VSearch currentStatus Nothing iId
                                 (\st -> (st, evMsg "search.nothing_item" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))) state
                         Nothing -> case find (matchesNPCTarget targetStr) roomNPCs of
                             Just npc ->
                                 let nId = npcId npc
                                     currentStatus = maybe "unknown" npcStatus (Map.lookup nId (npcStates (save state)))
-                                in runVerbMapEntry (npcVerbMap npc) VSearch currentStatus nId
+                                in runVerbMapEntry (npcVerbMap npc) VSearch currentStatus Nothing nId
                                     (\st -> (st, evMsg "search.nothing_npc" ([("npc", npcName npc)] ++ grammarArgs True "npc" (npcGrammar npc)))) state
                             Nothing -> (state, evMsg "target.not_seen" [("target", targetStr)])
 
@@ -1557,6 +1673,16 @@ dispatchCommandCoreEv RecipesCmd state =
 dispatchCommandCoreEv ScoreCmd state =
     showScore state
 
+-- | OPEN-21 (D4): the mass form for custom/phrase verbs — `put out all`
+--   runs the verb on every responding item/NPC in scope (a verb_map entry in
+--   its current state), in stable id order. `cmd.succeeded` is the
+--   conjunction of the parts (like `take sword and lamp`).
+dispatchCommandCoreEv (Interact verb targetStr) state
+    | isCustomVerb verb
+    , VCustom vn <- verb
+    , vn `notElem` ["use-ability", "ability"]
+    , map toLower (normalizeText targetStr) `elem` ["all", "alles"] =
+        massVerbAll verb targetStr state
 dispatchCommandCoreEv (Interact verb targetStr) state
     | not (null targetStr), VCustom vn <- verb
     , vn `elem` ["use-ability", "ability"]
@@ -1572,14 +1698,14 @@ dispatchCommandCoreEv (Interact verb targetStr) state
             , not (itemIsFeelable stateWithVars item) ->
                 (commandFailed stateWithVars, darkRoomEv room)
             | otherwise ->
-                interactItem verb item mSt targetStr stateWithVars
+                interactItem verb item mSt targetStr Nothing stateWithVars
         ITNpc npc mSt
             | isDarkRestricted verb
             , Just room <- getCurrentRoom stateWithVars
             , isDark room stateWithVars ->
                 (commandFailed stateWithVars, darkRoomEv room)
             | otherwise ->
-                interactNpc verb npc mSt targetStr stateWithVars
+                interactNpc verb npc mSt targetStr Nothing stateWithVars
         ITVehicle veh
             | isDarkRestricted verb
             , Just room <- getCurrentRoom stateWithVars
@@ -1736,6 +1862,38 @@ dispatchCommandCoreEv (InteractWith VUseOn itemStr entityStr) state =
             Just v -> Just (vehicleId v)
             Nothing -> Nothing
 
+-- | OPEN-21 (B): generic two-role dispatch for template verbs (`put <x> on
+--   <y>`, `fill <x> with <y>`). X answers first — its verb_map is consulted
+--   with the tool key (D1: "<state>,tool:<id>") — and when X has no entry the
+--   tool/supporter Y answers (Zork: PUT X ON Y is handled by Y), otherwise
+--   the fallback runs (cant_do / not_seen / `on: command` rule).
+dispatchCommandCoreEv (InteractWith verb xStr yStr) state
+    | isCustomVerb verb =
+        let stateWithVars = bindCommandVars (InteractWith verb xStr yStr) state
+            toolId = resolveToolId verb yStr stateWithVars
+        in case resolveInteractTarget verb xStr stateWithVars of
+            ITItem item mSt
+                | isDarkRestricted verb
+                , Just room <- getCurrentRoom stateWithVars
+                , isDark room stateWithVars
+                , not (hasItem (itemId item) stateWithVars)
+                , not (itemIsFeelable stateWithVars item) ->
+                    (commandFailed stateWithVars, darkRoomEv room)
+                | otherwise ->
+                    let fallback st'
+                            | hasOnCommandTrigger verb st' = ruleHandledVerb verb st'
+                            | otherwise = (st', evMsg "item.cant_do"
+                                ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
+                    in runVerbMapEntry (itemVerbMap item) verb (maybe "unknown" itemStatus mSt)
+                        (Just toolId) (itemId item) (secondTargetStandard verb xStr yStr fallback) stateWithVars
+            ITNpc npc mSt ->
+                let fallback st'
+                        | hasOnCommandTrigger verb st' = ruleHandledVerb verb st'
+                        | otherwise = (st', evMsg "npc.cant_do" [("npc", npcName npc)])
+                in runVerbMapEntry (npcVerbMap npc) verb (maybe "unknown" npcStatus mSt)
+                    (Just toolId) (npcId npc) (secondTargetStandard verb xStr yStr fallback) stateWithVars
+            ITAmbiguous ids -> interactAmbiguous ids stateWithVars
+            _ -> secondTargetStandard verb xStr yStr (interactNotFound verb xStr) stateWithVars
 dispatchCommandCoreEv (InteractWith _ _ _) state = (state, evMsg "use.nothing" [])
 
 dispatchCommandCoreEv Restart state = (state, [])
@@ -1822,6 +1980,72 @@ findVehicle targetStr state =
     let target = normalizeText targetStr
         aliases v = nub (map normalizeText (vehicleId v : vehicleName v : vehicleKeywords v))
     in find (\v -> target `elem` aliases v) (Map.elems (vehicleDefs (world state)))
+
+-- | OPEN-21 (B): the resolved tool id for verb_map tool keys — the entity id
+--   when the tool resolves, else the normalized raw phrase.
+resolveToolId :: Verb -> String -> GameState -> String
+resolveToolId verb yStr st = case resolveTarget verb yStr st of
+    ResolvedItem iid    -> iid
+    ResolvedNPC nid     -> nid
+    ResolvedVehicle vid -> vid
+    ResolvedDevice did  -> did
+    _                   -> normalizeText yStr
+
+-- | OPEN-21 (B): the standard slot of a two-role dispatch — when the primary
+--   target X has no verb_map entry, the tool/supporter Y answers (with X as
+--   its tool key), otherwise `fallback` runs.
+secondTargetStandard :: Verb -> String -> String -> (GameState -> (GameState, [OutputEvent]))
+                     -> GameState -> (GameState, [OutputEvent])
+secondTargetStandard verb xStr yStr fallback st =
+    let toolId = resolveToolId verb xStr st
+    in case resolveInteractTarget verb yStr st of
+        ITItem item mSt ->
+            runVerbMapEntry (itemVerbMap item) verb (maybe "unknown" itemStatus mSt)
+                (Just toolId) (itemId item) fallback st
+        ITNpc npc mSt ->
+            runVerbMapEntry (npcVerbMap npc) verb (maybe "unknown" npcStatus mSt)
+                (Just toolId) (npcId npc) fallback st
+        _ -> fallback st
+
+-- | OPEN-21 (D4): run a custom verb on every responding item/NPC in scope.
+massVerbAll :: Verb -> String -> GameState -> (GameState, [OutputEvent])
+massVerbAll verb targetStr state =
+    let mRoom = getCurrentRoom state
+        roomItems = maybe [] (\r -> getItemsInLocation (InRoom (roomId r)) state) mRoom
+        carried   = getItemsInLocation (CarriedBy ActorPlayer) state
+        items = [ i | i <- sortOn itemId (roomItems ++ carried)
+                , not (itemHidden i)
+                , verbMapResponds (itemVerbMap i) verb
+                    (maybe "unknown" itemStatus (Map.lookup (itemId i) (itemStates (save state)))) ]
+        npcs  = [ n | Just r <- [mRoom]
+                , n <- sortOn npcId (getNPCsInRoom (roomId r) state)
+                , verbMapResponds (npcVerbMap n) verb
+                    (maybe "unknown" npcStatus (Map.lookup (npcId n) (npcStates (save state)))) ]
+        runners = [ \st -> interactItem verb i (Map.lookup (itemId i) (itemStates (save st)))
+                                 (itemId i) Nothing st
+                  | i <- items ]
+               ++ [ \st -> interactNpc verb n (Map.lookup (npcId n) (npcStates (save st)))
+                                 (npcId n) Nothing st
+                  | n <- npcs ]
+    in case runners of
+        [] -> interactNotFound verb targetStr state
+        _  ->
+            let step (st, evs, allOk) run =
+                    let stIn = (setVariable "cmd.succeeded" (VVBool True) st) { lastVeto = Nothing }
+                        (st', evs') = run stIn
+                        -- like 'dispatchCommandEv': explicit failure bit, a
+                        -- veto, or a stable failure-message key fails the part
+                        okPart = getVariable "cmd.succeeded" st' /= Just (VVBool False)
+                                 && lastVeto st' == Nothing
+                                 && not (any commandFailureEvent evs')
+                    in (st', evs ++ evs', allOk && okPart)
+                (final, allEvs, okAll) = foldl' step (state, [], True) runners
+            in (setVariable "cmd.succeeded" (VVBool okAll) final { lastVeto = Nothing }, allEvs)
+  where
+    verbMapResponds vm vb status =
+        any (\key -> any (\ph -> Map.member (ph, key, status) vm) [PhaseBefore, PhaseInstead, PhaseAfter])
+            (verbMapLookupKeys vb)
+
 
 -- ---------------------------------------------------------------------------
 -- Helpers used by executeCommand
@@ -2036,10 +2260,16 @@ resolveInteractTarget verb targetStr state = case resolveTarget verb targetStr s
 --   (historical entries). Without a matching entry the standard action runs.
 --   A veto records cmd.succeeded = false; turn bookkeeping is driven
 --   by the command shape ('consumesTurnIn'), like any failed attempt.
-runVerbMapEntry :: Map.Map (VerbPhase, Verb, String) Effect -> Verb -> String -> ItemID
+-- | OPEN-21 (D1): the state keys to look up a verb_map entry under — a
+--   tool-specific key ("<state>,tool:<id>") beats the plain state key.
+verbMapStateKeys :: String -> Maybe String -> [String]
+verbMapStateKeys currentStatus mTool =
+    [ currentStatus ++ ",tool:" ++ t | Just t <- [mTool] ] ++ [currentStatus]
+
+runVerbMapEntry :: Map.Map (VerbPhase, Verb, String) Effect -> Verb -> String -> Maybe String -> ItemID
                 -> (GameState -> (GameState, [OutputEvent]))
                 -> GameState -> (GameState, [OutputEvent])
-runVerbMapEntry vm verb currentStatus targetId standard state =
+runVerbMapEntry vm verb currentStatus mTool targetId standard state =
     case entry PhaseInstead of
         Just outcome -> applyCommandOutcomeEv outcome targetId state
         Nothing -> case entry PhaseBefore of
@@ -2059,7 +2289,8 @@ runVerbMapEntry vm verb currentStatus targetId standard state =
     entry ph = listToMaybe
         [ outcome
         | key <- verbMapLookupKeys verb
-        , Just outcome <- [Map.lookup (ph, key, currentStatus) vm] ]
+        , stateKey <- verbMapStateKeys currentStatus mTool
+        , Just outcome <- [Map.lookup (ph, key, stateKey) vm] ]
 
 -- | Execute interaction on an item.
 --   Phase 4.2: the standard guards (`take.already`, `take.not_portable`,
@@ -2068,13 +2299,15 @@ runVerbMapEntry vm verb currentStatus targetId standard state =
 --   'PhaseInstead' replaces the pickup entirely, 'PhaseBefore' runs before it
 --   and may veto via `block:`, 'PhaseAfter' keeps the historical behaviour
 --   (entry in addition to the pickup).
-interactItem :: Verb -> ItemDef -> Maybe ItemState -> String -> GameState -> (GameState, [OutputEvent])
-interactItem verb item maybeItemState targetStr state =
+interactItem :: Verb -> ItemDef -> Maybe ItemState -> String -> Maybe String -> GameState -> (GameState, [OutputEvent])
+interactItem verb item maybeItemState targetStr mTool state =
     let iId = itemId item
         currentStatus = maybe "unknown" itemStatus maybeItemState
         notCarried = maybe True (\loc -> loc /= CarriedBy ActorPlayer) (fmap itemLocation maybeItemState)
         vm = itemVerbMap item
-        entry ph = Map.lookup (ph, verb, currentStatus) vm
+        entry ph = listToMaybe [ eff
+                              | stateKey <- verbMapStateKeys currentStatus mTool
+                              , Just eff <- [Map.lookup (ph, verb, stateKey) vm] ]
         insteadM = entry PhaseInstead
         beforeM  = entry PhaseBefore
         legacyM  = entry PhaseAfter
@@ -2122,14 +2355,14 @@ interactItem verb item maybeItemState targetStr state =
                                         takeMsg = evMsg "take.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item))
                                     in (pickupItem iId st', joinEv takeMsg extra)
                                 _ -> (pickupItem iId state, evMsg "take.ok" ([("item", itemName item)] ++ grammarArgs True "item" (itemGrammar item)))
-        _ -> runVerbMapEntry vm verb currentStatus iId standard state
+        _ -> runVerbMapEntry vm verb currentStatus mTool iId standard state
 
 -- | Execute interaction on an NPC. Phase 4.2 like 'interactItem':
 --   'PhaseInstead' replaces the standard action, 'PhaseBefore' runs first and
 --   may veto via `block:`, 'PhaseAfter' keeps the historical behaviour
 --   (entry replaces the standard action).
-interactNpc :: Verb -> NPCDef -> Maybe NPCState -> String -> GameState -> (GameState, [OutputEvent])
-interactNpc verb npc maybeNpcState targetStr state =
+interactNpc :: Verb -> NPCDef -> Maybe NPCState -> String -> Maybe String -> GameState -> (GameState, [OutputEvent])
+interactNpc verb npc maybeNpcState targetStr mTool state =
     let nId = npcId npc
         currentStatus = maybe "unknown" npcStatus maybeNpcState
         standard st =
@@ -2147,7 +2380,7 @@ interactNpc verb npc maybeNpcState targetStr state =
                           (joinEv (npcCarriedEv nId st) (npcWornEv nId st)) )
             else if hasOnCommandTrigger verb st then ruleHandledVerb verb st
             else (st, evMsg "npc.cant_do" [("npc", npcName npc)])
-    in runVerbMapEntry (npcVerbMap npc) verb currentStatus nId standard state
+    in runVerbMapEntry (npcVerbMap npc) verb currentStatus mTool nId standard state
 
 -- | B7: the carried-items line when looking at an NPC (mirrors the device
 --   "Mounted:" line; hidden items need discovery like everywhere else).
@@ -2242,10 +2475,10 @@ interactEntityById verb eid state =
         stateWithVars = bindCommandVars (Interact verb name) state
     in case chosenResolution eid stateWithVars of
         ResolvedItem iid -> case Map.lookup iid (itemDefs (world state)) of
-            Just item -> interactItem verb item (Map.lookup iid (itemStates (save state))) name stateWithVars
+            Just item -> interactItem verb item (Map.lookup iid (itemStates (save state))) name Nothing stateWithVars
             Nothing   -> (state, evMsg "target.not_seen" [("target", name)])
         ResolvedNPC nid -> case Map.lookup nid (npcDefs (world state)) of
-            Just npc  -> interactNpc verb npc (Map.lookup nid (npcStates (save state))) name stateWithVars
+            Just npc  -> interactNpc verb npc (Map.lookup nid (npcStates (save state))) name Nothing stateWithVars
             Nothing   -> (state, evMsg "target.not_seen" [("target", name)])
         ResolvedVehicle vid -> case Map.lookup vid (vehicleDefs (world state)) of
             Just veh  -> interactVehicle verb veh name stateWithVars

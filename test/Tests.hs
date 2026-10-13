@@ -3308,7 +3308,7 @@ testRandomChoiceDistribution = do
 --   die Registry und `cast scroll` → Interact (VCustom "cast") "scroll".
 testCustomVerbParseCreatesVCustom :: IO Bool
 testCustomVerbParseCreatesVCustom = do
-    let custom = VerbDef "cast" ["magic", "spell"]
+    let custom = VerbDef "cast" ["magic", "spell"] []
         reg = Map.singleton "cast" custom
     let cmd1 = parseCommandWith reg "cast scroll"
     let cmd2 = parseCommandWith reg "magic scroll"
@@ -3333,7 +3333,7 @@ testCustomVerbCoreStillWorks = do
 -- | VerbAliasMap baut korrekte Lookup-Tabelle
 testVerbAliasMapBuilt :: IO Bool
 testVerbAliasMapBuilt = do
-    let reg = Map.fromList [("cast", VerbDef "cast" ["magic"]), ("hack", VerbDef "hack" ["pwn", "exploit"])]
+    let reg = Map.fromList [("cast", VerbDef "cast" ["magic"] []), ("hack", VerbDef "hack" ["pwn", "exploit"] [])]
         aliases = verbAliasMap reg
     r1 <- expectEqual (Just "cast") (Map.lookup "cast" aliases)
     r2 <- expectEqual (Just "cast") (Map.lookup "magic" aliases)
@@ -4580,8 +4580,8 @@ tradeWorld stock credits =
                     ["rope"] Set.empty Nothing [] False Nothing True Nothing
                     (Map.singleton (PhaseAfter, VCustom "buy", "intact") buyEff
                         `Map.union` Map.singleton (PhaseAfter, VCustom "sell", "intact") sellEff) Nothing emptyAscii emptyGrammar False True Nothing Map.empty Nothing)
-            , verbDefs = Map.singleton "buy" (VerbDef "buy" ["purchase"])
-                `Map.union` Map.singleton "sell" (VerbDef "sell" ["pawn"])
+            , verbDefs = Map.singleton "buy" (VerbDef "buy" ["purchase"] [])
+                `Map.union` Map.singleton "sell" (VerbDef "sell" ["pawn"] [])
             }
         , save = (save sample)
             { itemStates = Map.singleton "rope"
@@ -4724,7 +4724,7 @@ testGenreVerbsNotCoreVerbs = do
 --   still parses (as `VCustom`), so `swim` needs no core code.
 testGenreVerbFromRegistry :: IO Bool
 testGenreVerbFromRegistry = do
-    let reg = Map.fromList [("swim", VerbDef "swim" [])]
+    let reg = Map.fromList [("swim", VerbDef "swim" [] [])]
     expectEqual (Interact (VCustom "swim") "") (parseCommandWith reg "swim")
 
 -- | Zork C2: `move <direction>` stays movement, `move <thing>` reaches an
@@ -4732,7 +4732,7 @@ testGenreVerbFromRegistry = do
 --   declaration it is still an unknown sentence.
 testMoveThingIsCustomVerb :: IO Bool
 testMoveThingIsCustomVerb = do
-    let reg = Map.fromList [("move", VerbDef "move" [])]
+    let reg = Map.fromList [("move", VerbDef "move" [] [])]
     r1 <- expectEqual (Go North) (parseCommandWith reg "move north")
     r2 <- expectEqual (Interact (VCustom "move") "rug") (parseCommandWith reg "move rug")
     r3 <- expectEqual (Unknown "move rug") (parseCommandWith Map.empty "move rug")
@@ -8019,9 +8019,9 @@ testFormatWithVarsIntegration = do
 testParameterizedCommandParsing :: IO Bool
 testParameterizedCommandParsing = do
     let reg = Map.fromList
-            [ ("kaufe", VerbDef "kaufe" ["kaufe", "buy"])
-            , ("steuern", VerbDef "steuern" ["steuern", "tax"])
-            , ("status", VerbDef "status" ["status"])
+            [ ("kaufe", VerbDef "kaufe" ["kaufe", "buy"] [])
+            , ("steuern", VerbDef "steuern" ["steuern", "tax"] [])
+            , ("status", VerbDef "status" ["status"] [])
             ]
     r1 <- expectEqual (ActionWithArgs (VCustom "kaufe") ["5", "weizen"])
                       (parseCommandWith reg "kaufe 5 weizen")
@@ -8053,7 +8053,7 @@ testBindCommandVars = do
 -- | Phase 1C: OnCommand trigger with args, formulas, conditional and interpolation
 testOnCommandTriggerWithArgsAndFormulas :: IO Bool
 testOnCommandTriggerWithArgsAndFormulas = do
-    let reg = Map.fromList [("kaufe", VerbDef "kaufe" ["kaufe"])]
+    let reg = Map.fromList [("kaufe", VerbDef "kaufe" ["kaufe"] [])]
         st0 = setVariable "gold" (VVInt 100)
             $ setVariable "korn" (VVInt 0)
             $ setVariable "markt.korn_preis" (VVInt 10)
@@ -8103,7 +8103,7 @@ testOnCommandTriggerWithArgsAndFormulas = do
 -- | Phase 1C: Informational custom verbs (status, bilanz) consume no turn
 testStatusVerbNoTurnConsumed :: IO Bool
 testStatusVerbNoTurnConsumed = do
-    let reg = Map.fromList [("status", VerbDef "status" ["status"])]
+    let reg = Map.fromList [("status", VerbDef "status" ["status"] [])]
         st0 = (initSampleGame) { world = (world initSampleGame) { verbDefs = reg } }
         cmd = parseCommandWith reg "status"
     r1 <- expectEqual False (consumesTurnIn st0 cmd)
@@ -11811,7 +11811,7 @@ testCustomVerbPrimaryTarget = do
         game phase =
             let st = withPotionVerbMap (Map.singleton (phase, verb, "intact") (SendMessage ("MAP:" ++ message)))
             in st { world = (world st)
-                        { verbDefs = Map.singleton "rub" (VerbDef "rub" [])
+                        { verbDefs = Map.singleton "rub" (VerbDef "rub" [] [])
                         , triggerDefs =
                             [TriggerDef "before_rub" (OnBefore "rub") Nothing
                                 [SendMessage ("BEFORE:" ++ message)] False 0 1 [] []
@@ -11835,7 +11835,7 @@ testCustomVerbPrimaryTarget = do
         (_, plainOutput) = applyLoopCommand (parseCommandFor (world st) "rub healing potion") (initLoopState st)
     plain <- expectTrue "multiword target without preposition still resolves" ("potion_healing|item" `isInfixOf` plainOutput)
     let npcGame = initSampleGame { world = (world initSampleGame)
-            { verbDefs = Map.singleton "rub" (VerbDef "rub" [])
+            { verbDefs = Map.singleton "rub" (VerbDef "rub" [] [])
             , npcDefs = Map.adjust (\npc -> npc { npcVerbMap = Map.singleton
                     (PhaseAfter, verb, "alive") (SendMessage "NPC:{cmd.target}:{cmd.raw_args}") })
                 "oldman" (npcDefs (world initSampleGame)) } }
@@ -11888,6 +11888,91 @@ testCmdRaw = do
         (lsC, _) = applyLoopCommandEv Help lsB
     r6 <- expectEqual (Just (VVText "take torch")) (getVariable "cmd.raw" (lsCurrent lsC))
     pure (and [r1, r2, r3, r4, r5, r6])
+
+-- | OPEN-21 (A/B): phrase verbs win over single-word resolution, templates
+--   split target/tool roles, core patterns stay untouched.
+testOpen21Parser :: IO Bool
+testOpen21Parser = do
+    let defs = Map.fromList
+            [ ("put out", VerbDef "put out" ["blow out"] [])
+            , ("put on", VerbDef "put on" [] ["put <x> on <y>"])
+            , ("fill", VerbDef "fill" [] ["fill <x> with <y>"])
+            , ("turn off", VerbDef "turn off" [] ["turn off <x>", "turn <x> off"]) ]
+    r1 <- expectEqual (Interact (VCustom "put out") "candle") (parseCommandWith defs "put out candle")
+    r2 <- expectEqual (Interact (VCustom "put out") "candles") (parseCommandWith defs "blow out candles")
+    r3 <- expectEqual (InteractWith (VCustom "fill") "bottle" "water") (parseCommandWith defs "fill bottle with water")
+    r4 <- expectEqual (InteractWith (VCustom "put on") "putty" "leak") (parseCommandWith defs "put putty on leak")
+    r5 <- expectEqual (PutInCmd "gem" "box") (parseCommandWith defs "put gem in box")
+    r6 <- expectEqual (Interact (VCustom "turn off") "torch") (parseCommandWith defs "turn torch off")
+    r7 <- expectEqual (Interact (VCustom "turn off") "torch") (parseCommandWith defs "turn off torch")
+    r8 <- expectEqual (CompoundCommand [Interact VTake "lamp", Interact (VCustom "put out") "torch"])
+                     (parseCommandWith defs "take lamp and put out torch")
+    r9 <- expectEqual (CompoundCommand [Interact VTake "sword", Interact VTake "lamp"])
+                     (parseCommandWith defs "take sword and lamp")
+    r10 <- expectEqual (Interact (VCustom "put out") "") (parseCommandWith defs "put out")
+    -- Single-word behaviour is untouched (read alias, look at).
+    r11 <- expectEqual (Interact (VCustom "read") "book") (parseCommandWith defs "read book")
+    r12 <- expectEqual (Interact VLookAt "sword") (parseCommandWith defs "look at sword")
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12])
+
+-- | OPEN-21 (B/D1/D4): tool keys beat plain keys, the tool target answers
+--   when the item has no entry, `cmd.tool` binds the role, and the mass form
+--   runs every responder with a conjunctive `cmd.succeeded`.
+testOpen21Dispatch :: IO Bool
+testOpen21Dispatch = do
+    let base = initSampleGame
+        fillVm = Map.fromList
+            [ ((PhaseAfter, VCustom "fill", "intact,tool:sword_rusty"), SendMessage "TOOLHIT")
+            , ((PhaseAfter, VCustom "fill", "intact"), SendMessage "GENERICHIT") ]
+        putOnVm = Map.singleton (PhaseAfter, VCustom "put on", "intact") (SendMessage "PATCHED")
+        game = withVerbMaps [("potion_healing", fillVm), ("sword_rusty", putOnVm)] base
+        run cmd st = applyLoopCommand cmd (initLoopState st)
+    -- D1: the tool key wins over the plain key …
+    let (_, out1) = run (InteractWith (VCustom "fill") "potion" "sword") game
+    r1 <- expectTrue ("tool key beats plain key: " ++ out1)
+            ("TOOLHIT" `isInfixOf` out1 && not ("GENERICHIT" `isInfixOf` out1))
+    -- … without a tool the plain key runs.
+    let (_, out2) = run (Interact (VCustom "fill") "potion") game
+    r2 <- expectTrue ("plain key without tool: " ++ out2) ("GENERICHIT" `isInfixOf` out2)
+    -- B: when X has no entry, the tool/supporter Y answers (PUT X ON Y).
+    let (_, out3) = run (InteractWith (VCustom "put on") "potion" "sword") game
+    r3 <- expectTrue ("tool target answers: " ++ out3) ("PATCHED" `isInfixOf` out3)
+    -- B: cmd.tool / cmd.tool_kind carry the role.
+    let (ls4, _) = applyLoopCommandEv (InteractWith (VCustom "fill") "potion" "sword") (initLoopState game)
+    r4 <- expectEqual (Just (VVText "sword_rusty")) (getVariable "cmd.tool" (lsCurrent ls4))
+    r5 <- expectEqual (Just (VVText "item")) (getVariable "cmd.tool_kind" (lsCurrent ls4))
+    -- B: the phrase reaches cmd.verb and on: command triggers.
+    let triggerGame = game { world = (world game) { triggerDefs =
+            [TriggerDef "t_put_out" (OnCommand "put out") Nothing [SendMessage "TRIGGERED"] False 0 1 [] []] } }
+        (_, out6) = run (Interact (VCustom "put out") "potion") triggerGame
+    r6 <- expectTrue ("on: command put out fires: " ++ out6) ("TRIGGERED" `isInfixOf` out6)
+    -- D4: the mass form runs every responder …
+    let massGame = withVerbMaps
+            [ ("potion_healing", Map.singleton (PhaseAfter, VCustom "put out", "intact") (SendMessage "OUT1"))
+            , ("sword_rusty", Map.singleton (PhaseAfter, VCustom "put out", "intact") (SendMessage "OUT2")) ] base
+        (ls7, evs7) = applyLoopCommandEv (Interact (VCustom "put out") "all") (initLoopState massGame)
+        out7 = renderEvents evs7
+    r7 <- expectTrue ("mass runs every responder: " ++ out7)
+            ("OUT1" `isInfixOf` out7 && "OUT2" `isInfixOf` out7)
+    r8 <- expectTrue "mass succeeds when all parts succeed"
+            (getVariable "cmd.succeeded" (lsCurrent ls7) == Just (VVBool True))
+    -- … and one failing part fails the conjunction.
+    let failGame = withVerbMaps
+            [ ("potion_healing", Map.singleton (PhaseAfter, VCustom "put out", "intact") (SendMessage "OUT1"))
+            , ("sword_rusty", Map.singleton (PhaseAfter, VCustom "put out", "intact")
+                (Block (Just "NOPE") False)) ] base
+        (ls9, _) = applyLoopCommandEv (Interact (VCustom "put out") "all") (initLoopState failGame)
+    r9 <- expectTrue "one failing part fails the mass command"
+            (getVariable "cmd.succeeded" (lsCurrent ls9) == Just (VVBool False))
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9])
+
+-- | Like 'withPotionVerbMap', but for any number of items.
+withVerbMaps :: [(String, Map.Map (VerbPhase, Verb, String) Effect)] -> GameState -> GameState
+withVerbMaps vms st =
+    let gw = world st
+        apply (iId, vm) = Map.adjust (\d -> d { itemVerbMap = vm }) iId
+        gw' = gw { itemDefs = foldl (flip apply) (itemDefs gw) vms }
+    in st { world = gw' }
 
 -- | OPEN-09: read has a canonical event distinct from examine, while legacy
 --   examine/read verb_map entries still handle the actual interaction.
@@ -12862,6 +12947,8 @@ main = do
         , runTest "verb_map: NPC phases (4.2)" testVerbMapPhasesOnNpc
         , runTest "custom verb_map resolves prepositional primary targets (OPEN-08)" testCustomVerbPrimaryTarget
         , runTest "cmd.raw raw input line binding (OPEN-22)" testCmdRaw
+        , runTest "phrase verbs and input templates parse (OPEN-21)" testOpen21Parser
+        , runTest "tool keys, tool target and mass form (OPEN-21)" testOpen21Dispatch
         , runTest "read command events preserve examine verb_map aliases (OPEN-09)" testReadCommandEvents
         -- Phase 4.3: language packs (D4)
         , runTest "lang pack: catalog layering and fallback (4.3)" testLangPackCatalogLayers

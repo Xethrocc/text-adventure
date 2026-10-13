@@ -12,7 +12,8 @@
 - `../examples/zork1.yaml` — Abnahme-Abenteuer
 - `adventure-schema.md` — Doku-Ziel (*Parametrisierte Befehle*, `verbs:`)
 
-**Status:** 📋 geplant · **Entscheidungen D1–D4:** ✅ entschieden 2026-10-13 (§4)
+**Status:** 🚧 in Umsetzung · **Entscheidungen D1–D4:** ✅ entschieden 2026-10-13 (§4)
+· **A+B+C:** ✅ umgesetzt 2026-10-13 (Engine + Tests, s. §6) · **D+E:** offen
 · **Aufwandsschätzung:** A+B je ~1 Tag, C+D ~½ Tag, E ~½ Tag
 
 ---
@@ -134,26 +135,29 @@ Gegen das kompilierte `zork1.yaml` (`parseCommandFor`):
    Zusatz-Schlüssel `verb,tool:<id>` am Entry (analog `wind,intact` aus
    `Z-06`); Validierung: unbekanntes Tool in `tool:`-Keys → B4-Warnung.
 4. **Grammatik-Erweiterung (D2 entschieden: generische Pattern-Syntax):**
-   `verbs:` bekommt `pattern:`, z. B.:
+   `verbs:` bekommt `pattern:` (eine Form) bzw. `patterns:` (Liste) —
+   **Full-Line-Templates** inkl. Verbwort, z. B.:
    ```yaml
-   - name: put out
+   - name: put out                       # kanonischer Name (cmd.verb, verb_map, Trigger)
      aliases: [blow out]
-   - name: put
-     pattern: "<x> on <y>"        # Zork PUT ON (PUT PUTTY ON LEAK)
+   - name: put on
+     patterns: ["put <x> on <y>"]        # Zork PUT ON (PUT PUTTY ON LEAK)
    - name: fill
-     pattern: "<x> with <y>"      # FILL X WITH Y
+     patterns: ["fill <x> with <y>"]     # FILL X WITH Y
+   - name: turn off
+     patterns: ["turn off <x>", "turn <x> off"]
    ```
-   Der Parser matched Pattern-Formen **vor** der Core-Auflösung (längste
-   Phrase + Shape zuerst); nicht passende Eingaben fallen wie gehabt durch
-   (`put gem in box` hat kein `on` → Core `PutInCmd` bleibt).
-   - **D2-Nachtrag (Kollision reservierter Wörter):** `pattern:`-Deklarationen
-     auf ein Core-/reserviertes Wort (`- name: put`) gelten als
-     **Erweiterung** (der Shape `put X on Y` wird ergänzt, `put X in Y`/
-     `put X down` bleiben Core) — nicht als Kollision. Die D3-Warnung trifft
-     nur `name: put` **ohne** `pattern:` (würde durch Core-Union nie matchen).
-5. **Rollensplit:** Pattern-Gruppen (`<x>`, `<y>`) + Präpositionstoken
-   (`on`/`with`/`in`/`from`/`to`/`about` + Pack-Aliase) →
-   `InteractWith (VCustom v) X Y`; Stopwörter auf beiden Seiten strippen.
+   **Umsetzungsnotiz:** die Templates sind bewusst Full-Line (Verbwort
+   enthalten), nicht „Tail-Patterns am Verb-Namen" — damit gibt es keine
+   Kollision mit Core-Aliasen (`name: put` wäre wegen `put`→`drop` nie
+   matchbar gewesen) und Objekt-Nachsilben wie `turn <x> off` sind
+   ausdrückbar. Der Parser matched Templates vor Core-Auflösung (meiste
+   Literalwörter zuerst); nicht passende Eingaben fallen wie gehabt durch
+   (`put gem in box` → `PutInCmd`, da kein `on` im Shape). Slots: `<x>` (Ziel)
+   und `<y>` (Werkzeug), jeweils 1+ Wörter, Stopwörter werden gestrippt.
+5. **Rollensplit:** Template-Slots + Literalwörter (beliebig, nicht nur
+   Präpositionen) → `InteractWith (VCustom <name>) X Y`; ein Slot ergibt
+   `Interact`, kein Slot `Interact` ohne Ziel.
 
 ### C — Tests
 
@@ -191,12 +195,37 @@ Gegen das kompilierte `zork1.yaml` (`parseCommandFor`):
 | # | Frage | **Entscheid (2026-10-13)** | Status |
 |---|---|---|---|
 | D1 | Werkzeug-Y in `verb_map` | **Lesbar + Match-Kriterium** — `cmd.tool`/`cmd.tool_kind` lesbar, `verb_map`-Entries matchen zusätzlich auf dem Werkzeug (`verb,tool:<id>`), Validierung wie `Z-06` | ✅ |
-| D2 | `put X on Y` / `fill X with Y` | **Generische Pattern-Syntax** (`pattern: "<x> on <y>"`), Core-Formen (`put X in Y`, `put X down`) bleiben unberührt; Pattern-Deklaration auf reservierte Wörter = Erweiterung (D2-Nachtrag, s. B4) | ✅ |
-| D3 | Phrase mit reserviertem Einzelwort (`put out` enthält `put`) | **Ja, aber mit Warnung** — Phrase erlaubt (Longest-Match), Compiler-Warnung (B4-Kanal); exakte Kollision (`name: put` ohne `pattern:`) ebenfalls Warnung | ✅ |
+| D2 | `put X on Y` / `fill X with Y` | **Generische Pattern-Syntax** — umgesetzt als **Full-Line-Templates** (`patterns: ["put <x> on <y>"]`, Verbwort im Template; Umsetzungsnotiz s. B4); Core-Formen (`put X in Y`, `put X down`) bleiben unberührt | ✅ |
+| D3 | Phrase mit reserviertem Einzelwort (`put out` enthält `put`) | **Ja, aber mit Warnung** — umgesetzt als `ReservedVerbPhrase`-Warnung für **Mehrwort**-Phrasen; exakte Kollision (`name: put`) bleibt wie bisher **Fehler** (`ReservedVerbName`) — das Template trägt das Verbwort, der Name ist kanonisch und muss unreserviert sein | ✅ |
 | D4 | Massenformen mit Phrase-Verben (`put out all`) | **Masse + `cmd.succeeded`-Konjunktion** — alle Ziele im Scope, Erfolg nur wenn alle Teile gelingen (wie Sammelkommandos) | ✅ |
 
 **Ablauf:** A → B → C → D → E (E als Abnahme; Port-Texte wie gehabt gegen
 `1actions.zil` spiegeln).
+
+---
+
+## 6. Umsetzungsstand 2026-10-13 (A+B+C)
+
+**Engine:** `Verbs.resolveVerbPhrase` (Longest-Match), `Parser`: Template- und
+Phrase-Matching vor der Core-Matrix (`matchVerbTemplates`/`matchVerbPhraseMulti`),
+mixed-Verb-Compounde (`take lamp and put out torch`), generischer
+`InteractWith`-Dispatch (X antwortet zuerst, dann Werkzeug-/Unterstützer-Y,
+Fallback `cant_do`/`not_seen`/`on: command`), `cmd.tool`/`cmd.tool_kind`,
+Werkzeug-Keys in `verb_map` (`<state>,tool:<id>` schlägt plain — Lookup wie
+`Z-06`), Masse (`put out all`, Konjunktion). **Worldbuilder:**
+`pattern:`/`patterns:` (+ `knownKeys`), `verb[,state][,tool:<id>]`-Keys
+(Staatsteil historisch identisch), Warnungen `ReservedVerbPhrase`,
+`DuplicateVerbPattern`, `UnknownVerbTool` (B4), Fehler `BadVerbPattern`.
+**Kein Auto-Split** undeklarierter Shapes — `ActionWithArgs`-Verhalten von
+OPEN-08 bleibt (durch `testCustomVerbPrimaryTarget` gepinnt).
+
+**Verifikation:** 609 Engine-Tests (+2 neu), 322 worldbuilder-Tests (+2 neu),
+`scripts/ci.sh` grün (516 E2E), `test-open16.py` 7/7, `world.json` von
+`zork1.yaml` **byte-identisch** zum Stand vor der Änderung.
+**Fixture:** `examples/fixtures/open21.yaml` (YAML-Shapes).
+
+**Noch offen:** D (Doku: `adventure-schema.md`, CHANGELOG, befunde/plan-End-
+stände) und E (Zork-Port C1 als Abnahme).
 
 ---
 

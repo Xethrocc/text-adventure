@@ -593,7 +593,11 @@ clashes pairs =
 compileAdventure :: Adventure -> Either [CompileIssue] CompileResult
 compileAdventure adv =
     let -- Verb registry first: items/NPCs may reference custom verbs
-        (verbErrs, verbRegistry) = compileVerbs (advVerbs adv)
+        (verbIssues, verbRegistry) = compileVerbs (advVerbs adv)
+        -- OPEN-21: compileVerbs reports warnings too (reserved phrases,
+        --   duplicate templates) — only errors are fatal here.
+        verbErrs = filter ((== SError) . ciSeverity) verbIssues
+        verbSoftWarns = filter ((== SWarning) . ciSeverity) verbIssues
         -- Compile each section, collecting issues
         (roomErrs, compiledRooms, vehicleExtraRooms) = compileRooms (advRooms adv) (advVehicles adv)
         (itemErrs, itemDefs, itemStates) = compileItems verbRegistry (advItems adv)
@@ -718,7 +722,7 @@ compileAdventure adv =
                 ("journal: '" ++ m ++ "' is not a mode (expected 'notes' or 'messages')")
             | Just m <- [advJournal adv], m `notElem` ["notes", "messages"] ]
         journalVerb = if notesMode
-            then Map.singleton "notizen" (E.VerbDef "notizen" ["notes"])
+            then Map.singleton "notizen" (E.VerbDef "notizen" ["notes"] [])
             else Map.empty
         journalTriggers = if notesMode then compileNotesTrigger "notizen" else []
         -- Registry-Kollisionen: ein Autor-Verb darf nicht mit den
@@ -932,13 +936,14 @@ compileAdventure adv =
                     Nothing -> []
                 keywordWarns = checkKeywordCollisions adv
                 placeholderWarns = checkUnknownPlaceholders adv allVarDefs
+                toolKeyWarns = checkUnknownVerbTools adv
                 darkRoomWarns = checkDarkRoomDeadEnds adv
                 deadContentWarns = checkUnreachableTriggers adv ++ checkUnsatisfiableConditions adv
                                 ++ checkDeadExits adv ++ checkUnreachableRooms adv
                                 ++ checkQuestProgress adv
                 standingChangeWarns = checkStandingChangeTriggers (advFactions adv) (advTriggers adv)
                 recipeResultWarns = checkRecipeResults adv
-                allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ darkRoomWarns
+                allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ toolKeyWarns ++ verbSoftWarns ++ darkRoomWarns
                           ++ varWarns
                           ++ chapterWarns
                           ++ deviceWarns
@@ -2213,7 +2218,7 @@ compileKnowledgeTriggers
     -> ([E.TriggerDef], Map.Map String E.VerbDef)
 compileKnowledgeTriggers verb cs factsById =
     ( successTriggers ++ [fallback]
-    , Map.singleton verb (E.VerbDef verb aliases) )
+    , Map.singleton verb (E.VerbDef verb aliases []) )
   where
     -- The fallback fires only when no success arm matches (exclusive by
     -- construction) and answers with a generic message - otherwise a wrong
@@ -2534,9 +2539,9 @@ compileDeviceTriggers devs items
         let hasHolders = any (\d -> not (null (adFits d)) || isJust (adFitsTag d) || not (null (adOnInsert d)) || not (null (adOnRemove d))) devs
             distinctFlipVerbs = nub [ fv | d <- devs, Just fv <- [adFlipVerb d], length (adFlipStates d) >= 2 ]
 
-            insertVerbDef = ("stecke", E.VerbDef "stecke" ["insert"])
-            removeVerbDef = ("ziehe", E.VerbDef "ziehe" ["remove"])
-            flipVerbDefs = [ (fv, E.VerbDef fv (flipAliases fv)) | fv <- distinctFlipVerbs ]
+            insertVerbDef = ("stecke", E.VerbDef "stecke" ["insert"] [])
+            removeVerbDef = ("ziehe", E.VerbDef "ziehe" ["remove"] [])
+            flipVerbDefs = [ (fv, E.VerbDef fv (flipAliases fv) []) | fv <- distinctFlipVerbs ]
             flipAliases "umlegen" = ["flip"]
             flipAliases "flip"    = ["umlegen"]
             flipAliases _         = []
@@ -3194,9 +3199,12 @@ hpTargetsInEffect e = case e of
 -- ---------------------------------------------------------------------------
 
 -- | Compile declared verbs into the registry; validate names/aliases.
+--   OPEN-21: phrases may contain reserved words (longest match protects;
+--   flagged as warning) and carry full-line input `patterns:`.
 compileVerbs :: [AVerb] -> ([CompileIssue], Map.Map String E.VerbDef)
 compileVerbs verbs =
-    let defs = Map.fromList [(avbName v, E.VerbDef (avbName v) (avbAliases v)) | v <- verbs]
+    let defs = Map.fromList
+            [ (avbName v, E.VerbDef (avbName v) (avbAliases v) (avbPatterns v)) | v <- verbs ]
         emptyErrs =
             [ ciError "verbs" "EmptyVerbName" "verb name must not be empty"
             | v <- verbs, null (avbName v) ]
@@ -3205,6 +3213,33 @@ compileVerbs verbs =
                 ("'" ++ avbName v ++ "' is a built-in verb and cannot be redeclared")
             | v <- verbs
             , map toLower (avbName v) `elem` reservedVerbWords ]
+        -- OPEN-21 (D3): a phrase that *contains* a reserved word ("put out")
+        --   is allowed — the longest phrase match wins — but flagged so the
+        --   author sees the shadowing. Single words stay as they were (exact
+        --   name collisions are 'ReservedVerbName' errors above; historical
+        --   aliases are silent).
+        phraseWarns =
+            [ ciWarning ("verbs." ++ avbName v) "ReservedVerbPhrase"
+                ("phrase '" ++ phrase ++ "' contains the built-in verb word '" ++ w
+                 ++ "' — allowed, but it wins over single-word parsing")
+            | v <- verbs
+            , phrase <- avbName v : avbAliases v
+            , length (words (map toLower phrase)) >= 2
+            , w <- words (map toLower phrase)
+            , w `elem` reservedVerbWords ]
+        -- OPEN-21 (B): templates are full lines of literal words plus at most
+        --   the slots <x>/<y>; at least one literal word.
+        patternErrs =
+            [ ciError ("verbs." ++ avbName v) "BadVerbPattern" msg
+            | v <- verbs
+            , p <- avbPatterns v
+            , Just msg <- [patternProblem p] ]
+        patternWarns =
+            [ ciWarning ("verbs." ++ avbName v) "DuplicateVerbPattern"
+                ("the template '" ++ p ++ "' is declared twice")
+            | v <- verbs
+            , p <- nub (avbPatterns v)
+            , length (filter (== p) (avbPatterns v)) > 1 ]
         -- alias collisions: only across different verbs, not within one verb
         aliasErrs =
             [ ciError "verbs" "DuplicateVerbAlias"
@@ -3216,7 +3251,16 @@ compileVerbs verbs =
                     , w <- vdName d : vdAliases d
                 ]
             , not (null others) ]
-    in (emptyErrs ++ reservedErrs ++ aliasErrs, defs)
+    in (emptyErrs ++ reservedErrs ++ phraseWarns ++ patternErrs ++ patternWarns ++ aliasErrs, defs)
+  where
+    patternProblem p =
+        let toks = words p
+            slots = [ () | t <- toks, take 1 t == "<", drop 1 t /= "", last t == '>' ]
+            lits  = [ t | t <- toks, not (take 1 t == "<" && drop 1 t /= "" && last t == '>') ]
+        in if null toks then Just "template must not be empty"
+           else if null lits then Just "template needs at least one literal word"
+           else if length slots > 2 then Just "template has more than two slots (<x>, <y>)"
+           else Nothing
 
 -- ---------------------------------------------------------------------------
 -- Items
@@ -3588,22 +3632,38 @@ compileVerbMapSafe :: Map.Map String E.VerbDef -> String -> Map.Map String [AAct
                    -> Either [CompileIssue] (Map.Map (E.VerbPhase, E.Verb, String) E.Effect)
 compileVerbMapSafe registry pathPrefix vm =
     let entries = Map.toList vm
-        parsed = [ (key, phase, parseVerbStrict registry verbStr, state)
+        parsed = [ (key, phase, parseVerbStrict registry verbStr, stateKey, toolId)
                  | (key, _) <- entries
                  , let (phase, keyRest) = parsePhasePrefix key
                  , let (verbStr, rest) = break (== ',') keyRest
-                 , let state = case rest of
-                         ',':s -> s
-                         _     -> "intact" ]
+                 -- OPEN-21 (D1): `verb[,state][,tool:<id>]` — the state keeps
+                 --   its historical meaning (default "intact", commas join
+                 --   back); the tool qualifier appends ",tool:<id>" to the
+                 --   lookup key (tool-specific entries beat plain ones).
+                 , let quals = case rest of
+                         ',':s -> splitOnComma s
+                         _     -> []
+                 , let toolIds = [ drop 5 q | q <- quals, "tool:" `isPrefixOf` q ]
+                 , let stateParts = [ q | q <- quals, not ("tool:" `isPrefixOf` q) ]
+                 , let state0 = if null stateParts then "intact" else intercalate "," stateParts
+                 , let stateKey = case toolIds of
+                         (t : _) -> state0 ++ ",tool:" ++ t
+                         []      -> state0
+                 , let toolId = listToMaybe toolIds ]
         verbErrs =
             [ ciError (pathPrefix ++ "." ++ key) "UnknownVerb" msg
-            | (key, _, Left msg, _) <- parsed ]
-        -- (Verb, State) collisions within one phase, e.g. "use,intact" + "activate,intact"
+            | (key, _, Left msg, _, _) <- parsed ]
+        toolErrs =
+            [ ciError (pathPrefix ++ "." ++ key) "DuplicateVerbTool"
+                ("verb key '" ++ key ++ "' declares more than one tool")
+            | (key, _) <- entries
+            , length (toolIdsOf key) > 1 ]
+        -- (Verb, StateKey) collisions within one phase, e.g. "use,intact" + "activate,intact"
         collErrs =
             [ ciError pathPrefix "DuplicateVerbKey"
                 ("verb keys " ++ show keys ++ " all resolve to " ++ show verb ++ ":" ++ state)
             | ((verb, state), keys) <- collisions
-                [(k, (v, st)) | (k, _, Right v, st) <- parsed] ]
+                [(k, (v, st)) | (k, _, Right v, st, _) <- parsed] ]
         -- Phase 4.2: one (verb, state) pair, one phase — otherwise the lookup
         -- order would silently shadow an entry.
         clashErrs =
@@ -3611,13 +3671,13 @@ compileVerbMapSafe registry pathPrefix vm =
                 ("verb key " ++ show verb ++ ":" ++ state ++ " is assigned in phases "
                  ++ show phases ++ "; use exactly one")
             | ((verb, state), phases) <- clashes
-                [((v, st), phaseTag ph) | (_, ph, Right v, st) <- parsed] ]
-    in if null (verbErrs ++ collErrs ++ clashErrs)
+                [((v, st), phaseTag ph) | (_, ph, Right v, st, _) <- parsed] ]
+    in if null (verbErrs ++ toolErrs ++ collErrs ++ clashErrs)
        then Right $ Map.fromList
             [ ((ph, verb, state), compileOutcomes outcomes)
-            | (key, ph, Right verb, state) <- parsed
+            | (key, ph, Right verb, state, _) <- parsed
             , Just outcomes <- [Map.lookup key vm] ]
-       else Left (verbErrs ++ collErrs ++ clashErrs)
+       else Left (verbErrs ++ toolErrs ++ collErrs ++ clashErrs)
   where
     parsePhasePrefix key = case key of
         ('b':'e':'f':'o':'r':'e':':':rest)     -> (E.PhaseBefore, rest)
@@ -3626,6 +3686,12 @@ compileVerbMapSafe registry pathPrefix vm =
     phaseTag E.PhaseAfter   = "after" :: String
     phaseTag E.PhaseBefore  = "before"
     phaseTag E.PhaseInstead = "instead"
+    splitOnComma s = case break (== ',') s of
+        (x, [])     -> [x]
+        (x, _ : xs) -> x : splitOnComma xs
+    toolIdsOf key = case break (== ',') key of
+        (_, ',':rest) -> [ drop 5 q | q <- splitOnComma rest, "tool:" `isPrefixOf` q ]
+        _             -> []
 
 -- | Parse verb strings: core first, then custom verb registry.
 --   Replaces the previous hardcoded list with Verbs.resolveVerb.
@@ -3633,6 +3699,25 @@ parseVerbStrict :: Map.Map String E.VerbDef -> String -> Either String E.Verb
 parseVerbStrict registry s = case Verbs.resolveVerb registry s of
     Just verb -> Right verb
     Nothing -> Left $ "Unknown verb '" ++ s ++ "' (expected a core verb or a declared adventure verb)"
+
+-- | OPEN-21 (D1): tool keys in verb_map entries ("put on,tool:leak") name an
+--   item/NPC id — warn when nothing of that id exists (typo trap).
+checkUnknownVerbTools :: Adventure -> [CompileIssue]
+checkUnknownVerbTools adv =
+    let known = Set.fromList ([ aiId i | i <- advItems adv ] ++ [ anId n | n <- advNPCs adv ])
+        badTools pathPrefix key =
+            [ ciWarning (pathPrefix ++ "." ++ key) "UnknownVerbTool"
+                ("tool '" ++ t ++ "' is not a known item or npc id")
+            | t <- toolIdsOfVerbKey key, t `Set.notMember` known ]
+    in concat [ badTools ("items." ++ aiId i) key | i <- advItems adv, key <- Map.keys (aiVerbMap i) ]
+    ++ concat [ badTools ("npcs." ++ anId n) key | n <- advNPCs adv, key <- Map.keys (anVerbMap n) ]
+  where
+    toolIdsOfVerbKey key = case break (== ',') key of
+        (_, ',':rest) -> [ drop 5 q | q <- splitQuals rest, "tool:" `isPrefixOf` q ]
+        _             -> []
+    splitQuals s = case break (== ',') s of
+        (x, [])     -> [x]
+        (x, _ : xs) -> x : splitQuals xs
 
 -- ---------------------------------------------------------------------------
 -- Action outcome compilation
@@ -5214,7 +5299,7 @@ checkUnknownPlaceholders adv varDefs =
         ]
     commandVars = Set.fromList
         [ "cmd.verb", "cmd.count", "cmd.raw_args", "cmd.target", "cmd.target_kind"
-        , "cmd.raw" ]
+        , "cmd.raw", "cmd.tool", "cmd.tool_kind" ]
 
     extractPlaceholders [] = []
     extractPlaceholders ('\\':'{':cs) = extractPlaceholders cs

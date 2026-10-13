@@ -386,13 +386,27 @@ data VerbPhase = PhaseAfter | PhaseBefore | PhaseInstead
 
 -- | A declared adventure verb: canonical name plus input aliases.
 --   The canonical name is what appears in verb_map keys ("cast,intact").
+--   OPEN-21: 'vdPatterns' holds full-line input templates like
+--   @"put <x> on <y>"@ or @"turn <x> off"@ — literal words plus the
+--   placeholders @<x>@/@<y>@. Ordinary verbs carry no patterns (empty) and
+--   keep the historical JSON shape (byte contract); the "patterns" key is
+--   written only when used.
 data VerbDef = VerbDef
-    { vdName    :: String
-    , vdAliases :: [String]
+    { vdName     :: String
+    , vdAliases  :: [String]
+    , vdPatterns :: [String]
     } deriving (Show, Eq, Generic)
 
-instance ToJSON VerbDef
-instance FromJSON VerbDef
+instance ToJSON VerbDef where
+    toJSON d = object $
+        [ "vdName" .= vdName d, "vdAliases" .= vdAliases d ]
+        ++ [ "vdPatterns" .= ps | not (null (vdPatterns d)), let ps = vdPatterns d ]
+
+instance FromJSON VerbDef where
+    parseJSON = withObject "VerbDef" $ \o -> VerbDef
+        <$> o .:  "vdName"
+        <*> o .:? "vdAliases"  .!= []
+        <*> o .:? "vdPatterns" .!= []
 
 -- | Reason the game ended
 data GameOverReason = Victory | Death | Custom String
