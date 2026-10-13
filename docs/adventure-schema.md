@@ -1465,6 +1465,73 @@ Ohne Präposition wird weiterhin die gesamte Wortgruppe als Ziel verwendet.
 Das Werkzeug bzw. der Empfänger **Y** wird nicht automatisch geprüft oder
 verbraucht; entsprechende Bedingungen und Effekte deklariert der Autor.
 
+### Mehrwort-Verben & Input-Templates (`verbs:`, `cmd.tool`) (OPEN-21)
+
+`verbs:` akzeptiert **Mehrwort**-Namen und -Aliase sowie deklarative
+**Eingabe-Templates** — damit sind Original-Grammatiken wie `put out candle`,
+`put putty on leak`, `fill <x> with <y>` oder `turn <x> off` ausdrückbar.
+
+```yaml
+verbs:
+  - name: put out                    # kanonischer Name: cmd.verb, verb_map-Keys, Trigger
+    aliases: [blow out]              # Eingabe-Phrasen (längster Match gewinnt)
+  - name: put on
+    patterns: ["put <x> on <y>"]     # Full-Line-Template inkl. Verbwort
+  - name: fill
+    patterns: ["fill <x> with <y>"]
+  - name: turn off
+    patterns: ["turn off <x>", "turn <x> off"]   # beide Wortstellungen
+```
+
+**Auflösungsreihenfolge** (in `parseSimpleCommandWith`):
+
+1. **Templates** (`patterns:`) — Literalwörter + Slots, meiste Literalwörter
+   zuerst. `<x>` = primäres Ziel, `<y>` = Werkzeug (je 1+ Wörter, Stopwörter
+   werden gestrippt). Ein Slot ergibt `Interact`, zwei Slots `InteractWith`.
+2. **Mehrwort-Phrasen** (Name/Aliase, ≥ 2 Wörter) — schlagen Einzelwörter
+   auch dann, wenn das Einzelwort ein Core-Alias ist (`put out candle` ist
+   `put out`, nicht `put`→`drop`).
+3. Die **Core-Matrix** (`look at`, `pick up`, `take X from Y`, `put X in Y`, …)
+   bleibt unverändert; nicht matchende Eingaben fallen wie gehabt durch.
+
+**Rollen & Variablen:** `InteractWith verb x y` bindet `cmd.target`/
+`cmd.target_kind` auf X und `cmd.tool`/`cmd.tool_kind` auf Y (analog
+`cmd.argN` nur während des Kommandos gesetzt). Bei `V X PREP Y`-Dispatch
+antwortet **X zuerst** (sein `verb_map`), dann **Y** (Werkzeug/Unterstützer —
+Zork: `PUT X ON Y` hängt am Y), sonst die Standard-Meldung (`item.cant_do`,
+`target.not_seen` bzw. eine `on: command`-Regel).
+
+**Werkzeug-Keys in `verb_map`** (D1): Einträge dürfen auf dem Werkzeug
+matchen — Key-Form `verb[,state][,tool:<id>]`; ein Tool-Key schlägt den
+Plain-Key, Lookup-Reihenfolge wie `Z-06`:
+
+```yaml
+items:
+  - id: leak
+    verb_map:
+      "put on,tool:putty": [{msg: "…gestopft…"}]   # nur MIT dem Kitt
+      "put on": [{msg: "There's no good surface on the leak."}]
+```
+
+Unbekannte Werkzeuge in Tool-Keys warnen (`UnknownVerbTool`, B4).
+
+**Massenformen** (D4): `put out all` arbeitet alle antwortenden Items/NPCs
+im Scope ab (Stabilitäts-Reihenfolge: Item-/NPC-Id); `cmd.succeeded` ist die
+**Konjunktion** der Teile — ein gescheiterter oder veto-ter Teil macht das
+Ganze zum Fehlschlag (wie `take sword and lamp`).
+
+**Compound-Ergänzung:** in `a und b` feuert **jeder Teil** seinen eigenen
+`on: command <verb>`-Trigger (regelgetriebene Verben wie `put out lamp`
+antworten auch in `take lamp and put out lamp`); das Gesamtkommando feuert
+weiterhin `on: command compound`.
+
+**Validierung (D3):** Eine Phrase, die ein reserviertes Einzelwort enthält
+(`put out`), ist erlaubt — der längste Match schützt —, wird aber als
+`ReservedVerbPhrase` gewarnt. Exakte Kollisionen (`name: put`) bleiben ein
+Fehler (`ReservedVerbName`); Templates sind Eingabeformen und kollidieren nie.
+`pattern:` (eine Form) bzw. `patterns:` (Liste) brauchen mindestens ein
+Literalwort und höchstens zwei Slots (`BadVerbPattern`).
+
 ### Text-Interpolation (`{var:name}` / `{name}`)
 
 Texte in Dialogen, Raumbeschreibungen, Ereignismeldungen (`msg`/`text`) und
@@ -1727,6 +1794,10 @@ Before a command is executed, the engine automatically extracts arguments and re
   see the same value; meta commands leave it untouched. Unrecognized input
   fires the `unknown` trigger verbs — see the German section *Rohes
   Spielerkommando (`cmd.raw`)* (OPEN-22).
+- `cmd.tool` / `cmd.tool_kind` — The tool role of a two-role template verb
+  (`put <x> on <y>`: Y), resolved like `cmd.target`. `verb_map` entries may
+  match on it via `verb[,state][,tool:<id>]` keys — see the German section
+  *Mehrwort-Verben & Input-Templates* (OPEN-21).
 - `cmd.count` — The number of argument tokens (integer).
 - `cmd.arg1..N` — Individual argument tokens (integer if numeric, otherwise text).
 - `cmd.succeeded` — The command result as a boolean value (`"true"`/`"false"`);

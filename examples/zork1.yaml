@@ -2967,6 +2967,24 @@ items:
   - leak
   location: maintenance-room
   portable: false
+  verb_map:
+    # C1 (OPEN-21): `put putty on leak` (Original: PUT PUTTY ON LEAK →
+    # FIX-MAINT-LEAK). Der Werkzeug-Key schlaegt den Plain-Key (D1).
+    "put on,tool:putty":
+    - if:
+        all:
+        - at: player
+          room: maintenance-room
+        - not:
+            has_flag: leak-fixed
+      then:
+      - msg: By some miracle of Zorkian technology, you have managed to stop the leak in the dam.
+      - set_flag: leak-fixed
+        val: 'true'
+      else:
+      - msg: There's no good surface on the leak.
+    "put on":
+    - msg: There's no good surface on the leak.
 - id: machine
   tags:
   - scenery
@@ -3753,6 +3771,7 @@ verbs:
 - name: drink
 - name: eat
 - name: fill
+  pattern: "fill <x> with <y>"
 - name: launch
 - name: land
 - name: in
@@ -3775,7 +3794,11 @@ verbs:
 - name: light
   aliases: [burn]
 - name: extinguish
-  aliases: [douse]
+  aliases: [douse, put out, blow out]
+# C1 (OPEN-21): PUT OBJECT ON OBJECT (gsyntax:385, V-PUT-ON) — der Shape
+# `put <x> on <y>` dispatcht ueber die Werkzeug-Rolle (D1) auf das Ziel.
+- name: put on
+  patterns: ["put <x> on <y>"]
 - name: odysseus
 patrol:
   hostiles:
@@ -5183,6 +5206,30 @@ rules:
   effects:
   - msg: 'Oh dear. It appears that the smell coming from this room was coal gas. I would have thought twice about carrying flaming objects in here.'
   - game_end: death
+
+# --- C1 (OPEN-21): `fill <x> with <y>` — das Original antwortet auf jede
+# FILL-Mit-Werkzeug-Form mit V-FILLs "You may know how to do that, but I don't."
+# (nur die blanke Form `fill <x>` tut etwas — die laeuft weiter ueber
+# `fill-bottle`/`fill-other` unten). Der Trigger erkennt die Werkzeug-Rolle an
+# cmd.tool_kind (bei `fill x` ohne Werkzeug ungebunden).
+- id: fill-with
+  on: before fill
+  when:
+    any:
+    - var: cmd.tool_kind
+      is: item
+    - var: cmd.tool_kind
+      is: npc
+    - var: cmd.tool_kind
+      is: vehicle
+    - var: cmd.tool_kind
+      is: device
+    - var: cmd.tool_kind
+      is: ambiguous
+    - var: cmd.tool_kind
+      is: none
+  effects:
+  - block: You may know how to do that, but I don't.
 
 # --- Stufe C: Leck im Wartungsraum (Original: LEAK-FUNCTION / FIX-MAINT-LEAK, 1actions.zil:1362) ---
 - id: maint-leak-fix

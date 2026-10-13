@@ -12,9 +12,8 @@
 - `../examples/zork1.yaml` — Abnahme-Abenteuer
 - `adventure-schema.md` — Doku-Ziel (*Parametrisierte Befehle*, `verbs:`)
 
-**Status:** 🚧 in Umsetzung · **Entscheidungen D1–D4:** ✅ entschieden 2026-10-13 (§4)
-· **A+B+C:** ✅ umgesetzt 2026-10-13 (Engine + Tests, s. §6) · **D+E:** offen
-· **Aufwandsschätzung:** A+B je ~1 Tag, C+D ~½ Tag, E ~½ Tag
+**Status:** ✅ abgeschlossen 2026-10-13 · **Entscheidungen D1–D4:** ✅ (§4)
+· **A–E umgesetzt** (§6)
 
 ---
 
@@ -224,8 +223,15 @@ OPEN-08 bleibt (durch `testCustomVerbPrimaryTarget` gepinnt).
 `zork1.yaml` **byte-identisch** zum Stand vor der Änderung.
 **Fixture:** `examples/fixtures/open21.yaml` (YAML-Shapes).
 
-**Noch offen:** D (Doku: `adventure-schema.md`, CHANGELOG, befunde/plan-End-
-stände) und E (Zork-Port C1 als Abnahme).
+**Noch offen:** ~~D (Doku) und E (Zork-Port C1 als Abnahme)~~ — beides
+abgeschlossen 2026-10-13: Port bringt `put out`/`blow out` (→ `extinguish`),
+`put putty on leak` (Werkzeug-Key), `fill <x> with <y>` (V-FILL-Originaltext)
+und gemischte Compounde; Doku in `adventure-schema.md` (*Mehrwort-Verben &
+Input-Templates*), CHANGELOG, befunde §7/§8, plan-zork C1. Zwei bei der
+Umsetzung gefundene Zusatzthemen sind behoben bzw. dokumentiert:
+Compound-Teile feuern jetzt `on: command` pro Teil (bisher nur
+`on: command compound`), und die bestehende `fill-bottle`-Regel des Ports
+wurde bewusst nicht dupliziert (kein Doppel-Dispatch).
 
 ---
 

@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+### OPEN-21: Mehrwort-Verben & Präpositionalphrasen
+
+`verbs:` akzeptiert Mehrwort-Namen/-Aliase (`put out`, `blow out`) und
+Full-Line-Input-Templates (`patterns: ["put <x> on <y>"]`) mit den Rollen
+`<x>` = Ziel, `<y>` = Werkzeug. Details in `docs/adventure-schema.md`
+(*Mehrwort-Verben & Input-Templates*); Ticket mit Design-Entscheidungen:
+`docs/plan-open21-mehrwort-verben.md`.
+
+- **Phrase-Matching:** längster Verb-Phrasen-Präfix schlägt Einzelwörter
+  (`put out candle` fällt nicht mehr als `put`→`drop` durch); die Core-Matrix
+  (`look at`, `take X from Y`, …) bleibt unverändert.
+- **Templates vor Core:** `turn <x> off` und `turn off <x>` mappen beide auf
+  `cmd.verb = "turn off"`; Slots werden stopwort-gestrippt.
+- **Rollen-Dispatch:** `InteractWith` (X antwortet zuerst, dann Werkzeug-/
+  Unterstützer-Y — Zork: `PUT X ON Y`), `cmd.tool`/`cmd.tool_kind` neu.
+- **Werkzeug-Keys** in `verb_map`: `verb[,state][,tool:<id>]` — Tool schlägt
+  Plain (Lookup wie `Z-06`); `UnknownVerbTool`-Warnung bei Typos (B4).
+- **Masse (D4):** `put out all` arbeitet alle antwortenden Items/NPCs ab,
+  `cmd.succeeded` ist die Konjunktion der Teile.
+- **Compound-Triggger-Fix:** `a und b` feuert pro Teil `on: command <verb>` —
+  regelgetriebene Verben wie `put out lamp` antworten jetzt auch in
+  `take lamp and put out lamp` (bisher nur `on: command compound`).
+- **Worldbuilder:** `pattern:`/`patterns:` (+ `knownKeys`), Warnungen
+  `ReservedVerbPhrase` (D3) / `DuplicateVerbPattern`, Fehler `BadVerbPattern`.
+- **Zork-Port (C1):** `put out`/`blow out` → `extinguish` (V-LAMP-OFF),
+  `put putty on leak` (Werkzeug-Key `put on,tool:putty`, Original V-PUT-ON-
+  Fallback "There's no good surface on the leak."), `fill <x> mit <y>` →
+  originalgetreu "You may know how to do that, but I don't.", gemischte
+  Compounde spielbar.
+- **Tests:** `phrase verbs and input templates parse (OPEN-21)`,
+  `tool keys, tool target and mass form (OPEN-21)`, 2 worldbuilder-Tests +
+  Fixture `examples/fixtures/open21.yaml`. `zork1.world.json` ohne Nutzung
+  der neuen Features byte-identisch.
+
 ### OPEN-22: `cmd.raw` — das rohe Spielerkommando
 
 Der Eingabe-Loop bindet die getippte Zeile als Variable `cmd.raw` — normalisiert
