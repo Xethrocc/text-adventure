@@ -18,6 +18,7 @@ import qualified Data.Text as T
 import qualified Data.Aeson.KeyMap as KM
 import qualified Data.Aeson.Key as K
 import qualified Data.Foldable as Foldable
+import Text.Read (readMaybe)
 import qualified Types as E
 
 -- ---------------------------------------------------------------------------
@@ -45,6 +46,7 @@ data Adventure = Adventure
     , advEnvironment      :: Maybe AEnvironment          -- ^ weather + drains (Phase 7d)
     , advStealth          :: Maybe AStealth              -- ^ noise + observers (Phase 7e)
     , advPatrol           :: Maybe APatrol               -- ^ patrouillierende/angreifende NPCs (Modul 7i)
+    , advHazards          :: Maybe [AHazard]             -- ^ Gefahrenlagen (OPEN-23 / Stufe 1)
     , advCombat           :: Maybe ACombat               -- ^ combat profile (Phase 7f)
     , advAbilities        :: [AAbility]                  -- ^ player abilities (Phase 7f-3 A3/A4)
     , advEndArt           :: Map.Map String AAscii       -- ^ end banners per reason (Phase G)
@@ -112,58 +114,79 @@ instance FromJSON AClip where
         <*> o .: "fps"
 
 instance FromJSON Adventure where
-    parseJSON v@(Object o) = Adventure
-        <$> o .:? "name"
-        <*> o .:?  "start_room" .!= ""
-        <*> o .:? "rooms"           .!= []
-        <*> o .:? "items"           .!= []
-        <*> o .:? "npcs"            .!= []
-        <*> o .:? "quests"          .!= []
-        <*> o .:? "vehicles"        .!= []
-        <*> o .:? "interactions"
-        <*> o .:? "verbs"           .!= []
-        <*> o .:? "variables"       .!= []
-        <*> parseRulesOrTriggers o
-        <*> o .:? "player"
-        <*> o .:? "initial_variables" .!= Map.empty
-        <*> o .:? "initial_flags"     .!= Map.empty
-        <*> o .:? "active_quests"     .!= []
-        <*> o .:? "factions"          .!= []
-        <*> o .:? "encounter_tables"  .!= []
-        <*> o .:? "environment"
-        <*> o .:? "stealth"
-        <*> o .:? "patrol"
-        <*> o .:? "combat"
-        <*> o .:? "abilities"       .!= []
-        <*> o .:? "end_art"         .!= Map.empty
-        <*> o .:? "title_art"       .!= AAscii (ACondText "" []) [] 1 [] Nothing
-        <*> o .:? "clips"           .!= []
-        <*> o .:? "game"
-        <*> parseCardsField o
-        <*> parseDeckField o
-        <*> parseHandLimitField o
-        <*> parseSandboxZonesField o
-        <*> o .:? "procedures" .!= []
-        <*> o .:? "combine_verb" .!= Nothing
-        <*> o .:? "journal"      .!= Nothing
-        <*> o .:? "chapters"   .!= []
-        <*> o .:? "pursuit"    .!= []
-        <*> o .:? "wander"     .!= []
-        <*> o .:? "containers" .!= []
-        <*> o .:? "facts"      .!= []
-        <*> parseStatementsField o
-        <*> o .:? "combine"    .!= []
-        <*> parseDevicesField o
-        <*> o .:? "progression"
-        <*> o .:? "tests" .!= []
-        <*> o .:? "include" .!= []
-        <*> o .:? "assets"  .!= []
-        <*> o .:? "language"
-        -- OPEN-18: `messages:` values are one template (string) or a pool of
-        --   alternatives (list) — the engine-side codec knows both shapes.
-        <*> (o .:? "messages" >>= maybe (pure Map.empty) E.messageMapFromJSON)
-        <*> pure (Just v)
+    parseJSON v@(Object o) =
+        let oDesug = case desugarHazardsValue v of
+                Object od -> od
+                _         -> o
+        in Adventure
+            <$> oDesug .:? "name"
+            <*> oDesug .:?  "start_room" .!= ""
+            <*> oDesug .:? "rooms"           .!= []
+            <*> oDesug .:? "items"           .!= []
+            <*> oDesug .:? "npcs"            .!= []
+            <*> oDesug .:? "quests"          .!= []
+            <*> oDesug .:? "vehicles"        .!= []
+            <*> oDesug .:? "interactions"
+            <*> oDesug .:? "verbs"           .!= []
+            <*> oDesug .:? "variables"       .!= []
+            <*> parseRulesOrTriggers oDesug
+            <*> oDesug .:? "player"
+            <*> oDesug .:? "initial_variables" .!= Map.empty
+            <*> oDesug .:? "initial_flags"     .!= Map.empty
+            <*> oDesug .:? "active_quests"     .!= []
+            <*> oDesug .:? "factions"          .!= []
+            <*> oDesug .:? "encounter_tables"  .!= []
+            <*> oDesug .:? "environment"
+            <*> oDesug .:? "stealth"
+            <*> oDesug .:? "patrol"
+            <*> parseHazardsField oDesug
+            <*> oDesug .:? "combat"
+            <*> oDesug .:? "abilities"       .!= []
+            <*> oDesug .:? "end_art"         .!= Map.empty
+            <*> oDesug .:? "title_art"       .!= AAscii (ACondText "" []) [] 1 [] Nothing
+            <*> oDesug .:? "clips"           .!= []
+            <*> oDesug .:? "game"
+            <*> parseCardsField oDesug
+            <*> parseDeckField oDesug
+            <*> parseHandLimitField oDesug
+            <*> parseSandboxZonesField oDesug
+            <*> oDesug .:? "procedures" .!= []
+            <*> oDesug .:? "combine_verb" .!= Nothing
+            <*> oDesug .:? "journal"      .!= Nothing
+            <*> oDesug .:? "chapters"   .!= []
+            <*> oDesug .:? "pursuit"    .!= []
+            <*> oDesug .:? "wander"     .!= []
+            <*> oDesug .:? "containers" .!= []
+            <*> oDesug .:? "facts"      .!= []
+            <*> parseStatementsField oDesug
+            <*> oDesug .:? "combine"    .!= []
+            <*> parseDevicesField oDesug
+            <*> oDesug .:? "progression"
+            <*> oDesug .:? "tests" .!= []
+            <*> oDesug .:? "include" .!= []
+            <*> oDesug .:? "assets"  .!= []
+            <*> oDesug .:? "language"
+            -- OPEN-18: `messages:` values are one template (string) or a pool of
+            --   alternatives (list) — the engine-side codec knows both shapes.
+            <*> (oDesug .:? "messages" >>= maybe (pure Map.empty) E.messageMapFromJSON)
+            <*> pure (Just v)
     parseJSON _ = fail "Expected Adventure to be an object"
+
+-- | Parse 'hazards' field (OPEN-23): supports both a map (`hazards: { reservoir: { ... } }`) and a list (`hazards: [ { id: "reservoir", ... } ]`).
+parseHazardsField :: Object -> Parser (Maybe [AHazard])
+parseHazardsField o = do
+    mVal <- o .:? "hazards"
+    case mVal of
+        Nothing -> pure Nothing
+        Just (Array arr) -> Just <$> mapM parseJSON (Foldable.toList arr)
+        Just (Object obj) -> do
+            hzs <- mapM (\(k, val) -> do
+                    hz <- parseJSON val
+                    let hid = if null (hazId hz) then K.toString k else hazId hz
+                    pure hz { hazId = hid }
+                 ) (KM.toList obj)
+            pure (Just hzs)
+        Just _ -> fail "Expected 'hazards' to be an object (map) or array (list)"
 
 -- | Parse 'rules' or 'triggers' field (Phase G9c).
 parseRulesOrTriggers :: Object -> Parser [ATrigger]
@@ -1205,6 +1228,337 @@ instance FromJSON ADrainDef where
         <*> o .:? "at_zero" .!= []
 
 -- ---------------------------------------------------------------------------
+-- Hazards (OPEN-23): zeitabhaengige, raeumlich begrenzte Gefahrenlagen
+-- ---------------------------------------------------------------------------
+
+-- | Das `hazards:`-Segment (OPEN-23): Verlauf x Ausdehnung x Wirkung.
+--   Reiner Worldbuilder-Schema-Zucker ohne Kern-Eingriff.
+data AHazard = AHazard
+    { hazId        :: String
+    , hazTrack     :: ATrack
+    , hazFootprint :: AFootprint
+    , hazStages    :: [(Int, [AActionOutcome])]
+    , hazOnZone    :: [AActionOutcome]
+    , hazTelegraph :: Maybe ATelegraph
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AHazard where
+    parseJSON = withObject "AHazard" $ \o -> AHazard
+        <$> o .:? "id" .!= ""
+        <*> o .:  "track"
+        <*> o .:  "footprint"
+        <*> parseHazardStagesField o
+        <*> o .:? "on_zone" .!= []
+        <*> o .:? "telegraph"
+
+instance ToJSON AHazard
+
+-- | Verlauf der Gefahr: Stufen 0..max, Taktrate und optionaler Pause-Filter.
+data ATrack = ATrack
+    { traMax    :: Int
+    , traStart  :: Int
+    , traRate   :: Int
+    , traEvery  :: Int
+    , traTarget :: Int
+    , traWhen   :: Maybe E.Predicate
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ATrack where
+    parseJSON = withObject "ATrack" $ \o -> do
+        mx <- o .: "max"
+        st <- o .:? "start" .!= 0
+        rt <- o .:? "rate" .!= 1
+        ev <- o .:? "every" .!= 1
+        tg <- o .:? "target" .!= st
+        w  <- o .:? "when"
+        pure (ATrack mx st rt ev tg w)
+
+instance ToJSON ATrack
+
+data AFootprintType
+    = FPElevation
+    | FPList
+    | FPTag
+    deriving (Show, Eq, Generic)
+
+instance FromJSON AFootprintType where
+    parseJSON (String s) = case s of
+        "elevation" -> pure FPElevation
+        "list"      -> pure FPList
+        "tag"       -> pure FPTag
+        _           -> fail ("Unknown footprint by: '" ++ T.unpack s ++ "'")
+    parseJSON _ = fail "Footprint 'by' must be a string (elevation, list, tag)"
+
+instance ToJSON AFootprintType where
+    toJSON FPElevation = String "elevation"
+    toJSON FPList      = String "list"
+    toJSON FPTag       = String "tag"
+
+-- | Ausdehnung der Gefahr: Schwellenhoehe, Phasenliste oder Raum-Tag.
+data AFootprint = AFootprint
+    { fpBy          :: AFootprintType
+    , fpRooms       :: Map.Map String Int
+    , fpStagesRooms :: [(Int, [String])]
+    , fpTag         :: Maybe String
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AFootprint where
+    parseJSON = withObject "AFootprint" $ \o -> do
+        by <- o .: "by"
+        roomsMap <- o .:? "rooms" .!= Map.empty
+        srList <- parseStagesRoomsField o
+        tagStr <- o .:? "tag"
+        pure (AFootprint by roomsMap srList tagStr)
+
+instance ToJSON AFootprint
+
+-- | Telegraph-Meldungen bei Naehe zur Gefahr.
+data ATelegraph = ATelegraph
+    { telAdjacent :: Maybe String
+    , telInside   :: Maybe String
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON ATelegraph where
+    parseJSON (String s) = pure (ATelegraph (Just (T.unpack s)) Nothing)
+    parseJSON (Object o) = ATelegraph
+        <$> o .:? "adjacent"
+        <*> (o .:? "inside" <|> o .:? "in_zone")
+    parseJSON _ = fail "telegraph must be a string or object with adjacent/inside"
+
+instance ToJSON ATelegraph
+
+-- | Parse 'stages:' in AHazard:
+--   stages:
+--     0: [ { msg: "Der Pegel ist jetzt niedrig." } ]
+--     8: [ { msg: "Das Wasser hat seinen Hoechststand erreicht." } ]
+parseHazardStagesField :: Object -> Parser [(Int, [AActionOutcome])]
+parseHazardStagesField o = do
+    mVal <- o .:? "stages"
+    case mVal of
+        Nothing -> pure []
+        Just (Object obj) ->
+            mapM (\(k, v) -> do
+                    lvl <- case readMaybe (K.toString k) of
+                        Just n  -> pure n
+                        Nothing -> fail ("Stage level must be an integer, got: " ++ K.toString k)
+                    outs <- case v of
+                        Array _ -> parseJSON v
+                        _       -> (:[]) <$> parseJSON v
+                    pure (lvl, outs)
+                 ) (KM.toList obj)
+        Just _ -> fail "Expected 'stages' to be an object mapping level to outcomes"
+
+-- | Parse 'stages_rooms:' in AFootprint:
+--   stages_rooms:
+--     1: [halle]
+--     2: [halle, schiff]
+parseStagesRoomsField :: Object -> Parser [(Int, [String])]
+parseStagesRoomsField o = do
+    mVal <- o .:? "stages_rooms"
+    case mVal of
+        Nothing -> pure []
+        Just (Object obj) ->
+            mapM (\(k, v) -> do
+                    lvl <- case readMaybe (K.toString k) of
+                        Just n  -> pure n
+                        Nothing -> fail ("Stage level must be an integer, got: " ++ K.toString k)
+                    rooms <- parseJSON v
+                    pure (lvl, rooms)
+                 ) (KM.toList obj)
+        Just _ -> fail "Expected 'stages_rooms' to be an object mapping level to room list"
+
+-- | OPEN-23: Desugar hazard predicates (hazard_level, in_hazard) in the raw YAML/JSON Value
+--   into standard engine predicates (compare_var, any, all).
+desugarHazardsValue :: Value -> Value
+desugarHazardsValue v@(Object topObj) =
+    let hazInfo = extractHazardInfo (KM.lookup "hazards" topObj)
+        roomTags = extractRoomTags (KM.lookup "rooms" topObj)
+    in desugarVal hazInfo roomTags v
+desugarHazardsValue other = other
+
+data RawHazardInfo = RawHazardInfo
+    { rhiBy          :: String
+    , rhiRooms       :: Map.Map String Int
+    , rhiStagesRooms :: [(Int, [String])]
+    , rhiTag         :: Maybe String
+    } deriving (Show)
+
+extractHazardInfo :: Maybe Value -> Map.Map String RawHazardInfo
+extractHazardInfo (Just (Object hzObj)) =
+    Map.fromList [ (K.toString k, parseRawHz v) | (k, v) <- KM.toList hzObj ]
+extractHazardInfo (Just (Array arr)) =
+    Map.fromList [ (hid, info)
+                 | Object o <- Foldable.toList arr
+                 , let hid = case KM.lookup "id" o of { Just (String s) -> T.unpack s; _ -> "" }
+                 , not (null hid)
+                 , let info = parseRawHz (Object o)
+                 ]
+extractHazardInfo _ = Map.empty
+
+parseRawHz :: Value -> RawHazardInfo
+parseRawHz (Object o) = case KM.lookup "footprint" o of
+    Just (Object fp) ->
+        let byStr = case KM.lookup "by" fp of { Just (String s) -> T.unpack s; _ -> "elevation" }
+            roomsM = case KM.lookup "rooms" fp of
+                Just (Object ro) -> Map.fromList [ (K.toString rk, case rv of Number n -> round n; _ -> 0) | (rk, rv) <- KM.toList ro ]
+                _ -> Map.empty
+            srList = case KM.lookup "stages_rooms" fp of
+                Just (Object sro) ->
+                    [ (lvl, [ T.unpack str | String str <- Foldable.toList arr ])
+                    | (sk, Array arr) <- KM.toList sro
+                    , Just lvl <- [readMaybe (K.toString sk)]
+                    ]
+                _ -> []
+            tagS = case KM.lookup "tag" fp of { Just (String s) -> Just (T.unpack s); _ -> Nothing }
+        in RawHazardInfo byStr roomsM srList tagS
+    _ -> RawHazardInfo "elevation" Map.empty [] Nothing
+parseRawHz _ = RawHazardInfo "elevation" Map.empty [] Nothing
+
+extractRoomTags :: Maybe Value -> Map.Map String [String]
+extractRoomTags (Just (Array arr)) =
+    Map.fromList
+        [ (rid, tags)
+        | Object o <- Foldable.toList arr
+        , Just (String rstr) <- [KM.lookup "id" o]
+        , let rid = T.unpack rstr
+        , let tags = case KM.lookup "tags" o of
+                Just (Array tarr) -> [ T.unpack ts | String ts <- Foldable.toList tarr ]
+                _                 -> []
+        ]
+extractRoomTags _ = Map.empty
+
+desugarVal :: Map.Map String RawHazardInfo -> Map.Map String [String] -> Value -> Value
+desugarVal hazs rtags = go
+  where
+    go (Object o)
+        | Just hlVal <- KM.lookup "hazard_level" o =
+            let otherKeys = KM.delete "hazard_level" o
+                desugaredPred = desugarHazardLevel hlVal
+            in case desugaredPred of
+                Object dObj -> Object (KM.union dObj (KM.map go otherKeys))
+                _           -> go (Object o)
+
+        | Just ihVal <- KM.lookup "in_hazard" o =
+            let otherKeys = KM.delete "in_hazard" o
+                desugaredPred = desugarInHazard hazs rtags ihVal
+            in case desugaredPred of
+                Object dObj -> Object (KM.union dObj (KM.map go otherKeys))
+                _           -> go (Object o)
+
+        | otherwise =
+            Object (KM.map go o)
+
+    go (Array arr) = Array (fmap go arr)
+    go other = other
+
+desugarHazardLevel :: Value -> Value
+desugarHazardLevel (Object o) =
+    let hid = case KM.lookup "hazard" o <|> KM.lookup "id" o <|> KM.lookup "name" o of
+            Just (String s) -> T.unpack s
+            _               -> ""
+        (opStr, valNum) = extractCmp o
+    in Object (KM.singleton "compare_var" (object
+        [ "name"  .= ("hazard." ++ hid ++ ".level")
+        , "op"    .= opStr
+        , "value" .= valNum
+        ]))
+desugarHazardLevel v = v
+
+extractCmp :: KM.KeyMap Value -> (String, Int)
+extractCmp o =
+    case [ (op, round n) | (k, op) <- [ ("gte", "gte"), ("at_least", "gte")
+                                     , ("lte", "lte"), ("at_most", "lte")
+                                     , ("eq", "eq"), ("equals", "eq")
+                                     , ("gt", "gt"), ("lt", "lt"), ("ne", "ne") ]
+                         , Just (Number n) <- [KM.lookup (K.fromString k) o] ] of
+        (c:_) -> c
+        []    -> case (KM.lookup "op" o, KM.lookup "value" o) of
+            (Just (String s), Just (Number n)) -> (T.unpack s, round n)
+            _                                  -> ("eq", 0)
+
+desugarInHazard :: Map.Map String RawHazardInfo -> Map.Map String [String] -> Value -> Value
+desugarInHazard hazs rtags (Object o) =
+    let hid = case KM.lookup "hazard" o <|> KM.lookup "id" o <|> KM.lookup "name" o of
+            Just (String s) -> T.unpack s
+            _               -> ""
+        roomTarget = case KM.lookup "room" o of
+            Just (String s) -> T.unpack s
+            _               -> "here"
+        mInfo = Map.lookup hid hazs
+    in case mInfo of
+        Nothing ->
+            Object (KM.singleton "compare_var" (object
+                [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("gt" :: String), "value" .= (0 :: Int) ]))
+        Just info -> case roomTarget of
+            "here" -> expandInHazardHere hid info rtags
+            r      -> expandInHazardRoom hid info rtags r
+desugarInHazard _ _ v = v
+
+expandInHazardHere :: String -> RawHazardInfo -> Map.Map String [String] -> Value
+expandInHazardHere hid info rtags = case rhiBy info of
+    "elevation" ->
+        let clauses =
+                [ object
+                    [ "all" .=
+                        [ object [ "at" .= ("player" :: String), "room" .= r ]
+                        , object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("gte" :: String), "value" .= t ] ]
+                        ]
+                    ]
+                | (r, t) <- Map.toList (rhiRooms info)
+                ]
+        in object [ "any" .= clauses ]
+    "list" ->
+        let clauses =
+                [ object
+                    [ "all" .=
+                        [ object [ "at" .= ("player" :: String), "room" .= r ]
+                        , object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("eq" :: String), "value" .= lvl ] ]
+                        ]
+                    ]
+                | (lvl, rms) <- rhiStagesRooms info
+                , r <- rms
+                ]
+        in object [ "any" .= clauses ]
+    "tag" ->
+        let mTag = rhiTag info
+            taggedRooms = case mTag of
+                Just t  -> [ r | (r, ts) <- Map.toList rtags, t `elem` ts ]
+                Nothing -> []
+            clauses =
+                [ object
+                    [ "all" .=
+                        [ object [ "at" .= ("player" :: String), "room" .= r ]
+                        , object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("gt" :: String), "value" .= (0 :: Int) ] ]
+                        ]
+                    ]
+                | r <- taggedRooms
+                ]
+        in object [ "any" .= clauses ]
+    _ -> object [ "any" .= ([] :: [Value]) ]
+
+expandInHazardRoom :: String -> RawHazardInfo -> Map.Map String [String] -> String -> Value
+expandInHazardRoom hid info rtags r = case rhiBy info of
+    "elevation" ->
+        case Map.lookup r (rhiRooms info) of
+            Just t  -> object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("gte" :: String), "value" .= t ] ]
+            Nothing -> object [ "not" .= object [ "true" .= True ] ]
+    "list" ->
+        let lvls = [ lvl | (lvl, rms) <- rhiStagesRooms info, r `elem` rms ]
+        in case lvls of
+            []    -> object [ "not" .= object [ "true" .= True ] ]
+            [lvl] -> object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("eq" :: String), "value" .= lvl ] ]
+            _     -> object [ "any" .= [ object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("eq" :: String), "value" .= l ] ] | l <- lvls ] ]
+    "tag" ->
+        let mTag = rhiTag info
+            hasTag = case mTag of
+                Just t  -> maybe False (t `elem`) (Map.lookup r rtags)
+                Nothing -> False
+        in if hasTag
+            then object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("gt" :: String), "value" .= (0 :: Int) ] ]
+            else object [ "not" .= object [ "true" .= True ] ]
+    _ -> object [ "not" .= object [ "true" .= True ] ]
+
+-- ---------------------------------------------------------------------------
 -- Stealth (Phase 7e): noise + observers
 -- ---------------------------------------------------------------------------
 
@@ -1795,7 +2149,13 @@ data AActionOutcome
     | AOSetFuel String Int             -- ^ set_fuel: {item, to} (OPEN-17)
     | AOAddFuel String Int             -- ^ add_fuel: {item, delta} (OPEN-17)
     | AOForget String String           -- ^ forget: <fact> - same shapes (W1)
+    | AOHazardTarget String Int        -- ^ hazard_target: {hazard: <id>, to: <int>} (OPEN-23)
+    | AOHazardJump String Int          -- ^ hazard_jump: {hazard: <id>, to: <int>} (OPEN-23)
+    | AOHazardPause String             -- ^ hazard_pause: <id> (OPEN-23)
+    | AOHazardResume String            -- ^ hazard_resume: <id> (OPEN-23)
     deriving (Show, Eq, Generic)
+
+instance ToJSON AActionOutcome
 
 -- | Procedure arguments are literal YAML scalars (int/bool/text) — literal on
 --   purpose so call sites stay statically checkable (no dynamic dispatch).
@@ -1960,6 +2320,21 @@ instance FromJSON AActionOutcome where
                 AOSetFuel <$> fo .: "item" <*> fo .: "to")
         <|> (do fo <- o .: "add_fuel" :: Parser Object
                 AOAddFuel <$> fo .: "item" <*> fo .: "delta")
+        -- OPEN-23: Hazard autor outcomes
+        <|> (do ho <- o .: "hazard_target" :: Parser Object
+                AOHazardTarget <$> (ho .: "hazard" <|> ho .: "id" <|> ho .: "name") <*> ho .: "to")
+        <|> (do ho <- o .: "hazard_jump" :: Parser Object
+                AOHazardJump <$> (ho .: "hazard" <|> ho .: "id" <|> ho .: "name") <*> ho .: "to")
+        <|> (do hpVal <- o .: "hazard_pause"
+                case hpVal of
+                    String s  -> pure (AOHazardPause (T.unpack s))
+                    Object ho -> AOHazardPause <$> (ho .: "hazard" <|> ho .: "id" <|> ho .: "name")
+                    _         -> fail "hazard_pause must be hazard id string or object")
+        <|> (do hrVal <- o .: "hazard_resume"
+                case hrVal of
+                    String s  -> pure (AOHazardResume (T.unpack s))
+                    Object ho -> AOHazardResume <$> (ho .: "hazard" <|> ho .: "id" <|> ho .: "name")
+                    _         -> fail "hazard_resume must be hazard id string or object")
         <|> (AOSetInventoryLimit <$> o .: "set_inventory_limit")
         <|> (AOSayNode <$> o .: "say_node")
         <|> (o .: "dialog_end" >>= \b -> if b :: Bool then pure AODialogEnd else empty)
@@ -2199,6 +2574,10 @@ data EntityType
     | EntStandingChange
     | EntScoreRanking
     | EntParty
+    | EntHazard
+    | EntHazardTrack
+    | EntHazardFootprint
+    | EntHazardTelegraph
     deriving (Show, Eq, Ord, Enum, Bounded)
 
 -- | Single source of truth for allowed YAML mapping keys per entity type,
@@ -2208,7 +2587,7 @@ knownKeys EntAdventure = Set.fromList
     [ "name", "start_room", "rooms", "items", "npcs", "quests", "vehicles"
     , "interactions", "verbs", "variables", "rules", "triggers", "player"
     , "initial_variables", "initial_flags", "active_quests", "factions"
-    , "encounter_tables", "environment", "stealth", "patrol", "combat"
+    , "encounter_tables", "environment", "stealth", "patrol", "hazards", "combat"
     , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
     , "handLimit", "hand_limit", "sandbox_zones", "procedures", "tests", "include"
     , "facts", "statements", "combine", "combine_verb", "journal", "chapters", "devices", "pursuit", "wander", "containers"
@@ -2307,3 +2686,11 @@ knownKeys EntParty = Set.fromList
     [ "can_join", "order_verb", "hp_tracked", "follow_msg", "stay_msg"
     , "combat_slot", "switch_verb", "xp_table"
     ]
+knownKeys EntHazard = Set.fromList
+    [ "id", "track", "footprint", "stages", "on_zone", "telegraph" ]
+knownKeys EntHazardTrack = Set.fromList
+    [ "max", "start", "rate", "every", "target", "when" ]
+knownKeys EntHazardFootprint = Set.fromList
+    [ "by", "rooms", "stages_rooms", "tag" ]
+knownKeys EntHazardTelegraph = Set.fromList
+    [ "adjacent", "inside", "in_zone" ]

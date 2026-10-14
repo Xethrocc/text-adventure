@@ -617,6 +617,10 @@ items:
 | `{ music: "pfad/datei.xm" }` | PlayMusic — Hintergrundmusik-Loop starten/wechseln (Audio Phase 2; `.xm`, `.mid`, `.wav/.ogg/.mp3`) |
 | `{ stop_music: true }` | StopMusic — Hintergrundmusik stoppen (Audio Phase 2) |
 | `{ block: "reason" }`, `{ block: true }`, or `{ block: { msg: "…", turn: true } }` | Block — Veto a command before execution (Phase 2.2). Stops command action. Default: `turn: false` (no turn consumed). Opt-in `turn: true` advances turn and ticks conditions. |
+| `{ hazard_target: { hazard: id, to: N } }` | SetValue (VRVariable "hazard.<id>.target") N — steuert Ziellevel einer Gefahr an (OPEN-23) |
+| `{ hazard_jump: { hazard: id, to: N } }` | SetValue (VRVariable "hazard.<id>.level") N — setzt Level einer Gefahr sofort (OPEN-23) |
+| `{ hazard_pause: id }` | SetValue (VRFlag "hazard.<id>.paused") "true" — pausiert den Taktfortschritt einer Gefahr (OPEN-23) |
+| `{ hazard_resume: id }` | SetValue (VRFlag "hazard.<id>.paused") "false" — reaktiviert eine pausierte Gefahr (OPEN-23) |
 
 Flags sind für Prädikate faktisch boolesch: `has_flag` prüft, ob ein Flag gesetzt
 ist (`"true"`). Ein Vergleich gegen einen *anderen* String-Wert ist über Flags
@@ -2603,6 +2607,95 @@ patrol:
   ganzen Rundkurs in einem Zug abreißen.
 - **Fehler:** `UnknownPatrolNPC`, `EmptyPatrolPath`, `UnknownPatrolRoom`,
   `BadPatrolMode`, `PatrolVariableClash`.
+
+---
+
+## Gefahrenlagen: `hazards:` (OPEN-23)
+
+Das Segment `hazards:` modelliert zeitabhängige, räumlich begrenzte Gefahrenlagen (Wasser/Flut, Lava, Feuer, Sturm, Einsturz, Giftgas, Seuche etc.) als reines Compiler-Zucker ohne Kern-Eingriff.
+Jede Gefahr wird über die Achsen **Verlauf (`track`) × Ausdehnung (`footprint`) × Wirkung (`stages`, `on_zone`, `telegraph`)** definiert:
+
+```yaml
+hazards:
+  reservoir:                              # Bezeichner der Gefahr (id)
+    track:
+      max: 8                              # Maximaler Level (0..max, Pflicht)
+      start: 8                            # Startlevel (Default: 0)
+      rate: 1                             # Schrittweite pro Takt in Richtung target (Default: 1)
+      every: 1                            # Takt-Intervall in Zügen (Default: 1)
+      target: 8                           # Ziellevel, auf das sich level zubewegt (Default: start)
+      when:                               # Optional: Bedingung für den Takt
+        has_flag: dam_open
+    footprint:
+      by: elevation                       # elevation | list | tag
+      # Bei 'elevation': Schwelle je Raum (Zonenzugehörigkeit gdw. level >= Schwelle)
+      rooms: { reservoir: 0, reservoir_north: 3, reservoir_south: 3 }
+      # Bei 'list': Räume je Stufe
+      # stages_rooms: { 1: [halle], 2: [halle, schiff] }
+      # Bei 'tag': alle Räume mit diesem Raum-Tag (aktiv sobald level > 0)
+      # tag: outdoor
+    stages:                               # Hooks beim ERREICHEN eines Levels (steigend oder fallend)
+      0:
+        - msg: "Der Pegel ist jetzt niedrig."
+        - reveal: truhe
+      8:
+        - msg: "Das Wasser hat seinen Höchststand erreicht."
+    on_zone:                              # Effekte pro Takt für Räume in der Zone
+      - if: { at: player, room: reservoir }
+        then:
+          - damage: 5
+          - msg: "Das tosende Wasser reisst dich mit!"
+    telegraph:                            # Vorwarnungen je nach Aufenthaltsort
+      adjacent: "Du hoerst Wasser rauschen."
+      inside: "Das Wasser steht dir bis zur Huefte."
+```
+
+### Verlauf (`track:`)
+- `max`: Pflichtwert (> 0). Legt den Wertebereich `0..max` fest.
+- `start`: Startwert des Levels (0..max, Default: 0).
+- `rate`: Schrittweite pro Takt in Richtung `target` (Default: 1).
+- `every`: Taktintervall in Zügen (Default: 1). Bei jedem Zug erhöht sich die interne Taktvariable; alle `every` Züge schreitet der Level fort.
+- `target`: Zielpegel (0..max, Default: `start`). Der Pegel bewegt sich schrittweise (`rate`) von `start` auf `target` zu.
+- `when`: Optionale Vorbedingung. Ist sie nicht erfüllt, pausiert der Taktfortschritt.
+
+### Ausdehnung (`footprint:`)
+- `by: elevation`: Ein Raum `r` liegt in der Gefahrenzone, wenn `hazard.<id>.level >= schwelle(r)`. Die Schwellen werden über `rooms: { <raum>: <schwelle> }` deklariert.
+- `by: list`: Feste Raumlisten je Stufe über `stages_rooms: { <level>: [<raum1>, <raum2>] }`.
+- `by: tag`: Alle Räume mit dem Raum-Tag `tag: <tag>` gehören zur Gefahrenzone, sobald `hazard.<id>.level > 0`.
+
+### Wirkung & Hooks
+- `stages:`: Hook-Effekte beim Erreichen eines Levels `n` (feuert einmalig beim Übergang von `prev != n` auf `level == n`, egal ob steigend, fallend oder per `hazard_jump`).
+- `on_zone:`: Autoreneffekte, die pro Takt für Spieler in Zonenräumen ausgewertet werden.
+- `telegraph:`: Atmosphärische Vorwarnungen:
+  - `inside:`: Wird ausgegeben, wenn der Spieler sich in der Gefahrenzone befindet.
+  - `adjacent:`: Wird ausgegeben, wenn der Spieler sich in einem Nachbarraum (angrenzend an die Gefahrenzone) befindet.
+
+### Autor-Effekte (AActionOutcome)
+- `hazard_target: { hazard: <id>, to: <n> }` — Ändert das Ziellevel `hazard.<id>.target`. Der Level bewegt sich in den folgenden Takten mit `rate` dorthin.
+- `hazard_jump: { hazard: <id>, to: <n> }` — Setzt `hazard.<id>.level` hart auf `<n>` (Klammerung 0..max; löst entsprechende `stages`-Hooks aus).
+- `hazard_pause: <id>` / `hazard_pause: { hazard: <id> }` — Pausiert die Taktung der Gefahr (`hazard.<id>.paused = true`).
+- `hazard_resume: <id>` / `hazard_resume: { hazard: <id> }` — Reaktiviert eine pausierte Gefahr.
+
+### Autor-Prädikate
+- `hazard_level: { hazard: <id>, eq: <n> }` (oder `gte`, `gt`, `lte`, `lt`, `neq`) — Vergleicht den aktuellen Level mit einem Zahlenwert.
+- `in_hazard: { hazard: <id>, room: <id>|here }` — Prüft, ob der angegebene Raum (oder der aktuelle Aufenthaltsort) in der Gefahrenzone liegt.
+
+### Generierte Variablen & Namensraum
+Der Namensraum `hazard.*` ist reserviert (`HazardVariableClash`). Pro Gefahr werden folgende Variablen erzeugt:
+- `hazard.<id>.level`: Aktueller Gefahrenlevel (`Int`, 0..max).
+- `hazard.<id>.target`: Angestrebtes Ziellevel (`Int`).
+- `hazard.<id>.clock`: Interner Taktzähler (`Int`).
+- `hazard.<id>.prev`: Vorheriger Level zur Zustandserkennung der Stage-Hooks (`Int`).
+- `hazard.<id>.paused`: Flag für den Pausierungsstatus (`Flag`).
+
+### Fehlercodes
+- `UnknownHazard`: Referenz auf eine nicht existierende Gefahr in Effekten oder Prädikaten.
+- `HazardLevelOutOfRange`: Ungültige Level-Angabe (außerhalb 0..max).
+- `HazardUnknownRoom`: Im Footprint referenzierter Raum existiert nicht in `rooms:`.
+- `HazardFootprintEmpty`: Footprint enthält keine Räume (oder bei `tag` passt kein Raum auf den Tag).
+- `HazardVariableClash`: Eine Variable mit dem Präfix `hazard.<id>.` wurde manuell unter `variables:` deklariert.
+- `DuplicateHazard`: Doppelte Hazard-ID in der `hazards:`-Deklaration.
+- `HazardIdEmpty`: Leere Hazard-ID angegeben.
 
 ---
 

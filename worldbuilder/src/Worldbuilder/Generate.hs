@@ -1375,6 +1375,7 @@ emitAdventure t plan seed =
             , advEnvironment       = Nothing
             , advStealth           = Nothing
             , advPatrol            = Nothing
+            , advHazards           = Nothing
             , advCombat            = dtCombat t
             , advAbilities         = []
             , advEndArt            = Map.empty

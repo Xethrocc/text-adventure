@@ -154,7 +154,7 @@ echo "== 4b. author content tests (B1) =="
 # Content tests as data: the `tests:` section of an adventure runs through
 # `worldbuilder test` (ordered markers). Extend the list as adventures grow
 # their own tests.
-for name in procedures wissen kapitel krypta quest_rpg pursuit wander multiraum include_demo mengen massen behaelter stroeme phasen sprache npc-interaktion npc-massen npc-ausruestung npc-tod quest-kette karte wuerfel ketten npc-zustaende zuneigung zyklen rezeptwissen score roguelike_dungeon board_nim idle_manufaktur krypta_der_verdammten alchemie_werkstatt chrome_and_ash neon_phantom survival_expedition soul_collector zeitschleife theater; do
+for name in procedures wissen kapitel krypta quest_rpg pursuit wander multiraum include_demo mengen massen behaelter stroeme phasen sprache npc-interaktion npc-massen npc-ausruestung npc-tod quest-kette karte wuerfel ketten npc-zustaende zuneigung zyklen rezeptwissen score roguelike_dungeon board_nim idle_manufaktur krypta_der_verdammten alchemie_werkstatt chrome_and_ash neon_phantom survival_expedition soul_collector zeitschleife theater hazards; do
     case "$name" in
         procedures) src="examples/fixtures/procedures.yaml" ;;
         wander) src="examples/fixtures/wander.yaml" ;;
@@ -195,6 +195,7 @@ for name in procedures wissen kapitel krypta quest_rpg pursuit wander multiraum 
         soul_collector) src="examples/genres/soul_collector.yaml" ;;
         zeitschleife) src="examples/genres/zeitschleife.yaml" ;;
         theater) src="examples/genres/theater.yaml" ;;
+        hazards) src="examples/modules/hazards.yaml" ;;
     esac
     "${WORLDBUILDER[@]}" test "$src" || exit 1
 done

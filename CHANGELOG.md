@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### OPEN-23: Gefahrenlagen (`hazards:`) — Stufe 1
+
+Neues Modul- und Top-Level-Segment `hazards:` für generalisierte, zeitabhängige
+und räumlich begrenzte Gefahrenlagen (Flut, Wasserstände, Sturm, Einsturz, Gas,
+Feuer). Vollständig als Compiler-Zucker ohne Eingriff in den Engine-Kern
+realisiert (`docs/plan-hazards.md`).
+
+- **Verlauf (`track:`):** Steuert Pegel `0..max` über Takt (`every`), Schrittweite
+  (`rate`), Zielpegel (`target`), Startwert (`start`) und optionales Gate (`when`).
+- **Ausdehnung (`footprint:`):** Räumliche Zonen über Schwellenwerte (`elevation`),
+  Listen je Level (`list` / `stages_rooms`) oder Raum-Tags (`tag`).
+- **Wirkung & Hooks:** Level-Übergangs-Hooks (`stages:`), zonenweite Runden-Effekte
+  (`on_zone:`), atmosphärische Vorwarnungen (`telegraph:` mit `inside` und `adjacent`).
+- **Autor-Effekte:** `hazard_target`, `hazard_jump`, `hazard_pause`, `hazard_resume`.
+- **Autor-Prädikate:** `hazard_level` (mit `eq`/`gte`/`lte` etc.), `in_hazard` (`room` oder `here`).
+- **Variablen & Namensraum:** Reservierter Namensraum `hazard.*` (`hazard.<id>.level`,
+  `.target`, `.clock`, `.prev`, `.paused`).
+- **Validierung:** Diagnose-Codes `UnknownHazard`, `HazardLevelOutOfRange`,
+  `HazardUnknownRoom`, `HazardFootprintEmpty`, `HazardVariableClash`,
+  `DuplicateHazard`, `HazardIdEmpty`.
+- **Byte-Vertrag:** `hazards:` wird im `world.json` nur serialisiert, wenn im
+  Abenteuer deklariert; Bestandsabenteuer bleiben byte-identisch.
+- **Fixture & Tests:** Referenz-Modul `examples/modules/hazards.yaml` (Wasserstand,
+  Gebirgssturm, Stolleneinsturz) mit 4 Inhalts-Tests; umfassende Unit-, Golden-,
+  Save/Load-, Fuzz- und Performance-Tests.
+
 ### OPEN-21: Mehrwort-Verben & Präpositionalphrasen
 
 `verbs:` akzeptiert Mehrwort-Namen/-Aliase (`put out`, `blow out`) und

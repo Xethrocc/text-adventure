@@ -207,6 +207,7 @@ minAdventure room = Adventure
     , advEnvironment = Nothing
     , advStealth = Nothing
     , advPatrol = Nothing
+    , advHazards = Nothing
     , advCombat = Nothing
     , advAbilities = []
     , advEndArt = Map.empty
@@ -1945,6 +1946,9 @@ findExample fname = firstExisting
     , "examples/templates" </> fname
     , "../examples/templates" </> fname
     , "../../examples/templates" </> fname
+    , "examples/modules" </> fname
+    , "../examples/modules" </> fname
+    , "../../examples/modules" </> fname
     ]
   where
     firstExisting [] = pure Nothing
@@ -4987,6 +4991,14 @@ tests =
     , ("steal:/swap_inventory: compile and validate actor refs (OPEN-15/OPEN-20)", testStealSwapCompilesAndValidates)
     , ("fuel: compiles, seeds the counter and compiles set_fuel/add_fuel (OPEN-17)", testFuelCompiles)
     , ("fuel: bad start/threshold shapes are compile errors (OPEN-17)", testFuelValidation)
+    -- OPEN-23: Gefahrenlagen (hazards:)
+    , ("hazards: compile and mechanics (rise, fall, turnaround, jump, pause/resume)", testHazardsCompileAndMechanics)
+    , ("hazards: save/load roundtrip and validation clean", testHazardsSaveLoadRoundtrip)
+    , ("hazards: footprints (elevation, list, tag) and telegraphs", testHazardsFootprintsAndTelegraph)
+    , ("hazards: static validation (UnknownHazard, HazardLevelOutOfRange, etc.)", testHazardsStaticValidation)
+    , ("hazards: unknown YAML keys emit warnings", testHazardsUnknownKeyWarning)
+    , ("hazards: locate and fuzz integration", testHazardsFuzzAndLocate)
+    , ("hazards: performance measurement (~500 triggers)", testHazardsPerformance500Triggers)
     ]
 
 -- ---------------------------------------------------------------------------
@@ -10412,6 +10424,332 @@ testContainerHasPredicateCompiles = do
         b <- expectTrue ("MissingItem ruine, got: " ++ show errs) (MissingItem "ruine" `elem` errs)
         pure (a && b)
     pure (r1 && r2)
+
+-- ---------------------------------------------------------------------------
+-- OPEN-23: Gefahrenlagen (hazards:) Tests
+-- ---------------------------------------------------------------------------
+
+testHazardsCompileAndMechanics :: IO Bool
+testHazardsCompileAndMechanics = do
+    mbPath <- findExample "hazards.yaml"
+    case mbPath of
+        Nothing -> do
+            putStrLn "  hazards.yaml not found"
+            pure False
+        Just path -> do
+            yamlBytes <- BLC.readFile path
+            case decode1 yamlBytes of
+                Left err -> do
+                    putStrLn $ "  hazards.yaml decode failed: " ++ show err
+                    pure False
+                Right (adv :: Adventure) -> case compileAdventure adv of
+                    Left errs -> do
+                        putStrLn $ "  hazards.yaml compile failed: " ++ issuesText errs
+                        pure False
+                    Right cr -> do
+                        let vars = E.variables (crSave cr)
+                        -- 1. Initial variables
+                        r1 <- expectEqual (Just (E.VVInt 0)) (Map.lookup "hazard.wasser.level" vars)
+                        r2 <- expectEqual (Just (E.VVInt 0)) (Map.lookup "hazard.wasser.target" vars)
+                        r3 <- expectEqual (Just (E.VVInt 0)) (Map.lookup "hazard.wasser.clock" vars)
+                        r4 <- expectEqual (Just (E.VVInt 0)) (Map.lookup "hazard.wasser.prev" vars)
+
+                        -- 2. Trigger existence
+                        let trigs = E.triggerDefs (crWorld cr)
+                        r5 <- expectTrue "tick trigger exists" (isJust (find ((== "hazard.wasser.tick") . E.trId) trigs))
+                        r6 <- expectTrue "stage trigger exists" (isJust (find ((== "hazard.wasser.stage") . E.trId) trigs))
+
+                        -- 3. Content tests run
+                        let ctests = advTests adv
+                        r7 <- expectEqual 4 (length ctests)
+                        results <- forM ctests $ \ct -> do
+                            let res = executeContentTest ct (crWorld cr) (crSave cr)
+                            case res of
+                                Nothing -> pure True
+                                Just m  -> do
+                                    putStrLn $ "  content test failed on marker: " ++ m
+                                    pure False
+                        pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && and results)
+
+testHazardsSaveLoadRoundtrip :: IO Bool
+testHazardsSaveLoadRoundtrip = do
+    mbPath <- findExample "hazards.yaml"
+    case mbPath of
+        Nothing -> pure False
+        Just path -> do
+            yamlBytes <- BLC.readFile path
+            case decode1 yamlBytes of
+                Left _ -> pure False
+                Right (adv :: Adventure) -> case compileAdventure adv of
+                    Left _ -> pure False
+                    Right cr -> do
+                        let worldErrs = validateWorld (crWorld cr)
+                        r1 <- expectTrue ("world validates clean: " ++ show worldErrs) (null worldErrs)
+                        let stateErrs = validateGameState (crWorld cr) (crSave cr)
+                        r2 <- expectTrue ("state validates clean: " ++ show stateErrs) (null stateErrs)
+                        -- Save roundtrip
+                        let encoded = Aeson.encode (crSave cr)
+                        case Aeson.decode encoded of
+                            Nothing -> expectTrue "SaveState JSON decodes cleanly" False
+                            Just (sv' :: E.SaveState) -> do
+                                r3 <- expectEqual (crSave cr) sv'
+                                pure (r1 && r2 && r3)
+
+testHazardsFootprintsAndTelegraph :: IO Bool
+testHazardsFootprintsAndTelegraph = do
+    mbPath <- findExample "hazards.yaml"
+    case mbPath of
+        Nothing -> pure False
+        Just path -> do
+            yamlBytes <- BLC.readFile path
+            case decode1 yamlBytes of
+                Left _ -> pure False
+                Right (adv :: Adventure) -> case compileAdventure adv of
+                    Left _ -> pure False
+                    Right cr -> do
+                        let trigs = E.triggerDefs (crWorld cr)
+                            trigIds = map E.trId trigs
+                        -- Elevation footprint triggers
+                        r1 <- expectTrue "zone trigger for reservoir" ("hazard.wasser.zone.reservoir" `elem` trigIds)
+                        r2 <- expectTrue "telegraph in for reservoir" ("hazard.wasser.telegraph.in.reservoir" `elem` trigIds)
+                        r3 <- expectTrue "telegraph in for damm" ("hazard.wasser.telegraph.in.damm" `elem` trigIds)
+                        r4 <- expectTrue "telegraph adj for hafen" ("hazard.wasser.telegraph.adj.hafen" `elem` trigIds)
+                        -- List footprint triggers
+                        r5 <- expectTrue "zone trigger for tunnel" ("hazard.einsturz.zone.tunnel" `elem` trigIds)
+                        r6 <- expectTrue "zone trigger for kammer" ("hazard.einsturz.zone.kammer" `elem` trigIds)
+                        -- Tag footprint triggers (outdoor: hafen, damm, reservoir)
+                        r7 <- expectTrue "zone trigger for hafen" ("hazard.sturm.zone.hafen" `elem` trigIds)
+                        r8 <- expectTrue "zone trigger for damm" ("hazard.sturm.zone.damm" `elem` trigIds)
+                        r9 <- expectTrue "telegraph adj for keller" ("hazard.sturm.telegraph.adj.keller" `elem` trigIds)
+                        pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9)
+
+testHazardsStaticValidation :: IO Bool
+testHazardsStaticValidation = do
+    -- 1. UnknownHazard in outcomes
+    let badOutcomeYaml = unlines
+            [ "name: Unknown Hazard Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: Raum"
+            , "rules:"
+            , "  - id: test_rule"
+            , "    on: turn"
+            , "    effects:"
+            , "      - { hazard_target: { hazard: ghost, to: 5 } }"
+            ]
+    r1 <- case decode1 (BLC.pack badOutcomeYaml) of
+        Right (a :: Adventure) -> case compileAdventure a of
+            Left errs -> expectTrue "UnknownHazard in outcome" (any ((== "UnknownHazard") . ciCode) errs)
+            Right _   -> do { putStrLn "  r1 compiled unexpectedly Right"; pure False }
+        Left err -> do { putStrLn $ "  r1 decode failed: " ++ show err; pure False }
+
+    -- 2. UnknownHazard in predicate
+    let badPredYaml = unlines
+            [ "name: Unknown Hazard Pred Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: Raum"
+            , "rules:"
+            , "  - id: test_rule"
+            , "    on: turn"
+            , "    when: { hazard_level: { hazard: phantom, gte: 1 } }"
+            , "    effects:"
+            , "      - { msg: \"Test\" }"
+            ]
+    r2 <- case decode1 (BLC.pack badPredYaml) of
+        Right (a :: Adventure) -> case compileAdventure a of
+            Left errs -> expectTrue "UnknownHazard in predicate" (any ((== "UnknownHazard") . ciCode) errs)
+            Right _   -> do { putStrLn "  r2 compiled unexpectedly Right"; pure False }
+        Left err -> do { putStrLn $ "  r2 decode failed: " ++ show err; pure False }
+
+    -- 3. HazardLevelOutOfRange
+    let outOfRangeYaml = unlines
+            [ "name: Range Test"
+            , "start_room: loc_0"
+            , "hazards:"
+            , "  flut:"
+            , "    track:"
+            , "      max: 5"
+            , "      start: 10"
+            , "      target: 0"
+            , "    footprint:"
+            , "      by: elevation"
+            , "      rooms: { loc_0: 0 }"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: Raum"
+            ]
+    r3 <- case decode1 (BLC.pack outOfRangeYaml) of
+        Right (a :: Adventure) -> case compileAdventure a of
+            Left errs -> expectTrue "HazardLevelOutOfRange on start > max" (any ((== "HazardLevelOutOfRange") . ciCode) errs)
+            Right _   -> do { putStrLn "  r3 compiled unexpectedly Right"; pure False }
+        Left err -> do { putStrLn $ "  r3 decode failed: " ++ show err; pure False }
+
+    -- 4. HazardUnknownRoom
+    let unknownRoomYaml = unlines
+            [ "name: Unknown Room Test"
+            , "start_room: loc_0"
+            , "hazards:"
+            , "  flut:"
+            , "    track:"
+            , "      max: 5"
+            , "      start: 0"
+            , "    footprint:"
+            , "      by: elevation"
+            , "      rooms: { nirvana: 0 }"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: Raum"
+            ]
+    r4 <- case decode1 (BLC.pack unknownRoomYaml) of
+        Right (a :: Adventure) -> case compileAdventure a of
+            Left errs -> expectTrue "HazardUnknownRoom" (any ((== "HazardUnknownRoom") . ciCode) errs)
+            Right _   -> do { putStrLn "  r4 compiled unexpectedly Right"; pure False }
+        Left err -> do { putStrLn $ "  r4 decode failed: " ++ show err; pure False }
+
+    -- 5. HazardFootprintEmpty
+    let emptyFpYaml = unlines
+            [ "name: Empty FP Test"
+            , "start_room: loc_0"
+            , "hazards:"
+            , "  flut:"
+            , "    track:"
+            , "      max: 5"
+            , "      start: 0"
+            , "    footprint:"
+            , "      by: elevation"
+            , "      rooms: {}"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: Raum"
+            ]
+    r5 <- case decode1 (BLC.pack emptyFpYaml) of
+        Right (a :: Adventure) -> case compileAdventure a of
+            Left errs -> expectTrue "HazardFootprintEmpty" (any ((== "HazardFootprintEmpty") . ciCode) errs)
+            Right _   -> do { putStrLn "  r5 compiled unexpectedly Right"; pure False }
+        Left err -> do { putStrLn $ "  r5 decode failed: " ++ show err; pure False }
+
+    -- 6. HazardVariableClash
+    let varClashYaml = unlines
+            [ "name: Var Clash Test"
+            , "start_room: loc_0"
+            , "variables:"
+            , "  - name: hazard.custom.level"
+            , "    type: int"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: Raum"
+            ]
+    r6 <- case decode1 (BLC.pack varClashYaml) of
+        Right (a :: Adventure) -> case compileAdventure a of
+            Left errs -> expectTrue "HazardVariableClash" (any ((== "HazardVariableClash") . ciCode) errs)
+            Right _   -> do { putStrLn "  r6 compiled unexpectedly Right"; pure False }
+        Left err -> do { putStrLn $ "  r6 decode failed: " ++ show err; pure False }
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
+
+testHazardsUnknownKeyWarning :: IO Bool
+testHazardsUnknownKeyWarning = do
+    let typoYaml = unlines
+            [ "name: Typo Test"
+            , "start_room: loc_0"
+            , "hazards:"
+            , "  flut:"
+            , "    track:"
+            , "      max: 5"
+            , "      trak_rate: 1"
+            , "    footprint:"
+            , "      by: elevation"
+            , "      rooms: { loc_0: 0 }"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: Raum"
+            ]
+    case decode1 (BLC.pack typoYaml) of
+        Right (a :: Adventure) -> case compileAdventure a of
+            Left errs -> do
+                putStrLn $ "  unexpected compile error: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let warns = crWarnings cr
+                expectTrue "UnknownYamlKey warning for trak_rate"
+                    (any (\w -> ciCode w == "UnknownYamlKey" && "trak_rate" `isInfixOf` ciMessage w) warns)
+        Left _ -> pure False
+
+testHazardsFuzzAndLocate :: IO Bool
+testHazardsFuzzAndLocate = do
+    mbPath <- findExample "hazards.yaml"
+    case mbPath of
+        Nothing -> pure False
+        Just path -> do
+            yamlBytes <- BLC.readFile path
+            let yamlStr = BLC.unpack yamlBytes
+                mPos = lineForPath yamlStr "hazards.wasser.track.max"
+            r1 <- case mPos of
+                Just (l, _) -> expectTrue "lineForPath finds track.max line" (l > 0)
+                Nothing     -> expectTrue "lineForPath should find hazards.wasser.track.max" False
+            r2 <- case decode1 yamlBytes of
+                Left err -> do
+                    putStrLn $ "  decode1 failed: " ++ show err
+                    pure False
+                Right (a :: Adventure) -> case compileAdventure a of
+                    Left errs -> do
+                        putStrLn $ "  compile failed: " ++ issuesText errs
+                        pure False
+                    Right cr -> do
+                        let sample = take 50 (genInputs 42 (fuzzVocab (crWorld cr)))
+                        r3 <- expectTrue "genInputs produces commands" (length sample == 50)
+                        found <- fuzzRun 1000000 50 25 1 42 (crWorld cr) (crSave cr) sample
+                        case found of
+                            Nothing -> pure r3
+                            Just f -> do
+                                putStrLn $ "  fuzz finding: " ++ show f
+                                pure False
+            pure (r1 && r2)
+
+testHazardsPerformance500Triggers :: IO Bool
+testHazardsPerformance500Triggers = do
+    let roomCount = 50 :: Int
+        hazCount = 10 :: Int
+        rawRooms = [ minRoom ("room_" ++ show i) | i <- [1..roomCount] ]
+        roomsWithExits =
+            [ r { arExits = Map.fromList
+                    ([ ("north", AExitRef ("room_" ++ show (i + 1)) Nothing Nothing False Nothing) | i < roomCount ]
+                     ++ [ ("south", AExitRef ("room_" ++ show (i - 1)) Nothing Nothing False Nothing) | i > 1 ])
+                }
+            | (i, r) <- zip [1..roomCount] rawRooms
+            ]
+        hazards =
+            [ AHazard
+                { hazId = "hazard_" ++ show h
+                , hazTrack = ATrack 10 0 1 1 10 Nothing
+                , hazFootprint = AFootprint FPElevation (Map.fromList [ ("room_" ++ show i, i `mod` 10) | i <- [1..roomCount] ]) [] Nothing
+                , hazStages = [(5, [AOMessage "Halbzeit"])]
+                , hazOnZone = [AOMessage "Zone!"]
+                , hazTelegraph = Just (ATelegraph (Just "Gefahr naht!") (Just "Mitten drin!"))
+                }
+            | h <- [1..hazCount]
+            ]
+        adv = (minAdventure (head roomsWithExits))
+                { advRooms = roomsWithExits
+                , advHazards = Just hazards
+                }
+    case compileAdventure adv of
+        Left errs -> do
+            putStrLn $ "  performance test compile failed: " ++ issuesText errs
+            pure False
+        Right cr -> do
+            let trigs = E.triggerDefs (crWorld cr)
+            expectTrue ("triggers >= 500, got: " ++ show (length trigs)) (length trigs >= 500)
 
 main :: IO ()
 main = do

@@ -87,7 +87,7 @@ parseBytes path bytes = case map toLower (takeExtension path) of
 includeForbiddenKeys :: [String]
 includeForbiddenKeys =
     [ "name", "start_room", "interactions", "player", "environment", "stealth"
-    , "patrol", "combat", "game", "deck", "hand_limit", "handLimit"
+    , "patrol", "hazards", "combat", "game", "deck", "hand_limit", "handLimit"
     , "combine_verb", "journal", "progression", "title_art", "titleArt"
     , "language", "messages" ]
 
@@ -190,6 +190,7 @@ duplicateSections adv =
     , ("factions", map afId (advFactions adv))
     , ("pursuit", map apeNpc (advPursuit adv))
     , ("wander", map aweNpc (advWander adv))
+    , ("hazards", maybe [] (map hazId) (advHazards adv))
     , ("initial_flags", Map.keys (advInitialFlags adv))
     , ("initial_variables", Map.keys (advInitialVariables adv))
     , ("end_art", Map.keys (advEndArt adv))

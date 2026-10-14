@@ -486,6 +486,69 @@ Wolfsschaden (`patrol-death`).
 
 ---
 
+## 7j — Gefahrenlagen (`hazards:`)
+
+**Kernänderung: keine.** Zeitabhängige, räumlich begrenzte Gefahrenlagen
+(Wasserstände, Flut, Sturm, Einsturz, Gas, Feuer etc.) werden vollständig
+über `OnTurn`-Trigger und pro Gefahr reservierte Statusvariablen abgebildet;
+das `hazards:`-Segment kompiliert sie als reines Worldbuilder-Sugar.
+
+```yaml
+hazards:
+  pegel:
+    track:
+      max: 8
+      start: 8
+      rate: 1
+      every: 1
+      target: 8
+      when: { has_flag: dam_open }
+    footprint:
+      by: elevation
+      rooms: { reservoir: 0, reservoir_ufer: 3 }
+    stages:
+      0: [ { msg: "Der Pegel ist auf Tiefststand gesunken." }, { reveal: schatz } ]
+      8: [ { msg: "Das Wasser steht auf Hoechststand." } ]
+    on_zone:
+      - if: { at: player, room: reservoir }
+        then: [ { damage: 5 }, { msg: "Das tosende Wasser reisst dich mit!" } ]
+    telegraph:
+      adjacent: "Du hoerst Wasser rauschen."
+      inside: "Das Wasser steht dir bis zur Huefte."
+```
+
+- **Verlauf (`track:`):** Verwaltet den Pegel im Wertebereich `0..max`.
+  Pro Taktintervall (`every` Züge) bewegt sich der Level mit Schrittweite `rate`
+  in Richtung `target` (geklammert an `0..max`). Ein optionales `when:`-Prädikat
+  pausiert den Takt, wenn es nicht zutrifft.
+- **Ausdehnung (`footprint:`):**
+  - `elevation`: Ein Raum gehört zur Gefahrenzone, wenn `hazard.<id>.level >= schwelle`
+    laut Tabelle `rooms: { <raum>: <schwelle> }`.
+  - `list`: Feste Zonenraumlisten je Stufe via `stages_rooms: { <level>: [<raeume>] }`.
+  - `tag`: Alle Räume mit Raum-Tag `tag: <tag>` zählen zur Gefahrenzone, sobald `level > 0`.
+- **Wirkung & Hooks:**
+  - `stages:`: Feuert einmalig beim Erreichen eines Levels (Übergang `prev != n` auf
+    `level == n`), egal ob steigend, fallend oder per `hazard_jump`.
+  - `on_zone:`: Autoreneffekte, die pro Takt für Spieler in Zonenräumen ausgewertet werden.
+  - `telegraph:`: Atmosphärische Vorwarnungen für Räume innerhalb (`inside`) oder
+    angrenzend (`adjacent`) an die Gefahrenzone.
+- **Autor-Effekte:** `hazard_target: { hazard: <id>, to: <n> }` (steuert neues Ziel an),
+  `hazard_jump: { hazard: <id>, to: <n> }` (hartes Setzen des Levels),
+  `hazard_pause: <id>` / `hazard_resume: <id>`.
+- **Autor-Prädikate:** `hazard_level: { hazard: <id>, gte|lte|eq: <n> }`,
+  `in_hazard: { hazard: <id>, room: <id>|here }`.
+- **Generierte Variablen & Trigger:** Reservierter Namensraum `hazard.*`
+  (`hazard.<id>.level`, `.target`, `.clock`, `.prev`, `.paused`).
+  Trigger: `hazard.<id>.tick`, `hazard.<id>.stage`, `hazard.<id>.zone.<raum>`,
+  `hazard.<id>.telegraph.in.<raum>`, `hazard.<id>.telegraph.adj.<raum>`.
+- **Validierung:** `UnknownHazard`, `HazardLevelOutOfRange`, `HazardUnknownRoom`,
+  `HazardFootprintEmpty`, `HazardVariableClash`, `DuplicateHazard`, `HazardIdEmpty`.
+
+Fixture: `examples/modules/hazards.yaml` — Die versunkene Talsperre (Wasserstand
+per `elevation`, Gebirgssturm per `tag`, Einsturz des Stollen per `list`).
+
+---
+
 ## Kompositionsbeweis — `examples/modules/combo.yaml`
 
 Abnahmepunkt 2 der Phase: **ein** Referenzspiel nutzt **fünf** Module

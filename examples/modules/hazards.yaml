@@ -1,0 +1,212 @@
+name: Gefahrenlagen (Hazards)
+start_room: hafen
+
+# Modul 7j (OPEN-23): Gefahrenlagen (hazards:)
+# Pure Worldbuilder Sugar: track (Variablen level/target/clock/prev + tick/stage-Trigger)
+# x footprint (elevation / list / tag) x on_zone / telegraph.
+
+hazards:
+  wasser:
+    track:
+      max: 8
+      start: 0
+      rate: 2
+      every: 1
+      target: 0
+    footprint:
+      by: elevation
+      rooms:
+        reservoir: 0
+        damm: 4
+    stages:
+      "0":
+        - { msg: "Das Reservoir ist trocken." }
+      "4":
+        - { msg: "Das Wasser erreicht die Dammkrone!" }
+      "8":
+        - { msg: "Das Wasser hat den Hoechststand erreicht!" }
+    on_zone:
+      - if: { at: player, room: reservoir }
+        then:
+          - { msg: "Das Wasser reisst an deinen Fuessen!" }
+    telegraph:
+      adjacent: "Du hoerst Wasser rauschen."
+      inside: "Kaltes Wasser umspuelt dich."
+
+  sturm:
+    track:
+      max: 4
+      start: 0
+      rate: 1
+      every: 1
+      target: 0
+    footprint:
+      by: tag
+      tag: outdoor
+    stages:
+      "1":
+        - { msg: "Der Sturm bricht los!" }
+      "4":
+        - { msg: "Orkanboeen fegen ueber das Gelaende!" }
+    on_zone:
+      - { msg: "Der Wind heult unbarmherzig." }
+    telegraph:
+      adjacent: "Draussen heult der Sturm."
+
+  einsturz:
+    track:
+      max: 2
+      start: 0
+      rate: 1
+      every: 1
+      target: 0
+    footprint:
+      by: list
+      stages_rooms:
+        "1": [tunnel]
+        "2": [tunnel, kammer]
+    stages:
+      "1":
+        - { msg: "Der Tunnel erzittert — Staub rieselt herab." }
+      "2":
+        - { msg: "Die Decke stuerzt ein! Truemmer versperren den Weg." }
+    on_zone:
+      - { msg: "Steinschlag droht von der Decke." }
+
+verbs:
+  - { name: fluten, aliases: [flood] }
+  - { name: senken, aliases: [drain] }
+  - { name: sprung, aliases: [jump] }
+  - { name: beben, aliases: [quake] }
+  - { name: sturm_auf, aliases: [storm_on] }
+  - { name: sturm_halt, aliases: [storm_pause] }
+  - { name: sturm_weiter, aliases: [storm_resume] }
+  - { name: rasten, aliases: [wait] }
+
+rules:
+  - id: cmd_fluten
+    on: command fluten
+    effects:
+      - { hazard_target: { hazard: wasser, to: 8 } }
+      - { msg: "Du drehst das Ventil auf. Wasser stroemt ein!" }
+
+  - id: cmd_senken
+    on: command senken
+    effects:
+      - { hazard_target: { hazard: wasser, to: 0 } }
+      - { msg: "Du schliesst das Ventil. Das Wasser laeuft ab." }
+
+  - id: cmd_sprung
+    on: command sprung
+    effects:
+      - { hazard_target: { hazard: wasser, to: 8 } }
+      - { hazard_jump: { hazard: wasser, to: 8 } }
+      - { msg: "Ein Dammbruch! Das Wasser springt auf Maximum!" }
+
+  - id: cmd_beben
+    on: command beben
+    effects:
+      - { hazard_target: { hazard: einsturz, to: 2 } }
+      - { msg: "Ein Rumpeln erschuettert das Gebirge!" }
+
+  - id: cmd_sturm_auf
+    on: command sturm_auf
+    effects:
+      - { hazard_target: { hazard: sturm, to: 4 } }
+      - { msg: "Dunkle Wolken ziehen auf." }
+
+  - id: cmd_sturm_halt
+    on: command sturm_halt
+    effects:
+      - { hazard_pause: sturm }
+      - { msg: "Ein Zauber haelt den Sturm an." }
+
+  - id: cmd_sturm_weiter
+    on: command sturm_weiter
+    effects:
+      - { hazard_resume: sturm }
+      - { msg: "Der Zauber verfliegt — der Sturm tobt weiter." }
+
+  - id: cmd_rasten
+    on: command rasten
+    effects:
+      - { msg: "Du wartest einen Moment." }
+
+rooms:
+  - id: hafen
+    name: Kleiner Hafen
+    desc: "Ein ruhiges Hafenbecken. Im Norden fuehrt ein Pfad zum Damm, im Osten liegt ein Hoehleneingang, im Westen ein sicherer Keller."
+    tags: [outdoor]
+    exits:
+      north: {to: damm}
+      east: {to: tunnel}
+      west: {to: keller}
+
+  - id: damm
+    name: Wehrdamm
+    desc: "Eine massive Steinmauer haelt das Wasser zurueck. Nach Norden geht es zum Reservoir."
+    tags: [outdoor]
+    exits:
+      south: {to: hafen}
+      north: {to: reservoir}
+
+  - id: reservoir
+    name: Wasserreservoir
+    desc: "Das tiefe Becken des Speichers. Ein grosses Ventil ragt aus dem Boden."
+    tags: [outdoor]
+    exits:
+      south: {to: damm}
+
+  - id: tunnel
+    name: Bergwerkstunnel
+    desc: "Ein enger Stollen fuehrt tiefer in den Berg zur Schatzkammer."
+    tags: [underground]
+    exits:
+      west: {to: hafen}
+      east: {to: kammer}
+
+  - id: kammer
+    name: Schatzkammer
+    desc: "Eine uralte Kammer tief im Fels."
+    tags: [underground]
+    exits:
+      west: {to: tunnel}
+
+  - id: keller
+    name: Gewoelbekeller
+    desc: "Ein dicker Steinkeller, geschuetzt vor Wind und Wetter."
+    tags: [indoor]
+    exits:
+      east: {to: hafen}
+
+tests:
+  - name: "wasserpegel steigen und fallen"
+    input: [fluten, rasten, rasten, rasten, rasten, senken, rasten, rasten, rasten, rasten]
+    expect:
+      - "Wasser stroemt ein!"
+      - "Das Wasser erreicht die Dammkrone!"
+      - "Das Wasser hat den Hoechststand erreicht!"
+      - "Das Wasser laeuft ab."
+      - "Das Reservoir ist trocken."
+
+  - name: "hazard_jump loest stages aus"
+    input: [sprung, rasten]
+    expect:
+      - "Ein Dammbruch!"
+      - "Das Wasser hat den Hoechststand erreicht!"
+
+  - name: "einsturz phasenliste"
+    input: [beben, rasten, rasten]
+    expect:
+      - "Ein Rumpeln erschuettert das Gebirge!"
+      - "Der Tunnel erzittert — Staub rieselt herab."
+      - "Die Decke stuerzt ein! Truemmer versperren den Weg."
+
+  - name: "sturm tag und pause"
+    input: [sturm_auf, rasten, sturm_halt, rasten, rasten, sturm_weiter, rasten, rasten, rasten]
+    expect:
+      - "Dunkle Wolken ziehen auf."
+      - "Der Sturm bricht los!"
+      - "Ein Zauber haelt den Sturm an."
+      - "Der Zauber verfliegt — der Sturm tobt weiter."
+      - "Orkanboeen fegen ueber das Gelaende!"

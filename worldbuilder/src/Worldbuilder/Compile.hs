@@ -41,6 +41,8 @@ module Worldbuilder.Compile
     , checkDarkRoomDeadEnds
     , checkDeviceRefs
     , checkRecipeLearning
+    , compileHazards
+    , checkHazardRefs
     ) where
 
 import Worldbuilder.Types
@@ -282,7 +284,15 @@ outcomeSurfaces a =
     ++ [ ("procedures." ++ apId pr, apEffects pr) | pr <- advProcedures a ]
     ++ [ ("devices." ++ adId dv, deviceOutcomes dv) | dv <- advDevices a ]
     ++ [ ("progression", maybe [] (concatMap alEffects . aplLevels) (advProgression a)) ]
+    ++ hazardOutcomes (advHazards a)
   where
+    hazardOutcomes mHzs = case mHzs of
+        Nothing  -> []
+        Just hzs -> concat
+            [ [ ("hazards." ++ hazId h ++ ".stages." ++ show lvl, outs)
+              | (lvl, outs) <- hazStages h ]
+              ++ [ ("hazards." ++ hazId h ++ ".on_zone", hazOnZone h) ]
+            | h <- hzs ]
     roomOutcomes r = concat (catMaybes [ arOnEnter r, arOnLook r, arOnExit r, arSearch r ])
     itemOutcomes i = maybe [] id (aiOnTake i) ++ concat (Map.elems (aiVerbMap i))
         -- OPEN-17: the effect trees of item timers (`fuel:` milestones and the
@@ -367,6 +377,10 @@ predicateSites a =
           | Just env <- [advEnvironment a]
           , d <- envDrains env, Just p <- [drWhen d] ]
         , [ ("chapters." ++ achId c, p) | c <- advChapters a, Just p <- [achWhen c] ]
+        , [ ("hazards." ++ hazId h ++ ".track", p)
+          | Just hzs <- [advHazards a]
+          , h <- hzs
+          , Just p <- [traWhen (hazTrack h)] ]
         ]
 
 -- | B4: evaluate a condition to 'TruthTrue' / 'TruthFalse reason' /
@@ -656,8 +670,12 @@ compileAdventure adv =
             mergeShipVars partyAllVarDefs partyAllVarInitials shipVarDefs shipVarInitials
         (progErrs, compiledProgression, progVarDefs, progVarInitials) =
             compileProgression (advProgression adv)
-        (progConflictErrs, allVarDefs, allVarInitials) =
+        (progConflictErrs, progAllVarDefs, progAllVarInitials) =
             mergeProgressionVars shipAllVarDefs shipAllVarInitials progVarDefs progVarInitials
+        (hzErrs, hzTriggerDefs, hzVarDefs, hzVarInitials) =
+            compileHazards allRooms (advHazards adv)
+        (hzConflictErrs, allVarDefs, allVarInitials) =
+            mergeHazardVars progAllVarDefs progAllVarInitials hzVarDefs hzVarInitials
         progVarErrs = checkProgressionVarReserved varDefs
         gainXpWarns = checkGainXpWithoutProgression adv
 
@@ -665,6 +683,7 @@ compileAdventure adv =
                         ++ pursuitTriggers ++ wanderTriggerDefs
             ++ patrolTriggerDefs ++ shipTriggerDefs
             ++ partyTriggerDefs
+            ++ hzTriggerDefs
             ++ knowledgeTriggers ++ journalTriggers ++ deviceTriggers
         -- W1/W4/C4: inject the generated combine/notes/device/party-switch verbs into the registry so
         -- `parseCommandWith` understands them like any custom verb.
@@ -882,6 +901,9 @@ compileAdventure adv =
                     ++ progErrs
                     ++ progConflictErrs
                     ++ progVarErrs
+                    ++ hzErrs
+                    ++ hzConflictErrs
+                    ++ checkHazardRefs (advHazards adv) adv
                     ++ possessionErrs
                     ++ npcIxErrs
                     ++ pairIxErrs
@@ -1022,6 +1044,7 @@ checkUnknownYamlKeys (Aeson.Object topObj) =
             ++ checkInteractionsSection (KM.lookup "interactions" topObj)
             ++ checkProgressionSection (KM.lookup "progression" topObj)
             ++ checkListOrMap "statements" EntStatement (KM.lookup "statements" topObj) noNested
+            ++ checkListOrMap "hazards" EntHazard (KM.lookup "hazards" topObj) checkHazardNested
     in topWarns ++ sectionWarns
 checkUnknownYamlKeys _ = []
 
@@ -1071,6 +1094,20 @@ checkVarNested path o =
                         _               -> []
                    | (i, item) <- zip [0 :: Int ..] (Foldable.toList arr) ]
         _ -> []
+
+checkHazardNested :: String -> Aeson.Object -> [CompileIssue]
+checkHazardNested path o =
+    (case KM.lookup "track" o of
+        Just (Aeson.Object to) -> checkKeys (path ++ ".track") EntHazardTrack (KM.keys to)
+        _                      -> [])
+    ++
+    (case KM.lookup "footprint" o of
+        Just (Aeson.Object fo) -> checkKeys (path ++ ".footprint") EntHazardFootprint (KM.keys fo)
+        _                      -> [])
+    ++
+    (case KM.lookup "telegraph" o of
+        Just (Aeson.Object teo) -> checkKeys (path ++ ".telegraph") EntHazardTelegraph (KM.keys teo)
+        _                       -> [])
 
 checkListOrMap :: String
                -> EntityType
@@ -1784,6 +1821,353 @@ mergeWanderVars varDefs varInitials wanderDefs wanderInitials =
             | name <- Map.keys varDefs
             , name `Map.member` wanderDefs ]
     in (clashErrs, Map.union wanderDefs varDefs, Map.union wanderInitials varInitials)
+
+-- ---------------------------------------------------------------------------
+-- Gefahrenlagen (hazards:) (OPEN-23)
+-- ---------------------------------------------------------------------------
+
+-- | Compile the `hazards:` segment (OPEN-23). Pure Worldbuilder sugar:
+--   - Track variables: `hazard.<id>.level`, `.target`, `.clock`, `.prev`.
+--   - Tick trigger: `hazard.<id>.tick` advances clock, updates level towards target clamped by rate.
+--   - Stage trigger: `hazard.<id>.stage` fires hooks when level == n && prev /= n, updates prev := level.
+--   - Zone triggers: `hazard.<id>.zone.<room>` fires on_zone effects when player is in room & active zone.
+--   - Telegraph triggers: `hazard.<id>.telegraph.in.<room>` and `hazard.<id>.telegraph.adj.<room>`.
+compileHazards :: Map.Map String E.Room -> Maybe [AHazard]
+               -> ([CompileIssue], [E.TriggerDef], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+compileHazards _ Nothing = ([], [], Map.empty, Map.empty)
+compileHazards _ (Just []) = ([], [], Map.empty, Map.empty)
+compileHazards allRooms (Just hzs) =
+    let results = [ compileOneHazard allRooms h | h <- hzs ]
+        errsList = [ e | (e, _, _, _) <- results ]
+        trigsList = [ t | (_, t, _, _) <- results ]
+        vdefsList = [ v | (_, _, v, _) <- results ]
+        initsList = [ i | (_, _, _, i) <- results ]
+        dupIdErrs =
+            [ ciError ("hazards." ++ hid) "DuplicateHazard"
+                ("hazard id '" ++ hid ++ "' is declared more than once")
+            | (hid, count) <- Map.toList (Map.fromListWith (+) [(hazId h, 1 :: Int) | h <- hzs])
+            , count > 1
+            ]
+        emptyIdErrs =
+            [ ciError "hazards" "HazardIdEmpty" "hazard id must not be empty"
+            | h <- hzs
+            , null (hazId h)
+            ]
+    in ( concat errsList ++ dupIdErrs ++ emptyIdErrs
+       , concat trigsList
+       , Map.unions vdefsList
+       , Map.unions initsList
+       )
+
+compileOneHazard :: Map.Map String E.Room -> AHazard
+                 -> ([CompileIssue], [E.TriggerDef], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+compileOneHazard allRooms h =
+    let hid = hazId h
+        tr = hazTrack h
+        fp = hazFootprint h
+        mx = traMax tr
+        st = traStart tr
+        rt = traRate tr
+        ev = traEvery tr
+        tg = traTarget tr
+
+        -- Validation
+        trackRangeErrs =
+            [ ciError ("hazards." ++ hid ++ ".track.max") "HazardLevelOutOfRange"
+                "hazard track max must be positive (> 0)"
+            | mx <= 0 ]
+            ++
+            [ ciError ("hazards." ++ hid ++ ".track.start") "HazardLevelOutOfRange"
+                ("hazard track start " ++ show st ++ " must be in 0..max (" ++ show mx ++ ")")
+            | mx > 0, st < 0 || st > mx ]
+            ++
+            [ ciError ("hazards." ++ hid ++ ".track.target") "HazardLevelOutOfRange"
+                ("hazard track target " ++ show tg ++ " must be in 0..max (" ++ show mx ++ ")")
+            | mx > 0, tg < 0 || tg > mx ]
+            ++
+            [ ciError ("hazards." ++ hid ++ ".track.rate") "HazardLevelOutOfRange"
+                "hazard track rate must be positive (> 0)"
+            | rt <= 0 ]
+            ++
+            [ ciError ("hazards." ++ hid ++ ".track.every") "HazardLevelOutOfRange"
+                "hazard track every must be positive (> 0)"
+            | ev <= 0 ]
+
+        stageRangeErrs =
+            [ ciError ("hazards." ++ hid ++ ".stages." ++ show lvl) "HazardLevelOutOfRange"
+                ("stage level " ++ show lvl ++ " is outside 0..max (" ++ show mx ++ ")")
+            | mx > 0, (lvl, _) <- hazStages h, lvl < 0 || lvl > mx ]
+
+        (footprintErrs, fpRoomsList) = case fpBy fp of
+            FPElevation ->
+                let rMap = fpRooms fp
+                    emptyErr = [ ciError ("hazards." ++ hid ++ ".footprint.rooms") "HazardFootprintEmpty"
+                                   "elevation footprint has no rooms declared"
+                               | Map.null rMap ]
+                    unknownRoomErrs =
+                        [ ciError ("hazards." ++ hid ++ ".footprint.rooms." ++ r) "HazardUnknownRoom"
+                            ("footprint references unknown room '" ++ r ++ "'")
+                        | r <- Map.keys rMap, not (Map.member r allRooms) ]
+                    rangeErrs =
+                        [ ciError ("hazards." ++ hid ++ ".footprint.rooms." ++ r) "HazardLevelOutOfRange"
+                            ("elevation threshold " ++ show th ++ " is outside 0..max (" ++ show mx ++ ")")
+                        | mx > 0, (r, th) <- Map.toList rMap, th < 0 || th > mx ]
+                in (emptyErr ++ unknownRoomErrs ++ rangeErrs, Map.keys rMap)
+
+            FPList ->
+                let srList = fpStagesRooms fp
+                    allSrRooms = concatMap snd srList
+                    emptyErr = [ ciError ("hazards." ++ hid ++ ".footprint.stages_rooms") "HazardFootprintEmpty"
+                                   "list footprint has no rooms declared"
+                               | null srList || null allSrRooms ]
+                    unknownRoomErrs =
+                        [ ciError ("hazards." ++ hid ++ ".footprint.stages_rooms." ++ show lvl) "HazardUnknownRoom"
+                            ("footprint references unknown room '" ++ r ++ "'")
+                        | (lvl, rms) <- srList, r <- rms, not (Map.member r allRooms) ]
+                    rangeErrs =
+                        [ ciError ("hazards." ++ hid ++ ".footprint.stages_rooms." ++ show lvl) "HazardLevelOutOfRange"
+                            ("list stage level " ++ show lvl ++ " is outside 0..max (" ++ show mx ++ ")")
+                        | mx > 0, (lvl, _) <- srList, lvl < 0 || lvl > mx ]
+                in (emptyErr ++ unknownRoomErrs ++ rangeErrs, nub allSrRooms)
+
+            FPTag ->
+                case fpTag fp of
+                    Nothing ->
+                        ( [ ciError ("hazards." ++ hid ++ ".footprint.tag") "HazardFootprintEmpty"
+                              "tag footprint missing tag declaration" ]
+                        , [] )
+                    Just t ->
+                        let taggedRooms = [ rId | (rId, rm) <- Map.toList allRooms, t `Set.member` E.roomTags rm ]
+                            emptyErr = [ ciError ("hazards." ++ hid ++ ".footprint.tag") "HazardFootprintEmpty"
+                                           ("tag footprint matches no rooms with tag '" ++ t ++ "'")
+                                       | null taggedRooms ]
+                        in (emptyErr, taggedRooms)
+
+        allIssues = trackRangeErrs ++ stageRangeErrs ++ footprintErrs
+
+        -- Variables
+        levelVar = "hazard." ++ hid ++ ".level"
+        targetVar = "hazard." ++ hid ++ ".target"
+        clockVar = "hazard." ++ hid ++ ".clock"
+        prevVar = "hazard." ++ hid ++ ".prev"
+
+        boundMax = max 1 mx
+        varDefs = Map.fromList
+            [ (levelVar,  E.VarDef levelVar  (E.VTInt (Just 0) (Just boundMax)) (E.VVInt st) [] [])
+            , (targetVar, E.VarDef targetVar (E.VTInt (Just 0) (Just boundMax)) (E.VVInt tg) [] [])
+            , (clockVar,  E.VarDef clockVar  (E.VTInt (Just 0) Nothing)         (E.VVInt 0)  [] [])
+            , (prevVar,   E.VarDef prevVar   (E.VTInt (Just 0) (Just boundMax)) (E.VVInt st) [] [])
+            ]
+        initials = Map.fromList
+            [ (levelVar,  E.VVInt st)
+            , (targetVar, E.VVInt tg)
+            , (clockVar,  E.VVInt 0)
+            , (prevVar,   E.VVInt st)
+            ]
+
+        -- Tick Trigger
+        pausedFlag = "hazard." ++ hid ++ ".paused"
+        notPaused = E.PNot (E.HasFlag pausedFlag)
+        tickCond = case traWhen tr of
+            Just w  -> Just (E.PAll [notPaused, w])
+            Nothing -> Just notPaused
+
+        stepEffect =
+            E.Conditional
+                (E.Compare (E.VRVariable levelVar) E.CLt (E.VRVariable targetVar))
+                (E.ComputeValue (E.VRVariable levelVar)
+                    (E.EMin (E.EVar targetVar) (E.EMin (E.ELit mx) (E.EAdd (E.EVar levelVar) (E.ELit rt)))))
+                (E.Conditional
+                    (E.Compare (E.VRVariable levelVar) E.CGt (E.VRVariable targetVar))
+                    (E.ComputeValue (E.VRVariable levelVar)
+                        (E.EMax (E.EVar targetVar) (E.EMax (E.ELit 0) (E.ESub (E.EVar levelVar) (E.ELit rt)))))
+                    (E.SetValue (E.VRFlag pausedFlag) (E.EVString "false")))
+
+        tickEffects =
+            [ E.ModifyValue (E.VRVariable clockVar) 1
+            , E.Conditional
+                (E.CompareVar clockVar E.CGte ev)
+                (E.Sequence
+                    [ E.SetValue (E.VRVariable clockVar) (E.EVInt 0)
+                    , stepEffect
+                    ])
+                E.Noop
+            ]
+
+        tickTrigger = E.TriggerDef ("hazard." ++ hid ++ ".tick") E.OnTurn tickCond tickEffects False 0 1 [] []
+
+        -- Stage Trigger
+        stageEffects =
+            [ E.Conditional
+                (E.PAll
+                    [ E.CompareVar levelVar E.CEq lvl
+                    , E.PNot (E.CompareVar prevVar E.CEq lvl)
+                    ])
+                (compileOutcomes outs)
+                E.Noop
+            | (lvl, outs) <- hazStages h
+            ]
+            ++ [ E.ComputeValue (E.VRVariable prevVar) (E.EVar levelVar) ]
+
+        stageTrigger = E.TriggerDef ("hazard." ++ hid ++ ".stage") E.OnTurn Nothing stageEffects False 0 1 [] []
+
+        -- Footprint Condition for a given room
+        roomCondition r = case fpBy fp of
+            FPElevation ->
+                let th = Map.findWithDefault 0 r (fpRooms fp)
+                in E.CompareVar levelVar E.CGte th
+            FPList ->
+                let lvls = [ lvl | (lvl, rms) <- fpStagesRooms fp, r `elem` rms ]
+                in case lvls of
+                    [lvl] -> E.CompareVar levelVar E.CEq lvl
+                    _     -> E.PAny [ E.CompareVar levelVar E.CEq lvl | lvl <- lvls ]
+            FPTag ->
+                E.CompareVar levelVar E.CGt 0
+
+        -- OnZone Triggers (per room in footprint)
+        zoneTriggers =
+            if null (hazOnZone h)
+            then []
+            else [ E.TriggerDef ("hazard." ++ hid ++ ".zone." ++ r) E.OnTurn
+                    (Just (E.PAll [ E.Location E.ActorPlayer r, roomCondition r ]))
+                    (map compileAActionOutcome (hazOnZone h))
+                    False 0 1 [] []
+                 | r <- fpRoomsList
+                 , Map.member r allRooms
+                 ]
+
+        -- Telegraph Triggers
+        insideTriggers = case hazTelegraph h >>= telInside of
+            Just inMsg ->
+                [ E.TriggerDef ("hazard." ++ hid ++ ".telegraph.in." ++ r) E.OnTurn
+                    (Just (E.PAll [ E.Location E.ActorPlayer r, roomCondition r ]))
+                    [ E.SendMessage inMsg ]
+                    False 0 1 [] []
+                | r <- fpRoomsList
+                , Map.member r allRooms
+                ]
+            Nothing -> []
+
+        roomExits r = case Map.lookup r allRooms of
+            Just rm -> [ E.exitRoomID ex | ex <- Map.elems (E.roomConnections rm) ]
+            Nothing -> []
+        allRoomKeys = Map.keys allRooms
+        fpRoomSet = Set.fromList fpRoomsList
+        neighborsOf r =
+            let outN = roomExits r
+                inN = [ r' | r' <- allRoomKeys, r `elem` roomExits r' ]
+            in nub (filter (/= r) (outN ++ inN))
+
+        adjCandidates =
+            [ r | r <- allRoomKeys
+            , any (`Set.member` fpRoomSet) (neighborsOf r)
+            ]
+
+        adjTriggers = case hazTelegraph h >>= telAdjacent of
+            Just adjMsg ->
+                [ E.TriggerDef ("hazard." ++ hid ++ ".telegraph.adj." ++ r) E.OnTurn
+                    (Just (E.PAll
+                        [ E.Location E.ActorPlayer r
+                        , if r `Set.member` fpRoomSet
+                          then E.PNot (roomCondition r)
+                          else E.PNot (E.PAny [])
+                        , let fpNeighbors = filter (`Set.member` fpRoomSet) (neighborsOf r)
+                          in case fpNeighbors of
+                              [fn] -> roomCondition fn
+                              _    -> E.PAny (map roomCondition fpNeighbors)
+                        ]))
+                    [ E.SendMessage adjMsg ]
+                    False 0 1 [] []
+                | r <- adjCandidates
+                ]
+            Nothing -> []
+
+        allTriggers = [tickTrigger, stageTrigger] ++ zoneTriggers ++ insideTriggers ++ adjTriggers
+
+    in (allIssues, allTriggers, varDefs, initials)
+
+-- | Merge hazard variables into the declared variables, rejecting a clash.
+mergeHazardVars :: Map.Map String E.VarDef -> Map.Map String E.VariableValue
+                -> Map.Map String E.VarDef -> Map.Map String E.VariableValue
+                -> ([CompileIssue], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+mergeHazardVars varDefs varInitials hzDefs hzInitials =
+    let clashErrs =
+            [ ciError ("variables." ++ name) "HazardVariableClash"
+                ("'" ++ name ++ "' is a hazard variable; declare it under 'hazards:' instead")
+            | name <- Map.keys varDefs
+            , name `Map.member` hzDefs ]
+    in (clashErrs, Map.union hzDefs varDefs, Map.union hzInitials varInitials)
+
+-- | Reference check for hazards: outcome targets/jumps/pause/resume and predicates.
+checkHazardRefs :: Maybe [AHazard] -> Adventure -> [CompileIssue]
+checkHazardRefs mHzs adv =
+    let declaredHazards = case mHzs of
+            Just hzs -> Map.fromList [ (hazId h, traMax (hazTrack h)) | h <- hzs, not (null (hazId h)) ]
+            Nothing  -> Map.empty
+        knownHids = Map.keysSet declaredHazards
+
+        outcomeIssues (path, os) = concatMap (checkOneOutcome path) (deepOutcomes os)
+        checkOneOutcome path ao = case ao of
+            AOHazardTarget hid to ->
+                if hid `Set.notMember` knownHids
+                then [ ciError (path ++ ".hazard_target") "UnknownHazard"
+                         ("outcome references undeclared hazard '" ++ hid ++ "'") ]
+                else case Map.lookup hid declaredHazards of
+                    Just mx | mx > 0 && (to < 0 || to > mx) ->
+                        [ ciError (path ++ ".hazard_target") "HazardLevelOutOfRange"
+                            ("hazard target value " ++ show to ++ " is outside 0..max (" ++ show mx ++ ")") ]
+                    _ -> []
+            AOHazardJump hid to ->
+                if hid `Set.notMember` knownHids
+                then [ ciError (path ++ ".hazard_jump") "UnknownHazard"
+                         ("outcome references undeclared hazard '" ++ hid ++ "'") ]
+                else case Map.lookup hid declaredHazards of
+                    Just mx | mx > 0 && (to < 0 || to > mx) ->
+                        [ ciError (path ++ ".hazard_jump") "HazardLevelOutOfRange"
+                            ("hazard jump value " ++ show to ++ " is outside 0..max (" ++ show mx ++ ")") ]
+                    _ -> []
+            AOHazardPause hid ->
+                [ ciError (path ++ ".hazard_pause") "UnknownHazard"
+                    ("outcome references undeclared hazard '" ++ hid ++ "'")
+                | hid `Set.notMember` knownHids ]
+            AOHazardResume hid ->
+                [ ciError (path ++ ".hazard_resume") "UnknownHazard"
+                    ("outcome references undeclared hazard '" ++ hid ++ "'")
+                | hid `Set.notMember` knownHids ]
+            _ -> []
+
+        rawIssues = case advRawValue adv of
+            Just rawVal -> checkRawHazardPredRefs knownHids rawVal
+            Nothing     -> []
+    in concatMap outcomeIssues (outcomeSurfaces adv) ++ rawIssues
+
+checkRawHazardPredRefs :: Set.Set String -> Aeson.Value -> [CompileIssue]
+checkRawHazardPredRefs knownHids = go ""
+  where
+    go path (Aeson.Object o) =
+        let hlErrs = case KM.lookup "hazard_level" o of
+                Just (Aeson.Object hlo) ->
+                    let hid = case KM.lookup "hazard" hlo <|> KM.lookup "id" hlo <|> KM.lookup "name" hlo of
+                            Just (Aeson.String s) -> T.unpack s
+                            _                     -> ""
+                    in [ ciError (if null path then "predicates.hazard_level" else path ++ ".hazard_level") "UnknownHazard"
+                           ("predicate hazard_level references undeclared hazard '" ++ hid ++ "'")
+                       | not (null hid), hid `Set.notMember` knownHids ]
+                _ -> []
+            ihErrs = case KM.lookup "in_hazard" o of
+                Just (Aeson.Object iho) ->
+                    let hid = case KM.lookup "hazard" iho <|> KM.lookup "id" iho <|> KM.lookup "name" iho of
+                            Just (Aeson.String s) -> T.unpack s
+                            _                     -> ""
+                    in [ ciError (if null path then "predicates.in_hazard" else path ++ ".in_hazard") "UnknownHazard"
+                           ("predicate in_hazard references undeclared hazard '" ++ hid ++ "'")
+                       | not (null hid), hid `Set.notMember` knownHids ]
+                _ -> []
+            childErrs = concat [ go (if null path then K.toString k else path ++ "." ++ K.toString k) v | (k, v) <- KM.toList o ]
+        in hlErrs ++ ihErrs ++ childErrs
+    go path (Aeson.Array arr) =
+        concat [ go (path ++ "[" ++ show i ++ "]") v | (i, v) <- zip [0 :: Int ..] (Foldable.toList arr) ]
+    go _ _ = []
 
 -- ---------------------------------------------------------------------------
 -- Wander (OPEN-14)
@@ -4084,6 +4468,14 @@ compileAActionOutcome ao = case ao of
                      else dirOf retDirStr
         in E.GenerateRoom rId rName rDesc fromR toDir retDir
     AOGainXp n -> E.GainXp n
+    AOHazardTarget hid to ->
+        E.SetValue (E.VRVariable ("hazard." ++ hid ++ ".target")) (E.EVInt to)
+    AOHazardJump hid to ->
+        E.SetValue (E.VRVariable ("hazard." ++ hid ++ ".level")) (E.EVInt to)
+    AOHazardPause hid ->
+        E.SetValue (E.VRFlag ("hazard." ++ hid ++ ".paused")) (E.EVString "true")
+    AOHazardResume hid ->
+        E.SetValue (E.VRFlag ("hazard." ++ hid ++ ".paused")) (E.EVString "false")
 
 -- | `Just` the compiled effect for a non-empty outcome list, else `Nothing`
 --   (engine `ApplyCondition` takes optional tick/end effects).
@@ -5331,6 +5723,15 @@ reservedVarWriteRules =
         , rvrCheckInitials = True
         , rvrCheckProcs    = True
         }
+    , ReservedVarWriteRule
+        { rvrPrefix        = "hazard."
+        , rvrCode          = "HazardVariableClash"
+        , rvrMessage       = \n -> "'" ++ n
+            ++ "' is in the reserved 'hazard.' namespace; hazards own these variables (OPEN-23)"
+        , rvrCheckOutcomes  = True
+        , rvrCheckInitials = True
+        , rvrCheckProcs    = True
+        }
     ]
 
 -- | Author-owned variable prefixes that content is expected and encouraged to write.
@@ -5422,6 +5823,7 @@ checkUnknownPlaceholders adv varDefs =
         | "known_recipe." `isPrefixOf` name = True
         | "known_recipe_by." `isPrefixOf` name = True
         | "statement." `isPrefixOf` name = True
+        | "hazard." `isPrefixOf` name = True
         -- G9a: {standing_name: <faction>} / {standing_name.<faction>} wird bewusst
         -- NICHT zur Compile-Zeit geprueft (Ehrlichkeit wie K16c {cmd.target}):
         -- der Wert haengt am Spielstand (dynamische Standing-Stufe), nicht am YAML.
@@ -5500,6 +5902,8 @@ checkUnknownPlaceholders adv varDefs =
         AOSetTextVar name _       -> [name]
         AOAddVar name _           -> [name]
         AOComputeVar name _       -> [name]
+        AOHazardTarget hid _      -> ["hazard." ++ hid ++ ".target"]
+        AOHazardJump hid _        -> ["hazard." ++ hid ++ ".level"]
         AOConditional _ ts es     -> concatMap outcomeWrittenVars (ts ++ es)
         AONarrative _ follow      -> concatMap outcomeWrittenVars follow
         AORandomChoice _ cs       -> concatMap (concatMap outcomeWrittenVars . snd) cs
