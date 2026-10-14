@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### OPEN-23a: Zork-Dam-Umbau auf Gefahrenlagen (`hazards:`)
+
+Umbau des Damms und Wasserpegels in `examples/zork1.yaml` auf das Modul `hazards:` laut `docs/plan-hazards.md` §7 (Entscheidungen E5 und E6):
+
+- **Gefahrenlage `reservoir`:** Deklaration unter `hazards: reservoir:` mit `track` (`max: 8`, `start: 8`, `target: 8`, `every: 1`, `rate: 1`) und `footprint` (`by: elevation`, Räume `reservoir`, `reservoir-north`, `reservoir-south`).
+- **Ablösung des Tide-Hacks:** Die bisherige Sofort-Umschaltung im `bolt`-Item entfällt; stattdessen steuert das Drehen des Bolzens den Zielpegel (`hazard_target: { hazard: reservoir, to: 0 }` beim Öffnen der Schleusen, `to: 8` beim Schließen).
+- **Synchronisation von `low_tide`:** `low_tide` wird als abgeleitete Semantik aus den `stages` synchronisiert (Stage "0" setzt `low_tide: true`, Stage "1" setzt `low_tide: false`). Sämtliche 26 `has_flag: low_tide`-Abfragen im Zork-Port bleiben unverändert funktionsfähig.
+- **I-EMPTY / I-RFILL-Analogien in `stages`:** Stage "0" und Stage "8" implementieren ortsabhängige Hooks (`if: at: player room: ...`): Meldungen in Reservoir/Canyon/Reservoir-Ufern, Heben/Sinken des Boots, Flucht aus dem lauten Raum (`loud-room`) sowie Tod beim Fluten des Reservoirs zu Fuß ohne Boot.
+
 ### OPEN-24: Fahrzeug-Zustandsänderung (`apply_vehicle_condition` / `clear_vehicle_condition`)
 
 Vollständige Implementierung von Fahrzeug-Zustandsänderungen (`docs/detailplan_vehicle_condition.md`),

@@ -2352,14 +2352,16 @@ items:
         - msg: The sluice gates close and water starts to collect behind the dam.
         - set_flag: gates-open
           val: 'false'
-        - set_flag: low_tide
-          val: 'false'
+        - hazard_target:
+            hazard: reservoir
+            to: 8
         else:
         - msg: The sluice gates open and water pours through the dam.
         - set_flag: gates-open
           val: 'true'
-        - set_flag: low_tide
-          val: 'true'
+        - hazard_target:
+            hazard: reservoir
+            to: 0
       else:
       - if:
           not:
@@ -3869,6 +3871,101 @@ wander:
     on_notice: pursue
     lose_after: 2
     msg: ''
+
+# Modul 7j (OPEN-23 / OPEN-23a): Gefahrenlagen (hazards:)
+# Reservoir-Pegelsteuerung: 8 Zuege Ablauf/Zulauf, Restdistanz bei Umkehr (E6).
+# stages ersetzen I-REMPTY/I-RFILL; das Flag 'low_tide' wird bei Pegel 0 gesetzt
+# und bei Pegelanstieg ueber 0 geloescht (abgeleitete low_tide-Semantik).
+hazards:
+  reservoir:
+    track:
+      max: 8
+      start: 8
+      rate: 1
+      every: 1
+      target: 8
+    footprint:
+      by: elevation
+      rooms:
+        reservoir: 0
+        reservoir-north: 3
+        reservoir-south: 3
+    stages:
+      "0":
+        - set_flag: low_tide
+        - if:
+            all:
+            - at: player
+              room: reservoir
+            - has_flag: in-boat
+          then:
+          - msg: The water level has dropped to the point at which the boat can no longer stay afloat. It sinks into the mud.
+        - if:
+            at: player
+            room: deep-canyon
+          then:
+          - msg: The roar of rushing water is quieter now.
+        - if:
+            any:
+            - at: player
+              room: reservoir-north
+            - at: player
+              room: reservoir-south
+          then:
+          - msg: The water level is now quite low here and you could easily cross over to the other side.
+      "1":
+        - set_flag: low_tide
+          val: 'false'
+      "8":
+        - if:
+            all:
+            - at: player
+              room: reservoir
+            - has_flag: in-boat
+          then:
+          - msg: The boat lifts gently out of the mud and is now floating on the reservoir.
+        - if:
+            all:
+            - at: player
+              room: reservoir
+            - not:
+                has_flag: in-boat
+          then:
+          - msg: >-
+              You are lifted up by the rising river! You try to swim, but the
+              currents are too strong. You come closer, closer to the awesome
+              structure of Flood Control Dam #3. The dam beckons to you.
+              The roar of the water nearly deafens you, but you remain conscious
+              as you tumble over the dam toward your certain doom among the rocks
+              at its base.
+          - game_end: death
+        - if:
+            at: player
+            room: deep-canyon
+          then:
+          - msg: A sound, like that of flowing water, starts to come from below.
+        - if:
+            at: player
+            room: loud-room
+          then:
+          - msg: >-
+              All of a sudden, an alarmingly loud roaring sound fills the room.
+              Filled with fear, you scramble away.
+          - random:
+            - - 1
+              - - move: round-room
+            - - 1
+              - - move: damp-cave
+            - - 1
+              - - move: deep-canyon
+        - if:
+            any:
+            - at: player
+              room: reservoir-north
+            - at: player
+              room: reservoir-south
+          then:
+          - msg: You notice that the water level has risen to the point that it is impossible to cross.
 
 rules:
 - id: score-skull

@@ -70,8 +70,8 @@ YAML-Task in `zork1.yaml` — siehe Abschnitt „Offene YAML-Tasks“) / ✅ (be
 | # | Mechanik | Original | Port-Workaround | Grenze | DEC | ADR / Notiz |
 |---|---|---|---|---|---|---|
 | E1 | Boot-State-Maschine | Deflated/Inflated/Punctured, `LAUNCH`, `LAND`, Drift | Flags `in-boat`/`boat-inflated`/`boat-punctured`; `land` fasst `LAND` + `V-DISEMBARK`; Vehicles.hs bewusst nicht benutzt | Kein Drift (I-RIVER); Fluss-Räume werden manuell per `down` durchfahren | Gestrichen | Kein Echtzeit-Drift; schrittweiser Drift pro Zug/User-Input ist per YAML (`on: turn` + `move: <room>`) voll abbildbar |
-| E2 | Tide / Reservoir-Wasserstand | Tide-Maschine (FLOOR-MODE): Wasserstand steigt/fällt, `low_tide`-Zyklus | Flag `low_tide` + Raum-Varianten/Ausgangs-`when`; Schalter am Dam toggelt | Kein echter Wasserstand; Kein „Objekt schwimmt mit" | Umgeplant | `OPEN-23` ersetzt durch **Gefahrenlagen** (`docs/plan-hazards.md`, Segment `hazards:` mit Pegel/`track`/Schwellen); `low_tide`-Hack bleibt bis zur Umsetzung |
-| E3 | Pumpe/Dam-Wasser | `release`/`press yellow` → Wasserstand | über Flag-Toggle | Passt | Nein | Item `bolt` (~L2332, `verb_map: turn`), `yellow-button` (~L2480), Flags `gate-flag`/`gates-open`/`low_tide` |
+| E2 | Tide / Reservoir-Wasserstand | Tide-Maschine (FLOOR-MODE): Wasserstand steigt/fällt, `low_tide`-Zyklus | Flag `low_tide` + Raum-Varianten/Ausgangs-`when`; Schalter am Dam toggelt | Kein echter Wasserstand; Kein „Objekt schwimmt mit" | Ja → ✅ umgesetzt 2026-10-14 | `OPEN-23a`: Zork-Dam auf `hazards: reservoir:` umgebaut (`docs/plan-hazards.md` §7, E5/E6; `track`: max 8, start 8, target 8, every 1, rate 1). `stages` ersetzen I-REMPTY/I-RFILL; `low_tide` wird über die Stages synchronisiert (0 -> gesetzt, 1 -> gelöscht). |
+| E3 | Pumpe/Dam-Wasser | `release`/`press yellow` → Wasserstand | über Flag-Toggle | Passt | Ja → ✅ umgesetzt 2026-10-14 | Item `bolt` setzt nun `hazard_target` (zu: 8, offen: 0) statt direkt `set_flag low_tide`; Torschaltung über `yellow-button` (`gate-flag`) und Schraubenschlüssel bleibt erhalten. |
 
 ---
 
@@ -94,7 +94,7 @@ YAML-Task in `zork1.yaml` — siehe Abschnitt „Offene YAML-Tasks“) / ✅ (be
 2. Bei **Ja**: Mini-Ticket im `befunde-text-adventure-engine.md` (§7 OPEN) eintragen und Engine-Patch planen — ✅ **Erledigt (`OPEN-14` bis `OPEN-23` eingetragen)**.
 3. Bei **Nein**: Verweis auf den konkreten Workaround (Datei + Regel-ID) im Plan behalten. — ✅ **Erledigt (2026-10-11)**, siehe Spalte „ADR / Notiz“.
    Bei **Gestrichen**: Eintrag in „Offene YAML-Tasks“ (unten) — ✅ **Erledigt (2026-10-11)**.
-4. Nach dem Durchgang: `win.py` auf den finalen Stand anpassen — Thief-Vorweg-Kill ✅ **erledigt (2026-10-12)**: Block gestrichen, der Hinterhalter-Dieb kommt nicht mehr von allein. Offen: Torch-Relight, `low_tide`-Hack entfernen (falls B1/E2 per Engine gelöst werden).
+4. Nach dem Durchgang: `win.py` auf den finalen Stand anpassen — Thief-Vorweg-Kill ✅ **erledigt (2026-10-12)**: Block gestrichen, der Hinterhalter-Dieb kommt nicht mehr von allein. `low_tide`-Hack entfernt ✅ **erledigt (2026-10-14, OPEN-23a)**: Damm auf `hazards: reservoir:` umgestellt (`win.py` benötigt noch die Ergänzung von `turn bolt with wrench` sowie 8 Züge Ablaufzeit vor Betreten des Reservoirs). Offen: Torch-Relight.
 
 ---
 
