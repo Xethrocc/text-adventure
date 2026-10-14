@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### OPEN-24: Fahrzeug-Zustandsänderung (`apply_vehicle_condition` / `clear_vehicle_condition`)
+
+Vollständige Implementierung von Fahrzeug-Zustandsänderungen (`docs/detailplan_vehicle_condition.md`),
+um Fahrzeug-Bedingungen (`conditions:`) per Effekt aktiv zu schalten und zu löschen:
+
+- **Core-Effekte:** `ApplyVehicleCondition VehicleID String` und `ClearVehicleCondition VehicleID String`
+  in `src/Types/Core.hs` und Dispatch in `src/Effects.hs` mit Ereignissen `vehicle.condition_set` und `vehicle.condition_cleared`.
+- **Core-Prädikat:** `VehicleHasCondition VehicleID String` in `src/Types/Core.hs` mit Auswertung in `evalPredicate` (`src/Game.hs`)
+  und Sichtbarkeitsprüfung in `isChoiceVisible` (`src/Types/Protocol.hs`).
+- **Fahrzeug-Setter:** `applyVehicleCondition` in `src/Vehicles.hs` fügt Bedingungen per `Set.insert` zu `vsActiveConditions` hinzu (idempotent);
+  `clearVehicleCondition` entfernt sie per `Set.delete`.
+- **Dynamisches Token `"current"`:** Löst zur Laufzeit auf das aktuelle Fahrzeug des Spielers bzw. Raum-Fahrzeug auf.
+- **Worldbuilder-Sugar & Validierung:** `apply_vehicle_condition: {vehicle, condition}` und `clear_vehicle_condition: {vehicle, condition}`;
+  Compiler-Refcheck `checkVehicleConditionRefs` meldet `UnknownVehicleConditionTarget` (Error) und `UnknownVehicleCondition` (Warning).
+- **Test-Suite & Byte-Vertrag:** 20 Testfälle (VC-01..VC-20) über Engine und Worldbuilder; Byte-Identität für unbetroffene Welten gewahrt.
+
 ### Benchmark-Adventure: Oregon Trail — „Der Treck nach Westen“
 
 Umfassendes Benchmark-Adventure (`examples/genres/oregon_trail.yaml`) basierend auf dem

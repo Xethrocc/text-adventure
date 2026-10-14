@@ -36,7 +36,7 @@ import Types
 import Game
 import Messages (evMsg, grammarArgs)
 import Quests (canStartQuest, startQuest, advanceQuest, completeQuestWith)
-import Vehicles (vehicleConditionTickWith)
+import Vehicles (vehicleConditionTickWith, applyVehicleCondition, clearVehicleConditionEv, vehicleForRoom)
 import Data.List (intercalate, foldl', find, sort, stripPrefix)
 import Data.Bits (shiftR, xor)
 import Data.Char (ord)
@@ -69,6 +69,15 @@ currentChapterId state = case getVariable "chapter.current" state of
 chapterVisited :: String -> GameState -> Bool
 chapterVisited cid state =
     getVariable ("chapter.visited." ++ cid) state == Just (VVInt 1)
+
+-- | OPEN-24 / D9: resolve vehicle identifier: "current" resolves to the player's
+--   current vehicle, or fallback to the vehicle owning the current room.
+resolveVehicleTarget :: String -> GameState -> Maybe VehicleID
+resolveVehicleTarget "current" state =
+    case currentVehicle (save state) of
+        Just vId -> Just vId
+        Nothing  -> vehicleForRoom (currentRoom (save state)) state
+resolveVehicleTarget vId _ = Just vId
 
 -- | Enter a chapter: set current, mark visited, show the intro, fire
 --   OnChapter. Shared by the auto-gate, next_chapter and goto_chapter.
@@ -473,6 +482,22 @@ applyOutcomeWith depth salt outcome targetId state
 
     ApplyCondition name turns tick end hidden -> (applyConditionWithHidden name turns tick end hidden state, [], salt)
     ClearCondition name -> (clearCondition name state, [], salt)
+
+    ApplyVehicleCondition v c ->
+        case resolveVehicleTarget v state of
+            Just vId ->
+                let (st', evs) = applyVehicleCondition vId c state
+                in (st', evs, salt)
+            Nothing ->
+                (state, evMsg "vehicle.condition_unknown" [("vehicle", v)], salt)
+
+    ClearVehicleCondition v c ->
+        case resolveVehicleTarget v state of
+            Just vId ->
+                let (st', evs) = clearVehicleConditionEv vId c state
+                in (st', evs, salt)
+            Nothing ->
+                (state, evMsg "vehicle.condition_unknown" [("vehicle", v)], salt)
 
     RaiseEvent name ->
         let (st', m) = fireTriggersWithDepth (depth + 1) (OnCustomEvent name) state

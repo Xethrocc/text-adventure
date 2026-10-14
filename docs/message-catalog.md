@@ -1,6 +1,6 @@
 # Engine-Message-Katalog (Phase 1.1)
 
-**Stand:** 2026-09-28 · **Kataloggröße: 258 Keys** (`src/Messages.hs`, `catalogEntries`)
+**Stand:** 2026-09-28 · **Kataloggröße: 262 Keys** (`src/Messages.hs`, `catalogEntries`)
 
 ## Was diese Stufe leistet
 
@@ -296,63 +296,67 @@ Rang: {rank}}` |
 | 200 | `search.reveal` | `You find the {item}.` | `Du findest {article_acc} {item}.` |
 | 201 | `search.void` | `You're in a void. There's nothing to search.` | `Du befindest dich im Nichts. Hier gibt es nichts zu durchsuchen.` |
 | 202 | `stats.attack` | `Attack:  {atk} (base {base})` | `Angriff:  {atk} (Basis {base})` |
-| 203 | `stats.conditions` | `Conditions: {conds}\n` | `Zustände: {conds}
+| 203 | `stats.companion_xp` | `Companion {name}: Level {level} ({xp} XP)` | `Begleiter {name}: Stufe {level} ({xp} XP)` |
+| 204 | `stats.conditions` | `Conditions: {conds}\n` | `Zustände: {conds}
 ` |
-| 204 | `stats.defense` | `Defense: {def} (base {base})` | `Verteidigung: {def} (Basis {base})` |
-| 205 | `stats.health` | `Health:  {hp} / {max}` | `Gesundheit:  {hp} / {max}` |
-| 206 | `stats.progression` | `Level {level} — {name} ({xp}/{next} XP)` | `Stufe {level} — {name} ({xp}/{next} XP)` |
-| 207 | `stats.progression_max` | `Level {level} — {name} ({xp} XP)` | `Stufe {level} — {name} ({xp} XP)` |
-| 208 | `stats.skills` | `Skills: {skills}\n` | `Fähigkeiten: {skills}
+| 205 | `stats.defense` | `Defense: {def} (base {base})` | `Verteidigung: {def} (Basis {base})` |
+| 206 | `stats.health` | `Health:  {hp} / {max}` | `Gesundheit:  {hp} / {max}` |
+| 207 | `stats.progression` | `Level {level} — {name} ({xp}/{next} XP)` | `Stufe {level} — {name} ({xp}/{next} XP)` |
+| 208 | `stats.progression_max` | `Level {level} — {name} ({xp} XP)` | `Stufe {level} — {name} ({xp} XP)` |
+| 209 | `stats.skills` | `Skills: {skills}\n` | `Fähigkeiten: {skills}
 ` |
-| 209 | `steal.from_you` | `{npc} takes the {item} from you.` | `{npc_article_nom} {npc} nimmt {item_article_acc} {item} von dir.` |
-| 210 | `steal.no_item` | `You have no {item}.` | `Du hast {article_acc} {item} nicht.` |
-| 211 | `steal.taken` | `{npc} takes the {item} from {from}.` | `{npc_article_nom} {npc} nimmt {item_article_acc} {item} von {from_article_dat} {from}.` |
-| 212 | `take.already` | `You already have the {item}.` | `Du hast {article_acc} {item} bereits.` |
-| 213 | `take.none_here` | `There's nothing here to take.` | `Hier gibt es nichts zu nehmen.` |
-| 214 | `take.not_portable` | `You can't take the {item}.` | `Du kannst {article_acc} {item} nicht mitnehmen.` |
-| 215 | `take.ok` | `You take the {item}.` | `Du nimmst {article_acc} {item}.` |
-| 216 | `talk.no_target` | `There's no one to talk to.` | `Hier gibt es niemanden, mit dem du sprechen kannst.` |
-| 217 | `target.not_carried` | `You don't have '{target}'.` | `Du hast '{target}' nicht.` |
-| 218 | `target.not_seen` | `You don't see '{target}' here.` | `Du siehst '{target}' hier nicht.` |
-| 219 | `ui.press_enter` | `  [Press Enter to continue]` | `  [Enter drücken, um fortzufahren]` |
-| 220 | `undo.disabled` | `Undo is disabled in this adventure.` | `Rückgängig ist in diesem Abenteuer deaktiviert.` |
-| 221 | `undo.done` | `Undone.` | `Rückgängig gemacht.` |
-| 222 | `undo.ironman` | `No undo in ironman mode.` | `Kein Rückgängig im Ironman-Modus.` |
-| 223 | `undo.nothing` | `Nothing to undo.` | `Nichts rückgängig zu machen.` |
-| 224 | `undo.permadeath` | `No undo after death (permadeath).` | `Nach dem Tod kein Rückgängig (Permadeath).` |
-| 225 | `unequip.all` | `You remove all equipment.` | `Du legst die gesamte Ausrüstung ab.` |
-| 226 | `unequip.not_equipped` | `The {item} is not equipped.` | `Du hast {article_acc} {item} nicht ausgerüstet.` |
-| 227 | `unequip.ok` | `You unequip the {item}.` | `Du legst {article_acc} {item} ab.` |
-| 228 | `unlock.no_target` | `There's nothing to unlock here.` | `Hier gibt es nichts aufzuschließen.` |
-| 229 | `use.no_known_recipe` | `You don't know a recipe with {item1} and {item2}.` | `Du kennst kein Rezept mit {item1} und {item2}.` |
-| 230 | `use.not_carried` | `You need to be carrying '{item}' to use it.` | `Dazu musst du '{item}' bei dir haben.` |
-| 231 | `use.nothing` | `Nothing happens.` | `Es passiert nichts.` |
-| 232 | `use.ok` | `You use the {item}. {msg}` | `Du benutzt {article_acc} {item}. {msg}` |
-| 233 | `use.unreachable` | `You can't reach '{entity}' from here.` | `Du kommst von hier nicht an '{entity}' heran.` |
-| 234 | `vehicle.board` | `You board the {vehicle}.` | `Du steigst in {vehicle}.` |
-| 235 | `vehicle.cant_drive` | `You can't drive there from here. Stations: {stations}` | `Von hier aus kannst du nicht dorthin fahren. Stationen: {stations}` |
-| 236 | `vehicle.cant_steer` | `You can't steer the {vehicle}; it follows its own route.` | `Du kannst {vehicle} nicht steuern; es folgt seiner eigenen Route.` |
-| 237 | `vehicle.disembark` | `You disembark from the {vehicle}.` | `Du steigst aus {vehicle} aus.` |
-| 238 | `vehicle.drive_to` | `You drive to {stop}.` | `Du fährst nach {stop}.` |
-| 239 | `vehicle.fuelled` | `The {vehicle} is fuelled ({f}/{max}).` | `{vehicle} ist betankt ({f}/{max}).` |
-| 240 | `vehicle.manual_only` | `This vehicle only moves when you drive it.` | `Dieses Fahrzeug bewegt sich nur, wenn du fährst.` |
-| 241 | `vehicle.need_controls` | `You need to be at the controls to drive.` | `Du musst an den Kontrollen sein, um zu fahren.` |
-| 242 | `vehicle.no_here_enter` | `There is no '{id}' here to enter.` | `Hier gibt es kein '{id}', in das du einsteigen könntest.` |
-| 243 | `vehicle.no_id` | `There is no '{id}'.` | `Es gibt kein '{id}'.` |
-| 244 | `vehicle.not_here` | `The {vehicle} is not here.` | `{vehicle} ist nicht hier.` |
-| 245 | `vehicle.not_in` | `You are not in a vehicle.` | `Du befindest dich in keinem Fahrzeug.` |
-| 246 | `vehicle.not_on` | `You are not on a vehicle.` | `Du befindest dich in keinem Fahrzeug.` |
-| 247 | `vehicle.route_end` | `The route has no further stops.` | `Die Route hat keine weiteren Haltepunkte.` |
-| 248 | `vehicle.travel_on` | `You travel on to {stop}.` | `Du fährst weiter nach {stop}.` |
-| 249 | `vehicle.warning` | `Warning: {list}!` | `Warnung: {list}!` |
-| 250 | `verb.no_target` | `What do you want to {verb}?` | `Was möchtest du {verb}?` |
-| 251 | `victory.title` | `  VICTORY!` | `  SIEG!` |
-| 252 | `wander.step` | `{name} wanders to {room}.` | `{name} wandert nach {room}.` |
-| 253 | `watch.nothing` | `There is nothing to watch about {label}.` | `Über {label} gibt es nichts zu beobachten.` |
-| 254 | `watch.start` | `Watching {label}...` | `Du beobachtest {label}...` |
-| 255 | `watch.void` | `You're in a void. There's nothing to watch.` | `Du befindest dich im Nichts. Hier gibt es nichts zu beobachten.` |
-| 256 | `world.file_unreadable` | `Could not read world file '{path}': {err}` | `Weltdatei '{path}' konnte nicht gelesen werden: {err}` |
-| 257 | `world.save_unreadable` | `Could not read save file '{path}': {err}` | `Speicherdatei '{path}' konnte nicht gelesen werden: {err}` |
-| 258 | `xp.clamped` | `XP cannot drop below 0.` | `XP können nicht unter 0 fallen.` |
+| 210 | `steal.from_you` | `{npc} takes the {item} from you.` | `{npc_article_nom} {npc} nimmt {item_article_acc} {item} von dir.` |
+| 211 | `steal.no_item` | `You have no {item}.` | `Du hast {article_acc} {item} nicht.` |
+| 212 | `steal.taken` | `{npc} takes the {item} from {from}.` | `{npc_article_nom} {npc} nimmt {item_article_acc} {item} von {from_article_dat} {from}.` |
+| 213 | `take.already` | `You already have the {item}.` | `Du hast {article_acc} {item} bereits.` |
+| 214 | `take.none_here` | `There's nothing here to take.` | `Hier gibt es nichts zu nehmen.` |
+| 215 | `take.not_portable` | `You can't take the {item}.` | `Du kannst {article_acc} {item} nicht mitnehmen.` |
+| 216 | `take.ok` | `You take the {item}.` | `Du nimmst {article_acc} {item}.` |
+| 217 | `talk.no_target` | `There's no one to talk to.` | `Hier gibt es niemanden, mit dem du sprechen kannst.` |
+| 218 | `target.not_carried` | `You don't have '{target}'.` | `Du hast '{target}' nicht.` |
+| 219 | `target.not_seen` | `You don't see '{target}' here.` | `Du siehst '{target}' hier nicht.` |
+| 220 | `ui.press_enter` | `  [Press Enter to continue]` | `  [Enter drücken, um fortzufahren]` |
+| 221 | `undo.disabled` | `Undo is disabled in this adventure.` | `Rückgängig ist in diesem Abenteuer deaktiviert.` |
+| 222 | `undo.done` | `Undone.` | `Rückgängig gemacht.` |
+| 223 | `undo.ironman` | `No undo in ironman mode.` | `Kein Rückgängig im Ironman-Modus.` |
+| 224 | `undo.nothing` | `Nothing to undo.` | `Nichts rückgängig zu machen.` |
+| 225 | `undo.permadeath` | `No undo after death (permadeath).` | `Nach dem Tod kein Rückgängig (Permadeath).` |
+| 226 | `unequip.all` | `You remove all equipment.` | `Du legst die gesamte Ausrüstung ab.` |
+| 227 | `unequip.not_equipped` | `The {item} is not equipped.` | `Du hast {article_acc} {item} nicht ausgerüstet.` |
+| 228 | `unequip.ok` | `You unequip the {item}.` | `Du legst {article_acc} {item} ab.` |
+| 229 | `unlock.no_target` | `There's nothing to unlock here.` | `Hier gibt es nichts aufzuschließen.` |
+| 230 | `use.no_known_recipe` | `You don't know a recipe with {item1} and {item2}.` | `Du kennst kein Rezept mit {item1} und {item2}.` |
+| 231 | `use.not_carried` | `You need to be carrying '{item}' to use it.` | `Dazu musst du '{item}' bei dir haben.` |
+| 232 | `use.nothing` | `Nothing happens.` | `Es passiert nichts.` |
+| 233 | `use.ok` | `You use the {item}. {msg}` | `Du benutzt {article_acc} {item}. {msg}` |
+| 234 | `use.unreachable` | `You can't reach '{entity}' from here.` | `Du kommst von hier nicht an '{entity}' heran.` |
+| 235 | `vehicle.board` | `You board the {vehicle}.` | `Du steigst in {vehicle}.` |
+| 236 | `vehicle.cant_drive` | `You can't drive there from here. Stations: {stations}` | `Von hier aus kannst du nicht dorthin fahren. Stationen: {stations}` |
+| 237 | `vehicle.cant_steer` | `You can't steer the {vehicle}; it follows its own route.` | `Du kannst {vehicle} nicht steuern; es folgt seiner eigenen Route.` |
+| 238 | `vehicle.condition_cleared` | `{vehicle}: problem resolved — {condition}.` | `{vehicle}: Problem behoben — {condition}.` |
+| 239 | `vehicle.condition_set` | `{vehicle}: problem detected — {condition}.` | `{vehicle}: Problem aufgetreten — {condition}.` |
+| 240 | `vehicle.condition_unknown` | `Unknown vehicle: {vehicle}.` | `Unbekanntes Fahrzeug: {vehicle}.` |
+| 241 | `vehicle.disembark` | `You disembark from the {vehicle}.` | `Du steigst aus {vehicle} aus.` |
+| 242 | `vehicle.drive_to` | `You drive to {stop}.` | `Du fährst nach {stop}.` |
+| 243 | `vehicle.fuelled` | `The {vehicle} is fuelled ({f}/{max}).` | `{vehicle} ist betankt ({f}/{max}).` |
+| 244 | `vehicle.manual_only` | `This vehicle only moves when you drive it.` | `Dieses Fahrzeug bewegt sich nur, wenn du fährst.` |
+| 245 | `vehicle.need_controls` | `You need to be at the controls to drive.` | `Du musst an den Kontrollen sein, um zu fahren.` |
+| 246 | `vehicle.no_here_enter` | `There is no '{id}' here to enter.` | `Hier gibt es kein '{id}', in das du einsteigen könntest.` |
+| 247 | `vehicle.no_id` | `There is no '{id}'.` | `Es gibt kein '{id}'.` |
+| 248 | `vehicle.not_here` | `The {vehicle} is not here.` | `{vehicle} ist nicht hier.` |
+| 249 | `vehicle.not_in` | `You are not in a vehicle.` | `Du befindest dich in keinem Fahrzeug.` |
+| 250 | `vehicle.not_on` | `You are not on a vehicle.` | `Du befindest dich in keinem Fahrzeug.` |
+| 251 | `vehicle.route_end` | `The route has no further stops.` | `Die Route hat keine weiteren Haltepunkte.` |
+| 252 | `vehicle.travel_on` | `You travel on to {stop}.` | `Du fährst weiter nach {stop}.` |
+| 253 | `vehicle.warning` | `Warning: {list}!` | `Warnung: {list}!` |
+| 254 | `verb.no_target` | `What do you want to {verb}?` | `Was möchtest du {verb}?` |
+| 255 | `victory.title` | `  VICTORY!` | `  SIEG!` |
+| 256 | `wander.step` | `{name} wanders to {room}.` | `{name} wandert nach {room}.` |
+| 257 | `watch.nothing` | `There is nothing to watch about {label}.` | `Über {label} gibt es nichts zu beobachten.` |
+| 258 | `watch.start` | `Watching {label}...` | `Du beobachtest {label}...` |
+| 259 | `watch.void` | `You're in a void. There's nothing to watch.` | `Du befindest dich im Nichts. Hier gibt es nichts zu beobachten.` |
+| 260 | `world.file_unreadable` | `Could not read world file '{path}': {err}` | `Weltdatei '{path}' konnte nicht gelesen werden: {err}` |
+| 261 | `world.save_unreadable` | `Could not read save file '{path}': {err}` | `Speicherdatei '{path}' konnte nicht gelesen werden: {err}` |
+| 262 | `xp.clamped` | `XP cannot drop below 0.` | `XP können nicht unter 0 fallen.` |
 
 <!-- END GENERATED -->

@@ -390,6 +390,9 @@ catalogEntries =
     , ("vehicle.travel_on",       "You travel on to {stop}.")
     , ("vehicle.fuelled",         "The {vehicle} is fuelled ({f}/{max}).")
     , ("vehicle.warning",         "Warning: {list}!")
+    , ("vehicle.condition_set",   "{vehicle}: problem detected — {condition}.")
+    , ("vehicle.condition_cleared", "{vehicle}: problem resolved — {condition}.")
+    , ("vehicle.condition_unknown", "Unknown vehicle: {vehicle}.")
     , ("look.fuel_out",           "\nOut of {item} (0/{max})")
     , ("look.fuel",               "\nFuel ({item}: {f}/{max})")
     -- -- quests / effects / journal -----------------------------------------

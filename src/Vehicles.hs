@@ -15,7 +15,9 @@ module Vehicles
     , driveVehicle
     , advanceVehicleRoute
     , refuelVehicle
+    , applyVehicleCondition
     , clearVehicleCondition
+    , clearVehicleConditionEv
     , vehicleConditionTickWith
     , vehicleLookAddon
     ) where
@@ -196,11 +198,25 @@ refuelVehicle vId amount state = case lookupVehicle vId state >>= vehicleFuelPro
                     [("vehicle", maybe vId vehicleName (lookupVehicle vId state)),
                      ("f", show newFuel), ("max", show maxFuel)])
 
--- | Clear a vehicle condition (e.g. after `repair`)
-clearVehicleCondition :: VehicleID -> String -> GameState -> GameState
-clearVehicleCondition vId condId state =
+-- | Apply / activate a vehicle condition
+applyVehicleCondition :: VehicleID -> String -> GameState -> (GameState, [OutputEvent])
+applyVehicleCondition vId condId state =
     let vs = getVehicleState vId state
-    in setVehicleState vId (vs { vsActiveConditions = Set.delete condId (vsActiveConditions vs) }) state
+        vName = maybe vId vehicleName (lookupVehicle vId state)
+        st' = setVehicleState vId (vs { vsActiveConditions = Set.insert condId (vsActiveConditions vs) }) state
+    in (st', evMsg "vehicle.condition_set" [("vehicle", vName), ("condition", condId)])
+
+-- | Clear a vehicle condition with an output event (e.g. from an effect)
+clearVehicleConditionEv :: VehicleID -> String -> GameState -> (GameState, [OutputEvent])
+clearVehicleConditionEv vId condId state =
+    let vs = getVehicleState vId state
+        vName = maybe vId vehicleName (lookupVehicle vId state)
+        st' = setVehicleState vId (vs { vsActiveConditions = Set.delete condId (vsActiveConditions vs) }) state
+    in (st', evMsg "vehicle.condition_cleared" [("vehicle", vName), ("condition", condId)])
+
+-- | Clear a vehicle condition (state-only wrapper; e.g. after `repair`)
+clearVehicleCondition :: VehicleID -> String -> GameState -> GameState
+clearVehicleCondition vId condId state = fst (clearVehicleConditionEv vId condId state)
 
 -- | Fire a vehicle-wide condition effect with an outcome runner.
 --   Returns the (possibly updated) state plus a message ("" if nothing fired).

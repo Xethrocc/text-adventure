@@ -325,7 +325,7 @@ checkMissingVehiclesInDefs gw =
     let vehicleRefs = Set.fromList (Map.keys (vehicleDefs gw))
         allRefs = concatMap idsFromOutcomeVehicle (allOutcomes gw)
                ++ concatMap idsFromPredicateVehicle (allPredicates gw)
-    in [MissingVehicle vId | vId <- nub allRefs, not (Set.member vId vehicleRefs)]
+    in [MissingVehicle vId | vId <- nub allRefs, vId /= "current", not (Set.member vId vehicleRefs)]
 
 -- ---------------------------------------------------------------------------
 -- Flag consistency
@@ -533,6 +533,8 @@ checkPlacementRefs gw = concatMap effectRefs (allOutcomes gw)
 -- | Vehicle IDs referenced via `ship.<id>.<system>` variables or `ActorShip` in an Effect.
 idsFromOutcomeVehicle :: Effect -> [String]
 idsFromOutcomeVehicle outcome = case outcome of
+    ApplyVehicleCondition vId _                  -> [vId]
+    ClearVehicleCondition vId _                  -> [vId]
     SetValue (VRActorProp (ActorShip vId) _) _    -> [vId]
     ModifyValue (VRActorProp (ActorShip vId) _) _ -> [vId]
     ComputeValue (VRActorProp (ActorShip vId) _) _ -> [vId]
@@ -552,6 +554,7 @@ idsFromOutcomeVehicle outcome = case outcome of
 -- | Vehicle IDs referenced via `ship.<id>.<system>` variables in a Predicate.
 idsFromPredicateVehicle :: Predicate -> [String]
 idsFromPredicateVehicle p = case p of
+    VehicleHasCondition vId _ -> [vId]
     PNot q              -> idsFromPredicateVehicle q
     PAll qs             -> concatMap idsFromPredicateVehicle qs
     PAny qs             -> concatMap idsFromPredicateVehicle qs

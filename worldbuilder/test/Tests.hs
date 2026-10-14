@@ -26,7 +26,7 @@ import Worldbuilder.QuestCheck (questDiagnostics, QuestDiagnostic (..))
 import Worldbuilder.ProjectView (ProjectView (..), PVRoom (..), PVEdge (..),
                                  PVReachability (..), PVQuest (..),
                                  buildProjectView, encodeProjectView, renderMapGrid)
-import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome, allWorldEffects, allAOutcomes, checkUnknownYamlKeys)
+import Worldbuilder.Compile (CompileResult (..), compileAdventure, CompileIssue(..), Severity(..), compileAActionOutcome, allWorldEffects, allAOutcomes, checkUnknownYamlKeys, vehicleTargetsInEffect)
 import Worldbuilder.Test (checkMarkers, executeContentTest)
 import Worldbuilder.Fuzz (FindingKind (..), FuzzFinding (..), FuzzVocab (..),
                           frozenWindow, fuzzRun, fuzzVocab, genInputs, runSeedFor)
@@ -4999,6 +4999,10 @@ tests =
     , ("hazards: unknown YAML keys emit warnings", testHazardsUnknownKeyWarning)
     , ("hazards: locate and fuzz integration", testHazardsFuzzAndLocate)
     , ("hazards: performance measurement (~500 triggers)", testHazardsPerformance500Triggers)
+    , ("VC-11: vehicle condition sugar YAML parsing and compilation", testVehicleConditionSugar)
+    , ("VC-12..14: vehicle condition ref checks, error, warning and current token", testVehicleConditionRefChecks)
+    , ("VC-15: walker traverses nested vehicle condition effects", testVehicleConditionWalkerCoverage)
+    , ("VC-20: schema example compiles cleanly", testVehicleConditionDocExampleCompiles)
     ]
 
 -- ---------------------------------------------------------------------------
@@ -10750,6 +10754,134 @@ testHazardsPerformance500Triggers = do
         Right cr -> do
             let trigs = E.triggerDefs (crWorld cr)
             expectTrue ("triggers >= 500, got: " ++ show (length trigs)) (length trigs >= 500)
+
+-- | VC-11: apply_vehicle_condition and clear_vehicle_condition YAML syntax decodes and compiles to Core effects
+testVehicleConditionSugar :: IO Bool
+testVehicleConditionSugar = do
+    let dec = Aeson.decode :: BLC.ByteString -> Maybe AActionOutcome
+    r1 <- expectEqual (Just (AOApplyVehicleCondition "kestrel" "overheat"))
+              (dec (BLC.pack "{\"apply_vehicle_condition\": {\"vehicle\": \"kestrel\", \"condition\": \"overheat\"}}"))
+    r2 <- expectEqual (Just (AOClearVehicleCondition "kestrel" "overheat"))
+              (dec (BLC.pack "{\"clear_vehicle_condition\": {\"vehicle\": \"kestrel\", \"condition\": \"overheat\"}}"))
+    c1 <- expectEqual (E.ApplyVehicleCondition "kestrel" "overheat")
+              (compileAActionOutcome (AOApplyVehicleCondition "kestrel" "overheat"))
+    c2 <- expectEqual (E.ClearVehicleCondition "kestrel" "overheat")
+              (compileAActionOutcome (AOClearVehicleCondition "kestrel" "overheat"))
+    pure (r1 && r2 && c1 && c2)
+
+-- | VC-12, VC-13, VC-14: checkVehicleConditionRefs tests
+--   VC-12: Unknown vehicle target is a hard error (UnknownVehicleConditionTarget, Left)
+--   VC-13: Unknown condition name is a warning (UnknownVehicleCondition, Right)
+--   VC-14: Dynamic token "current" compiles without refcheck errors
+testVehicleConditionRefChecks :: IO Bool
+testVehicleConditionRefChecks = do
+    let shipOk = (minShip "kestrel")
+            { avConditions = Map.singleton "overheat" [AOMessage "Engine heat critical!"] }
+        makeAdv vTarget cName = (minAdventure (minRoom "loc_0"))
+            { advVehicles = [shipOk]
+            , advTriggers =
+                [ ATrigger "t_heat" "turn" Nothing
+                    [AOApplyVehicleCondition vTarget cName] False 0 1 [] [] ]
+            }
+        advGood = makeAdv "kestrel" "overheat"
+        advBadTarget = makeAdv "unknown_ship" "overheat"
+        advBadCondition = makeAdv "kestrel" "unknown_leak"
+        advCurrentToken = makeAdv "current" "overheat"
+    -- Good compiles clean
+    r1 <- case compileAdventure advGood of
+            Left errs -> do
+                putStrLn $ "  compile errors in advGood: " ++ issuesText errs
+                pure False
+            Right _ -> pure True
+    -- VC-12: Bad target fails with UnknownVehicleConditionTarget
+    r2 <- case compileAdventure advBadTarget of
+            Left errs -> expectContains "UnknownVehicleConditionTarget" (issuesText errs)
+            Right _   -> expectTrue "expected UnknownVehicleConditionTarget error" False
+    -- VC-13: Unknown condition produces warning, compiles Right
+    r3 <- case compileAdventure advBadCondition of
+            Left errs -> do
+                putStrLn $ "  unexpected compile error in advBadCondition: " ++ issuesText errs
+                pure False
+            Right cr  -> expectContains "UnknownVehicleCondition" (issuesText (crWarnings cr))
+    -- VC-14: Token "current" compiles without UnknownVehicleConditionTarget error
+    r4 <- case compileAdventure advCurrentToken of
+            Left errs -> do
+                putStrLn $ "  unexpected compile error in advCurrentToken: " ++ issuesText errs
+                pure False
+            Right cr  -> expectEqual [] [ i | i <- crWarnings cr, ciCode i == "UnknownVehicleConditionTarget" ]
+    pure (r1 && r2 && r3 && r4)
+
+-- | VC-15: Walker processes new constructors in nested structures
+testVehicleConditionWalkerCoverage :: IO Bool
+testVehicleConditionWalkerCoverage = do
+    let shipOk = (minShip "kestrel")
+            { avConditions = Map.singleton "overheat" [AOMessage "Engine heat critical!"] }
+        advNested = (minAdventure (minRoom "loc_0"))
+            { advVehicles = [shipOk]
+            , advTriggers =
+                [ ATrigger "t_nested" "turn" Nothing
+                    [ AOConditional (E.VehicleHasCondition "kestrel" "overheat")
+                        [AOApplyVehicleCondition "kestrel" "overheat"]
+                        [AOClearVehicleCondition "kestrel" "overheat"]
+                    ] False 0 1 [] [] ]
+            }
+    case compileAdventure advNested of
+        Left errs -> do
+            putStrLn $ "  nested vehicle condition compile failed: " ++ issuesText errs
+            pure False
+        Right cr -> do
+            let allEffs = allWorldEffects (crWorld cr)
+                targets = concatMap vehicleTargetsInEffect allEffs
+            expectTrue "walker sees nested vehicle condition effects" (("kestrel", "overheat") `elem` targets)
+
+-- | VC-20: Schema example from docs/adventure-schema.md compiles cleanly
+testVehicleConditionDocExampleCompiles :: IO Bool
+testVehicleConditionDocExampleCompiles = do
+    tmpDir <- getTemporaryDirectory
+    let path = tmpDir </> "vc20-doc-example.yaml"
+        yamlDoc = unlines
+            [ "name: Vehicle Condition Demo"
+            , "start_room: bridge"
+            , "rooms:"
+            , "  - id: bridge"
+            , "    name: Bridge"
+            , "    desc: The control bridge of the starship."
+            , "vehicles:"
+            , "  - id: starship"
+            , "    name: Starship"
+            , "    type: player"
+            , "    entry_room: bridge"
+            , "    cockpit: bridge"
+            , "    interior:"
+            , "      - id: bridge"
+            , "        name: Bridge"
+            , "        desc: The control bridge."
+            , "    conditions:"
+            , "      hull_breach:"
+            , "        - msg: Hull integrity compromised!"
+            , "rules:"
+            , "  - id: breach_trigger"
+            , "    on: turn"
+            , "    effects:"
+            , "      - apply_vehicle_condition:"
+            , "          vehicle: starship"
+            , "          condition: hull_breach"
+            , "      - clear_vehicle_condition:"
+            , "          vehicle: current"
+            , "          condition: hull_breach"
+            ]
+    writeFile path yamlDoc
+    parsed <- parseAdventureFile path
+    removeFile path
+    case parsed of
+        Left parseErr -> do
+            putStrLn $ "  failed to parse schema example: " ++ parseErr
+            pure False
+        Right adv -> case compileAdventure adv of
+            Left compileErrs -> do
+                putStrLn $ "  failed to compile schema example: " ++ issuesText compileErrs
+                pure False
+            Right _ -> pure True
 
 main :: IO ()
 main = do

@@ -617,6 +617,8 @@ items:
 | `{ music: "pfad/datei.xm" }` | PlayMusic — Hintergrundmusik-Loop starten/wechseln (Audio Phase 2; `.xm`, `.mid`, `.wav/.ogg/.mp3`) |
 | `{ stop_music: true }` | StopMusic — Hintergrundmusik stoppen (Audio Phase 2) |
 | `{ block: "reason" }`, `{ block: true }`, or `{ block: { msg: "…", turn: true } }` | Block — Veto a command before execution (Phase 2.2). Stops command action. Default: `turn: false` (no turn consumed). Opt-in `turn: true` advances turn and ticks conditions. |
+| `{ apply_vehicle_condition: { vehicle: id, condition: name } }` | ApplyVehicleCondition (OPEN-24) — aktiviert eine Fahrzeug-Bedingung in `vsActiveConditions` (Set-Semantik, idempotent; Nachricht `vehicle.condition_set`). `vehicle:` nimmt eine Fahrzeug-ID oder das Token `"current"` (löst zum aktuellen Fahrzeug auf). **Achtung:** `set_state` wirkt **nicht** auf Fahrzeuge. |
+| `{ clear_vehicle_condition: { vehicle: id, condition: name } }` | ClearVehicleCondition (OPEN-24) — entfernt eine Fahrzeug-Bedingung aus `vsActiveConditions` (Nachricht `vehicle.condition_cleared`). `vehicle:` nimmt eine Fahrzeug-ID oder `"current"`. |
 | `{ hazard_target: { hazard: id, to: N } }` | SetValue (VRVariable "hazard.<id>.target") N — steuert Ziellevel einer Gefahr an (OPEN-23) |
 | `{ hazard_jump: { hazard: id, to: N } }` | SetValue (VRVariable "hazard.<id>.level") N — setzt Level einer Gefahr sofort (OPEN-23) |
 | `{ hazard_pause: id }` | SetValue (VRFlag "hazard.<id>.paused") "true" — pausiert den Taktfortschritt einer Gefahr (OPEN-23) |
@@ -1144,6 +1146,42 @@ quests:
 Befehle: `enter/board <vehicle>`, `disembark` (nicht `exit` — das beendet
 das Spiel), `drive to <label>`, `wait` (Automatikroute), `refuel`,
 `repair <condition>`.
+
+### Fahrzeug-Zustandsänderung (OPEN-24)
+
+Fahrzeuge unterstützen definierte Zustände unter `conditions:` (z. B. `broken_wheel`, `overheat`).
+Diese Zustände können über Effekte aktiviert und deaktiviert sowie über Prädikate abgefragt werden:
+
+- **Bedingung aktivieren (`apply_vehicle_condition`):**
+  ```yaml
+  effects:
+    - apply_vehicle_condition:
+        vehicle: carriage       # Fahrzeug-ID oder dynamisches Token "current"
+        condition: broken_wheel
+  ```
+- **Bedingung deaktivieren (`clear_vehicle_condition`):**
+  ```yaml
+  effects:
+    - clear_vehicle_condition:
+        vehicle: current        # löst zum aktuellen Fahrzeug des Spielers auf
+        condition: broken_wheel
+  ```
+- **Bedingung abfragen (`vehicle_has_condition` Predicate):**
+  ```yaml
+  when:
+    vehicle_has_condition:
+      vehicle: carriage         # oder "current"
+      condition: broken_wheel
+  ```
+  Kann in `when:`, `if:` und in Dialog-Optionen (`visible:`) genutzt werden.
+
+> [!WARNING]
+> `set_state` wirkt **nicht** auf Fahrzeuge. `conditions:` sind keine Entity- oder NPC-States. Verwenden Sie für Fahrzeuge stets `apply_vehicle_condition` und `clear_vehicle_condition`.
+
+- **Dynamisches Token `"current"`:** Löst zur Laufzeit auf das aktuelle Fahrzeug auf, in dem sich der Spieler befindet (bzw. auf ein im Raum befindliches Fahrzeug).
+- **Zero-New-Fields-Regel:** Am YAML-Schema des Fahrzeugs sind keine neuen Top-Level-Felder erforderlich; Zustände werden unter `conditions:` deklariert.
+- **Runden-Ticks:** Solange der Spieler sich im Fahrzeug befindet, feuern die Ticks aktiver Zustände (`vehicleConditionEffects`) rundenbasiert.
+- **Reparatur-Kommando:** Aktive Bedingungen können vom Spieler weiterhin interaktiv mit `repair <condition>` behoben werden.
 
 ### Fahrzeug mit Systemen (Module 7h)
 

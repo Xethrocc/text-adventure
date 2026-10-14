@@ -119,6 +119,10 @@ import Types.Core
     , NPCID
     , QuestID
     )
+import Types.Vehicles
+    ( VehicleDef (..)
+    , VehicleState (..)
+    )
 import Types.Output
     ( OutputEvent (..)
     , styledText
@@ -883,6 +887,15 @@ makeSnapshot state = Snapshot
             Just (VVText s) -> s == val
             _               -> False
         Just (HasCondition cond) -> Map.member cond (conditions ss)
+        Just (VehicleHasCondition v cond) ->
+            let vId = if v == "current"
+                      then currentVehicle ss <|> fmap fst (F.find (\(_, def) -> currentRoom ss `elem` vehicleRooms def) (Map.toList (vehicleDefs gw)))
+                      else Just v
+            in case vId of
+                Just vid -> case Map.lookup vid (vehicleStates ss) of
+                    Just vs -> Set.member cond (vsActiveConditions vs)
+                    Nothing -> False
+                Nothing -> False
         Just _               -> True
 
     -- Combat snapshot

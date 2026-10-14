@@ -955,6 +955,7 @@ data Predicate
     | RoomHasTaggedItem RoomID String   -- ^ B2: does the room hold an item with this tag?
     | ResourceFull String               -- ^ K4: variable is at or above declared max
     | ResourceEmpty String              -- ^ K4: variable is at or below declared min
+    | VehicleHasCondition VehicleID String -- ^ OPEN-24: active condition on vehicle
     deriving (Show, Eq, Generic)
 
 -- | Serialize to the same compact object shape that FromJSON accepts
@@ -977,6 +978,7 @@ instance ToJSON Predicate where
                                         [ "name" .= n, "op" .= comparatorName op, "value" .= v ] ]
         VarIs n v          -> object [ "var" .= n, "is" .= v ]
         HasCondition c     -> object [ "has_condition" .= c ]
+        VehicleHasCondition v c -> object [ "vehicle_has_condition" .= object [ "vehicle" .= v, "condition" .= c ] ]
         Knows a f          -> object [ "knows" .= actorId a, "fact" .= f ]
         KnowsRecipe a r    -> object [ "knows_recipe" .= actorId a, "id" .= r ]
         HasTaggedItem a t  -> object [ "actor_has_tag" .= object ["actor" .= actorId a, "tag" .= t ] ]
@@ -1031,6 +1033,8 @@ instance FromJSON Predicate where
                 ActorHas <$> ah .: "actor" <*> ah .: "item")
         <|> (HasFlag   <$> o .: "has_flag")
         <|> (HasCondition <$> o .: "has_condition")
+        <|> (do vhc <- o .: "vehicle_has_condition"
+                VehicleHasCondition <$> vhc .: "vehicle" <*> vhc .: "condition")
         -- W1: knowledge — `knows: <fact>` (player) or `{knows: <actor>, fact: <fact>}`
         <|> (do k <- o .: "knows"
                 mFact  <- o .:? "fact"
@@ -1215,6 +1219,8 @@ data Effect
     | SwapInventory ActorRef ActorRef         -- ^ OPEN-20: atomarer Tausch zweier Inventare (getragen + ausgerüstet)
     | SetFuel ItemID Int                      -- ^ OPEN-17: Item-Timer auf N setzen (wird 0 → `on_empty`)
     | AddFuel ItemID Int                      -- ^ OPEN-17: Item-Timer um N ändern, geklammert bei 0 (wird 0 → `on_empty`)
+    | ApplyVehicleCondition VehicleID String   -- ^ OPEN-24: activate condition on vehicle
+    | ClearVehicleCondition VehicleID String   -- ^ OPEN-24: deactivate condition on vehicle
     | Noop                                        -- ^ Do nothing
     deriving (Show, Eq, Generic)
 
@@ -1529,6 +1535,18 @@ instance ToJSON Effect where
     toJSON (LearnRecipe a rId) =
         object [ "tag" .= ("LearnRecipe" :: String)
                , "contents" .= object [ "id" .= rId, "actor" .= actorId a ] ]
+    toJSON (ApplyVehicleCondition v c) = object
+        [ "apply_vehicle_condition" .= object
+            [ "vehicle" .= v
+            , "condition" .= c
+            ]
+        ]
+    toJSON (ClearVehicleCondition v c) = object
+        [ "clear_vehicle_condition" .= object
+            [ "vehicle" .= v
+            , "condition" .= c
+            ]
+        ]
     toJSON other = genericToJSON defaultOptions other
 
     toEncoding (RollDice pool die stream keep) = pairs
@@ -1544,10 +1562,27 @@ instance ToJSON Effect where
     toEncoding (LearnRecipe a rId) =
         pairs ("tag" .= ("LearnRecipe" :: String)
             <> "contents" .= object [ "id" .= rId, "actor" .= actorId a ])
+    toEncoding (ApplyVehicleCondition v c) = pairs
+        ( "apply_vehicle_condition" .= object
+            [ "vehicle" .= v
+            , "condition" .= c
+            ]
+        )
+    toEncoding (ClearVehicleCondition v c) = pairs
+        ( "clear_vehicle_condition" .= object
+            [ "vehicle" .= v
+            , "condition" .= c
+            ]
+        )
     toEncoding other = genericToEncoding defaultOptions other
 
 instance FromJSON Effect where
-    parseJSON v = parseRollDice v <|> parseLearnRecipe v <|> genericParseJSON defaultOptions v <|> parseLegacyEffect v
+    parseJSON v = parseRollDice v
+              <|> parseLearnRecipe v
+              <|> parseApplyVehicleCondition v
+              <|> parseClearVehicleCondition v
+              <|> genericParseJSON defaultOptions v
+              <|> parseLegacyEffect v
       where
         parseRollDice = withObject "Effect" $ \o -> do
             rd <- o .: "roll_dice"
@@ -1557,6 +1592,14 @@ instance FromJSON Effect where
                 s <- ro .:? "stream" .!= ""
                 k <- ro .:? "keep" .!= p
                 pure (RollDice p d s k)
+        parseApplyVehicleCondition = withObject "Effect" $ \o -> do
+            vc <- o .: "apply_vehicle_condition"
+            flip (withObject "apply_vehicle_condition") vc $ \vco ->
+                ApplyVehicleCondition <$> vco .: "vehicle" <*> vco .: "condition"
+        parseClearVehicleCondition = withObject "Effect" $ \o -> do
+            vc <- o .: "clear_vehicle_condition"
+            flip (withObject "clear_vehicle_condition") vc $ \vco ->
+                ClearVehicleCondition <$> vco .: "vehicle" <*> vco .: "condition"
         -- K11d/K11e: player form (contents = recipe id string, historical —
         --   the generic decoder no longer fits once the constructor carries an
         --   actor) and actor form (contents = {id, actor}).

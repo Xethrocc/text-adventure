@@ -2097,6 +2097,8 @@ data AActionOutcome
     | AOApplyCondition String Int [AActionOutcome] [AActionOutcome] Bool
         -- ^ condition: {name, turns, tick, end, hidden} — timed status effect (Phase 2.1)
     | AOClearCondition String          -- ^ clear_condition: <name>
+    | AOApplyVehicleCondition String String -- ^ apply_vehicle_condition: { vehicle: id, condition: name }
+    | AOClearVehicleCondition String String -- ^ clear_vehicle_condition: { vehicle: id, condition: name }
     | AOModifySkill String Int         -- ^ skill: {name, delta}
     | AORandomChoice String [(Int, [AActionOutcome])]
         -- ^ `random: [[weight, [outcomes]], ...]` (default stream, Stream-Name "")
@@ -2224,6 +2226,10 @@ instance FromJSON AActionOutcome where
                                  <*> cond .:? "tick" .!= [] <*> cond .:? "end" .!= []
                                  <*> cond .:? "hidden" .!= False)
         <|> (AOClearCondition <$> o .: "clear_condition")
+        <|> (do avc <- o .: "apply_vehicle_condition"
+                AOApplyVehicleCondition <$> avc .: "vehicle" <*> avc .: "condition")
+        <|> (do cvc <- o .: "clear_vehicle_condition"
+                AOClearVehicleCondition <$> cvc .: "vehicle" <*> cvc .: "condition")
         <|> (do l <- o .: "learn"
                 case l of
                     String f  -> pure (AOLearn (T.unpack f) "player")

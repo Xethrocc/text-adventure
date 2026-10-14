@@ -1794,6 +1794,20 @@ evalPredicate (RoomHasTaggedItem r tag) st =
     not (null (countItemMembers (CountSpec CountItems (CountInRoom r) (Just tag)) st))
 evalPredicate (HasFlag f) st = hasFlag f st
 evalPredicate (HasCondition cn) st = hasCondition cn st
+evalPredicate (VehicleHasCondition v c) st =
+    case resolveVehicle v of
+        Just vId -> case Map.lookup vId (vehicleStates (save st)) of
+            Just vs -> c `Set.member` vsActiveConditions vs
+            Nothing -> False
+        Nothing  -> False
+  where
+    resolveVehicle "current" =
+        case currentVehicle (save st) of
+            Just vId -> Just vId
+            Nothing  ->
+                let rId = currentRoom (save st)
+                in fmap fst (find (\(_, def) -> rId `elem` vehicleRooms def) (Map.toList (vehicleDefs (world st))))
+    resolveVehicle vId = Just vId
 -- A state predicate checks the entity's state in whichever layer stores it:
 -- `entityStates` (exit locks, doors, `set_state:` targets), an NPC's status
 -- ("alive"/"dead", as `killNPC` and the combat path set it) or an item's status

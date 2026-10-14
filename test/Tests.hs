@@ -2997,14 +2997,12 @@ testRefuelViaItem = do
     r2 <- expectEqual (Just 10) (vsFuel (getVehicleState "carriage" st))
     pure (r1 && r2)
 
+-- | VC-19: vehicle condition tick runs through ApplyVehicleCondition effect instead of setVehicleState hack
 testVehicleConditionTick :: IO Bool
 testVehicleConditionTick = do
-    -- Simulate a hull breach-like condition: set it directly, then tick
     let aboard = fst (executeCommand (EnterVehicleCmd "carriage")
                         (moveToRoom "meadow" initSampleGame))
-        breach = setVehicleState "carriage"
-                    ((getVehicleState "carriage" aboard)
-                        { vsActiveConditions = Set.singleton "test_leak" }) aboard
+        (breach, _) = applyOutcome (ApplyVehicleCondition "carriage" "test_leak") "" aboard
         breachDef = breach { world = (world breach)
             { vehicleDefs = Map.adjust (\v -> v { vehicleConditionEffects =
                 Map.singleton "test_leak" (ModifyValue VRPlayerHealth (-5)) })
@@ -3013,13 +3011,189 @@ testVehicleConditionTick = do
     r1 <- expectTrue "damage applied" (playerHealth (player (save st)) == 95)
     pure r1
 
+-- | VC-17: SaveState and VehicleState JSON round-trip with active conditions
 testVehicleStateRoundTrip :: IO Bool
 testVehicleStateRoundTrip = do
     let vs = VehicleState "meadow" (Just 7) (Set.singleton "derailed")
                 (Map.singleton "cabin" "The cabin lists to one side.")
         encoded = Aeson.encode vs
         decoded = Aeson.decode encoded :: Maybe VehicleState
-    expectEqual (Just vs) decoded
+    r1 <- expectEqual (Just vs) decoded
+    -- VC-17: SaveState roundtrip with populated vsActiveConditions
+    let ss = (save initSampleGame)
+            { vehicleStates = Map.singleton "carriage" vs }
+        encodedSs = Aeson.encode ss
+        decodedSs = Aeson.decode encodedSs :: Maybe SaveState
+    r2 <- expectEqual (Just ss) decodedSs
+    pure (r1 && r2)
+
+-- | VC-01: Effect JSON roundtrip for ApplyVehicleCondition and ClearVehicleCondition
+testEffectVehicleConditionRoundTrip :: IO Bool
+testEffectVehicleConditionRoundTrip = do
+    let effApply = ApplyVehicleCondition "carriage" "broken_wheel"
+        effClear = ClearVehicleCondition "carriage" "broken_wheel"
+        encApply = Aeson.encode effApply
+        encClear = Aeson.encode effClear
+        decApply = Aeson.decode encApply :: Maybe Effect
+        decClear = Aeson.decode encClear :: Maybe Effect
+    r1 <- expectEqual (Just effApply) decApply
+    r2 <- expectEqual (Just effClear) decClear
+    let strApply = BLC.unpack encApply
+        strClear = BLC.unpack encClear
+    r3 <- expectTrue "apply has explicit key" ("apply_vehicle_condition" `isInfixOf` strApply)
+    r4 <- expectTrue "clear has explicit key" ("clear_vehicle_condition" `isInfixOf` strClear)
+    pure (r1 && r2 && r3 && r4)
+
+-- | VC-02: Predicate JSON roundtrip for VehicleHasCondition
+testPredicateVehicleHasConditionRoundTrip :: IO Bool
+testPredicateVehicleHasConditionRoundTrip = do
+    let pred1 = VehicleHasCondition "carriage" "broken_wheel"
+        enc = Aeson.encode pred1
+        dec = Aeson.decode enc :: Maybe Predicate
+        str = BLC.unpack enc
+    r1 <- expectEqual (Just pred1) dec
+    r2 <- expectTrue "contains vehicle_has_condition" ("vehicle_has_condition" `isInfixOf` str)
+    pure (r1 && r2)
+
+-- | VC-03: ApplyVehicleCondition inserts condition into vsActiveConditions and emits event
+testApplyVehicleConditionInserts :: IO Bool
+testApplyVehicleConditionInserts = do
+    let st0 = initSampleGame
+        (st1, evs) = applyOutcome (ApplyVehicleCondition "carriage" "flat_tire") "" st0
+        vs = getVehicleState "carriage" st1
+    r1 <- expectTrue "condition added" ("flat_tire" `Set.member` vsActiveConditions vs)
+    r2 <- expectTrue "emits condition_set event" (not (null evs))
+    pure (r1 && r2)
+
+-- | VC-04: ClearVehicleCondition removes condition from vsActiveConditions and emits event
+testClearVehicleConditionRemoves :: IO Bool
+testClearVehicleConditionRemoves = do
+    let st0 = initSampleGame
+        (st1, _) = applyOutcome (ApplyVehicleCondition "carriage" "flat_tire") "" st0
+        (st2, evs) = applyOutcome (ClearVehicleCondition "carriage" "flat_tire") "" st1
+        vs = getVehicleState "carriage" st2
+    r1 <- expectTrue "condition removed" (not ("flat_tire" `Set.member` vsActiveConditions vs))
+    r2 <- expectTrue "emits condition_cleared event" (not (null evs))
+    pure (r1 && r2)
+
+-- | VC-05: Applying a condition twice is idempotent (Set semantics)
+testApplyVehicleConditionIdempotent :: IO Bool
+testApplyVehicleConditionIdempotent = do
+    let st0 = initSampleGame
+        (st1, _) = applyOutcome (ApplyVehicleCondition "carriage" "flat_tire") "" st0
+        (st2, _) = applyOutcome (ApplyVehicleCondition "carriage" "flat_tire") "" st1
+        vs = getVehicleState "carriage" st2
+    expectEqual ["flat_tire"] (Set.toList (vsActiveConditions vs))
+
+-- | VC-06: evalPredicate with VehicleHasCondition
+testEvalPredicateVehicleHasCondition :: IO Bool
+testEvalPredicateVehicleHasCondition = do
+    let st0 = initSampleGame
+    r1 <- expectTrue "initially false" (not (evalPredicate (VehicleHasCondition "carriage" "overheat") st0))
+    let (st1, _) = applyOutcome (ApplyVehicleCondition "carriage" "overheat") "" st0
+    r2 <- expectTrue "true after apply" (evalPredicate (VehicleHasCondition "carriage" "overheat") st1)
+    let (st2, _) = applyOutcome (ClearVehicleCondition "carriage" "overheat") "" st1
+    r3 <- expectTrue "false after clear" (not (evalPredicate (VehicleHasCondition "carriage" "overheat") st2))
+    pure (r1 && r2 && r3)
+
+-- | VC-07: isChoiceVisible filters choices based on vehicle_has_condition
+testChoiceVisibleVehicleCondition :: IO Bool
+testChoiceVisibleVehicleCondition = do
+    let choiceGated = DialogueChoice "Fix carriage" (Just "fix_node") (Just (VehicleHasCondition "carriage" "broken")) Noop
+        choiceAlways = DialogueChoice "Say hello" (Just "hello_node") Nothing Noop
+        node = DialogueNode "root" "Need something?" [choiceAlways, choiceGated]
+        tree = DialogueTree "root" (Map.singleton "root" node)
+        squire = squireDef { npcDialogueTrees = Map.singleton "alive" tree }
+        st0 = (moveToRoom "meadow" initSampleGame)
+            { world = (world initSampleGame) { npcDefs = Map.insert "squire" squire (npcDefs (world initSampleGame)) }
+            , save = (save initSampleGame) { activeDialogue = Just "squire" }
+            }
+        snap0 = makeSnapshot st0
+        choices0 = maybe [] dsChoices (snapDialogue snap0)
+    r1 <- expectEqual 1 (length choices0)
+    let (st1, _) = applyOutcome (ApplyVehicleCondition "carriage" "broken") "" st0
+        snap1 = makeSnapshot st1
+        choices1 = maybe [] dsChoices (snapDialogue snap1)
+    r2 <- expectEqual 2 (length choices1)
+    pure (r1 && r2)
+
+-- | VC-08: Token "current" resolves to the player's current vehicle
+testDynamicTokenCurrentVehicle :: IO Bool
+testDynamicTokenCurrentVehicle = do
+    let st0 = moveToRoom "meadow" initSampleGame
+        aboard = fst (executeCommand (EnterVehicleCmd "carriage") st0)
+    let (st1, _) = applyOutcome (ApplyVehicleCondition "current" "engine_trouble") "" aboard
+        vs = getVehicleState "carriage" st1
+    r1 <- expectTrue "condition applied via current" ("engine_trouble" `Set.member` vsActiveConditions vs)
+    r2 <- expectTrue "predicate evaluates via current" (evalPredicate (VehicleHasCondition "current" "engine_trouble") st1)
+    let (st2, _) = applyOutcome (ClearVehicleCondition "current" "engine_trouble") "" st1
+        vs2 = getVehicleState "carriage" st2
+    r3 <- expectTrue "condition cleared via current" (not ("engine_trouble" `Set.member` vsActiveConditions vs2))
+    r4 <- expectTrue "predicate false after clear" (not (evalPredicate (VehicleHasCondition "current" "engine_trouble") st2))
+    pure (r1 && r2 && r3 && r4)
+
+-- | VC-10: repair <condition> clears condition applied by effect
+testRepairClearsVehicleCondition :: IO Bool
+testRepairClearsVehicleCondition = do
+    let st0 = moveToRoom "meadow" initSampleGame
+        aboard = fst (executeCommand (EnterVehicleCmd "carriage") st0)
+        (st1, _) = applyOutcome (ApplyVehicleCondition "carriage" "broken_axle") "" aboard
+        vs1 = getVehicleState "carriage" st1
+    r1 <- expectTrue "condition set" ("broken_axle" `Set.member` vsActiveConditions vs1)
+    let (st2, msgs) = executeCommand (RepairCmd "broken_axle") st1
+        vs2 = getVehicleState "carriage" st2
+    r2 <- expectTrue "condition cleared by repair" (not ("broken_axle" `Set.member` vsActiveConditions vs2))
+    r3 <- expectTrue "repair output mentions problem" ("broken_axle" `isInfixOf` msgs)
+    pure (r1 && r2 && r3)
+
+-- | VC-16: Validate reports undeclared vehicle reference in vehicle condition effect
+testValidateVehicleConditionDetected :: IO Bool
+testValidateVehicleConditionDetected = do
+    let gwBad = (world initSampleGame)
+            { triggerDefs =
+                [ TriggerDef "t_vc" OnTurn
+                    Nothing
+                    [ ApplyVehicleCondition "nonexistent_vehicle" "leak" ] False 0 1 [] []
+                ] }
+        errorsBad = validateWorld gwBad
+    r1 <- expectTrue "undeclared vehicle in ApplyVehicleCondition detected by Validate"
+            (MissingVehicle "nonexistent_vehicle" `elem` errorsBad)
+    let gwGood = (world initSampleGame)
+            { triggerDefs =
+                [ TriggerDef "t_vc" OnTurn
+                    Nothing
+                    [ ApplyVehicleCondition "carriage" "leak" ] False 0 1 [] []
+                ] }
+        errorsGood = validateWorld gwGood
+    r2 <- expectTrue "declared vehicle in ApplyVehicleCondition valid"
+            (MissingVehicle "carriage" `notElem` errorsGood)
+    let gwCurrent = (world initSampleGame)
+            { triggerDefs =
+                [ TriggerDef "t_vc" OnTurn
+                    Nothing
+                    [ ApplyVehicleCondition "current" "leak" ] False 0 1 [] []
+                ] }
+        errorsCurrent = validateWorld gwCurrent
+    r3 <- expectTrue "current token in ApplyVehicleCondition valid"
+            (MissingVehicle "current" `notElem` errorsCurrent)
+    pure (r1 && r2 && r3)
+
+-- | VC-18: World with new effects roundtrips cleanly; world without remains byte-identical
+testByteContractWorldVehicleCondition :: IO Bool
+testByteContractWorldVehicleCondition = do
+    let vDef = (Map.findWithDefault (error "carriage missing") "carriage" (vehicleDefs (world initSampleGame)))
+            { vehicleConditionEffects = Map.singleton "broken" (ApplyVehicleCondition "current" "alarm") }
+        gwWithNew = (world initSampleGame)
+            { vehicleDefs = Map.insert "carriage" vDef (vehicleDefs (world initSampleGame)) }
+        encWithNew = Aeson.encode gwWithNew
+        decWithNew = Aeson.decode encWithNew :: Maybe GameWorld
+    r1 <- expectEqual (Just gwWithNew) decWithNew
+    let gwClean = world initSampleGame
+        encClean1 = Aeson.encode gwClean
+        decClean = Aeson.decode encClean1 :: Maybe GameWorld
+        encClean2 = fmap Aeson.encode decClean
+    r2 <- expectEqual (Just encClean1) encClean2
+    pure (r1 && r2)
 
 -- ===== Undo tests (Phase 4.3) =====
 
@@ -12798,6 +12972,17 @@ main = do
         , runTest "refuel via item-on-vehicle" testRefuelViaItem
         , runTest "vehicle condition fires vehicle-wide tick" testVehicleConditionTick
         , runTest "VehicleState JSON round-trip" testVehicleStateRoundTrip
+        , runTest "VC-01: Effect JSON roundtrip for vehicle condition" testEffectVehicleConditionRoundTrip
+        , runTest "VC-02: Predicate JSON roundtrip for vehicle condition" testPredicateVehicleHasConditionRoundTrip
+        , runTest "VC-03: ApplyVehicleCondition inserts condition" testApplyVehicleConditionInserts
+        , runTest "VC-04: ClearVehicleCondition removes condition" testClearVehicleConditionRemoves
+        , runTest "VC-05: ApplyVehicleCondition is idempotent" testApplyVehicleConditionIdempotent
+        , runTest "VC-06: evalPredicate with VehicleHasCondition" testEvalPredicateVehicleHasCondition
+        , runTest "VC-07: isChoiceVisible filters vehicle condition choices" testChoiceVisibleVehicleCondition
+        , runTest "VC-08: current token resolves to current vehicle" testDynamicTokenCurrentVehicle
+        , runTest "VC-10: repair command clears vehicle condition" testRepairClearsVehicleCondition
+        , runTest "VC-16: Validate reports undeclared vehicle in effect" testValidateVehicleConditionDetected
+        , runTest "VC-18: byte contract world vehicle condition roundtrip" testByteContractWorldVehicleCondition
         -- Undo (Phase 4.3)
         , runTest "undo restores previous state" testUndoRestoresPreviousState
         , runTest "quit does not create undo history" testQuitDoesNotCreateUndoHistory

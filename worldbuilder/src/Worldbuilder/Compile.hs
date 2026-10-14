@@ -43,6 +43,7 @@ module Worldbuilder.Compile
     , checkRecipeLearning
     , compileHazards
     , checkHazardRefs
+    , vehicleTargetsInEffect
     ) where
 
 import Worldbuilder.Types
@@ -838,6 +839,9 @@ compileAdventure adv =
         facRefErrs = checkStandingRefs (advFactions adv) gwResolved
         encRefErrs = checkEncounterRefs (advEncounterTables adv) gwResolved
         npcRefErrs = checkDamageNpcRefs gwResolved
+        vehicleCondIssues = checkVehicleConditionRefs gwResolved
+        vehicleCondRefErrs = [ i | i <- vehicleCondIssues, ciSeverity i == SError ]
+        vehicleCondRefWarns = [ i | i <- vehicleCondIssues, ciSeverity i == SWarning ]
         trigIdErrs = checkTriggerIds (advTriggers adv)
         cmdVerbErrs = checkCommandVerbRefs verbRegistry (advTriggers adv)
         chainTargetErrs = checkChainTargets (advTriggers adv) (advNPCs adv)
@@ -873,6 +877,7 @@ compileAdventure adv =
                     ++ shipErrs ++ shipConflictErrs
                     ++ combatErrs
                     ++ initVarErrs ++ initStateErrs ++ facRefErrs ++ encRefErrs ++ npcRefErrs
+                    ++ vehicleCondRefErrs
                     ++ trigIdErrs
                     ++ cmdVerbErrs
                     ++ chainTargetErrs
@@ -981,6 +986,7 @@ compileAdventure adv =
                           ++ gramWarns
                           ++ standingChangeWarns
                           ++ recipeResultWarns
+                          ++ vehicleCondRefWarns
             in Right (CompileResult gwResolved startSave allWarns)
   where
     -- Every locked exit starts locked in entityStates
@@ -3687,6 +3693,8 @@ refsInEffect e = case e of
     E.ApplyCondition _ _ (Just t) (Just el) _ -> refsInEffect t ++ refsInEffect el
     E.ApplyCondition _ _ (Just t) Nothing _   -> refsInEffect t
     E.ApplyCondition _ _ Nothing (Just el) _  -> refsInEffect el
+    E.ApplyVehicleCondition _ _       -> []
+    E.ClearVehicleCondition _ _       -> []
     _                                 -> []
 
 -- | Faction references inside a Predicate tree.
@@ -3698,6 +3706,7 @@ refsInPredicate p = case p of
     E.PNot q                       -> refsInPredicate q
     E.PAll qs                      -> concatMap refsInPredicate qs
     E.PAny qs                      -> concatMap refsInPredicate qs
+    E.VehicleHasCondition _ _      -> []
     _                              -> []
 
 -- | `"faction.x"` -> `Just "x"`; anything else -> Nothing.
@@ -3735,7 +3744,71 @@ hpTargetsInEffect e = case e of
     E.ApplyCondition _ _ (Just t) (Just el) _ -> hpTargetsInEffect t ++ hpTargetsInEffect el
     E.ApplyCondition _ _ (Just t) Nothing _   -> hpTargetsInEffect t
     E.ApplyCondition _ _ Nothing (Just el) _  -> hpTargetsInEffect el
+    E.ApplyVehicleCondition _ _             -> []
+    E.ClearVehicleCondition _ _             -> []
     _                                       -> []
+
+-- ---------------------------------------------------------------------------
+-- Vehicle condition references (OPEN-24)
+-- ---------------------------------------------------------------------------
+
+-- | OPEN-24: validate vehicle condition targets and condition names.
+--   Unknown vehicle target is a hard error (UnknownVehicleConditionTarget);
+--   unknown condition name (not declared in vehicle's conditions) is a warning (UnknownVehicleCondition).
+checkVehicleConditionRefs :: E.GameWorld -> [CompileIssue]
+checkVehicleConditionRefs gw =
+    let declaredVehicles = Map.keysSet (E.vehicleDefs gw)
+        dynamicTargets = Set.singleton "current"
+        effRefs = concatMap vehicleTargetsInEffect (allWorldEffects gw)
+        predRefs = concatMap vehicleTargetsInPredicate (allWorldPredicates gw)
+        allRefs = nub (effRefs ++ predRefs)
+
+        -- Errors: unknown vehicle target
+        targetErrs =
+            [ ciError "vehicle_condition" "UnknownVehicleConditionTarget"
+                ("vehicle condition targets '" ++ v ++ "', which is not declared under 'vehicles:'")
+            | (v, _) <- allRefs
+            , v `Set.notMember` declaredVehicles
+            , v `Set.notMember` dynamicTargets
+            ]
+
+        -- Warnings: unknown condition name for declared vehicle
+        allVehicleConds = Set.unions [ Map.keysSet (E.vehicleConditionEffects vd) | vd <- Map.elems (E.vehicleDefs gw) ]
+        condWarns =
+            [ ciWarning "vehicle_condition" "UnknownVehicleCondition"
+                ("condition '" ++ c ++ "' is not declared under conditions for vehicle '" ++ v ++ "'")
+            | (v, c) <- allRefs
+            , if v == "current"
+                then c `Set.notMember` allVehicleConds
+                else case Map.lookup v (E.vehicleDefs gw) of
+                    Just vd -> c `Set.notMember` Map.keysSet (E.vehicleConditionEffects vd)
+                    Nothing -> False
+            ]
+    in targetErrs ++ condWarns
+
+-- | Vehicle condition targets in an Effect tree.
+vehicleTargetsInEffect :: E.Effect -> [(String, String)]
+vehicleTargetsInEffect e = case e of
+    E.ApplyVehicleCondition v c -> [(v, c)]
+    E.ClearVehicleCondition v c -> [(v, c)]
+    E.Sequence es              -> concatMap vehicleTargetsInEffect es
+    E.RandomChoice cs          -> concatMap (vehicleTargetsInEffect . snd) cs
+    E.RandomChoiceOn _ cs      -> concatMap (vehicleTargetsInEffect . snd) cs
+    E.Conditional p t el       -> vehicleTargetsInPredicate p ++ vehicleTargetsInEffect t ++ vehicleTargetsInEffect el
+    E.Narrative _ follow       -> vehicleTargetsInEffect follow
+    E.ApplyCondition _ _ (Just t) (Just el) _ -> vehicleTargetsInEffect t ++ vehicleTargetsInEffect el
+    E.ApplyCondition _ _ (Just t) Nothing _   -> vehicleTargetsInEffect t
+    E.ApplyCondition _ _ Nothing (Just el) _  -> vehicleTargetsInEffect el
+    _                          -> []
+
+-- | Vehicle condition targets in a Predicate tree.
+vehicleTargetsInPredicate :: E.Predicate -> [(String, String)]
+vehicleTargetsInPredicate p = case p of
+    E.VehicleHasCondition v c  -> [(v, c)]
+    E.PNot q                   -> vehicleTargetsInPredicate q
+    E.PAll qs                  -> concatMap vehicleTargetsInPredicate qs
+    E.PAny qs                  -> concatMap vehicleTargetsInPredicate qs
+    _                          -> []
 
 -- ---------------------------------------------------------------------------
 -- Verbs (Phase 3a): adventure-declared custom verbs
@@ -4428,6 +4501,8 @@ compileAActionOutcome ao = case ao of
     AOApplyCondition name turns tick end hidden ->
         E.ApplyCondition name turns (outcomesMaybe tick) (outcomesMaybe end) hidden
     AOClearCondition name -> E.ClearCondition name
+    AOApplyVehicleCondition v c -> E.ApplyVehicleCondition v c
+    AOClearVehicleCondition v c -> E.ClearVehicleCondition v c
     -- Rogue Phase 3: dynamic exits. Direction strings are validated in
     -- 'checkSetExitRefs' (UnknownDirection) — they must not be silently
     -- mapped; missing `from`/`to` rooms surface as MissingRoom in the

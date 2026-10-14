@@ -1,4 +1,4 @@
--- | Generated from lang/de.json (sha256: 7cdbbd542ac4257ff0504d2238f4dfe2cfcea6eefd7607110f716feefe2f45a3) by scripts/gen-lang-pack.py.
+-- | Generated from lang/de.json (sha256: 6c61f4dce1e7b4f1a592deef8b15f02ad9ddcd7e2c9a96653bfa7fa90cff9bb5) by scripts/gen-lang-pack.py.
 --   DO NOT EDIT by hand - rerun the generator after changing the JSON.
 --
 --   Language-pack data (Phase 4.3): message templates keyed like the
@@ -192,6 +192,9 @@ langDe =
       , ("vehicle.travel_on", "Du fährst weiter nach {stop}.")
       , ("vehicle.fuelled", "{vehicle} ist betankt ({f}/{max}).")
       , ("vehicle.warning", "Warnung: {list}!")
+      , ("vehicle.condition_set", "{vehicle}: Problem aufgetreten — {condition}.")
+      , ("vehicle.condition_cleared", "{vehicle}: Problem behoben — {condition}.")
+      , ("vehicle.condition_unknown", "Unbekanntes Fahrzeug: {vehicle}.")
       , ("look.fuel_out", "\n{item} aufgebraucht (0/{max})")
       , ("look.fuel", "\nTreibstoff ({item}: {f}/{max})")
       , ("consume.not_reachable", "Das liegt nicht bei dir.")

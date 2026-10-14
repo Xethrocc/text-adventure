@@ -2,7 +2,7 @@
 
 | Kopf | Wert |
 |---|---|
-| **Status** | 🟢 Plan abgeschlossen — **nicht implementiert**, keine Produktivdateien geändert (nur diese Planungsdatei) |
+| **Status** | ✅ Vollständig implementiert — alle Phasen 0–7 abgeschlossen |
 | **Stand** | Erstellt aus Code-Inspektion (Zeilenangaben verifiziert) |
 | **Scope** | Setter für `vsActiveConditions`, passende Prädikate, Worldbuilder-YAML-Sugar, Compiler-Refchecks, Tests, Docs |
 | **Referenz** | `docs/befunde-text-adventure-engine.md` — **OPEN-24** (Fahrzeug-Zustand-Setter) |
@@ -37,7 +37,7 @@ Fahrzeug-`conditions:` (`vehicleConditionEffects`, `src/Types/Vehicles.hs:76`) s
 |---|---|---|---|
 | D1 | Effekt-Konstruktoren (Core) | `ApplyVehicleCondition VehicleID String` und `ClearVehicleCondition VehicleID String` in `data Effect` neben `ApplyCondition`/`ClearCondition` (`src/Types/Core.hs:1171-1172`) | Spiegelt die bestehende Condition-API; getrennte Namespace-Semantik (pro Fahrzeug, nicht pro Spieler); kein Turn-Timer nötig (`vsActiveConditions` ist eine `Set String`, kein Countdown). |
 | D2 | Prädikat (Core) | `VehicleHasCondition String String` (Vehicle, Condition) in `data Predicate` neben `HasCondition` (`src/Types/Core.hs:949`) | Symmetrie zum Spieler-Prädikat; auswertbar in `evalPredicate` (`src/Game.hs:1796`) und in `isChoiceVisible` (`src/Types/Protocol.hs:877-885`). |
-| D3 | JSON-Keys (Kern, gespeichert) | Explizite Keys `apply_vehicle_condition: {vehicle, condition}` und `clear_vehicle_condition: {vehicle, condition}` über **eigene** `ToJSON`/`ToEncoding`-Klauseln (vor dem generischen Fallback `src/Types/Core.hs:1514-1547`) sowie passende `FromJSON`-Klauseln (`:1549-1550`) — Entscheidung 8B | Wie `ApplyCondition`/`ClearCondition` (Legacy-Parser `:1579-1588` behandelt nur alte Welten). Bestehende Serialisierung bestehender Konstruktoren bleibt unangetastet → Byte-Vertrag. |
+| D3 | JSON-Keys (Kern, gespeichert) | Explizite Keys `apply_vehicle_condition: {vehicle, condition}` und `clear_vehicle_condition: {vehicle, condition}` über **eigene** `ToJSON`/`ToEncoding`-Klauseln (vor dem generischen Fallback `toJSON other = genericToJSON …` bei `src/Types/Core.hs:1532`, Zeilenbereich `:1514-1547`) sowie passende `FromJSON`-Klauseln (`:1549-1550`) — Entscheidung 8B | Wie `ApplyCondition`/`ClearCondition` (Legacy-Parser `:1576+` behandelt nur alte Welten). Bestehende Serialisierung bestehender Konstruktoren bleibt unangetastet → Byte-Vertrag. |
 | D4 | JSON/YAML-Keys (Autoren-Form, Worldbuilder) | `apply_vehicle_condition: {vehicle: <id>, condition: <name>}` und `clear_vehicle_condition: {vehicle: <id>, condition: <name>}` | Konsistent zu `apply_condition`/`clear_condition`; Objektshape analog `damage_npc: {npc, amount}` (`worldbuilder/src/Worldbuilder/Types.hs:2442-2443`). |
 | D5 | Fehlercodes (Worldbuilder) | `UnknownVehicleConditionTarget` (Fahrzeug unbekannt → **Error**) und `UnknownVehicleCondition` (Condition nicht in `vehicleConditionEffects` → **Warning**) via `ciError`/`ciWarning` (`Compile.hs:93-97`) | Präzedenz `UnknownDamageNPC` (`Compile.hs:3721`, hart); Condition-Namen dürfen bewusst „kosmetisch" sein (nur `vehicle.warning`-Anzeige + `repair`), daher Warning statt Error. Variante B/C siehe offene Entscheidung 3. |
 | D6 | Refcheck-Struktur | Neue `checkVehicleConditionRefs :: E.GameWorld -> [CompileIssue]`, aufgerufen neben `npcRefErrs = checkDamageNpcRefs gwResolved` (`Compile.hs:840`) | Bewährtes Muster (`:3713-3723`); sammelt Referenzen aus `allWorldEffects gw`. |
@@ -66,7 +66,7 @@ Fahrzeug-`conditions:` (`vehicleConditionEffects`, `src/Types/Vehicles.hs:76`) s
 **Betroffene Dateien:**
 - `src/Types/Core.hs`: `data Effect` (~`:1171`) erweitern um `ApplyVehicleCondition String String` / `ClearVehicleCondition String String`; `data Predicate` (~`:949`) erweitern um `VehicleHasCondition String String`.
 - `src/Types/Core.hs`: Predicate `toJSON` (`:979` — Clause `object ["vehicle_has_condition" .= object ["vehicle" .= …, "condition" .= …]]`) und `FromJSON` (`:1033` — `<|>`-Clause mit Objektform `vehicle_has_condition: {vehicle, condition}`).
-- `src/Types/Core.hs`: Effect `toJSON`/`toEncoding` (`:1514-1547`) — **neue Klauseln** für `ApplyVehicleCondition`/`ClearVehicleCondition` mit Objektform `{vehicle, condition}` (vor dem generischen Fallback `:1547`); bestehende Konstruktoren unverändert. `FromJSON` (`:1549-1550`) — passende Klauseln für die neuen Keys ergänzen; prüfen, dass `parseLegacyEffect` (`:1579+`) die neuen Keys nicht falsch schluckt.
+- `src/Types/Core.hs`: Effect `toJSON`/`toEncoding` (`:1514-1547`) — **neue Klauseln** für `ApplyVehicleCondition`/`ClearVehicleCondition` mit Objektform `{vehicle, condition}` (vor dem generischen Fallback `toJSON other = genericToJSON …` bei `:1532`); bestehende Konstruktoren unverändert. `FromJSON` (`:1549-1550`) — **eigene Klauseln für die neuen Keys VOR `genericParseJSON` einhängen** (Chain `:1550` ist `parseRollDice <|> parseLearnRecipe <|> genericParseJSON <|> parseLegacyEffect` — `genericParseJSON` erwartet tag/contents und parsed die Objektform nicht; Muster: `parseRollDice`/`parseLearnRecipe`); prüfen, dass `parseLegacyEffect` (`:1576+`) die neuen Keys nicht falsch schluckt.
 **Änderungen:** Konstruktoren + Predicate-JSON; keine Dispatches (gewollt!).
 **Tests:** JSON-Roundtrip für beide Effekte + Prädikat (neu in `test/Tests.hs`, Abschnitt 4: VC-01/VC-02).
 **Weiterkriterium:** `Types/Core.hs` kompiliert; Roundtrip-Tests grün; `cabal build` scheitert **nur** mit `-Werror=incomplete-patterns`-Fehlern in genau diesen Dateien: `src/Effects.hs`, `src/Game.hs`, `src/Types/Protocol.hs`, `worldbuilder/src/Worldbuilder/Compile.hs`, `src/Validate.hs` (Wildcard-Walker).
@@ -77,7 +77,7 @@ Fahrzeug-`conditions:` (`vehicleConditionEffects`, `src/Types/Vehicles.hs:76`) s
 **Ziel:** `vsActiveConditions` kann zur Laufzeit gesetzt/gelöscht werden; Effekte feuern.
 **Betroffene Dateien:**
 - `src/Vehicles.hs`: neue Funktion `applyVehicleCondition :: VehicleID -> String -> GameState -> (GameState, [OutputEvent])` (Set-Insert + Nachricht `vehicle.condition_set`) und Erweiterung von `clearVehicleCondition` (`:200-203`) um eine `… -> (GameState, [OutputEvent])`-Variante mit Nachricht `vehicle.condition_cleared` (Altfunktion als `fst`-Wrapper erhalten, da `src/Parser.hs:2000` sie nutzt); Exportliste `:3-21` anpassen.
-- `src/Effects.hs`: Dispatch in `applyOutcome` neben `:474-475` (`ApplyCondition`/`ClearCondition`): `ApplyVehicleCondition v c -> …`, `ClearVehicleCondition v c -> …` mit `resolveVarName`-Auflösung für `v` (Dynamic-Token `current` → `currentVehicle (save state)`, wie D9).
+- `src/Effects.hs`: Dispatch in `applyOutcome` neben `:474-475` (`ApplyCondition`/`ClearCondition`): `ApplyVehicleCondition v c -> …`, `ClearVehicleCondition v c -> …` mit **Fahrzeug-Auflösung** für `v`: Literal = VehicleID, Token `current` → `currentVehicle (save state)` (Fallback `vehicleForRoom`, `src/Vehicles.hs:47-49`), wie D9 — **nicht** `resolveVarName` (das ist die Variablen-Logik für `{var:}`-Tokens).
 - `src/Messages.hs`: neue Default-Keys neben `vehicle.warning` (`:392`): `vehicle.condition_set` (`"{vehicle}: problem detected — {condition}."`), `vehicle.condition_cleared`, `vehicle.condition_unknown` (nur falls Runtime-Warnung gewünscht).
 **Tests:** VC-03 (Insert), VC-04 (Clear via Effekt), VC-05 (Idempotenz/`Set`-Semantik, doppeltes Anwenden = 1 Eintrag); optional VC-09 (Diagnose im `set_state`-Catch-all `Effects.hs:848`, nur falls die optionale Mitigation aus Abschnitt 6 mitgenommen wird).
 **Weiterkriterium:** `cabal build` grün; VC-03..05 grün; `repair <condition>` (Parser.hs:1984-2002) löscht einen per Effekt gesetzten Zustand (VC-10, Integration).
@@ -176,7 +176,7 @@ Fahrzeug-`conditions:` (`vehicleConditionEffects`, `src/Types/Vehicles.hs:76`) s
 | `VehicleState` (`src/Types/Vehicles.hs:110-125`) | **nein** | `vsActiveConditions` existiert bereits inkl. JSON (`:123`) — **keine neuen Save-Felder** (Regel 6, `docs/adventure-schema.md:1314-1317`). |
 | `SaveState` | **nein** | `vehicleStates :: Map VehicleID VehicleState` existiert. |
 | `ToJSON Effect` (`src/Types/Core.hs:1514-1547`) | **ja** | Neue Klauseln für `apply_vehicle_condition`/`clear_vehicle_condition` (Objektform `{vehicle, condition}`, Entscheidung 8B); Serialisierung **bestehender** Konstruktoren unverändert → alte `world.json` byte-identisch. |
-| `FromJSON Effect` (`:1549-1588`) | nein (prüfen) | `genericParseJSON` erbt die neuen Tags; `parseLegacyEffect` (`:1579+`) darf sie nicht verschlucken (VC-01). |
+| `FromJSON Effect` (`:1549-1588`) | **ja** | Neue Klauseln für die expliziten Keys müssen **vor** `genericParseJSON` eingehängt werden (Chain `:1550`: `parseRollDice <|> parseLearnRecipe <|> genericParseJSON <|> parseLegacyEffect`) — `genericParseJSON` erwartet tag/contents und parsed die Objektform `{vehicle, condition}` nicht. `parseLegacyEffect` (`:1576+`) darf die neuen Keys nicht verschlucken (VC-01). |
 | `ToJSON/FromJSON Predicate` (`:979`, `:1033`) | **ja** | Neue Clause `vehicle_has_condition` (Objektform `{vehicle, condition}`). Alte Prädikate unverändert. |
 | `VehicleDef` / `vehicleConditionEffects` (`src/Types/Vehicles.hs:76, 92, 108`) | nein | Map `String Effect` serialisiert die neuen Effekte als Values — Welt-JSON wächst nur dort, wo Autoren die Features nutzen. |
 | WASM/JSON-Protokoll (`src/Types/Protocol.hs`) | **nein** (im empfohlenen Design) | `isChoiceVisible` (`:877-885`) wertet `VehicleHasCondition` direkt gegen `vehicleStates ss` aus; `Snapshot`-JSON (`:570+`) bleibt unverändert. Nur bei Entscheidung 4-Variante C (Snapshot-Exposure) gäbe es eine Protokolländerung → dann `currentProtocolVersion` (`:635`) hochzählen. |
@@ -202,7 +202,7 @@ Fahrzeug-`conditions:` (`vehicleConditionEffects`, `src/Types/Vehicles.hs:76`) s
 
 ## 7. Offene Entscheidungen (Multiple-Choice; **Empfehlung immer erste Option**)
 
-**Entschieden (Stand 14.10.2026):** 1A, 2A, 3A, 4A, 5A, 6A, 7A, 8B.
+**Entschieden (Stand 14.10.2026, vom Nutzer bestätigt):** 1A, 2A, 3A, 4A, 5A, 6A, 7A, 8B.
 Konsequenzen: Serialisierung der neuen Effekte mit expliziten Keys (`apply_vehicle_condition: {vehicle, condition}`, `clear_vehicle_condition: {vehicle, condition}`) über eigene `ToJSON`/`ToEncoding`-Klauseln; höherer Test- und Codeaufwand, dafür lesbare Autorensyntax. Die Optionen unten bleiben zur Nachvollziehbarkeit stehen.
 
 **1. Namenskonvention der YAML-Keys**
