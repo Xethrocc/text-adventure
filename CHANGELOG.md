@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### OPEN-23 Stufe 2: Gefahrenlagen — Spread-Ausbreitung, Zufallsereignisse und Wirktypen-Zucker
+
+Vollständige Implementierung von Hazards Stufe 2 laut `docs/plan-hazards.md` §12 (Entscheidungen E8–E10, AP A–E):
+
+- **Footprint `by: spread` (E8):** Level-gebundene, schrittweise Zonenausbreitung ab einem Startraum (`from:`).
+  Kantenverfolgung über Raum-Ausgänge (`via: exits`) mit prozentualer Kanten-Chance `chance: 0..100` (Default 100).
+  Würfe erfolgen auf dem isolierten RNG-Stream `hazard.<id>.spread` (B8) und sind run-stabil und deterministisch (kein Neuwürfeln bei Rückzug/Neuausbreitung).
+  Optionaler `needs_tag:`-Filter schließt unpassende Räume vom BFS-Baum aus.
+  Zone zieht ringweise mit dem Level auf und ab (E1-Reversibilität). Raumvariablen: `hazard.<id>.zone.<raum>` (1 wenn in Zone, 0 sonst; `from:` immer 1).
+- **Zufallsereignisse `every:` (E9):** Periodische Zufallsereignisse auf Gefahren-Ebene mit Intervall `period:`, RNG-Stream `stream:` und gewichteter Auswahl `choices:`. Interner Taktzähler `hazard.<id>.every.clock`.
+- **Wirktypen als Compiler-Zucker (E10):**
+  - `flood: { hazard, delta: N }` -> desugart zu `hazard_target`
+  - `flood: { hazard, set: N }` -> desugart zu `hazard_jump`
+  - `landslide: { from, dir [, reopen: true] }` -> desugart zu `remove_exit` bzw. `set_exit` (Zielraum optional, automatisch aus Topologie aufgelöst)
+  - `damage: { player: N }` -> desugart zu `DamagePlayer N`
+  - `damage: { npc, amount: N }` -> desugart zu `DamageNPC npc N`
+- **Validierung & Tests:** Neue Fehlercodes `UnknownSpreadFrom`, `UnknownSpreadTag`, `EveryWithoutStream` und umfassende Ref-Checks; 7 neue Unit-Tests in `Tests.hs` (Ausbreitung/Rückzug, Seed-Determinismus & Roll-Stabilität, Tag-Filter, Perioden & Streams, Wirktypen-Desugaring, statische Validierung, Byte-Vertrag-Wächter für 5 bestehende Abenteuer). Fixture `examples/modules/hazards.yaml` um Brand-Szenario (`feuer`) und 5. E2E-Content-Test erweitert.
+
 ### FIX: `put X in Y` löst X aus getragenen offenen Containern auf
 
 `findScopeItem` (`src/Parser.hs`) nutzte für die Quellauflösung von `put` den

@@ -1240,18 +1240,70 @@ data AHazard = AHazard
     , hazStages    :: [(Int, [AActionOutcome])]
     , hazOnZone    :: [AActionOutcome]
     , hazTelegraph :: Maybe ATelegraph
+    , hazEvery     :: Maybe AEventEvery
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AHazard where
-    parseJSON = withObject "AHazard" $ \o -> AHazard
-        <$> o .:? "id" .!= ""
-        <*> o .:  "track"
-        <*> o .:  "footprint"
-        <*> parseHazardStagesField o
-        <*> o .:? "on_zone" .!= []
-        <*> o .:? "telegraph"
+    parseJSON = withObject "AHazard" $ \o -> do
+        hid <- o .:? "id" .!= ""
+        mTr <- o .:? "track"
+        let tr = fromMaybe (ATrack 100 0 1 1 0 Nothing) mTr
+        fp  <- o .:  "footprint"
+        stg <- parseHazardStagesField o
+        oz  <- o .:? "on_zone" .!= []
+        tel <- o .:? "telegraph"
+        ev  <- o .:? "every"
+        pure (AHazard hid tr fp stg oz tel ev)
 
-instance ToJSON AHazard
+instance ToJSON AHazard where
+    toJSON h = object $ filter (not . isNullOrEmpty . snd)
+        [ "id"        .= hazId h
+        , "track"     .= hazTrack h
+        , "footprint" .= hazFootprint h
+        , "stages"    .= if null (hazStages h) then Null else toJSON (object [ K.fromString (show lvl) .= outs | (lvl, outs) <- hazStages h ])
+        , "on_zone"   .= if null (hazOnZone h) then Null else toJSON (hazOnZone h)
+        , "telegraph" .= hazTelegraph h
+        , "every"     .= hazEvery h
+        ]
+      where
+        isNullOrEmpty Null = True
+        isNullOrEmpty _    = False
+
+-- | Zufallsereignisse auf Gefahren-Ebene (OPEN-23 / Stufe 2, E9).
+data AEventEvery = AEventEvery
+    { aeePeriod  :: Int
+    , aeeStream  :: String
+    , aeeChoices :: [(Int, [AActionOutcome])]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AEventEvery where
+    parseJSON = withObject "AEventEvery" $ \o -> do
+        p <- o .:? "period" .!= 1
+        s <- o .:? "stream" .!= ""
+        mVal <- o .:? "choices"
+        cs <- maybe (pure []) parseEveryChoices mVal
+        pure (AEventEvery p s cs)
+
+parseEveryChoices :: Value -> Parser [(Int, [AActionOutcome])]
+parseEveryChoices (Array arr) = mapM parseOneEveryChoice (Foldable.toList arr)
+parseEveryChoices _           = pure []
+
+parseOneEveryChoice :: Value -> Parser (Int, [AActionOutcome])
+parseOneEveryChoice (Array arr) = case Foldable.toList arr of
+    [Number w, outsVal] -> do
+        outs <- case outsVal of
+            Array _ -> parseJSON outsVal
+            _       -> (:[]) <$> parseJSON outsVal
+        pure (round w, outs)
+    _ -> fail "Every choice must be a 2-element array [weight, outcomes]"
+parseOneEveryChoice _ = fail "Every choice must be a 2-element array [weight, outcomes]"
+
+instance ToJSON AEventEvery where
+    toJSON (AEventEvery p s cs) = object
+        [ "period"  .= p
+        , "stream"  .= s
+        , "choices" .= cs
+        ]
 
 -- | Verlauf der Gefahr: Stufen 0..max, Taktrate und optionaler Pause-Filter.
 data ATrack = ATrack
@@ -1279,6 +1331,7 @@ data AFootprintType
     = FPElevation
     | FPList
     | FPTag
+    | FPSpread
     deriving (Show, Eq, Generic)
 
 instance FromJSON AFootprintType where
@@ -1286,20 +1339,26 @@ instance FromJSON AFootprintType where
         "elevation" -> pure FPElevation
         "list"      -> pure FPList
         "tag"       -> pure FPTag
+        "spread"    -> pure FPSpread
         _           -> fail ("Unknown footprint by: '" ++ T.unpack s ++ "'")
-    parseJSON _ = fail "Footprint 'by' must be a string (elevation, list, tag)"
+    parseJSON _ = fail "Footprint 'by' must be a string (elevation, list, tag, spread)"
 
 instance ToJSON AFootprintType where
     toJSON FPElevation = String "elevation"
     toJSON FPList      = String "list"
     toJSON FPTag       = String "tag"
+    toJSON FPSpread    = String "spread"
 
--- | Ausdehnung der Gefahr: Schwellenhoehe, Phasenliste oder Raum-Tag.
+-- | Ausdehnung der Gefahr: Schwellenhoehe, Phasenliste, Raum-Tag oder Ausbreitung (spread).
 data AFootprint = AFootprint
     { fpBy          :: AFootprintType
     , fpRooms       :: Map.Map String Int
     , fpStagesRooms :: [(Int, [String])]
     , fpTag         :: Maybe String
+    , fpFrom        :: Maybe String
+    , fpVia         :: Maybe String
+    , fpChance      :: Maybe Int
+    , fpNeedsTag    :: Maybe String
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AFootprint where
@@ -1308,9 +1367,26 @@ instance FromJSON AFootprint where
         roomsMap <- o .:? "rooms" .!= Map.empty
         srList <- parseStagesRoomsField o
         tagStr <- o .:? "tag"
-        pure (AFootprint by roomsMap srList tagStr)
+        fromStr <- o .:? "from"
+        viaStr <- o .:? "via"
+        chanceVal <- o .:? "chance"
+        needsTagStr <- o .:? "needs_tag"
+        pure (AFootprint by roomsMap srList tagStr fromStr viaStr chanceVal needsTagStr)
 
-instance ToJSON AFootprint
+instance ToJSON AFootprint where
+    toJSON fp = object $ filter (not . isNullOrEmpty . snd)
+        [ "by"           .= fpBy fp
+        , "rooms"        .= if Map.null (fpRooms fp) then Null else toJSON (fpRooms fp)
+        , "stages_rooms" .= if null (fpStagesRooms fp) then Null else toJSON (object [ K.fromString (show lvl) .= rms | (lvl, rms) <- fpStagesRooms fp ])
+        , "tag"          .= fpTag fp
+        , "from"         .= fpFrom fp
+        , "via"          .= fpVia fp
+        , "chance"       .= fpChance fp
+        , "needs_tag"    .= fpNeedsTag fp
+        ]
+      where
+        isNullOrEmpty Null = True
+        isNullOrEmpty _    = False
 
 -- | Telegraph-Meldungen bei Naehe zur Gefahr.
 data ATelegraph = ATelegraph
@@ -1381,6 +1457,10 @@ data RawHazardInfo = RawHazardInfo
     , rhiRooms       :: Map.Map String Int
     , rhiStagesRooms :: [(Int, [String])]
     , rhiTag         :: Maybe String
+    , rhiFrom        :: Maybe String
+    , rhiVia         :: Maybe String
+    , rhiChance      :: Maybe Int
+    , rhiNeedsTag    :: Maybe String
     } deriving (Show)
 
 extractHazardInfo :: Maybe Value -> Map.Map String RawHazardInfo
@@ -1410,9 +1490,13 @@ parseRawHz (Object o) = case KM.lookup "footprint" o of
                     ]
                 _ -> []
             tagS = case KM.lookup "tag" fp of { Just (String s) -> Just (T.unpack s); _ -> Nothing }
-        in RawHazardInfo byStr roomsM srList tagS
-    _ -> RawHazardInfo "elevation" Map.empty [] Nothing
-parseRawHz _ = RawHazardInfo "elevation" Map.empty [] Nothing
+            fromS = case KM.lookup "from" fp of { Just (String s) -> Just (T.unpack s); _ -> Nothing }
+            viaS = case KM.lookup "via" fp of { Just (String s) -> Just (T.unpack s); _ -> Nothing }
+            chanceVal = case KM.lookup "chance" fp of { Just (Number n) -> Just (round n); _ -> Nothing }
+            needsTagS = case KM.lookup "needs_tag" fp of { Just (String s) -> Just (T.unpack s); _ -> Nothing }
+        in RawHazardInfo byStr roomsM srList tagS fromS viaS chanceVal needsTagS
+    _ -> RawHazardInfo "elevation" Map.empty [] Nothing Nothing Nothing Nothing Nothing
+parseRawHz _ = RawHazardInfo "elevation" Map.empty [] Nothing Nothing Nothing Nothing Nothing
 
 extractRoomTags :: Maybe Value -> Map.Map String [String]
 extractRoomTags (Just (Array arr)) =
@@ -1534,6 +1618,17 @@ expandInHazardHere hid info rtags = case rhiBy info of
                 | r <- taggedRooms
                 ]
         in object [ "any" .= clauses ]
+    "spread" ->
+        let clauses =
+                [ object
+                    [ "all" .=
+                        [ object [ "at" .= ("player" :: String), "room" .= r ]
+                        , object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".zone." ++ r), "op" .= ("eq" :: String), "value" .= (1 :: Int) ] ]
+                        ]
+                    ]
+                | r <- Map.keys rtags
+                ]
+        in object [ "any" .= clauses ]
     _ -> object [ "any" .= ([] :: [Value]) ]
 
 expandInHazardRoom :: String -> RawHazardInfo -> Map.Map String [String] -> String -> Value
@@ -1556,6 +1651,10 @@ expandInHazardRoom hid info rtags r = case rhiBy info of
         in if hasTag
             then object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("gt" :: String), "value" .= (0 :: Int) ] ]
             else object [ "not" .= object [ "true" .= True ] ]
+    "spread" ->
+        if Map.member r rtags
+        then object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".zone." ++ r), "op" .= ("eq" :: String), "value" .= (1 :: Int) ] ]
+        else object [ "not" .= object [ "true" .= True ] ]
     _ -> object [ "not" .= object [ "true" .= True ] ]
 
 -- ---------------------------------------------------------------------------
@@ -2155,9 +2254,44 @@ data AActionOutcome
     | AOHazardJump String Int          -- ^ hazard_jump: {hazard: <id>, to: <int>} (OPEN-23)
     | AOHazardPause String             -- ^ hazard_pause: <id> (OPEN-23)
     | AOHazardResume String            -- ^ hazard_resume: <id> (OPEN-23)
+    | AOFlood String (Maybe Int) (Maybe Int)            -- ^ flood: {hazard: <id>, delta?: N, set?: N} (OPEN-23 Stufe 2)
+    | AOLandslide String String Bool (Maybe String)     -- ^ landslide: {from: <room>, dir: <dir>, reopen?: Bool, to?: <room>} (OPEN-23 Stufe 2)
+    | AODamage (Maybe Int) (Maybe (String, Int))        -- ^ damage: {player?: N, npc?: <id>, amount?: N} (OPEN-23 Stufe 2)
     deriving (Show, Eq, Generic)
 
-instance ToJSON AActionOutcome
+instance ToJSON AActionOutcome where
+    toJSON (AOFlood hid mdelta mset) = object
+        [ "flood" .= object (filter (not . isNullOrEmpty . snd)
+            [ "hazard" .= hid
+            , "delta"  .= mdelta
+            , "set"    .= mset
+            ])
+        ]
+      where
+        isNullOrEmpty Null = True
+        isNullOrEmpty _    = False
+    toJSON (AOLandslide from dir reopen mTo) = object
+        [ "landslide" .= object (filter (not . isNullOrEmpty . snd)
+            [ "from"   .= from
+            , "dir"    .= dir
+            , "reopen" .= if reopen then Just True else Nothing
+            , "to"     .= mTo
+            ])
+        ]
+      where
+        isNullOrEmpty Null = True
+        isNullOrEmpty _    = False
+    toJSON (AODamage mPlayer mNpc) = object
+        [ "damage" .= object (filter (not . isNullOrEmpty . snd)
+            [ "player" .= mPlayer
+            , "npc"    .= fmap fst mNpc
+            , "amount" .= fmap snd mNpc
+            ])
+        ]
+      where
+        isNullOrEmpty Null = True
+        isNullOrEmpty _    = False
+    toJSON other = genericToJSON defaultOptions other
 
 -- | Procedure arguments are literal YAML scalars (int/bool/text) — literal on
 --   purpose so call sites stay statically checkable (no dynamic dispatch).
@@ -2341,6 +2475,27 @@ instance FromJSON AActionOutcome where
                     String s  -> pure (AOHazardResume (T.unpack s))
                     Object ho -> AOHazardResume <$> (ho .: "hazard" <|> ho .: "id" <|> ho .: "name")
                     _         -> fail "hazard_resume must be hazard id string or object")
+        -- OPEN-23 Stufe 2: Wirktypen flood, landslide, damage
+        <|> (do fo <- o .: "flood" :: Parser Object
+                hid <- fo .: "hazard" <|> fo .: "id" <|> fo .: "name"
+                mdelta <- fo .:? "delta"
+                mset <- fo .:? "set"
+                pure (AOFlood hid mdelta mset))
+        <|> (do lo <- o .: "landslide" :: Parser Object
+                fromR <- lo .: "from"
+                dirStr <- lo .: "dir" <|> lo .: "direction"
+                reopen <- lo .:? "reopen" .!= False
+                mTo <- lo .:? "to"
+                pure (AOLandslide fromR dirStr reopen mTo))
+        <|> (do do_obj <- o .: "damage" :: Parser Object
+                mPlayer <- do_obj .:? "player"
+                mNpc <- do_obj .:? "npc"
+                mAmt <- do_obj .:? "amount"
+                case mPlayer of
+                    Just n -> pure (AODamage (Just n) Nothing)
+                    Nothing -> case (mNpc, mAmt) of
+                        (Just npc, Just amt) -> pure (AODamage Nothing (Just (npc, amt)))
+                        _ -> fail "damage must specify either player: N or npc: <id>, amount: N")
         <|> (AOSetInventoryLimit <$> o .: "set_inventory_limit")
         <|> (AOSayNode <$> o .: "say_node")
         <|> (o .: "dialog_end" >>= \b -> if b :: Bool then pure AODialogEnd else empty)
@@ -2584,6 +2739,7 @@ data EntityType
     | EntHazardTrack
     | EntHazardFootprint
     | EntHazardTelegraph
+    | EntHazardEvery
     deriving (Show, Eq, Ord, Enum, Bounded)
 
 -- | Single source of truth for allowed YAML mapping keys per entity type,
@@ -2693,10 +2849,12 @@ knownKeys EntParty = Set.fromList
     , "combat_slot", "switch_verb", "xp_table"
     ]
 knownKeys EntHazard = Set.fromList
-    [ "id", "track", "footprint", "stages", "on_zone", "telegraph" ]
+    [ "id", "track", "footprint", "stages", "on_zone", "telegraph", "every" ]
 knownKeys EntHazardTrack = Set.fromList
     [ "max", "start", "rate", "every", "target", "when" ]
 knownKeys EntHazardFootprint = Set.fromList
-    [ "by", "rooms", "stages_rooms", "tag" ]
+    [ "by", "rooms", "stages_rooms", "tag", "from", "via", "chance", "needs_tag" ]
 knownKeys EntHazardTelegraph = Set.fromList
     [ "adjacent", "inside", "in_zone" ]
+knownKeys EntHazardEvery = Set.fromList
+    [ "period", "stream", "choices" ]

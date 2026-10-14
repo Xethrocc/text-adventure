@@ -16,6 +16,9 @@ import System.FilePath ((</>))
 import System.IO (hSetEncoding, stdout, utf8, openTempFile, hClose)
 import qualified System.Info as Info
 import Control.Exception (try, SomeException)
+import System.Process (readProcess)
+import GameLoop (initLoopState, applyLoopCommandEv, LoopState(..))
+import Parser (Command (..), parseCommandFor)
 import Worldbuilder.Types
 import Worldbuilder.Locate (lineForPath)
 import Worldbuilder.YamlDoc (parseYamlDoc, ydResolveIssuePath, ydScalarSpan,
@@ -4999,6 +5002,13 @@ tests =
     , ("hazards: unknown YAML keys emit warnings", testHazardsUnknownKeyWarning)
     , ("hazards: locate and fuzz integration", testHazardsFuzzAndLocate)
     , ("hazards: performance measurement (~500 triggers)", testHazardsPerformance500Triggers)
+    , ("hazards: spread footprint expansion, retraction, and room state", testHazardsSpreadRisingFalling)
+    , ("hazards: spread edge roll stability and determinism across seeds", testHazardsSpreadStabilityAndDeterminism)
+    , ("hazards: spread needs_tag filter exclusion", testHazardsSpreadNeedsTag)
+    , ("hazards: every random events clock, periods, and streams", testHazardsEveryEvent)
+    , ("hazards: wirktypen desugaring and effects mapping (flood, landslide, damage)", testHazardsWirktypenMapping)
+    , ("hazards: static validation stufe 2 (spread from/tag, every stream, wirktyp refs)", testHazardsStaticValidationStufe2)
+    , ("hazards: byte contract watcher for worlds without stufe 2", testHazardsByteContractWatcher)
     , ("VC-11: vehicle condition sugar YAML parsing and compilation", testVehicleConditionSugar)
     , ("VC-12..14: vehicle condition ref checks, error, warning and current token", testVehicleConditionRefChecks)
     , ("VC-15: walker traverses nested vehicle condition effects", testVehicleConditionWalkerCoverage)
@@ -10465,7 +10475,7 @@ testHazardsCompileAndMechanics = do
 
                         -- 3. Content tests run
                         let ctests = advTests adv
-                        r7 <- expectEqual 4 (length ctests)
+                        r7 <- expectEqual 5 (length ctests)
                         results <- forM ctests $ \ct -> do
                             let res = executeContentTest ct (crWorld cr) (crSave cr)
                             case res of
@@ -10736,10 +10746,11 @@ testHazardsPerformance500Triggers = do
             [ AHazard
                 { hazId = "hazard_" ++ show h
                 , hazTrack = ATrack 10 0 1 1 10 Nothing
-                , hazFootprint = AFootprint FPElevation (Map.fromList [ ("room_" ++ show i, i `mod` 10) | i <- [1..roomCount] ]) [] Nothing
+                , hazFootprint = AFootprint FPElevation (Map.fromList [ ("room_" ++ show i, i `mod` 10) | i <- [1..roomCount] ]) [] Nothing Nothing Nothing Nothing Nothing
                 , hazStages = [(5, [AOMessage "Halbzeit"])]
                 , hazOnZone = [AOMessage "Zone!"]
                 , hazTelegraph = Just (ATelegraph (Just "Gefahr naht!") (Just "Mitten drin!"))
+                , hazEvery = Nothing
                 }
             | h <- [1..hazCount]
             ]
@@ -10754,6 +10765,523 @@ testHazardsPerformance500Triggers = do
         Right cr -> do
             let trigs = E.triggerDefs (crWorld cr)
             expectTrue ("triggers >= 500, got: " ++ show (length trigs)) (length trigs >= 500)
+
+-- | OPEN-23 Stufe 2: Spread-Footprint breitet sich stufenweise aus und zieht
+--   sich ringweise wieder zurueck (E1 Reversibilitaet). Der Startraum (from:)
+--   ist immer in der Zone.
+testHazardsSpreadRisingFalling :: IO Bool
+testHazardsSpreadRisingFalling = do
+    let yaml = unlines
+            [ "name: Spread Rising Falling Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Raum 0"
+            , "    desc: Start"
+            , "    exits:"
+            , "      east: loc_1"
+            , "  - id: loc_1"
+            , "    name: Raum 1"
+            , "    desc: Mitte"
+            , "    exits:"
+            , "      west: loc_0"
+            , "      east: loc_2"
+            , "  - id: loc_2"
+            , "    name: Raum 2"
+            , "    desc: Ende"
+            , "    exits:"
+            , "      west: loc_1"
+            , "verbs:"
+            , "  - { name: loeschen }"
+            , "  - { name: nullen }"
+            , "rules:"
+            , "  - id: cmd_loeschen"
+            , "    on: command loeschen"
+            , "    effects:"
+            , "      - { flood: { hazard: flut, delta: -1 } }"
+            , "  - id: cmd_nullen"
+            , "    on: command nullen"
+            , "    effects:"
+            , "      - { flood: { hazard: flut, delta: -1 } }"
+            , "hazards:"
+            , "  flut:"
+            , "    track:"
+            , "      rate: 1"
+            , "      max: 2"
+            , "      start: 0"
+            , "      target: 2"
+            , "    footprint:"
+            , "      by: spread"
+            , "      from: loc_0"
+            , "      chance: 100"
+            , "    stages:"
+            , "      '1':"
+            , "        - { msg: 'Stufe 1!' }"
+            , "      '2':"
+            , "        - { msg: 'Stufe 2!' }"
+            ]
+    compileYamlForTest yaml $ \cr -> do
+        let gw = crWorld cr
+            sv = crSave cr
+            st0 = E.GameState gw sv Nothing Nothing Nothing [] Nothing [] Nothing Nothing []
+            ls0 = initLoopState st0
+            v0 = E.variables (save (lsCurrent ls0))
+        -- 1. Initialzustand: loc_0 (from:) ist immer in Zone, auch bei Level 0
+        r0a <- expectEqual (Just (E.VVInt 0)) (Map.lookup "hazard.flut.level" v0)
+        r0b <- expectEqual (Just (E.VVInt 1)) (Map.lookup "hazard.flut.zone.loc_0" v0)
+        r0c <- expectEqual (Just (E.VVInt 0)) (Map.lookup "hazard.flut.zone.loc_1" v0)
+        r0d <- expectEqual (Just (E.VVInt 0)) (Map.lookup "hazard.flut.zone.loc_2" v0)
+
+        -- 2. Turn 1 (Wait): Level steigt auf 1, Ring 1 (loc_1) tritt der Zone bei
+        let (ls1, _) = applyLoopCommandEv (parseCommandFor gw "wait") ls0
+            v1 = E.variables (save (lsCurrent ls1))
+        r1a <- expectEqual (Just (E.VVInt 1)) (Map.lookup "hazard.flut.level" v1)
+        r1b <- expectEqual (Just (E.VVInt 1)) (Map.lookup "hazard.flut.zone.loc_0" v1)
+        r1c <- expectEqual (Just (E.VVInt 1)) (Map.lookup "hazard.flut.zone.loc_1" v1)
+        r1d <- expectEqual (Just (E.VVInt 0)) (Map.lookup "hazard.flut.zone.loc_2" v1)
+
+        -- 3. Turn 2 (Wait): Level steigt auf 2, Ring 2 (loc_2) tritt der Zone bei
+        let (ls2, _) = applyLoopCommandEv (parseCommandFor gw "wait") ls1
+            v2 = E.variables (save (lsCurrent ls2))
+        r2a <- expectEqual (Just (E.VVInt 2)) (Map.lookup "hazard.flut.level" v2)
+        r2b <- expectEqual (Just (E.VVInt 1)) (Map.lookup "hazard.flut.zone.loc_0" v2)
+        r2c <- expectEqual (Just (E.VVInt 1)) (Map.lookup "hazard.flut.zone.loc_1" v2)
+        r2d <- expectEqual (Just (E.VVInt 1)) (Map.lookup "hazard.flut.zone.loc_2" v2)
+
+        -- 4. Turn 3 (Loeschen): Level faellt auf 1, Ring 2 (loc_2) verlaesst die Zone
+        let (ls3, _) = applyLoopCommandEv (parseCommandFor gw "loeschen") ls2
+            v3 = E.variables (save (lsCurrent ls3))
+        r3a <- expectEqual (Just (E.VVInt 1)) (Map.lookup "hazard.flut.level" v3)
+        r3b <- expectEqual (Just (E.VVInt 1)) (Map.lookup "hazard.flut.zone.loc_0" v3)
+        r3c <- expectEqual (Just (E.VVInt 1)) (Map.lookup "hazard.flut.zone.loc_1" v3)
+        r3d <- expectEqual (Just (E.VVInt 0)) (Map.lookup "hazard.flut.zone.loc_2" v3)
+
+        -- 5. Turn 4 (Nullen): Level faellt auf 0, Ring 1 (loc_1) verlaesst die Zone, loc_0 bleibt
+        let (ls4, _) = applyLoopCommandEv (parseCommandFor gw "nullen") ls3
+            v4 = E.variables (save (lsCurrent ls4))
+        r4a <- expectEqual (Just (E.VVInt 0)) (Map.lookup "hazard.flut.level" v4)
+        r4b <- expectEqual (Just (E.VVInt 1)) (Map.lookup "hazard.flut.zone.loc_0" v4)
+        r4c <- expectEqual (Just (E.VVInt 0)) (Map.lookup "hazard.flut.zone.loc_1" v4)
+        r4d <- expectEqual (Just (E.VVInt 0)) (Map.lookup "hazard.flut.zone.loc_2" v4)
+
+        pure (and [r0a, r0b, r0c, r0d, r1a, r1b, r1c, r1d, r2a, r2b, r2c, r2d, r3a, r3b, r3c, r3d, r4a, r4b, r4c, r4d])
+
+-- | OPEN-23 Stufe 2: Kanten-Wuerfe sind deterministisch pro Seed und wuerfeln
+--   bei Rueckzug/Neuausbreitung nicht neu (stabil ueber Run).
+testHazardsSpreadStabilityAndDeterminism :: IO Bool
+testHazardsSpreadStabilityAndDeterminism = do
+    let yaml = unlines
+            [ "name: Spread Stability Test"
+            , "start_room: hub"
+            , "rooms:"
+            , "  - id: hub"
+            , "    name: Hub"
+            , "    desc: Hub"
+            , "    exits:"
+            , "      north: n1"
+            , "      south: s1"
+            , "      east: e1"
+            , "      west: w1"
+            , "  - id: n1"
+            , "    name: N1"
+            , "    desc: N1"
+            , "  - id: s1"
+            , "    name: S1"
+            , "    desc: S1"
+            , "  - id: e1"
+            , "    name: E1"
+            , "    desc: E1"
+            , "  - id: w1"
+            , "    name: W1"
+            , "    desc: W1"
+            , "verbs:"
+            , "  - { name: loeschen }"
+            , "  - { name: anheizen }"
+            , "rules:"
+            , "  - id: cmd_loeschen"
+            , "    on: command loeschen"
+            , "    effects:"
+            , "      - { flood: { hazard: feuer, set: 0 } }"
+            , "  - id: cmd_anheizen"
+            , "    on: command anheizen"
+            , "    effects:"
+            , "      - { flood: { hazard: feuer, set: 1 } }"
+            , "hazards:"
+            , "  - id: feuer"
+            , "    level: 0"
+            , "    target: 1"
+            , "    track:"
+            , "      rate: 1"
+            , "      max: 1"
+            , "    footprint:"
+            , "      by: spread"
+            , "      from: hub"
+            , "      chance: 50"
+            ]
+    compileYamlForTest yaml $ \cr -> do
+        let gw = crWorld cr
+            roomIds = ["n1", "s1", "e1", "w1"]
+            checkZones vars = [ (r, Map.lookup ("hazard.feuer.zone." ++ r) vars) | r <- roomIds ]
+            checkReached vars = [ (r, Map.lookup ("hazard.feuer.reached." ++ r) vars) | r <- roomIds ]
+
+        -- Run A with Seed 424242
+        let svA = (crSave cr) { E.runSeed = 424242 }
+            stA0 = E.GameState gw svA Nothing Nothing Nothing [] Nothing [] Nothing Nothing []
+            lsA0 = initLoopState stA0
+            (lsA1, _) = applyLoopCommandEv Look lsA0
+            vA1 = E.variables (save (lsCurrent lsA1))
+            reachedA1 = checkReached vA1
+            zonesA1 = checkZones vA1
+
+        -- Run B with the EXACT SAME Seed 424242 from scratch
+        let svB = (crSave cr) { E.runSeed = 424242 }
+            stB0 = E.GameState gw svB Nothing Nothing Nothing [] Nothing [] Nothing Nothing []
+            lsB0 = initLoopState stB0
+            (lsB1, _) = applyLoopCommandEv Look lsB0
+            vB1 = E.variables (save (lsCurrent lsB1))
+            reachedB1 = checkReached vB1
+            zonesB1 = checkZones vB1
+
+        -- Seed-Determinismus: Run A und Run B muessen identische Ausbreitung haben
+        rDetReached <- expectEqual reachedA1 reachedB1
+        rDetZones   <- expectEqual zonesA1 zonesB1
+
+        -- Stabilitaet innerhalb eines Runs:
+        -- Rueckzug auf Level 0
+        let (lsA2, _) = applyLoopCommandEv (parseCommandFor gw "loeschen") lsA1
+            vA2 = E.variables (save (lsCurrent lsA2))
+            zonesA2 = checkZones vA2
+        -- Alle Raeume haben Zone 0 verlassen
+        rRetracted <- expectEqual [ (r, Just (E.VVInt 0)) | r <- roomIds ] zonesA2
+
+        -- Wiederanstieg auf Level 1
+        let (lsA3, _) = applyLoopCommandEv (parseCommandFor gw "anheizen") lsA2
+            vA3 = E.variables (save (lsCurrent lsA3))
+            zonesA3 = checkZones vA3
+            reachedA3 = checkReached vA3
+
+        -- Keine Neuwuerfe: die Zonen muessen exakt dieselben sein wie in Turn 1!
+        rStableZones   <- expectEqual zonesA1 zonesA3
+        rStableReached <- expectEqual reachedA1 reachedA3
+
+        pure (and [rDetReached, rDetZones, rRetracted, rStableZones, rStableReached])
+
+-- | OPEN-23 Stufe 2: needs_tag-Filter schliesst Raeume ohne diesen Tag aus.
+testHazardsSpreadNeedsTag :: IO Bool
+testHazardsSpreadNeedsTag = do
+    let yaml = unlines
+            [ "name: Spread Needs Tag Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: Start"
+            , "    tags: [brennbar]"
+            , "    exits:"
+            , "      east: loc_wood"
+            , "      west: loc_stone"
+            , "  - id: loc_wood"
+            , "    name: Holzhuette"
+            , "    desc: Holz"
+            , "    tags: [brennbar]"
+            , "  - id: loc_stone"
+            , "    name: Steinbunker"
+            , "    desc: Stein"
+            , "    tags: [unbrennbar]"
+            , "hazards:"
+            , "  feuer:"
+            , "    track:"
+            , "      max: 1"
+            , "      start: 0"
+            , "      rate: 1"
+            , "      target: 1"
+            , "    footprint:"
+            , "      by: spread"
+            , "      from: loc_0"
+            , "      chance: 100"
+            , "      needs_tag: brennbar"
+            ]
+    compileYamlForTest yaml $ \cr -> do
+        let gw = crWorld cr
+            sv = crSave cr
+            st0 = E.GameState gw sv Nothing Nothing Nothing [] Nothing [] Nothing Nothing []
+            ls0 = initLoopState st0
+            (ls1, _) = applyLoopCommandEv (parseCommandFor gw "wait") ls0
+            v1 = E.variables (save (lsCurrent ls1))
+        rWood  <- expectEqual (Just (E.VVInt 1)) (Map.lookup "hazard.feuer.zone.loc_wood" v1)
+        rStone <- expectEqual Nothing (Map.lookup "hazard.feuer.zone.loc_stone" v1)
+        pure (rWood && rStone)
+
+-- | OPEN-23 Stufe 2: every: { period, stream, choices } auf Gefahren-Ebene.
+--   Zaehlt pro Turn die Clock hoch; bei Erreichen der Periode wird gewuerfelt und
+--   die Clock zurueckgesetzt.
+testHazardsEveryEvent :: IO Bool
+testHazardsEveryEvent = do
+    let yaml = unlines
+            [ "name: Every Event Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: Start"
+            , "    tags: [drinnen]"
+            , "hazards:"
+            , "  vulkan:"
+            , "    track:"
+            , "      max: 1"
+            , "      start: 0"
+            , "      rate: 1"
+            , "      target: 0"
+            , "    footprint:"
+            , "      by: tag"
+            , "      tag: drinnen"
+            , "    every:"
+            , "      period: 2"
+            , "      stream: funken"
+            , "      choices:"
+            , "        - [1, [{ msg: 'Funkenflug!' }]]"
+            ]
+    compileYamlForTest yaml $ \cr -> do
+        let gw = crWorld cr
+            sv = crSave cr
+            st0 = E.GameState gw sv Nothing Nothing Nothing [] Nothing [] Nothing Nothing []
+            ls0 = initLoopState st0
+
+        -- Turn 1: Wait -> clock wird 1, kein Funkenflug
+        let (ls1, evs1) = applyLoopCommandEv (parseCommandFor gw "wait") ls0
+            v1 = E.variables (save (lsCurrent ls1))
+            hasMsg1 = "Funkenflug!" `isInfixOf` E.renderEvents evs1
+        r1Clock <- expectEqual (Just (E.VVInt 1)) (Map.lookup "hazard.vulkan.every.clock" v1)
+        r1Msg   <- expectTrue "turn 1 has no every msg" (not hasMsg1)
+
+        -- Turn 2: Wait -> clock erreicht 2, setzt auf 0 zurueck, Funkenflug wird gewuerfelt
+        let (ls2, evs2) = applyLoopCommandEv (parseCommandFor gw "wait") ls1
+            v2 = E.variables (save (lsCurrent ls2))
+            hasMsg2 = "Funkenflug!" `isInfixOf` E.renderEvents evs2
+        r2Clock <- expectEqual (Just (E.VVInt 0)) (Map.lookup "hazard.vulkan.every.clock" v2)
+        r2Msg   <- expectTrue "turn 2 fires every msg" hasMsg2
+
+        pure (r1Clock && r1Msg && r2Clock && r2Msg)
+
+-- | OPEN-23 Stufe 2: Wirktypen-Desugaring und Effekt-Mapping fuer flood, landslide, damage.
+testHazardsWirktypenMapping :: IO Bool
+testHazardsWirktypenMapping = do
+    -- A. JSON decoding
+    let dec = Aeson.decode :: BLC.ByteString -> Maybe AActionOutcome
+        dFloodD = dec (BLC.pack "{\"flood\": {\"hazard\": \"wasser\", \"delta\": 2}}")
+        dFloodS = dec (BLC.pack "{\"flood\": {\"hazard\": \"wasser\", \"set\": 3}}")
+        dSlideO = dec (BLC.pack "{\"landslide\": {\"from\": \"loc_0\", \"dir\": \"north\"}}")
+        dSlideR = dec (BLC.pack "{\"landslide\": {\"from\": \"loc_0\", \"dir\": \"north\", \"reopen\": true}}")
+        dDmgP   = dec (BLC.pack "{\"damage\": {\"player\": 5}}")
+        dDmgN   = dec (BLC.pack "{\"damage\": {\"npc\": \"goblin\", \"amount\": 4}}")
+
+    rDec1 <- expectEqual (Just (AOFlood "wasser" (Just 2) Nothing)) dFloodD
+    rDec2 <- expectEqual (Just (AOFlood "wasser" Nothing (Just 3))) dFloodS
+    rDec3 <- expectEqual (Just (AOLandslide "loc_0" "north" False Nothing)) dSlideO
+    rDec4 <- expectEqual (Just (AOLandslide "loc_0" "north" True Nothing)) dSlideR
+    rDec5 <- expectEqual (Just (AODamage (Just 5) Nothing)) dDmgP
+    rDec6 <- expectEqual (Just (AODamage Nothing (Just ("goblin", 4)))) dDmgN
+
+    -- B. Outcome compilation
+    let cFloodD = compileAActionOutcome (AOFlood "wasser" (Just 2) Nothing)
+        cFloodS = compileAActionOutcome (AOFlood "wasser" Nothing (Just 3))
+        cSlideO = compileAActionOutcome (AOLandslide "loc_0" "north" False Nothing)
+        cSlideR = compileAActionOutcome (AOLandslide "loc_0" "north" True (Just "loc_1"))
+        cDmgP   = compileAActionOutcome (AODamage (Just 5) Nothing)
+        cDmgN   = compileAActionOutcome (AODamage Nothing (Just ("goblin", 4)))
+
+    rCmp1 <- expectEqual (E.ModifyValue (E.VRVariable "hazard.wasser.target") 2) cFloodD
+    rCmp2 <- expectEqual (E.SetValue (E.VRVariable "hazard.wasser.level") (E.EVInt 3)) cFloodS
+    rCmp3 <- expectEqual (E.RemoveExit "loc_0" E.North) cSlideO
+    rCmp4 <- expectEqual (E.SetExit "loc_0" E.North (E.Open "loc_1")) cSlideR
+    rCmp5 <- expectEqual (E.ModifyValue E.VRPlayerHealth (-5)) cDmgP
+    rCmp6 <- expectEqual (E.ModifyValue (E.VRActorProp (E.ActorNPC "goblin") E.PHealth) (-4)) cDmgN
+
+    -- C. Desugaring von landslide reopen ohne explizites to
+    let yamlDesugar = unlines
+            [ "name: Landslide Desugar Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: Start"
+            , "    exits:"
+            , "      north: loc_1"
+            , "  - id: loc_1"
+            , "    name: Ziel"
+            , "    desc: Ziel"
+            , "rules:"
+            , "  - id: r_slide"
+            , "    on: turn"
+            , "    effects:"
+            , "      - { landslide: { from: loc_0, dir: north, reopen: true } }"
+            ]
+    rDesugar <- compileYamlForTest yamlDesugar $ \cr -> do
+        let trigs = E.triggerDefs (crWorld cr)
+            mTrig = find ((== "r_slide") . E.trId) trigs
+        case mTrig of
+            Nothing -> expectTrue "r_slide found" False
+            Just tr -> expectEqual [E.SetExit "loc_0" E.North (E.Open "loc_1")] (E.trEffects tr)
+
+    pure (and [rDec1, rDec2, rDec3, rDec4, rDec5, rDec6, rCmp1, rCmp2, rCmp3, rCmp4, rCmp5, rCmp6, rDesugar])
+
+-- | OPEN-23 Stufe 2: Statische Validierung der neuen Konstrukte
+--   (UnknownSpreadFrom, UnknownSpreadTag, EveryWithoutStream, HazardLevelOutOfRange,
+--    UnknownHazard, MissingRoom, UnknownExit, UnknownNpc).
+testHazardsStaticValidationStufe2 :: IO Bool
+testHazardsStaticValidationStufe2 = do
+    let baseYaml haz rules = unlines $
+            [ "name: Validation Stufe 2"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Start"
+            , "    desc: Start"
+            , "    tags: [drinnen]"
+            , "    exits:"
+            , "      north: loc_1"
+            , "  - id: loc_1"
+            , "    name: Ziel"
+            , "    desc: Ziel"
+            ]
+            ++ (if null haz then [] else "hazards:" : haz)
+            ++ (if null rules then [] else "rules:" : rules)
+
+        checkCode expectedCode txt = case decode1 (BLC.pack txt) of
+            Left err -> do
+                putStrLn $ "  yaml decode failed: " ++ show err
+                pure False
+            Right (adv :: Adventure) -> case compileAdventure adv of
+                Left errs -> expectTrue (expectedCode ++ ", got: " ++ issuesText errs)
+                                (any (\i -> ciCode i == expectedCode) errs)
+                Right _   -> expectTrue (expectedCode ++ " expected, but compilation succeeded") False
+
+    -- 1. UnknownSpreadFrom
+    let yBadFrom = baseYaml
+            [ "  h1:"
+            , "    track: { max: 2 }"
+            , "    footprint:"
+            , "      by: spread"
+            , "      from: phantom_room" ]
+            []
+    r1 <- checkCode "UnknownSpreadFrom" yBadFrom
+
+    -- 2. UnknownSpreadTag
+    let yBadTag = baseYaml
+            [ "  h1:"
+            , "    track: { max: 2 }"
+            , "    footprint:"
+            , "      by: spread"
+            , "      from: loc_0"
+            , "      needs_tag: bogus_tag" ]
+            []
+    r2 <- checkCode "UnknownSpreadTag" yBadTag
+
+    -- 3. EveryWithoutStream
+    let yNoStream = baseYaml
+            [ "  h1:"
+            , "    track: { max: 2 }"
+            , "    footprint:"
+            , "      by: tag"
+            , "      tag: drinnen"
+            , "    every:"
+            , "      period: 2"
+            , "      stream: ''"
+            , "      choices:"
+            , "        - [1, [{ msg: 'x' }]]" ]
+            []
+    r3 <- checkCode "EveryWithoutStream" yNoStream
+
+    -- 4. HazardLevelOutOfRange on flood set
+    let yOutOfRange = baseYaml
+            [ "  h1:"
+            , "    track: { max: 3 }"
+            , "    footprint:"
+            , "      by: tag"
+            , "      tag: drinnen" ]
+            [ "  - id: r1"
+            , "    on: turn"
+            , "    effects:"
+            , "      - { flood: { hazard: h1, set: 99 } }" ]
+    r4 <- checkCode "HazardLevelOutOfRange" yOutOfRange
+
+    -- 5. UnknownHazard on flood
+    let yUnknownHaz = baseYaml
+            []
+            [ "  - id: r1"
+            , "    on: turn"
+            , "    effects:"
+            , "      - { flood: { hazard: ghost_hazard, delta: 1 } }" ]
+    r5 <- checkCode "UnknownHazard" yUnknownHaz
+
+    -- 6. MissingRoom on landslide from
+    let yMissingRoom = baseYaml
+            []
+            [ "  - id: r1"
+            , "    on: turn"
+            , "    effects:"
+            , "      - { landslide: { from: ghost_room, dir: north } }" ]
+    r6 <- checkCode "MissingRoom" yMissingRoom
+
+    -- 7. UnknownExit on landslide reopen without exit
+    let yUnknownExit = baseYaml
+            []
+            [ "  - id: r1"
+            , "    on: turn"
+            , "    effects:"
+            , "      - { landslide: { from: loc_0, dir: south, reopen: true } }" ]
+    r7 <- checkCode "UnknownExit" yUnknownExit
+
+    -- 8. UnknownNpc on damage
+    let yUnknownNpc = baseYaml
+            []
+            [ "  - id: r1"
+            , "    on: turn"
+            , "    effects:"
+            , "      - { damage: { npc: ghost_npc, amount: 2 } }" ]
+    r8 <- checkCode "UnknownNpc" yUnknownNpc
+
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8])
+
+-- | OPEN-23: Byte-Vertrag-Waechter — mindestens 5 bestehende Abenteuer kompilieren
+--   zu einem mit den gepinnten Baselines byte-identischen world.json (SHA256).
+testHazardsByteContractWatcher :: IO Bool
+testHazardsByteContractWatcher = do
+    let baselines =
+            [ ("demo.yaml", "3aa9fed02d6d9b8f16bb7c4c3b18169e891f504a1feb880dfc87db21eedbb784")
+            , ("thefog.yaml", "8f58bb4fead8660dbaeadce039150cae08e8338a46e02d8d63d1660c3861d1f6")
+            , ("zork1.yaml", "089d318d206c779e5de12272d917b95d1d29a60b1a921aaed11b7676650be761")
+            , ("roguelike_dungeon.yaml", "946cd88374d3dcf3def610186c7f3cf99167771aa5970db06e1e2caa4ac21495")
+            , ("wissen.yaml", "da115a31517847aefb134a25c3b9a669e0f4ee383534cfeb79adea423add36eb")
+            ]
+    results <- forM baselines $ \(fname, expSha) -> do
+        mbPath <- findExample fname
+        case mbPath of
+            Nothing -> do
+                putStrLn $ "  byte contract watcher: " ++ fname ++ " not found"
+                pure False
+            Just path -> do
+                advResult <- parseAdventureFile path
+                case advResult of
+                    Left err -> do
+                        putStrLn $ "  byte contract watcher: " ++ fname ++ " parse failed: " ++ err
+                        pure False
+                    Right adv -> case compileAdventure adv of
+                        Left errs -> do
+                            putStrLn $ "  byte contract watcher: " ++ fname ++ " compile failed: " ++ issuesText errs
+                            pure False
+                        Right cr -> do
+                            tmpDir <- getTemporaryDirectory
+                            let tmpFile = tmpDir </> ("bc-" ++ fname ++ ".json")
+                            BL.writeFile tmpFile (Aeson.encode (crWorld cr))
+                            out <- readProcess "sha256sum" [tmpFile] ""
+                            _ <- try (removeFile tmpFile) :: IO (Either SomeException ())
+                            let actualSha = take 64 out
+                            r <- expectEqual expSha actualSha
+                            when (not r) $
+                                putStrLn $ "  byte contract SHA mismatch for " ++ fname ++ ": expected " ++ expSha ++ ", got " ++ actualSha
+                            pure r
+    pure (and results)
 
 -- | VC-11: apply_vehicle_condition and clear_vehicle_condition YAML syntax decodes and compiles to Core effects
 testVehicleConditionSugar :: IO Bool

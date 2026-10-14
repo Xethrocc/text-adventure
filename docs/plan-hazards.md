@@ -1,6 +1,6 @@
 # Plan: `hazards:` — generalisierte Gefahrenlagen (OPEN-23)
 
-**Stand:** 2026-10-13 · **Status:** Entscheidungen getroffen, Machbarkeit am Code geprüft · **Stufe 1 (AP A–F) umgesetzt** (`90c1418`, CI grün, Byte-Vertrag: 5 Abenteuer SHA256-identisch) ·
+**Stand:** 2026-10-14 · **Status:** Stufe 1 und Stufe 2 (AP A–E) vollständig umgesetzt (CI grün, Byte-Vertrag: 5 Abenteuer SHA256-identisch) ·
 **Gültig:** Das ist **der** Plan zu `OPEN-23` (Entscheidung 2026-10-13). Zunächst als Analyse entstanden,
 nach einem Wechsel des Repo-Stands wiederhergestellt.
 
@@ -152,3 +152,64 @@ Das Zwischenentwurf-Unwettermodul (`environment.severe:` an 7d) löst OPEN-23 an
 ## 11. Reihenfolge / Konsequenzen
 
 1. Stufe 1 (AP A–F). 2. Zork-Dam umbauen (OPEN-23a, wartet laut E5). 3. Stufe 2 (`spread`, Item-Helfer, Zufallsereignisse nach §10) nach erstem Autoreneinsatz. 4. Wetter-Alias (E3).
+
+## 12. Stufe 2 — entschieden 2026-10-14 (Patrick)
+
+**Umfang (2a):** `spread` + Zufallsereignisse + Wirktypen `flood:`/`landslide:`/`damage:`
+in einem Durchlauf. **Item-Helfer (`flow:`/`burn:`, §6) bleiben separat (2b)** —
+eigene Entscheidung, eigene Stufe.
+
+### E8 — Spread ist level-gebunden (Entscheidung 2026-10-14, abweichend vom
+boolean-Kanten-Wurf aus §3 Folgerung 3)
+
+- Footprint-Variante `by: spread` mit `from: <raum>`, `via: exits`,
+  `chance: <0–100>`, `needs_tag: <tag>?`.
+- **Zone bei Level L = alle Räume, die von `from:` in ≤ L Schritten über
+  `via:`-Kanten erreichbar sind.** Jede traversierte Kante durchläuft einen
+  `chance:`-Wurf auf dem Stream `hazard.<id>.spread` (`RandomChoiceOn`, B8,
+  deterministisch pro Run-Seed) — ein fehlgeschlagener Wurf schneidet diesen
+  Zweig ab; die Würfe sind pro Run stabil (gleicher Seed → gleiche Zone).
+- Steigendes Level erweitert die Zone ringweise (pro Level-Einheit), fallendes
+  zieht sie in derselben Granularität zurück (Reversibilität E1 analog).
+- Raumzustand `hazard.<id>.zone.<raum>` (0/1) wie in Stufe 1 geplant;
+  `in_hazard:` und `on_zone:`/`telegraph:` arbeiten darauf weiter.
+- `from:` ist immer in der Zone (Quelle); `needs_tag:` schließt Räume ohne das
+  Tag von der Expansion aus (z. B. nur `outdoor`).
+- Kombination mit `track` ist die Regel (der Pegel steuert den Radius); ein
+  Spread ohne `track` ist zulässig (Level wird dann per `hazard_jump`/
+  Wirktypen gesetzt).
+
+### E9 — Zufallsereignisse (§10 übernommen)
+
+- Auf Gefahren-Ebene neben `track`/`stages`/`on_zone`:
+  `every: {period: P, stream: name, choices: [[gewicht, [effekte]], …]}`.
+- Pro P Züge ein Wurf auf `rng.<name>` (B8, `RandomChoiceOn`-Semantik);
+  Null-Gewicht/Erfolg ohne Ziel = kein Effekt. Deterministisch pro Run-Seed.
+
+### E10 — Wirktypen als Compiler-Kürzel (keine neue Runtime)
+
+| Sugar | Expansion | Zweck |
+|---|---|---|
+| `flood: {hazard, delta: N}` | `hazard_target` (Ziel um N verschieben, Level läuft mit `rate` hin) | Pegelbewegung wie E5 |
+| `flood: {hazard, set: N}` | `hazard_jump` (hart setzen) | sofortige Pegelstellung |
+| `landslide: {from, dir}` / `landslide: {from, dir, reopen: true}` | `remove_exit` bzw. `set_exit` | Ausgang sperren/freigeben |
+| `damage: {player: N}` / `damage: {npc: <id>, amount: N}` | `ModifyValue VRPlayerHealth` bzw. `damage_npc`-Äquivalent | Schaden |
+
+- Validierung/Fehlercodes analog Stufe 1 (unbekannte Hazard-/Raum-/NPC-Referenzen),
+  Hook-`when:` über die B4-Sammelliste.
+- **Byte-Vertrag:** neue Felder/Keys nur serialisiert wenn benutzt; bestehende
+  Welten byte-identisch (Vorbild Stufe 1).
+
+### Stufe-2-Arbeitspakete (agy-Stufe, extern verifizieren)
+
+| AP | Inhalt |
+|---|---|
+| A | Typen: `AFootprintType`-Variante `Spread`, `AEventEvery` (`every:`-Block), Wirktyp-Outcome `AOFlood`/`AOLandslide`/`AODamage` + JSON, `advHazards` erweitert |
+| B | Compile: Spread-Ringlogik (Level↔Radius, Kanten-Würfe auf `hazard.<id>.spread`, `zone.<raum>`-Pflege pro Ringstufe), `every:`-Trigger mit Periode + Stream, Wirktyp-Desugaring |
+| C | Validierung: `UnknownSpreadFrom`, `UnknownSpreadTag`, `EveryWithoutStream`, Wirktyp-Refchecks; Walker-Abgleich (Catch-alls wie Stufe 1 AP D) |
+| D | Tests: Spread steigen/fallen, Kanten-Wurf-Stabilität (gleicher Seed), `needs_tag:`-Filter, `every:`-Perioden/Streams, Wirktyp-Mapping, Byte-Vertrag-Wächter; Fixture `examples/modules/hazards.yaml` um einen Spread-Fall + Zufallsereignis erweitern |
+| E | Docs: `adventure-schema.md` (Spread-Footprint, `every:`, Wirktypen), `modules.md` 7j, CHANGELOG, Befunde-Eintrag |
+
+**Abnahme:** `scripts/ci.sh` grün inkl. erweiterter Fixture; Spread-Determinismus
+(gleicher Seed → gleiche Zonen) im Test belegt; Welten ohne Stufe-2-Features
+byte-identisch.

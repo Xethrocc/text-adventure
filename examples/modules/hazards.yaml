@@ -73,6 +73,32 @@ hazards:
     on_zone:
       - { msg: "Steinschlag droht von der Decke." }
 
+  feuer:
+    track:
+      max: 2
+      start: 0
+      rate: 1
+      every: 1
+      target: 0
+    footprint:
+      by: spread
+      from: reservoir
+      via: exits
+      chance: 100
+      needs_tag: outdoor
+    stages:
+      "1":
+        - { msg: "Das Feuer breitet sich ueber den Damm aus!" }
+      "2":
+        - { msg: "Die Flammen erreichen den Hafen!" }
+    on_zone:
+      - { msg: "Hitze und dichter Rauch erbaermen sich nicht." }
+    every:
+      period: 2
+      stream: funken
+      choices:
+        - [1, [{ msg: "Funken stieben durch die Nacht." }]]
+
 verbs:
   - { name: fluten, aliases: [flood] }
   - { name: senken, aliases: [drain] }
@@ -82,6 +108,11 @@ verbs:
   - { name: sturm_halt, aliases: [storm_pause] }
   - { name: sturm_weiter, aliases: [storm_resume] }
   - { name: rasten, aliases: [wait] }
+  - { name: feuer_an, aliases: [ignite] }
+  - { name: loeschen, aliases: [extinguish] }
+  - { name: erdrutsch, aliases: [landslide] }
+  - { name: raeumen, aliases: [clear] }
+  - { name: qualm, aliases: [smoke] }
 
 rules:
   - id: cmd_fluten
@@ -131,6 +162,36 @@ rules:
     on: command rasten
     effects:
       - { msg: "Du wartest einen Moment." }
+
+  - id: cmd_feuer_an
+    on: command feuer_an
+    effects:
+      - { flood: { hazard: feuer, delta: 2 } }
+      - { msg: "Du entzuendest ein Signalfeuer am Reservoir!" }
+
+  - id: cmd_loeschen
+    on: command loeschen
+    effects:
+      - { flood: { hazard: feuer, set: 0 } }
+      - { msg: "Wasser loescht den Brand schlagartig!" }
+
+  - id: cmd_erdrutsch
+    on: command erdrutsch
+    effects:
+      - { landslide: { from: hafen, dir: east } }
+      - { msg: "Eine Geroelllawine verschuettet den Tunneleingang!" }
+
+  - id: cmd_raeumen
+    on: command raeumen
+    effects:
+      - { landslide: { from: hafen, dir: east, reopen: true } }
+      - { msg: "Die Helfer raeumen den Tunneleingang wieder frei!" }
+
+  - id: cmd_qualm
+    on: command qualm
+    effects:
+      - { damage: { player: 5 } }
+      - { msg: "Bissiger Rauch laesst dich husten." }
 
 rooms:
   - id: hafen
@@ -210,3 +271,17 @@ tests:
       - "Ein Zauber haelt den Sturm an."
       - "Der Zauber verfliegt — der Sturm tobt weiter."
       - "Orkanboeen fegen ueber das Gelaende!"
+
+  - name: "spread feuer und wirktypen"
+    input: [feuer_an, rasten, rasten, loeschen, rasten, erdrutsch, east, raeumen, east, look, qualm]
+    expect:
+      - "Du entzuendest ein Signalfeuer am Reservoir!"
+      - "Das Feuer breitet sich ueber den Damm aus!"
+      - "Die Flammen erreichen den Hafen!"
+      - "Funken stieben durch die Nacht."
+      - "Wasser loescht den Brand schlagartig!"
+      - "Eine Geroelllawine verschuettet den Tunneleingang!"
+      - "You can't go that way."
+      - "Die Helfer raeumen den Tunneleingang wieder frei!"
+      - "Ein enger Stollen fuehrt tiefer in den Berg zur Schatzkammer."
+      - "Bissiger Rauch laesst dich husten."

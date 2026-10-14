@@ -58,7 +58,7 @@ import qualified Messages as Msg
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Char (toLower, isDigit, isSpace)
-import Data.List (nub, stripPrefix, isPrefixOf, isInfixOf, minimumBy, intercalate, sortOn, find, (\\), foldl')
+import Data.List (nub, stripPrefix, isPrefixOf, isInfixOf, minimumBy, intercalate, sort, sortOn, find, (\\), foldl')
 import Data.Ord (comparing)
 import Data.Maybe (mapMaybe, fromMaybe, catMaybes, isNothing, isJust, listToMaybe)
 import Data.Either (partitionEithers)
@@ -293,6 +293,8 @@ outcomeSurfaces a =
             [ [ ("hazards." ++ hazId h ++ ".stages." ++ show lvl, outs)
               | (lvl, outs) <- hazStages h ]
               ++ [ ("hazards." ++ hazId h ++ ".on_zone", hazOnZone h) ]
+              ++ [ ("hazards." ++ hazId h ++ ".every", concatMap snd (aeeChoices ev))
+                 | Just ev <- [hazEvery h] ]
             | h <- hzs ]
     roomOutcomes r = concat (catMaybes [ arOnEnter r, arOnLook r, arOnExit r, arSearch r ])
     itemOutcomes i = maybe [] id (aiOnTake i) ++ concat (Map.elems (aiVerbMap i))
@@ -604,10 +606,126 @@ clashes pairs =
         (Map.fromListWith (++) [(t, [p]) | (t, p) <- pairs])
     , length (nub ps) > 1 ]
 
+-- | Desugar AOLandslide with reopen: true and omitted 'to' by resolving the exit target
+--   from the initial room connections (E10).
+desugarAO :: [ARoom] -> AActionOutcome -> AActionOutcome
+desugarAO rooms ao = case ao of
+    AOLandslide from dir True Nothing ->
+        let mTarget = do
+                pDir <- case parseDir dir of
+                    Right d -> Just d
+                    Left _  -> Nothing
+                rm <- find (\r -> arId r == from) rooms
+                listToMaybe [ aeTarget ex
+                            | (d, ex) <- Map.toList (arExits rm)
+                            , parseDir d == Right pDir ]
+        in AOLandslide from dir True mTarget
+    AOConditional p ts es ->
+        AOConditional p (map (desugarAO rooms) ts) (map (desugarAO rooms) es)
+    AONarrative ls ts ->
+        AONarrative ls (map (desugarAO rooms) ts)
+    AORandomChoice s cs ->
+        AORandomChoice s [ (w, map (desugarAO rooms) os) | (w, os) <- cs ]
+    AOApplyCondition n turns ts es h ->
+        AOApplyCondition n turns (map (desugarAO rooms) ts) (map (desugarAO rooms) es) h
+    other -> other
+
+desugarAdventureLandslide :: Adventure -> Adventure
+desugarAdventureLandslide a =
+    let rms = advRooms a
+        d = desugarAO rms
+        dList = map d
+        dMaybe = fmap dList
+
+        dRoom r = r
+            { arOnEnter = dMaybe (arOnEnter r)
+            , arOnLook = dMaybe (arOnLook r)
+            , arOnExit = dMaybe (arOnExit r)
+            , arSearch = dMaybe (arSearch r)
+            }
+        dItem i = i
+            { aiOnTake = dMaybe (aiOnTake i)
+            , aiVerbMap = Map.map dList (aiVerbMap i)
+            }
+        dDialogTree tr = tr
+            { adtNodes = Map.map (\dn -> dn { adnChoices = map (\dc -> dc { adcOutcomes = dList (adcOutcomes dc) }) (adnChoices dn) }) (adtNodes tr) }
+        dState (st, sdef) = (st, sdef { asdEffects = dList (asdEffects sdef) })
+        dNPC n = n
+            { anVerbMap = Map.map dList (anVerbMap n)
+            , anTopics = Map.map d (anTopics n)
+            , anOnTalk = fmap d (anOnTalk n)
+            , anDialogue = Map.map dDialogTree (anDialogue n)
+            , anAI = fmap (\ai -> ai { aiStates = map dState (aiStates ai) }) (anAI n)
+            }
+        dInteractions ai = ai
+            { aiItem = map (\re -> re { aiiEffects = dList (aiiEffects re) }) (aiItem ai)
+            , aiNpc = map (\re -> re { apiEffects = dList (apiEffects re) }) (aiNpc ai)
+            , aiVehicle = map (\re -> re { apiEffects = dList (apiEffects re) }) (aiVehicle ai)
+            , aiExit = map (\re -> re { apiEffects = dList (apiEffects re) }) (aiExit ai)
+            }
+        dTrigger t = t { atEffects = dList (atEffects t) }
+        dQuest q = q { aqReward = dMaybe (aqReward q) }
+        dVehicle v = v
+            { avConditions = Map.map dList (avConditions v)
+            , avStations = map (\st -> st { astEffects = dList (astEffects st) }) (avStations v)
+            }
+        dEncounterTable tbl = tbl
+            { ertEntries = map (\e -> e { eneEffects = dList (eneEffects e) }) (ertEntries tbl) }
+        dEnv env = env
+            { envWeather = fmap (\w -> w { weaTransitions = map (\t -> t { wtEffects = dList (wtEffects t) }) (weaTransitions w) }) (envWeather env)
+            , envDrains = map (\dr -> dr { drAtZero = dList (drAtZero dr) }) (envDrains env)
+            }
+        dStealth st = st
+            { stObservers = map (\ob -> ob { obOnHear = dList (obOnHear ob) }) (stObservers st) }
+        dPatrol pt = pt
+            { ptHostiles = map (\h -> h { ahAttack = dList (ahAttack h) }) (ptHostiles pt) }
+        dCombat c = c
+            { acOnWin = dList (acOnWin c)
+            , acOnLose = dList (acOnLose c)
+            }
+        dAbility ab = ab { aabEffects = dList (aabEffects ab) }
+        dCard cd = cd { acdOutcomes = dList (acdOutcomes cd) }
+        dProc p = p { apEffects = dList (apEffects p) }
+        dDevice dv = dv
+            { adOnInsert = dList (adOnInsert dv)
+            , adOnRemove = dList (adOnRemove dv)
+            , adOnFlip = [ (st, dList effs) | (st, effs) <- adOnFlip dv ]
+            }
+        dProg pr = pr
+            { aplLevels = map (\lvl -> lvl { alEffects = dList (alEffects lvl) }) (aplLevels pr) }
+        dHazard h = h
+            { hazStages = [ (lvl, dList outs) | (lvl, outs) <- hazStages h ]
+            , hazOnZone = dList (hazOnZone h)
+            , hazEvery = fmap (\ev -> ev { aeeChoices = [ (w, dList outs) | (w, outs) <- aeeChoices ev ] }) (hazEvery h)
+            }
+        dVar v = v { avbOnOverflow = dList (avbOnOverflow v) }
+    in a
+        { advRooms = map dRoom (advRooms a)
+        , advItems = map dItem (advItems a)
+        , advNPCs = map dNPC (advNPCs a)
+        , advInteractions = fmap dInteractions (advInteractions a)
+        , advTriggers = map dTrigger (advTriggers a)
+        , advQuests = map dQuest (advQuests a)
+        , advVehicles = map dVehicle (advVehicles a)
+        , advEncounterTables = map dEncounterTable (advEncounterTables a)
+        , advEnvironment = fmap dEnv (advEnvironment a)
+        , advStealth = fmap dStealth (advStealth a)
+        , advPatrol = fmap dPatrol (advPatrol a)
+        , advCombat = fmap dCombat (advCombat a)
+        , advAbilities = map dAbility (advAbilities a)
+        , advCards = map dCard (advCards a)
+        , advProcedures = map dProc (advProcedures a)
+        , advDevices = map dDevice (advDevices a)
+        , advProgression = fmap dProg (advProgression a)
+        , advHazards = fmap (map dHazard) (advHazards a)
+        , advVariables = map dVar (advVariables a)
+        }
+
 -- | Compile an Adventure into engine types, or return structured issues
 compileAdventure :: Adventure -> Either [CompileIssue] CompileResult
-compileAdventure adv =
-    let -- Verb registry first: items/NPCs may reference custom verbs
+compileAdventure rawAdv =
+    let adv = desugarAdventureLandslide rawAdv
+        -- Verb registry first: items/NPCs may reference custom verbs
         (verbIssues, verbRegistry) = compileVerbs (advVerbs adv)
         -- OPEN-21: compileVerbs reports warnings too (reserved phrases,
         --   duplicate templates) — only errors are fatal here.
@@ -1114,6 +1232,10 @@ checkHazardNested path o =
     (case KM.lookup "telegraph" o of
         Just (Aeson.Object teo) -> checkKeys (path ++ ".telegraph") EntHazardTelegraph (KM.keys teo)
         _                       -> [])
+    ++
+    (case KM.lookup "every" o of
+        Just (Aeson.Object eo) -> checkKeys (path ++ ".every") EntHazardEvery (KM.keys eo)
+        _                      -> [])
 
 checkListOrMap :: String
                -> EntityType
@@ -1832,6 +1954,38 @@ mergeWanderVars varDefs varInitials wanderDefs wanderInitials =
 -- Gefahrenlagen (hazards:) (OPEN-23)
 -- ---------------------------------------------------------------------------
 
+-- | Build the BFS spread tree from 'from:' room (OPEN-23 Stufe 2, E8).
+--   Returns list of (room, parentRoom, distance) for all reachable rooms (including 'from' at distance 0 with parent 'from').
+--   Deterministic: canonical ordering by room ID.
+computeSpreadTree :: Map.Map String E.Room -> String -> Maybe String -> [(String, String, Int)]
+computeSpreadTree allRooms fromR mNeedsTag
+    | fromR `Map.notMember` allRooms = []
+    | otherwise = go [(fromR, fromR, 0)] (Set.singleton fromR) [(fromR, fromR, 0)]
+  where
+    satisfiesTag r = case mNeedsTag of
+        Nothing -> True
+        Just t  -> case Map.lookup r allRooms of
+            Just rm -> t `Set.member` E.roomTags rm
+            Nothing -> False
+
+    outgoingExits u = case Map.lookup u allRooms of
+        Just rm ->
+            sort (nub [ E.exitRoomID ex
+                      | ex <- Map.elems (E.roomConnections rm)
+                      , let tid = E.exitRoomID ex
+                      , Map.member tid allRooms
+                      ])
+        Nothing -> []
+
+    go [] _ acc = acc
+    go ((curr, _, dist) : queue) visited acc =
+        let nexts = [ nxt | nxt <- outgoingExits curr
+                          , nxt `Set.notMember` visited
+                          , satisfiesTag nxt ]
+            visited' = foldl' (flip Set.insert) visited nexts
+            newNodes = [ (nxt, curr, dist + 1) | nxt <- nexts ]
+        in go (queue ++ newNodes) visited' (acc ++ newNodes)
+
 -- | Compile the `hazards:` segment (OPEN-23). Pure Worldbuilder sugar:
 --   - Track variables: `hazard.<id>.level`, `.target`, `.clock`, `.prev`.
 --   - Tick trigger: `hazard.<id>.tick` advances clock, updates level towards target clamped by rate.
@@ -1949,7 +2103,50 @@ compileOneHazard allRooms h =
                                        | null taggedRooms ]
                         in (emptyErr, taggedRooms)
 
-        allIssues = trackRangeErrs ++ stageRangeErrs ++ footprintErrs
+            FPSpread ->
+                case fpFrom fp of
+                    Nothing ->
+                        ( [ ciError ("hazards." ++ hid ++ ".footprint.from") "UnknownSpreadFrom"
+                              "spread footprint missing 'from' room declaration" ]
+                        , [] )
+                    Just fromR
+                        | null fromR ->
+                            ( [ ciError ("hazards." ++ hid ++ ".footprint.from") "UnknownSpreadFrom"
+                                  "spread footprint missing 'from' room declaration" ]
+                            , [] )
+                        | fromR `Map.notMember` allRooms ->
+                            ( [ ciError ("hazards." ++ hid ++ ".footprint.from") "UnknownSpreadFrom"
+                                  ("spread footprint references unknown room '" ++ fromR ++ "'") ]
+                            , [] )
+                        | otherwise ->
+                            let tagErrs = case fpNeedsTag fp of
+                                    Just t ->
+                                        let taggedRooms = [ rId | (rId, rm) <- Map.toList allRooms, t `Set.member` E.roomTags rm ]
+                                        in [ ciError ("hazards." ++ hid ++ ".footprint.needs_tag") "UnknownSpreadTag"
+                                               ("spread footprint needs_tag '" ++ t ++ "' matches no declared room")
+                                           | null taggedRooms ]
+                                    Nothing -> []
+                                chanceErrs = case fpChance fp of
+                                    Just ch | ch < 0 || ch > 100 ->
+                                        [ ciError ("hazards." ++ hid ++ ".footprint.chance") "HazardLevelOutOfRange"
+                                            ("spread chance " ++ show ch ++ " must be in 0..100") ]
+                                    _ -> []
+                                stNodes = computeSpreadTree allRooms fromR (fpNeedsTag fp)
+                                rms = [ r | (r, _, _) <- stNodes ]
+                            in (tagErrs ++ chanceErrs, rms)
+
+        everyErrs = case hazEvery h of
+            Nothing -> []
+            Just evDef ->
+                [ ciError ("hazards." ++ hid ++ ".every.stream") "EveryWithoutStream"
+                    "hazard every definition missing stream name"
+                | null (aeeStream evDef) ]
+                ++
+                [ ciError ("hazards." ++ hid ++ ".every.period") "HazardLevelOutOfRange"
+                    ("hazard every period " ++ show (aeePeriod evDef) ++ " must be positive (> 0)")
+                | aeePeriod evDef <= 0 ]
+
+        allIssues = trackRangeErrs ++ stageRangeErrs ++ footprintErrs ++ everyErrs
 
         -- Variables
         levelVar = "hazard." ++ hid ++ ".level"
@@ -1958,18 +2155,52 @@ compileOneHazard allRooms h =
         prevVar = "hazard." ++ hid ++ ".prev"
 
         boundMax = max 1 mx
-        varDefs = Map.fromList
+        baseVarDefs = Map.fromList
             [ (levelVar,  E.VarDef levelVar  (E.VTInt (Just 0) (Just boundMax)) (E.VVInt st) [] [])
             , (targetVar, E.VarDef targetVar (E.VTInt (Just 0) (Just boundMax)) (E.VVInt tg) [] [])
             , (clockVar,  E.VarDef clockVar  (E.VTInt (Just 0) Nothing)         (E.VVInt 0)  [] [])
             , (prevVar,   E.VarDef prevVar   (E.VTInt (Just 0) (Just boundMax)) (E.VVInt st) [] [])
             ]
-        initials = Map.fromList
+        baseInitials = Map.fromList
             [ (levelVar,  E.VVInt st)
             , (targetVar, E.VVInt tg)
             , (clockVar,  E.VVInt 0)
             , (prevVar,   E.VVInt st)
             ]
+
+        fromRoomId = fromMaybe "" (fpFrom fp)
+        spreadTree = case fpBy fp of
+            FPSpread | fromRoomId `Map.member` allRooms ->
+                computeSpreadTree allRooms fromRoomId (fpNeedsTag fp)
+            _ -> []
+
+        spreadVarDefs = Map.fromList
+            [ (vname, E.VarDef vname vt (E.VVInt initV) [] [])
+            | (r, _, _) <- spreadTree
+            , (vname, vt, initV) <-
+                [ ("hazard." ++ hid ++ ".zone." ++ r, E.VTInt (Just 0) (Just 1), if r == fromRoomId then 1 else 0)
+                , ("hazard." ++ hid ++ ".reached." ++ r, E.VTInt (Just 0) (Just 2), if r == fromRoomId then 1 else 0)
+                ]
+            ]
+        spreadInitials = Map.fromList
+            [ (vname, E.VVInt initV)
+            | (r, _, _) <- spreadTree
+            , (vname, initV) <-
+                [ ("hazard." ++ hid ++ ".zone." ++ r, if r == fromRoomId then 1 else 0)
+                , ("hazard." ++ hid ++ ".reached." ++ r, if r == fromRoomId then 1 else 0)
+                ]
+            ]
+
+        everyClockVar = "hazard." ++ hid ++ ".every.clock"
+        everyVarDefs = case hazEvery h of
+            Just _  -> Map.singleton everyClockVar (E.VarDef everyClockVar (E.VTInt (Just 0) Nothing) (E.VVInt 0) [] [])
+            Nothing -> Map.empty
+        everyInitials = case hazEvery h of
+            Just _  -> Map.singleton everyClockVar (E.VVInt 0)
+            Nothing -> Map.empty
+
+        varDefs = Map.unions [baseVarDefs, spreadVarDefs, everyVarDefs]
+        initials = Map.unions [baseInitials, spreadInitials, everyInitials]
 
         -- Tick Trigger
         pausedFlag = "hazard." ++ hid ++ ".paused"
@@ -2002,6 +2233,57 @@ compileOneHazard allRooms h =
 
         tickTrigger = E.TriggerDef ("hazard." ++ hid ++ ".tick") E.OnTurn tickCond tickEffects False 0 1 [] []
 
+        -- Spread Trigger (OPEN-23 Stufe 2, E8)
+        spreadEffects =
+            [ let zoneVar = "hazard." ++ hid ++ ".zone." ++ v
+                  reachedVar = "hazard." ++ hid ++ ".reached." ++ v
+                  reachedParent = "hazard." ++ hid ++ ".reached." ++ u
+                  ch = max 0 (min 100 (fromMaybe 100 (fpChance fp)))
+                  rollEffect = case ch of
+                      100 -> E.Sequence
+                          [ E.SetValue (E.VRVariable reachedVar) (E.EVInt 1)
+                          , E.SetValue (E.VRVariable zoneVar) (E.EVInt 1)
+                          ]
+                      0   -> E.Sequence
+                          [ E.SetValue (E.VRVariable reachedVar) (E.EVInt 2)
+                          , E.SetValue (E.VRVariable zoneVar) (E.EVInt 0)
+                          ]
+                      _   -> E.RandomChoiceOn ("hazard." ++ hid ++ ".spread")
+                          [ ( ch
+                            , E.Sequence
+                                [ E.SetValue (E.VRVariable reachedVar) (E.EVInt 1)
+                                , E.SetValue (E.VRVariable zoneVar) (E.EVInt 1)
+                                ]
+                            )
+                          , ( 100 - ch
+                            , E.Sequence
+                                [ E.SetValue (E.VRVariable reachedVar) (E.EVInt 2)
+                                , E.SetValue (E.VRVariable zoneVar) (E.EVInt 0)
+                                ]
+                            )
+                          ]
+              in E.Conditional
+                  (E.CompareVar reachedVar E.CEq 0)
+                  (E.Conditional
+                      (E.PAll [E.CompareVar levelVar E.CGte d, E.CompareVar reachedParent E.CEq 1])
+                      rollEffect
+                      E.Noop)
+                  (E.Conditional
+                      (E.PAll [E.CompareVar reachedVar E.CEq 1, E.CompareVar levelVar E.CGte d])
+                      (E.SetValue (E.VRVariable zoneVar) (E.EVInt 1))
+                      (E.SetValue (E.VRVariable zoneVar) (E.EVInt 0)))
+            | (v, u, d) <- spreadTree
+            , d > 0
+            ]
+            ++
+            [ E.SetValue (E.VRVariable ("hazard." ++ hid ++ ".zone." ++ fromRoomId)) (E.EVInt 1)
+            | not (null fromRoomId), fromRoomId `Map.member` allRooms
+            ]
+
+        spreadTriggers = case fpBy fp of
+            FPSpread -> [ E.TriggerDef ("hazard." ++ hid ++ ".spread") E.OnTurn Nothing spreadEffects False 0 1 [] [] ]
+            _        -> []
+
         -- Stage Trigger
         stageEffects =
             [ E.Conditional
@@ -2029,6 +2311,8 @@ compileOneHazard allRooms h =
                     _     -> E.PAny [ E.CompareVar levelVar E.CEq lvl | lvl <- lvls ]
             FPTag ->
                 E.CompareVar levelVar E.CGt 0
+            FPSpread ->
+                E.CompareVar ("hazard." ++ hid ++ ".zone." ++ r) E.CEq 1
 
         -- OnZone Triggers (per room in footprint)
         zoneTriggers =
@@ -2088,7 +2372,24 @@ compileOneHazard allRooms h =
                 ]
             Nothing -> []
 
-        allTriggers = [tickTrigger, stageTrigger] ++ zoneTriggers ++ insideTriggers ++ adjTriggers
+        everyTriggers = case hazEvery h of
+            Just evDef | not (null (aeeStream evDef)) && aeePeriod evDef > 0 ->
+                let clkVar = "hazard." ++ hid ++ ".every.clock"
+                    effs =
+                        [ E.ModifyValue (E.VRVariable clkVar) 1
+                        , E.Conditional
+                            (E.CompareVar clkVar E.CGte (aeePeriod evDef))
+                            (E.Sequence
+                                [ E.SetValue (E.VRVariable clkVar) (E.EVInt 0)
+                                , E.RandomChoiceOn (aeeStream evDef)
+                                    [ (w, compileOutcomes outs) | (w, outs) <- aeeChoices evDef ]
+                                ])
+                            E.Noop
+                        ]
+                in [ E.TriggerDef ("hazard." ++ hid ++ ".every") E.OnTurn tickCond effs False 0 1 [] [] ]
+            _ -> []
+
+        allTriggers = [tickTrigger] ++ spreadTriggers ++ [stageTrigger] ++ zoneTriggers ++ insideTriggers ++ adjTriggers ++ everyTriggers
 
     in (allIssues, allTriggers, varDefs, initials)
 
@@ -2140,6 +2441,66 @@ checkHazardRefs mHzs adv =
                 [ ciError (path ++ ".hazard_resume") "UnknownHazard"
                     ("outcome references undeclared hazard '" ++ hid ++ "'")
                 | hid `Set.notMember` knownHids ]
+            AOFlood hid mdelta mset ->
+                (if hid `Set.notMember` knownHids
+                 then [ ciError (path ++ ".flood") "UnknownHazard"
+                          ("outcome references undeclared hazard '" ++ hid ++ "'") ]
+                 else case Map.lookup hid declaredHazards of
+                     Just mx | mx > 0 ->
+                         case mset of
+                             Just s | s < 0 || s > mx ->
+                                 [ ciError (path ++ ".flood.set") "HazardLevelOutOfRange"
+                                     ("flood set value " ++ show s ++ " is outside 0..max (" ++ show mx ++ ")") ]
+                             _ -> []
+                     _ -> [])
+                ++
+                (if isNothing mdelta && isNothing mset
+                 then [ ciError (path ++ ".flood") "HazardLevelOutOfRange"
+                          "flood outcome must specify either delta or set" ]
+                 else [])
+            AOLandslide from dir reopen mTo ->
+                let roomKeys = Set.fromList (map arId (advRooms adv))
+                    mParsedDir = case parseDir dir of
+                        Right d -> Just d
+                        Left _  -> Nothing
+                    findTarget = do
+                        pDir <- mParsedDir
+                        rm <- find (\r -> arId r == from) (advRooms adv)
+                        listToMaybe [ aeTarget ex
+                                    | (d, ex) <- Map.toList (arExits rm)
+                                    , parseDir d == Right pDir ]
+                    hasExit = isJust findTarget
+                in [ ciError (path ++ ".landslide.from") "MissingRoom"
+                       ("room '" ++ from ++ "' does not exist")
+                   | from `Set.notMember` roomKeys ]
+                   ++
+                   [ ciError (path ++ ".landslide.dir") "UnknownDirection"
+                       ("landslide direction '" ++ dir ++ "' is unknown")
+                   | isNothing mParsedDir ]
+                   ++
+                   [ ciError (path ++ ".landslide") "UnknownExit"
+                       ("room '" ++ from ++ "' has no exit in direction '" ++ dir ++ "' to reopen")
+                   | reopen, isNothing mTo, from `Set.member` roomKeys, isJust mParsedDir, not hasExit ]
+                   ++
+                   [ ciError (path ++ ".landslide.to") "MissingRoom"
+                       ("room '" ++ to ++ "' does not exist")
+                   | Just to <- [mTo], to `Set.notMember` roomKeys ]
+            AODamage mPlayer mNpc ->
+                let knownNpcs = Set.fromList (map anId (advNPCs adv))
+                in case mNpc of
+                    Just (npc, amt) ->
+                        [ ciError (path ++ ".damage.npc") "UnknownNpc"
+                            ("damage target '" ++ npc ++ "' is not an existing npc id")
+                        | npc `Set.notMember` knownNpcs ]
+                        ++
+                        [ ciError (path ++ ".damage.amount") "HazardLevelOutOfRange"
+                            ("damage amount " ++ show amt ++ " must be positive")
+                        | amt <= 0 ]
+                    Nothing -> case mPlayer of
+                        Just p | p <= 0 ->
+                            [ ciError (path ++ ".damage.player") "HazardLevelOutOfRange"
+                                ("damage amount " ++ show p ++ " must be positive") ]
+                        _ -> []
             _ -> []
 
         rawIssues = case advRawValue adv of
@@ -4551,6 +4912,22 @@ compileAActionOutcome ao = case ao of
         E.SetValue (E.VRFlag ("hazard." ++ hid ++ ".paused")) (E.EVString "true")
     AOHazardResume hid ->
         E.SetValue (E.VRFlag ("hazard." ++ hid ++ ".paused")) (E.EVString "false")
+    AOFlood hid mdelta mset ->
+        case (mdelta, mset) of
+            (Just d, _) -> E.ModifyValue (E.VRVariable ("hazard." ++ hid ++ ".target")) d
+            (_, Just s) -> E.SetValue (E.VRVariable ("hazard." ++ hid ++ ".level")) (E.EVInt s)
+            _           -> E.Noop
+    AOLandslide from dir reopen mTo ->
+        if reopen
+            then case mTo of
+                Just to -> E.SetExit from (dirOf dir) (E.Open to)
+                Nothing -> E.Noop
+            else E.RemoveExit from (dirOf dir)
+    AODamage mPlayer mNpc ->
+        case (mPlayer, mNpc) of
+            (Just p, _)          -> E.ModifyValue E.VRPlayerHealth (-p)
+            (_, Just (npc, amt)) -> E.ModifyValue (E.VRActorProp (E.ActorNPC npc) E.PHealth) (-amt)
+            _                    -> E.Noop
 
 -- | `Just` the compiled effect for a non-empty outcome list, else `Nothing`
 --   (engine `ApplyCondition` takes optional tick/end effects).
@@ -5979,6 +6356,8 @@ checkUnknownPlaceholders adv varDefs =
         AOComputeVar name _       -> [name]
         AOHazardTarget hid _      -> ["hazard." ++ hid ++ ".target"]
         AOHazardJump hid _        -> ["hazard." ++ hid ++ ".level"]
+        AOFlood hid (Just _) _    -> ["hazard." ++ hid ++ ".target"]
+        AOFlood hid _ (Just _)    -> ["hazard." ++ hid ++ ".level"]
         AOConditional _ ts es     -> concatMap outcomeWrittenVars (ts ++ es)
         AONarrative _ follow      -> concatMap outcomeWrittenVars follow
         AORandomChoice _ cs       -> concatMap (concatMap outcomeWrittenVars . snd) cs

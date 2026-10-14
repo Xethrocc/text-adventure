@@ -2700,6 +2700,22 @@ hazards:
 - `by: elevation`: Ein Raum `r` liegt in der Gefahrenzone, wenn `hazard.<id>.level >= schwelle(r)`. Die Schwellen werden über `rooms: { <raum>: <schwelle> }` deklariert.
 - `by: list`: Feste Raumlisten je Stufe über `stages_rooms: { <level>: [<raum1>, <raum2>] }`.
 - `by: tag`: Alle Räume mit dem Raum-Tag `tag: <tag>` gehören zur Gefahrenzone, sobald `hazard.<id>.level > 0`.
+- `by: spread` (Stufe 2): Dynamische, level-gebundene Ausbreitung ab einem Startraum (`from:`):
+  - `from: <raum>` — Startraum der Ausbreitung (Pflicht; immer in der Zone, auch bei Level 0).
+  - `via: exits` — Kantenverfolgung über Raum-Ausgänge (Default: `exits`).
+  - `chance: 0..100` — Prozentuale Chance je Kante (Default: 100). Gewürfelt auf Stream `hazard.<id>.spread` (B8), deterministisch pro Run-Seed. Ein fehlgeschlagener Wurf schneidet den Zweig ab. Würfe sind stabil über den Run (kein Neuwürfeln bei Rückzug/Neuausbreitung).
+  - `needs_tag: <tag>` — Optionaler Filter: nur Räume mit diesem Tag können betreten werden.
+  - Die Zone zieht ringweise mit dem Level auf und ab (E1-Reversibilität). Raumzustand: `hazard.<id>.zone.<raum>` (1 wenn in Zone, 0 sonst).
+
+### Zufallsereignisse (`every:`, Stufe 2)
+Auf Gefahren-Ebene können periodische Zufallsereignisse definiert werden:
+```yaml
+every:
+  period: 2                           # Alle N Züge wird gewürfelt (Taktzähler hazard.<id>.every.clock)
+  stream: funken                      # RNG-Stream rng.<stream> (B8)
+  choices:
+    - [1, [{ msg: "Funken stieben durch die Nacht." }]]
+```
 
 ### Wirkung & Hooks
 - `stages:`: Hook-Effekte beim Erreichen eines Levels `n` (feuert einmalig beim Übergang von `prev != n` auf `level == n`, egal ob steigend, fallend oder per `hazard_jump`).
@@ -2714,6 +2730,14 @@ hazards:
 - `hazard_pause: <id>` / `hazard_pause: { hazard: <id> }` — Pausiert die Taktung der Gefahr (`hazard.<id>.paused = true`).
 - `hazard_resume: <id>` / `hazard_resume: { hazard: <id> }` — Reaktiviert eine pausierte Gefahr.
 
+#### Wirktypen-Zucker (Stufe 2)
+Reiner Compiler-Zucker auf bestehende Primitiven:
+- `flood: { hazard: <id>, delta: <n> }` — Steuert das Ziellevel relativ an (entspricht `hazard_target` mit Ziel `target + delta`).
+- `flood: { hazard: <id>, set: <n> }` — Springt hart auf den angegebenen Level (entspricht `hazard_jump`).
+- `landslide: { from: <raum>, dir: <richtung> [, reopen: true] }` — Verschüttet einen Ausgang (`remove_exit`) bzw. räumt ihn frei (`set_exit` bei `reopen: true`; Zielraum optional oder automatisch aus Raumtopologie aufgelöst).
+- `damage: { player: <n> }` — Zieht dem Spieler `<n>` Lebenspunkte ab (`DamagePlayer`).
+- `damage: { npc: <id>, amount: <n> }` — Zieht dem NPC `<id>` `<n>` Lebenspunkte ab (`DamageNPC`).
+
 ### Autor-Prädikate
 - `hazard_level: { hazard: <id>, eq: <n> }` (oder `gte`, `gt`, `lte`, `lt`, `neq`) — Vergleicht den aktuellen Level mit einem Zahlenwert.
 - `in_hazard: { hazard: <id>, room: <id>|here }` — Prüft, ob der angegebene Raum (oder der aktuelle Aufenthaltsort) in der Gefahrenzone liegt.
@@ -2725,6 +2749,9 @@ Der Namensraum `hazard.*` ist reserviert (`HazardVariableClash`). Pro Gefahr wer
 - `hazard.<id>.clock`: Interner Taktzähler (`Int`).
 - `hazard.<id>.prev`: Vorheriger Level zur Zustandserkennung der Stage-Hooks (`Int`).
 - `hazard.<id>.paused`: Flag für den Pausierungsstatus (`Flag`).
+- `hazard.<id>.zone.<raum>`: Zonenzugehörigkeit (bei `spread`-Footprint, `Int` 0 oder 1).
+- `hazard.<id>.reached.<raum>`: Gewürfelter Erreichbarkeitsstatus (bei `spread`-Footprint, `Int` 0 oder 1).
+- `hazard.<id>.every.clock`: Interner Periodenzähler für `every:` (`Int`).
 
 ### Fehlercodes
 - `UnknownHazard`: Referenz auf eine nicht existierende Gefahr in Effekten oder Prädikaten.
@@ -2734,6 +2761,9 @@ Der Namensraum `hazard.*` ist reserviert (`HazardVariableClash`). Pro Gefahr wer
 - `HazardVariableClash`: Eine Variable mit dem Präfix `hazard.<id>.` wurde manuell unter `variables:` deklariert.
 - `DuplicateHazard`: Doppelte Hazard-ID in der `hazards:`-Deklaration.
 - `HazardIdEmpty`: Leere Hazard-ID angegeben.
+- `UnknownSpreadFrom`: Startraum `from:` im `spread`-Footprint fehlt oder existiert nicht.
+- `UnknownSpreadTag`: `needs_tag:` im `spread`-Footprint matcht keinen bekannten Raum.
+- `EveryWithoutStream`: `every:`-Block ohne Stream-Namen deklariert.
 
 ---
 

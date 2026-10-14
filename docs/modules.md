@@ -526,6 +526,14 @@ hazards:
     laut Tabelle `rooms: { <raum>: <schwelle> }`.
   - `list`: Feste Zonenraumlisten je Stufe via `stages_rooms: { <level>: [<raeume>] }`.
   - `tag`: Alle Räume mit Raum-Tag `tag: <tag>` zählen zur Gefahrenzone, sobald `level > 0`.
+  - `spread` (Stufe 2): Dynamische Ausbreitung ab einem Startraum (`from:`; immer in der Zone).
+    Kantenverfolgung über Raumausgänge (`via: exits`) mit prozentualer Chance `chance: 0..100`
+    (Default 100), gewürfelt auf Stream `hazard.<id>.spread` (B8), stabil über den Run
+    (kein Neuwürfeln bei Rückzug/Neuausbreitung, E1-Reversibilität). Optionaler Filter via `needs_tag:`.
+    Raumzustand: `hazard.<id>.zone.<raum>` (1 wenn in Zone, 0 sonst) und `hazard.<id>.reached.<raum>`.
+- **Zufallsereignisse (`every:`, Stufe 2):** Periodisches Ereignis auf Gefahren-Ebene
+  mit Intervall `period: N`, benanntem Stream `stream:` und gewichteter Auswahl `choices:`.
+  Interner Zähler: `hazard.<id>.every.clock`.
 - **Wirkung & Hooks:**
   - `stages:`: Feuert einmalig beim Erreichen eines Levels (Übergang `prev != n` auf
     `level == n`), egal ob steigend, fallend oder per `hazard_jump`.
@@ -535,17 +543,22 @@ hazards:
 - **Autor-Effekte:** `hazard_target: { hazard: <id>, to: <n> }` (steuert neues Ziel an),
   `hazard_jump: { hazard: <id>, to: <n> }` (hartes Setzen des Levels),
   `hazard_pause: <id>` / `hazard_resume: <id>`.
+  - **Wirktypen-Zucker (Stufe 2):** `flood: { hazard, delta|set }` (Zielpegel/Sprung),
+    `landslide: { from, dir[, reopen] }` (versperrt/öffnet Ausgänge; Ziel optional),
+    `damage: { player: N }` / `damage: { npc, amount }` (Schadensabzug).
 - **Autor-Prädikate:** `hazard_level: { hazard: <id>, gte|lte|eq: <n> }`,
   `in_hazard: { hazard: <id>, room: <id>|here }`.
 - **Generierte Variablen & Trigger:** Reservierter Namensraum `hazard.*`
-  (`hazard.<id>.level`, `.target`, `.clock`, `.prev`, `.paused`).
+  (`hazard.<id>.level`, `.target`, `.clock`, `.prev`, `.paused`, `.zone.<raum>`, `.reached.<raum>`, `.every.clock`).
   Trigger: `hazard.<id>.tick`, `hazard.<id>.stage`, `hazard.<id>.zone.<raum>`,
-  `hazard.<id>.telegraph.in.<raum>`, `hazard.<id>.telegraph.adj.<raum>`.
+  `hazard.<id>.telegraph.in.<raum>`, `hazard.<id>.telegraph.adj.<raum>`, `hazard.<id>.every`.
 - **Validierung:** `UnknownHazard`, `HazardLevelOutOfRange`, `HazardUnknownRoom`,
-  `HazardFootprintEmpty`, `HazardVariableClash`, `DuplicateHazard`, `HazardIdEmpty`.
+  `HazardFootprintEmpty`, `HazardVariableClash`, `DuplicateHazard`, `HazardIdEmpty`,
+  `UnknownSpreadFrom`, `UnknownSpreadTag`, `EveryWithoutStream`.
 
 Fixture: `examples/modules/hazards.yaml` — Die versunkene Talsperre (Wasserstand
-per `elevation`, Gebirgssturm per `tag`, Einsturz des Stollen per `list`).
+per `elevation`, Gebirgssturm per `tag`, Einsturz des Stollen per `list`, Brand/Ausbreitung
+per `spread` inkl. `every:`-Zufall und Wirktypen-Zucker `flood:`, `landslide:`, `damage:`).
 
 ---
 
