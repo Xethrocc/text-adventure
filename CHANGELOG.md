@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### FIX: `put X in Y` löst X aus getragenen offenen Containern auf
+
+`findScopeItem` (`src/Parser.hs`) nutzte für die Quellauflösung von `put` den
+nicht-rekursiven Inventarblick (`getItemsInLocation`), während `take` längst
+rekursiv durch offene Container suchte (`visibleItemsAt`). Dadurch waren
+Inventargegenstände in einer mitgeführten Tasche für `put` unsichtbar
+(„You don't have 'x'."). Der getragene Zweig nutzt jetzt dieselbe rekursive
+Sicht wie `take`; ein geschlossener Container hält seinen Inhalt weiterhin
+aus dem Scope. Regressionstests in `testContainerTakePut` (r11/r12).
+
+### Zork-Port: Maschinenregeln an den Raum gebunden
+
+`machine-turn`, `machine-lid` und `machine-lid-close` feuerten ohne
+Raum-Bedingung aus jedem Raum (und im Dunkeln). Die Regeln prüfen jetzt
+`at: player, room: machine-room`.
+
 ### OPEN-23a: Zork-Dam-Umbau auf Gefahrenlagen (`hazards:`)
 
 Umbau des Damms und Wasserpegels in `examples/zork1.yaml` auf das Modul `hazards:` laut `docs/plan-hazards.md` §7 (Entscheidungen E5 und E6):

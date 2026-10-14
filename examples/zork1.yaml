@@ -4998,8 +4998,11 @@ rules:
 - id: machine-lid
   on: before open
   when:
-    var: cmd.arg1
-    is: machine
+    all:
+    - var: cmd.arg1
+      is: machine
+    - at: player
+      room: machine-room
   effects:
   - if:
       has_flag: machine-open
@@ -5014,8 +5017,11 @@ rules:
 - id: machine-lid-close
   on: before close
   when:
-    var: cmd.arg1
-    is: machine
+    all:
+    - var: cmd.arg1
+      is: machine
+    - at: player
+      room: machine-room
   effects:
   - if:
       has_flag: machine-open
@@ -5352,11 +5358,14 @@ rules:
 - id: machine-turn
   on: before turn
   when:
-    any:
-    - var: cmd.arg1
-      is: switch
-    - var: cmd.arg1
-      is: machine-switch
+    all:
+    - at: player
+      room: machine-room
+    - any:
+      - var: cmd.arg1
+        is: switch
+      - var: cmd.arg1
+        is: machine-switch
   effects:
   - if:
       has_flag: machine-open

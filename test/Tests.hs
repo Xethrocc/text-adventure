@@ -5579,7 +5579,19 @@ testContainerTakePut = do
         st7 = stOf (run "take stein" st6)
     r10 <- expectTrue "inventory limit refuses" ("carrying too much" `isInfixOf`
             renderEvents (evsOf (run "take lampe" st7)))
-    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10)
+    -- FIX 2026-10-14: put X in Y muss X auch aus getragenen OFFENEN Containern
+    -- aufloesen (vorher nur direkt getragene Items; 'take' war bereits rekursiv)
+    let beutel = (mkTestItem "beutel" "Beutel") { itemCapacity = Just 3 }
+        stB = cstate2 [mkTestRoom "halle" "Halle"]
+                [ (truhe, InRoom "halle"), (beutel, CarriedBy ActorPlayer), (stein, InContainer "beutel") ]
+                [] (Map.fromList [("truhe", "open"), ("beutel", "open")])
+        stB2 = stOf (run "put stein in truhe" stB)
+    r11 <- expectEqual (Just (InContainer "truhe")) (itemLoc "stein" stB2)
+    -- ein GESCHLOSSENER getragener Container haelt seinen Inhalt aus dem Scope
+    let stB3 = stOf (run "close beutel" stB)
+        stB4 = stOf (run "put stein in truhe" stB3)
+    r12 <- expectEqual (Just (InContainer "beutel")) (itemLoc "stein" stB4)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12)
 
 -- ---------------------------------------------------------------------------
 -- 4.5: topic table

@@ -955,7 +955,7 @@ findScopeItem targetStr state =
         []        -> Nothing
   where
     scopeItems = visibleItemsAt (InRoom (currentRoom (save state))) state
-                ++ getItemsInLocation (CarriedBy ActorPlayer) state
+                ++ visibleItemsAt (CarriedBy ActorPlayer) state
 
 -- | Scope-independent existence: is this target the name of some item, NPC or
 --   container anywhere in the world, whether or not the player can see it?
