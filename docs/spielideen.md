@@ -11,7 +11,7 @@ Zork-I-Port.
 
 **Status-Legende:** `[ ]` offen · `[~]` in Arbeit · `[x]` umgesetzt · `[-]` verworfen
 
-**Stand der Engine-Deckung (2026-10-12, am Code geprüft; Details und
+**Stand der Engine-Deckung (2026-10-14, am Code geprüft; Oregon Trail umgesetzt; Details und
 Umsetzungsplan: `~/workspace/plan-spielideen-umsetzung.md`):**
 
 - **Sofort baubar (nur Content):** Zeitschleife ⭐ (`meta.*` + Runden-Trigger +
@@ -21,8 +21,7 @@ Umsetzungsplan: `~/workspace/plan-spielideen-umsetzung.md`):**
   Grenzposten (Zyklen + `random:` + `compare_var` + Fraktions-`standing:`),
   alle Mechanik-Experimente (§3) und ASCII-Showcases (§4 — nur Content).
 - **Braucht einen Engine-Rest:** Bauernhof (Zuneigung geht, aber
-  Schwellen-Ereignisse/Konsequenzketten = G9-Rest), Oregon Trail (alle Module da,
-  Aufwand = Content), FTL-Lite (Schiffsduelle 7h2 + Party + Worldgen da;
+  Schwellen-Ereignisse/Konsequenzketten = G9-Rest), FTL-Lite (Schiffsduelle 7h2 + Party + Worldgen da;
   Sektoren-Ketten = Content).
 - **Braucht eine Engine-Entscheidung:** Monster sammeln — der Fangen/Opfern-Loop
   ist durch `soul_collector.yaml` belegt (`[~]`), aber **Team-Wechsel +
@@ -33,13 +32,15 @@ Umsetzungsplan: `~/workspace/plan-spielideen-umsetzung.md`):**
 
 ## 1. Showcase-Kombinationen (mehrere Features in einem Spiel)
 
-### [ ] Oregon Trail – „Der Treck nach Westen“
+### [x] Oregon Trail – „Der Treck nach Westen“
 Ein Wagenzug zieht über Etappen nach Westen: Proviant kaufen, Flüsse
 durchqueren, Krankheiten überstehen.
 - **Zeigt:** Fahrzeug mit automatischer Route und Stopps, Survival und Wetter,
-  Handel, Zufallsbegegnungen, Zustände (Ruhr …) mit Wirkung pro Runde
+  Handel, Zufallsbegegnungen, Zustände (Ruhr …) mit Wirkung pro Runde,
+  zwei dynamische Katastrophen (`hazards:` Hochwasser & Erdrutsch)
 - **Warum:** Fast jeder kennt das Vorbild, und es zeigt viele Module in einem
   kompakten Spiel.
+- **Status:** Umgesetzt als Benchmark-Adventure in `examples/genres/oregon_trail.yaml` (2026-10-14).
 
 ### [ ] FTL-Lite – „Sprung ins Ungewisse“
 Mehrere Sektoren, Schiffsduelle, eine Crew, Permadeath.

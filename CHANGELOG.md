@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+### Benchmark-Adventure: Oregon Trail — „Der Treck nach Westen“
+
+Umfassendes Benchmark-Adventure (`examples/genres/oregon_trail.yaml`) basierend auf dem
+klassischen Pionier-Treck von 1848 von Missouri ins Willamette Valley (`docs/plan-oregon-trail.md`).
+Führt mehrere Kernmodule in einem zusammenhängenden Roadtrip-Szenario zusammen:
+
+- **Planwagen-Roadtrip (`vehicles:`):** Automatikroute (`type: auto`) mit 5 Etappenstopps
+  (`Independence`, `Fort Laramie`, `Snake River`, `Blue Mountains`, `Oregon City`).
+  Weiterfahrt per `enter planwagen` + `wait`.
+- **Zwei dynamische Gefahrenlagen (`hazards:`):**
+  - `hochwasser` (Footprint nach `elevation`): Zyklischer Wasseranstieg an der Snake-River-Furt
+    mit Signalmeldungen (`stages:` 0/2/4/6) und Flutschaden/Ruhr-Gefahr (`on_zone:`).
+    Kann durch Entlastungsstich mit der Schaufel abgeleitet werden (`hazard_target: 0`).
+  - `erdrutsch` (Footprint nach `list`): Dynamischer Geröllrutsch in den Blue Mountains,
+    der bei Stufe 3 die Schlucht verschüttet (`remove_exit`). Kann vorab mit Stützbalken
+    gestoppt (`hazard_pause`) oder nachträglich freigegraben werden (`hazard_jump: 0`, `set_exit`).
+- **Handelssystem (`buy`/`sell`):** Krämerläden und Pelzhändler mit Währung (`dollars`)
+  und Inventarbeständen für Schaufel, Wagenteer, Medizin, Ersatzrad, Stützbalken und Rationen.
+- **Survival-Drain & Wetter:** Kontinuierlicher Runden-Verbrauch von `proviant` mit
+  Verhungern bei Nullstand; atmosphärische Wetterwechsel (`klar` → `dauerregen` → `schneesturm`).
+- **Zufallsbegegnungen & Radbruch:** `encounter_tables:` auf Prärie-Etappen mit Bisonherden,
+  Schlangenbissen und Radbruch-Mechanik (Reparatur per Ersatzrad).
+- **Ruhr-Condition & Medizin:** Flutwasser-Infektion mit periodischem HP-Schaden, heilbar per Laudanum-Medizin.
+- **Tests & CI:** 4 autorisierte Inhalts-Tests (`happy_path_oregon`, `fluss_uebertritt_und_ruhr`,
+  `erdrutsch_verschuettet_und_schaufel_jump`, `fail_path_ruhr_tod`), zwei E2E-Fixtures
+  (`ci/e2e/oregon_trail.{in,expect}` und `ci/e2e/oregon_trail-dysentery-fail.{in,expect}`)
+  sowie Integration in `scripts/ci.sh`.
+
 ### OPEN-23: Gefahrenlagen (`hazards:`) — Stufe 1
 
 Neues Modul- und Top-Level-Segment `hazards:` für generalisierte, zeitabhängige

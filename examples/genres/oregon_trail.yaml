@@ -1,0 +1,694 @@
+# Oregon Trail — Der Treck nach Westen (oregon_trail)
+#
+# Genre: Historischer Roadtrip / Survival-Pionier-Benchmark
+#
+# Demonstriert die Verzahnung von:
+#   - Modul 7j (OPEN-23) Gefahrenlagen (hazards:):
+#       - 'hochwasser': Reversibler Flusspegel mit elevation-Footprint (snake_furt 2,
+#         etappe_3_snake_ufer 4, ufer_anhaehe 6). Ansteigen bei Ankunft, zonenweiter
+#         Schaden und Ruhr-Infektion ohne Abdichtung, Rinnen-Entlastung via Schaufel
+#         senkt den Pegel wieder auf 0.
+#       - 'erdrutsch': Phasenweise Hangrutschung mit list-Footprint (Stufen 1..3).
+#         Verschuettet in Stufe 3 den Passausgang via remove_exit; Praevention durch
+#         Stuetzbalken (hazard_pause) oder Rettung durch Freischaufeln (hazard_jump + set_exit).
+#   - Fahrzeuge (7h / 0.5):
+#       - Planwagen (type: auto) mit automatischer 5-Etappen-Route via wait.
+#       - Innenraum wagen_inneres als Rueckzugsort.
+#       - Flag-basierter Radbruch mit Warnung und Weiterfahrt-Blockade.
+#   - Handel (Modul 7b):
+#       - Kraemerladen in Independence und Handelsposten / Schmiede in Fort Laramie.
+#       - Kaufen/Verkaufen via buy/sell mit Dollars und begrenztem Lagerbestand.
+#       - Verkauf von Bueffelpelzen aus der Jagd.
+#   - Survival & Wetter (Modul 7d):
+#       - Proviant-Drain pro Zug mit Tod bei Null; Rationen essen zum Auffuellen.
+#       - Wetterwechsel klar -> dauerregen -> schneesturm mit passenden Beschreibungen.
+#   - Zufallsbegegnungen (Modul 7c):
+#       - Praerie-Tabelle (Bueffelherde, Klapperschlange, Achsenknarren) mit Cooldown.
+#   - Bedingungen (Phase 2.1):
+#       - Ruhr (Dysenterie) als Tick-Condition (-2 HP/Zug), heilbar durch Laudanum-Medizin.
+
+name: Oregon Trail — Der Treck nach Westen
+start_room: etappe_1_independence
+
+language: de
+
+title_art: |
+  ========================================================================
+     O R E G O N   T R A I L  —  D E R   T R E C K   N A C H   W E S T E N
+          1848: 2.000 Meilen von Missouri ins Willamette Valley
+  ========================================================================
+
+end_art:
+  victory: |
+    ========================================================================
+       OREGON TRAIL — DAS ZIEL IST ERREICHT!
+    ========================================================================
+    Das Willamette Valley breitet sich gruen und weit vor dir aus!
+    Dein Treck hat den Kontinent bezwungen. Willkommen in Oregon!
+  death: |
+    ========================================================================
+       DU BIST GESTORBEN AUF DEM OREGON TRAIL
+    ========================================================================
+    Die gnadenlose Wildnis hat deinen Treck bezwungen.
+    Ein einsames Holzkreuz markiert deine letzte Ruhestaette am Wegesrand.
+
+player:
+  max_hp: 16
+
+variables:
+  - { name: dollars, type: int, initial: 50, min: 0 }
+  - { name: proviant, type: int, initial: 14, min: 0 }
+
+initial_variables:
+  shop.posten.ration: 6
+  shop.posten.wagenteer: 1
+  shop.posten.medizin: 1
+  shop.posten.ersatzrad: 1
+  shop.posten.stuetzbalken: 1
+  shop.posten.schaufel: 1
+
+verbs:
+  - { name: buy, aliases: [kaufen, erwerben] }
+  - { name: sell, aliases: [verkaufen, verhoekern] }
+  - { name: eat, aliases: [essen, verzehren] }
+  - { name: rasten, aliases: [rast, ruhen] }
+
+hazards:
+  hochwasser:
+    track:
+      max: 6
+      start: 0
+      rate: 2
+      every: 1
+      target: 0
+    footprint:
+      by: elevation
+      rooms:
+        snake_furt: 2
+        etappe_3_snake_ufer: 4
+        ufer_anhaehe: 6
+    stages:
+      "0":
+        - msg: "Der Snake River hat sich in sein Flussbett zurueckgezogen. Die Steine der Furt liegen wieder frei."
+      "2":
+        - msg: "Schlammige Fluten schiessen durch den Snake River — die Furt ist ueberflutet!"
+      "4":
+        - msg: "DER FLUSS TRITT UEBER DIE UFER! Tosendes Wasser bricht ueber die Boeschung und flutet das Uferlager!"
+      "6":
+        - msg: "Jahrhundertflut! Die reissenden Wassermassen schaeumen selbst bis zur oberen Anhoehe hinauf!"
+    on_zone:
+      - if:
+          all:
+            - any:
+                - in_hazard: { hazard: hochwasser, room: here }
+                - all:
+                    - { at: player, room: wagen_inneres }
+                    - { hazard_level: { hazard: hochwasser, gte: 4 } }
+            - not: { has_flag: wagen_geteert }
+        then:
+          - msg: "Eiskaltes Flutwasser schwappt in den Wagen! Das schmutzige Wasser macht dich krank!"
+          - damage: 2
+          - if: { not: { has_condition: ruhr } }
+            then:
+              - condition:
+                  name: ruhr
+                  turns: 5
+                  tick:
+                    - msg: "Die Ruhr schuettelt deinen Koerper mit heftigen Kraempfen (-2 HP)."
+                    - damage: 2
+                  end:
+                    - msg: "Das Fieber der Ruhr klingt endlich ab."
+    telegraph:
+      adjacent: "Vom Flussbett her hoerst du das bedrohliche Rauschen anschwellender Wassermassen."
+      inside: "Braunes, reissendes Hochwasser umspuelt deine Stiefel und zerrt an den Wagenraedern."
+
+  erdrutsch:
+    track:
+      max: 3
+      start: 0
+      rate: 1
+      every: 1
+      target: 0
+    footprint:
+      by: list
+      stages_rooms:
+        "1": [etappe_4_blue_pass]
+        "2": [etappe_4_blue_pass, geroellhang]
+        "3": [etappe_4_blue_pass, geroellhang, schlucht_ausgang]
+    stages:
+      "1":
+        - msg: "Der aufgeweichte Bergkamm erzittert — erstes Geroell prasselt in die Pass-Engstelle!"
+      "2":
+        - msg: "EIN ERDRUTSCH LOEST SICH! Eine Walze aus Lehm und Felsbrocken donnert ueber den Geroellhang!"
+      "3":
+        - msg: "DER HANG STUERZT EIN! Tonnen von Fels und Schlamm begraben den Schluchtausgang unter sich!"
+        - set_flag: pass_verschuettet
+        - remove_exit: { from: geroellhang, dir: west }
+    on_zone:
+      - if:
+          all:
+            - in_hazard: { hazard: erdrutsch, room: here }
+            - not: { has_flag: hang_gesichert }
+        then:
+          - msg: "Herabstuerzende Steine und Schlammbrocken treffen dich!"
+          - damage: 3
+    telegraph:
+      adjacent: "Aus der Schlucht dringt das unheilvolle Knirschen nachgebender Gesteinsschichten."
+      inside: "Unter deinen Fuessen vibriert der Boden; Steinschlag rieselt vom Hang."
+
+environment:
+  weather:
+    states: [klar, dauerregen, schneesturm]
+    initial: klar
+    transitions:
+      - when:
+          all:
+            - { at: player, room: etappe_3_snake_ufer }
+            - { compare_var: { name: env.weather, op: ne, value: 1 } }
+        to: dauerregen
+        effects:
+          - { msg: "Der Wolkenbruch verwandelt sich in anhaltenden Dauerregen." }
+      - when:
+          all:
+            - { at: player, room: etappe_4_blue_pass }
+            - { compare_var: { name: env.weather, op: ne, value: 2 } }
+        to: schneesturm
+        effects:
+          - { msg: "Ein eisiger Schneesturm bricht ueber die Blue Mountains herein!" }
+  drains:
+    - var: proviant
+      per_turn: -1
+      at_zero:
+        - { game_end: death, msg: "Deine Rationen sind aufgebraucht — der Hunger fordert seinen Tribut. Du verhungerst auf der Trail." }
+
+encounter_tables:
+  - id: praerie_treck
+    on: turn
+    cooldown: 3
+    when:
+      any:
+        - { at: player, room: etappe_2_fort_laramie }
+        - { at: player, room: praerie_jagdgrund }
+        - { at: player, room: etappe_3_snake_ufer }
+        - { at: player, room: etappe_4_blue_pass }
+    entries:
+      - { weight: 3, effects: [ { msg: "Der Treck rollt ruhig ueber die Rillen der Praerie." } ] }
+      - { weight: 2, effects: [ { msg: "Eine Bueffelherde kreuzt den Weg in der Ferne." } ] }
+      - { weight: 2, effects: [ { msg: "Das Wagenrad knarrt gefaehrlich — ein bedrohliches Achsenknarren hallt ueber die Steppe." } ] }
+      - { weight: 1, effects: [ { msg: "Eine Klapperschlange zischt zwischen den Grasbuescheln — du springst beiseite!" }, { damage: 1 } ] }
+
+vehicles:
+  - id: planwagen
+    name: Planwagen
+    desc: "Ein beladener Prairie Schooner mit segelartiger Plane und vier Eisenraedern."
+    type: auto
+    entry_room: wagen_inneres
+    keys: [planwagen, wagen, treck, schooner]
+    interior:
+      - id: wagen_inneres
+        name: Im Planwagen
+        desc: "Kisten, Faesser und die gespannte Plane ueber dir. Vom Kutschbock aus lenkst du den Treck."
+        exits: {}
+    stops:
+      "Independence": etappe_1_independence
+      "Fort Laramie": etappe_2_fort_laramie
+      "Snake River": etappe_3_snake_ufer
+      "Blue Mountains": etappe_4_blue_pass
+      "Oregon City": etappe_5_oregon_city
+    start_stop: "Independence"
+
+rooms:
+  - id: etappe_1_independence
+    name: Independence, Missouri
+    desc: "Der Ausgangspunkt des Oregon Trail. Zwischen Hufschmieden und Proviantlagern stehen Planwagen zur Abreise bereit. Im Kraemerladen kannst du Vorraete fuer die weite Reise kaufen."
+    exits: {}
+
+  - id: etappe_2_fort_laramie
+    name: Fort Laramie
+    desc: "Eine stolze Festung am Zusammenfluss von Laramie und North Platte River. Trapper und Soldaten feilschen um Felle und Eisenwaren. Noerdlich oeffnet sich der Jagdgrund der Praerie."
+    exits:
+      north: {to: praerie_jagdgrund}
+
+  - id: praerie_jagdgrund
+    name: Jagdgrund der Praerie
+    desc: "Weites, welliges Grasland unter einem endlosen Himmel. Frische Hufspuren zeugen von riesigen Bisonherden. Nach Sueden geht es zurueck zum Fort."
+    exits:
+      south: {to: etappe_2_fort_laramie}
+    search:
+      - {give: bueffelpelz}
+      - {msg: "Du pirschst durch das hohe Praeriegras und erlegst einen Bison — das dichte Fell wird dir einen guten Preis einbringen!"}
+
+  - id: etappe_3_snake_ufer
+    name: Uferlager am Snake River
+    description:
+      default: "Das Lager am reissenden Snake River. Braun schaeumendes Wasser prescht gegen die Uferboeschung. Noerdlich steigt der Pfad zu einer sicheren Anhoehe hinauf, suedlich liegt die tueckische Flussfurt."
+      variants:
+        - when: { compare_var: { name: env.weather, op: eq, value: 1 } }
+          text: "Das Lager am Snake River versinkt im stroemenden Dauerregen. Schlamm und reissendes Wasser drohen das gesamte Lager wegzuschwemmen."
+    exits:
+      north: {to: ufer_anhaehe}
+      south: {to: snake_furt}
+
+  - id: ufer_anhaehe
+    name: Hohe Uferanhoehe
+    desc: "Eine felsige Erhebung ueber dem Flussufer. Von hier aus ueberblickst du das Tal. Neben alten Weiden verlaeuft eine mit Schlamm und Schwemmholz verstopfte Flussrinne, die frueher Hochwasser ableitete."
+    exits:
+      south: {to: etappe_3_snake_ufer}
+
+  - id: snake_furt
+    name: Flussfurt des Snake River
+    desc: "Die flache Ueberquerungsstelle des Snake River. Scharfkantige Steine liegen im Flussbett. Nach Noerden fuehrt der Weg zurueck ans Uferlager."
+    exits:
+      north: {to: etappe_3_snake_ufer}
+
+  - id: etappe_4_blue_pass
+    name: Pass-Engstelle der Blue Mountains
+    description:
+      default: "Eine schmale Felsklamm hoch in den Bergen. Der Wind pfeift schneidend durch die Felsspalten. Nach Sueden windet sich der Saumpfad zum Geroellhang."
+      variants:
+        - when: { compare_var: { name: env.weather, op: eq, value: 2 } }
+          text: "Eisiger Schneesturm peitscht durch die Pass-Engstelle. Die Sicht reicht kaum drei Schritte weit, und der Boden ist spiegelglatt gefroren."
+    exits:
+      south: {to: geroellhang}
+
+  - id: geroellhang
+    name: Geroellhang
+    desc: "Ein steiler, rutschiger Schotterhang unter einer drueckenden Felswand. Nach Noerden geht es zurueck zur Pass-Engstelle, nach Westen hinab zur Schluchtsohle."
+    exits:
+      north: {to: etappe_4_blue_pass}
+      west: {to: schlucht_ausgang}
+
+  - id: schlucht_ausgang
+    name: Schluchtsohle
+    desc: "Der westliche Ausgang der Bergpassage. Der Pfad oeffnet sich ins breite Tal des Columbia River. Nach Osten fuehrt der Weg den Geroellhang hinauf."
+    exits:
+      east: {to: geroellhang}
+
+  - id: etappe_5_oregon_city
+    name: Oregon City
+    desc: "Das Willamette Valley! Gruene Wiesen, fruchtbare Auen und das Klappern von Saegewerken kuenden von einer neuen Heimat. Die 2.000 Meilen liegen hinter dir!"
+    exits: {}
+
+items:
+  - id: ration
+    name: Proviantration
+    desc: "Ein Paket mit haltbarem Trockenfleisch, Maismehl und Schiffszwieback."
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [ration, rationen, proviant, fleisch, verpflegung, trockenfleisch]
+    location: etappe_1_independence
+    verb_map:
+      buy,intact:
+        - if: { compare_var: { name: shop.posten.ration, op: gte, value: 1 } }
+          then:
+            - if: { compare_var: { name: dollars, op: gte, value: 10 } }
+              then:
+                - { add_var: dollars, delta: -10 }
+                - { add_var: shop.posten.ration, delta: -1 }
+                - { give: ration }
+                - { msg: "Du kaufst ein Paket Proviantrationen fuer 10 Dollar." }
+              else:
+                - { msg: "Dafuer reicht dein Geld nicht. (10 Dollar)" }
+          else:
+            - { msg: "Der Kraemer hat keine Rationen mehr." }
+      eat,intact:
+        - { add_var: proviant, delta: 8 }
+        - { consume: ration }
+        - { msg: "Du isst eine herzhafte Portion Trockenfleisch und Zwieback (+8 Proviant)." }
+
+  - id: wagenteer
+    name: Wagenteer
+    desc: "Ein kleiner Eimer mit zaehem, schwarzem Kalfaterteer zum Abdichten von Fugen und Planen."
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [teer, wagenteer, kalfater, eimer]
+    location: etappe_1_independence
+    verb_map:
+      buy,intact:
+        - if: { compare_var: { name: shop.posten.wagenteer, op: gte, value: 1 } }
+          then:
+            - if: { compare_var: { name: dollars, op: gte, value: 15 } }
+              then:
+                - { add_var: dollars, delta: -15 }
+                - { add_var: shop.posten.wagenteer, delta: -1 }
+                - { give: wagenteer }
+                - { msg: "Du kaufst einen Eimer Wagenteer fuer 15 Dollar." }
+              else:
+                - { msg: "Dafuer reicht dein Geld nicht. (15 Dollar)" }
+          else:
+            - { msg: "Der Kraemer hat keinen Wagenteer mehr." }
+      use,intact:
+        - { set_flag: wagen_geteert, val: "true" }
+        - { consume: wagenteer }
+        - { msg: "Du kalfaterst die Planen und Fugen mit heissem Teer. Der Wagen ist jetzt dicht." }
+
+  - id: medizin
+    name: Flasche Medizin
+    desc: "Eine getoente Glasflasche mit bitterem Laudanum und Chinin gegen Sumpffieber und Ruhr."
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [medizin, laudanum, flasche, chinin]
+    location: etappe_1_independence
+    verb_map:
+      buy,intact:
+        - if: { compare_var: { name: shop.posten.medizin, op: gte, value: 1 } }
+          then:
+            - if: { compare_var: { name: dollars, op: gte, value: 15 } }
+              then:
+                - { add_var: dollars, delta: -15 }
+                - { add_var: shop.posten.medizin, delta: -1 }
+                - { give: medizin }
+                - { msg: "Du kaufst eine Flasche Laudanum-Medizin fuer 15 Dollar." }
+              else:
+                - { msg: "Dafuer reicht dein Geld nicht. (15 Dollar)" }
+          else:
+            - { msg: "Der Kraemer hat keine Medizin mehr." }
+      use,intact:
+        - { clear_condition: ruhr }
+        - { heal: 4 }
+        - { consume: medizin }
+        - { msg: "Du kippst das bittere Laudanum hinunter. Die Kraempfe lassen nach (+4 HP)." }
+
+  - id: schaufel
+    name: Schaufel
+    desc: "Eine robuste Pionierschaufel mit Eschenholzstiel und geschmiedetem Stahlblatt."
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    keys: [schaufel, spaten]
+    location: etappe_1_independence
+    verb_map:
+      buy,intact:
+        - if: { compare_var: { name: shop.posten.schaufel, op: gte, value: 1 } }
+          then:
+            - if: { compare_var: { name: dollars, op: gte, value: 8 } }
+              then:
+                - { add_var: dollars, delta: -8 }
+                - { add_var: shop.posten.schaufel, delta: -1 }
+                - { give: schaufel }
+                - { msg: "Du kaufst eine robuste Schaufel fuer 8 Dollar." }
+              else:
+                - { msg: "Dafuer reicht dein Geld nicht. (8 Dollar)" }
+          else:
+            - { msg: "Der Kraemer hat keine Schaufeln mehr." }
+      use,intact:
+        - if:
+            all:
+              - { at: player, room: ufer_anhaehe }
+              - { hazard_level: { hazard: hochwasser, gte: 1 } }
+          then:
+            - { msg: "Du stichst den verklausulierten Entlastungsgraben frei. Das Wasser des Seitenarms schiesst ab!" }
+            - { hazard_target: { hazard: hochwasser, to: 0 } }
+          else:
+            - if:
+                all:
+                  - { at: player, room: geroellhang }
+                  - { has_flag: pass_verschuettet }
+              then:
+                - { msg: "Stunde um Stunde graebst du Felsbrocken beiseite, bis der Durchgang wieder frei ist!" }
+                - { hazard_target: { hazard: erdrutsch, to: 0 } }
+                - { hazard_jump: { hazard: erdrutsch, to: 0 } }
+                - { set_exit: { from: geroellhang, dir: west, to: schlucht_ausgang } }
+                - { set_flag: pass_verschuettet, val: "false" }
+                - { set_flag: hang_gesichert, val: "true" }
+              else:
+                - { msg: "Hier gibt es im Moment nichts zu schaufeln oder zu graben." }
+
+  - id: ersatzrad
+    name: Ersatzrad
+    desc: "Ein schweres Eisenbeschlagrad aus Eschenholz, passend fuer die Achsen des Planwagens."
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [ersatzrad, rad, wagenrad]
+    location: etappe_2_fort_laramie
+    verb_map:
+      buy,intact:
+        - if: { compare_var: { name: shop.posten.ersatzrad, op: gte, value: 1 } }
+          then:
+            - if: { compare_var: { name: dollars, op: gte, value: 20 } }
+              then:
+                - { add_var: dollars, delta: -20 }
+                - { add_var: shop.posten.ersatzrad, delta: -1 }
+                - { give: ersatzrad }
+                - { msg: "Du kaufst ein stabiles Ersatzrad fuer 20 Dollar." }
+              else:
+                - { msg: "Dafuer reicht dein Geld nicht. (20 Dollar)" }
+          else:
+            - { msg: "Der Schmied hat keine Ersatzraeder mehr." }
+      use,intact:
+        - if: { has_flag: radbruch }
+          then:
+            - { set_flag: radbruch, val: "false" }
+            - { consume: ersatzrad }
+            - { msg: "Du montierst das Ersatzrad an die gebrochene Achse. Der Planwagen ist wieder fahrbereit!" }
+          else:
+            - { msg: "Keines der Raeder ist gebrochen." }
+
+  - id: stuetzbalken
+    name: Stuetzbalken
+    desc: "Schwere Eichenbalken mit Keilen, gezimmert zur Absicherung von Stollendecken und Felswaenden."
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [stuetzbalken, balken, holzbalken]
+    location: etappe_2_fort_laramie
+    verb_map:
+      buy,intact:
+        - if: { compare_var: { name: shop.posten.stuetzbalken, op: gte, value: 1 } }
+          then:
+            - if: { compare_var: { name: dollars, op: gte, value: 12 } }
+              then:
+                - { add_var: dollars, delta: -12 }
+                - { add_var: shop.posten.stuetzbalken, delta: -1 }
+                - { give: stuetzbalken }
+                - { msg: "Du kaufst schwere Stuetzbalken fuer 12 Dollar." }
+              else:
+                - { msg: "Dafuer reicht dein Geld nicht. (12 Dollar)" }
+          else:
+            - { msg: "Der Schmied hat keine Stuetzbalken mehr." }
+      use,intact:
+        - if:
+            all:
+              - { at: player, room: geroellhang }
+              - { hazard_level: { hazard: erdrutsch, lte: 2 } }
+          then:
+            - { msg: "Du verkeilst die Stuetzbalken unter der ueberhaengenden Felskante. Der Hang steht." }
+            - { hazard_pause: erdrutsch }
+            - { set_flag: hang_gesichert, val: "true" }
+            - { consume: stuetzbalken }
+          else:
+            - if: { at: player, room: geroellhang }
+              then:
+                - { msg: "Zu spaet! Der Hang ist bereits abgerutscht — hier helfen keine Stuetzbalken mehr." }
+              else:
+                - { msg: "Hier gibt es nichts abzustuetzen." }
+
+  - id: bueffelpelz
+    name: Bueffelpelz
+    desc: "Ein schweres, dichtes Fell eines Praeriebisons. Haendler an den Handelsposten zahlen gutes Geld dafuer."
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [pelz, bueffelpelz, fell, bisonfell]
+    location: praerie_jagdgrund
+    hidden: true
+    verb_map:
+      sell,intact:
+        - if:
+            any:
+              - { at: player, room: etappe_1_independence }
+              - { at: player, room: etappe_2_fort_laramie }
+          then:
+            - { add_var: dollars, delta: 25 }
+            - { consume: bueffelpelz }
+            - { msg: "Du verkaufst den dichten Bueffelpelz an den Pelzhaendler fuer 25 Dollar." }
+          else:
+            - { msg: "Hier ist niemand, der dir den Pelz abkaufen wuerde." }
+
+rules:
+  # Etappen-Trigger
+  - id: flut_bricht_los
+    on: enter etappe_3_snake_ufer
+    once: true
+    effects:
+      - { msg: "Schwarze Wolken haengen ueber den Bergen. Der erste Wolkenbruch prallt auf die Planen." }
+      - { hazard_target: { hazard: hochwasser, to: 6 } }
+
+  - id: hang_rutscht
+    on: enter etappe_4_blue_pass
+    once: true
+    effects:
+      - { msg: "Der Regen der letzten Tage hat den Bergkamm aufgeweicht. Der Boden gibt nach." }
+      - { hazard_target: { hazard: erdrutsch, to: 3 } }
+
+  - id: treck_erreicht_ziel
+    on: enter etappe_5_oregon_city
+    effects:
+      - { msg: "Das weite, gruene Willamette Valley breitet sich vor dir aus! Du hast den Oregon Trail bezwungen und deine Siedlung erreicht!" }
+      - { game_end: victory, msg: "VICTORY — Willamette Valley erreicht! Dein Treck hat das Ziel sicher erreicht." }
+
+  # Weiterfahrt-Vetos (block:)
+  - id: weiterfahrt_gesperrt_flut
+    on: before wait
+    when:
+      all:
+        - any:
+            - { at: player, room: etappe_3_snake_ufer }
+            - { at: player, room: wagen_inneres }
+        - { hazard_level: { hazard: hochwasser, gte: 2 } }
+        - not: { has_flag: wagen_geteert }
+    effects:
+      - block: { msg: "Die Furt steht unter Wasser — keine Weiterfahrt, solange der Pegel so hoch steht.", turn: false }
+
+  - id: weiterfahrt_gesperrt_schutt
+    on: before wait
+    when:
+      all:
+        - any:
+            - { at: player, room: etappe_4_blue_pass }
+            - { at: player, room: wagen_inneres }
+        - { has_flag: pass_verschuettet }
+    effects:
+      - block: { msg: "Der Pass ist verschuettet. Der Treck kommt nicht durch.", turn: false }
+
+  - id: weiterfahrt_gesperrt_radbruch
+    on: before wait
+    when:
+      has_flag: radbruch
+    effects:
+      - block: { msg: "Mit gebrochenem Rad kann der Planwagen nicht weiterfahren! Du musst das Rad erst reparieren.", turn: false }
+
+  - id: weiterfahrt_nur_beim_wagen
+    on: before wait
+    when:
+      any:
+        - { at: player, room: ufer_anhaehe }
+        - { at: player, room: snake_furt }
+        - { at: player, room: praerie_jagdgrund }
+        - { at: player, room: geroellhang }
+        - { at: player, room: schlucht_ausgang }
+    effects:
+      - block: { msg: "Du bist nicht beim Planwagen! Kehre erst zum Treck zurueck.", turn: false }
+
+  # Radbruch-Meldung pro Runde
+  - id: radbruch_warnung
+    on: turn
+    when:
+      has_flag: radbruch
+    effects:
+      - { msg: "Das linke Vorderrad wackelt gefaehrlich — der Wagen humpelt mit gebrochenem Rad." }
+
+  # Repair-Befehl fuer Radbruch
+  - id: repair_radbruch_cmd
+    on: before repair
+    when:
+      has_flag: radbruch
+    effects:
+      - if: { has_item: ersatzrad }
+        then:
+          - { set_flag: radbruch, val: "false" }
+          - { consume: ersatzrad }
+          - block: { msg: "Du montierst das Ersatzrad an die gebrochene Achse. Der Planwagen ist wieder fahrbereit!", turn: true }
+        else:
+          - block: "Du hast kein Ersatzrad, um den Radbruch zu reparieren!"
+
+  # Rasten-Befehl
+  - id: cmd_rasten
+    on: command rasten
+    effects:
+      - { msg: "Du rastest einen Moment und laesst die Zeit verstreichen." }
+
+tests:
+  - name: "happy_path_oregon"
+    input:
+      - "buy schaufel"
+      - "buy ration"
+      - "eat ration"
+      - "enter planwagen"
+      - "wait"
+      - "north"
+      - "search"
+      - "south"
+      - "sell bueffelpelz"
+      - "buy stuetzbalken"
+      - "wait"
+      - "north"
+      - "use schaufel"
+      - "rasten"
+      - "south"
+      - "wait"
+      - "south"
+      - "use stuetzbalken"
+      - "north"
+      - "wait"
+    expect:
+      - "Du kaufst eine robuste Schaufel fuer 8 Dollar."
+      - "Du fährst weiter nach Fort Laramie."
+      - "Du verkaufst den dichten Bueffelpelz an den Pelzhaendler fuer 25 Dollar."
+      - "Du kaufst schwere Stuetzbalken fuer 12 Dollar."
+      - "Du fährst weiter nach Snake River."
+      - "Schwarze Wolken haengen ueber den Bergen."
+      - "DER FLUSS TRITT UEBER DIE UFER!"
+      - "Du stichst den verklausulierten Entlastungsgraben frei."
+      - "Schlammige Fluten schiessen durch den Snake River — die Furt ist ueberflutet!"
+      - "Der Snake River hat sich in sein Flussbett zurueckgezogen."
+      - "Du fährst weiter nach Blue Mountains."
+      - "EIN ERDRUTSCH LOEST SICH!"
+      - "Du verkeilst die Stuetzbalken unter der ueberhaengenden Felskante. Der Hang steht."
+      - "Du fährst weiter nach Oregon City."
+      - "VICTORY"
+
+  - name: "fluss_uebertritt_und_ruhr"
+    input:
+      - "buy medizin"
+      - "enter planwagen"
+      - "wait"
+      - "wait"
+      - "rasten"
+      - "rasten"
+      - "use medizin"
+    expect:
+      - "Du fährst weiter nach Snake River."
+      - "DER FLUSS TRITT UEBER DIE UFER!"
+      - "Eiskaltes Flutwasser schwappt in den Wagen! Das schmutzige Wasser macht dich krank!"
+      - "Die Ruhr schuettelt deinen Koerper mit heftigen Kraempfen (-2 HP)."
+      - "Du kippst das bittere Laudanum hinunter. Die Kraempfe lassen nach (+4 HP)."
+
+  - name: "erdrutsch_verschuettet_und_schaufel_jump"
+    input:
+      - "buy schaufel"
+      - "buy ration"
+      - "eat ration"
+      - "buy wagenteer"
+      - "use wagenteer"
+      - "enter planwagen"
+      - "wait"
+      - "wait"
+      - "wait"
+      - "south"
+      - "rasten"
+      - "west"
+      - "use schaufel"
+      - "west"
+      - "east"
+      - "north"
+      - "wait"
+    expect:
+      - "Du fährst weiter nach Blue Mountains."
+      - "EIN ERDRUTSCH LOEST SICH!"
+      - "DER HANG STUERZT EIN! Tonnen von Fels und Schlamm begraben den Schluchtausgang unter sich!"
+      - "Dort kannst du nicht hindurch."
+      - "Stunde um Stunde graebst du Felsbrocken beiseite, bis der Durchgang wieder frei ist!"
+      - "Schluchtsohle"
+      - "Du fährst weiter nach Oregon City."
+      - "VICTORY"
+
+  - name: "fail_path_ruhr_tod"
+    input:
+      - "enter planwagen"
+      - "wait"
+      - "wait"
+      - "rasten"
+      - "rasten"
+      - "rasten"
+    expect:
+      - "DER FLUSS TRITT UEBER DIE UFER!"
+      - "Eiskaltes Flutwasser schwappt in den Wagen! Das schmutzige Wasser macht dich krank!"
+      - "Die Ruhr schuettelt deinen Koerper mit heftigen Kraempfen (-2 HP)."

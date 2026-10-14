@@ -1,0 +1,21 @@
+buy schaufel
+buy ration
+eat ration
+enter planwagen
+wait
+north
+search
+south
+sell bueffelpelz
+buy stuetzbalken
+wait
+north
+use schaufel
+rasten
+south
+wait
+south
+use stuetzbalken
+north
+wait
+q
