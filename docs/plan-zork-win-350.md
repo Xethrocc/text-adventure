@@ -55,8 +55,10 @@ im aktuellen Balancing mathematisch verloren (Spieler 30 HP / Treffer 6 vs. Dieb
   (Port-Datenänderung, klein).
 - **C. Chalice-Snatch ohne Kampf:** Guard nur bei `at: thief` im Raum — wenn der
   Dieb wegwandert, kurz rein und mitnehmen (Timing-Zufall, Seed-Suche).
-- Empfehlung des Autors dieses Plans: **B** (klein, deterministisch, kein
-  Kern-Eingriff) — Balancing-Entscheidung gehört Patrick.
+
+**✅ Entschieden (2026-10-14, Patrick): Variante B** — das Schwert bekommt
+`slot: weapon, effects: [attack+4]` (analog Stiletto). Umsetzung in AP A;
+Kampf-Nachweis (Sieg über den Dieb) ist Teil der Abnahme.
 
 ## 3. Arbeitspakete (wenn freigegeben)
 
