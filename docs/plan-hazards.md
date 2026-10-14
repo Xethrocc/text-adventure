@@ -1,6 +1,6 @@
 # Plan: `hazards:` — generalisierte Gefahrenlagen (OPEN-23)
 
-**Stand:** 2026-10-13 · **Status:** Entscheidungen getroffen, Machbarkeit am Code geprüft, **nichts umgesetzt** ·
+**Stand:** 2026-10-13 · **Status:** Entscheidungen getroffen, Machbarkeit am Code geprüft · **Stufe 1 (AP A–F) umgesetzt** (`90c1418`, CI grün, Byte-Vertrag: 5 Abenteuer SHA256-identisch) ·
 **Gültig:** Das ist **der** Plan zu `OPEN-23` (Entscheidung 2026-10-13). Zunächst als Analyse entstanden,
 nach einem Wechsel des Repo-Stands wiederhergestellt.
 
