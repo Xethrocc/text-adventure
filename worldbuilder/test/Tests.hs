@@ -11281,7 +11281,12 @@ testHazardsByteContractWatcher = do
                             BL.writeFile tmpFile (Aeson.encode (crWorld cr))
                             out <- readProcess "sha256sum" [tmpFile] ""
                             _ <- try (removeFile tmpFile) :: IO (Either SomeException ())
-                            let actualSha = take 64 out
+                            -- GNU sha256sum prefixes the line with '\' when the
+                            -- file name needs escaping (Windows paths contain
+                            -- backslashes) — strip that marker and read the
+                            -- hex digest instead of blindly taking 64 chars.
+                            let actualSha = takeWhile (\c -> c `elem` ("0123456789abcdef" :: String))
+                                            (dropWhile (== '\\') out)
                             r <- expectEqual expSha actualSha
                             when (not r) $
                                 putStrLn $ "  byte contract SHA mismatch for " ++ fname ++ ": expected " ++ expSha ++ ", got " ++ actualSha

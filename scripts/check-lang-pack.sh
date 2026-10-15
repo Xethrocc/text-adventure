@@ -28,9 +28,11 @@ fi
 
 file_hash() {
     if command -v sha256sum >/dev/null 2>&1; then
-        sha256sum "$1" | cut -d' ' -f1
+        # Strip the optional GNU escaping marker '\' (sha256sum prints it when
+        # the file name needs escaping — Windows paths contain backslashes).
+        sha256sum "$1" | sed 's/^\\//' | cut -d' ' -f1
     else
-        shasum -a 256 "$1" | cut -d' ' -f1
+        shasum -a 256 "$1" | sed 's/^\\//' | cut -d' ' -f1
     fi
 }
 
