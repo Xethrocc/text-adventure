@@ -2753,6 +2753,46 @@ Der Namensraum `hazard.*` ist reserviert (`HazardVariableClash`). Pro Gefahr wer
 - `hazard.<id>.reached.<raum>`: Gewürfelter Erreichbarkeitsstatus (bei `spread`-Footprint, `Int` 0 oder 1).
 - `hazard.<id>.every.clock`: Interner Periodenzähler für `every:` (`Int`).
 
+### Item-Helfer (`flow:` / `burn:`, Stufe 2b)
+Gefahren können mit automatischen Item-Interaktionen für die aktive Gefahrenzone ausgestattet werden. Die Helfer verankern sich direkt an der Gefahr und referenzieren Items über bestehende Tags (kein Item-Schema-Eingriff, kein neuer Save-State):
+
+```yaml
+hazards:
+  flut:
+    footprint:
+      by: elevation
+      from: quelle
+      rooms: { quelle: 0, flussbett: 2, see: 4 }
+    items:
+      flow:
+        tag: treibgut
+        chance: 100
+        msg: "{item} treibt mit der Strömung nach {to_room}."
+  feuer:
+    items:
+      burn:
+        tag: brennbar
+        chance: 50
+        msg: "{item} verglüht in {room} zu Asche."
+```
+
+#### Semantik
+- **Geltungsbereich:** Beide Helfer arbeiten pro Zug und Zonenraum auf dem aktuellen `zone`-Zustand aller Footprint-Typen.
+- **Nur direkt liegende Items:** Betrifft ausschließlich lose im Raum liegende Items (`Location (ActorEntity it) r`). Getragene Gegenstände (`inventory`) und Inhalte von Behältern (`in_container`) bleiben unangetastet.
+- **`flow` (Wegdriften vom Ursprung):**
+  - Items treiben schrittweise vom Ursprung (`from:`) weg in einen Nachbarraum innerhalb der aktiven Zone, dessen BFS-Abstand zu `from:` größer ist als der des aktuellen Raums.
+  - Räume werden in absteigender Distanzreihenfolge verarbeitet, sodass ein Item pro Zug maximal einen Raum weit treibt (kein Kaskadieren im selben Zug).
+  - Hat der Raum keinen Nachbarn in der Zone mit größerem Abstand (z. B. am Zonenrand), bleibt das Item liegen.
+- **`burn` (Verzehren):**
+  - Passende Items werden verbraucht (`consume`-Semantik, FIX-02-konform, Status `Removed`, keine Wiederbelebung).
+- **Reihenfolge:** Bei beiden Helfern wird pro Zug erst `flow`, dann `burn` ausgewertet.
+- **Würfe & Determinismus:** `chance:` (0–100) wird pro Zug auf dem isolierten RNG-Stream `hazard.<id>.items` gewürfelt (B8, stabil und deterministisch pro Run-Seed).
+- **Platzhalter & Meldungen:** `msg:` ist optionaler Autorentext mit Ersetzung zur Compile-Zeit:
+  - `{item}`: Name des Items
+  - `{room}`: Name des aktuellen Raums
+  - `{from_room}` / `{to_room}`: Quell- und Zielraum bei `flow`
+  - Ohne `msg:` verläuft das Ereignis still (keine Engine-Meldungsschlüssel erforderlich).
+
 ### Fehlercodes
 - `UnknownHazard`: Referenz auf eine nicht existierende Gefahr in Effekten oder Prädikaten.
 - `HazardLevelOutOfRange`: Ungültige Level-Angabe (außerhalb 0..max).
@@ -2764,6 +2804,8 @@ Der Namensraum `hazard.*` ist reserviert (`HazardVariableClash`). Pro Gefahr wer
 - `UnknownSpreadFrom`: Startraum `from:` im `spread`-Footprint fehlt oder existiert nicht.
 - `UnknownSpreadTag`: `needs_tag:` im `spread`-Footprint matcht keinen bekannten Raum.
 - `EveryWithoutStream`: `every:`-Block ohne Stream-Namen deklariert.
+- `HazardItemHelperChance`: Prozentuale Chance im Item-Helfer (`flow:` / `burn:`) außerhalb 0..100.
+- `UnknownItemHelperTag`: Der im Item-Helfer referenzierte Item-Tag kommt auf keinem deklarierten Item vor (Warnung).
 
 ---
 

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### OPEN-23 Stufe 2b: Gefahrenlagen — Item-Helfer `flow:` und `burn:`
+
+Vollständige Implementierung von Hazards Stufe 2b laut `docs/plan-hazards.md` §13 (Entscheidungen E11–E13, AP A–D):
+
+- **Verankerung auf der Gefahr (E11):** Item-Helfer werden direkt an der Gefahr deklariert (`items: { flow: { tag, chance, msg? }, burn: { tag, chance, msg? } }`) und referenzieren Items über bestehende Tags. Kein Eingriff in das Item-Schema, keine neuen Item-Felder, kein neuer Save-State.
+- **`flow:`-Richtung vom Ursprung weg (E12):** Lose im Raum liegende Items mit dem Tag treiben schrittweise vom Ursprung (`from:`) weg in Zonen-Nachbarräume mit größerem BFS-Kürzestwegeabstand. Zonenräume werden in absteigender Distanzreihenfolge verarbeitet, sodass ein Item pro Zug maximal einen Raum weit treibt (kein Kaskadieren). Liegt kein weiter entfernter Nachbar in der Zone vor (z. B. am Zonenrand), bleibt das Item liegen.
+- **`burn:` zufallsbasiert pro Zug (E13):** Lose im Raum liegende Items mit dem Tag werden verbraucht (`consume`-Semantik, FIX-02-konform, Status `Removed`).
+- **Scope & Reihenfolge:** Betrifft ausschließlich direkt im Raum liegende Gegenstände (`Location (ActorEntity it) r`). Container-Inhalte (`in_container`) und getragene Gegenstände (`carried_by`) bleiben unberührt. Pro Zug wird erst `flow`, dann `burn` ausgewertet.
+- **Würfe & Determinismus:** `chance: 0..100` wird pro Zug auf dem isolierten RNG-Stream `hazard.<id>.items` gewürfelt (B8, Run-stabil und deterministisch pro Run-Seed).
+- **Meldungen & Platzhalter:** Optionales Autorenfeld `msg:` mit Ersetzung zur Compile-Zeit (`{item}`, `{room}`, `{from_room}`, `{to_room}`). Ohne `msg:` still (keine Engine-Meldungsschlüssel erforderlich, Katalog-Gate unberührt).
+- **Validierung:** Hard Error `HazardItemHelperChance` bei `chance` außerhalb 0..100; Warnung `UnknownItemHelperTag`, wenn der Tag auf keinem deklarierten Item vorkommt.
+- **Tests & Fixtures:** 4 neue Unit-Tests in `Tests.hs` (Flow-Richtung/-Rand & Container-Schutz, Burn-Consume & Container-Schutz, Seed-Determinismus auf `hazard.<id>.items`, statische Validierung). Fixture `examples/modules/hazards.yaml` um Item-Helfer und 6. Content-Test erweitert.
+
 ### OPEN-23 Stufe 2: Gefahrenlagen — Spread-Ausbreitung, Zufallsereignisse und Wirktypen-Zucker
 
 Vollständige Implementierung von Hazards Stufe 2 laut `docs/plan-hazards.md` §12 (Entscheidungen E8–E10, AP A–E):

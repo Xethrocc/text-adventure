@@ -1241,19 +1241,21 @@ data AHazard = AHazard
     , hazOnZone    :: [AActionOutcome]
     , hazTelegraph :: Maybe ATelegraph
     , hazEvery     :: Maybe AEventEvery
+    , hazItems     :: Maybe AHazardItems
     } deriving (Show, Eq, Generic)
 
 instance FromJSON AHazard where
     parseJSON = withObject "AHazard" $ \o -> do
-        hid <- o .:? "id" .!= ""
-        mTr <- o .:? "track"
+        hid  <- o .:? "id" .!= ""
+        mTr  <- o .:? "track"
         let tr = fromMaybe (ATrack 100 0 1 1 0 Nothing) mTr
-        fp  <- o .:  "footprint"
-        stg <- parseHazardStagesField o
-        oz  <- o .:? "on_zone" .!= []
-        tel <- o .:? "telegraph"
-        ev  <- o .:? "every"
-        pure (AHazard hid tr fp stg oz tel ev)
+        fp   <- o .:  "footprint"
+        stg  <- parseHazardStagesField o
+        oz   <- o .:? "on_zone" .!= []
+        tel  <- o .:? "telegraph"
+        ev   <- o .:? "every"
+        itms <- o .:? "items"
+        pure (AHazard hid tr fp stg oz tel ev itms)
 
 instance ToJSON AHazard where
     toJSON h = object $ filter (not . isNullOrEmpty . snd)
@@ -1264,6 +1266,53 @@ instance ToJSON AHazard where
         , "on_zone"   .= if null (hazOnZone h) then Null else toJSON (hazOnZone h)
         , "telegraph" .= hazTelegraph h
         , "every"     .= hazEvery h
+        , "items"     .= hazItems h
+        ]
+      where
+        isNullOrEmpty Null = True
+        isNullOrEmpty _    = False
+
+-- | Helfer-Konfiguration fuer Items auf Gefahren (OPEN-23 Stufe 2b, E11-E13).
+data AHazardItemHelper = AHazardItemHelper
+    { hihTag    :: String
+    , hihChance :: Int
+    , hihMsg    :: Maybe String
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AHazardItemHelper where
+    parseJSON = withObject "AHazardItemHelper" $ \o -> do
+        t <- o .:? "tag" .!= ""
+        c <- o .:? "chance" .!= 100
+        m <- o .:? "msg"
+        pure (AHazardItemHelper t c m)
+
+instance ToJSON AHazardItemHelper where
+    toJSON (AHazardItemHelper t c m) = object $ filter (not . isNullOrEmpty . snd)
+        [ "tag"    .= t
+        , "chance" .= c
+        , "msg"    .= m
+        ]
+      where
+        isNullOrEmpty Null = True
+        isNullOrEmpty _    = False
+
+-- | Item-Helfer flow: / burn: auf Gefahren-Ebene (OPEN-23 Stufe 2b, E11).
+data AHazardItems = AHazardItems
+    { ahiFlow :: Maybe AHazardItemHelper
+    , ahiBurn :: Maybe AHazardItemHelper
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AHazardItems where
+    parseJSON = withObject "AHazardItems" $ \o -> do
+        f <- o .:? "flow"
+        b <- o .:? "burn"
+        pure (AHazardItems f b)
+
+instance ToJSON AHazardItems where
+    toJSON (AHazardItems Nothing Nothing) = Null
+    toJSON (AHazardItems mf mb) = object $ filter (not . isNullOrEmpty . snd)
+        [ "flow" .= mf
+        , "burn" .= mb
         ]
       where
         isNullOrEmpty Null = True
@@ -2740,6 +2789,8 @@ data EntityType
     | EntHazardFootprint
     | EntHazardTelegraph
     | EntHazardEvery
+    | EntHazardItems
+    | EntHazardItemHelper
     deriving (Show, Eq, Ord, Enum, Bounded)
 
 -- | Single source of truth for allowed YAML mapping keys per entity type,
@@ -2849,7 +2900,7 @@ knownKeys EntParty = Set.fromList
     , "combat_slot", "switch_verb", "xp_table"
     ]
 knownKeys EntHazard = Set.fromList
-    [ "id", "track", "footprint", "stages", "on_zone", "telegraph", "every" ]
+    [ "id", "track", "footprint", "stages", "on_zone", "telegraph", "every", "items" ]
 knownKeys EntHazardTrack = Set.fromList
     [ "max", "start", "rate", "every", "target", "when" ]
 knownKeys EntHazardFootprint = Set.fromList
@@ -2858,3 +2909,7 @@ knownKeys EntHazardTelegraph = Set.fromList
     [ "adjacent", "inside", "in_zone" ]
 knownKeys EntHazardEvery = Set.fromList
     [ "period", "stream", "choices" ]
+knownKeys EntHazardItems = Set.fromList
+    [ "flow", "burn" ]
+knownKeys EntHazardItemHelper = Set.fromList
+    [ "tag", "chance", "msg" ]

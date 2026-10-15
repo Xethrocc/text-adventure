@@ -1,6 +1,6 @@
 # Plan: `hazards:` — generalisierte Gefahrenlagen (OPEN-23)
 
-**Stand:** 2026-10-14 · **Status:** Stufe 1 und Stufe 2 (AP A–E) vollständig umgesetzt (CI grün, Byte-Vertrag: 5 Abenteuer SHA256-identisch) ·
+**Stand:** 2026-10-15 · **Status:** Stufe 1, Stufe 2 (AP A–E) und Stufe 2b (AP A–D) vollständig umgesetzt (CI grün, Byte-Vertrag: 5 Abenteuer SHA256-identisch) ·
 **Gültig:** Das ist **der** Plan zu `OPEN-23` (Entscheidung 2026-10-13). Zunächst als Analyse entstanden,
 nach einem Wechsel des Repo-Stands wiederhergestellt.
 
@@ -213,3 +213,67 @@ boolean-Kanten-Wurf aus §3 Folgerung 3)
 **Abnahme:** `scripts/ci.sh` grün inkl. erweiterter Fixture; Spread-Determinismus
 (gleicher Seed → gleiche Zonen) im Test belegt; Welten ohne Stufe-2-Features
 byte-identisch.
+
+## 13. Stufe 2b — Item-Helfer `flow:`/`burn:` (entschieden 2026-10-14, Patrick)
+
+Drei Entscheidungen (alle Empfehlungen angenommen):
+
+- **E11 — Verankerung auf der Gefahr:** `items: {flow: …, burn: …}` mit
+  Tag-Bezug (`tag: treibgut`) — nutzt die vorhandene Tag-Mechanik, **kein**
+  Item-Schema, keine neuen Item-Felder, kein neuer Save-State.
+- **E12 — `flow:`-Richtung: vom Ursprung weg** — Items treiben den
+  Spread-Ringen folgend zum Zonenrand (bei `elevation`/`list`/`tag`-Footprints
+  in einen beliebigen Nachbarraum in der Zone mit größerem Abstand zu `from:`;
+  ohne solchen Nachbarn bleibt das Item liegen).
+- **E13 — `burn:` zufallsbasiert pro Zug** (stateless): `chance: 0–100` pro Zug
+  in der Zone, deterministisch pro Stream/Seed — **Byte-Vertrag bleibt gewahrt**
+  (keine Expositions-Zähler im Save).
+
+### Autoren-Syntax
+
+```yaml
+hazards:
+  flut:
+    # … track/footprint/stages wie gehabt …
+    items:
+      flow: { tag: treibgut, chance: 30, msg: "{item} treibt davon." }   # msg optional
+  feuer:
+    items:
+      burn: { tag: brennbar, chance: 20, msg: "{item} verglüht." }
+```
+
+### Semantik
+
+- Beide Helfer arbeiten **pro Zug und Zonenraum** auf dem aktuellen
+  `zone`-Zustand (alle Footprint-Typen): für jedes **direkt im Raum liegende**
+  Item mit passendem Tag wird ein `chance:`-Wurf auf dem Stream
+  `hazard.<id>.items` geworfen (B8, deterministisch pro Run-Seed).
+- `flow` (Erfolg): Item wechselt in einen Nachbarraum in der Zone, der eine
+  Ringstufe weiter von `from:` entfernt liegt (vom Ursprung weg); liegt keiner
+  vor, bleibt das Item. Container-Inhalt und getragene Items sind **nicht**
+  betroffen (Semantik wie `move_all` auf Räume).
+- `burn` (Erfolg): Item wird verbraucht (`consume`-Semantik, FIX-02-konform —
+  keine Wiederbelebung).
+- `msg:` ist optional (Autorentext mit `{item}`/`{room}`-Platzhaltern); **ohne
+  `msg:` ist das Ereignis still** — keine neuen Engine-Messages-Keys
+  (Katalog-Gate bleibt unberührt, reines Worldbuilder-Sugar).
+- Reihenfolge bei mehreren Helfern: erst `flow`, dann `burn` (Doku-Hinweis;
+  D4-Muster Deklarationsreihenfolge).
+
+### Validierung / Fehlercodes
+
+Strukturelle Fehler analog Stufe 2 (`UnknownItemHelperTag` als Warning wenn der
+Tag nirgends vorkommt, `HazardItemHelperChance` bei `chance` außerhalb 0–100,
+unbekannte Felder = Schema-Warnung). Walker-Catch-alls abgleichen (Stufe 2 AP C).
+
+### Arbeitspakete (agy-Stufe)
+
+| AP | Inhalt |
+|---|---|
+| A | Typen: `AHazardItems` (`flow`/`burn` mit `tag`, `chance`, `msg?`) + JSON, omittierbar; `hazItems` an `AHazard` |
+| B | Compile: pro Zug/Zonenraum Würfe auf `hazard.<id>.items`, `flow`-Ring-Suche (vom Ursprung weg), `burn`-Consume; Trigger-Muster wie Stufe 1/2 |
+| C | Validierung + Tests: Flow-Richtung/-Rand, Burn-Consume, Chance-Determinismus (gleicher Seed), Container/Getragenes unberührt, Fußpunkt-Verhalten; Fixture um `items:`-Helfer erweitern |
+| D | Docs: `adventure-schema.md` (Abschnitt Item-Helfer), `modules.md` 7j, CHANGELOG, Befunde-Eintrag; Byte-Vertrag-Wächter |
+
+**Abnahme:** `scripts/ci.sh` grün; Byte-Vertrag (Welten ohne `items:` byte-identisch);
+Determinismus-Test (gleicher Seed → gleiche Fluss-/Brand-Ereignisse).

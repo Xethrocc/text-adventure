@@ -15,9 +15,15 @@ hazards:
       target: 0
     footprint:
       by: elevation
+      from: reservoir
       rooms:
         reservoir: 0
         damm: 4
+    items:
+      flow:
+        tag: treibgut
+        chance: 100
+        msg: "Die Flut spuelt das {item} weiter."
     stages:
       "0":
         - { msg: "Das Reservoir ist trocken." }
@@ -86,6 +92,11 @@ hazards:
       via: exits
       chance: 100
       needs_tag: outdoor
+    items:
+      burn:
+        tag: brennbar
+        chance: 100
+        msg: "Die Hitze laesst das {item} in {room} in Flammen aufgehen."
     stages:
       "1":
         - { msg: "Das Feuer breitet sich ueber den Damm aus!" }
@@ -193,6 +204,19 @@ rules:
       - { damage: { player: 5 } }
       - { msg: "Bissiger Rauch laesst dich husten." }
 
+items:
+  - id: treibholz
+    name: Treibholz
+    desc: "Ein nasses Stueck Schwemmholz."
+    location: reservoir
+    tags: [treibgut]
+
+  - id: laub
+    name: Trockenes Laub
+    desc: "Ein Haufen welker Blaetter."
+    location: damm
+    tags: [brennbar]
+
 rooms:
   - id: hafen
     name: Kleiner Hafen
@@ -285,3 +309,12 @@ tests:
       - "Die Helfer raeumen den Tunneleingang wieder frei!"
       - "Ein enger Stollen fuehrt tiefer in den Berg zur Schatzkammer."
       - "Bissiger Rauch laesst dich husten."
+
+  - name: "item helfer flow und burn"
+    input: [fluten, rasten, rasten, feuer_an, rasten]
+    expect:
+      - "Wasser stroemt ein!"
+      - "Das Wasser erreicht die Dammkrone!"
+      - "Die Flut spuelt das Treibholz weiter."
+      - "Du entzuendest ein Signalfeuer am Reservoir!"
+      - "Die Hitze laesst das Trockenes Laub in Wehrdamm in Flammen aufgehen."

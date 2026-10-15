@@ -534,6 +534,17 @@ hazards:
 - **Zufallsereignisse (`every:`, Stufe 2):** Periodisches Ereignis auf Gefahren-Ebene
   mit Intervall `period: N`, benanntem Stream `stream:` und gewichteter Auswahl `choices:`.
   Interner Zähler: `hazard.<id>.every.clock`.
+- **Item-Helfer (`items:`, Stufe 2b):** Automatische Interaktionen auf Gefahren-Ebene
+  mit lose im Zonenraum liegenden Items über Item-Tags (`items: { flow: …, burn: … }`,
+  kein Item-Schema-Eingriff, kein neuer Save-State):
+  - `flow: { tag, chance, msg? }`: Treibt direkt im Raum liegende Items vom Ursprung (`from:`)
+    weg in einen Zonen-Nachbarraum mit größerem Abstand (BFS-Ringsuche); bleibt am Zonenrand
+    liegen. Container-Inhalte und getragene Gegenstände bleiben unberührt.
+  - `burn: { tag, chance, msg? }`: Verbraucht passende direkt im Zonenraum liegende Items
+    (`consume`-Semantik, FIX-02-konform, Status `Removed`).
+  - Reihenfolge: pro Zug wird erst `flow`, dann `burn` ausgewertet.
+  - Würfe: `chance: 0..100` auf isoliertem Stream `hazard.<id>.items` (B8, stabil pro Run-Seed).
+  - Optionales `msg:` mit Platzhaltern `{item}`, `{room}`, `{from_room}`, `{to_room}`; ohne `msg:` still.
 - **Wirkung & Hooks:**
   - `stages:`: Feuert einmalig beim Erreichen eines Levels (Übergang `prev != n` auf
     `level == n`), egal ob steigend, fallend oder per `hazard_jump`.
@@ -551,14 +562,17 @@ hazards:
 - **Generierte Variablen & Trigger:** Reservierter Namensraum `hazard.*`
   (`hazard.<id>.level`, `.target`, `.clock`, `.prev`, `.paused`, `.zone.<raum>`, `.reached.<raum>`, `.every.clock`).
   Trigger: `hazard.<id>.tick`, `hazard.<id>.stage`, `hazard.<id>.zone.<raum>`,
-  `hazard.<id>.telegraph.in.<raum>`, `hazard.<id>.telegraph.adj.<raum>`, `hazard.<id>.every`.
+  `hazard.<id>.telegraph.in.<raum>`, `hazard.<id>.telegraph.adj.<raum>`, `hazard.<id>.every`,
+  `hazard.<id>.items`.
 - **Validierung:** `UnknownHazard`, `HazardLevelOutOfRange`, `HazardUnknownRoom`,
   `HazardFootprintEmpty`, `HazardVariableClash`, `DuplicateHazard`, `HazardIdEmpty`,
-  `UnknownSpreadFrom`, `UnknownSpreadTag`, `EveryWithoutStream`.
+  `UnknownSpreadFrom`, `UnknownSpreadTag`, `EveryWithoutStream`,
+  `HazardItemHelperChance`, `UnknownItemHelperTag`.
 
 Fixture: `examples/modules/hazards.yaml` — Die versunkene Talsperre (Wasserstand
 per `elevation`, Gebirgssturm per `tag`, Einsturz des Stollen per `list`, Brand/Ausbreitung
-per `spread` inkl. `every:`-Zufall und Wirktypen-Zucker `flood:`, `landslide:`, `damage:`).
+per `spread` inkl. `every:`-Zufall, Wirktypen-Zucker `flood:`, `landslide:`, `damage:`
+sowie Item-Helfer `flow:` [Treibholz] und `burn:` [Laub]).
 
 ---
 

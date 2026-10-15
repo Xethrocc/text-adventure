@@ -5009,6 +5009,10 @@ tests =
     , ("hazards: wirktypen desugaring and effects mapping (flood, landslide, damage)", testHazardsWirktypenMapping)
     , ("hazards: static validation stufe 2 (spread from/tag, every stream, wirktyp refs)", testHazardsStaticValidationStufe2)
     , ("hazards: byte contract watcher for worlds without stufe 2", testHazardsByteContractWatcher)
+    , ("hazards: item helper flow moves items away from origin and respects boundary", testHazardsItemHelperFlow)
+    , ("hazards: item helper burn consumes items directly in room", testHazardsItemHelperBurn)
+    , ("hazards: item helper chance determinism on hazard.<id>.items stream", testHazardsItemHelperChanceDeterminism)
+    , ("hazards: item helper static validation (HazardItemHelperChance, UnknownItemHelperTag)", testHazardsItemHelperValidation)
     , ("VC-11: vehicle condition sugar YAML parsing and compilation", testVehicleConditionSugar)
     , ("VC-12..14: vehicle condition ref checks, error, warning and current token", testVehicleConditionRefChecks)
     , ("VC-15: walker traverses nested vehicle condition effects", testVehicleConditionWalkerCoverage)
@@ -10475,7 +10479,7 @@ testHazardsCompileAndMechanics = do
 
                         -- 3. Content tests run
                         let ctests = advTests adv
-                        r7 <- expectEqual 5 (length ctests)
+                        r7 <- expectEqual 6 (length ctests)
                         results <- forM ctests $ \ct -> do
                             let res = executeContentTest ct (crWorld cr) (crSave cr)
                             case res of
@@ -10751,6 +10755,7 @@ testHazardsPerformance500Triggers = do
                 , hazOnZone = [AOMessage "Zone!"]
                 , hazTelegraph = Just (ATelegraph (Just "Gefahr naht!") (Just "Mitten drin!"))
                 , hazEvery = Nothing
+                , hazItems = Nothing
                 }
             | h <- [1..hazCount]
             ]
@@ -11282,6 +11287,371 @@ testHazardsByteContractWatcher = do
                                 putStrLn $ "  byte contract SHA mismatch for " ++ fname ++ ": expected " ++ expSha ++ ", got " ++ actualSha
                             pure r
     pure (and results)
+
+-- | OPEN-23 Stufe 2b: Item-Helfer flow: treibt direkt im Raum liegende Items
+--   vom Ursprung (from:) weg zum Rand der aktiven Zone. Getragene und
+--   in Containern befindliche Items bleiben unberuehrt. Rand-Items ohne
+--   weiter entfernten Zonen-Nachbarn bleiben liegen. Platzhalter {item},
+--   {room}, {from_room}, {to_room} werden ersetzt.
+testHazardsItemHelperFlow :: IO Bool
+testHazardsItemHelperFlow = do
+    let yaml = unlines
+            [ "name: Item Helper Flow Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Quelle"
+            , "    desc: Der Ursprung."
+            , "    exits:"
+            , "      east: loc_1"
+            , "  - id: loc_1"
+            , "    name: Flussbett"
+            , "    desc: Die Mitte."
+            , "    exits:"
+            , "      west: loc_0"
+            , "      east: loc_2"
+            , "  - id: loc_2"
+            , "    name: Muendung"
+            , "    desc: Das Ende."
+            , "    exits:"
+            , "      west: loc_1"
+            , "items:"
+            , "  - id: treibholz"
+            , "    name: Treibholz"
+            , "    desc: Treibendes Holz."
+            , "    location: loc_0"
+            , "    tags: [treibgut]"
+            , "  - id: kiste"
+            , "    name: Holzkiste"
+            , "    desc: Eine Kiste."
+            , "    location: loc_0"
+            , "    is_container: true"
+            , "  - id: perle"
+            , "    name: Perle"
+            , "    desc: In der Kiste."
+            , "    in_container: kiste"
+            , "    tags: [treibgut]"
+            , "  - id: amulett"
+            , "    name: Amulett"
+            , "    desc: Getragen."
+            , "    carried_by: player"
+            , "    tags: [treibgut]"
+            , "  - id: kiesel"
+            , "    name: Kiesel"
+            , "    desc: Kein Treibgut."
+            , "    location: loc_0"
+            , "    tags: [stein]"
+            , "  - id: anker"
+            , "    name: Anker"
+            , "    desc: Liegt an der Muendung."
+            , "    location: loc_2"
+            , "    tags: [treibgut]"
+            , "hazards:"
+            , "  wasser:"
+            , "    track:"
+            , "      rate: 1"
+            , "      max: 1"
+            , "      start: 1"
+            , "      target: 1"
+            , "    footprint:"
+            , "      by: elevation"
+            , "      rooms:"
+            , "        loc_0: 0"
+            , "        loc_1: 0"
+            , "        loc_2: 0"
+            , "      from: loc_0"
+            , "    items:"
+            , "      flow:"
+            , "        tag: treibgut"
+            , "        chance: 100"
+            , "        msg: '{item} treibt von {from_room} nach {to_room}.'"
+            ]
+    compileYamlForTest yaml $ \cr -> do
+        let gw = crWorld cr
+            sv = crSave cr
+            st0 = E.GameState gw sv Nothing Nothing Nothing [] Nothing [] Nothing Nothing []
+            ls0 = initLoopState st0
+            locOf i ls = fmap E.itemLocation (Map.lookup i (E.itemStates (save (lsCurrent ls))))
+
+        -- Initial: treibholz in loc_0, perle in kiste, amulett carried, anker in loc_2
+        r0a <- expectEqual (Just (E.InRoom "loc_0")) (locOf "treibholz" ls0)
+        r0b <- expectEqual (Just (E.InContainer "kiste")) (locOf "perle" ls0)
+        r0c <- expectEqual (Just (E.CarriedBy E.ActorPlayer)) (locOf "amulett" ls0)
+        r0d <- expectEqual (Just (E.InRoom "loc_0")) (locOf "kiesel" ls0)
+        r0e <- expectEqual (Just (E.InRoom "loc_2")) (locOf "anker" ls0)
+
+        -- Turn 1: treibholz treibt loc_0 -> loc_1
+        let (ls1, evs1) = applyLoopCommandEv (parseCommandFor gw "wait") ls0
+            msg1 = E.renderEvents evs1
+        r1a <- expectEqual (Just (E.InRoom "loc_1")) (locOf "treibholz" ls1)
+        r1b <- expectTrue "msg includes substituted names" ("Treibholz treibt von Quelle nach Flussbett." `isInfixOf` msg1)
+        -- Container-Inhalt und getragenes Item unberuehrt
+        r1c <- expectEqual (Just (E.InContainer "kiste")) (locOf "perle" ls1)
+        r1d <- expectEqual (Just (E.CarriedBy E.ActorPlayer)) (locOf "amulett" ls1)
+        r1e <- expectEqual (Just (E.InRoom "loc_0")) (locOf "kiesel" ls1)
+        -- Rand-Verhalten: anker in loc_2 hat keinen Zonen-Nachbarn weiter weg -> bleibt in loc_2
+        r1f <- expectEqual (Just (E.InRoom "loc_2")) (locOf "anker" ls1)
+
+        -- Turn 2: treibholz treibt loc_1 -> loc_2
+        let (ls2, evs2) = applyLoopCommandEv (parseCommandFor gw "wait") ls1
+            msg2 = E.renderEvents evs2
+        r2a <- expectEqual (Just (E.InRoom "loc_2")) (locOf "treibholz" ls2)
+        r2b <- expectTrue "msg turn 2" ("Treibholz treibt von Flussbett nach Muendung." `isInfixOf` msg2)
+
+        -- Turn 3: treibholz erreicht Rand (loc_2), bleibt liegen
+        let (ls3, evs3) = applyLoopCommandEv (parseCommandFor gw "wait") ls2
+            msg3 = E.renderEvents evs3
+        r3a <- expectEqual (Just (E.InRoom "loc_2")) (locOf "treibholz" ls3)
+        r3b <- expectTrue "no flow msg when at boundary" (not ("treibt" `isInfixOf` msg3))
+
+        pure (and [r0a, r0b, r0c, r0d, r0e, r1a, r1b, r1c, r1d, r1e, r1f, r2a, r2b, r3a, r3b])
+
+-- | OPEN-23 Stufe 2b: Item-Helfer burn: verbraucht passende Items direkt im Raum
+--   (consume-Semantik, Location = Removed). Container-Inhalte und nicht-passende
+--   Items bleiben unberuehrt. msg wird substituiert.
+testHazardsItemHelperBurn :: IO Bool
+testHazardsItemHelperBurn = do
+    let yaml = unlines
+            [ "name: Item Helper Burn Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Feuerstelle"
+            , "    desc: Flammen lodern."
+            , "items:"
+            , "  - id: papier"
+            , "    name: Papier"
+            , "    desc: Leicht entflammbar."
+            , "    location: loc_0"
+            , "    tags: [brennbar]"
+            , "  - id: truhe"
+            , "    name: Eisentruhe"
+            , "    desc: Eine schwere Eisentruhe."
+            , "    location: loc_0"
+            , "    is_container: true"
+            , "  - id: pergament"
+            , "    name: Pergament"
+            , "    desc: Liegt sicher in der Truhe."
+            , "    in_container: truhe"
+            , "    tags: [brennbar]"
+            , "  - id: stein"
+            , "    name: Stein"
+            , "    desc: Nicht brennbar."
+            , "    location: loc_0"
+            , "    tags: [mineral]"
+            , "hazards:"
+            , "  feuer:"
+            , "    track:"
+            , "      rate: 1"
+            , "      max: 1"
+            , "      start: 1"
+            , "      target: 1"
+            , "    footprint:"
+            , "      by: elevation"
+            , "      rooms:"
+            , "        loc_0: 0"
+            , "    items:"
+            , "      burn:"
+            , "        tag: brennbar"
+            , "        chance: 100"
+            , "        msg: '{item} verbrennt im {room} zu Asche!'"
+            ]
+    compileYamlForTest yaml $ \cr -> do
+        let gw = crWorld cr
+            sv = crSave cr
+            st0 = E.GameState gw sv Nothing Nothing Nothing [] Nothing [] Nothing Nothing []
+            ls0 = initLoopState st0
+            locOf i ls = fmap E.itemLocation (Map.lookup i (E.itemStates (save (lsCurrent ls))))
+
+        let (ls1, evs1) = applyLoopCommandEv (parseCommandFor gw "wait") ls0
+            msg1 = E.renderEvents evs1
+
+        -- papier is consumed (Removed, FIX-02 compliant)
+        r1 <- expectEqual (Just E.Removed) (locOf "papier" ls1)
+        r2 <- expectTrue "msg includes substituted text" ("Papier verbrennt im Feuerstelle zu Asche!" `isInfixOf` msg1)
+        -- container content untouched
+        r3 <- expectEqual (Just (E.InContainer "truhe")) (locOf "pergament" ls1)
+        -- non-matching item untouched
+        r4 <- expectEqual (Just (E.InRoom "loc_0")) (locOf "stein" ls1)
+
+        pure (r1 && r2 && r3 && r4)
+
+-- | OPEN-23 Stufe 2b: Zufallsbasierte Item-Wuerfe auf hazard.<id>.items sind
+--   pro Stream isoliert und fuehren bei gleichem Run-Seed zu exakt identischen
+--   Ergebnissen ueber mehrere Zuege.
+testHazardsItemHelperChanceDeterminism :: IO Bool
+testHazardsItemHelperChanceDeterminism = do
+    let yaml = unlines
+            [ "name: Item Helper Determinism Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Raum 0"
+            , "    desc: Raum 0"
+            , "    exits:"
+            , "      east: loc_1"
+            , "  - id: loc_1"
+            , "    name: Raum 1"
+            , "    desc: Raum 1"
+            , "items:"
+            , "  - id: item_1"
+            , "    name: Item 1"
+            , "    location: loc_0"
+            , "    tags: [treibgut]"
+            , "  - id: item_2"
+            , "    name: Item 2"
+            , "    location: loc_0"
+            , "    tags: [treibgut]"
+            , "  - id: item_3"
+            , "    name: Item 3"
+            , "    location: loc_0"
+            , "    tags: [brennbar]"
+            , "hazards:"
+            , "  flut:"
+            , "    track:"
+            , "      rate: 1"
+            , "      max: 1"
+            , "      start: 1"
+            , "      target: 1"
+            , "    footprint:"
+            , "      by: elevation"
+            , "      rooms:"
+            , "        loc_0: 0"
+            , "        loc_1: 0"
+            , "      from: loc_0"
+            , "    items:"
+            , "      flow:"
+            , "        tag: treibgut"
+            , "        chance: 50"
+            , "      burn:"
+            , "        tag: brennbar"
+            , "        chance: 50"
+            ]
+    compileYamlForTest yaml $ \cr -> do
+        let gw = crWorld cr
+            locs ls = [ (i, fmap E.itemLocation (Map.lookup i (E.itemStates (save (lsCurrent ls)))))
+                      | i <- ["item_1", "item_2", "item_3"] ]
+
+            runTurns seed = do
+                let sv = (crSave cr) { E.runSeed = seed }
+                    st0 = E.GameState gw sv Nothing Nothing Nothing [] Nothing [] Nothing Nothing []
+                    ls0 = initLoopState st0
+                    (ls1, _) = applyLoopCommandEv (parseCommandFor gw "wait") ls0
+                    (ls2, _) = applyLoopCommandEv (parseCommandFor gw "wait") ls1
+                    (ls3, _) = applyLoopCommandEv (parseCommandFor gw "wait") ls2
+                pure (locs ls1, locs ls2, locs ls3)
+
+        -- Run A & Run B with identical seed 55555
+        (a1, a2, a3) <- runTurns 55555
+        (b1, b2, b3) <- runTurns 55555
+
+        r1 <- expectEqual a1 b1
+        r2 <- expectEqual a2 b2
+        r3 <- expectEqual a3 b3
+
+        pure (r1 && r2 && r3)
+
+-- | OPEN-23 Stufe 2b: Validierung von items:
+--   - HazardItemHelperChance bei chance < 0 oder > 100 (Hard Error)
+--   - UnknownItemHelperTag als Warning wenn tag nirgends im Abenteuer existiert
+testHazardsItemHelperValidation :: IO Bool
+testHazardsItemHelperValidation = do
+    let baseYaml haz = unlines $
+            [ "name: Item Helper Validation Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Raum 0"
+            , "    desc: Raum 0"
+            , "items:"
+            , "  - id: holz"
+            , "    name: Holz"
+            , "    location: loc_0"
+            , "    tags: [treibgut]"
+            , "hazards:"
+            ] ++ haz
+
+        checkError expectedCode txt = case decode1 (BLC.pack txt) of
+            Left err -> do
+                putStrLn $ "  yaml decode failed: " ++ show err
+                pure False
+            Right (adv :: Adventure) -> case compileAdventure adv of
+                Left errs -> expectTrue (expectedCode ++ ", got: " ++ issuesText errs)
+                                (any (\i -> ciCode i == expectedCode) errs)
+                Right _   -> expectTrue (expectedCode ++ " expected, but compilation succeeded") False
+
+        checkWarning expectedCode txt = case decode1 (BLC.pack txt) of
+            Left err -> do
+                putStrLn $ "  yaml decode failed: " ++ show err
+                pure False
+            Right (adv :: Adventure) -> case compileAdventure adv of
+                Left errs -> do
+                    putStrLn $ "  unexpected compile error: " ++ issuesText errs
+                    pure False
+                Right cr  -> expectTrue (expectedCode ++ " warning expected")
+                                (any (\i -> ciCode i == expectedCode) (crWarnings cr))
+
+    -- 1. HazardItemHelperChance: chance < 0 on flow
+    let yNegChance = baseYaml
+            [ "  wasser:"
+            , "    track: { max: 1 }"
+            , "    footprint:"
+            , "      by: elevation"
+            , "      rooms:"
+            , "        loc_0: 0"
+            , "    items:"
+            , "      flow: { tag: treibgut, chance: -5 }"
+            ]
+    r1 <- checkError "HazardItemHelperChance" yNegChance
+
+    -- 2. HazardItemHelperChance: chance > 100 on burn
+    let yOverChance = baseYaml
+            [ "  feuer:"
+            , "    track: { max: 1 }"
+            , "    footprint:"
+            , "      by: elevation"
+            , "      rooms:"
+            , "        loc_0: 0"
+            , "    items:"
+            , "      burn: { tag: treibgut, chance: 120 }"
+            ]
+    r2 <- checkError "HazardItemHelperChance" yOverChance
+
+    -- 3. UnknownItemHelperTag warning when tag unknown
+    let yUnknownTag = baseYaml
+            [ "  wasser:"
+            , "    track: { max: 1 }"
+            , "    footprint:"
+            , "      by: elevation"
+            , "      rooms:"
+            , "        loc_0: 0"
+            , "    items:"
+            , "      flow: { tag: phantomschwimmer, chance: 50 }"
+            ]
+    r3 <- checkWarning "UnknownItemHelperTag" yUnknownTag
+
+    -- 4. Valid tag compiles cleanly with no UnknownItemHelperTag warning
+    let yValidTag = baseYaml
+            [ "  wasser:"
+            , "    track: { max: 1 }"
+            , "    footprint:"
+            , "      by: elevation"
+            , "      rooms:"
+            , "        loc_0: 0"
+            , "    items:"
+            , "      flow: { tag: treibgut, chance: 50 }"
+            ]
+    r4 <- case decode1 (BLC.pack yValidTag) of
+            Left err -> do
+                putStrLn $ "  yaml decode failed: " ++ show err
+                pure False
+            Right (adv :: Adventure) -> case compileAdventure adv of
+                Left errs -> do
+                    putStrLn $ "  unexpected compile error: " ++ issuesText errs
+                    pure False
+                Right cr  -> expectEqual [] [ i | i <- crWarnings cr, ciCode i == "UnknownItemHelperTag" ]
+
+    pure (r1 && r2 && r3 && r4)
 
 -- | VC-11: apply_vehicle_condition and clear_vehicle_condition YAML syntax decodes and compiles to Core effects
 testVehicleConditionSugar :: IO Bool
