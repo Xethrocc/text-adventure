@@ -149,6 +149,12 @@ environment:
 - **Drain-Validierung:** `UnknownWeatherState` (initial/`to` nicht in
   `states`), `UnknownDrainVariable` (Var nicht unter `variables:`
   deklariert).
+- **Wetter-Alias auf Gefahren-Zustands-Track (E15):** Mit Stufe 2c des
+  Gefahren-Systems (`OPEN-23`) desugart `environment.weather` intern direkt
+  auf einen E14-Zustands-Track mit `var: env.weather`. Die kompilierte Ausgabe
+  bleibt zu 100% byte-identisch zur 7d-Struktur (`survival.yaml`), und alle
+  Fehlercodes (`UnknownWeatherState`, `EnvironmentVariableClash`) bleiben
+  über Alias-Remapping erhalten. `environment.drains` bleibt unverändert in 7d.
 - **Engine-Tests:** „drain stops when flag fed" — Drain stoppt bei Flag,
   Tod bei 0; „trigger cooldown gates turns" (7c) gilt auch hier.
 
@@ -517,10 +523,18 @@ hazards:
       inside: "Das Wasser steht dir bis zur Huefte."
 ```
 
-- **Verlauf (`track:`):** Verwaltet den Pegel im Wertebereich `0..max`.
-  Pro Taktintervall (`every` Züge) bewegt sich der Level mit Schrittweite `rate`
-  in Richtung `target` (geklammert an `0..max`). Ein optionales `when:`-Prädikat
-  pausiert den Takt, wenn es nicht zutrifft.
+- **Verlauf (`track:` oder `states:`):**
+  - Numerischer Verlauf (`track:`): Verwaltet den Pegel im Wertebereich `0..max`.
+    Pro Taktintervall (`every` Züge) bewegt sich der Level mit Schrittweite `rate`
+    in Richtung `target` (geklammert an `0..max`). Ein optionales `when:`-Prädikat
+    pausiert den Takt, wenn es nicht zutrifft.
+  - Zustands-Track (`states:`, Stufe 2c / E14): Diskrete Zustandsnamen (`states: [s1, s2, ...]`)
+    mit regelbasierten Übergängen (`transitions: [{when, to, effects}]`) analog 7d-Wetter.
+    Zustand wird als 0-basierter Index in `var:` (Default: `hazard.<id>.level`) geführt.
+    `to` und `initial` akzeptieren Name oder Index. Jeder Übergang kompiliert zu einem
+    `on: turn`-Trigger mit `when:`, Setzen der Zielvariable und `effects:`.
+    `stages:` (sowie `hazard_level` und `on_zone:`) akzeptieren sowohl numerische Indizes
+    als auch Zustandsnamen.
 - **Ausdehnung (`footprint:`):**
   - `elevation`: Ein Raum gehört zur Gefahrenzone, wenn `hazard.<id>.level >= schwelle`
     laut Tabelle `rooms: { <raum>: <schwelle> }`.
@@ -567,12 +581,13 @@ hazards:
 - **Validierung:** `UnknownHazard`, `HazardLevelOutOfRange`, `HazardUnknownRoom`,
   `HazardFootprintEmpty`, `HazardVariableClash`, `DuplicateHazard`, `HazardIdEmpty`,
   `UnknownSpreadFrom`, `UnknownSpreadTag`, `EveryWithoutStream`,
-  `HazardItemHelperChance`, `UnknownItemHelperTag`.
+  `HazardItemHelperChance`, `UnknownItemHelperTag`, `UnknownHazardState`,
+  `DuplicateHazardState`, `HazardStatesWithoutTransitions`, `HazardStateVarClash`.
 
 Fixture: `examples/modules/hazards.yaml` — Die versunkene Talsperre (Wasserstand
 per `elevation`, Gebirgssturm per `tag`, Einsturz des Stollen per `list`, Brand/Ausbreitung
-per `spread` inkl. `every:`-Zufall, Wirktypen-Zucker `flood:`, `landslide:`, `damage:`
-sowie Item-Helfer `flow:` [Treibholz] und `burn:` [Laub]).
+per `spread` inkl. `every:`-Zufall, Wirktypen-Zucker `flood:`, `landslide:`, `damage:`,
+Item-Helfer `flow:` [Treibholz] und `burn:` [Laub] sowie Zustands-Track `nebel`).
 
 ---
 

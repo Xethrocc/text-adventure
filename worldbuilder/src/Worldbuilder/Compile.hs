@@ -58,7 +58,7 @@ import qualified Messages as Msg
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Char (toLower, isDigit, isSpace)
-import Data.List (nub, stripPrefix, isPrefixOf, isInfixOf, minimumBy, intercalate, sort, sortOn, sortBy, find, (\\), foldl')
+import Data.List (nub, stripPrefix, isPrefixOf, isInfixOf, minimumBy, intercalate, sort, sortOn, sortBy, find, (\\), foldl', elemIndex)
 import Data.Ord (comparing)
 import Data.Maybe (mapMaybe, fromMaybe, catMaybes, isNothing, isJust, listToMaybe)
 import Data.Either (partitionEithers)
@@ -295,6 +295,8 @@ outcomeSurfaces a =
               ++ [ ("hazards." ++ hazId h ++ ".on_zone", hazOnZone h) ]
               ++ [ ("hazards." ++ hazId h ++ ".every", concatMap snd (aeeChoices ev))
                  | Just ev <- [hazEvery h] ]
+              ++ [ ("hazards." ++ hazId h ++ ".transitions", ahtEffects trn)
+                 | Just hs <- [hazStates h], trn <- ahsTransitions hs, not (null (ahtEffects trn)) ]
             | h <- hzs ]
     roomOutcomes r = concat (catMaybes [ arOnEnter r, arOnLook r, arOnExit r, arSearch r ])
     itemOutcomes i = maybe [] id (aiOnTake i) ++ concat (Map.elems (aiVerbMap i))
@@ -383,7 +385,14 @@ predicateSites a =
         , [ ("hazards." ++ hazId h ++ ".track", p)
           | Just hzs <- [advHazards a]
           , h <- hzs
-          , Just p <- [traWhen (hazTrack h)] ]
+          , Just tr <- [hazTrack h]
+          , Just p <- [traWhen tr] ]
+        , [ ("hazards." ++ hazId h ++ ".transitions", p)
+          | Just hzs <- [advHazards a]
+          , h <- hzs
+          , Just hs <- [hazStates h]
+          , trn <- ahsTransitions hs
+          , Just p <- [ahtWhen trn] ]
         ]
 
 -- | B4: evaluate a condition to 'TruthTrue' / 'TruthFalse reason' /
@@ -697,6 +706,7 @@ desugarAdventureLandslide a =
             { hazStages = [ (lvl, dList outs) | (lvl, outs) <- hazStages h ]
             , hazOnZone = dList (hazOnZone h)
             , hazEvery = fmap (\ev -> ev { aeeChoices = [ (w, dList outs) | (w, outs) <- aeeChoices ev ] }) (hazEvery h)
+            , hazStates = fmap (\hs -> hs { ahsTransitions = map (\tr -> tr { ahtEffects = dList (ahtEffects tr) }) (ahsTransitions hs) }) (hazStates h)
             }
         dVar v = v { avbOnOverflow = dList (avbOnOverflow v) }
     in a
@@ -1225,8 +1235,25 @@ checkVarNested path o =
 checkHazardNested :: String -> Aeson.Object -> [CompileIssue]
 checkHazardNested path o =
     (case KM.lookup "track" o of
-        Just (Aeson.Object to) -> checkKeys (path ++ ".track") EntHazardTrack (KM.keys to)
+        Just (Aeson.Object to) ->
+            let trkType = if KM.member "states" to then EntHazardStates else EntHazardTrack
+                transIssues = case KM.lookup "transitions" to of
+                    Just (Aeson.Array arr) ->
+                        [ issue
+                        | (i, Aeson.Object tro) <- zip [(0::Int)..] (Foldable.toList arr)
+                        , issue <- checkKeys (path ++ ".track.transitions[" ++ show i ++ "]") EntHazardTransition (KM.keys tro)
+                        ]
+                    _ -> []
+            in checkKeys (path ++ ".track") trkType (KM.keys to) ++ transIssues
         _                      -> [])
+    ++
+    (case KM.lookup "transitions" o of
+        Just (Aeson.Array arr) ->
+            [ issue
+            | (i, Aeson.Object tro) <- zip [(0::Int)..] (Foldable.toList arr)
+            , issue <- checkKeys (path ++ ".transitions[" ++ show i ++ "]") EntHazardTransition (KM.keys tro)
+            ]
+        _ -> [])
     ++
     (case KM.lookup "footprint" o of
         Just (Aeson.Object fo) -> checkKeys (path ++ ".footprint") EntHazardFootprint (KM.keys fo)
@@ -1662,33 +1689,112 @@ compileEnvironment varDefs (Just env) =
         (dErrs, dTriggers) = compileDrains varDefs (envDrains env)
     in (wErrs ++ dErrs, wTriggers ++ dTriggers, wVarDefs, wInitials)
 
--- | Weather machine: validate states/transitions, seed `env.weather`, and
---   turn each transition into an OnTurn trigger that sets the new state.
+-- | Resolve a hazard state reference (name or index) against a list of declared states.
+resolveHazardState :: [String] -> AHazardStateRef -> Maybe Int
+resolveHazardState states (HSRName s)  = elemIndex s states
+resolveHazardState states (HSRIndex i) = if i >= 0 && i < length states then Just i else Nothing
+
+-- | State-based hazard (E14) and weather alias (E15) compilation.
+--   Validates states and transitions, and emits one OnTurn trigger per transition
+--   that sets the state variable to the transition target index and executes its effects.
+compileHazardStates :: String -> AHazardStates
+                    -> ([CompileIssue], [E.TriggerDef], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+compileHazardStates hid hs =
+    let isAlias = hid == "environment.weather"
+        pathPrefix = if isAlias then "environment.weather" else "hazards." ++ hid
+        states = ahsStates hs
+        nStates = length states
+        varName = fromMaybe ("hazard." ++ hid ++ ".level") (ahsVar hs)
+
+        -- Duplicate states check
+        dupErrs =
+            [ ciError (pathPrefix ++ ".states") "DuplicateHazardState"
+                ("duplicate hazard state '" ++ st ++ "' in states list")
+            | (st, count) <- Map.toList (Map.fromListWith (+) [(s, 1 :: Int) | s <- states])
+            , count > 1
+            ]
+
+        -- Initial state check
+        refStr (HSRName s) = s
+        refStr (HSRIndex i) = show i
+
+        initErr = case resolveHazardState states (ahsInitial hs) of
+            Just _  -> []
+            Nothing ->
+                let code = if isAlias then "UnknownWeatherState" else "UnknownHazardState"
+                    msg = (if isAlias then "weather state '" else "hazard state '")
+                          ++ refStr (ahsInitial hs) ++ "' is not in 'states'"
+                in [ ciError (pathPrefix ++ ".initial") code msg ]
+
+        -- Transition target checks
+        transErrs =
+            [ let code = if isAlias then "UnknownWeatherState" else "UnknownHazardState"
+                  msg = (if isAlias then "weather state '" else "hazard state '")
+                        ++ refStr (ahtTo t) ++ "' is not in 'states'"
+              in ciError (pathPrefix ++ ".transitions." ++ show i) code msg
+            | (i, t) <- zip [0 :: Int ..] (ahsTransitions hs)
+            , resolveHazardState states (ahtTo t) == Nothing
+            ]
+
+        -- HazardStatesWithoutTransitions (warning for author-facing hazards if non-empty states but empty transitions)
+        noTransWarn =
+            [ ciWarning (pathPrefix ++ ".transitions") "HazardStatesWithoutTransitions"
+                ("hazard '" ++ hid ++ "' declares states but no transitions")
+            | not isAlias, not (null states), null (ahsTransitions hs)
+            ]
+
+        -- HazardStateVarClash: author-specified var in reserved namespace (env.* or foreign hazard.*)
+        varClashErrs = case ahsVar hs of
+            Just v | not isAlias ->
+                if "env." `isPrefixOf` v
+                then [ ciError (pathPrefix ++ ".var") "HazardStateVarClash"
+                         ("hazard variable '" ++ v ++ "' cannot use reserved 'env.*' namespace") ]
+                else if "hazard." `isPrefixOf` v && not (("hazard." ++ hid ++ ".") `isPrefixOf` v)
+                then [ ciError (pathPrefix ++ ".var") "HazardStateVarClash"
+                         ("hazard variable '" ++ v ++ "' cannot use reserved namespace of another hazard") ]
+                else []
+            _ -> []
+
+        allIssues = (if isAlias then [] else dupErrs) ++ initErr ++ transErrs ++ noTransWarn ++ varClashErrs
+
+        initIdx = fromMaybe 0 (resolveHazardState states (ahsInitial hs))
+        vdef = if isAlias
+               then E.VarDef varName (E.VTInt Nothing Nothing) (E.VVInt initIdx) [] []
+               else E.VarDef varName (E.VTInt (Just 0) (Just (max 0 (nStates - 1)))) (E.VVInt initIdx) [] []
+
+        varDefs = Map.singleton varName vdef
+        initials = Map.singleton varName (E.VVInt initIdx)
+
+        trigIdPrefix = if isAlias then "environment.weather." else "hazard." ++ hid ++ "."
+        transitions =
+            [ E.TriggerDef (trigIdPrefix ++ show i) E.OnTurn (ahtWhen t)
+                (E.SetValue (E.VRVariable varName) (E.EVInt toIdx)
+                    : map compileAActionOutcome (ahtEffects t))
+                False 0 1 [] []
+            | (i, t) <- zip [0 :: Int ..] (ahsTransitions hs)
+            , Just toIdx <- [resolveHazardState states (ahtTo t)]
+            ]
+    in (allIssues, transitions, varDefs, initials)
+
+-- | Weather machine: desugars to E14 hazard states with byte-identical contract.
 compileWeather :: Maybe AWeatherDef
                -> ([CompileIssue], [E.TriggerDef], Map.Map String E.VarDef, Map.Map String E.VariableValue)
 compileWeather Nothing = ([], [], Map.empty, Map.empty)
 compileWeather (Just wd) =
-    let states = weaStates wd
-        stateIndex s = length (takeWhile (/= s) states)
-        badInitial = if weaInitial wd `elem` states
-                        then [] else [ ciError "environment.weather.initial" "UnknownWeatherState"
-                            ("weather state '" ++ weaInitial wd ++ "' is not in 'states'") ]
-        badTransitions =
-            [ ciError ("environment.weather.transitions." ++ show i) "UnknownWeatherState"
-                ("weather state '" ++ wtTo t ++ "' is not in 'states'")
-            | (i, t) <- zip [0 :: Int ..] (weaTransitions wd)
-            , wtTo t `notElem` states ]
-        initIdx = stateIndex (weaInitial wd)
-        varDefs = Map.singleton "env.weather"
-            (E.VarDef "env.weather" (E.VTInt Nothing Nothing) (E.VVInt initIdx) [] [])
-        initials = Map.singleton "env.weather" (E.VVInt initIdx)
-        transitions =
-            [ E.TriggerDef ("environment.weather." ++ show i) E.OnTurn (wtWhen t)
-                (E.SetValue (E.VRVariable "env.weather") (E.EVInt (stateIndex (wtTo t)))
-                    : map compileAActionOutcome (wtEffects t)) False 0 1 [] []
-            | (i, t) <- zip [0 :: Int ..] (weaTransitions wd)
-            , stateIndex (wtTo t) >= 0 ]
-    in (badInitial ++ badTransitions, transitions, varDefs, initials)
+    let hs = AHazardStates
+            { ahsStates = weaStates wd
+            , ahsInitial = HSRName (weaInitial wd)
+            , ahsVar = Just "env.weather"
+            , ahsTransitions =
+                [ AHazardTransition
+                    { ahtWhen = wtWhen t
+                    , ahtTo = HSRName (wtTo t)
+                    , ahtEffects = wtEffects t
+                    }
+                | t <- weaTransitions wd
+                ]
+            }
+    in compileHazardStates "environment.weather" hs
 
 -- | Each drain: OnTurn trigger whose condition is the drain's `when`, whose
 --   effects move the variable then check `var ≤ 0` to fire at_zero outcomes.
@@ -2078,44 +2184,38 @@ compileHazards allItems allRooms (Just hzs) =
 
 compileOneHazard :: [AItem] -> Map.Map String E.Room -> AHazard
                  -> ([CompileIssue], [E.TriggerDef], Map.Map String E.VarDef, Map.Map String E.VariableValue)
-compileOneHazard allItems allRooms h =
-    let hid = hazId h
-        tr = hazTrack h
-        fp = hazFootprint h
-        mx = traMax tr
-        st = traStart tr
-        rt = traRate tr
-        ev = traEvery tr
-        tg = traTarget tr
+compileOneHazard allItems allRooms h = case (hazTrack h, hazStates h) of
+    (Just tr, Nothing) -> compileNumericHazard allItems allRooms h tr
+    (Nothing, Just hs) -> compileStateHazard allItems allRooms h hs
+    (Just _, Just _)   ->
+        ( [ ciError ("hazards." ++ hazId h) "HazardBothTrackAndStates"
+              ("hazard '" ++ hazId h ++ "' cannot declare both 'track' and 'states'") ]
+        , []
+        , Map.empty
+        , Map.empty
+        )
+    (Nothing, Nothing) ->
+        ( [ ciError ("hazards." ++ hazId h) "HazardMissingTrack"
+              ("hazard '" ++ hazId h ++ "' must declare either 'track' or 'states'") ]
+        , []
+        , Map.empty
+        , Map.empty
+        )
 
-        -- Validation
-        trackRangeErrs =
-            [ ciError ("hazards." ++ hid ++ ".track.max") "HazardLevelOutOfRange"
-                "hazard track max must be positive (> 0)"
-            | mx <= 0 ]
-            ++
-            [ ciError ("hazards." ++ hid ++ ".track.start") "HazardLevelOutOfRange"
-                ("hazard track start " ++ show st ++ " must be in 0..max (" ++ show mx ++ ")")
-            | mx > 0, st < 0 || st > mx ]
-            ++
-            [ ciError ("hazards." ++ hid ++ ".track.target") "HazardLevelOutOfRange"
-                ("hazard track target " ++ show tg ++ " must be in 0..max (" ++ show mx ++ ")")
-            | mx > 0, tg < 0 || tg > mx ]
-            ++
-            [ ciError ("hazards." ++ hid ++ ".track.rate") "HazardLevelOutOfRange"
-                "hazard track rate must be positive (> 0)"
-            | rt <= 0 ]
-            ++
-            [ ciError ("hazards." ++ hid ++ ".track.every") "HazardLevelOutOfRange"
-                "hazard track every must be positive (> 0)"
-            | ev <= 0 ]
-
-        stageRangeErrs =
-            [ ciError ("hazards." ++ hid ++ ".stages." ++ show lvl) "HazardLevelOutOfRange"
-                ("stage level " ++ show lvl ++ " is outside 0..max (" ++ show mx ++ ")")
-            | mx > 0, (lvl, _) <- hazStages h, lvl < 0 || lvl > mx ]
-
-        (footprintErrs, fpRoomsList) = case fpBy fp of
+compileHazardFootprint :: String -> String -> Int -> Map.Map String E.Room -> AHazard -> AFootprint
+                       -> ( [CompileIssue]
+                          , [String]
+                          , String
+                          , Map.Map String E.VarDef
+                          , Map.Map String E.VariableValue
+                          , [E.TriggerDef]
+                          , String -> E.Predicate
+                          , [E.TriggerDef]
+                          , [E.TriggerDef]
+                          , [E.TriggerDef]
+                          )
+compileHazardFootprint hid varName mx allRooms h fp =
+    let (footprintErrs, fpRoomsList) = case fpBy fp of
             FPElevation ->
                 let rMap = fpRooms fp
                     emptyErr = [ ciError ("hazards." ++ hid ++ ".footprint.rooms") "HazardFootprintEmpty"
@@ -2192,65 +2292,6 @@ compileOneHazard allItems allRooms h =
                                 rms = [ r | (r, _, _) <- stNodes ]
                             in (tagErrs ++ chanceErrs, rms)
 
-        everyErrs = case hazEvery h of
-            Nothing -> []
-            Just evDef ->
-                [ ciError ("hazards." ++ hid ++ ".every.stream") "EveryWithoutStream"
-                    "hazard every definition missing stream name"
-                | null (aeeStream evDef) ]
-                ++
-                [ ciError ("hazards." ++ hid ++ ".every.period") "HazardLevelOutOfRange"
-                    ("hazard every period " ++ show (aeePeriod evDef) ++ " must be positive (> 0)")
-                | aeePeriod evDef <= 0 ]
-
-        allTags = Set.fromList (concatMap aiTagsAnyState allItems)
-        itemIssues = case hazItems h of
-            Nothing -> []
-            Just itms ->
-                let flowChanceErrs = case ahiFlow itms of
-                        Just f | hihChance f < 0 || hihChance f > 100 ->
-                            [ ciError ("hazards." ++ hid ++ ".items.flow.chance") "HazardItemHelperChance"
-                                ("flow chance " ++ show (hihChance f) ++ " must be in 0..100") ]
-                        _ -> []
-                    flowTagWarns = case ahiFlow itms of
-                        Just f | hihTag f `Set.notMember` allTags ->
-                            [ ciWarning ("hazards." ++ hid ++ ".items.flow.tag") "UnknownItemHelperTag"
-                                ("flow helper specifies tag '" ++ hihTag f ++ "', which matches no declared items") ]
-                        _ -> []
-                    burnChanceErrs = case ahiBurn itms of
-                        Just b | hihChance b < 0 || hihChance b > 100 ->
-                            [ ciError ("hazards." ++ hid ++ ".items.burn.chance") "HazardItemHelperChance"
-                                ("burn chance " ++ show (hihChance b) ++ " must be in 0..100") ]
-                        _ -> []
-                    burnTagWarns = case ahiBurn itms of
-                        Just b | hihTag b `Set.notMember` allTags ->
-                            [ ciWarning ("hazards." ++ hid ++ ".items.burn.tag") "UnknownItemHelperTag"
-                                ("burn helper specifies tag '" ++ hihTag b ++ "', which matches no declared items") ]
-                        _ -> []
-                in flowChanceErrs ++ flowTagWarns ++ burnChanceErrs ++ burnTagWarns
-
-        allIssues = trackRangeErrs ++ stageRangeErrs ++ footprintErrs ++ everyErrs ++ itemIssues
-
-        -- Variables
-        levelVar = "hazard." ++ hid ++ ".level"
-        targetVar = "hazard." ++ hid ++ ".target"
-        clockVar = "hazard." ++ hid ++ ".clock"
-        prevVar = "hazard." ++ hid ++ ".prev"
-
-        boundMax = max 1 mx
-        baseVarDefs = Map.fromList
-            [ (levelVar,  E.VarDef levelVar  (E.VTInt (Just 0) (Just boundMax)) (E.VVInt st) [] [])
-            , (targetVar, E.VarDef targetVar (E.VTInt (Just 0) (Just boundMax)) (E.VVInt tg) [] [])
-            , (clockVar,  E.VarDef clockVar  (E.VTInt (Just 0) Nothing)         (E.VVInt 0)  [] [])
-            , (prevVar,   E.VarDef prevVar   (E.VTInt (Just 0) (Just boundMax)) (E.VVInt st) [] [])
-            ]
-        baseInitials = Map.fromList
-            [ (levelVar,  E.VVInt st)
-            , (targetVar, E.VVInt tg)
-            , (clockVar,  E.VVInt 0)
-            , (prevVar,   E.VVInt st)
-            ]
-
         fromRoomId = fromMaybe "" (fpFrom fp)
         spreadTree = case fpBy fp of
             FPSpread | fromRoomId `Map.member` allRooms ->
@@ -2274,49 +2315,6 @@ compileOneHazard allItems allRooms h =
                 ]
             ]
 
-        everyClockVar = "hazard." ++ hid ++ ".every.clock"
-        everyVarDefs = case hazEvery h of
-            Just _  -> Map.singleton everyClockVar (E.VarDef everyClockVar (E.VTInt (Just 0) Nothing) (E.VVInt 0) [] [])
-            Nothing -> Map.empty
-        everyInitials = case hazEvery h of
-            Just _  -> Map.singleton everyClockVar (E.VVInt 0)
-            Nothing -> Map.empty
-
-        varDefs = Map.unions [baseVarDefs, spreadVarDefs, everyVarDefs]
-        initials = Map.unions [baseInitials, spreadInitials, everyInitials]
-
-        -- Tick Trigger
-        pausedFlag = "hazard." ++ hid ++ ".paused"
-        notPaused = E.PNot (E.HasFlag pausedFlag)
-        tickCond = case traWhen tr of
-            Just w  -> Just (E.PAll [notPaused, w])
-            Nothing -> Just notPaused
-
-        stepEffect =
-            E.Conditional
-                (E.Compare (E.VRVariable levelVar) E.CLt (E.VRVariable targetVar))
-                (E.ComputeValue (E.VRVariable levelVar)
-                    (E.EMin (E.EVar targetVar) (E.EMin (E.ELit mx) (E.EAdd (E.EVar levelVar) (E.ELit rt)))))
-                (E.Conditional
-                    (E.Compare (E.VRVariable levelVar) E.CGt (E.VRVariable targetVar))
-                    (E.ComputeValue (E.VRVariable levelVar)
-                        (E.EMax (E.EVar targetVar) (E.EMax (E.ELit 0) (E.ESub (E.EVar levelVar) (E.ELit rt)))))
-                    (E.SetValue (E.VRFlag pausedFlag) (E.EVString "false")))
-
-        tickEffects =
-            [ E.ModifyValue (E.VRVariable clockVar) 1
-            , E.Conditional
-                (E.CompareVar clockVar E.CGte ev)
-                (E.Sequence
-                    [ E.SetValue (E.VRVariable clockVar) (E.EVInt 0)
-                    , stepEffect
-                    ])
-                E.Noop
-            ]
-
-        tickTrigger = E.TriggerDef ("hazard." ++ hid ++ ".tick") E.OnTurn tickCond tickEffects False 0 1 [] []
-
-        -- Spread Trigger (OPEN-23 Stufe 2, E8)
         spreadEffects =
             [ let zoneVar = "hazard." ++ hid ++ ".zone." ++ v
                   reachedVar = "hazard." ++ hid ++ ".reached." ++ v
@@ -2348,11 +2346,11 @@ compileOneHazard allItems allRooms h =
               in E.Conditional
                   (E.CompareVar reachedVar E.CEq 0)
                   (E.Conditional
-                      (E.PAll [E.CompareVar levelVar E.CGte d, E.CompareVar reachedParent E.CEq 1])
+                      (E.PAll [E.CompareVar varName E.CGte d, E.CompareVar reachedParent E.CEq 1])
                       rollEffect
                       E.Noop)
                   (E.Conditional
-                      (E.PAll [E.CompareVar reachedVar E.CEq 1, E.CompareVar levelVar E.CGte d])
+                      (E.PAll [E.CompareVar reachedVar E.CEq 1, E.CompareVar varName E.CGte d])
                       (E.SetValue (E.VRVariable zoneVar) (E.EVInt 1))
                       (E.SetValue (E.VRVariable zoneVar) (E.EVInt 0)))
             | (v, u, d) <- spreadTree
@@ -2367,37 +2365,20 @@ compileOneHazard allItems allRooms h =
             FPSpread -> [ E.TriggerDef ("hazard." ++ hid ++ ".spread") E.OnTurn Nothing spreadEffects False 0 1 [] [] ]
             _        -> []
 
-        -- Stage Trigger
-        stageEffects =
-            [ E.Conditional
-                (E.PAll
-                    [ E.CompareVar levelVar E.CEq lvl
-                    , E.PNot (E.CompareVar prevVar E.CEq lvl)
-                    ])
-                (compileOutcomes outs)
-                E.Noop
-            | (lvl, outs) <- hazStages h
-            ]
-            ++ [ E.ComputeValue (E.VRVariable prevVar) (E.EVar levelVar) ]
-
-        stageTrigger = E.TriggerDef ("hazard." ++ hid ++ ".stage") E.OnTurn Nothing stageEffects False 0 1 [] []
-
-        -- Footprint Condition for a given room
         roomCondition r = case fpBy fp of
             FPElevation ->
                 let th = Map.findWithDefault 0 r (fpRooms fp)
-                in E.CompareVar levelVar E.CGte th
+                in E.CompareVar varName E.CGte th
             FPList ->
                 let lvls = [ lvl | (lvl, rms) <- fpStagesRooms fp, r `elem` rms ]
                 in case lvls of
-                    [lvl] -> E.CompareVar levelVar E.CEq lvl
-                    _     -> E.PAny [ E.CompareVar levelVar E.CEq lvl | lvl <- lvls ]
+                    [lvl] -> E.CompareVar varName E.CEq lvl
+                    _     -> E.PAny [ E.CompareVar varName E.CEq lvl | lvl <- lvls ]
             FPTag ->
-                E.CompareVar levelVar E.CGt 0
+                E.CompareVar varName E.CGt 0
             FPSpread ->
                 E.CompareVar ("hazard." ++ hid ++ ".zone." ++ r) E.CEq 1
 
-        -- OnZone Triggers (per room in footprint)
         zoneTriggers =
             if null (hazOnZone h)
             then []
@@ -2409,7 +2390,6 @@ compileOneHazard allItems allRooms h =
                  , Map.member r allRooms
                  ]
 
-        -- Telegraph Triggers
         insideTriggers = case hazTelegraph h >>= telInside of
             Just inMsg ->
                 [ E.TriggerDef ("hazard." ++ hid ++ ".telegraph.in." ++ r) E.OnTurn
@@ -2455,6 +2435,40 @@ compileOneHazard allItems allRooms h =
                 ]
             Nothing -> []
 
+    in ( footprintErrs
+       , fpRoomsList
+       , fromRoomId
+       , spreadVarDefs
+       , spreadInitials
+       , spreadTriggers
+       , roomCondition
+       , zoneTriggers
+       , insideTriggers
+       , adjTriggers
+       )
+
+compileHazardEvery :: String -> Maybe E.Predicate -> AHazard
+                   -> ([CompileIssue], Map.Map String E.VarDef, Map.Map String E.VariableValue, [E.TriggerDef])
+compileHazardEvery hid tickCond h =
+    let everyErrs = case hazEvery h of
+            Nothing -> []
+            Just evDef ->
+                [ ciError ("hazards." ++ hid ++ ".every.stream") "EveryWithoutStream"
+                    "hazard every definition missing stream name"
+                | null (aeeStream evDef) ]
+                ++
+                [ ciError ("hazards." ++ hid ++ ".every.period") "HazardLevelOutOfRange"
+                    ("hazard every period " ++ show (aeePeriod evDef) ++ " must be positive (> 0)")
+                | aeePeriod evDef <= 0 ]
+
+        everyClockVar = "hazard." ++ hid ++ ".every.clock"
+        everyVarDefs = case hazEvery h of
+            Just _  -> Map.singleton everyClockVar (E.VarDef everyClockVar (E.VTInt (Just 0) Nothing) (E.VVInt 0) [] [])
+            Nothing -> Map.empty
+        everyInitials = case hazEvery h of
+            Just _  -> Map.singleton everyClockVar (E.VVInt 0)
+            Nothing -> Map.empty
+
         everyTriggers = case hazEvery h of
             Just evDef | not (null (aeeStream evDef)) && aeePeriod evDef > 0 ->
                 let clkVar = "hazard." ++ hid ++ ".every.clock"
@@ -2471,110 +2485,308 @@ compileOneHazard allItems allRooms h =
                         ]
                 in [ E.TriggerDef ("hazard." ++ hid ++ ".every") E.OnTurn tickCond effs False 0 1 [] [] ]
             _ -> []
+    in (everyErrs, everyVarDefs, everyInitials, everyTriggers)
 
-        -- Item Helper Trigger (OPEN-23 Stufe 2b, E11-E13)
-        distMap = if not (null fromRoomId) && fromRoomId `Map.member` allRooms
-                  then bfsDistances allRooms fromRoomId (fpNeedsTag fp)
-                  else Map.empty
+compileHazardItemHelper :: String -> Maybe E.Predicate -> [AItem] -> Map.Map String E.Room
+                        -> [String] -> Map.Map String Int -> (String -> E.Predicate) -> AHazardItems
+                        -> ([CompileIssue], [E.TriggerDef])
+compileHazardItemHelper hid tickCond allItems allRooms fpRoomsList distMap roomCondition itms =
+    let allTags = Set.fromList (concatMap aiTagsAnyState allItems)
+        flowChanceErrs = case ahiFlow itms of
+            Just f | hihChance f < 0 || hihChance f > 100 ->
+                [ ciError ("hazards." ++ hid ++ ".items.flow.chance") "HazardItemHelperChance"
+                    ("flow chance " ++ show (hihChance f) ++ " must be in 0..100") ]
+            _ -> []
+        flowTagWarns = case ahiFlow itms of
+            Just f | hihTag f `Set.notMember` allTags ->
+                [ ciWarning ("hazards." ++ hid ++ ".items.flow.tag") "UnknownItemHelperTag"
+                    ("flow helper specifies tag '" ++ hihTag f ++ "', which matches no declared items") ]
+            _ -> []
+        burnChanceErrs = case ahiBurn itms of
+            Just b | hihChance b < 0 || hihChance b > 100 ->
+                [ ciError ("hazards." ++ hid ++ ".items.burn.chance") "HazardItemHelperChance"
+                    ("burn chance " ++ show (hihChance b) ++ " must be in 0..100") ]
+            _ -> []
+        burnTagWarns = case ahiBurn itms of
+            Just b | hihTag b `Set.notMember` allTags ->
+                [ ciWarning ("hazards." ++ hid ++ ".items.burn.tag") "UnknownItemHelperTag"
+                    ("burn helper specifies tag '" ++ hihTag b ++ "', which matches no declared items") ]
+            _ -> []
+        itemIssues = flowChanceErrs ++ flowTagWarns ++ burnChanceErrs ++ burnTagWarns
 
-        itemTriggers = case hazItems h of
+        flowEffs = case ahiFlow itms of
             Nothing -> []
-            Just itms ->
-                let flowEffs = case ahiFlow itms of
-                        Nothing -> []
-                        Just fh ->
-                            let tag = hihTag fh
-                                ch = max 0 (min 100 (hihChance fh))
-                                matchingItems = sortOn aiId [ it | it <- allItems, tag `elem` aiTagsAnyState it ]
-                                roomDist r = Map.lookup r distMap
-                                cmpRooms r1 r2 = case (roomDist r1, roomDist r2) of
-                                    (Just d1, Just d2) -> compare d2 d1 <> compare r1 r2
-                                    (Just _, Nothing)  -> LT
-                                    (Nothing, Just _)  -> GT
-                                    (Nothing, Nothing) -> compare r1 r2
-                                orderedRooms = sortBy cmpRooms (filter (`Map.member` allRooms) fpRoomsList)
-                                roomEff r =
-                                    let d = Map.findWithDefault (-1) r distMap
-                                        outgoing = case Map.lookup r allRooms of
-                                            Just rm -> sort (nub [ E.exitRoomID ex
-                                                                 | ex <- Map.elems (E.roomConnections rm)
-                                                                 , Map.member (E.exitRoomID ex) allRooms
-                                                                 ])
-                                            Nothing -> []
-                                        candidates = [ nxt | nxt <- outgoing
-                                                           , nxt `elem` fpRoomsList
-                                                           , case Map.lookup nxt distMap of
-                                                               Just dNxt -> dNxt > d
-                                                               Nothing   -> False
-                                                     ]
-                                        rName = case Map.lookup r allRooms of
-                                            Just rm -> if null (E.roomName rm) then r else E.roomName rm
-                                            Nothing -> r
-                                        itemEff it =
-                                            let itName = if null (aiName it) then aiId it else aiName it
-                                                moveEff nxt =
-                                                    let nxtName = case Map.lookup nxt allRooms of
-                                                            Just nm -> if null (E.roomName nm) then nxt else E.roomName nm
-                                                            Nothing -> nxt
-                                                    in E.Sequence $
-                                                        maybe [] (\m -> [E.SendMessage (substPlaceholders [("{item}", itName), ("{room}", rName), ("{from_room}", rName), ("{to_room}", nxtName)] m)]) (hihMsg fh)
-                                                        ++ [E.PlaceItem (aiId it) (E.InRoom nxt)]
-                                                successBr = foldr (\nxt elseBr -> E.Conditional (roomCondition nxt) (moveEff nxt) elseBr) E.Noop candidates
-                                                rollEff = case ch of
-                                                    100 -> successBr
-                                                    0   -> E.Noop
-                                                    _   -> E.RandomChoiceOn ("hazard." ++ hid ++ ".items")
-                                                               [ (ch, successBr)
-                                                               , (100 - ch, E.Noop)
-                                                               ]
-                                            in if null candidates || ch == 0
-                                               then E.Noop
-                                               else E.Conditional (E.Location (E.ActorEntity (aiId it)) r) rollEff E.Noop
-                                        effs = filter (/= E.Noop) [ itemEff it | it <- matchingItems ]
-                                    in if null effs
-                                       then E.Noop
-                                       else E.Conditional (roomCondition r) (E.Sequence effs) E.Noop
-                            in filter (/= E.Noop) [ roomEff r | r <- orderedRooms ]
+            Just fh ->
+                let tag = hihTag fh
+                    ch = max 0 (min 100 (hihChance fh))
+                    matchingItems = sortOn aiId [ it | it <- allItems, tag `elem` aiTagsAnyState it ]
+                    roomDist r = Map.lookup r distMap
+                    cmpRooms r1 r2 = case (roomDist r1, roomDist r2) of
+                        (Just d1, Just d2) -> compare d2 d1 <> compare r1 r2
+                        (Just _, Nothing)  -> LT
+                        (Nothing, Just _)  -> GT
+                        (Nothing, Nothing) -> compare r1 r2
+                    orderedRooms = sortBy cmpRooms (filter (`Map.member` allRooms) fpRoomsList)
+                    roomEff r =
+                        let d = Map.findWithDefault (-1) r distMap
+                            outgoing = case Map.lookup r allRooms of
+                                Just rm -> sort (nub [ E.exitRoomID ex
+                                                     | ex <- Map.elems (E.roomConnections rm)
+                                                     , Map.member (E.exitRoomID ex) allRooms
+                                                     ])
+                                Nothing -> []
+                            candidates = [ nxt | nxt <- outgoing
+                                               , nxt `elem` fpRoomsList
+                                               , case Map.lookup nxt distMap of
+                                                   Just dNxt -> dNxt > d
+                                                   Nothing   -> False
+                                         ]
+                            rName = case Map.lookup r allRooms of
+                                Just rm -> if null (E.roomName rm) then r else E.roomName rm
+                                Nothing -> r
+                            itemEff it =
+                                let itName = if null (aiName it) then aiId it else aiName it
+                                    moveEff nxt =
+                                        let nxtName = case Map.lookup nxt allRooms of
+                                                Just nm -> if null (E.roomName nm) then nxt else E.roomName nm
+                                                Nothing -> nxt
+                                        in E.Sequence $
+                                            maybe [] (\m -> [E.SendMessage (substPlaceholders [("{item}", itName), ("{room}", rName), ("{from_room}", rName), ("{to_room}", nxtName)] m)]) (hihMsg fh)
+                                            ++ [E.PlaceItem (aiId it) (E.InRoom nxt)]
+                                    successBr = foldr (\nxt elseBr -> E.Conditional (roomCondition nxt) (moveEff nxt) elseBr) E.Noop candidates
+                                    rollEff = case ch of
+                                        100 -> successBr
+                                        0   -> E.Noop
+                                        _   -> E.RandomChoiceOn ("hazard." ++ hid ++ ".items")
+                                                   [ (ch, successBr)
+                                                   , (100 - ch, E.Noop)
+                                                   ]
+                                in if null candidates || ch == 0
+                                   then E.Noop
+                                   else E.Conditional (E.Location (E.ActorEntity (aiId it)) r) rollEff E.Noop
+                            effs = filter (/= E.Noop) [ itemEff it | it <- matchingItems ]
+                        in if null effs
+                           then E.Noop
+                           else E.Conditional (roomCondition r) (E.Sequence effs) E.Noop
+                in filter (/= E.Noop) [ roomEff r | r <- orderedRooms ]
 
-                    burnEffs = case ahiBurn itms of
-                        Nothing -> []
-                        Just bh ->
-                            let tag = hihTag bh
-                                ch = max 0 (min 100 (hihChance bh))
-                                matchingItems = sortOn aiId [ it | it <- allItems, tag `elem` aiTagsAnyState it ]
-                                orderedRooms = sort (filter (`Map.member` allRooms) fpRoomsList)
-                                roomEff r =
-                                    let rName = case Map.lookup r allRooms of
-                                            Just rm -> if null (E.roomName rm) then r else E.roomName rm
-                                            Nothing -> r
-                                        itemEff it =
-                                            let itName = if null (aiName it) then aiId it else aiName it
-                                                burnSuccess = E.Sequence $
-                                                    maybe [] (\m -> [E.SendMessage (substPlaceholders [("{item}", itName), ("{room}", rName)] m)]) (hihMsg bh)
-                                                    ++ [E.MoveEntity (aiId it) E.Removed]
-                                                rollEff = case ch of
-                                                    100 -> burnSuccess
-                                                    0   -> E.Noop
-                                                    _   -> E.RandomChoiceOn ("hazard." ++ hid ++ ".items")
-                                                               [ (ch, burnSuccess)
-                                                               , (100 - ch, E.Noop)
-                                                               ]
-                                            in if ch == 0
-                                               then E.Noop
-                                               else E.Conditional (E.Location (E.ActorEntity (aiId it)) r) rollEff E.Noop
-                                        effs = filter (/= E.Noop) [ itemEff it | it <- matchingItems ]
-                                    in if null effs
-                                       then E.Noop
-                                       else E.Conditional (roomCondition r) (E.Sequence effs) E.Noop
-                            in filter (/= E.Noop) [ roomEff r | r <- orderedRooms ]
+        burnEffs = case ahiBurn itms of
+            Nothing -> []
+            Just bh ->
+                let tag = hihTag bh
+                    ch = max 0 (min 100 (hihChance bh))
+                    matchingItems = sortOn aiId [ it | it <- allItems, tag `elem` aiTagsAnyState it ]
+                    orderedRooms = sort (filter (`Map.member` allRooms) fpRoomsList)
+                    roomEff r =
+                        let rName = case Map.lookup r allRooms of
+                                Just rm -> if null (E.roomName rm) then r else E.roomName rm
+                                Nothing -> r
+                            itemEff it =
+                                let itName = if null (aiName it) then aiId it else aiName it
+                                    burnSuccess = E.Sequence $
+                                        maybe [] (\m -> [E.SendMessage (substPlaceholders [("{item}", itName), ("{room}", rName)] m)]) (hihMsg bh)
+                                        ++ [E.MoveEntity (aiId it) E.Removed]
+                                    rollEff = case ch of
+                                        100 -> burnSuccess
+                                        0   -> E.Noop
+                                        _   -> E.RandomChoiceOn ("hazard." ++ hid ++ ".items")
+                                                   [ (ch, burnSuccess)
+                                                   , (100 - ch, E.Noop)
+                                                   ]
+                                in if ch == 0
+                                   then E.Noop
+                                   else E.Conditional (E.Location (E.ActorEntity (aiId it)) r) rollEff E.Noop
+                            effs = filter (/= E.Noop) [ itemEff it | it <- matchingItems ]
+                        in if null effs
+                           then E.Noop
+                           else E.Conditional (roomCondition r) (E.Sequence effs) E.Noop
+                in filter (/= E.Noop) [ roomEff r | r <- orderedRooms ]
 
-                    allEffs = flowEffs ++ burnEffs
-                in if null allEffs
-                   then []
-                   else [ E.TriggerDef ("hazard." ++ hid ++ ".items") E.OnTurn tickCond allEffs False 0 1 [] [] ]
+        allEffs = flowEffs ++ burnEffs
+        itemTriggers = if null allEffs
+                       then []
+                       else [ E.TriggerDef ("hazard." ++ hid ++ ".items") E.OnTurn tickCond allEffs False 0 1 [] [] ]
+    in (itemIssues, itemTriggers)
 
+compileNumericHazard :: [AItem] -> Map.Map String E.Room -> AHazard -> ATrack
+                     -> ([CompileIssue], [E.TriggerDef], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+compileNumericHazard allItems allRooms h tr =
+    let hid = hazId h
+        mx = traMax tr
+        st = traStart tr
+        rt = traRate tr
+        ev = traEvery tr
+        tg = traTarget tr
+
+        trackRangeErrs =
+            [ ciError ("hazards." ++ hid ++ ".track.max") "HazardLevelOutOfRange"
+                "hazard track max must be positive (> 0)"
+            | mx <= 0 ]
+            ++
+            [ ciError ("hazards." ++ hid ++ ".track.start") "HazardLevelOutOfRange"
+                ("hazard track start " ++ show st ++ " must be in 0..max (" ++ show mx ++ ")")
+            | mx > 0, st < 0 || st > mx ]
+            ++
+            [ ciError ("hazards." ++ hid ++ ".track.target") "HazardLevelOutOfRange"
+                ("hazard track target " ++ show tg ++ " must be in 0..max (" ++ show mx ++ ")")
+            | mx > 0, tg < 0 || tg > mx ]
+            ++
+            [ ciError ("hazards." ++ hid ++ ".track.rate") "HazardLevelOutOfRange"
+                "hazard track rate must be positive (> 0)"
+            | rt <= 0 ]
+            ++
+            [ ciError ("hazards." ++ hid ++ ".track.every") "HazardLevelOutOfRange"
+                "hazard track every must be positive (> 0)"
+            | ev <= 0 ]
+
+        stageRangeErrs =
+            [ ciError ("hazards." ++ hid ++ ".stages." ++ show lvl) "HazardLevelOutOfRange"
+                ("stage level " ++ show lvl ++ " is outside 0..max (" ++ show mx ++ ")")
+            | mx > 0, (lvl, _) <- hazStages h, lvl < 0 || lvl > mx ]
+
+        levelVar = "hazard." ++ hid ++ ".level"
+        targetVar = "hazard." ++ hid ++ ".target"
+        clockVar = "hazard." ++ hid ++ ".clock"
+        prevVar = "hazard." ++ hid ++ ".prev"
+
+        boundMax = max 1 mx
+        baseVarDefs = Map.fromList
+            [ (levelVar,  E.VarDef levelVar  (E.VTInt (Just 0) (Just boundMax)) (E.VVInt st) [] [])
+            , (targetVar, E.VarDef targetVar (E.VTInt (Just 0) (Just boundMax)) (E.VVInt tg) [] [])
+            , (clockVar,  E.VarDef clockVar  (E.VTInt (Just 0) Nothing)         (E.VVInt 0)  [] [])
+            , (prevVar,   E.VarDef prevVar   (E.VTInt (Just 0) (Just boundMax)) (E.VVInt st) [] [])
+            ]
+        baseInitials = Map.fromList
+            [ (levelVar,  E.VVInt st)
+            , (targetVar, E.VVInt tg)
+            , (clockVar,  E.VVInt 0)
+            , (prevVar,   E.VVInt st)
+            ]
+
+        (fpIssues, fpRoomsList, fromRoomId, spreadVarDefs, spreadInitials, spreadTriggers, roomCondition, zoneTriggers, insideTriggers, adjTriggers) =
+            case hazFootprint h of
+                Nothing -> ([], [], "", Map.empty, Map.empty, [], const (E.PAny []), [], [], [])
+                Just fp -> compileHazardFootprint hid levelVar mx allRooms h fp
+
+        pausedFlag = "hazard." ++ hid ++ ".paused"
+        notPaused = E.PNot (E.HasFlag pausedFlag)
+        tickCond = case traWhen tr of
+            Just w  -> Just (E.PAll [notPaused, w])
+            Nothing -> Just notPaused
+
+        stepEffect =
+            E.Conditional
+                (E.Compare (E.VRVariable levelVar) E.CLt (E.VRVariable targetVar))
+                (E.ComputeValue (E.VRVariable levelVar)
+                    (E.EMin (E.EVar targetVar) (E.EMin (E.ELit mx) (E.EAdd (E.EVar levelVar) (E.ELit rt)))))
+                (E.Conditional
+                    (E.Compare (E.VRVariable levelVar) E.CGt (E.VRVariable targetVar))
+                    (E.ComputeValue (E.VRVariable levelVar)
+                        (E.EMax (E.EVar targetVar) (E.EMax (E.ELit 0) (E.ESub (E.EVar levelVar) (E.ELit rt)))))
+                    (E.SetValue (E.VRFlag pausedFlag) (E.EVString "false")))
+
+        tickEffects =
+            [ E.ModifyValue (E.VRVariable clockVar) 1
+            , E.Conditional
+                (E.CompareVar clockVar E.CGte ev)
+                (E.Sequence
+                    [ E.SetValue (E.VRVariable clockVar) (E.EVInt 0)
+                    , stepEffect
+                    ])
+                E.Noop
+            ]
+
+        tickTrigger = E.TriggerDef ("hazard." ++ hid ++ ".tick") E.OnTurn tickCond tickEffects False 0 1 [] []
+
+        stageEffects =
+            [ E.Conditional
+                (E.PAll
+                    [ E.CompareVar levelVar E.CEq lvl
+                    , E.PNot (E.CompareVar prevVar E.CEq lvl)
+                    ])
+                (compileOutcomes outs)
+                E.Noop
+            | (lvl, outs) <- hazStages h
+            ]
+            ++ [ E.ComputeValue (E.VRVariable prevVar) (E.EVar levelVar) ]
+
+        stageTrigger = E.TriggerDef ("hazard." ++ hid ++ ".stage") E.OnTurn Nothing stageEffects False 0 1 [] []
+
+        (evIssues, evVarDefs, evInitials, everyTriggers) = compileHazardEvery hid tickCond h
+
+        distMap = case hazFootprint h of
+            Just fp | not (null fromRoomId) && fromRoomId `Map.member` allRooms ->
+                bfsDistances allRooms fromRoomId (fpNeedsTag fp)
+            _ -> Map.empty
+
+        (itemIssues, itemTriggers) = case hazItems h of
+            Nothing   -> ([], [])
+            Just itms -> compileHazardItemHelper hid tickCond allItems allRooms fpRoomsList distMap roomCondition itms
+
+        allIssues = trackRangeErrs ++ stageRangeErrs ++ fpIssues ++ evIssues ++ itemIssues
         allTriggers = [tickTrigger] ++ spreadTriggers ++ [stageTrigger] ++ itemTriggers ++ zoneTriggers ++ insideTriggers ++ adjTriggers ++ everyTriggers
+        varDefs = Map.unions [baseVarDefs, spreadVarDefs, evVarDefs]
+        initials = Map.unions [baseInitials, spreadInitials, evInitials]
+    in (allIssues, allTriggers, varDefs, initials)
 
+compileStateHazard :: [AItem] -> Map.Map String E.Room -> AHazard -> AHazardStates
+                   -> ([CompileIssue], [E.TriggerDef], Map.Map String E.VarDef, Map.Map String E.VariableValue)
+compileStateHazard allItems allRooms h hs =
+    let hid = hazId h
+        states = ahsStates hs
+        nStates = length states
+        mx = max 0 (nStates - 1)
+        varName = fromMaybe ("hazard." ++ hid ++ ".level") (ahsVar hs)
+        (stateIssues, stateTriggers, stateVarDefs, stateInitials) = compileHazardStates hid hs
+
+        stageRangeErrs =
+            [ ciError ("hazards." ++ hid ++ ".stages." ++ show lvl) "HazardLevelOutOfRange"
+                ("stage level " ++ show lvl ++ " is outside 0..max (" ++ show mx ++ ")")
+            | mx >= 0, (lvl, _) <- hazStages h, lvl < 0 || lvl > mx ]
+
+        prevVar = "hazard." ++ hid ++ ".prev"
+        initIdx = fromMaybe 0 (resolveHazardState states (ahsInitial hs))
+
+        (stageVarDefs, stageInitials, stageTriggers) =
+            if null (hazStages h)
+            then (Map.empty, Map.empty, [])
+            else
+                ( Map.singleton prevVar (E.VarDef prevVar (E.VTInt (Just 0) (Just mx)) (E.VVInt initIdx) [] [])
+                , Map.singleton prevVar (E.VVInt initIdx)
+                , let stageEffects =
+                          [ E.Conditional
+                              (E.PAll
+                                  [ E.CompareVar varName E.CEq lvl
+                                  , E.PNot (E.CompareVar prevVar E.CEq lvl)
+                                  ])
+                              (compileOutcomes outs)
+                              E.Noop
+                          | (lvl, outs) <- hazStages h
+                          ]
+                          ++ [ E.ComputeValue (E.VRVariable prevVar) (E.EVar varName) ]
+                  in [ E.TriggerDef ("hazard." ++ hid ++ ".stage") E.OnTurn Nothing stageEffects False 0 1 [] [] ]
+                )
+
+        (fpIssues, fpRoomsList, fromRoomId, spreadVarDefs, spreadInitials, spreadTriggers, roomCondition, zoneTriggers, insideTriggers, adjTriggers) =
+            case hazFootprint h of
+                Nothing -> ([], [], "", Map.empty, Map.empty, [], const (E.PAny []), [], [], [])
+                Just fp -> compileHazardFootprint hid varName mx allRooms h fp
+
+        (evIssues, evVarDefs, evInitials, everyTriggers) = compileHazardEvery hid Nothing h
+
+        distMap = case hazFootprint h of
+            Just fp | not (null fromRoomId) && fromRoomId `Map.member` allRooms ->
+                bfsDistances allRooms fromRoomId (fpNeedsTag fp)
+            _ -> Map.empty
+
+        (itemIssues, itemTriggers) = case hazItems h of
+            Nothing   -> ([], [])
+            Just itms -> compileHazardItemHelper hid Nothing allItems allRooms fpRoomsList distMap roomCondition itms
+
+        allIssues = stateIssues ++ stageRangeErrs ++ fpIssues ++ evIssues ++ itemIssues
+        allTriggers = stateTriggers ++ spreadTriggers ++ stageTriggers ++ itemTriggers ++ zoneTriggers ++ insideTriggers ++ adjTriggers ++ everyTriggers
+        varDefs = Map.unions [stateVarDefs, stageVarDefs, spreadVarDefs, evVarDefs]
+        initials = Map.unions [stateInitials, stageInitials, spreadInitials, evInitials]
     in (allIssues, allTriggers, varDefs, initials)
 
 -- | Merge hazard variables into the declared variables, rejecting a clash.
@@ -2592,8 +2804,13 @@ mergeHazardVars varDefs varInitials hzDefs hzInitials =
 -- | Reference check for hazards: outcome targets/jumps/pause/resume and predicates.
 checkHazardRefs :: Maybe [AHazard] -> Adventure -> [CompileIssue]
 checkHazardRefs mHzs adv =
-    let declaredHazards = case mHzs of
-            Just hzs -> Map.fromList [ (hazId h, traMax (hazTrack h)) | h <- hzs, not (null (hazId h)) ]
+    let hazardMax h = case hazTrack h of
+            Just tr -> traMax tr
+            Nothing -> case hazStates h of
+                Just hs -> max 0 (length (ahsStates hs) - 1)
+                Nothing -> 0
+        declaredHazards = case mHzs of
+            Just hzs -> Map.fromList [ (hazId h, hazardMax h) | h <- hzs, not (null (hazId h)) ]
             Nothing  -> Map.empty
         knownHids = Map.keysSet declaredHazards
 

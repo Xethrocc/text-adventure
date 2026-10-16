@@ -3311,7 +3311,15 @@ testEnvironmentValidation = do
     r3 <- case compileAdventure advNoVar of
             Left errs -> expectContains "UnknownDrainVariable" (issuesText errs)
             Right _   -> expectTrue "expected UnknownDrainVariable" False
-    pure (r1 && r2 && r3)
+    -- Clashing author variable with env.weather
+    let advClash = (minAdventure (minRoom "loc_0"))
+            { advEnvironment = Just (AEnvironment (Just (AWeatherDef ["clear", "storm"] "clear" [])) [])
+            , advVariables = [ AVariable "env.weather" "int" (Just (Aeson.Number 0)) Nothing Nothing 0 Nothing [] [] ]
+            }
+    r4 <- case compileAdventure advClash of
+            Left errs -> expectContains "EnvironmentVariableClash" (issuesText errs)
+            Right _   -> expectTrue "expected EnvironmentVariableClash" False
+    pure (r1 && r2 && r3 && r4)
 
 -- | The 7d mini-fixture compiles and validates clean.
 testSurvivalFixtureCompiles :: IO Bool
@@ -5013,6 +5021,8 @@ tests =
     , ("hazards: item helper burn consumes items directly in room", testHazardsItemHelperBurn)
     , ("hazards: item helper chance determinism on hazard.<id>.items stream", testHazardsItemHelperChanceDeterminism)
     , ("hazards: item helper static validation (HazardItemHelperChance, UnknownItemHelperTag)", testHazardsItemHelperValidation)
+    , ("hazards: state track compile, transitions, var default/override, and at: name resolution", testHazardsStateTrackCompileAndTransitions)
+    , ("hazards: state track static validation (UnknownHazardState, DuplicateHazardState, HazardStatesWithoutTransitions, HazardStateVarClash)", testHazardsStateTrackValidation)
     , ("VC-11: vehicle condition sugar YAML parsing and compilation", testVehicleConditionSugar)
     , ("VC-12..14: vehicle condition ref checks, error, warning and current token", testVehicleConditionRefChecks)
     , ("VC-15: walker traverses nested vehicle condition effects", testVehicleConditionWalkerCoverage)
@@ -10749,8 +10759,9 @@ testHazardsPerformance500Triggers = do
         hazards =
             [ AHazard
                 { hazId = "hazard_" ++ show h
-                , hazTrack = ATrack 10 0 1 1 10 Nothing
-                , hazFootprint = AFootprint FPElevation (Map.fromList [ ("room_" ++ show i, i `mod` 10) | i <- [1..roomCount] ]) [] Nothing Nothing Nothing Nothing Nothing
+                , hazTrack = Just (ATrack 10 0 1 1 10 Nothing)
+                , hazStates = Nothing
+                , hazFootprint = Just (AFootprint FPElevation (Map.fromList [ ("room_" ++ show i, i `mod` 10) | i <- [1..roomCount] ]) [] Nothing Nothing Nothing Nothing Nothing)
                 , hazStages = [(5, [AOMessage "Halbzeit"])]
                 , hazOnZone = [AOMessage "Zone!"]
                 , hazTelegraph = Just (ATelegraph (Just "Gefahr naht!") (Just "Mitten drin!"))
@@ -11258,6 +11269,7 @@ testHazardsByteContractWatcher = do
             , ("zork1.yaml", "089d318d206c779e5de12272d917b95d1d29a60b1a921aaed11b7676650be761")
             , ("roguelike_dungeon.yaml", "946cd88374d3dcf3def610186c7f3cf99167771aa5970db06e1e2caa4ac21495")
             , ("wissen.yaml", "da115a31517847aefb134a25c3b9a669e0f4ee383534cfeb79adea423add36eb")
+            , ("survival.yaml", "3dda736f26e4d8f6feaf85bda37090e975a5e9090f9c0960a41263311ac947d9")
             ]
     results <- forM baselines $ \(fname, expSha) -> do
         mbPath <- findExample fname
@@ -11657,6 +11669,228 @@ testHazardsItemHelperValidation = do
                 Right cr  -> expectEqual [] [ i | i <- crWarnings cr, ciCode i == "UnknownItemHelperTag" ]
 
     pure (r1 && r2 && r3 && r4)
+
+-- | E14 / E15: State-Track for hazards (author-facing, transitions, var default/override, at: name resolution).
+testHazardsStateTrackCompileAndTransitions :: IO Bool
+testHazardsStateTrackCompileAndTransitions = do
+    -- 1. Full state-track with transitions, string initial, default var (hazard.wetter.level),
+    --    stages: with at: as state name and integer, and hazard_level predicate.
+    let yStateHazard = unlines
+            [ "name: State Hazard Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Lichtung"
+            , "    desc: Eine friedliche Lichtung."
+            , "hazards:"
+            , "  wetter:"
+            , "    states: [klar, bewoelkt, sturm]"
+            , "    initial: klar"
+            , "    transitions:"
+            , "      - when: { compare_var: { name: day, op: gte, value: 1 } }"
+            , "        to: bewoelkt"
+            , "        effects: [ { msg: \"Wolken ziehen auf.\" } ]"
+            , "      - when: { compare_var: { name: day, op: gte, value: 3 } }"
+            , "        to: sturm"
+            , "        effects: [ { msg: \"Ein Sturm bricht los!\" } ]"
+            , "    stages:"
+            , "      - at: sturm"
+            , "        effects: [ { msg: \"Stufe Sturm erreicht!\" } ]"
+            , "triggers:"
+            , "  - id: check_wetter"
+            , "    on: turn"
+            , "    when: { hazard_level: { hazard: wetter, at: sturm } }"
+            , "    effects: [ { msg: \"Es stuermt gewaltig.\" } ]"
+            ]
+    r1 <- case decode1 (BLC.pack yStateHazard) of
+        Left err -> do
+            putStrLn $ "  state hazard yaml decode failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  state hazard compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let gw = crWorld cr
+                    st = crSave cr
+                    trigs = E.triggerDefs gw
+                    vdefs = E.varDefs gw
+                    vvals = E.variables st
+
+                -- Variable hazard.wetter.level seeded with 0 (index of 'klar')
+                t1 <- expectEqual (Just (E.VVInt 0)) (Map.lookup "hazard.wetter.level" vvals)
+                t2 <- expectTrue "hazard.wetter.level in varDefs" (Map.member "hazard.wetter.level" vdefs)
+
+                -- Transitions compiled to on: turn triggers with SetValue and effects
+                let mTrig0 = find ((== "hazard.wetter.0") . E.trId) trigs
+                    mTrig1 = find ((== "hazard.wetter.1") . E.trId) trigs
+                t3 <- case mTrig0 of
+                    Just trg -> do
+                        let hasSet = any (\eff -> case eff of E.SetValue (E.VRVariable "hazard.wetter.level") (E.EVInt 1) -> True; _ -> False) (E.trEffects trg)
+                        expectTrue "hazard.wetter.0 sets level to 1 (bewoelkt)" hasSet
+                    Nothing -> expectTrue "hazard.wetter.0 trigger exists" False
+                t4 <- case mTrig1 of
+                    Just trg -> do
+                        let hasSet = any (\eff -> case eff of E.SetValue (E.VRVariable "hazard.wetter.level") (E.EVInt 2) -> True; _ -> False) (E.trEffects trg)
+                        expectTrue "hazard.wetter.1 sets level to 2 (sturm)" hasSet
+                    Nothing -> expectTrue "hazard.wetter.1 trigger exists" False
+
+                -- Stage trigger generated and checks level == 2
+                let mStageTrig = find ((== "hazard.wetter.stage") . E.trId) trigs
+                t5 <- expectTrue "stage trigger generated" (isJust mStageTrig)
+
+                -- Predicate hazard_level with at: sturm desugared to compare_var hazard.wetter.level == 2
+                let mCheckTrig = find ((== "check_wetter") . E.trId) trigs
+                t6 <- case mCheckTrig of
+                    Just trg -> expectEqual (Just (E.CompareVar "hazard.wetter.level" E.CEq 2)) (E.trCondition trg)
+                    Nothing -> expectTrue "check_wetter trigger exists" False
+
+                pure (t1 && t2 && t3 && t4 && t5 && t6)
+
+    -- 2. Var override (var: state.wetter), initial as integer index (initial: 1), stages map syntax
+    let yOverrideHazard = unlines
+            [ "name: State Hazard Override Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Lichtung"
+            , "    desc: Eine friedliche Lichtung."
+            , "hazards:"
+            , "  nebel:"
+            , "    states: [dunst, nebel, suppe]"
+            , "    initial: 1"
+            , "    var: state.wetter"
+            , "    transitions:"
+            , "      - when: { compare_var: { name: turn_count, op: gte, value: 5 } }"
+            , "        to: 2"
+            , "        effects: [ { msg: \"Die Suppe wird dichter.\" } ]"
+            , "    stages:"
+            , "      suppe: [ { msg: \"Man sieht die Hand vor Augen nicht.\" } ]"
+            ]
+    r2 <- case decode1 (BLC.pack yOverrideHazard) of
+        Left err -> do
+            putStrLn $ "  override hazard yaml decode failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  override hazard compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let gw = crWorld cr
+                    st = crSave cr
+                    trigs = E.triggerDefs gw
+                    vdefs = E.varDefs gw
+                    vvals = E.variables st
+
+                -- Custom variable state.wetter seeded with 1 (index of 'nebel')
+                t1 <- expectEqual (Just (E.VVInt 1)) (Map.lookup "state.wetter" vvals)
+                t2 <- expectTrue "state.wetter in varDefs" (Map.member "state.wetter" vdefs)
+
+                -- Transition sets state.wetter to 2
+                let mTrig0 = find ((== "hazard.nebel.0") . E.trId) trigs
+                t3 <- case mTrig0 of
+                    Just trg -> do
+                        let hasSet = any (\eff -> case eff of E.SetValue (E.VRVariable "state.wetter") (E.EVInt 2) -> True; _ -> False) (E.trEffects trg)
+                        expectTrue "hazard.nebel.0 sets state.wetter to 2" hasSet
+                    Nothing -> expectTrue "hazard.nebel.0 trigger exists" False
+
+                pure (t1 && t2 && t3)
+
+    pure (r1 && r2)
+
+-- | E14 Validation tests: UnknownHazardState, DuplicateHazardState,
+--   HazardStatesWithoutTransitions (warning), HazardStateVarClash.
+testHazardsStateTrackValidation :: IO Bool
+testHazardsStateTrackValidation = do
+    let baseYaml hzYaml = unlines $
+            [ "name: State Hazard Validation"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Lichtung"
+            , "    desc: Hier."
+            , "hazards:"
+            ] ++ hzYaml
+
+        checkErr code y = case decode1 (BLC.pack y) of
+            Left err -> do
+                putStrLn $ "  decode failed for " ++ code ++ ": " ++ show err
+                pure False
+            Right (adv :: Adventure) -> case compileAdventure adv of
+                Left errs -> expectContains code (issuesText errs)
+                Right _   -> expectTrue ("expected " ++ code) False
+
+        checkWarn code y = case decode1 (BLC.pack y) of
+            Left err -> do
+                putStrLn $ "  decode failed for " ++ code ++ ": " ++ show err
+                pure False
+            Right (adv :: Adventure) -> case compileAdventure adv of
+                Left errs -> do
+                    putStrLn $ "  unexpected hard error: " ++ issuesText errs
+                    pure False
+                Right cr  -> expectTrue ("expected warning " ++ code) (any ((== code) . ciCode) (crWarnings cr))
+
+    -- 1. UnknownHazardState: bad initial state
+    let yBadInit = baseYaml
+            [ "  wetter:"
+            , "    states: [klar, sturm]"
+            , "    initial: orkan"
+            , "    transitions: []"
+            ]
+    r1 <- checkErr "UnknownHazardState" yBadInit
+
+    -- 2. UnknownHazardState: bad to state in transition
+    let yBadTo = baseYaml
+            [ "  wetter:"
+            , "    states: [klar, sturm]"
+            , "    initial: klar"
+            , "    transitions:"
+            , "      - to: blizzard"
+            ]
+    r2 <- checkErr "UnknownHazardState" yBadTo
+
+    -- 3. DuplicateHazardState: duplicate state in states list
+    let yDupState = baseYaml
+            [ "  wetter:"
+            , "    states: [klar, sturm, klar]"
+            , "    initial: klar"
+            , "    transitions:"
+            , "      - to: sturm"
+            ]
+    r3 <- checkErr "DuplicateHazardState" yDupState
+
+    -- 4. HazardStatesWithoutTransitions: warning when transitions empty
+    let yNoTrans = baseYaml
+            [ "  wetter:"
+            , "    states: [klar, sturm]"
+            , "    initial: klar"
+            , "    transitions: []"
+            ]
+    r4 <- checkWarn "HazardStatesWithoutTransitions" yNoTrans
+
+    -- 5. HazardStateVarClash: reserved env.* namespace
+    let yEnvClash = baseYaml
+            [ "  wetter:"
+            , "    states: [klar, sturm]"
+            , "    initial: klar"
+            , "    var: env.custom"
+            , "    transitions:"
+            , "      - to: sturm"
+            ]
+    r5 <- checkErr "HazardStateVarClash" yEnvClash
+
+    -- 6. HazardStateVarClash: reserved foreign hazard namespace
+    let yForeignClash = baseYaml
+            [ "  wetter:"
+            , "    states: [klar, sturm]"
+            , "    initial: klar"
+            , "    var: hazard.other.level"
+            , "    transitions:"
+            , "      - to: sturm"
+            ]
+    r6 <- checkErr "HazardStateVarClash" yForeignClash
+
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
 
 -- | VC-11: apply_vehicle_condition and clear_vehicle_condition YAML syntax decodes and compiles to Core effects
 testVehicleConditionSugar :: IO Bool

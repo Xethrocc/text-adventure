@@ -110,6 +110,22 @@ hazards:
       choices:
         - [1, [{ msg: "Funken stieben durch die Nacht." }]]
 
+  nebel:
+    states: [klar, dunst, suppe]
+    initial: klar
+    transitions:
+      - when: { compare_var: { name: turn_count, op: gte, value: 3 } }
+        to: dunst
+        effects:
+          - { msg: "Leichter Dunst steigt von der Wasseroberflaeche auf." }
+      - when: { compare_var: { name: turn_count, op: gte, value: 6 } }
+        to: suppe
+        effects:
+          - { msg: "Dichter Nebel verschluckt das Gelaende." }
+    stages:
+      suppe:
+        - { msg: "Der Nebel hat maximale Dichte erreicht." }
+
 verbs:
   - { name: fluten, aliases: [flood] }
   - { name: senken, aliases: [drain] }

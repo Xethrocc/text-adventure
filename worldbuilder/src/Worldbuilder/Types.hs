@@ -12,7 +12,7 @@ import Data.Maybe (fromMaybe)
 import GHC.Generics (Generic)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.List (isPrefixOf)
+import Data.List (isPrefixOf, elemIndex)
 import Data.Char (isAlphaNum)
 import qualified Data.Text as T
 import qualified Data.Aeson.KeyMap as KM
@@ -1231,12 +1231,77 @@ instance FromJSON ADrainDef where
 -- Hazards (OPEN-23): zeitabhaengige, raeumlich begrenzte Gefahrenlagen
 -- ---------------------------------------------------------------------------
 
+-- | Referenz auf einen Hazard-Zustand: entweder symbolischer Name oder 0-basierter Index.
+data AHazardStateRef
+    = HSRName String
+    | HSRIndex Int
+    deriving (Show, Eq, Generic)
+
+instance FromJSON AHazardStateRef where
+    parseJSON (String s) = pure (HSRName (T.unpack s))
+    parseJSON (Number n) = pure (HSRIndex (round n))
+    parseJSON _          = fail "hazard state reference must be a string name or integer index"
+
+instance ToJSON AHazardStateRef where
+    toJSON (HSRName s)  = toJSON s
+    toJSON (HSRIndex i) = toJSON i
+
+-- | Bedingter Uebergang in einem Zustands-Track (OPEN-23 E14, analog 7d).
+data AHazardTransition = AHazardTransition
+    { ahtWhen    :: Maybe E.Predicate
+    , ahtTo      :: AHazardStateRef
+    , ahtEffects :: [AActionOutcome]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AHazardTransition where
+    parseJSON = withObject "AHazardTransition" $ \o -> AHazardTransition
+        <$> o .:? "when"    .!= Nothing
+        <*> o .:  "to"
+        <*> o .:? "effects" .!= []
+
+instance ToJSON AHazardTransition where
+    toJSON (AHazardTransition w to outs) = object $ filter (not . isNullOrEmpty . snd)
+        [ "when"    .= w
+        , "to"      .= to
+        , "effects" .= if null outs then Null else toJSON outs
+        ]
+      where
+        isNullOrEmpty Null = True
+        isNullOrEmpty _    = False
+
+-- | Zustandslisten-Track fuer Gefahrenlagen (OPEN-23 E14).
+data AHazardStates = AHazardStates
+    { ahsStates      :: [String]
+    , ahsInitial     :: AHazardStateRef
+    , ahsVar         :: Maybe String
+    , ahsTransitions :: [AHazardTransition]
+    } deriving (Show, Eq, Generic)
+
+instance FromJSON AHazardStates where
+    parseJSON = withObject "AHazardStates" $ \o -> AHazardStates
+        <$> o .:  "states"
+        <*> o .:? "initial"     .!= HSRName ""
+        <*> o .:? "var"
+        <*> o .:? "transitions" .!= []
+
+instance ToJSON AHazardStates where
+    toJSON (AHazardStates sts initRef mVar trans) = object $ filter (not . isNullOrEmpty . snd)
+        [ "states"      .= sts
+        , "initial"     .= initRef
+        , "var"         .= mVar
+        , "transitions" .= if null trans then Null else toJSON trans
+        ]
+      where
+        isNullOrEmpty Null = True
+        isNullOrEmpty _    = False
+
 -- | Das `hazards:`-Segment (OPEN-23): Verlauf x Ausdehnung x Wirkung.
 --   Reiner Worldbuilder-Schema-Zucker ohne Kern-Eingriff.
 data AHazard = AHazard
     { hazId        :: String
-    , hazTrack     :: ATrack
-    , hazFootprint :: AFootprint
+    , hazTrack     :: Maybe ATrack
+    , hazStates    :: Maybe AHazardStates
+    , hazFootprint :: Maybe AFootprint
     , hazStages    :: [(Int, [AActionOutcome])]
     , hazOnZone    :: [AActionOutcome]
     , hazTelegraph :: Maybe ATelegraph
@@ -1247,26 +1312,53 @@ data AHazard = AHazard
 instance FromJSON AHazard where
     parseJSON = withObject "AHazard" $ \o -> do
         hid  <- o .:? "id" .!= ""
-        mTr  <- o .:? "track"
-        let tr = fromMaybe (ATrack 100 0 1 1 0 Nothing) mTr
-        fp   <- o .:  "footprint"
-        stg  <- parseHazardStagesField o
+        mTrVal <- o .:? "track"
+        (mTr, mStatesFromTrack) <- case mTrVal of
+            Nothing -> pure (Nothing, Nothing)
+            Just trVal@(Object to) -> do
+                hasStates <- to .:? "states" :: Parser (Maybe [String])
+                case hasStates of
+                    Just _ -> do
+                        st <- parseJSON trVal
+                        pure (Nothing, Just st)
+                    Nothing -> do
+                        tr <- parseJSON trVal
+                        pure (Just tr, Nothing)
+            Just trVal -> do
+                tr <- parseJSON trVal
+                pure (Just tr, Nothing)
+        mStatesTop <- do
+            hasStates <- o .:? "states" :: Parser (Maybe [String])
+            case hasStates of
+                Just _  -> Just <$> parseJSON (Object o)
+                Nothing -> pure Nothing
+        let mStates = mStatesTop <|> mStatesFromTrack
+        let tr = case (mTr, mStates) of
+                    (Just t, _)        -> Just t
+                    (Nothing, Nothing) -> Just (ATrack 100 0 1 1 0 Nothing)
+                    (Nothing, Just _)  -> Nothing
+        mFp  <- o .:? "footprint"
+        stg  <- parseHazardStagesField (fmap ahsStates mStates) o
         oz   <- o .:? "on_zone" .!= []
         tel  <- o .:? "telegraph"
         ev   <- o .:? "every"
         itms <- o .:? "items"
-        pure (AHazard hid tr fp stg oz tel ev itms)
+        pure (AHazard hid tr mStates mFp stg oz tel ev itms)
 
 instance ToJSON AHazard where
     toJSON h = object $ filter (not . isNullOrEmpty . snd)
-        [ "id"        .= hazId h
-        , "track"     .= hazTrack h
-        , "footprint" .= hazFootprint h
-        , "stages"    .= if null (hazStages h) then Null else toJSON (object [ K.fromString (show lvl) .= outs | (lvl, outs) <- hazStages h ])
-        , "on_zone"   .= if null (hazOnZone h) then Null else toJSON (hazOnZone h)
-        , "telegraph" .= hazTelegraph h
-        , "every"     .= hazEvery h
-        , "items"     .= hazItems h
+        [ "id"          .= hazId h
+        , "track"       .= hazTrack h
+        , "states"      .= fmap ahsStates (hazStates h)
+        , "initial"     .= fmap ahsInitial (hazStates h)
+        , "var"         .= (hazStates h >>= ahsVar)
+        , "transitions" .= fmap ahsTransitions (hazStates h)
+        , "footprint"   .= hazFootprint h
+        , "stages"      .= if null (hazStages h) then Null else toJSON (object [ K.fromString (show lvl) .= outs | (lvl, outs) <- hazStages h ])
+        , "on_zone"     .= if null (hazOnZone h) then Null else toJSON (hazOnZone h)
+        , "telegraph"   .= hazTelegraph h
+        , "every"       .= hazEvery h
+        , "items"       .= hazItems h
         ]
       where
         isNullOrEmpty Null = True
@@ -1456,22 +1548,59 @@ instance ToJSON ATelegraph
 --   stages:
 --     0: [ { msg: "Der Pegel ist jetzt niedrig." } ]
 --     8: [ { msg: "Das Wasser hat seinen Hoechststand erreicht." } ]
-parseHazardStagesField :: Object -> Parser [(Int, [AActionOutcome])]
-parseHazardStagesField o = do
+--   stages:
+--     clear: [ { msg: "Der Himmel klaert auf." } ]
+--   stages:
+--     - at: storm
+--       effects: [ { msg: "Sturm zieht auf." } ]
+parseHazardStagesField :: Maybe [String] -> Object -> Parser [(Int, [AActionOutcome])]
+parseHazardStagesField mStates o = do
     mVal <- o .:? "stages"
     case mVal of
         Nothing -> pure []
         Just (Object obj) ->
             mapM (\(k, v) -> do
-                    lvl <- case readMaybe (K.toString k) of
-                        Just n  -> pure n
-                        Nothing -> fail ("Stage level must be an integer, got: " ++ K.toString k)
+                    lvl <- resolveStageKey (K.toString k)
                     outs <- case v of
                         Array _ -> parseJSON v
                         _       -> (:[]) <$> parseJSON v
                     pure (lvl, outs)
                  ) (KM.toList obj)
-        Just _ -> fail "Expected 'stages' to be an object mapping level to outcomes"
+        Just (Array arr) ->
+            mapM parseOneStageEntry (Foldable.toList arr)
+        Just _ -> fail "Expected 'stages' to be an object mapping level to outcomes or an array of stage objects"
+  where
+    resolveStageKey kStr = case readMaybe kStr of
+        Just n -> pure n
+        Nothing -> case mStates of
+            Just sts -> case elemIndex kStr sts of
+                Just idx -> pure idx
+                Nothing  -> fail ("Unknown hazard state '" ++ kStr ++ "' in stages")
+            Nothing -> fail ("Stage level must be an integer, got: " ++ kStr)
+
+    parseOneStageEntry (Object so) = do
+        atVal <- so .: "at"
+        lvl <- case atVal of
+            Number n -> pure (round n :: Int)
+            String s -> case readMaybe (T.unpack s) of
+                Just n -> pure n
+                Nothing -> case mStates of
+                    Just sts -> case elemIndex (T.unpack s) sts of
+                        Just idx -> pure idx
+                        Nothing  -> fail ("Unknown hazard state '" ++ T.unpack s ++ "' in stages at:")
+                    Nothing -> fail ("Stage level must be an integer, got: " ++ T.unpack s)
+            _ -> fail "Stage 'at' must be an integer or state name"
+        outs <- case KM.lookup "effects" so <|> KM.lookup "then" so of
+            Just v -> case v of
+                Array _ -> parseJSON v
+                _       -> (:[]) <$> parseJSON v
+            Nothing ->
+                let restObj = KM.delete "at" so
+                in if KM.null restObj
+                   then pure []
+                   else (:[]) <$> parseJSON (Object restObj)
+        pure (lvl, outs)
+    parseOneStageEntry _ = fail "Each stage entry must be an object with 'at:'"
 
 -- | Parse 'stages_rooms:' in AFootprint:
 --   stages_rooms:
@@ -1510,6 +1639,8 @@ data RawHazardInfo = RawHazardInfo
     , rhiVia         :: Maybe String
     , rhiChance      :: Maybe Int
     , rhiNeedsTag    :: Maybe String
+    , rhiStates      :: [String]
+    , rhiVar         :: Maybe String
     } deriving (Show)
 
 extractHazardInfo :: Maybe Value -> Map.Map String RawHazardInfo
@@ -1525,27 +1656,44 @@ extractHazardInfo (Just (Array arr)) =
 extractHazardInfo _ = Map.empty
 
 parseRawHz :: Value -> RawHazardInfo
-parseRawHz (Object o) = case KM.lookup "footprint" o of
-    Just (Object fp) ->
-        let byStr = case KM.lookup "by" fp of { Just (String s) -> T.unpack s; _ -> "elevation" }
-            roomsM = case KM.lookup "rooms" fp of
-                Just (Object ro) -> Map.fromList [ (K.toString rk, case rv of Number n -> round n; _ -> 0) | (rk, rv) <- KM.toList ro ]
-                _ -> Map.empty
-            srList = case KM.lookup "stages_rooms" fp of
-                Just (Object sro) ->
-                    [ (lvl, [ T.unpack str | String str <- Foldable.toList arr ])
-                    | (sk, Array arr) <- KM.toList sro
-                    , Just lvl <- [readMaybe (K.toString sk)]
-                    ]
+parseRawHz (Object o) =
+    let statesList = case KM.lookup "states" o of
+            Just (Array arr) -> [ T.unpack s | String s <- Foldable.toList arr ]
+            _ -> case KM.lookup "track" o of
+                Just (Object trObj) -> case KM.lookup "states" trObj of
+                    Just (Array arr) -> [ T.unpack s | String s <- Foldable.toList arr ]
+                    _ -> []
                 _ -> []
-            tagS = case KM.lookup "tag" fp of { Just (String s) -> Just (T.unpack s); _ -> Nothing }
-            fromS = case KM.lookup "from" fp of { Just (String s) -> Just (T.unpack s); _ -> Nothing }
-            viaS = case KM.lookup "via" fp of { Just (String s) -> Just (T.unpack s); _ -> Nothing }
-            chanceVal = case KM.lookup "chance" fp of { Just (Number n) -> Just (round n); _ -> Nothing }
-            needsTagS = case KM.lookup "needs_tag" fp of { Just (String s) -> Just (T.unpack s); _ -> Nothing }
-        in RawHazardInfo byStr roomsM srList tagS fromS viaS chanceVal needsTagS
-    _ -> RawHazardInfo "elevation" Map.empty [] Nothing Nothing Nothing Nothing Nothing
-parseRawHz _ = RawHazardInfo "elevation" Map.empty [] Nothing Nothing Nothing Nothing Nothing
+        varStr = case KM.lookup "var" o of
+            Just (String s) -> Just (T.unpack s)
+            _ -> case KM.lookup "track" o of
+                Just (Object trObj) -> case KM.lookup "var" trObj of
+                    Just (String s) -> Just (T.unpack s)
+                    _ -> Nothing
+                _ -> Nothing
+    in case KM.lookup "footprint" o of
+        Just (Object fp) ->
+            let byStr = case KM.lookup "by" fp of { Just (String s) -> T.unpack s; _ -> "elevation" }
+                roomsM = case KM.lookup "rooms" fp of
+                    Just (Object ro) -> Map.fromList [ (K.toString rk, case rv of Number n -> round n; _ -> 0) | (rk, rv) <- KM.toList ro ]
+                    _ -> Map.empty
+                srList = case KM.lookup "stages_rooms" fp of
+                    Just (Object sro) ->
+                        [ (lvl, [ T.unpack str | String str <- Foldable.toList arr ])
+                        | (sk, Array arr) <- KM.toList sro
+                        , Just lvl <- [case readMaybe (K.toString sk) of
+                                        Just n  -> Just n
+                                        Nothing -> elemIndex (K.toString sk) statesList]
+                        ]
+                    _ -> []
+                tagS = case KM.lookup "tag" fp of { Just (String s) -> Just (T.unpack s); _ -> Nothing }
+                fromS = case KM.lookup "from" fp of { Just (String s) -> Just (T.unpack s); _ -> Nothing }
+                viaS = case KM.lookup "via" fp of { Just (String s) -> Just (T.unpack s); _ -> Nothing }
+                chanceVal = case KM.lookup "chance" fp of { Just (Number n) -> Just (round n); _ -> Nothing }
+                needsTagS = case KM.lookup "needs_tag" fp of { Just (String s) -> Just (T.unpack s); _ -> Nothing }
+            in RawHazardInfo byStr roomsM srList tagS fromS viaS chanceVal needsTagS statesList varStr
+        _ -> RawHazardInfo "elevation" Map.empty [] Nothing Nothing Nothing Nothing Nothing statesList varStr
+parseRawHz _ = RawHazardInfo "elevation" Map.empty [] Nothing Nothing Nothing Nothing Nothing [] Nothing
 
 extractRoomTags :: Maybe Value -> Map.Map String [String]
 extractRoomTags (Just (Array arr)) =
@@ -1566,7 +1714,7 @@ desugarVal hazs rtags = go
     go (Object o)
         | Just hlVal <- KM.lookup "hazard_level" o =
             let otherKeys = KM.delete "hazard_level" o
-                desugaredPred = desugarHazardLevel hlVal
+                desugaredPred = desugarHazardLevel hazs hlVal
             in case desugaredPred of
                 Object dObj -> Object (KM.union dObj (KM.map go otherKeys))
                 _           -> go (Object o)
@@ -1578,36 +1726,112 @@ desugarVal hazs rtags = go
                 Object dObj -> Object (KM.union dObj (KM.map go otherKeys))
                 _           -> go (Object o)
 
+        | Just htVal <- KM.lookup "hazard_target" o =
+            let desugaredTarget = desugarHazardTarget hazs htVal
+                otherKeys = KM.delete "hazard_target" o
+            in Object (KM.insert "hazard_target" desugaredTarget (KM.map go otherKeys))
+
+        | Just hjVal <- KM.lookup "hazard_jump" o =
+            let desugaredJump = desugarHazardJump hazs hjVal
+                otherKeys = KM.delete "hazard_jump" o
+            in Object (KM.insert "hazard_jump" desugaredJump (KM.map go otherKeys))
+
         | otherwise =
             Object (KM.map go o)
 
     go (Array arr) = Array (fmap go arr)
     go other = other
 
-desugarHazardLevel :: Value -> Value
-desugarHazardLevel (Object o) =
+desugarHazardTarget :: Map.Map String RawHazardInfo -> Value -> Value
+desugarHazardTarget hazs (Object o) =
     let hid = case KM.lookup "hazard" o <|> KM.lookup "id" o <|> KM.lookup "name" o of
             Just (String s) -> T.unpack s
             _               -> ""
-        (opStr, valNum) = extractCmp o
+        mStates = fmap rhiStates (Map.lookup hid hazs)
+        resolveVal v = case v of
+            Number n -> Number n
+            String s -> case mStates of
+                Just sts -> case elemIndex (T.unpack s) sts of
+                    Just idx -> Number (fromIntegral idx)
+                    Nothing  -> case readMaybe (T.unpack s) of
+                        Just n  -> Number (fromIntegral (n :: Int))
+                        Nothing -> String s
+                Nothing -> case readMaybe (T.unpack s) of
+                    Just n  -> Number (fromIntegral (n :: Int))
+                    Nothing -> String s
+            other -> other
+        mTo = KM.lookup "to" o <|> KM.lookup "at" o
+        newObj = case mTo of
+            Just toVal -> KM.insert "to" (resolveVal toVal) (KM.delete "at" o)
+            Nothing    -> o
+    in Object newObj
+desugarHazardTarget _ v = v
+
+desugarHazardJump :: Map.Map String RawHazardInfo -> Value -> Value
+desugarHazardJump hazs (Object o) =
+    let hid = case KM.lookup "hazard" o <|> KM.lookup "id" o <|> KM.lookup "name" o of
+            Just (String s) -> T.unpack s
+            _               -> ""
+        mStates = fmap rhiStates (Map.lookup hid hazs)
+        resolveVal v = case v of
+            Number n -> Number n
+            String s -> case mStates of
+                Just sts -> case elemIndex (T.unpack s) sts of
+                    Just idx -> Number (fromIntegral idx)
+                    Nothing  -> case readMaybe (T.unpack s) of
+                        Just n  -> Number (fromIntegral (n :: Int))
+                        Nothing -> String s
+                Nothing -> case readMaybe (T.unpack s) of
+                    Just n  -> Number (fromIntegral (n :: Int))
+                    Nothing -> String s
+            other -> other
+        mTo = KM.lookup "to" o <|> KM.lookup "at" o
+        newObj = case mTo of
+            Just toVal -> KM.insert "to" (resolveVal toVal) (KM.delete "at" o)
+            Nothing    -> o
+    in Object newObj
+desugarHazardJump _ v = v
+
+desugarHazardLevel :: Map.Map String RawHazardInfo -> Value -> Value
+desugarHazardLevel hazs (Object o) =
+    let hid = case KM.lookup "hazard" o <|> KM.lookup "id" o <|> KM.lookup "name" o of
+            Just (String s) -> T.unpack s
+            _               -> ""
+        mInfo = Map.lookup hid hazs
+        varName = case mInfo >>= rhiVar of
+            Just v  -> v
+            Nothing -> "hazard." ++ hid ++ ".level"
+        (opStr, valNum) = extractCmp (fmap rhiStates mInfo) o
     in Object (KM.singleton "compare_var" (object
-        [ "name"  .= ("hazard." ++ hid ++ ".level")
+        [ "name"  .= varName
         , "op"    .= opStr
         , "value" .= valNum
         ]))
-desugarHazardLevel v = v
+desugarHazardLevel _ v = v
 
-extractCmp :: KM.KeyMap Value -> (String, Int)
-extractCmp o =
-    case [ (op, round n) | (k, op) <- [ ("gte", "gte"), ("at_least", "gte")
-                                     , ("lte", "lte"), ("at_most", "lte")
-                                     , ("eq", "eq"), ("equals", "eq")
-                                     , ("gt", "gt"), ("lt", "lt"), ("ne", "ne") ]
-                         , Just (Number n) <- [KM.lookup (K.fromString k) o] ] of
+extractCmp :: Maybe [String] -> KM.KeyMap Value -> (String, Int)
+extractCmp mStates o =
+    let cmpKeys = [ ("gte", "gte"), ("at_least", "gte")
+                  , ("lte", "lte"), ("at_most", "lte")
+                  , ("eq", "eq"), ("equals", "eq")
+                  , ("at", "eq"), ("is", "eq")
+                  , ("gt", "gt"), ("lt", "lt"), ("ne", "ne") ]
+        parseNum (Number n) = Just (round n)
+        parseNum (String s) = case mStates of
+            Just sts -> case elemIndex (T.unpack s) sts of
+                Just idx -> Just idx
+                Nothing  -> readMaybe (T.unpack s)
+            Nothing -> readMaybe (T.unpack s)
+        parseNum _ = Nothing
+    in case [ (op, n)
+            | (k, op) <- cmpKeys
+            , Just val <- [KM.lookup (K.fromString k) o]
+            , Just n <- [parseNum val]
+            ] of
         (c:_) -> c
-        []    -> case (KM.lookup "op" o, KM.lookup "value" o) of
-            (Just (String s), Just (Number n)) -> (T.unpack s, round n)
-            _                                  -> ("eq", 0)
+        []    -> case (KM.lookup "op" o, KM.lookup "value" o >>= parseNum) of
+            (Just (String s), Just n) -> (T.unpack s, n)
+            _                         -> ("eq", 0)
 
 desugarInHazard :: Map.Map String RawHazardInfo -> Map.Map String [String] -> Value -> Value
 desugarInHazard hazs rtags (Object o) =
@@ -1618,23 +1842,26 @@ desugarInHazard hazs rtags (Object o) =
             Just (String s) -> T.unpack s
             _               -> "here"
         mInfo = Map.lookup hid hazs
+        varName = maybe ("hazard." ++ hid ++ ".level") (\info -> fromMaybe ("hazard." ++ hid ++ ".level") (rhiVar info)) mInfo
     in case mInfo of
         Nothing ->
             Object (KM.singleton "compare_var" (object
-                [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("gt" :: String), "value" .= (0 :: Int) ]))
+                [ "name" .= varName, "op" .= ("gt" :: String), "value" .= (0 :: Int) ]))
         Just info -> case roomTarget of
             "here" -> expandInHazardHere hid info rtags
             r      -> expandInHazardRoom hid info rtags r
 desugarInHazard _ _ v = v
 
 expandInHazardHere :: String -> RawHazardInfo -> Map.Map String [String] -> Value
-expandInHazardHere hid info rtags = case rhiBy info of
+expandInHazardHere hid info rtags =
+    let varName = fromMaybe ("hazard." ++ hid ++ ".level") (rhiVar info)
+    in case rhiBy info of
     "elevation" ->
         let clauses =
                 [ object
                     [ "all" .=
                         [ object [ "at" .= ("player" :: String), "room" .= r ]
-                        , object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("gte" :: String), "value" .= t ] ]
+                        , object [ "compare_var" .= object [ "name" .= varName, "op" .= ("gte" :: String), "value" .= t ] ]
                         ]
                     ]
                 | (r, t) <- Map.toList (rhiRooms info)
@@ -1645,7 +1872,7 @@ expandInHazardHere hid info rtags = case rhiBy info of
                 [ object
                     [ "all" .=
                         [ object [ "at" .= ("player" :: String), "room" .= r ]
-                        , object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("eq" :: String), "value" .= lvl ] ]
+                        , object [ "compare_var" .= object [ "name" .= varName, "op" .= ("eq" :: String), "value" .= lvl ] ]
                         ]
                     ]
                 | (lvl, rms) <- rhiStagesRooms info
@@ -1661,7 +1888,7 @@ expandInHazardHere hid info rtags = case rhiBy info of
                 [ object
                     [ "all" .=
                         [ object [ "at" .= ("player" :: String), "room" .= r ]
-                        , object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("gt" :: String), "value" .= (0 :: Int) ] ]
+                        , object [ "compare_var" .= object [ "name" .= varName, "op" .= ("gt" :: String), "value" .= (0 :: Int) ] ]
                         ]
                     ]
                 | r <- taggedRooms
@@ -1681,24 +1908,26 @@ expandInHazardHere hid info rtags = case rhiBy info of
     _ -> object [ "any" .= ([] :: [Value]) ]
 
 expandInHazardRoom :: String -> RawHazardInfo -> Map.Map String [String] -> String -> Value
-expandInHazardRoom hid info rtags r = case rhiBy info of
+expandInHazardRoom hid info rtags r =
+    let varName = fromMaybe ("hazard." ++ hid ++ ".level") (rhiVar info)
+    in case rhiBy info of
     "elevation" ->
         case Map.lookup r (rhiRooms info) of
-            Just t  -> object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("gte" :: String), "value" .= t ] ]
+            Just t  -> object [ "compare_var" .= object [ "name" .= varName, "op" .= ("gte" :: String), "value" .= t ] ]
             Nothing -> object [ "not" .= object [ "true" .= True ] ]
     "list" ->
         let lvls = [ lvl | (lvl, rms) <- rhiStagesRooms info, r `elem` rms ]
         in case lvls of
             []    -> object [ "not" .= object [ "true" .= True ] ]
-            [lvl] -> object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("eq" :: String), "value" .= lvl ] ]
-            _     -> object [ "any" .= [ object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("eq" :: String), "value" .= l ] ] | l <- lvls ] ]
+            [lvl] -> object [ "compare_var" .= object [ "name" .= varName, "op" .= ("eq" :: String), "value" .= lvl ] ]
+            _     -> object [ "any" .= [ object [ "compare_var" .= object [ "name" .= varName, "op" .= ("eq" :: String), "value" .= l ] ] | l <- lvls ] ]
     "tag" ->
         let mTag = rhiTag info
             hasTag = case mTag of
                 Just t  -> maybe False (t `elem`) (Map.lookup r rtags)
                 Nothing -> False
         in if hasTag
-            then object [ "compare_var" .= object [ "name" .= ("hazard." ++ hid ++ ".level"), "op" .= ("gt" :: String), "value" .= (0 :: Int) ] ]
+            then object [ "compare_var" .= object [ "name" .= varName, "op" .= ("gt" :: String), "value" .= (0 :: Int) ] ]
             else object [ "not" .= object [ "true" .= True ] ]
     "spread" ->
         if Map.member r rtags
@@ -2786,6 +3015,8 @@ data EntityType
     | EntParty
     | EntHazard
     | EntHazardTrack
+    | EntHazardStates
+    | EntHazardTransition
     | EntHazardFootprint
     | EntHazardTelegraph
     | EntHazardEvery
@@ -2900,9 +3131,17 @@ knownKeys EntParty = Set.fromList
     , "combat_slot", "switch_verb", "xp_table"
     ]
 knownKeys EntHazard = Set.fromList
-    [ "id", "track", "footprint", "stages", "on_zone", "telegraph", "every", "items" ]
+    [ "id", "track", "footprint", "stages", "on_zone", "telegraph", "every", "items"
+    , "states", "initial", "var", "transitions"
+    ]
 knownKeys EntHazardTrack = Set.fromList
-    [ "max", "start", "rate", "every", "target", "when" ]
+    [ "max", "start", "rate", "every", "target", "when"
+    , "states", "initial", "var", "transitions"
+    ]
+knownKeys EntHazardStates = Set.fromList
+    [ "states", "initial", "var", "transitions" ]
+knownKeys EntHazardTransition = Set.fromList
+    [ "when", "to", "effects" ]
 knownKeys EntHazardFootprint = Set.fromList
     [ "by", "rooms", "stages_rooms", "tag", "from", "via", "chance", "needs_tag" ]
 knownKeys EntHazardTelegraph = Set.fromList

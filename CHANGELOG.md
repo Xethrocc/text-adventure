@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### OPEN-23 Stufe 2c / E3: Gefahrenlagen — Zustands-Track und Wetter-Migration (E14/E15)
+
+Vollständige Implementierung von Hazards Stufe 2c laut `docs/plan-hazards.md` §8 (Entscheidungen E14–E15, AP A–E):
+
+- **Zustands-Track für `hazards:` (E14):** Autoren-fähige Deklaration diskreter Zustände (`states: [s1, s2, ...]`) als Alternative zum numerischen `track:`.
+  - `initial:` Startzustand als Name oder 0-basierter Index (Default: 0).
+  - `var:` Zielvariable für den Zustand (optional, Default: `hazard.<id>.level`).
+  - `transitions: [{when, to, effects?}]`: Zustandstransitionen pro Zug in Deklarationsreihenfolge (D4-Muster); kompiliert zu `on: turn` + `when` + Setzen der Variable + `effects` (exakt analog der 7d-Struktur).
+  - Zustand als Integer-Index in der Zielvariable (`VTInt`).
+  - `stages:` und `at:` akzeptieren sowohl numerische Indizes als auch Zustandsnamen.
+  - `hazard_level`-Prädikat und `on_zone:` arbeiten transparent über den numerischen Indexwert bzw. aufgelöste Zustandsnamen.
+- **Wetter-Alias mit hartem Byte-Gate (E15):** `environment.weather` desugart intern auf einen E14-Zustands-Track mit `var: env.weather`.
+  - Die kompilierte `world.json` für `survival.yaml` bleibt **100% byte-identisch** zur historischen 7d-Ausgabe (gepinnt im Byte-Vertrag-Wächter `testHazardsByteContractWatcher`).
+  - Fehlercode-Parität: Validierungsfehler aus `environment.weather` werden via Alias-Remapping als `UnknownWeatherState` bzw. `EnvironmentVariableClash` gemeldet.
+  - `environment.drains:` bleibt unverändert Teil von 7d.
+- **Validierung & Fehlercodes:** Neue Fehlercodes `UnknownHazardState`, `DuplicateHazardState`, `HazardStatesWithoutTransitions` (Warnung), `HazardStateVarClash` sowie Walker-Catch-alls für `AHazardStates` und `AHazardTransition`.
+- **Tests & Fixtures:** 2 neue Testblöcke in `worldbuilder/test/Tests.hs` (`testHazardsStateTrackCompileAndTransitions`, `testHazardsStateTrackValidation`), `survival.yaml` im Byte-Vertrag-Wächter verankert, `EnvironmentVariableClash` in `testEnvironmentValidation` abgesichert. Fixture `examples/modules/hazards.yaml` um Zustands-Track-Szenario (`nebel`) erweitert.
+
 ### OPEN-23 Stufe 2b: Gefahrenlagen — Item-Helfer `flow:` und `burn:`
 
 Vollständige Implementierung von Hazards Stufe 2b laut `docs/plan-hazards.md` §13 (Entscheidungen E11–E13, AP A–D):

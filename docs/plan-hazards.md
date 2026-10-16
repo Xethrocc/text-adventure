@@ -1,6 +1,6 @@
 # Plan: `hazards:` — generalisierte Gefahrenlagen (OPEN-23)
 
-**Stand:** 2026-10-15 · **Status:** Stufe 1, Stufe 2 (AP A–E) und Stufe 2b (AP A–D) vollständig umgesetzt (CI grün, Byte-Vertrag: 5 Abenteuer SHA256-identisch) ·
+**Stand:** 2026-10-15 · **Status:** Stufe 1, Stufe 2 (AP A–E), Stufe 2b (AP A–D) und Stufe 2c / E3 (Wetter-Migration & Zustands-Track, AP A–E) vollständig umgesetzt (CI grün, Byte-Vertrag: 6 Abenteuer SHA256-identisch) ·
 **Gültig:** Das ist **der** Plan zu `OPEN-23` (Entscheidung 2026-10-13). Zunächst als Analyse entstanden,
 nach einem Wechsel des Repo-Stands wiederhergestellt.
 
@@ -130,6 +130,57 @@ Validierung: `UnknownHazard`, `HazardLevelOutOfRange`, `HazardUnknownRoom`, `Haz
 ## 8. Wetter-Migration (E3)
 
 `environment.weather` bleibt zunächst unverändert. Spätere Zusammenführung als **Alias**: `environment.weather` kompiliert intern zu einem `hazards`-Eintrag vom Typ „Zustandsliste", Variable heißt weiter `env.weather`, Fehlercodes (`UnknownWeatherState`, `EnvironmentVariableClash`) bleiben, Golden-Tests (`survival.yaml`) ändern sich nicht. Voraussetzung: `track` kann **Zustandsnamen + bedingte Übergänge** (nicht nur Zahlen) — ein eigener Schritt nach Stufe 1 (~1 d + Regressionslauf).
+
+### Ausarbeitung (entschieden 2026-10-15, Patrick)
+
+- **E14 — Zustands-Track ist autoren-fähig** (nicht nur intern): `hazards:`
+  kann künftig eigene Zustandslisten-Tracks bauen; das Wetter ist nur der
+  erste Nutzer. Autoren-Syntax analog 7d (Vertrautheit):
+
+  ```yaml
+  hazards:
+    wetter:
+      states: [clear, storm]        # Zustandsliste
+      initial: clear
+      var: env.weather              # optional, Default hazard.<id>.level
+      transitions:
+        - when: { compare_var: { name: day, op: gte, value: 3 } }
+          to: storm
+          effects: [ { msg: "Ein Sturm zieht auf." } ]
+  ```
+
+  - Der Zustand wird als **Int-Index in `states`** gespeichert (identisch zu
+    7d), `var:` erlaubt den Variablennamen — Default `hazard.<id>.level`
+    (Kopplung an die vorhandene Track-Mechanik), für den Wetter-Alias fest
+    `env.weather` (Byte-Vertrag).
+  - `transitions:` sind bedingte Übergänge (`when` + `to` = Zustandsname oder
+    Index, optionale `effects`); Auswertung pro Zug in Deklarationsreihenfolge
+    (D4-Muster), jeder Übergang kompiliert zu `on: turn` + `when` + Setzen der
+    Variable + `effects` — **exakt die heutige 7d-Struktur**.
+  - `stages:`/`on_zone:` können weiterhin über den numerischen Wert arbeiten;
+    `at:` akzeptiert auch Zustandsnamen (als Index aufgelöst).
+  - Eigene Fehlercodes der Autoren-Variante: `UnknownHazardState` (`to:`,
+    `initial:` nicht in `states`), `DuplicateHazardState`,
+    `HazardStatesWithoutTransitions` (Warning), `HazardStateVarClash`
+    (Autor-Var in reserviertem `hazard.*`/`env.*`-Namespace).
+
+- **E15 — Wetter-Alias mit hartem Byte-Gate:** `environment.weather` desugart
+  auf E14 mit `var: env.weather`. Die **compilierte `world.json` muss byte-
+  identisch** zur heutigen 7d-Ausgabe bleiben (Golden-Wächter `survival.yaml`);
+  auch die Fehlercodes bleiben exakt `UnknownWeatherState` /
+  `UnknownDrainVariable` / `EnvironmentVariableClash` (die Alias-Ebene mappt
+  die E14-Codes zurück, wo sie aus `environment.weather` ausgelöst werden).
+  `environment.drains:` bleibt unverändert Teil von 7d (kein Wetter).
+
+### Arbeitspakete
+
+| AP | Inhalt |
+|---|---|
+| A | Typen: `AHazardStates` (states/initial/var/transitions) + JSON omittierbar; Track-Erweiterung serialisierungskompatibel |
+| B | Compile: Zustands-Track-Trigger (7d-Struktur), `at:`-Auflösung von Zustandsnamen, Wetter-Desugaring `environment.weather` → E14 mit `var: env.weather` |
+| C | Validierung: E14-Fehlercodes + Alias-Remapping auf die alten Codes; Walker-Catch-alls |
+| D | Tests: Golden `survival.yaml` **byte-identisch** (Wächter wie Stufe 2), Fehlercode-Parität, Zustands-Track-Tests (Übergänge, Initial, `at:`-Auflösung, Var-Default/-Override), Regressionslauf aller Abenteuer; Fixture `examples/modules/hazards.yaml` um einen Zustands-Track-Fall erweitern |
+| E | Docs: `adventure-schema.md` (Zustands-Track + Wetter-Alias), `modules.md` 7d/7j, CHANGELOG, Befunde-Eintrag |
 
 ## 9. Offene Detailfragen
 

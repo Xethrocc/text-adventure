@@ -2563,6 +2563,10 @@ environment:
   `initial` bestimmt den Start; der Namespace `env.*` ist reserviert).
   Raumtexte wechseln per CondText-Varianten, z. B.
   `when: {compare_var: {name: env.weather, op: eq, value: 1}}`.
+- **Wetter-Alias (E15):** `environment.weather` ist ein Compiler-Alias auf
+  den Zustands-Track von `hazards:` (E14) mit `var: env.weather`. Die kompilierte
+  Ausgabe bleibt byte-identisch zur 7d-Struktur. Fehlercodes (`UnknownWeatherState`,
+  `UnknownDrainVariable`, `EnvironmentVariableClash`) bleiben unverändert erhalten.
 - Jede Transition kompiliert zu einem `on: turn`-Trigger (`when` als
   Bedingung); jeder Drain zu `environment.drain.<var>` mit `ModifyValue
   per_turn` + `Conditional (var ≤ 0)` auf die `at_zero`-Effekte.
@@ -2688,13 +2692,42 @@ hazards:
       inside: "Das Wasser steht dir bis zur Huefte."
 ```
 
-### Verlauf (`track:`)
+### Verlauf (`track:` oder `states:`)
+
+Eine Gefahr wird entweder über einen numerischen Pegelverlauf (`track:`) oder über diskrete Zustände (`states:`, Zustands-Track Stufe 2c / E14) gesteuert:
+
+#### Numerischer Verlauf (`track:`)
 - `max`: Pflichtwert (> 0). Legt den Wertebereich `0..max` fest.
 - `start`: Startwert des Levels (0..max, Default: 0).
 - `rate`: Schrittweite pro Takt in Richtung `target` (Default: 1).
 - `every`: Taktintervall in Zügen (Default: 1). Bei jedem Zug erhöht sich die interne Taktvariable; alle `every` Züge schreitet der Level fort.
 - `target`: Zielpegel (0..max, Default: `start`). Der Pegel bewegt sich schrittweise (`rate`) von `start` auf `target` zu.
 - `when`: Optionale Vorbedingung. Ist sie nicht erfüllt, pausiert der Taktfortschritt.
+
+#### Zustands-Track (`states:`, Stufe 2c / E14)
+Alternativ zu `track:` können diskrete Zustandsnamen mit regelbasierten Übergängen definiert werden (Syntax analog 7d-Wetter):
+```yaml
+hazards:
+  sturm:
+    states: [aufziehend, tosend, abflauend]   # Diskrete Zustandsnamen (Pflicht)
+    initial: aufziehend                       # Startzustand (Name oder 0-basierter Index, Default: 0)
+    var: hazard.sturm.level                   # Variable (optional, Default: hazard.<id>.level)
+    transitions:                              # Zustandsübergänge pro Zug
+      - when: { compare_var: { name: day, op: gte, value: 3 } }
+        to: tosend                            # Zielzustand (Name oder Index)
+        effects: [ { msg: "Der Sturm erreicht orkanartige Stärke!" } ]
+    stages:
+      tosend:                                 # Akzeptiert Zustandsnamen oder numerischen Index
+        - msg: "Dächer werden abgedeckt."
+```
+- **Zustand als Int-Index:** Der Zustand wird als 0-basierter Index der `states`-Liste in der Zielvariable geführt (Default: `hazard.<id>.level`).
+- **Übergänge:** Jeder Eintrag in `transitions:` wird zu einem `on: turn`-Trigger mit Bedingung `when:`, Setzen der Zielvariable auf den Ziel-Index und optionalen `effects:`. Die Auswertung erfolgt pro Zug in Deklarationsreihenfolge (D4-Muster).
+- **Namensauflösung in `stages:` und Prädikaten:** `stages:` (Map-Keys oder `{ at: <name> }`), `hazard_level` und `on_zone:` akzeptieren sowohl Zustandsnamen als auch numerische Indizes.
+- **Validierung:**
+  - `UnknownHazardState`: `initial`, `to` oder `at:` referenziert einen unbekannten Zustandsnamen.
+  - `DuplicateHazardState`: Mehrfach deklarierter Zustandsname in `states:`.
+  - `HazardStatesWithoutTransitions`: `states:` deklariert, aber keine `transitions:` angegeben (Warnung).
+  - `HazardStateVarClash`: Die angegebene `var:` kollidiert mit deklarierten Variablen oder reservierten Namensräumen.
 
 ### Ausdehnung (`footprint:`)
 - `by: elevation`: Ein Raum `r` liegt in der Gefahrenzone, wenn `hazard.<id>.level >= schwelle(r)`. Die Schwellen werden über `rooms: { <raum>: <schwelle> }` deklariert.
@@ -2806,6 +2839,10 @@ hazards:
 - `EveryWithoutStream`: `every:`-Block ohne Stream-Namen deklariert.
 - `HazardItemHelperChance`: Prozentuale Chance im Item-Helfer (`flow:` / `burn:`) außerhalb 0..100.
 - `UnknownItemHelperTag`: Der im Item-Helfer referenzierte Item-Tag kommt auf keinem deklarierten Item vor (Warnung).
+- `UnknownHazardState`: Im Zustands-Track (`initial`, `to`) oder in `stages:` (`at:`) referenzierter Zustand existiert nicht in `states:`.
+- `DuplicateHazardState`: Mehrfach deklarierter Zustandsname in `states:`.
+- `HazardStatesWithoutTransitions`: Zustands-Track ohne Übergänge (`transitions:`) deklariert (Warnung).
+- `HazardStateVarClash`: Die für `var:` angegebene Variable im Zustands-Track kollidiert mit deklarierten Variablen oder reservierten Namensräumen.
 
 ---
 
