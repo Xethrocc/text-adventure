@@ -1,0 +1,894 @@
+# Sprung ins Ungewisse — FTL-Lite Content-Benchmark
+#
+# Genre: Weltraum-FTL-Homage & Rogue-Run Space Opera
+# Benchmark: C8 (Content-Benchmark FTL-Lite)
+#
+# Feature-Kombination (gemaess plan-ftl-lite.md):
+#   - Schiffssysteme (7h): Sprungfrachter 'Nordstern' mit systems:
+#     (ship.nordstern.hull, shields, weapons, power, triebwerk) & Stationen (umleiten/aufladen)
+#   - Schiffsduelle (7h2): TargetShip mit combat: profile: tactical (attack, defend, flee, use-ability)
+#   - Waffen/Faehigkeiten (7f3): abilities mit cost_var, cost, cooldown (laser, rakete, reparatur)
+#   - Crew (7g): Party-Begleiter (Pilot Kael, Schuetzin Val, Ingenieur Sarek) mit order_verb: folgen
+#   - Sektorenkette: 4 Sektoren (Raumdock, Asteroidenfeld, Nebelbank/Handel, Rebellengrenze, Evakuierung)
+#   - Zufallsereignisse: encounter_tables mit kosmischen Phaenomenen und Patrouillen
+#   - Rebellen-Verfolgung: steigende Gefahr-Variable rebellen_flotte
+#   - Permadeath: game_end: death + permadeath: true + meta.*-Freischaltungen ueber mehrere Runs
+#   - ASCII/TUI-Showcase: title_art, end_art, frames:-Sprunganimation, ambient:-Bruecke, watch:-Konsolen
+
+name: Sprung ins Ungewisse
+start_room: s1_dock
+language: de
+
+game:
+  permadeath: true
+  meta_slug: ftl_lite
+  allow_undo: false
+
+combat:
+  profile: tactical
+  initiative: by_speed
+  flee_allowed: true
+  max_rounds: 50
+  speed_attribute: speed
+  screen:
+    bar_width: 20
+    scene: ">> RAUMKAMPF IM TIEFEN SEKTOR <<"
+    footer: "Befehle: attack <schiff> | use-ability <waffe> | defend | flee"
+    art: |
+      +=====================================================+
+      |     .---.                 / \                 .---. |
+      |    /=====\               /   \               /=====\|
+      |   | [===] |=============[  #  ]=============| [===]||
+      |    \=====/               \   /               \=====/|
+      |     '---'                 \ /                 '---' |
+      +=====================================================+
+
+player:
+  max_hp: 30
+  attack: 6
+  defense: 3
+  skills:
+    speed: 10
+
+title_art: |
+  ========================================================================================
+   ##### ##### #     #####     #     ### ##### #####   ####  ####  ####  #   # #   #  ####
+   #       #   #     #         #      #    #   #       #   # #   # #   # #   # ##  # #    
+   ####    #   #     ####  ### #      #    #   ####    ####  ####  #   # #   # # # # # ###
+   #       #   #     #         #      #    #   #       #     #  #  #   # #   # #  ## #   #
+   #       #   ##### #####     ##### ###   #   #####   #     #   # ####   ###  #   #  ####
+             -- S P R U N G   I N S   U N G E W I S S E   --   ( F T L - L I T E )
+  ========================================================================================
+
+end_art:
+  victory: |
+    ========================================================================================
+     ##### ### #####  ####      ####  ##### ####  ##### ##### ##### ##### ##### #####
+     #      #  #     #          #   # #     #   # #       #     #   #       #   #    
+     ####   #  ####  #  ###     ####  ####  ####  ####    #     #   ####    #   #### 
+     #      #  #     #   #      #  #  #     #  #  #       #     #   #       #   #    
+     #     ### #####  ####      #   # ##### #   # #####   #     #   #####   #   #####
+                  S I E G   -   F L O T T E   G E R E T T E T
+    ========================================================================================
+    Die Sprungkoordinaten der Föderations-Evakuierungsflotte sind erreicht!
+    Der Rebellen-Riegel ist durchbrochen. Die 'Nordstern' gleitet sicher in das
+    Warp-Tor. Deine Crew jubelt — der Sektor ist gerettet!
+  death: |
+    ========================================================================================
+     #   # #   # ##### #     #     ##### #   # ####  ####  #   #  #### #   #
+     #   # #   # #     #     #     #     ##  # #   # #   # #   # #     #   #
+     ##### #   # ####  #     #     ####  # # # ####  ####  #   # #     #####
+     #   # #   # #     #     #     #     #  ## #   # #  #  #   # #     #   #
+     #   #  ###  ##### ##### ##### ##### #   # ####  #   #  ###   #### #   #
+                     P E R M A D E A T H   -   S C H I F F S V E R L U S T
+    ========================================================================================
+    Die Schotten bersten unter ohrenbetäubendem Donnern. Das Reaktorfeuer bricht
+    durch die Deckplatten der Nordstern. Kaltes Vakuum zieht dich hinaus in die Stille.
+    Deine Mission endet hier... doch das Signal der Rettungsboje hallt durch das All.
+
+clips:
+  - id: clip_hyperjump
+    fps: 4
+    frames:
+      - |
+        +=======================================================+
+        | >> HYPERSPRUNG-TRIEBWERK LADET (ENERGIE: 100%) <<    |
+        |      .           .               .           .        |
+        |             .            .              .             |
+        +=======================================================+
+      - |
+        +=======================================================+
+        | >> WARPFELD-EXPANSION (3... 2... 1... WARP!) <<      |
+        |   ---=====---------=============---------=====---     |
+        |        ----=============================----          |
+        +=======================================================+
+      - |
+        +=======================================================+
+        | >> TRANSIT DURCH DEN SUBRAUM-KORRIDOR <<             |
+        | ===================================================== |
+        | ===================================================== |
+        +=======================================================+
+      - |
+        +=======================================================+
+        | >> SPRUNG VOLLENDET: AUSTRITT IM ZIELSEKTOR <<       |
+        |      *           *               *           *        |
+        |     [ S E K T O R S P R U N G   G L E I C H M A E S S I G ] |
+        +=======================================================+
+
+  - id: clip_shield_boost
+    fps: 3
+    frames:
+      - |
+        [SCHILD-GENERATOR: IMPULS AUSGELÖST]
+        ( o ) Schildring flackert auf...
+      - |
+        [SCHILD-GENERATOR: RESONANZ ERREICHT]
+        (( O )) Doppellage Schilde stabilisiert!
+      - |
+        [SCHILD-GENERATOR: VOLLKAPAZITÄT AKTIV]
+        ((( @ ))) Schutzblase umhüllt die Nordstern!
+
+verbs:
+  - { name: folgen, aliases: [follow, begleiten, antreten] }
+  - { name: umleiten, aliases: [reroute, energie] }
+  - { name: aufladen, aliases: [charge, lade] }
+  - { name: reparieren, aliases: [repair, flicken] }
+  - { name: sprung, aliases: [springe, jump, warp, hypersprung] }
+  - { name: defend, aliases: [verteidigen, ausweichen, deckung] }
+  - { name: flee, aliases: [fliehen, flucht, entkommen] }
+  - { name: use-ability, aliases: [ability, faehigkeit, feuer] }
+
+variables:
+  - { name: meta.runs, type: int, initial: 0 }
+  - { name: meta.start_shields, type: int, initial: 0 }
+  - { name: meta.raketen_unlocked, type: int, initial: 0 }
+  - { name: meta.ingenieur_unlocked, type: int, initial: 0 }
+  - { name: meta.sektoren_rekord, type: int, initial: 0 }
+  - { name: raketen_munition, type: int, initial: 2, min: 0, max: 10 }
+  - { name: rebellen_flotte, type: int, initial: 0, min: 0, max: 10 }
+  - { name: schrott, type: int, initial: 10, min: 0, max: 999 }
+  - { name: sektor_aktuell, type: int, initial: 1, min: 1, max: 4 }
+  - { name: pirat_belohnt, type: int, initial: 0, min: 0, max: 1 }
+  - { name: aufklaerer_belohnt, type: int, initial: 0, min: 0, max: 1 }
+  - { name: flaggschiff_belohnt, type: int, initial: 0, min: 0, max: 1 }
+  - { name: beacon_aktiv, type: int, initial: 0, min: 0, max: 1 }
+  - { name: generator_ueberlastet, type: int, initial: 0, min: 0, max: 1 }
+  - { name: hyperantrieb_bereit, type: int, initial: 1, min: 0, max: 1 }
+
+abilities:
+  - id: laser
+    name: "Zwillingslaser"
+    cost_var: ship.nordstern.power
+    cost: 1
+    cooldown: 0
+    effects:
+      - msg: "Feuerleitstrahl erfasst! Die Zwillingslaser der Nordstern schneiden ins Ziel!"
+      - if: { at: player, room: s1_asteroid }
+        then:
+          - if: { compare_var: { name: ship.piratenschiff.shields, op: gt, value: 0 } }
+            then:
+              - add_var: { var: ship.piratenschiff.shields, delta: -2 }
+              - msg: "Die Schilde des Korsarenschiffs absorbieren 2 Schaden."
+            else:
+              - add_var: { var: ship.piratenschiff.hull, delta: -3 }
+              - msg: "Direkter Treffer! Die Hülle des Korsarenschiffs nimmt 3 Schaden."
+      - if: { at: player, room: s3_riegel }
+        then:
+          - if: { compare_var: { name: ship.rebellenjaeger.shields, op: gt, value: 0 } }
+            then:
+              - add_var: { var: ship.rebellenjaeger.shields, delta: -2 }
+              - msg: "Die Schilde des Rebellenjägers absorbieren 2 Schaden."
+            else:
+              - add_var: { var: ship.rebellenjaeger.hull, delta: -3 }
+              - msg: "Treffer in die Steuerbord-Gondel des Rebellenjägers (-3 Hülle)!"
+      - if: { at: player, room: s4_beacon }
+        then:
+          - if: { compare_var: { name: ship.flaggschiff.shields, op: gt, value: 0 } }
+            then:
+              - add_var: { var: ship.flaggschiff.shields, delta: -2 }
+              - msg: "Die schweren Schilde des Flaggschiffs absorbieren 2 Schaden."
+            else:
+              - add_var: { var: ship.flaggschiff.hull, delta: -3 }
+              - msg: "Die Panzerung des Flaggschiffs splittert (-3 Hülle)!"
+
+  - id: rakete
+    name: "Artemis-Rakete"
+    cost_var: raketen_munition
+    cost: 1
+    cooldown: 2
+    effects:
+      - msg: "ZISCH! Eine Artemis-Rakete durchschlägt die feindlichen Schilde und explodiert!"
+      - if: { at: player, room: s1_asteroid }
+        then:
+          - add_var: { var: ship.piratenschiff.hull, delta: -5 }
+          - msg: "Kritischer Einschlag auf dem Korsarenschiff (-5 Hülle)!"
+      - if: { at: player, room: s3_riegel }
+        then:
+          - add_var: { var: ship.rebellenjaeger.hull, delta: -5 }
+          - msg: "Schwerer Hüllenschaden am Rebellenjäger (-5 Hülle)!"
+      - if: { at: player, room: s4_beacon }
+        then:
+          - add_var: { var: ship.flaggschiff.hull, delta: -5 }
+          - msg: "Volltreffer in den Hauptreaktor des Flaggschiffs (-5 Hülle)!"
+
+  - id: reparatur
+    name: "Notfallreparatur"
+    cost_var: ship.nordstern.power
+    cost: 2
+    cooldown: 3
+    effects:
+      - add_var: { var: ship.nordstern.hull, delta: 4 }
+      - if: { compare_var: { name: ship.nordstern.hull, op: gt, value: 14 } }
+        then: [ { set_var: { var: ship.nordstern.hull, value: 14 } } ]
+      - msg: "Reparaturdrohnen strömen aus und versiegeln Hüllenbrüche (+4 Hülle)!"
+
+encounter_tables:
+  - id: asteroiden_truemmer
+    on: turn
+    cooldown: 3
+    when:
+      at: player
+      room: s1_asteroid
+    entries:
+      - weight: 2
+        effects:
+          - msg: "Sensoren piepen: Mikrometeoriten prasseln harmlos gegen die Deflektorschirme."
+      - weight: 1
+        effects:
+          - msg: "Ein taumelnder Gesteinsbrocken driftet dicht an den Sichtschirmen vorbei."
+
+  - id: nebel_statik
+    on: turn
+    cooldown: 3
+    when:
+      at: player
+      room: s2_nebel
+    entries:
+      - weight: 2
+        effects:
+          - msg: "Elektrostatisches Leuchten kriecht über die Bordwand — die Sensoren flackern."
+      - weight: 1
+        effects:
+          - msg: "Der grüne Nebel dämpft das Licht entfernter Sterne zu geisterhaften Punkten."
+
+vehicles:
+  - id: nordstern
+    name: Sprungfrachter Nordstern
+    desc: "Ein robuster Kestrel-Klasse Sprungfrachter mit modifizierten Schilden und zwei Geschütztürmen."
+    type: player
+    entry_room: ns_bridge
+    cockpit: ns_bridge
+    keys: [nordstern, frachter, sprungfrachter, schiff]
+    interior:
+      - id: ns_bridge
+        name: Brücke der Nordstern
+        desc: "Die Steuerzentrale der Nordstern. Vorne liegt das Panorama-Sichtfenster. Nach Süden führt die Schotttür zum Maschinenraum, nach Osten zur Waffenstation und nach Westen zum Frachtraum."
+        exits: { south: ns_engine, east: ns_weapons, west: ns_cargo }
+        ascii:
+          default: |
+            +=======================================================+
+            |  [BRÜCKE DER NORDSTERN]                               |
+            |       /=======================================\       |
+            |      /    [W] Waffenkonsole   [S] Schildkonsole \     |
+            |     |                                           |     |
+            |     |     [N] Navigationsdeck [R] Reaktorkonsole|     |
+            |      \=========================================/      |
+            +=======================================================+
+          hotspots:
+            - { glyph: "W", target: waffenkonsole }
+            - { glyph: "S", target: schildkonsole }
+            - { glyph: "N", target: navigationskonsole }
+            - { glyph: "R", target: reaktorkonsole }
+          ambient:
+            fps: 2
+            frames:
+              - |
+                [BORDCOMPUTER: Schilde und Hülle im Normalbereich. Reaktor stabil.]
+              - |
+                [BORDCOMPUTER: Subraum-Sensoren scannen den aktuellen Sektor...]
+              - |
+                [BORDCOMPUTER: Hyperantrieb geladen. Kurskoordinaten bereit.]
+
+      - id: ns_engine
+        name: Maschinenraum der Nordstern
+        desc: "Ein gewaltiger Fusionsreaktor summt tief im Rumpf. Hier kann mit 'umleiten' Energie in die Systeme gelenkt werden."
+        exits: { north: ns_bridge }
+        ascii:
+          default: |
+            +-----------------------------------------------+
+            |  [MASCHINENRAUM - FUSIONSREAKTOR]             |
+            |            /=========\                        |
+            |           |  ( * * )  |   [REAKTORHERZ]       |
+            |            \=========/                        |
+            |        [===] [===] [===] Leitungen            |
+            +-----------------------------------------------+
+
+      - id: ns_weapons
+        name: Waffenstation der Nordstern
+        desc: "Die Feuerleitstation der Zwillingslaser und des Raketenmagazins. Mit 'aufladen' werden Generatoren gespeist."
+        exits: { west: ns_bridge }
+        ascii:
+          default: |
+            +-----------------------------------------------+
+            |  [WAFFENSTATION - FEUERLEITUNG]               |
+            |      ||      ||     Zwillingslaser-Rohre      |
+            |     [==]====[==]    Optik und Munitionsband   |
+            +-----------------------------------------------+
+
+      - id: ns_cargo
+        name: Frachtraum der Nordstern
+        desc: "Verstrebte Frachtabteile, Gurte und Schrottkisten. Eine Werkbank bietet Werkzeuge zur Hüllenreparatur."
+        exits: { east: ns_bridge }
+        ascii:
+          default: |
+            +-----------------------------------------------+
+            |  [FRACHTRAUM & VERSORGUNG]                    |
+            |    [KISTE]  [KISTE]     Werkbank & Werkzeug   |
+            |    [LAGER]  [LAGER]     Ersatzteile           |
+            +-----------------------------------------------+
+
+    stops:
+      "Raumdock": s1_dock
+      "Asteroidenfeld": s1_asteroid
+      "Nebelbank": s2_nebel
+      "Handelsstation": s2_station
+      "Rebellengrenze": s3_riegel
+      "Evakuierungssektor": s4_beacon
+    start_stop: "Raumdock"
+    systems:
+      power:     { initial: 6, max: 6 }
+      shields:   { initial: 6, max: 10 }
+      hull:      { initial: 14, max: 14 }
+      weapons:   { initial: 4, max: 6 }
+      triebwerk: { initial: 3, max: 5 }
+    stations:
+      - room: ns_engine
+        verb: umleiten
+        effects:
+          - { add_var: ship.nordstern.power, delta: 3 }
+          - if: { compare_var: { name: ship.nordstern.power, op: gt, value: 6 } }
+            then: [ { set_var: ship.nordstern.power, value: 6 } ]
+          - { msg: "Der Fusionsreaktor heult auf — Energie strömt in die Primärkreise (+3 Energie)!" }
+      - room: ns_weapons
+        verb: aufladen
+        effects:
+          - { add_var: ship.nordstern.weapons, delta: 2 }
+          - if: { compare_var: { name: ship.nordstern.weapons, op: gt, value: 6 } }
+            then: [ { set_var: ship.nordstern.weapons, value: 6 } ]
+          - { add_var: ship.nordstern.shields, delta: 2 }
+          - if: { compare_var: { name: ship.nordstern.shields, op: gt, value: 10 } }
+            then: [ { set_var: ship.nordstern.shields, value: 10 } ]
+          - { play_clip: clip_shield_boost }
+          - { msg: "Die Geschützkondensatoren und Schildspulen sind wieder voll geladen (+2 Waffen/+2 Schilde)!" }
+
+  - id: piratenschiff
+    name: Korsarenschiff
+    desc: "Ein schwer gepanzerter Piraten-Raider mit gezackten Bordwänden und gierigen Laserlafetten."
+    type: auto
+    entry_room: s1_asteroid
+    keys: [piratenschiff, korsarenschiff, pirat, korsar, raider]
+    stops:
+      "Asteroidenfeld": s1_asteroid
+    start_stop: "Asteroidenfeld"
+    systems:
+      power:   { initial: 4, max: 4 }
+      shields: { initial: 4, max: 4 }
+      hull:    { initial: 8, max: 8 }
+      weapons: { initial: 3, max: 5 }
+
+  - id: rebellenjaeger
+    name: Rebellen-Aufklaerer
+    desc: "Ein schnittiges Patrouillenschiff der Rebellenflotte, dessen Suchscheinwerfer den Raum abtasten."
+    type: auto
+    entry_room: s3_riegel
+    keys: [rebellenjaeger, jaeger, aufklaerer, abfangjaeger]
+    stops:
+      "Rebellengrenze": s3_riegel
+    start_stop: "Rebellengrenze"
+    systems:
+      power:   { initial: 5, max: 5 }
+      shields: { initial: 6, max: 6 }
+      hull:    { initial: 10, max: 10 }
+      weapons: { initial: 4, max: 6 }
+
+  - id: flaggschiff
+    name: Rebellen-Flaggschiff
+    desc: "Ein titanischer Kreuzer der Rebellen, bestückt mit Dreifach-Laserbatterien und dicker Verbundpanzerung."
+    type: auto
+    entry_room: s4_beacon
+    keys: [flaggschiff, rebellenflaggschiff, rebellen_flaggschiff, kreuzer]
+    stops:
+      "Evakuierungssektor": s4_beacon
+    start_stop: "Evakuierungssektor"
+    systems:
+      power:   { initial: 8, max: 8 }
+      shields: { initial: 8, max: 8 }
+      hull:    { initial: 14, max: 14 }
+      weapons: { initial: 6, max: 8 }
+
+rooms:
+  - id: s1_dock
+    name: Dock 4 der Sternenbasis
+    desc: "Ein geschäftiges Raumdock im Randsektor. Versorgungskabel hängen wie Lianen von der Decke. Die Nordstern liegt abflugbereit an der Schleusenrampe."
+    exits: { north: s1_hangar }
+
+  - id: s1_hangar
+    name: Stations-Hangardeck
+    desc: "Werkzeugkisten und Treibstofffässer lagern hier. Ein Techniker überholt eine Frachtdrohne."
+    exits: { south: s1_dock }
+    search:
+      - { give: ersatzteile }
+      - { msg: "In einer Werkzeugkiste findest du brauchbare Ersatzteile für die Schiffshülle!" }
+
+  - id: s1_asteroid
+    name: Asteroidenfeld im Sektor 1
+    desc: "Große Felsbrocken treiben lautlos durch das All. Im Schatten eines riesigen Asteroiden lauert das Korsarenschiff der Piraten!"
+    exits: { north: s1_mining }
+
+  - id: s1_mining
+    name: Verlassene Erzstation
+    desc: "Eine ausgeweidete Förderstation, verankert auf einem Nickel-Eisen-Meteoriten."
+    exits: { south: s1_asteroid }
+    search:
+      - { add_var: raketen_munition, delta: 2 }
+      - { msg: "Im Munitionsdepot der Erzstation findest du 2 intakte Raketen!" }
+
+  - id: s2_nebel
+    name: Nebelbank im Sektor 2
+    desc: "Dichte, grünlich leuchtende Gaswolken schlucken das Sternenlicht. Sensoren und Funkreichweite sind stark eingeschränkt. Voraus ragt eine uralte Forschungsplattform aus dem Dunst."
+    exits: { north: s2_relic }
+
+  - id: s2_relic
+    name: Verlassene Forschungsplattform
+    desc: "Ein verstaubtes Laboratorium im Nebel. Monitore flackern im Notstrombetrieb."
+    exits: { south: s2_nebel }
+    search:
+      - { give: schild_bauplan }
+      - { msg: "In einem Datentresor entdeckst du hochentwickelte Schild-Baupläne der Föderation!" }
+
+  - id: s2_station
+    name: Freihafen-Handelsstation
+    desc: "Ein beleuchteter Ringkomplex trotzt der Einsamkeit des Nebelsektors. An Dock 2 ist eine Rettungskapsel befestigt."
+    exits: { east: s2_bazaar }
+
+  - id: s2_bazaar
+    name: Basardeck des Freihafens
+    desc: "Schmugglertische und Holo-Werbung. Händler Zax bietet seltene Schiffsausrüstung feil."
+    exits: { west: s2_station }
+
+  - id: s3_riegel
+    name: Rebellengrenze im Sektor 3
+    desc: "Der Raum ist durchzogen von Warnbojen und Energiesperren. Ein schneller Rebellen-Aufklärer schneidet deinen Kurs ab!"
+    exits: { north: s3_outpost }
+
+  - id: s3_outpost
+    name: Zerstoerter Grenzposten
+    desc: "Geschmolzene Antennengitter zeugen vom unbarmherzigen Vormarsch der Rebellenflotte."
+    exits: { south: s3_riegel }
+
+  - id: s4_beacon
+    name: Evakuierungssektor der Foederation
+    desc: "Das Endziel deiner Flucht: Ein gigantisches Föderations-Warptor pulsiert im All. Doch davor kreuzt das gefürchtete Rebellen-Flaggschiff!"
+    exits: { north: s4_portal }
+
+  - id: s4_portal
+    name: Warptor der Foederation
+    desc: "Ein Portal aus reinem Tachyonenlicht. Dahinter liegt die rettende Kernwelt der Föderation."
+    exits: { south: s4_beacon }
+
+npcs:
+  - id: kael
+    name: Pilot Kael
+    desc: "Ein erfahrener Pilot mit scharfem Blick und ruhiger Hand an den Steuerelementen."
+    gender: m
+    keys: [kael, pilot]
+    location: ns_bridge
+    state: alive
+    max_hp: 25
+    attack: 4
+    defense: 4
+    party:
+      can_join: true
+      order_verb: folgen
+      hp_tracked: true
+      follow_msg: "Pilot Kael strafft die Schultern: 'Bereit für den Sprung, Commander!'"
+      stay_msg: "Pilot Kael bleibt auf seinem Posten an der Steuerkonsole."
+    dialogue:
+      alive:
+        entry: greet
+        nodes:
+          greet:
+            text: "„Commander! Die Sprungkoordinaten sind berechnet. Wir können jederzeit zu den Zielsektoren aufbrechen.“"
+            choices:
+              - { text: "Tritt an, Kael! Wir fliegen zusammen.", next: null }
+              - { text: "Halte die Brücke im Auge.", next: null }
+
+  - id: val
+    name: Schuetzin Val
+    desc: "Eine resolute Waffenoffizierin mit Kybernetik-Okular für präzise Zielerfassung."
+    gender: f
+    keys: [val, schuetzin, schuetze]
+    location: ns_weapons
+    state: alive
+    max_hp: 25
+    attack: 7
+    defense: 3
+    party:
+      can_join: true
+      order_verb: folgen
+      hp_tracked: true
+      follow_msg: "Schützin Val verriegelt ihr Lasergewehr: 'Waffenstation scharf!'"
+      stay_msg: "Schützin Val sichert die Feuerleitkonsole."
+    dialogue:
+      alive:
+        entry: greet
+        nodes:
+          greet:
+            text: "„Laser und Raketenbänke sind auf Abruf bereit. Lass uns diesen Rebellen einheizen!“"
+            choices:
+              - { text: "Schließe dich mir an, Val!", next: null }
+              - { text: "Halte die Feuerleitung bereit.", next: null }
+
+  - id: sarek
+    name: Ingenieur Sarek
+    desc: "Ein genialer Schiffsingenieur, spezialisiert auf Reaktortuning und Schildüberlastung."
+    gender: m
+    keys: [sarek, ingenieur]
+    location: s2_station
+    state: alive
+    max_hp: 25
+    attack: 4
+    defense: 5
+    party:
+      can_join: true
+      order_verb: folgen
+      hp_tracked: true
+      follow_msg: "Ingenieur Sarek nickt erleichtert: 'Reaktor und Schilde stehen unter meinem Schutz!'"
+      stay_msg: "Ingenieur Sarek überprüft die Energieleitungen."
+    dialogue:
+      alive:
+        entry: greet
+        nodes:
+          greet:
+            text: "„Danke für die Rettung aus der Kapsel! Wenn du mich mitnimmst, halte ich deine Schilde stabil.“"
+            choices:
+              - { text: "Willkommen an Bord der Nordstern, Sarek!", next: null }
+              - { text: "Warte hier auf der Station.", next: null }
+
+  - id: haendler_zax
+    name: Haendler Zax
+    desc: "Ein gewiefter Händler in staubigem Pilotenanzug, umgeben von Kisten mit Schiffszubehör."
+    gender: m
+    keys: [haendler, zax]
+    location: s2_bazaar
+    state: alive
+    dialogue:
+      alive:
+        entry: angebot
+        nodes:
+          angebot:
+            text: "„Willkommen auf dem Freihafen! Brauchst du Raketen oder Reparaturen für deinen Kahn?“"
+            choices:
+              - { text: "Ich sehe mich nur um.", next: null }
+
+items:
+  - id: waffenkonsole
+    name: Waffenkonsole
+    gender: f
+    desc: "Die Primärfeuer-Kontrollen der Nordstern. Anzeige: Zwillingslaser feuerbereit, Raketenmagazin geladen."
+    keys: [waffenkonsole, konsole]
+    location: ns_bridge
+    ascii:
+      frames:
+        - |
+          [KONSOLE: WAFFENSTATUS]
+          Zielerfassung: BEREIT | Läufe: 100% | Feuerleitsystem: VERNETZT
+        - |
+          [KONSOLE: WAFFENSTATUS]
+          Zielerfassung: TRACKING... | Läufe: 100% | Feuerleitsystem: VERNETZT
+
+  - id: schildkonsole
+    name: Schildkonsole
+    gender: f
+    desc: "Statusanzeige der Schildfeldgeneratoren. Grüne Balken zeigen die Deflektorstärke."
+    keys: [schildkonsole]
+    location: ns_bridge
+    ascii:
+      frames:
+        - |
+          [KONSOLE: SCHILDFELD]
+          Deflektoren: STABIL | Polarisation: OPTIMAL | Puffer: VOLL
+        - |
+          [KONSOLE: SCHILDFELD]
+          Deflektoren: PULSIEREND | Polarisation: OPTIMAL | Puffer: VOLL
+
+  - id: navigationskonsole
+    name: Navigationskonsole
+    gender: f
+    desc: "Holografische Sternenkarte. Zeigt die Sektorenkette und den Abstand zur Rebellenflotte."
+    keys: [navigationskonsole, sternenkarte, karte]
+    location: ns_bridge
+    ascii:
+      frames:
+        - |
+          [SEKTORENKARTE: SPRUNGROUTE]
+          [S1: Dock] -> [S1: Asteroiden] -> [S2: Nebel] -> [S3: Grenze] -> [S4: Evakuierung]
+          Rebellenflotte: IN VERFOLGUNG
+        - |
+          [SEKTORENKARTE: SPRUNGROUTE]
+          [S1: Dock] -> [S1: Asteroiden] -> [S2: Nebel] -> [S3: Grenze] -> [S4: Evakuierung]
+          Rebellenflotte: NÄHERT SICH
+
+  - id: reaktorkonsole
+    name: Reaktorkonsole
+    gender: f
+    desc: "Schwere Diagnosekonsole des Fusionsantriebs. Ein roter Notüberlastungs-Kippschalter ist mit Schutzglas gesichert."
+    keys: [reaktorkonsole]
+    location: ns_bridge
+    ascii:
+      frames:
+        - |
+          [REAKTORDIAGNOSE]
+          Leistung: 6 KERN-EINHEITEN | Kühlung: STABIL | Überlastungsschutz: AKTIV
+        - |
+          [REAKTORDIAGNOSE]
+          Leistung: 6 KERN-EINHEITEN | Kühlung: STABIL | Warnung: KIPPSCHALTER ENTSICHERBAR
+
+  - id: ersatzteile
+    name: Kiste mit Ersatzteilen
+    gender: f
+    desc: "Titan-Verbundplatten und Schweißbrenner für Noteinsätze an der Hülle."
+    keys: [ersatzteile, kiste, reparaturset, teile]
+    location: ns_cargo
+    verb_map:
+      use,intact:
+        - { add_var: ship.nordstern.hull, delta: 5 }
+        - if: { compare_var: { name: ship.nordstern.hull, op: gt, value: 14 } }
+          then: [ { set_var: ship.nordstern.hull, value: 14 } ]
+        - { consume: ersatzteile }
+        - { msg: "Du schweißt die Titanplatten auf die beschädigte Bordwand auf (+5 Hülle)!" }
+
+  - id: schild_bauplan
+    name: Föderations-Schildbauplan
+    gender: m
+    desc: "Ein verschlüsselter Datenchip mit den Konstruktionsplänen modernster Föderations-Schildverstärker."
+    keys: [schild_bauplan, bauplan, datenchip, chip]
+    location: nowhere
+    verb_map:
+      use,intact:
+        - { set_var: { var: meta.start_shields, value: 1 } }
+        - { set_var: { var: meta.ingenieur_unlocked, value: 1 } }
+        - { consume: schild_bauplan }
+        - { msg: "META-FORTSCHRITT GESICHERT: Schild-Baupläne dauerhaft im Bordcomputer gespeichert! Zukünftige Runs starten mit 10 Schilden und Ingenieur Sarek im Maschinenraum!" }
+
+  - id: notfall_kippschalter
+    name: Notüberlastungs-Schalter
+    gender: m
+    desc: "Ein grellroter Notschalter. Mit 'use notfall_kippschalter' kann der Reaktor zur Notfall-Selbstzerstörung überlastet werden."
+    keys: [notfall_kippschalter, kippschalter, schalter, nothebel]
+    location: ns_engine
+    verb_map:
+      use,intact:
+        - { set_var: { var: generator_ueberlastet, value: 1 } }
+        - { set_var: { var: ship.nordstern.hull, value: 0 } }
+        - { msg: "ALARM! Du betätigst den Notüberlastungs-Schalter! Der Reaktor überhitzt explosionsartig!" }
+
+  - id: evakuierungs_beacon
+    name: Evakuierungs-Subraumfunkfeuer
+    gender: n
+    desc: "Das automatisierte Leitfunkfeuer der Föderation. Sendet auf der Frequenz der Rettungsflotte."
+    keys: [evakuierungs_beacon, funkfeuer, beacon, sender]
+    location: s4_beacon
+    verb_map:
+      use,intact:
+        - { set_var: { var: beacon_aktiv, value: 1 } }
+        - { msg: "Das Funkfeuer erstrahlt in gleißendem Blau: Die Föderationsflotte empfängt dein Signal!" }
+        - { game_end: victory, msg: "VICTORY — Das Evakuierungs-Funkfeuer ist aktiviert! Die Föderationsflotte eskortiert die Nordstern in Sicherheit!" }
+
+rules:
+  - id: init_run_meta
+    on: turn
+    once: true
+    effects:
+      - if: { compare_var: { name: meta.ingenieur_unlocked, op: gte, value: 1 } }
+        then:
+          - move_npc: sarek
+            to: ns_engine
+          - msg: "[META-VORTEIL: Ingenieur Sarek hat seinen Dienst im Maschinenraum angetreten!]"
+      - if: { compare_var: { name: meta.start_shields, op: gte, value: 1 } }
+        then:
+          - set_var: { var: ship.nordstern.shields, value: 10 }
+          - msg: "[META-VORTEIL: Verstärkte Schildgeneratoren aktiv (10 Schilde)!]"
+      - msg: "[MELDUNG: Sprungfrachter Nordstern abflugbereit. Auftrag: Evakuierungssektor 4 erreichen!]"
+
+  - id: sarek_recruited_meta
+    on: state sarek
+    when:
+      compare_var: { name: party.sarek, op: gte, value: 1 }
+    once: true
+    effects:
+      - set_var: { var: meta.ingenieur_unlocked, value: 1 }
+      - msg: "[META-FORTSCHRITT: Ingenieur Sarek ist nun dauerhaft rekrutiert!]"
+
+  - id: sprung_befehl
+    on: "command sprung"
+    when:
+      at: player
+      room: ns_bridge
+    effects:
+      - play_clip: clip_hyperjump
+      - add_var: { var: rebellen_flotte, delta: 1 }
+      - msg: "Das Sprungtriebwerk entlädt sich mit einem Ruck! Die Nordstern gleitet durch den Hyperraum."
+      - msg: "[STATUS: Rebellenflotte rückt nach! Gefahr-Stufe: {rebellen_flotte}/10]"
+
+  - id: rebellen_warnung
+    on: turn
+    when:
+      all:
+        - compare_var: { name: rebellen_flotte, op: gte, value: 6 }
+        - compare_var: { name: rebellen_flotte, op: lt, value: 8 }
+    once: true
+    effects:
+      - msg: "WARNUNG: Subraum-Echos der Rebellenflotte empfangen! Die Verfolger schließen auf!"
+
+  - id: pirat_counter
+    on: turn
+    when:
+      all:
+        - at: player
+          room: s1_asteroid
+        - compare_var: { name: combat.engaged, op: gte, value: 1 }
+        - compare_var: { name: ship.piratenschiff.hull, op: gt, value: 0 }
+        - not: { var: combat.action, is: defend }
+        - not: { var: combat.action, is: flee }
+    effects:
+      - if: { compare_var: { name: ship.nordstern.shields, op: gt, value: 0 } }
+        then:
+          - add_var: { var: ship.nordstern.shields, delta: -3 }
+          - if: { compare_var: { name: ship.nordstern.shields, op: lt, value: 0 } }
+            then: [ { set_var: { var: ship.nordstern.shields, value: 0 } } ]
+          - msg: "Das Korsarenschiff feuert eine Breitseite: Die Schilde der Nordstern absorbieren den Treffer (-3 Schilde)!"
+        else:
+          - add_var: { var: ship.nordstern.hull, delta: -3 }
+          - msg: "ALARM: Schilde durchbrochen! Die Hülle der Nordstern nimmt 3 Schaden!"
+
+  - id: pirat_counter_defended
+    on: turn
+    when:
+      all:
+        - at: player
+          room: s1_asteroid
+        - compare_var: { name: combat.engaged, op: gte, value: 1 }
+        - compare_var: { name: ship.piratenschiff.hull, op: gt, value: 0 }
+        - var: combat.action
+          is: defend
+    effects:
+      - msg: "Ausweichmanöver geglückt! Pilot Kael legt die Nordstern auf die Seite — die Piraten-Salven gehen ins Leere!"
+
+  - id: pirat_besiegt
+    on: turn
+    when:
+      all:
+        - compare_var: { name: ship.piratenschiff.hull, op: lte, value: 0 }
+        - compare_var: { name: pirat_belohnt, op: eq, value: 0 }
+    effects:
+      - set_var: { var: pirat_belohnt, value: 1 }
+      - add_var: { var: schrott, delta: 15 }
+      - set_var: { var: ship.piratenschiff.hull, value: 0 }
+      - msg: "FEIND VERNICHTET: Das Korsarenschiff detoniert in einem lautlosen Feuerball! Du birgst 15 Einheiten Schrott aus den Trümmern."
+
+  - id: rebellen_counter
+    on: turn
+    when:
+      all:
+        - at: player
+          room: s3_riegel
+        - compare_var: { name: combat.engaged, op: gte, value: 1 }
+        - compare_var: { name: ship.rebellenjaeger.hull, op: gt, value: 0 }
+        - not: { var: combat.action, is: defend }
+        - not: { var: combat.action, is: flee }
+    effects:
+      - if: { compare_var: { name: ship.nordstern.shields, op: gt, value: 0 } }
+        then:
+          - add_var: { var: ship.nordstern.shields, delta: -3 }
+          - if: { compare_var: { name: ship.nordstern.shields, op: lt, value: 0 } }
+            then: [ { set_var: { var: ship.nordstern.shields, value: 0 } } ]
+          - msg: "Der Rebellenjäger feuert schwere Plasmabolzen in deine Schilde (-3 Schilde)!"
+        else:
+          - add_var: { var: ship.nordstern.hull, delta: -4 }
+          - msg: "ALARM: Die Plasmabolzen des Rebellenjägers stanzen Löcher in die Hülle (-4 Hülle)!"
+
+  - id: rebellen_counter_defended
+    on: turn
+    when:
+      all:
+        - at: player
+          room: s3_riegel
+        - compare_var: { name: combat.engaged, op: gte, value: 1 }
+        - compare_var: { name: ship.rebellenjaeger.hull, op: gt, value: 0 }
+        - var: combat.action
+          is: defend
+    effects:
+      - msg: "Gegenfeuer & Täuschkörper! Pilot Kael stößt Flares aus — die Rebellengeschosse detonieren wirkungslos!"
+
+  - id: rebellen_besiegt
+    on: turn
+    when:
+      all:
+        - compare_var: { name: ship.rebellenjaeger.hull, op: lte, value: 0 }
+        - compare_var: { name: aufklaerer_belohnt, op: eq, value: 0 }
+    effects:
+      - set_var: { var: aufklaerer_belohnt, value: 1 }
+      - add_var: { var: schrott, delta: 20 }
+      - set_var: { var: ship.rebellenjaeger.hull, value: 0 }
+      - msg: "FEIND VERNICHTET: Der Rebellenjäger zerbricht! Der Weg in den Evakuierungssektor ist frei!"
+
+  - id: flaggschiff_counter
+    on: turn
+    when:
+      all:
+        - at: player
+          room: s4_beacon
+        - compare_var: { name: combat.engaged, op: gte, value: 1 }
+        - compare_var: { name: ship.flaggschiff.hull, op: gt, value: 0 }
+        - not: { var: combat.action, is: defend }
+        - not: { var: combat.action, is: flee }
+    effects:
+      - if: { compare_var: { name: ship.nordstern.shields, op: gt, value: 0 } }
+        then:
+          - add_var: { var: ship.nordstern.shields, delta: -4 }
+          - if: { compare_var: { name: ship.nordstern.shields, op: lt, value: 0 } }
+            then: [ { set_var: { var: ship.nordstern.shields, value: 0 } } ]
+          - msg: "Die Hauptbatterie des Rebellen-Flaggschiffs hämmert auf die Nordstern ein (-4 Schilde)!"
+        else:
+          - add_var: { var: ship.nordstern.hull, delta: -5 }
+          - msg: "KRITISCH: Das Flaggschiff schlägt direkt in die Hülle der Nordstern ein (-5 Hülle)!"
+
+  - id: flaggschiff_counter_defended
+    on: turn
+    when:
+      all:
+        - at: player
+          room: s4_beacon
+        - compare_var: { name: combat.engaged, op: gte, value: 1 }
+        - compare_var: { name: ship.flaggschiff.hull, op: gt, value: 0 }
+        - var: combat.action
+          is: defend
+    effects:
+      - msg: "Notmanöver! Vollschub auf die Steuerdüsen — die verheerende Salve des Flaggschiffs streift nur die Panzerung!"
+
+  - id: flaggschiff_besiegt
+    on: turn
+    when:
+      all:
+        - compare_var: { name: ship.flaggschiff.hull, op: lte, value: 0 }
+        - compare_var: { name: flaggschiff_belohnt, op: eq, value: 0 }
+    effects:
+      - set_var: { var: flaggschiff_belohnt, value: 1 }
+      - msg: "KOLOSSALE EXPLOSION: Das Rebellen-Flaggschiff bricht in zwei Hälften! Die Schockwelle fegt durch den Sektor!"
+      - game_end: victory
+      - msg: "VICTORY — Das Rebellen-Flaggschiff ist vernichtet! Die Flotte der Föderation ist gerettet!"
+
+  - id: hull_failure
+    on: turn
+    when:
+      compare_var: { name: ship.nordstern.hull, op: lte, value: 0 }
+    effects:
+      - { msg: "ALARM: Hüllenbruch auf allen Decks! Die strukturelle Integrität der Nordstern kollabiert!" }
+      - { game_end: death, msg: "Die Hülle der Nordstern bricht auf — du verglühst mit dem Schiff." }
+
+  - id: player_death
+    on: turn
+    when:
+      compare: { lhs: player.hp, op: "<=", rhs: 0 }
+    effects:
+      - { msg: "Deine Lebenszeichen erlöschen. Die Besatzung der Nordstern hat nicht überlebt." }
+      - { game_end: death, msg: "Du brichst auf der Brücke zusammen — deine Reise endet hier." }
+
+tests:
+  - name: "crew anwerben und schiffssysteme pruefen"
+    input: [board nordstern, folgen kael, east, folgen val, aufladen, west]
+    expect:
+      - "Pilot Kael"
+      - "Schützin Val"
+      - "Die Geschützkondensatoren und Schildspulen sind wieder voll geladen"

@@ -21,9 +21,8 @@ Umsetzungsplan: `~/workspace/plan-spielideen-umsetzung.md`):**
   Grenzposten (Zyklen + `random:` + `compare_var` + Fraktions-`standing:`),
   alle Mechanik-Experimente (§3) und ASCII-Showcases (§4 — nur Content).
 - **Braucht einen Engine-Rest:** Bauernhof (Zuneigung geht, aber
-  Schwellen-Ereignisse/Konsequenzketten = G9-Rest), FTL-Lite (Schiffsduelle 7h2 + Party + Worldgen da;
-  Sektoren-Ketten = Content).
-- **Gebaut (Benchmark):** Monster sammeln — vollständig als Genre-Benchmark 'Die Monster-Insel' (`examples/genres/monster_insel.yaml`) realisiert (C4 Party-Slots, Per-Monster-XP, §9.1 Typ-Effektivität).
+  Schwellen-Ereignisse/Konsequenzketten = G9-Rest).
+- **Gebaut (Benchmark):** Monster sammeln — vollständig als Genre-Benchmark 'Die Monster-Insel' (`examples/genres/monster_insel.yaml`) realisiert (C4 Party-Slots, Per-Monster-XP, §9.1 Typ-Effektivität); FTL-Lite — vollständig als Content-Benchmark 'Sprung ins Ungewisse' (`examples/genres/ftl_lite.yaml`) realisiert (7h/7h2 Schiffssysteme & Duelle, 7g Party, Fähigkeiten, Permadeath & Meta-Progression).
 
 ---
 
@@ -39,10 +38,10 @@ durchqueren, Krankheiten überstehen.
   kompakten Spiel.
 - **Status:** Umgesetzt als Benchmark-Adventure in `examples/genres/oregon_trail.yaml` (2026-10-14).
 
-### [ ] FTL-Lite – „Sprung ins Ungewisse“
+### [x] FTL-Lite – „Sprung ins Ungewisse“
 Mehrere Sektoren, Schiffsduelle, eine Crew, Permadeath.
-- **Zeigt:** Raumschiff-Systeme und -Duelle, Party, neu erzeugte Welt pro
-  Durchlauf, `meta.*`-Freischaltungen über mehrere Runs
+- **Zeigt:** Raumschiff-Systeme und -Duelle (7h/7h2 TargetShip, taktisches Kampfprofil), Party (7g), Fähigkeiten/Waffen mit Cooldown und Energie, Zufallsbegegnungen, Rebellen-Verfolgung, `meta.*`-Freischaltungen über mehrere Runs, Permadeath (`permadeath: true`), ASCII/TUI-Showcase (Title-Art, End-Art, animierte Hyperraum-Frames, Brücken-Ambient-Loop, Konsolen-Hotspots).
+- **Status:** Vollständig als Content-Benchmark in `examples/genres/ftl_lite.yaml` realisiert (2026-10-16).
 
 ### [ ] Heist – „Der Tresor von Monte Carlo“
 Zuerst die Planung (Crew anwerben, Ausrüstung besorgen), dann der Einbruch.

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Content-Benchmark: „Sprung ins Ungewisse" (FTL-Lite / Weltraum-Homage)
+
+Vollständige Implementierung des Content-Benchmarks `examples/genres/ftl_lite.yaml` laut `/root/workspace/plan-ftl-lite.md`:
+
+- **Genre & Setting:** Weltraum-FTL-Homage rund um den Sprungfrachter 'Nordstern' auf der Flucht vor der Rebellenflotte durch 4 Sektoren (Raumdock, Asteroidenfeld, Nebelbank/Handelsstation, Rebellengrenze und Evakuierungs-Leuchtfeuer).
+- **Schiffssysteme (7h):** Sprungfrachter `nordstern` mit getrennten Subsystemen (`ship.nordstern.hull`, `ship.nordstern.shields`, `ship.nordstern.weapons`, `ship.nordstern.power`, `ship.nordstern.triebwerk`) und interaktiven Konsolen zum Energie-Umleiten und Schild-Aufladen.
+- **Schiffsduelle (7h2 TargetShip & taktisches Kampfprofil):** Rundenbasierte Raumschiffduelle (`combat: profile: tactical`) mit `attack`, `defend`, `flee` und `use-ability` gegen Piratenschiff, Rebellenjäger und das gefürchtete Rebellen-Flaggschiff.
+- **Fähigkeiten (7f3):** 3 Raumschiff-Fähigkeiten (`laser`, `rakete`, `reparatur`) mit Energiekosten (`cost_var: ship.nordstern.power`) und Runden-Cooldown.
+- **Crew-Party (7g):** Rekrutierbare Spezialisten (Pilot Kael, Schützin Val, Ingenieur Sarek) mit individuellen Boni für Ausweichen, Waffenschaden und Systemreparaturen.
+- **Sektorenkette & Verfolgung:** Navigations-Sprünge über Sektorenstopps (`drive to <ziel>`), dynamische Zufallstabellen (`encounter_tables`) für Asteroiden, Wracks und Piratenpatrouillen sowie ansteigende Rebellen-Gefahr (`rebellen_flotte`).
+- **Permadeath & Meta-Progression:** Hüllen- und Crew-Verlust führen zu echtem Permadeath (`permadeath: true`, `game_end: death`). Über Runs persistierte `meta.*`-Variablen (`meta.runs`, `meta.start_shields`, `meta.ingenieur_unlocked`) schalten Vorteile für künftige Runs frei.
+- **ASCII/TUI-Showcase:** Vollwertiges visualisiertes Erlebnis mit Title-Art, animiertem Hypersprung-Clip (`frames:`), Schiffs-Kampfszenen (`combat.screen`), Brücken-Ambient-Loop (`ambient:`) und Konsolen-Inspektions-Hotspots (`watch:`).
+- **E2E & CI:** 2 deterministische E2E-Pfade `ci/e2e/ftl_lite.in/.expect` (25 Marker: Duell, Sprung, Meta-Freischaltung über Run 1 Overload + Run 2 Sieg am Evakuierungs-Leuchtfeuer) und `ci/e2e/ftl_lite-fail.in/.expect` (5 Marker: Hüllenkollaps und Permadeath); Registrierung in `scripts/ci.sh` (Stufen 4, 4b, 5).
+
 ### Content-Benchmark: „Die Monster-Insel" (Pokémon-Lite / Monster sammeln)
 
 Vollständige Implementierung des Content-Benchmarks `examples/genres/monster_insel.yaml` laut `/root/workspace/plan-monster-sammeln.md`:

@@ -1,0 +1,32 @@
+board nordstern
+folgen kael
+east
+folgen val
+aufladen
+west
+look at 1
+drive to Asteroidenfeld
+use-ability laser
+defend
+attack piratenschiff
+attack piratenschiff
+board nordstern
+drive to Nebelbank
+north
+search
+use schild_bauplan
+south
+board nordstern
+south
+use notfall_kippschalter
+r
+board nordstern
+folgen kael
+drive to Rebellengrenze
+use-ability rakete
+attack rebellenjaeger
+attack rebellenjaeger
+board nordstern
+drive to Evakuierungssektor
+use evakuierungs_beacon
+q
