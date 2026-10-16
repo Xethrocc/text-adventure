@@ -23,10 +23,7 @@ Umsetzungsplan: `~/workspace/plan-spielideen-umsetzung.md`):**
 - **Braucht einen Engine-Rest:** Bauernhof (Zuneigung geht, aber
   Schwellen-Ereignisse/Konsequenzketten = G9-Rest), FTL-Lite (Schiffsduelle 7h2 + Party + Worldgen da;
   Sektoren-Ketten = Content).
-- **Braucht eine Engine-Entscheidung:** Monster sammeln — der Fangen/Opfern-Loop
-  ist durch `soul_collector.yaml` belegt (`[~]`), aber **Team-Wechsel +
-  Pro-Monster-XP** im taktischen Kampf fehlt (§9.2 des Kandidaten-Dokuments,
-  Compiler-Pass).
+- **Gebaut (Benchmark):** Monster sammeln — vollständig als Genre-Benchmark 'Die Monster-Insel' (`examples/genres/monster_insel.yaml`) realisiert (C4 Party-Slots, Per-Monster-XP, §9.1 Typ-Effektivität).
 
 ---
 
@@ -91,12 +88,10 @@ Tagesregeln ab und stempelst.
 Tage und Jahreszeiten, Saat und Ernte, Markt, Zuneigung zu Dorfbewohnern.
 - **Zeigt:** Zyklen, Mengen, Handel, Zuneigung
 
-### [~] Monster sammeln – Pokémon-Lite
-Kreaturen per Custom-Verb `fangen` ins Team holen und taktisch kämpfen lassen.
-- **Zeigt:** Party, Kampffähigkeiten, Begegnungstabellen
-- **Stand:** `[~]` — `soul_collector.yaml` belegt den Fangen-/Opfern-/Stats-Loop.
-  Offen: Team-Wechsel + Pro-Monster-XP im taktischen Kampf (Kandidaten-Dokument
-  §9.2, Compiler-Pass) — erst nach dem K16-Abgleich entscheiden.
+### [x] Monster sammeln – Pokémon-Lite
+Kreaturen per Custom-Verb `fangen` oder Safari-Ball ins Team holen und in der Liga kämpfen lassen.
+- **Zeigt:** Party (C4 `combat_slot:`, `switch_verb:`), Per-Monster-XP (`xp_table:`), §9.1 Typ-Effektivität (4 Typen), Begegnungstabellen (`encounter_tables:`), Arena-Liga mit 4 Trainern + Champion Viktor, animierte Fang- und Level-Up-Frames, ASCII-Art für jedes Monster, 2 Ebenen mit Minimap.
+- **Stand:** `[x]` — Vollständig als Content-Benchmark `examples/genres/monster_insel.yaml` umgesetzt inkl. E2E-Sieg- und Fail-Pfade (`ci/e2e/monster_insel*`).
 
 ### [ ] Spielbuch-Port – à la *Fighting Fantasy*
 Abschnitte als Räume, Würfelkämpfe und Glücksproben.
@@ -228,4 +223,4 @@ Theater reine Präsentation ist und keine Engine-Grenze aufdeckt. Details:
 3. **Oregon Trail**: bekanntes Vorbild, viele Module in einem Spiel (nur Content)
 4. Mechanik-Experimente als kleine Fixtures nebenbei (Tamagotchi, Escape Room,
    Mastermind, Minesweeper)
-5. **Monster sammeln** erst nach der Team-Wechsel-Entscheidung (§9.2)
+5. **Monster sammeln**: ✅ als Content-Benchmark 'Die Monster-Insel' umgesetzt (`examples/genres/monster_insel.yaml`)

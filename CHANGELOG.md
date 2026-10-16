@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Content-Benchmark: „Die Monster-Insel" (Pokémon-Lite / Monster sammeln)
+
+Vollständige Implementierung des Content-Benchmarks `examples/genres/monster_insel.yaml` laut `/root/workspace/plan-monster-sammeln.md`:
+
+- **Genre & Setting:** Freundliches Safari-Park-Setting auf einer tropischen Insel mit 4 Biomen (Sonnenstrand, Smaragddschungel, Glutpfad/Vulkan, Kristallgrotte/Basaltkammer) auf 2 Ebenen (`floor: 0` und `floor: 1`) mit Minimap-Koordinaten (`map: {x, y}`).
+- **C4 Party-Mechanik:** Teamverwaltung mit `combat_slot:`, `switch_verb: switch`, Begleiter-Tags und Per-Monster-XP über `xp_table:` (mit Validierungscodes `PartyInvalidXpTable` und `PartyNonMonotonicXp`).
+- **§9.1 Typ-Effektivität:** 4 Typen (`feuer`, `wasser`, `blatt`, `stein`) mit Text-Typ-Variablen je NPC (`type_tag_*`), generischer Zielauflösung über `cmd.target`, O(T²)-Multiplikator-Tabelle (`mult`) und Schadensberechnung via `compute_var: {var: eff_damage, expr: "base_damage * mult"}` ohne Engine-Eingriff.
+- **Fang-Mechanik:** Fangen wilder Monster mit Safari-Bällen (`consume: safariball`), animierter Fang-Sequenz (`clip_fang` mit 5 `frames:`) und Beitritt ins Ranger-Team.
+- **Arena-Liga:** 4 Trainer (Jan, Lea, Bruno, Pyra) und Champion Viktor mit eigenen Monstern (Flossler, Borkenkauz, Gargol, Flamara, Krateron), Level-Up-Sequenz (`clip_levelup`), Stadion-Ambient-Loop (`ambient:`).
+- **Sieg & Fail:** Siegbedingung bei gewonnener Liga und vollständigem Dex (mindestens 3 Arten); Turnier-Aus bei Betreten der Arena ohne Team oder vorzeitiger Aufgabe (`aufgeben`).
+- **E2E & CI:** 2 neue E2E-Pfade `ci/e2e/monster_insel.in/.expect` (Siegpfad mit 26 Markern) und `ci/e2e/monster_insel-fail.in/.expect` (Turnier-Aus); Registrierung in `scripts/ci.sh` (Stufen 4, 4b, 5).
+
 ### K18: Karten-Properties (`tags:` auf Karten, `hand_has_tagged_card`, `count.cards.hand.<tag>`)
 
 Vollständige Implementierung von K18 (Karten-Properties) laut `/root/workspace/plan-engine-kandidaten-kombinationssysteme.md` §10:

@@ -1,0 +1,1106 @@
+# Die Monster-Insel — Ein Pokémon-lite Adventure
+#
+# Genre: Monster sammeln / Safari-Park
+# Benchmark: C4 (Combat-Slots, Switch-Verb, Per-Monster-XP)
+# Feature-Mapping (laut /root/workspace/plan-monster-sammeln.md):
+#   - Fangen: ability mit consume: ball + random:-Wurf
+#   - Team: combat_slot:, switch_verb: (C4), party.<id>.slot, party.slot.active
+#   - Per-Monster-XP: xp_table: (C4, Validierungscodes PartyInvalidXpTable/PartyNonMonotonicXp)
+#   - Typ-Effektivitaet: §9.1-Rezept (Typ-Variable je NPC, cmd.target-Zielaufloesung,
+#     mult-Regeltabelle O(T^2), compute_var fuer Schaden)
+#   - Begegnungen: encounter_tables: (7c) mit Zonen-Gates
+#   - Arena-Liga: 4 Trainer (Jan, Lea, Bruno, Pyra) + Champion Viktor
+#   - 4 Typen: feuer, wasser, blatt, stein
+#   - ASCII/TUI-Showcase:
+#       - title_art / end_art (text2ascii)
+#       - Pro Monster eigenes ASCII-Art (Art-Mechanik wie in soul_collector.yaml)
+#       - Animierte frames: fuer Fang-Sequence und Level-Up
+#       - ambient:-Loop in der Arena
+#       - Minimap map: mit Koordinaten und 2 Ebenen (floor: 0 / 1)
+#   - Sieg: Liga gewonnen + Dex-Mindestzahl gefangen
+#   - Fail: Turnier-Aus / ohne Team angetreten
+
+name: Die Monster-Insel
+start_room: park_zentrale
+language: de
+
+combat:
+  profile: classic
+  screen:
+    bar_width: 20
+    scene: ">> KAMPF IN DER MONSTER-ARENA <<"
+
+player:
+  max_hp: 50
+  attack: 8
+  defense: 3
+
+title_art: |
+  #   #  ###  #   #  #### ##### ##### ####      ### #   #  #### ##### #    
+  ## ## #   # ##  # #       #   #     #   #      #  ##  # #     #     #    
+  # # # #   # # # #  ###    #   ####  ####  ###  #  # # #  ###  ####  #    
+  #   # #   # #  ##     #   #   #     #  #       #  #  ##     # #     #    
+  #   #  ###  #   # ####    #   ##### #   #     ### #   # ####  ##### #####
+  =========================================================================
+                 D I E   M O N S T E R - I N S E L
+              --- Das Pokémon-lite Safari-Adventure ---
+  =========================================================================
+
+end_art:
+  victory: |
+    =========================================================================
+     #### #   #  ###  #   # ####  ###  ###  #   #
+    #     #   # #   # ## ## #   #  #  #   # ##  #
+    #     ##### ##### # # # ####   #  #   # # # #
+    #     #   # #   # #   # #      #  #   # #  ##
+     #### #   # #   # #   # #     ###  ###  #   #
+    =========================================================================
+    VICTORY — Der Meistertitel gehoert dir!
+    Du hast die Insel-Liga gewonnen und deinen Ranger-Dex gefuellt!
+    Alle Trainer verbeugen sich vor deiner meisterhaften Bindung
+    zu deinen Monstern. Du bist die lebende Legende der Monster-Insel!
+  turnier_aus: |
+    =========================================================================
+    ##### #   # ####  #   # ### ##### ####       ###  #   #  ####
+      #   #   # #   # ##  #  #  #     #   #     #   # #   # #    
+      #   #   # ####  # # #  #  ####  ####  ### ##### #   #  ### 
+      #   #   # #  #  #  ##  #  #     #  #      #   # #   #     #
+      #    ###  #   # #   # ### ##### #   #     #   #  ###  #### 
+    =========================================================================
+    TURNIER-AUS — Dein Lauf in der Liga ist beendet!
+    Ohne einsatzfaehiges Team oder nach vorzeitiger Aufgabe
+    scheidest du aus der Arena-Liga aus.
+    Uebe fleissig weiter im Safari-Park fuer die naechste Saison!
+
+clips:
+  - id: clip_fang
+    fps: 4
+    frames:
+      - |
+        +===============================================+
+        |   ( O )  Du wirfst zielsicher den Safari-Ball!|
+        +===============================================+
+      - |
+        +===============================================+
+        |   [ * ]  TREFFER! Der Ball saugt Energie ein! |
+        +===============================================+
+      - |
+        +===============================================+
+        |   ( * )  ... der Safari-Ball wackelt ...     |
+        +===============================================+
+      - |
+        +===============================================+
+        |   ( * )  ... ein zweites Mal ...             |
+        +===============================================+
+      - |
+        +===============================================+
+        |  [ KLICK! ] GEFANGEN! Das Monster ist dein!  |
+        +===============================================+
+
+  - id: clip_levelup
+    fps: 4
+    frames:
+      - |
+        +===============================================+
+        |      . : * : .                                |
+        |   Ein Funke wahrer Kampferfahrung glueht auf! |
+        +===============================================+
+      - |
+        +===============================================+
+        |    * : # # # : *                              |
+        |   Kraftvolle Elementarenergie stroemt ein!    |
+        +===============================================+
+      - |
+        +===============================================+
+        |  [ *** LEVEL UP! *** ]                        |
+        |   Stufe erhoeht! Dein Monster wird staerker!  |
+        +===============================================+
+
+variables:
+  - { name: dex_count, type: int, initial: 0 }
+  - { name: team_level_ups, type: int, initial: 0 }
+  - { name: fang_versuch, type: int, initial: 0 }
+  - { name: move_type, type: int, initial: 0 }
+  - { name: target_type, type: int, initial: 0 }
+  - { name: mult, type: int, initial: 1 }
+  - { name: eff_damage, type: int, initial: 0 }
+  - { name: base_damage, type: int, initial: 40 }
+  # Typ-Tags je NPC (§9.1-Rezept)
+  - { name: type_tag_glutling, type: text, initial: "feuer" }
+  - { name: type_tag_flamara, type: text, initial: "feuer" }
+  - { name: type_tag_krateron, type: text, initial: "feuer" }
+  - { name: type_tag_nassling, type: text, initial: "wasser" }
+  - { name: type_tag_flossler, type: text, initial: "wasser" }
+  - { name: type_tag_blattfink, type: text, initial: "blatt" }
+  - { name: type_tag_borkenkauz, type: text, initial: "blatt" }
+  - { name: type_tag_felsling, type: text, initial: "stein" }
+  - { name: type_tag_gargol, type: text, initial: "stein" }
+
+abilities:
+  - id: fangball
+    name: "Safari-Ball werfen"
+    effects:
+      - { consume: safariball }
+      - { set_var: { name: fang_versuch, value: 1 } }
+
+  - id: glutstoss
+    name: "Glutstoss"
+    effects:
+      - { set_var: { name: move_type, value: 1 } }
+      - { msg: "Glutstoss: Lodernde Feuerfunken zischen auf das Ziel!" }
+
+  - id: aquawelle
+    name: "Aquawelle"
+    effects:
+      - { set_var: { name: move_type, value: 2 } }
+      - { msg: "Aquawelle: Ein reissender Wasserstrahl schlaegt ein!" }
+
+  - id: blatttanz
+    name: "Blatttanz"
+    effects:
+      - { set_var: { name: move_type, value: 3 } }
+      - { msg: "Blatttanz: Wirbelnde Klingen aus Dornenlaub schneiden durch die Luft!" }
+
+  - id: steinwurf
+    name: "Steinwurf"
+    effects:
+      - { set_var: { name: move_type, value: 4 } }
+      - { msg: "Steinwurf: Ein wuchtiger Felsbrocken donnert auf das Ziel!" }
+
+verbs:
+  - { name: folgen, aliases: [follow, begleiten, mitkommen] }
+  - { name: switch, aliases: [wechsel, wechseln, tausche, tauschen] }
+  - { name: fangen, aliases: [ball, werfen, capture, catch] }
+  - { name: herausfordern, aliases: [fordern, challenge, duellieren] }
+  - { name: aufgeben, aliases: [surrender, forfeit, aufgabe] }
+  - { name: glutstoss, aliases: [feuerstoss, feuerangriff] }
+  - { name: aquawelle, aliases: [wasserwelle, wasserangriff] }
+  - { name: blatttanz, aliases: [rankenhieb, blattangriff] }
+  - { name: steinwurf, aliases: [felswurf, steinangriff] }
+
+encounter_tables:
+  - id: strand_zone
+    on: turn
+    cooldown: 2
+    when: { any: [{ at: player, room: strand }, { at: player, room: strand_lagune }] }
+    entries:
+      - { weight: 3, effects: [{ msg: "Die Meeresbrise weht erfrischend: Ein wildes Nassling taucht auf und platscht in den Wellen!" }] }
+      - { weight: 2, effects: [{ msg: "Sanfte Brandung rauscht ueber den weissen Korallensand." }] }
+
+  - id: dschungel_zone
+    on: turn
+    cooldown: 2
+    when: { any: [{ at: player, room: dschungel }, { at: player, room: dschungel_dickicht }] }
+    entries:
+      - { weight: 3, effects: [{ msg: "Lianen schwingen im Dickicht: Ein wilder Blattfink fluegelt aufgeregt durch das Gruen!" }] }
+      - { weight: 2, effects: [{ msg: "Sonnenstrahlen malen goldene Flecken auf den feuchten Waldboden." }] }
+
+  - id: vulkan_zone
+    on: turn
+    cooldown: 2
+    when: { any: [{ at: player, room: vulkan_pfad }, { at: player, room: vulkan_krater }] }
+    entries:
+      - { weight: 3, effects: [{ msg: "Schwefeldampf steigt empor: Funken spruehen, als ein wilder Glutling herumhuepft!" }] }
+      - { weight: 2, effects: [{ msg: "Die Basaltfelsen strahlen noch immer die sengende Waerme des Erdinneren ab." }] }
+
+  - id: hoehle_zone
+    on: turn
+    cooldown: 2
+    when: { any: [{ at: player, room: hoehle_eingang }, { at: player, room: hoehle_tiefe }] }
+    entries:
+      - { weight: 3, effects: [{ msg: "Steine poltern: Ein runder Felsling kullert neugierig an dir vorbei!" }] }
+      - { weight: 2, effects: [{ msg: "Tropfsteinspitzen glitzern im Daemmerlicht der unterirdischen Hoehle." }] }
+
+rooms:
+  # Ebene 0: Oberwelt (Park-Zentrale, Strand, Dschungel, Vulkan, Arena)
+  - id: park_zentrale
+    name: "Ranger-Zentrale"
+    desc: >
+      Willkommen im Safari-Park der Monster-Insel! Auf dem Schreibtisch
+      flimmert das Ranger-Terminal ('watch monitor').
+      Pfade fuehren nach Westen zum Sonnenstrand, nach Osten in den
+      Smaragddschungel, nach Sueden zum Vulkanpfad und nach Norden zum
+      Vorplatz der Arena-Liga.
+    floor: 0
+    map: { x: 2, y: 2 }
+    exits:
+      west: { to: strand }
+      east: { to: dschungel }
+      south: { to: vulkan_pfad }
+      north: { to: arena_vorplatz }
+    on_enter:
+      - if: { not: { has_flag: start_ausruestung } }
+        then:
+          - { set_flag: start_ausruestung }
+          - { give: safariball }
+          - { msg: "Ranger-Ausruestung erhalten: Safari-Baelle wurden in deinen Rucksack gelegt!" }
+
+  - id: strand
+    name: "Sonnenstrand"
+    desc: >
+      Sonnenstrand: Goldgelber Sandstrand unter tropischer Sonne. Tuerkisblaues Wasser
+      schlaegt schaeumend an die Kueste. Im Osten liegt die Ranger-Zentrale,
+      waehrend der Ufersaum nach Norden zur Korallenlagune fuehrt.
+    floor: 0
+    map: { x: 1, y: 2 }
+    exits:
+      east: { to: park_zentrale }
+      north: { to: strand_lagune }
+
+  - id: strand_lagune
+    name: "Korallenlagune"
+    desc: >
+      Korallenlagune: Eine flache, geschuetzte Lagune voller bunter Seesterne und Wasserpflanzen.
+      Hier leben die Wassermonster der Insel. Nach Sueden geht es zurueck zum Strand.
+    floor: 0
+    map: { x: 1, y: 1 }
+    exits:
+      south: { to: strand }
+
+  - id: dschungel
+    name: "Smaragddschungel"
+    desc: >
+      Smaragddschungel: Ein ueppiger Regenwald mit uralten Wipfeln und riesigen Moosfarnen.
+      Exotische Vogelrufe hallen durch die Luft. Im Westen liegt die
+      Ranger-Zentrale, nach Norden schlaengelt sich ein Pfad ins dichte Dickicht.
+    floor: 0
+    map: { x: 3, y: 2 }
+    exits:
+      west: { to: park_zentrale }
+      north: { to: dschungel_dickicht }
+
+  - id: dschungel_dickicht
+    name: "Geheimnisvolles Dickicht"
+    desc: >
+      Geheimnisvolles Dickicht: Dornenranken und dichte Blaetterwaende bilden eine verborgene Waldlichtung.
+      Hier nisten die Blatt- und Pflanzenmonster. Nach Sueden gelangst du zurueck.
+    floor: 0
+    map: { x: 3, y: 1 }
+    exits:
+      south: { to: dschungel }
+
+  - id: vulkan_pfad
+    name: "Glutpfad am Vulkan"
+    desc: >
+      Glutpfad am Vulkan: Ein schroffer Pfad aus erstarrter Lava zieht sich den Berghang empor.
+      Hitze steigt aus Erdspalten auf. Im Norden liegt die Ranger-Zentrale,
+      nach Sueden geht es zum rauchenden Krater. Ein finsterer Schlund fuehrt
+      nach unten ('down') in die Kristallgrotte.
+    floor: 0
+    map: { x: 2, y: 3 }
+    exits:
+      north: { to: park_zentrale }
+      south: { to: vulkan_krater }
+      down: { to: hoehle_eingang }
+
+  - id: vulkan_krater
+    name: "Feuerkrater"
+    desc: >
+      Feuerkrater: Der Gipfel des Vulkans! Flammende Asche tanzt ueber brodelnden Lavaseen.
+      Hier fuehlen sich Feuermonster zuhause. Nach Norden fuehrt der Pfad hinab.
+    floor: 0
+    map: { x: 2, y: 4 }
+    exits:
+      north: { to: vulkan_pfad }
+
+  - id: arena_vorplatz
+    name: "Vorplatz der Liga"
+    desc: >
+      Vorplatz der Liga: Ein praechtiger Platz vor der grossen Arena. Bunte Wimpel flattern im
+      Wind. Im Sueden liegt die Park-Zentrale, nach Norden oeffnet sich das
+      grosse Portal zur Arena der Champions.
+    floor: 0
+    map: { x: 2, y: 1 }
+    exits:
+      south: { to: park_zentrale }
+      north: { to: arena_stadion }
+
+  - id: arena_stadion
+    name: "Arena der Champions"
+    desc: >
+      Arena der Champions: Das monumentale Sandoval der Insel-Liga! Tausende begeisterte Fans
+      jubeln von den Tribuenen. Flutlichtmasten tauchen den Kampfring in
+      strahlenden Schein. Im Sueden liegt das Ausgangsportal, im Osten der Warteraum.
+    floor: 0
+    map: { x: 2, y: 0 }
+    exits:
+      south: { to: arena_vorplatz }
+      east: { to: arena_wartesaal }
+    ascii:
+      default: |
+        +------------------------------------------------+
+        |  [=== ARENA DER CHAMPIONS - LIGA-STADION ===]  |
+        |      \O/     \O/     \O/     \O/     \O/       |
+        |  ============================================  |
+        +------------------------------------------------+
+      ambient:
+        fps: 2
+        frames:
+          - |
+            [ *** ARENA DER CHAMPIONS - JUBEL BRANDET AUF! *** ]
+          - |
+            [ *** FLUTLICHT BLITZT UEBER DEM KAMPFFELD! *** ]
+
+  - id: arena_wartesaal
+    name: "Warteraum der Arena"
+    desc: >
+      Warteraum der Arena: Hier bereiten sich die Trainer und ihre Monster auf den Kampf vor.
+      Nach Westen fuehrt die Tuer direkt in den Kampfring der Arena.
+    floor: 0
+    map: { x: 3, y: 0 }
+    exits:
+      west: { to: arena_stadion }
+
+  # Ebene 1: Hoehle / Untergrund (floor: 1)
+  - id: hoehle_eingang
+    name: "Kristallgrotte"
+    desc: >
+      Kristallgrotte: Eine kuehle Hoehle tief im Berg. Schimmernde Kristalle leuchten blau
+      an den Tropfsteinwaenden. Eine Steinstiege fuehrt nach oben ('up') zum
+      Vulkanpfad. Im Norden oeffnet sich die tiefe Basaltkammer.
+    floor: 1
+    map: { x: 2, y: 3 }
+    exits:
+      up: { to: vulkan_pfad }
+      north: { to: hoehle_tiefe }
+
+  - id: hoehle_tiefe
+    name: "Tiefste Basaltkammer"
+    desc: >
+      Tiefste Basaltkammer: Gewaltige Felssaeulen stuetzen das unterirdische Gewoelbe. Rollende
+      Steine verraten die Anwesenheit von Gesteinsmonstern. Nach Sueden geht
+      es zurueck zur Kristallgrotte.
+    floor: 1
+    map: { x: 2, y: 2 }
+    exits:
+      south: { to: hoehle_eingang }
+
+items:
+  - id: safariball
+    name: "Safari-Ball"
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    keys: [ball, safariball, safaribaelle, pokeball]
+    location: park_zentrale
+    portable: true
+    desc: "Eine hochmoderne Ranger-Kapsel zum schonenden Einfangen wilder Inselmonster."
+
+  - id: ball_depot
+    name: "Ball-Depot"
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [depot, kiste, box, tisch]
+    location: park_zentrale
+    portable: false
+    desc: "Ein Nachschublager mit handlichen Safari-Baellen fuer Ranger ('take ball')."
+    verb_map:
+      take,intact:
+        - { give: safariball }
+        - { msg: "Du nimmst dir einen weiteren Safari-Ball aus dem Vorrat." }
+
+  - id: ranger_monitor
+    name: "Ranger-Terminal"
+    gender: n
+    article: { nom: das, acc: das, dat: dem }
+    keys: [monitor, terminal, bildschirm, display, infoterminal]
+    location: park_zentrale
+    portable: false
+    desc: "Ein Monitor mit Live-Sensorik des Safari-Parks ('watch monitor')."
+    ascii:
+      frames:
+        - |
+          +---[ RANGER TERMINAL: STATUS INSEL ]---+
+          | Strand [O]  Dschungel [O]  Vulkan [O] |
+          | Hoehle [O]  Liga-Arena [O]            |
+          +---------------------------------------+
+        - |
+          +---[ RANGER TERMINAL: SCANNING ]-------+
+          | * Wilde Monster auf der Insel aktiv * |
+          | Ziel: 3+ Arten fangen & Liga schlagen |
+          +---------------------------------------+
+      every: 2
+
+npcs:
+  # 1. Fangbare Wilde Monster (C4: combat_slot & xp_table)
+  - id: glutling
+    name: Glutling
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    desc: "Ein feuriges Echsenwesen mit einer lodernden Flamme am Schweif."
+    keys: [glutling, feuermonster]
+    location: vulkan_krater
+    state: alive
+    max_hp: 25
+    attack: 7
+    defense: 2
+    party:
+      can_join: true
+      order_verb: folgen
+      hp_tracked: true
+      combat_slot: 1
+      switch_verb: switch
+      follow_msg: "Glutling schliesst sich deinem Team an!"
+      stay_msg: "Glutling wartet am warmen Lagerplatz."
+      xp_table:
+        - { level: 1, xp: 0, name: "Glutling (Basis)" }
+        - { level: 2, xp: 50, name: "Glutling (Flamme)", msg: "Glutling erreicht Stufe 2! Seine Flammen lodern heller!", effects: [{ play_clip: clip_levelup }, { add_var: { var: team_level_ups, delta: 1 } }] }
+    ascii:
+      default: |
+        [ Glutling - Typ: Feuer ]
+           ( \
+          ( \ \
+         ( ) ) )
+          ( o.o )
+           > ^ <
+
+  - id: nassling
+    name: Nassling
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    desc: "Ein froehlicher Wassersalamander mit glaenzenden, blauen Schuppen."
+    keys: [nassling, wassermonster]
+    location: strand_lagune
+    state: alive
+    max_hp: 25
+    attack: 6
+    defense: 3
+    party:
+      can_join: true
+      order_verb: folgen
+      hp_tracked: true
+      combat_slot: 2
+      switch_verb: switch
+      follow_msg: "Nassling schliesst sich deinem Team an!"
+      stay_msg: "Nassling taucht entspannt im Wasser ab."
+      xp_table:
+        - { level: 1, xp: 0, name: "Nassling (Basis)" }
+        - { level: 2, xp: 50, name: "Nassling (Flut)", msg: "Nassling erreicht Stufe 2! Seine Wasserstrahlen werden maechtiger!", effects: [{ play_clip: clip_levelup }, { add_var: { var: team_level_ups, delta: 1 } }] }
+    ascii:
+      default: |
+        [ Nassling - Typ: Wasser ]
+            _.~"~._
+          .' O   O '.
+         /  (  _  )  \
+        |    `---'    |
+         \  \_____/  /
+
+  - id: blattfink
+    name: Blattfink
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    desc: "Ein flinker Waldvogel, dessen Gefieder aus scharfen Laubklingen besteht."
+    keys: [blattfink, pflanzenmonster, fink, vogel]
+    location: dschungel_dickicht
+    state: alive
+    max_hp: 22
+    attack: 7
+    defense: 2
+    party:
+      can_join: true
+      order_verb: folgen
+      hp_tracked: true
+      combat_slot: 3
+      switch_verb: switch
+      follow_msg: "Blattfink schliesst sich deinem Team an!"
+      stay_msg: "Blattfink laesst sich auf einem Zweig nieder."
+      xp_table:
+        - { level: 1, xp: 0, name: "Blattfink (Basis)" }
+        - { level: 2, xp: 50, name: "Blattfink (Sturm)", msg: "Blattfink erreicht Stufe 2! Sein Blaetterkleid glaenzt smaragdgruen!", effects: [{ play_clip: clip_levelup }, { add_var: { var: team_level_ups, delta: 1 } }] }
+    ascii:
+      default: |
+        [ Blattfink - Typ: Blatt ]
+             _ _
+           /'   `\
+          (  o>   )
+           \  == /
+           /`---'\
+
+  - id: felsling
+    name: Felsling
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    desc: "Ein rollendes Kieselwesen mit dickem Granitpanzer und treuen Kulleraugen."
+    keys: [felsling, steinmonster, kiesel]
+    location: hoehle_tiefe
+    state: alive
+    max_hp: 30
+    attack: 6
+    defense: 4
+    party:
+      can_join: true
+      order_verb: folgen
+      hp_tracked: true
+      combat_slot: 4
+      switch_verb: switch
+      follow_msg: "Felsling schliesst sich deinem Team an!"
+      stay_msg: "Felsling rollt sich gemuetlich am Fels zusammen."
+      xp_table:
+        - { level: 1, xp: 0, name: "Felsling (Basis)" }
+        - { level: 2, xp: 50, name: "Felsling (Granit)", msg: "Felsling erreicht Stufe 2! Sein Panzer wird steinhart!", effects: [{ play_clip: clip_levelup }, { add_var: { var: team_level_ups, delta: 1 } }] }
+    ascii:
+      default: |
+        [ Felsling - Typ: Stein ]
+            .-----.
+           / -   - \
+          | [o] [o] |
+          |    =    |
+           \_______/
+
+  # 2. Arena-Liga: Schiedsrichter, Trainer & deren Monster
+  - id: schiedsrichter
+    name: "Liga-Schiedsrichter"
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    desc: "Der offizielle Schiedsrichter der Insel-Liga. Ueberwacht die Kaempfe gegen Jan, Lea, Bruno, Pyra und Viktor!"
+    keys: [schiedsrichter, leiter, ref, meister]
+    location: arena_stadion
+    state: alive
+
+  - id: trainer_jan
+    name: "Trainer Jan"
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    desc: "Ein energischer Wassertrainer mit Neoprenanzug ('herausfordern jan')."
+    keys: [jan, trainer_jan, trainer]
+    location: arena_stadion
+    state: alive
+
+  - id: flossler
+    name: Flossler
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    desc: "Jans flinke Wasserotter mit messerscharfen Schwimmflossen."
+    keys: [flossler, otter]
+    location: arena_wartesaal
+    state: alive
+    max_hp: 20
+    attack: 4
+    defense: 1
+    ascii:
+      default: |
+        [ Flossler - Typ: Wasser ]
+             .-"""-.
+            / .===. \
+           \/ 6   6 \/
+           ( \___/ )
+            \_____/
+
+  - id: trainerin_lea
+    name: "Trainerin Lea"
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    desc: "Eine ruhige Pflanzen-Trainerin im Waldtarnanzug ('herausfordern lea')."
+    keys: [lea, trainerin_lea]
+    location: arena_stadion
+    state: alive
+
+  - id: borkenkauz
+    name: Borkenkauz
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    desc: "Leas weise Baumeule aus borkenartigem Holzgefieder."
+    keys: [borkenkauz, eule, kauz]
+    location: arena_wartesaal
+    state: alive
+    max_hp: 25
+    attack: 5
+    defense: 2
+    ascii:
+      default: |
+        [ Borkenkauz - Typ: Blatt ]
+           (o,o)
+           |)__)
+           -"-"-
+
+  - id: trainer_bruno
+    name: "Trainer Bruno"
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    desc: "Ein kraeftiger Steintrainer mit Bergsteiger-Gurt ('herausfordern bruno')."
+    keys: [bruno, trainer_bruno]
+    location: arena_stadion
+    state: alive
+
+  - id: gargol
+    name: Gargol
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    desc: "Brunos furchteinfloessender Felsspeier aus gehaertetem Stein."
+    keys: [gargol, steinwesen]
+    location: arena_wartesaal
+    state: alive
+    max_hp: 30
+    attack: 6
+    defense: 3
+    ascii:
+      default: |
+        [ Gargol - Typ: Stein ]
+           /\___/\
+          /       \
+         (  [x][x] )
+          \   ^   /
+           `-----'
+
+  - id: trainerin_pyra
+    name: "Trainerin Pyra"
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    desc: "Eine feurige Trainerin mit rotgluehendem Mantel ('herausfordern pyra')."
+    keys: [pyra, trainerin_pyra]
+    location: arena_stadion
+    state: alive
+
+  - id: flamara
+    name: Flamara
+    gender: f
+    article: { nom: die, acc: die, dat: der }
+    desc: "Pyras eleganter Feuerfuchs mit maechtig lodernder Flammenaura."
+    keys: [flamara, feuerfuchs]
+    location: arena_wartesaal
+    state: alive
+    max_hp: 35
+    attack: 7
+    defense: 3
+    ascii:
+      default: |
+        [ Flamara - Typ: Feuer ]
+            /\_/\
+           ( *.* )
+           /)   (\
+          (__\_/__)
+
+  - id: champion_viktor
+    name: "Champion Viktor"
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    desc: "Der legendaere Champ der Monster-Insel ('herausfordern viktor')."
+    keys: [viktor, champion_viktor, champ]
+    location: arena_stadion
+    state: alive
+
+  - id: krateron
+    name: Krateron
+    gender: m
+    article: { nom: der, acc: den, dat: dem }
+    desc: "Viktors unbezwingbarer Magma-Titan mit flammenden Hoernern."
+    keys: [krateron, drache, titan]
+    location: arena_wartesaal
+    state: alive
+    max_hp: 45
+    attack: 8
+    defense: 3
+    ascii:
+      default: |
+        [ Krateron - Typ: Feuer ]
+            / \__
+           (    @\___
+           /         O
+          /   (_____/
+         /_____/
+
+rules:
+  # Moves als Direktkommandos (§9.1)
+  - id: cmd_glutstoss
+    on: command glutstoss
+    effects:
+      - { set_var: { name: move_type, value: 1 } }
+      - { msg: "Glutstoss: Lodernde Feuerfunken zischen auf das Ziel!" }
+
+  - id: cmd_aquawelle
+    on: command aquawelle
+    effects:
+      - { set_var: { name: move_type, value: 2 } }
+      - { msg: "Aquawelle: Ein reissender Wasserstrahl schlaegt ein!" }
+
+  - id: cmd_blatttanz
+    on: command blatttanz
+    effects:
+      - { set_var: { name: move_type, value: 3 } }
+      - { msg: "Blatttanz: Scharfe Pflanzendornen peitschen hervor!" }
+
+  - id: cmd_steinwurf
+    on: command steinwurf
+    effects:
+      - { set_var: { name: move_type, value: 4 } }
+      - { msg: "Steinwurf: Ein wuchtiger Felsbrocken donnert auf das Ziel!" }
+
+  # Fang-Mechanik
+  - id: cmd_fangen_fallback
+    on: command fangen
+    when: { not: { has_item: safariball } }
+    effects: [{ msg: "Du hast keinen Safari-Ball mehr im Rucksack! Hole Nachschub aus der Zentrale." }]
+
+  - id: cmd_fangen_with_ball
+    on: command fangen
+    when: { has_item: safariball }
+    effects:
+      - { consume: safariball }
+      - { set_var: { name: fang_versuch, value: 1 } }
+
+  - id: catch_nassling
+    on: turn
+    when: { all: [{ compare_var: { name: fang_versuch, op: gte, value: 1 } }, { var: cmd.target, is: nassling }] }
+    effects:
+      - { play_clip: clip_fang }
+      - { msg: "KLICK! Nassling wurde gefangen!" }
+      - { set_var: { var: "party.nassling", val: 1 } }
+      - { add_var: { var: dex_count, delta: 1 } }
+      - { set_var: { name: fang_versuch, value: 0 } }
+      - { msg: "Nassling schliesst sich deinem Team an!" }
+
+  - id: catch_blattfink
+    on: turn
+    when: { all: [{ compare_var: { name: fang_versuch, op: gte, value: 1 } }, { var: cmd.target, is: blattfink }] }
+    effects:
+      - { play_clip: clip_fang }
+      - { msg: "KLICK! Blattfink wurde gefangen!" }
+      - { set_var: { var: "party.blattfink", val: 1 } }
+      - { add_var: { var: dex_count, delta: 1 } }
+      - { set_var: { name: fang_versuch, value: 0 } }
+      - { msg: "Blattfink schliesst sich deinem Team an!" }
+
+  - id: catch_glutling
+    on: turn
+    when: { all: [{ compare_var: { name: fang_versuch, op: gte, value: 1 } }, { var: cmd.target, is: glutling }] }
+    effects:
+      - { play_clip: clip_fang }
+      - { msg: "KLICK! Glutling wurde gefangen!" }
+      - { set_var: { var: "party.glutling", val: 1 } }
+      - { add_var: { var: dex_count, delta: 1 } }
+      - { set_var: { name: fang_versuch, value: 0 } }
+      - { msg: "Glutling schliesst sich deinem Team an!" }
+
+  - id: catch_felsling
+    on: turn
+    when: { all: [{ compare_var: { name: fang_versuch, op: gte, value: 1 } }, { var: cmd.target, is: felsling }] }
+    effects:
+      - { play_clip: clip_fang }
+      - { msg: "KLICK! Felsling wurde gefangen!" }
+      - { set_var: { var: "party.felsling", val: 1 } }
+      - { add_var: { var: dex_count, delta: 1 } }
+      - { set_var: { name: fang_versuch, value: 0 } }
+      - { msg: "Felsling schliesst sich deinem Team an!" }
+
+  - id: catch_arena_refuse
+    on: turn
+    when:
+      all:
+        - compare_var: { name: fang_versuch, op: gte, value: 1 }
+        - any:
+            - { var: cmd.target, is: flossler }
+            - { var: cmd.target, is: borkenkauz }
+            - { var: cmd.target, is: gargol }
+            - { var: cmd.target, is: flamara }
+            - { var: cmd.target, is: krateron }
+    effects:
+      - { msg: "Das Monster gehoert einem Arenatrainer! Du kannst fremde Monster nicht fangen!" }
+      - { set_var: { name: fang_versuch, value: 0 } }
+
+  # §9.1 Typ-Effektivitaet: Zielaufloesung ueber cmd.target
+  - id: target_is_glutling
+    on: turn
+    when: { all: [{ var: cmd.target, is: glutling }, { compare_var: { name: move_type, op: gte, value: 1 } }] }
+    effects: [{ set_var: { name: target_type, value: 1 } }]
+
+  - id: target_is_flamara
+    on: turn
+    when: { all: [{ var: cmd.target, is: flamara }, { compare_var: { name: move_type, op: gte, value: 1 } }] }
+    effects: [{ set_var: { name: target_type, value: 1 } }]
+
+  - id: target_is_krateron
+    on: turn
+    when: { all: [{ var: cmd.target, is: krateron }, { compare_var: { name: move_type, op: gte, value: 1 } }] }
+    effects: [{ set_var: { name: target_type, value: 1 } }]
+
+  - id: target_is_nassling
+    on: turn
+    when: { all: [{ var: cmd.target, is: nassling }, { compare_var: { name: move_type, op: gte, value: 1 } }] }
+    effects: [{ set_var: { name: target_type, value: 2 } }]
+
+  - id: target_is_flossler
+    on: turn
+    when: { all: [{ var: cmd.target, is: flossler }, { compare_var: { name: move_type, op: gte, value: 1 } }] }
+    effects: [{ set_var: { name: target_type, value: 2 } }]
+
+  - id: target_is_blattfink
+    on: turn
+    when: { all: [{ var: cmd.target, is: blattfink }, { compare_var: { name: move_type, op: gte, value: 1 } }] }
+    effects: [{ set_var: { name: target_type, value: 3 } }]
+
+  - id: target_is_borkenkauz
+    on: turn
+    when: { all: [{ var: cmd.target, is: borkenkauz }, { compare_var: { name: move_type, op: gte, value: 1 } }] }
+    effects: [{ set_var: { name: target_type, value: 3 } }]
+
+  - id: target_is_felsling
+    on: turn
+    when: { all: [{ var: cmd.target, is: felsling }, { compare_var: { name: move_type, op: gte, value: 1 } }] }
+    effects: [{ set_var: { name: target_type, value: 4 } }]
+
+  - id: target_is_gargol
+    on: turn
+    when: { all: [{ var: cmd.target, is: gargol }, { compare_var: { name: move_type, op: gte, value: 1 } }] }
+    effects: [{ set_var: { name: target_type, value: 4 } }]
+
+  # §9.1 Typ-Tabelle: Sehr effektive Paarungen (mult = 2)
+  - id: chart_fire_vs_leaf
+    on: turn
+    when: { all: [{ compare_var: { name: move_type, op: eq, value: 1 } }, { compare_var: { name: target_type, op: eq, value: 3 } }] }
+    effects: [{ set_var: { name: mult, value: 2 } }]
+
+  - id: chart_water_vs_fire
+    on: turn
+    when: { all: [{ compare_var: { name: move_type, op: eq, value: 2 } }, { compare_var: { name: target_type, op: eq, value: 1 } }] }
+    effects: [{ set_var: { name: mult, value: 2 } }]
+
+  - id: chart_water_vs_stone
+    on: turn
+    when: { all: [{ compare_var: { name: move_type, op: eq, value: 2 } }, { compare_var: { name: target_type, op: eq, value: 4 } }] }
+    effects: [{ set_var: { name: mult, value: 2 } }]
+
+  - id: chart_leaf_vs_water
+    on: turn
+    when: { all: [{ compare_var: { name: move_type, op: eq, value: 3 } }, { compare_var: { name: target_type, op: eq, value: 2 } }] }
+    effects: [{ set_var: { name: mult, value: 2 } }]
+
+  - id: chart_leaf_vs_stone
+    on: turn
+    when: { all: [{ compare_var: { name: move_type, op: eq, value: 3 } }, { compare_var: { name: target_type, op: eq, value: 4 } }] }
+    effects: [{ set_var: { name: mult, value: 2 } }]
+
+  - id: chart_stone_vs_fire
+    on: turn
+    when: { all: [{ compare_var: { name: move_type, op: eq, value: 4 } }, { compare_var: { name: target_type, op: eq, value: 1 } }] }
+    effects: [{ set_var: { name: mult, value: 2 } }]
+
+  # Schadensberechnung & Meldung
+  - id: resolve_move_effect
+    on: turn
+    when: { compare_var: { name: move_type, op: gte, value: 1 } }
+    effects:
+      - { compute_var: { var: eff_damage, expr: "base_damage * mult" } }
+      - if: { compare_var: { name: mult, op: gte, value: 2 } }
+        then:
+          - { msg: "Das ist sehr effektiv! ({mult}x Multiplikator, {eff_damage} Effektivschaden!)" }
+        else:
+          - { msg: "Treffer erzielt! ({mult}x Multiplikator, {eff_damage} Schaden.)" }
+      - { set_var: { name: move_type, value: 0 } }
+      - { set_var: { name: target_type, value: 0 } }
+      - { set_var: { name: mult, value: 1 } }
+
+  # Schadenstransfer auf Gegner
+  - id: dmg_flossler
+    on: turn
+    when: { all: [{ var: cmd.target, is: flossler }, { compare_var: { name: eff_damage, op: gte, value: 1 } }] }
+    effects: [{ damage_npc: { npc: flossler, amount: 20 } }, { set_var: { name: eff_damage, value: 0 } }]
+
+  - id: dmg_borkenkauz
+    on: turn
+    when: { all: [{ var: cmd.target, is: borkenkauz }, { compare_var: { name: eff_damage, op: gte, value: 1 } }] }
+    effects: [{ damage_npc: { npc: borkenkauz, amount: 25 } }, { set_var: { name: eff_damage, value: 0 } }]
+
+  - id: dmg_gargol
+    on: turn
+    when: { all: [{ var: cmd.target, is: gargol }, { compare_var: { name: eff_damage, op: gte, value: 1 } }] }
+    effects: [{ damage_npc: { npc: gargol, amount: 30 } }, { set_var: { name: eff_damage, value: 0 } }]
+
+  - id: dmg_flamara
+    on: turn
+    when: { all: [{ var: cmd.target, is: flamara }, { compare_var: { name: eff_damage, op: gte, value: 1 } }] }
+    effects: [{ damage_npc: { npc: flamara, amount: 35 } }, { set_var: { name: eff_damage, value: 0 } }]
+
+  - id: dmg_krateron
+    on: turn
+    when: { all: [{ var: cmd.target, is: krateron }, { compare_var: { name: eff_damage, op: gte, value: 1 } }] }
+    effects: [{ damage_npc: { npc: krateron, amount: 45 } }, { set_var: { name: eff_damage, value: 0 } }]
+
+  # Arena-Liga: Fail-Gates & Kaempfe
+  - id: fail_gate_empty_party
+    on: command herausfordern
+    when: { compare_var: { name: dex_count, op: eq, value: 0 } }
+    effects:
+      - { msg: "TURNIER-AUS — Ohne Monster im Team kannst du nicht antreten! Du wirst disqualifiziert." }
+      - { msg: "Du scheidest aus der Arena-Liga aus." }
+      - { game_end: turnier_aus }
+
+  - id: fail_cmd_aufgeben
+    on: command aufgeben
+    when: { at: player, room: arena_stadion }
+    effects:
+      - { msg: "TURNIER-AUS — Du gibst das Match auf und deine Monster treten den Rueckzug an!" }
+      - { msg: "Du scheidest aus der Arena-Liga aus." }
+      - { game_end: turnier_aus }
+
+  # Trainer 1: Jan
+  - id: challenge_jan
+    on: command herausfordern
+    when: { all: [{ at: player, room: arena_stadion }, { compare_var: { name: dex_count, op: gte, value: 1 } }, { not: { has_flag: jan_besiegt } }] }
+    effects:
+      - { msg: "Trainer Jan ruft Flossler in die Arena!" }
+      - { move_npc: flossler, to: arena_stadion }
+
+  - id: defeat_jan
+    on: state flossler
+    once: true
+    effects:
+      - { set_flag: jan_besiegt }
+      - { msg: "Flossler ist kampfunfaehig! Trainer Jan ruft es zurueck: 'Du hast echtes Talent! Lea wartet schon auf dich!'" }
+      - { add_var: { var: "party.glutling.xp", delta: 60 } }
+      - { add_var: { var: "party.nassling.xp", delta: 60 } }
+      - { add_var: { var: "party.blattfink.xp", delta: 60 } }
+      - { add_var: { var: "party.felsling.xp", delta: 60 } }
+      - { msg: "Dein Team erhaelt 60 Erfahrungspunkte!" }
+
+  # Trainer 2: Lea
+  - id: challenge_lea
+    on: command herausfordern
+    when: { all: [{ at: player, room: arena_stadion }, { has_flag: jan_besiegt }, { not: { has_flag: lea_besiegt } }] }
+    effects:
+      - { msg: "Trainerin Lea ruft Borkenkauz in die Arena!" }
+      - { move_npc: borkenkauz, to: arena_stadion }
+
+  - id: defeat_lea
+    on: state borkenkauz
+    once: true
+    effects:
+      - { set_flag: lea_besiegt }
+      - { msg: "Borkenkauz sinkt erschoepft zu Boden. Trainerin Lea nickt: 'Beeindruckend! Jetzt musst du an Bruno vorbei!'" }
+      - { add_var: { var: "party.glutling.xp", delta: 60 } }
+      - { add_var: { var: "party.nassling.xp", delta: 60 } }
+      - { add_var: { var: "party.blattfink.xp", delta: 60 } }
+      - { add_var: { var: "party.felsling.xp", delta: 60 } }
+      - { msg: "Dein Team erhaelt 60 Erfahrungspunkte!" }
+
+  # Trainer 3: Bruno
+  - id: challenge_bruno
+    on: command herausfordern
+    when: { all: [{ at: player, room: arena_stadion }, { has_flag: lea_besiegt }, { not: { has_flag: bruno_besiegt } }] }
+    effects:
+      - { msg: "Trainer Bruno ruft Gargol in die Arena!" }
+      - { move_npc: gargol, to: arena_stadion }
+
+  - id: defeat_bruno
+    on: state gargol
+    once: true
+    effects:
+      - { set_flag: bruno_besiegt }
+      - { msg: "Gargol splittert und geht k.o.! Bruno lacht droehnend: 'Stark gekaempft! Doch Pyras Feuer wird dich testen!'" }
+      - { add_var: { var: "party.glutling.xp", delta: 60 } }
+      - { add_var: { var: "party.nassling.xp", delta: 60 } }
+      - { add_var: { var: "party.blattfink.xp", delta: 60 } }
+      - { add_var: { var: "party.felsling.xp", delta: 60 } }
+      - { msg: "Dein Team erhaelt 60 Erfahrungspunkte!" }
+
+  # Trainer 4: Pyra
+  - id: challenge_pyra
+    on: command herausfordern
+    when: { all: [{ at: player, room: arena_stadion }, { has_flag: bruno_besiegt }, { not: { has_flag: pyra_besiegt } }] }
+    effects:
+      - { msg: "Trainerin Pyra ruft Flamara in die Arena!" }
+      - { move_npc: flamara, to: arena_stadion }
+
+  - id: defeat_pyra
+    on: state flamara
+    once: true
+    effects:
+      - { set_flag: pyra_besiegt }
+      - { msg: "Flamaras Flammen erloeschen. Pyra verbeugt sich: 'Unglaublich! Du bist bereit fuer den Champion Viktor!'" }
+      - { add_var: { var: "party.glutling.xp", delta: 60 } }
+      - { add_var: { var: "party.nassling.xp", delta: 60 } }
+      - { add_var: { var: "party.blattfink.xp", delta: 60 } }
+      - { add_var: { var: "party.felsling.xp", delta: 60 } }
+      - { msg: "Dein Team erhaelt 60 Erfahrungspunkte!" }
+
+  # Champion Viktor
+  - id: challenge_viktor
+    on: command herausfordern
+    when: { all: [{ at: player, room: arena_stadion }, { has_flag: pyra_besiegt }, { not: { has_flag: liga_gewonnen } }] }
+    effects:
+      - { msg: "Champion Viktor ruft Krateron in die Arena!" }
+      - { move_npc: krateron, to: arena_stadion }
+
+  - id: defeat_viktor
+    on: state krateron
+    once: true
+    effects:
+      - { set_flag: liga_gewonnen }
+      - { msg: "Der maechtige Krateron stuerzt auf die Knie! Die gesamte Arena jubelt auf!" }
+      - if: { compare_var: { name: dex_count, op: gte, value: 3 } }
+        then:
+          - { set_flag: sieg_gemeldet }
+          - { msg: "VICTORY — Meister-Ranger der Monster-Insel! Du hast alle Trainer bezwungen und deinen Pokédex vervollstaendigt!" }
+          - { game_end: victory }
+        else:
+          - { msg: "Viktor gratuliert dir zum Sieg, aber dein Dex braucht noch mehr dokumentierte Arten! Fange mindestens 3 Monsterarten!" }
+
+  - id: check_dex_after_league
+    on: turn
+    when: { all: [{ has_flag: liga_gewonnen }, { compare_var: { name: dex_count, op: gte, value: 3 } }, { not: { has_flag: sieg_gemeldet } }] }
+    once: true
+    effects:
+      - { set_flag: sieg_gemeldet }
+      - { msg: "VICTORY — Meister-Ranger der Monster-Insel! Du hast alle Trainer bezwungen und deinen Pokédex vervollstaendigt!" }
+      - { game_end: victory }
+
+tests:
+  - name: "siegeszug durch alle biome und meisterschaft in der arena"
+    input:
+      - look
+      - watch monitor
+      - west
+      - north
+      - use-ability fangball auf nassling
+      - south
+      - east
+      - east
+      - north
+      - use-ability fangball auf blattfink
+      - south
+      - west
+      - south
+      - south
+      - use-ability fangball auf glutling
+      - switch glutling
+      - north
+      - north
+      - north
+      - north
+      - herausfordern jan
+      - attack flossler
+      - herausfordern lea
+      - glutstoss borkenkauz
+      - herausfordern bruno
+      - switch nassling
+      - aquawelle gargol
+      - herausfordern pyra
+      - aquawelle flamara
+      - herausfordern viktor
+      - aquawelle krateron
+    expect:
+      - "Willkommen im Safari-Park der Monster-Insel!"
+      - "Du beobachtest Ranger-Terminal..."
+      - "Sonnenstrand"
+      - "Korallenlagune"
+      - "KLICK! Nassling wurde gefangen!"
+      - "Nassling schliesst sich deinem Team an!"
+      - "Smaragddschungel"
+      - "Geheimnisvolles Dickicht"
+      - "KLICK! Blattfink wurde gefangen!"
+      - "Blattfink schliesst sich deinem Team an!"
+      - "Glutpfad am Vulkan"
+      - "Feuerkrater"
+      - "KLICK! Glutling wurde gefangen!"
+      - "Glutling schliesst sich deinem Team an!"
+      - "Glutling takes combat slot 1."
+      - "Vorplatz der Liga"
+      - "Arena der Champions"
+      - "Trainer Jan ruft Flossler in die Arena!"
+      - "Flossler ist kampfunfaehig!"
+      - "Glutling erreicht Stufe 2!"
+      - "Trainerin Lea ruft Borkenkauz in die Arena!"
+      - "Das ist sehr effektiv! (2x Multiplikator"
+      - "Trainer Bruno ruft Gargol in die Arena!"
+      - "Nassling takes combat slot 2."
+      - "Trainerin Pyra ruft Flamara in die Arena!"
+      - "Champion Viktor ruft Krateron in die Arena!"
+      - "VICTORY — Meister-Ranger der Monster-Insel!"
