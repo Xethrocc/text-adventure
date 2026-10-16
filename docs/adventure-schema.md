@@ -3288,6 +3288,7 @@ cards:
     type: attack            # attack | skill | power | curse
     cost: { energy: 1 }     # Ressourcenkosten (Variable muss existieren oder wird initialisiert)
     target: single_enemy    # single_enemy | all_enemies | self | none
+    tags: [klinge, leicht]  # K18: optionale freie Karten-Tags für Synergien & Zählungen
     exhaust: false          # Wandert bei true nach dem Ausspielen auf den Exhaust-Stapel
     description: "Fügt einem Ziel 6 Schaden zu."
     outcomes:
@@ -3298,6 +3299,7 @@ cards:
     type: attack
     cost: { energy: 2 }
     target: single_enemy
+    tags: [wucht]
     description: "Fügt 8 Schaden zu. +4 Bonusschaden, wenn 'defend' auf der Hand liegt."
     outcomes:
       - damage: 8
@@ -3314,6 +3316,7 @@ cards:
 | `type` | String | `skill` | Kartentyp: `attack`, `skill`, `power`, `curse` |
 | `cost` | Map (String -> Int) | `{}` | Benötigte Ressourcen (z. B. `energy: 1`, `mana: 2`) |
 | `target` | String | `single_enemy` | Zielmodus: `single_enemy`, `all_enemies`, `self`, `none` |
+| `tags` | [String] | `[]` | Freie Karten-Tags für Synergien und Set-Zählungen (K18, z. B. `klinge`, `feuer`, `gift`). In `world.json` wird `cardTags` weggelassen, wenn leer (Byte-Vertrag) |
 | `exhaust` | Bool | `false` | Falls `true`, landet die Karte nach dem Ausspielen im `exhaust`-Stapel statt im `discard` |
 | `description` | String | `""` | Kurzbeschreibung für den ASCII-Kartenrahmen |
 | `outcomes` / `effects` | [Effekt] | `[]` | Liste auszuführender Effekte beim erfolgreichen Ausspielen |
@@ -3347,26 +3350,50 @@ deck:
   - Ist ein Limit gesetzt (z. B. `handLimit: 5`), zieht der Spieler nur so viele Karten, bis das Limit erreicht ist.
   - Das Nachmischen des Ablagestapels (`discard`) in den Nachziehstapel (`draw`) erfolgt wie gewohnt, wenn der Nachziehstapel leer wird; das Ziehen wird jedoch gestoppt, sobald die Hand voll ist.
 
-### Kartensynergien & Combos (`card_in_hand` / `combo`)
+### Kartensynergien, Karten-Tags & Combos (`card_in_hand`, `combo`, `hand_has_tagged_card`, `count.cards.hand.<tag>`)
 
-Bedingte Karteneffekte und Synergien können prüfen, ob sich bestimmte Karten aktuell auf der Spielerhand befinden:
+Bedingte Karteneffekte und Synergien können prüfen, ob sich bestimmte Karten oder Karten mit bestimmten Eigenschaften (`tags:`, K18) aktuell auf der Spielerhand befinden:
 
 ```yaml
-# Shorthand 1: Einzelne Karte auf der Hand
+# Shorthand 1: Einzelne Karte auf der Hand (nach ID)
 if: { card_in_hand: defend }
 then:
   - damage: 4
 
-# Shorthand 2: Combo mit mehreren Karten
+# Shorthand 2: Combo mit mehreren Karten (nach ID)
 if: { combo: [strike, defend] }
 then:
   - msg: "Perfekte Klingenkombination!"
+
+# Shorthand 3 (K18): Karte mit Tag auf der Hand (Prädikat HandHasTaggedCard)
+if: { hand_has_tagged_card: gift }     # auch { hand_has_tagged_card: { tag: gift } }
+then:
+  - damage: 3
+  - msg: "Giftsynergie!"
+
+# Shorthand 4 (K18): Anzahl Handkarten mit Tag zählen (ValueRef CountCards)
+if:
+  compare_var:
+    name: count.cards.hand.klinge      # oder compare mit { count: { what: cards, in: hand, tag: klinge } }
+    op: gte
+    value: 3
+then:
+  - damage: 6
+  - msg: "Klingenwirbel! ({count.cards.hand.klinge} Klingen auf der Hand)"
 
 # Standard-Prädikat über Entity-State:
 if: { state: defend, is: in_hand }
 then:
   - modify_value: { actor: player, prop: health, delta: 3 }
 ```
+
+**Karten-Properties (`tags:`, K18):**
+- **Freie Eigenschafts-Tags:** Jede Karte unter `cards:` kann `tags: [klinge, feuer, ...]` tragen (Default: `[]`). Tags sind freie Strings (analog zu `Item.tags`).
+- **Prädikat `hand_has_tagged_card` (`HandHasTaggedCard <tag>`):** Wahr genau dann, wenn sich mindestens eine Karte in der aktuellen Hand (`deckState.hand`) befindet, deren `tags` den angegebenen Tag enthalten. Akzeptiert String-Form (`hand_has_tagged_card: klinge`) und Objektform (`hand_has_tagged_card: { tag: klinge }`); Aliase: `has_tagged_card`, `hand_has_tag`, `card_in_hand_has_tag`.
+- **Zähl-ValueRef `count.cards.hand.<tag>` (`CountCards`):** Liefert die Anzahl der Karten auf der aktuellen Spielerhand, die `<tag>` tragen (Mehrfachexemplare derselben Karte auf der Hand zählen einzeln). Nutzbar in `compare_var`, `compare`, `compute_var` sowie in Text-Platzhaltern `{count.cards.hand.<tag>}`.
+- **Architektur-Vertrag (kein `hand.score` im Kern):** Die Engine berechnet keinen genre-spezifischen `hand.score`. Punktzahlen bleiben reguläre Autoren-Variablen; Flush-/Set-Prüfungen („mindestens 3 Karten einer Farbe/Gattung") werden über `count.cards.hand.<tag>` + `compare_var` ausgedrückt.
+- **Compiler-Validierung:** Referenziert eine `when:`/`if:`-Bedingung über `hand_has_tagged_card` oder `count.cards.hand.<tag>` einen leeren Tag oder einen Tag, der auf keiner deklarierten Karte in `cards:` vorkommt, meldet der Worldbuilder die Warnung `UnknownCardTag` (analog `UnknownItemHelperTag`).
+- **Byte-Vertrag:** In `world.json` wird `"cardTags"` nur serialisiert, wenn die Liste nicht leer ist. Bestehende Abenteuer ohne Karten-Tags bleiben 100 % byte-identisch.
 
 Folgende Kartenzustände können mit `state: <cardId>, is: <zustand>` geprüft werden:
 - `in_hand` / `hand`: Karte befindet sich auf der aktiven Hand
@@ -3381,6 +3408,7 @@ Zur Anzeige in Beschreibungen, Dashboards und HUDs stellt die Engine dynamische 
 - `{deck.count}`: Anzahl verbleibender Karten im Nachziehstapel
 - `{discard.count}`: Anzahl Karten auf dem Ablagestapel
 - `{exhaust.count}`: Anzahl Karten im Erschöpft-Stapel
+- `{count.cards.hand.<tag>}`: Anzahl Handkarten mit dem Tag `<tag>` (K18)
 
 ### Befehle im Spiel
 
@@ -4218,6 +4246,7 @@ und genre-neutral.
 ```yaml
 when: { actor_has_tag: {actor: player, tag: licht} }   # trägt etwas mit Tag X
 when: { room: halle, has_item_tag: licht }             # liegt hier etwas mit Tag X?
+when: { hand_has_tagged_card: klinge }                 # hält Handkarte mit Tag X (K18)
 ```
 
 **Die Zähl-Familie** (Int-Werte, überall nutzbar, wo Werte stehen — `compare_var`,
@@ -4226,18 +4255,21 @@ when: { room: halle, has_item_tag: licht }             # liegt hier etwas mit Ta
 ```yaml
 when: { compare_var: {name: count.items.in.halle, op: gte, value: 2} }   # Anzahl ≥ n
 when: { compare_var: {name: count.alive_npcs.in.halle, op: eq, value: 0} }  # alle tot
-# String-Form: count.<was>.<in|by|in_container>.<id>[.<tag>]
+when: { compare_var: {name: count.cards.hand.klinge, op: gte, value: 3} }   # Handkarten mit Tag (K18)
+# String-Form: count.<was>.<in|by|in_container>.<id>[.<tag>] bzw. count.cards.hand.<tag>
 #   count.items.in.halle   count.npcs.in.halle   count.alive_npcs.in.halle
 #   count.items.by.player  count.items.tag.licht.in.halle
 #   count.items.in_container.flasche   count.items.tag.wasser.in_container.flasche
+#   count.cards.hand.klinge
 when: { compare: { lhs: {count: {what: items, in: halle, tag: licht}}, op: gte, value: 1 } }
+when: { compare: { lhs: {count: {what: cards, in: hand, tag: klinge}}, op: gte, value: 3 } }
 ```
 
 | Dimension | Werte | Anmerkung |
 |---|---|---|
-| **was** | `items`, `npcs` (alle), `alive_npcs` (lebende) | `npcs` zählt alle im Raum, `alive_npcs` nur lebende — „alle tot" ist `alive_npcs == 0` |
-| **wo** | `in: <raum>` / `by: <actor>` | `by:` zählt Getragenes (Inventar + Ausrüstung); für NPCs ist `by:` immer 0 (getragene NPCs gibt es nicht) |
-| **tag** (optional) | `tag: <tag>` | filtert auf Items mit diesem Tag; nur bei `items` |
+| **was** | `items`, `npcs` (alle), `alive_npcs` (lebende), `cards` (Handkarten, K18) | `npcs` zählt alle im Raum, `alive_npcs` nur lebende — „alle tot" ist `alive_npcs == 0`; `cards` zählt Karten auf der Hand |
+| **wo** | `in: <raum>` / `by: <actor>` / `in: hand` (bei `cards`) | `by:` zählt Getragenes (Inventar + Ausrüstung); für NPCs ist `by:` immer 0 (getragene NPCs gibt es nicht) |
+| **tag** (optional) | `tag: <tag>` | filtert auf Items bzw. Handkarten (`cards`) mit diesem Tag |
 
 **Anmerkungen:**
 

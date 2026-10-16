@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### K18: Karten-Properties (`tags:` auf Karten, `hand_has_tagged_card`, `count.cards.hand.<tag>`)
+
+Vollständige Implementierung von K18 (Karten-Properties) laut `/root/workspace/plan-engine-kandidaten-kombinationssysteme.md` §10:
+
+- **Karten-Tags (`Card.cardTags` / `cards: tags:`):**
+  - `Card` (`src/Types/Cards.hs`) erhält `cardTags :: [String]` (Default `[]`).
+  - **Byte-Vertrag:** `ToJSON Card` serialisiert `"cardTags"` nur, wenn die Liste nicht leer ist (`null (cardTags c)` lässt den Schlüssel weg); `FromJSON Card` liest `"cardTags"` (oder `"tags"`) mit Default `[]`. Bestehende Abenteuer (inkl. `deckbuilder_spire.yaml`) kompilieren 100 % byte-identisch.
+  - Worldbuilder (`ACard.acdTags`, `knownKeys EntCard`, `compileCards`) parst und übersetzt `tags: [String]` auf Karten ohne `UnknownYamlKey`-Warnung.
+- **Prädikat `HandHasTaggedCard String` (`hand_has_tagged_card`):**
+  - Neuer Konstruktor `HandHasTaggedCard String` in `Predicate` (`src/Types/Core.hs`), ausgewertet in `evalPredicate` (`src/Game.hs`) über die aktuelle Spielerhand (`deckState.hand`).
+  - Akzeptiert in YAML/JSON sowohl String-Form (`hand_has_tagged_card: klinge`) als auch Objektform (`hand_has_tagged_card: { tag: klinge }`) sowie die Aliase `has_tagged_card`, `hand_has_tag` und `card_in_hand_has_tag`.
+- **Zähl-ValueRef `CountCards` (`count.cards.hand.<tag>`):**
+  - `CountWhat` (`src/Types/Core.hs`) um `CountCards` erweitert; `parseCountRef` löst `count.cards.hand.<tag>` (sowie Objektform `{ count: { what: cards, in: hand, tag: <tag> } }`) auf `VRCount (CountSpec CountCards (CountInRoom "hand") (Just <tag>))` auf.
+  - `countCardMembers` (`src/Game.hs`) zählt alle Kartenexemplare auf der aktuellen Spielerhand, deren `cardTags` den gesuchten Tag enthalten; nutzbar in `compare_var`, `compare`, `compute_var` und als Text-Platzhalter `{count.cards.hand.<tag>}`.
+  - Genre-neutraler Kern: Kein `hand.score` oder `ScoreValueRef` im Engine-Kern (Punktzahlen bleiben Autoren-Variablen; Sets/Flushes = `count.cards.hand.<tag>` + `compare_var`).
+- **Statische Validierung (`UnknownCardTag`):**
+  - `checkUnknownCardTags` (`worldbuilder/src/Worldbuilder/Compile.hs`) prüft alle Prädikate auf `HandHasTaggedCard` und `CountCards` und emittiert eine `UnknownCardTag`-Warnung bei leeren Tags oder Tags, die auf keiner Karte in `cards:` deklariert sind.
+- **Tests & Dokumentation:**
+  - Engine-Tests (`test/Tests.hs`): JSON-Roundtrip (omittierbar/leer/nicht-leer), Prädikat- und ValueRef-Auswertung über eine 5-Karten-Hand (3× `klinge`), Parser-Formen.
+  - Worldbuilder-Tests (`worldbuilder/test/Tests.hs`): YAML-Kompilierung & Synergie-Auswertung, `UnknownCardTag`-Validierung, Byte-Vertrag-Wächter über 6 bestehende Abenteuer inkl. `deckbuilder_spire.yaml`.
+  - Dokumentation in `docs/adventure-schema.md` ergänzt.
+
 ### OPEN-23 Stufe 2c / E3: Gefahrenlagen — Zustands-Track und Wetter-Migration (E14/E15)
 
 Vollständige Implementierung von Hazards Stufe 2c laut `docs/plan-hazards.md` §8 (Entscheidungen E14–E15, AP A–E):

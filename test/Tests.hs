@@ -932,6 +932,7 @@ testAllPredicateRoundtrip = do
             , ("HasTaggedItem(npc)", HasTaggedItem (ActorNPC "guard") "weapon")
             , ("HasTaggedItem(ship)", HasTaggedItem (ActorShip "kestrel") "weapon")
             , ("RoomHasTaggedItem", RoomHasTaggedItem "room1" "treasure")
+            , ("HandHasTaggedCard", HandHasTaggedCard "klinge")
             , ("ResourceFull", ResourceFull "mana")
             , ("ResourceEmpty", ResourceEmpty "stamina")
             ]
@@ -8377,6 +8378,7 @@ testCardDataTypesJSONRoundTrip = do
             , cardTarget = TargetSingleEnemy
             , cardExhaust = False
             , cardEffects = [ ModifyValue (VRVariable "enemy.hp") (-6) ]
+            , cardTags = []
             }
     let cardEnc = Aeson.encode card
     r4 <- expectEqual (Just card) (Aeson.decode cardEnc)
@@ -8408,7 +8410,7 @@ testGameWorldCardDefsM2Invariant = do
     let cs = computeWorldChecksum gw
     r2 <- expectTrue "checksum is non-empty" (not (null cs))
     -- Round-trip with cardDefs populated
-    let card = Card "c1" "Defend" (Map.singleton "energy" 1) CardSkill "Block +5" TargetSelf False []
+    let card = Card "c1" "Defend" (Map.singleton "energy" 1) CardSkill "Block +5" TargetSelf False [] []
         gwWithCards = gw { cardDefs = Map.singleton "c1" card }
         encWithCards = Aeson.encode gwWithCards
     r3 <- expectTrue "cards key present when non-empty" (isInfixOf "\"cards\"" (BLC.unpack encWithCards))
@@ -8746,6 +8748,7 @@ testPlayCardDeductsEnergyAndAppliesOutcomes = do
             , cardTarget = TargetSingleEnemy
             , cardExhaust = False
             , cardEffects = [ ModifyValue (VRActorProp (ActorNPC "chosen") PHealth) (-6) ]
+            , cardTags = []
             }
         baseSt = initSampleGame
         cRoom = currentRoom (save baseSt)
@@ -8796,6 +8799,7 @@ testPlayCardExhaustsCorrectly = do
             , cardTarget = TargetSingleEnemy
             , cardExhaust = True
             , cardEffects = [ ModifyValue (VRActorProp (ActorNPC "chosen") PHealth) (-20) ]
+            , cardTags = []
             }
         baseSt = initSampleGame
         cRoom = currentRoom (save baseSt)
@@ -8936,6 +8940,7 @@ testCardSynergyCombo = do
                     (ModifyValue (VRActorProp (ActorNPC "chosen") PHealth) (-4))
                     Noop
                 ]
+            , cardTags = []
             }
         baseSt = initSampleGame
         cRoom = currentRoom (save baseSt)
@@ -8972,6 +8977,118 @@ testCardSynergyCombo = do
     r1 <- expectEqual (Just 18) hp1   -- 30 - 8 - 4 = 18
     r2 <- expectEqual (Just 22) hp2   -- 30 - 8 = 22
     pure (r1 && r2)
+
+-- | K18: Card tags JSON round-trip and byte-contract omission when empty.
+testK18CardTagsJSONRoundTrip :: IO Bool
+testK18CardTagsJSONRoundTrip = do
+    let untagged = Card
+            { cardId = "strike"
+            , cardName = "Hieb"
+            , cardCost = Map.singleton "energy" 1
+            , cardType = CardAttack
+            , cardDescription = "Deals 6 damage."
+            , cardTarget = TargetSingleEnemy
+            , cardExhaust = False
+            , cardEffects = []
+            , cardTags = []
+            }
+        tagged = untagged { cardTags = ["klinge", "physisch"] }
+        encUntagged = Aeson.encode untagged
+        encTagged   = Aeson.encode tagged
+    r1 <- expectTrue "cardTags omitted when empty (byte contract)"
+            (not ("\"cardTags\"" `isInfixOf` BLC.unpack encUntagged))
+    r2 <- expectEqual (Just untagged) (Aeson.decode encUntagged)
+    r3 <- expectTrue "cardTags present when non-empty"
+            ("\"cardTags\"" `isInfixOf` BLC.unpack encTagged)
+    r4 <- expectEqual (Just tagged) (Aeson.decode encTagged)
+    -- YAML/shorthand "tags" key decodes into cardTags
+    let rawYamlLike = BLC.pack "{\"id\":\"slash\",\"name\":\"Schnitt\",\"tags\":[\"klinge\"]}"
+    r5 <- case Aeson.decode rawYamlLike :: Maybe Card of
+        Just c  -> expectEqual ["klinge"] (cardTags c)
+        Nothing -> expectTrue "decode Card with tags key failed" False
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | K18: HandHasTaggedCard and count.cards.hand.<tag> evaluation over a hand
+--   (e.g. 3 of 5 cards with tag 'klinge' -> count = 3).
+testK18HandHasTaggedCardAndCount :: IO Bool
+testK18HandHasTaggedCardAndCount = do
+    let mkCard cid tags = Card
+            { cardId = cid
+            , cardName = cid
+            , cardCost = Map.empty
+            , cardType = CardAttack
+            , cardDescription = ""
+            , cardTarget = TargetNone
+            , cardExhaust = False
+            , cardEffects = []
+            , cardTags = tags
+            }
+        cStrike1 = mkCard "strike_1" ["klinge", "angriff"]
+        cStrike2 = mkCard "strike_2" ["klinge"]
+        cSlash   = mkCard "slash"    ["klinge", "schnell"]
+        cDefend  = mkCard "defend"   ["schild"]
+        cHeal    = mkCard "heal"     []
+        baseSt   = initSampleGame
+        stWithHand = baseSt
+            { world = (world baseSt)
+                { cardDefs = Map.fromList
+                    [ ("strike_1", cStrike1)
+                    , ("strike_2", cStrike2)
+                    , ("slash",    cSlash)
+                    , ("defend",   cDefend)
+                    , ("heal",     cHeal)
+                    ]
+                }
+            , save = (save baseSt)
+                { deckState = Just (defaultDeckState
+                    { hand = ["strike_1", "strike_2", "slash", "defend", "heal"] })
+                }
+            }
+        stNoDeck = stWithHand { save = (save stWithHand) { deckState = Nothing } }
+    r1 <- expectTrue "hand has card with tag 'klinge'"
+            (evalPredicate (HandHasTaggedCard "klinge") stWithHand)
+    r2 <- expectTrue "hand has card with tag 'schild'"
+            (evalPredicate (HandHasTaggedCard "schild") stWithHand)
+    r3 <- expectTrue "hand does not have card with tag 'feuer'"
+            (not (evalPredicate (HandHasTaggedCard "feuer") stWithHand))
+    r4 <- expectTrue "empty tag evaluates to False"
+            (not (evalPredicate (HandHasTaggedCard "") stWithHand))
+    r5 <- expectEqual (3 :: Int)
+            (resolveValueRef (VRVariable "count.cards.hand.klinge") stWithHand)
+    r6 <- expectEqual (3 :: Int)
+            (resolveValueRef (parseCountRef "cards.hand.klinge") stWithHand)
+    r7 <- expectEqual (1 :: Int)
+            (resolveValueRef (VRVariable "count.cards.hand.schild") stWithHand)
+    r8 <- expectEqual (0 :: Int)
+            (resolveValueRef (VRVariable "count.cards.hand.feuer") stWithHand)
+    r9 <- expectTrue "compare_var count.cards.hand.klinge >= 3 holds"
+            (evalPredicate (CompareVar "count.cards.hand.klinge" CGte 3) stWithHand)
+    r10 <- expectTrue "compare_var count.cards.hand.klinge >= 4 is false"
+            (not (evalPredicate (CompareVar "count.cards.hand.klinge" CGte 4) stWithHand))
+    r11 <- expectTrue "HandHasTaggedCard false when deckState is Nothing"
+            (not (evalPredicate (HandHasTaggedCard "klinge") stNoDeck))
+    r12 <- expectEqual (0 :: Int)
+            (resolveValueRef (VRVariable "count.cards.hand.klinge") stNoDeck)
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7 && r8 && r9 && r10 && r11 && r12)
+
+-- | K18: Parser tests for both YAML/JSON forms (HandHasTaggedCard predicate
+--   and count.cards.hand.<tag> ValueRef/CompareVar).
+testK18ParserForms :: IO Bool
+testK18ParserForms = do
+    let pStr = "{\"hand_has_tagged_card\":\"klinge\"}"
+        pObj = "{\"hand_has_tagged_card\":{\"tag\":\"klinge\"}}"
+        pAlias = "{\"has_tagged_card\":\"klinge\"}"
+        pCountVar = "{\"compare_var\":{\"name\":\"count.cards.hand.klinge\",\"op\":\"gte\",\"value\":3}}"
+        pCompareStr = "{\"compare\":{\"lhs\":\"count.cards.hand.klinge\",\"op\":\"gte\",\"rhs\":3}}"
+        pCompareObj = "{\"compare\":{\"lhs\":{\"count\":{\"what\":\"cards\",\"in\":\"hand\",\"tag\":\"klinge\"}},\"op\":\"gte\",\"rhs\":3}}"
+        expectedSpec = CountSpec CountCards (CountInRoom "hand") (Just "klinge")
+    r1 <- expectEqual (Just (HandHasTaggedCard "klinge")) (Aeson.decode (BLC.pack pStr))
+    r2 <- expectEqual (Just (HandHasTaggedCard "klinge")) (Aeson.decode (BLC.pack pObj))
+    r3 <- expectEqual (Just (HandHasTaggedCard "klinge")) (Aeson.decode (BLC.pack pAlias))
+    r4 <- expectEqual (Just (CompareVar "count.cards.hand.klinge" CGte 3)) (Aeson.decode (BLC.pack pCountVar))
+    r5 <- expectEqual (Just (Compare (VRCount expectedSpec) CGte (VRVariable "3"))) (Aeson.decode (BLC.pack pCompareStr))
+    r6 <- expectEqual (Just (Compare (VRCount expectedSpec) CGte (VRVariable "3"))) (Aeson.decode (BLC.pack pCompareObj))
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
 
 -- ---------------------------------------------------------------------------
 -- Phase 2C: Visuals & HUD Tests (Card Boxes, Horizontal Tiling, Combat Banner)
@@ -9020,6 +9137,7 @@ testRenderCardBoxFormattingAndColors = do
             , cardTarget = TargetSingleEnemy
             , cardExhaust = False
             , cardEffects = []
+            , cardTags = []
             }
         defend = Card
             { cardId = "defend"
@@ -9030,6 +9148,7 @@ testRenderCardBoxFormattingAndColors = do
             , cardTarget = TargetSelf
             , cardExhaust = False
             , cardEffects = []
+            , cardTags = []
             }
         power = Card
             { cardId = "demon_form"
@@ -9040,6 +9159,7 @@ testRenderCardBoxFormattingAndColors = do
             , cardTarget = TargetSelf
             , cardExhaust = False
             , cardEffects = []
+            , cardTags = []
             }
     let box1 = renderCardBox 1 strike
     -- Check that every line has visible width 16
@@ -9073,7 +9193,7 @@ testRenderCardBoxFormattingAndColors = do
 -- | Phase 2C: renderDeckCombatHud generates combat status banner and enemy intent lines.
 testRenderDeckCombatHud :: IO Bool
 testRenderDeckCombatHud = do
-    let strike = Card "strike" "Hieb" (Map.singleton "energy" 1) CardAttack "6 Schaden." TargetSingleEnemy False []
+    let strike = Card "strike" "Hieb" (Map.singleton "energy" 1) CardAttack "6 Schaden." TargetSingleEnemy False [] []
         ds = DeckState
             { drawPile = ["c1", "c2", "c3"]
             , hand = ["strike"]
@@ -13298,6 +13418,9 @@ main = do
         , runTest "draw cards hand limit blocks when full (Phase 2 / S2)" testDrawCardsHandLimitBlocked
         , runTest "draw cards hand limit checks after reshuffle (Phase 2 / S2)" testDrawCardsHandLimitReshuffle
         , runTest "card combo synergy outcome (Phase 2 / S2)" testCardSynergyCombo
+        , runTest "K18: Card tags JSON round-trip and byte-contract omission" testK18CardTagsJSONRoundTrip
+        , runTest "K18: HandHasTaggedCard and count.cards.hand.<tag> evaluation" testK18HandHasTaggedCardAndCount
+        , runTest "K18: Parser forms for HandHasTaggedCard and count.cards.hand.<tag>" testK18ParserForms
         -- Phase 2C: Visuals & HUD (Deckbuilder)
         , runTest "hcatBoxes formatting and wrapping (Phase 2C)" testHcatBoxesFormatting
         , runTest "renderCardBox formatting and colors (Phase 2C)" testRenderCardBoxFormattingAndColors

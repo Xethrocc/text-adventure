@@ -5027,6 +5027,10 @@ tests =
     , ("VC-12..14: vehicle condition ref checks, error, warning and current token", testVehicleConditionRefChecks)
     , ("VC-15: walker traverses nested vehicle condition effects", testVehicleConditionWalkerCoverage)
     , ("VC-20: schema example compiles cleanly", testVehicleConditionDocExampleCompiles)
+    -- K18: Karten-Properties (tags, hand_has_tagged_card, count.cards.hand.<tag>)
+    , ("K18: cards tags compile, omit when empty, and evaluate synergy/count", testK18CardTagsCompileAndSynergy)
+    , ("K18: unknown or empty card tag in conditions emits UnknownCardTag warning", testK18CardTagValidation)
+    , ("K18: byte contract watcher for existing adventures incl. deckbuilder_spire", testK18ByteContractWatcher)
     ]
 
 -- ---------------------------------------------------------------------------
@@ -12019,6 +12023,190 @@ testVehicleConditionDocExampleCompiles = do
                 putStrLn $ "  failed to compile schema example: " ++ issuesText compileErrs
                 pure False
             Right _ -> pure True
+
+-- ---------------------------------------------------------------------------
+-- K18: Karten-Properties (tags, hand_has_tagged_card, count.cards.hand.<tag>)
+-- ---------------------------------------------------------------------------
+
+-- | K18: `cards:` with `tags:` compiles without UnknownYamlKey or UnknownCardTag
+--   warnings, omits `cardTags` from JSON when empty, and evaluates
+--   `hand_has_tagged_card` + `count.cards.hand.<tag>` in card outcomes & rules.
+testK18CardTagsCompileAndSynergy :: IO Bool
+testK18CardTagsCompileAndSynergy = do
+    let yaml = unlines
+            [ "name: K18 Synergy Test"
+            , "start_room: arena"
+            , "rooms:"
+            , "  - id: arena"
+            , "    name: Arena"
+            , "    desc: 'Klingen auf der Hand: {count.cards.hand.klinge}.'"
+            , "cards:"
+            , "  - id: rostiger_dolch"
+            , "    name: Rostiger Dolch"
+            , "    type: attack"
+            , "    target: self"
+            , "    tags: [klinge, leicht]"
+            , "    outcomes:"
+            , "      - if: { hand_has_tagged_card: gift }"
+            , "        then:"
+            , "          - msg: 'Giftsynergie aktiv!'"
+            , "      - if:"
+            , "          compare_var:"
+            , "            name: count.cards.hand.klinge"
+            , "            op: gte"
+            , "            value: 2"
+            , "        then:"
+            , "          - msg: 'Klingen-Set aktiv!'"
+            , "  - id: giftklinge"
+            , "    name: Giftklinge"
+            , "    type: attack"
+            , "    target: self"
+            , "    tags: [klinge, gift]"
+            , "    outcomes:"
+            , "      - msg: 'Giftklinge gespielt.'"
+            , "  - id: schildblock"
+            , "    name: Schildblock"
+            , "    type: skill"
+            , "    target: self"
+            , "    outcomes:"
+            , "      - msg: 'Schildblock gespielt.'"
+            , "deck: [rostiger_dolch, rostiger_dolch, giftklinge, schildblock]"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml parse failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  compile failed: " ++ issuesText errs
+                pure False
+            Right cr -> do
+                let keyWarns = filter (\i -> ciCode i == "UnknownYamlKey") (crWarnings cr)
+                    tagWarns = filter (\i -> ciCode i == "UnknownCardTag") (crWarnings cr)
+                    phWarns  = filter (\i -> ciCode i == "UnknownPlaceholder") (crWarnings cr)
+                    gw       = crWorld cr
+                    cDefs    = E.cardDefs gw
+                r1 <- expectTrue ("expected 0 UnknownYamlKey warnings, got: " ++ issuesText keyWarns) (null keyWarns)
+                r2 <- expectTrue ("expected 0 UnknownCardTag warnings, got: " ++ issuesText tagWarns) (null tagWarns)
+                r3 <- expectTrue ("expected 0 UnknownPlaceholder warnings, got: " ++ issuesText phWarns) (null phWarns)
+                r4 <- expectEqual (Just ["klinge", "leicht"]) (E.cardTags <$> Map.lookup "rostiger_dolch" cDefs)
+                r5 <- expectEqual (Just ["klinge", "gift"]) (E.cardTags <$> Map.lookup "giftklinge" cDefs)
+                r6 <- expectEqual (Just []) (E.cardTags <$> Map.lookup "schildblock" cDefs)
+                let encDolch  = BLC.unpack (Aeson.encode (cDefs Map.! "rostiger_dolch"))
+                    encSchild = BLC.unpack (Aeson.encode (cDefs Map.! "schildblock"))
+                r7 <- expectTrue "cardTags present when non-empty" ("\"cardTags\"" `isInfixOf` encDolch)
+                r8 <- expectTrue "cardTags omitted when empty" (not ("\"cardTags\"" `isInfixOf` encSchild))
+                -- Evaluate predicates on a state where hand has 2x rostiger_dolch + 1x giftklinge + 1x schildblock
+                let sv0 = (crSave cr) { E.deckState = Just (E.DeckState [] ["rostiger_dolch", "rostiger_dolch", "giftklinge", "schildblock"] [] [] 0) }
+                    st0 = E.GameState gw sv0 Nothing Nothing Nothing [] Nothing [] Nothing Nothing []
+                r9  <- expectEqual True  (evalPredicate (E.HandHasTaggedCard "klinge") st0)
+                r10 <- expectEqual True  (evalPredicate (E.HandHasTaggedCard "gift") st0)
+                r11 <- expectEqual False (evalPredicate (E.HandHasTaggedCard "feuer") st0)
+                r12 <- expectEqual True  (evalPredicate (E.CompareVar "count.cards.hand.klinge" E.CEq 3) st0)
+                pure (and [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12])
+
+-- | K18: Referencing an unknown or empty card tag in `when:`/`if:` conditions
+--   emits an `UnknownCardTag` warning; declared card tags stay silent.
+testK18CardTagValidation :: IO Bool
+testK18CardTagValidation = do
+    let makeYaml ruleWhen = unlines
+            [ "name: K18 Tag Validation"
+            , "start_room: arena"
+            , "rooms:"
+            , "  - id: arena"
+            , "    name: Arena"
+            , "    desc: Arena."
+            , "cards:"
+            , "  - id: dolch"
+            , "    name: Dolch"
+            , "    type: attack"
+            , "    tags: [klinge]"
+            , "rules:"
+            , "  - id: r_check"
+            , "    on: turn"
+            , "    when: " ++ ruleWhen
+            , "    effects:"
+            , "      - msg: 'Triggered.'"
+            ]
+        checkWarns y = case decode1 (BLC.pack y) of
+            Left err -> error ("yaml decode failed: " ++ show err)
+            Right (adv :: Adventure) -> case compileAdventure adv of
+                Left errs -> error ("unexpected compile error: " ++ issuesText errs)
+                Right cr  -> [ i | i <- crWarnings cr, ciCode i == "UnknownCardTag" ]
+
+    -- 1. Unknown tag in hand_has_tagged_card warns
+    let w1 = checkWarns (makeYaml "{ hand_has_tagged_card: phantom_tag }")
+    r1 <- expectEqual 1 (length w1)
+
+    -- 2. Unknown tag in count.cards.hand.<tag> warns
+    let w2 = checkWarns (makeYaml "{ compare_var: { name: count.cards.hand.phantom_tag, op: gte, value: 1 } }")
+    r2 <- expectEqual 1 (length w2)
+
+    -- 3. Empty tag in hand_has_tagged_card warns
+    let w3 = checkWarns (makeYaml "{ hand_has_tagged_card: \"\" }")
+    r3 <- expectEqual 1 (length w3)
+
+    -- 4. Known tag 'klinge' in both forms emits 0 UnknownCardTag warnings
+    let w4a = checkWarns (makeYaml "{ hand_has_tagged_card: klinge }")
+        w4b = checkWarns (makeYaml "{ compare_var: { name: count.cards.hand.klinge, op: gte, value: 2 } }")
+    r4 <- expectTrue "known tag emits 0 warnings" (null w4a && null w4b)
+
+    pure (r1 && r2 && r3 && r4)
+
+-- | K18: Byte-Vertrag-Waechter — mindestens 5 bestehende Abenteuer (inkl.
+--   deckbuilder_spire.yaml) kompilieren zu einem byte-identischen world.json.
+testK18ByteContractWatcher :: IO Bool
+testK18ByteContractWatcher = do
+    let baselines =
+            [ ("demo.yaml", "3aa9fed02d6d9b8f16bb7c4c3b18169e891f504a1feb880dfc87db21eedbb784")
+            , ("thefog.yaml", "8f58bb4fead8660dbaeadce039150cae08e8338a46e02d8d63d1660c3861d1f6")
+            , ("zork1.yaml", "089d318d206c779e5de12272d917b95d1d29a60b1a921aaed11b7676650be761")
+            , ("roguelike_dungeon.yaml", "946cd88374d3dcf3def610186c7f3cf99167771aa5970db06e1e2caa4ac21495")
+            , ("wissen.yaml", "da115a31517847aefb134a25c3b9a669e0f4ee383534cfeb79adea423add36eb")
+            , ("survival.yaml", "3dda736f26e4d8f6feaf85bda37090e975a5e9090f9c0960a41263311ac947d9")
+            ]
+    results <- forM baselines $ \(fname, expSha) -> do
+        mbPath <- findExample fname
+        case mbPath of
+            Nothing -> do
+                putStrLn $ "  K18 byte contract watcher: " ++ fname ++ " not found"
+                pure False
+            Just path -> do
+                advResult <- parseAdventureFile path
+                case advResult of
+                    Left err -> do
+                        putStrLn $ "  K18 byte contract watcher: " ++ fname ++ " parse failed: " ++ err
+                        pure False
+                    Right adv -> case compileAdventure adv of
+                        Left errs -> do
+                            putStrLn $ "  K18 byte contract watcher: " ++ fname ++ " compile failed: " ++ issuesText errs
+                            pure False
+                        Right cr -> do
+                            tmpDir <- getTemporaryDirectory
+                            let tmpFile = tmpDir </> ("k18-bc-" ++ fname ++ ".json")
+                            BL.writeFile tmpFile (Aeson.encode (crWorld cr))
+                            out <- readProcess "sha256sum" [tmpFile] ""
+                            _ <- try (removeFile tmpFile) :: IO (Either SomeException ())
+                            let actualSha = takeWhile (\c -> c `elem` ("0123456789abcdef" :: String))
+                                            (dropWhile (== '\\') out)
+                            r <- expectEqual expSha actualSha
+                            when (not r) $
+                                putStrLn $ "  K18 byte contract SHA mismatch for " ++ fname ++ ": expected " ++ expSha ++ ", got " ++ actualSha
+                            pure r
+    -- Additionally verify deckbuilder_spire.yaml compiles without any "cardTags" field in world.json
+    mbSpire <- findExample "deckbuilder_spire.yaml"
+    rSpire <- case mbSpire of
+        Nothing -> expectTrue "deckbuilder_spire.yaml found" False
+        Just spirePath -> do
+            advRes <- parseAdventureFile spirePath
+            case advRes of
+                Left err -> expectTrue ("deckbuilder_spire parse: " ++ err) False
+                Right adv -> case compileAdventure adv of
+                    Left errs -> expectTrue ("deckbuilder_spire compile: " ++ issuesText errs) False
+                    Right cr -> do
+                        let bytes = BLC.unpack (Aeson.encode (crWorld cr))
+                        expectTrue "deckbuilder_spire world.json omits cardTags" (not ("\"cardTags\"" `isInfixOf` bytes))
+    pure (and results && rSpire)
 
 main :: IO ()
 main = do

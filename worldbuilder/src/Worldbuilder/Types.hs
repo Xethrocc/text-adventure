@@ -309,6 +309,7 @@ data ACard = ACard
     , acdDescription :: String
     , acdExhaust     :: Bool
     , acdOutcomes    :: [AActionOutcome]
+    , acdTags        :: [String]             -- ^ K18: optional card property tags
     } deriving (Show, Eq, Generic)
 
 instance FromJSON ACard where
@@ -327,6 +328,7 @@ instance FromJSON ACard where
                 case mOutcomes of
                     Just os -> pure os
                     Nothing -> o .:? "effects" .!= [])
+        <*> o .:? "tags"        .!= []
 
 -- | Optional player stats block in YAML (Phase 4d).
 --   `player: { max_hp: 50, attack: 8, defense: 3, skills: { lockpick: 5 }, deck: [strike, defend] }`
@@ -3069,7 +3071,7 @@ knownKeys EntStandingChange = Set.fromList
     [ "faction", "id", "to" ]
 knownKeys EntCard = Set.fromList
     [ "id", "name", "cost", "type", "target", "description", "desc"
-    , "exhaust", "outcomes", "effects"
+    , "exhaust", "outcomes", "effects", "tags"
     ]
 knownKeys EntSandboxZone = Set.fromList
     [ "id", "origin", "floor", "biomes" ]

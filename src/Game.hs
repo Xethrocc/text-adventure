@@ -26,6 +26,7 @@ module Game
     , wanderStep
     , countItemMembers
     , countNpcMembers
+    , countCardMembers
     , itemsAtLoc
     , isContainer
     , containerCapacityOf
@@ -680,14 +681,35 @@ getExitInDirection dir state = case getCurrentRoom state of
 -- Pursuit (Tür IV): distance queries and one-edge pursuit steps
 -- ---------------------------------------------------------------------------
 
--- | B2: evaluate a general count query (items/npcs in a room or carried,
---   optional item-tag filter). NPCs carried by an actor are not a thing —
---   a `by:` where counts nothing for them.
+-- | B2/K18: evaluate a general count query (items/npcs in a room or carried,
+--   optional item-tag filter; cards in hand filtered by card tag). NPCs
+--   carried by an actor are not a thing — a `by:` where counts nothing for them.
 countSpecValue :: CountSpec -> GameState -> Int
 countSpecValue cs st = case csWhat cs of
     CountItems     -> length (countItemMembers cs st)
     CountNpcs      -> length (countNpcMembers cs st)
     CountAliveNpcs -> length (countNpcMembers cs st)
+    CountCards     -> length (countCardMembers cs st)
+
+-- | K18: the card members of a count set in a deck pile (default: "hand"),
+--   filtered by optional card tag. Each card instance in the pile counts.
+countCardMembers :: CountSpec -> GameState -> [Card]
+countCardMembers cs st = case csWhat cs of
+    CountCards -> [ c | cid <- pileCards, Just c <- [Map.lookup cid (cardDefs (world st))], tagged c ]
+    _          -> []
+  where
+    pileCards = case deckState (save st) of
+        Nothing -> []
+        Just ds -> case csWhere cs of
+            CountInRoom "hand"    -> hand ds
+            CountInRoom "in_hand" -> hand ds
+            CountInRoom "draw"    -> drawPile ds
+            CountInRoom "discard" -> discardPile ds
+            CountInRoom "exhaust" -> exhaustPile ds
+            _                     -> []
+    tagged c = case csTag cs of
+        Nothing -> True
+        Just t  -> not (null t) && t `elem` cardTags c
 
 -- | B2/B3: the item members of a count set (empty for npc sets). The set is
 --   **every** item at the location, hidden ones included — otherwise
@@ -728,6 +750,7 @@ dormantItems st =
 countNpcMembers :: CountSpec -> GameState -> [NPCID]
 countNpcMembers cs st = case csWhat cs of
     CountItems     -> []
+    CountCards     -> []
     CountNpcs      -> npcsAt
     CountAliveNpcs -> [ nId | nId <- npcsAt, not (isDeadNPC nId st) ]
   where
@@ -1792,6 +1815,8 @@ evalPredicate (HasTaggedItem actor tag) st =
     not (null (countItemMembers (CountSpec CountItems (CountCarriedBy actor) (Just tag)) st))
 evalPredicate (RoomHasTaggedItem r tag) st =
     not (null (countItemMembers (CountSpec CountItems (CountInRoom r) (Just tag)) st))
+evalPredicate (HandHasTaggedCard tag) st =
+    not (null (countCardMembers (CountSpec CountCards (CountInRoom "hand") (Just tag)) st))
 evalPredicate (HasFlag f) st = hasFlag f st
 evalPredicate (HasCondition cn) st = hasCondition cn st
 evalPredicate (VehicleHasCondition v c) st =
@@ -2090,6 +2115,8 @@ lookupVarForFormat st rawName =
                 _ -> Nothing
         | Just cName <- stripPrefix "condition_turns." name =
             Just (show (resolveValueRef (VRConditionTurns cName) st))
+        | Just rest <- stripPrefix "count." name =
+            Just (show (resolveValueRef (parseCountRef rest) st))
         | name `elem` ["player.hp", "player.health"] =
             Just (show (playerHealth (player (save st))))
         | name `elem` ["player.max_hp", "player.max_health"] =

@@ -559,11 +559,12 @@ instance FromJSON WanderOptions
 defaultWanderOptions :: WanderOptions
 defaultWanderOptions = WanderOptions [] Nothing [] False False
 
--- | B2: what a count query counts.
+-- | B2/K18: what a count query counts.
 data CountWhat
     = CountItems        -- ^ items (optionally filtered by tag)
     | CountNpcs         -- ^ all NPCs
     | CountAliveNpcs    -- ^ living NPCs only
+    | CountCards        -- ^ K18: cards in a deck pile (e.g. hand, optionally filtered by tag)
     deriving (Show, Eq, Generic)
 
 -- | B2: where a count query looks.
@@ -595,7 +596,7 @@ instance FromJSON CountWhere where
 data CountSpec = CountSpec
     { csWhat :: CountWhat
     , csWhere :: CountWhere
-    , csTag   :: Maybe String  -- ^ optional: only items carrying this tag
+    , csTag   :: Maybe String  -- ^ optional: only items/cards carrying this tag
     } deriving (Show, Eq, Generic)
 
 instance ToJSON CountSpec where
@@ -606,6 +607,7 @@ instance ToJSON CountSpec where
         whatName CountItems     = ("items" :: String)
         whatName CountNpcs      = "npcs"
         whatName CountAliveNpcs = "alive_npcs"
+        whatName CountCards     = "cards"
         whereKey (CountInRoom r)       = ("in" :: Key) .= r
         whereKey (CountCarriedBy a)    = ("by" :: Key) .= actorId a
         whereKey (CountInContainer c)  = ("in_container" :: Key) .= c
@@ -619,11 +621,13 @@ instance FromJSON CountSpec where
             "items"      -> pure CountItems
             "npcs"       -> pure CountNpcs
             "alive_npcs" -> pure CountAliveNpcs
+            "cards"      -> pure CountCards
             other        -> fail ("count: unknown what '" ++ other
-                                  ++ "' (use items, npcs or alive_npcs)")
+                                  ++ "' (use items, npcs, alive_npcs or cards)")
         wherePart <- (CountInRoom <$> o .: "in")
                   <|> (CountCarriedBy . parseActorString <$> o .: "by")
                   <|> (CountInContainer <$> o .: "in_container")
+                  <|> (if what == CountCards then pure (CountInRoom "hand") else fail "count: missing where")
         tag <- o .:? "tag"
         pure (CountSpec what wherePart tag)
 
@@ -739,17 +743,35 @@ splitOnce c s = case break (== c) s of
     (a, _:b) -> (a, b)
     (a, _)   -> (a, "")
 
--- | String form `count.<what>.<in|by>.<id>` and
---   `count.<what>.tag.<tag>.<in|by>.<id>` (B2) — e.g. "items.in.halle",
---   "items.tag.light.in.halle", "alive_npcs.in.halle", "items.by.player".
+-- | String form `count.<what>.<in|by>.<id>`,
+--   `count.<what>.tag.<tag>.<in|by>.<id>` (B2) and
+--   `count.cards.hand.<tag>` (K18) — e.g. "items.in.halle",
+--   "items.tag.light.in.halle", "alive_npcs.in.halle", "items.by.player",
+--   "cards.hand.klinge".
 parseCountRef :: String -> ValueRef
-parseCountRef rest = VRCount (CountSpec what wherePart tag)
+parseCountRef rest
+    | what == CountCards = VRCount (CountSpec CountCards (CountInRoom cardLoc) cardTag)
+    | otherwise          = VRCount (CountSpec what wherePart tag)
   where
     (whatStr, afterWhat) = splitOnce '.' rest
     what = case whatStr of
         "npcs"       -> CountNpcs
         "alive_npcs" -> CountAliveNpcs
+        "cards"      -> CountCards
         _            -> CountItems
+    (cardLoc, cardTag) = case stripPrefix "tag." afterWhat of
+        Just t ->
+            let (tg, afterT) = splitOnce '.' t
+                (_, loc)     = splitOnce '.' afterT
+            in (if null loc then "hand" else loc, Just tg)
+        Nothing -> case stripPrefix "in." afterWhat of
+            Just inRest ->
+                let (loc, tg) = splitOnce '.' inRest
+                in (if null loc then "hand" else loc, Just tg)
+            Nothing ->
+                let (loc, tg) = splitOnce '.' afterWhat
+                    tgClean = maybe tg id (stripPrefix "tag." tg)
+                in (if null loc then "hand" else loc, Just tgClean)
     (tag, afterTag) = case stripPrefix "tag." afterWhat of
         Nothing -> (Nothing, afterWhat)
         Just t  -> let (tg, rest') = splitOnce '.' t in (Just tg, rest')
@@ -953,6 +975,7 @@ data Predicate
     | ActorHas ActorRef ItemID          -- ^ W4: does the actor (player, NPC, device) carry/hold this item?
     | HasTaggedItem ActorRef String     -- ^ B2: does the actor carry an item with this tag?
     | RoomHasTaggedItem RoomID String   -- ^ B2: does the room hold an item with this tag?
+    | HandHasTaggedCard String          -- ^ K18: does the player hold a card in hand with this tag?
     | ResourceFull String               -- ^ K4: variable is at or above declared max
     | ResourceEmpty String              -- ^ K4: variable is at or below declared min
     | VehicleHasCondition VehicleID String -- ^ OPEN-24: active condition on vehicle
@@ -983,6 +1006,7 @@ instance ToJSON Predicate where
         KnowsRecipe a r    -> object [ "knows_recipe" .= actorId a, "id" .= r ]
         HasTaggedItem a t  -> object [ "actor_has_tag" .= object ["actor" .= actorId a, "tag" .= t ] ]
         RoomHasTaggedItem r t -> object [ "room" .= r, "has_item_tag" .= t ]
+        HandHasTaggedCard t -> object [ "hand_has_tagged_card" .= t ]
         ResourceFull v     -> object [ "resource_full" .= v ]
         ResourceEmpty v    -> object [ "resource_empty" .= v ]
 
@@ -1120,6 +1144,15 @@ instance FromJSON Predicate where
                         pure (PAll [EntityHasState c "in_hand" | c <- cs])
                     String s -> pure (EntityHasState (T.unpack s) "in_hand")
                     _        -> fail "Expected card id or list of card ids for combo")
+        -- K18: hand_has_tagged_card (and aliases has_tagged_card / hand_has_tag)
+        <|> (do v <- o .: "hand_has_tagged_card"
+                 <|> o .: "has_tagged_card"
+                 <|> o .: "hand_has_tag"
+                 <|> o .: "card_in_hand_has_tag"
+                case v of
+                    String s  -> pure (HandHasTaggedCard (T.unpack s))
+                    Object co -> HandHasTaggedCard <$> co .: "tag"
+                    _         -> fail "Expected tag string or {tag: ...} object for hand_has_tagged_card")
         -- K4: resource_full / resource_empty predicates
         <|> (do v <- o .: "resource_full"
                 case v of

@@ -1099,6 +1099,7 @@ compileAdventure rawAdv =
                 keywordWarns = checkKeywordCollisions adv
                 placeholderWarns = checkUnknownPlaceholders adv allVarDefs
                 resourceVarWarns = checkUnknownResourceVars adv gwResolved allVarDefs
+                cardTagWarns = checkUnknownCardTags adv gwResolved
                 toolKeyWarns = checkUnknownVerbTools adv
                 darkRoomWarns = checkDarkRoomDeadEnds adv
                 deadContentWarns = checkUnreachableTriggers adv ++ checkUnsatisfiableConditions adv
@@ -1106,7 +1107,7 @@ compileAdventure rawAdv =
                                 ++ checkQuestProgress adv
                 standingChangeWarns = checkStandingChangeTriggers (advFactions adv) (advTriggers adv)
                 recipeResultWarns = checkRecipeResults adv
-                allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ resourceVarWarns ++ toolKeyWarns ++ verbSoftWarns ++ darkRoomWarns
+                allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ resourceVarWarns ++ cardTagWarns ++ toolKeyWarns ++ verbSoftWarns ++ darkRoomWarns
                           ++ varWarns
                           ++ chapterWarns
                           ++ deviceWarns
@@ -5993,6 +5994,7 @@ compileCards cards =
                 , E.cardTarget = fromMaybe E.TargetNone mTarget
                 , E.cardExhaust = acdExhaust c
                 , E.cardEffects = map compileAActionOutcome (acdOutcomes c)
+                , E.cardTags = acdTags c
                 })
            else Left allErrs
 
@@ -6672,6 +6674,7 @@ checkUnknownPlaceholders adv varDefs =
         | "flag." `isPrefixOf` name = True
         | "flag:" `isPrefixOf` name = True
         | "condition_turns." `isPrefixOf` name = True
+        | "count." `isPrefixOf` name = True
         | "known." `isPrefixOf` name = True
         | "known_recipe." `isPrefixOf` name = True
         | "known_recipe_by." `isPrefixOf` name = True
@@ -6927,3 +6930,61 @@ checkUnknownResourceVars adv gw varDefs =
         E.PAll qs         -> concatMap resourceVarsIn qs
         E.PAny qs         -> concatMap resourceVarsIn qs
         _                 -> []
+
+-- | K18: warn when a card tag predicate (`hand_has_tagged_card` or
+--   `count.cards.hand.<tag>`) references an empty or unknown card tag.
+checkUnknownCardTags :: Adventure -> E.GameWorld -> [CompileIssue]
+checkUnknownCardTags adv gw =
+    let allCardTags = Set.fromList
+            [ t
+            | c <- advCards adv
+            , t <- acdTags c
+            , not (null (dropWhile isSpace t))
+            ]
+        sites = predicateSites adv
+            ++ [ ("rooms." ++ arId r ++ ".exits." ++ dir, p)
+               | r <- advRooms adv
+               , (dir, ex) <- Map.toList (arExits r)
+               , Just p <- [aeWhen ex]
+               ]
+            ++ [ ("statements." ++ stId s, p)
+               | s <- advStatements adv
+               , Just p <- [stWhen s]
+               ]
+        isBadTag t = null (dropWhile isSpace t) || t `Set.notMember` allCardTags
+        warnMsg t
+            | null (dropWhile isSpace t) = "card tag predicate specifies an empty tag"
+            | otherwise = "card tag predicate specifies tag '" ++ t ++ "', which matches no declared cards"
+        siteIssues =
+            [ ciWarning path "UnknownCardTag" (warnMsg t)
+            | (path, p) <- sites
+            , t <- cardTagsIn p
+            , isBadTag t
+            ]
+        seenTags = Set.fromList [ t | (_, p) <- sites, t <- cardTagsIn p ]
+        worldIssues =
+            [ ciWarning "predicates.card_tag" "UnknownCardTag" (warnMsg t)
+            | p <- allWorldPredicates gw
+            , t <- cardTagsIn p
+            , isBadTag t
+            , t `Set.notMember` seenTags
+            ]
+    in siteIssues ++ worldIssues
+  where
+    cardTagsIn p = case p of
+        E.HandHasTaggedCard t -> [t]
+        E.Compare lhs _ rhs   -> cardTagsInValueRef lhs ++ cardTagsInValueRef rhs
+        E.CompareVar name _ _ -> cardTagsInVarName name
+        E.PNot q              -> cardTagsIn q
+        E.PAll qs             -> concatMap cardTagsIn qs
+        E.PAny qs             -> concatMap cardTagsIn qs
+        _                     -> []
+
+    cardTagsInValueRef vr = case vr of
+        E.VRCount (E.CountSpec E.CountCards _ mTag) -> [fromMaybe "" mTag]
+        E.VRVariable name                           -> cardTagsInVarName name
+        _                                           -> []
+
+    cardTagsInVarName name = case stripPrefix "count." name of
+        Just rest -> cardTagsInValueRef (E.parseCountRef rest)
+        Nothing   -> []

@@ -97,10 +97,11 @@ data Card = Card
     , cardTarget      :: CardTarget
     , cardExhaust     :: Bool                     -- ^ Removed to exhaust pile on play
     , cardEffects     :: [Effect]                 -- ^ Pure Effect DSL
+    , cardTags        :: [String]                 -- ^ K18: Optional property tags (omitted in JSON when empty)
     } deriving (Show, Eq, Generic)
 
 instance ToJSON Card where
-    toJSON c = object
+    toJSON c = object $
         [ "cardId"          .= cardId c
         , "cardName"        .= cardName c
         , "cardCost"        .= cardCost c
@@ -110,6 +111,7 @@ instance ToJSON Card where
         , "cardExhaust"     .= cardExhaust c
         , "cardEffects"     .= cardEffects c
         ]
+        ++ [ "cardTags" .= cardTags c | not (null (cardTags c)) ]
 
 instance FromJSON Card where
     parseJSON = withObject "Card" $ \o -> Card
@@ -121,6 +123,7 @@ instance FromJSON Card where
         <*> (o .:? "cardTarget" >>= maybe (o .:? "target" .!= TargetNone) pure)
         <*> (o .:? "cardExhaust" >>= maybe (o .:? "exhaust" .!= False) pure)
         <*> (o .:? "cardEffects" >>= maybe (o .:? "effects" >>= maybe (o .:? "outcomes" .!= []) pure) pure)
+        <*> (o .:? "cardTags" >>= maybe (o .:? "tags" .!= []) pure)
 
 -- | Runtime state of card decks in SaveState.
 data DeckState = DeckState
