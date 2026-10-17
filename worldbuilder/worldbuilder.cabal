@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               worldbuilder
-version:            0.5.0.0
+version:            0.6.0.0
 synopsis:           Authoring toolchain for the text-adventure engine
 description:        Turns authored YAML content into the GameWorld and SaveState
                     JSON files that the text-adventure engine loads.

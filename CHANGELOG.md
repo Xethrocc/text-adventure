@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+## [0.12.0.0] — 2026-10-17
+
+Engine `0.12.0.0`, Worldbuilder `0.6.0.0`. Gefahrenlagen (`hazards:`), Software-Synth
+(SFX + Musik-Tracks, auch in der TUI), die Engine-Reihe OPEN-14…OPEN-24, Karten-Tags
+(K18) und sechs neue Content-Benchmarks. Details in den Einträgen unten.
+
+### Added
+- **Gefahrenlagen `hazards:` (OPEN-23, Worldbuilder):** Verlauf/Footprint/Hooks (Stufe 1),
+  Ausbreitung `spread`, Zufallsereignisse `every:`, Wirktypen `flood:`/`landslide:`/`damage:`
+  (Stufe 2), Item-Helfer `flow:`/`burn:` (2b), Zustands-Tracks + `environment.weather` als
+  Alias (2c/E3). Zork-Dam auf `hazards: reservoir:` umgestellt (OPEN-23a).
+- **Software-Synth (Phase 5.2b–e):** purer Renderer im Kern (`Synth.Patch/Render/Wav`),
+  `sounds:`/`sfx: {synth}`, Musik-Tracks `tracks:`/`music: {synth}` mit Pattern-Raster,
+  inhaltsadressierter Cache, `worldbuilder synth list/render/preview`, TUI-Audio mit
+  `--no-audio`/`--audio-helper`.
+- **Engine OPEN-14…OPEN-24:** `wander:` + Run-Seed, `steal:`, `swap_inventory:`,
+  Parser-Default-Ziel, Item-Timer `fuel:`, Meldungs-Pools in `messages:`, Multi-Raum-Objekte
+  `locations:`, Mehrwort-Verben & Präpositionalphrasen, `cmd.raw`,
+  Fahrzeug-Zustände `apply/clear_vehicle_condition` + `vehicle_has_condition`.
+- **K18 Karten-Tags**, **K4-Rest** (`resource_full/empty`), **C4** Team-Wechsel + XP pro Monster.
+- **Content-Benchmarks:** Krypta der Verdammten, Alchemisten-Werkstatt, Neon Phantom,
+  Chrome & Ash, Verschollen im ewigen Eis, Soul Collector, Zeitschleife, Theater der
+  Schatten, Oregon Trail, Die Monster-Insel, Sprung ins Ungewisse (FTL-Lite).
+
+### Fixed
+- FIX-11/FIX-12 (tote Alias-Fallbacks), `put X in Y` aus getragenen Containern,
+  Audio-Helper-Name bei `.bat`/`.cmd`-Wrappern, Windows-CI (`sha256sum`-Parsing,
+  TUI-Audio-Test), Build-Warnungs-Gate in `ci.sh`, Oregon-Trail-Radbruch und Rationen-Kauf.
+
 ### FIX: Audio-Helper-Name ignoriert Windows-Wrapper (`.bat`/`.cmd`)
 
 - `Audio.baseName` strich nur `.exe` ab: ein Helper `mpv.bat`/`mpv.cmd` (z. B. per `--audio-helper`) hieß `"mpv.bat"` und fiel in `sfxArgs`/`musicLoopArgs` auf die Default-Argumente zurück — ohne `--no-video --really-quiet` und ohne `--loop=inf` (Musik lief nicht in Schleife). Jetzt werden `.exe`, `.bat` und `.cmd` entfernt.
