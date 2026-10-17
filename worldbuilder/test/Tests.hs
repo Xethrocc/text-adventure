@@ -4970,6 +4970,7 @@ tests =
     , ("variable cycles: YAML parsing and knownKeys clean (K7/K4)", testVarCyclesYamlParsingAndKnownKeys)
     , ("variable cycles: static validation for reset_on, on_overflow and refill (K7/K4)", testVarCyclesValidation)
     , ("resource predicates: YAML parsing and UnknownVariable warning (K4)", testResourcePredicatesYamlAndValidation)
+    , ("compare_var on an undeclared, never-written variable warns (X3)", testUnknownCompareVar)
     -- K11a: Crafting verbraucht seine Zutaten
     , ("crafting: compile of valid recipe with consume {item1}/{item2} (K11a)", testCraftingCompileValidForm)
     , ("crafting: unbound dynamic ref {item9} produces hard compile error (K11a)", testCraftingUnboundRefRejected)
@@ -9383,6 +9384,59 @@ testVarCyclesValidation = do
                 Right _   -> False)
 
     pure (and [r1, r2, r3, r4])
+
+-- | X3: `compare_var` on a plain variable that nothing declares or writes
+--   warns (UnknownVariable); declared, written, dotted (engine) and
+--   nested-`if:` reads behave as documented.
+testUnknownCompareVar :: IO Bool
+testUnknownCompareVar = do
+    let yaml = unlines
+            [ "name: Compare Var Test"
+            , "start_room: loc_0"
+            , "rooms:"
+            , "  - id: loc_0"
+            , "    name: Room 0"
+            , "    desc: Room"
+            , "variables:"
+            , "  - { name: mana, type: int, initial: 3 }"
+            , "rules:"
+            , "  - id: r_ghost"
+            , "    on: turn"
+            , "    when: { compare_var: { name: turn_count, op: gte, value: 3 } }"
+            , "    effects:"
+            , "      - msg: 'Late.'"
+            , "  - id: r_known"
+            , "    on: turn"
+            , "    when: { compare_var: { name: mana, op: gte, value: 1 } }"
+            , "    effects:"
+            , "      - add_var: { var: counter, delta: 1 }"
+            , "      - if: { compare_var: { name: counter, op: gte, value: 2 } }"
+            , "        then: [ { msg: 'Twice.' } ]"
+            , "      - if: { compare_var: { name: nested_ghost, op: gte, value: 1 } }"
+            , "        then: [ { msg: 'Never.' } ]"
+            , "  - id: r_engine"
+            , "    on: turn"
+            , "    when: { compare_var: { name: ship.kestrel.hull, op: lte, value: 0 } }"
+            , "    effects:"
+            , "      - msg: 'Engine var.'"
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left err -> do
+            putStrLn $ "  yaml decode failed: " ++ show err
+            pure False
+        Right (adv :: Adventure) -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn $ "  unexpected compile error: " ++ show errs
+                pure False
+            Right cr -> do
+                let uv = [ ciMessage w | w <- crWarnings cr, ciCode w == "UnknownVariable" ]
+                    mentions v = any (("'" ++ v ++ "'") `isInfixOf`) uv
+                r1 <- expectTrue "turn_count (never provided) warns" (mentions "turn_count")
+                r2 <- expectTrue "nested if: read warns" (mentions "nested_ghost")
+                r3 <- expectTrue "declared variable does not warn" (not (mentions "mana"))
+                r4 <- expectTrue "effect-written variable does not warn" (not (mentions "counter"))
+                r5 <- expectTrue "dotted engine variable does not warn" (not (mentions "ship.kestrel.hull"))
+                pure (r1 && r2 && r3 && r4 && r5)
 
 -- | K4: YAML parsing and UnknownVariable warning for resource_full / resource_empty predicates.
 testResourcePredicatesYamlAndValidation :: IO Bool

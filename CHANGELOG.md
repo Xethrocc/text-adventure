@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Engine/Validator: Befunde aus dem Content-Audit (X1, X3, X4)
+
+Aus dem Content-Audit vom 2026-10-17 (`~/workspace/befunde-content-audit-2026-10-17.md` §0):
+
+- **X1 — das erste Spielende eines Zuges gilt (`src/Effects.hs`):** Nach einem `game_end` feuert in diesem Zug keine weitere Regel mehr (`fireTriggerList`), und ein späteres `game_end` überschreibt Grund und Meldung nicht (die auslösende Regel führt ihre restlichen Effekte noch aus). Vorher überschrieb ein Hunger-/Kälte-/Sauerstoff-Drain den Sieg im selben Zug — reproduziert in `space-opera`, `survival_expedition` und `modules/survival` (dort jetzt Sieg).
+- **X3 — `UnknownVariable` für `compare_var` (Worldbuilder):** Warnung, wenn `compare_var` eine ungepunktete Variable liest, die weder deklariert, noch in `initial_variables:` gesetzt, noch von einem Effekt geschrieben, noch Prozedur-Parameter ist (die Vergleichsseite sah sonst still 0). Gepunktete Namen schreibt die Engine weitgehend selbst und bleiben ungeprüft. Über alle gelieferten Abenteuer genau ein Treffer: `turn_count` in `examples/modules/hazards.yaml` (Nebel-Track tot).
+- **X4 — `current` / `current_room` in Raum-Prädikaten (`src/Game.hs`):** `{room: current_room, has_tag: …}` und `{…, has_item_tag: …}` lösen jetzt auf den Raum des Spielers auf (wie `generate_room`). Vorher wurde ein Raum namens „current_room“ gesucht — `hacken`/`sammeln` in `sandbox_wilderness` gingen nie, obwohl `docs/adventure-schema.md` genau dieses Muster zeigt.
+- Tests: 2 Engine-Tests (X1, X4), 1 Worldbuilder-Test (X3).
+
 ## [0.12.0.0] — 2026-10-17
 
 Engine `0.12.0.0`, Worldbuilder `0.6.0.0`. Gefahrenlagen (`hazards:`), Software-Synth

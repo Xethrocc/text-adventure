@@ -598,7 +598,7 @@ items:
 | `{ equip: item_id }` | MoveEntity to EquippedBy "player" |
 | `{ move: room_id }` | SetValue (VRProperty "player" "room") — bewegt den Spieler |
 | `{ move_npc: npc_id, to: room_id }` | MoveEntity — bewegt einen NPC; `to:` nimmt neben der Raum-ID auch `to: {here}` / `to: {room_of: <npc>}` (OPEN-11, s. u.) |
-| `{ game_end: victory }` / `{ game_end: death, msg: "…" }` | GameEnd |
+| `{ game_end: victory }` / `{ game_end: death, msg: "…" }` | GameEnd — **das erste Spielende eines Zuges gilt:** danach feuert in diesem Zug keine weitere Regel, und ein späteres `game_end` bleibt stumm (die auslösende Regel führt ihre restlichen Effekte noch aus). Ein Hunger-/Kälte-Drain kann einen Sieg im selben Zug also nicht mehr überschreiben. |
 | `{ if: <predicate>, then: […], else: […] }` | Conditional — Prädikat-gesteuerter Zweig |
 | `{ msg: "Text", then: [...], else: [...] }` | Sequence [SendMessage, Conditional...] |
 | `{ standing: { faction: id, add: N } }` | ModifyValue (VRVariable "faction.id") +N — Module 7a |
@@ -4251,6 +4251,10 @@ when: { actor_has_tag: {actor: player, tag: licht} }   # trägt etwas mit Tag X
 when: { room: halle, has_item_tag: licht }             # liegt hier etwas mit Tag X?
 when: { hand_has_tagged_card: klinge }                 # hält Handkarte mit Tag X (K18)
 ```
+
+In `{room: …, has_tag: …}` und `{room: …, has_item_tag: …}` steht `current` bzw. `current_room`
+für den Raum des Spielers (derselbe Alias wie bei `generate_room`) — nötig für generierte
+Sandbox-Räume, deren IDs der Autor nicht kennt.
 
 **Die Zähl-Familie** (Int-Werte, überall nutzbar, wo Werte stehen — `compare_var`,
 `compare`, `compute_var`):

@@ -1799,6 +1799,15 @@ combatAbilityKey :: String
 combatAbilityKey = combatVarPrefix ++ "ability"
 
 -- | Evaluate a Predicate against the current game state.
+-- | X4: `current` / `current_room` in a room predicate (`{room: …, has_tag: …}`,
+--   `{room: …, has_item_tag: …}`) means the player's room — the same alias
+--   `generate_room` accepts for its source room. Without it the predicate looked
+--   up a room literally named "current_room" and was always false.
+resolveRoomAlias :: RoomID -> GameState -> RoomID
+resolveRoomAlias r st
+    | r `elem` ["current", "current_room"] = currentRoom (save st)
+    | otherwise                            = r
+
 evalPredicate :: Predicate -> GameState -> Bool
 evalPredicate PTrue _ = True
 evalPredicate (PNot p) st = not (evalPredicate p st)
@@ -1816,7 +1825,7 @@ evalPredicate (ActorHas actor iId) st = actorHasItem actor iId st
 evalPredicate (HasTaggedItem actor tag) st =
     not (null (countItemMembers (CountSpec CountItems (CountCarriedBy actor) (Just tag)) st))
 evalPredicate (RoomHasTaggedItem r tag) st =
-    not (null (countItemMembers (CountSpec CountItems (CountInRoom r) (Just tag)) st))
+    not (null (countItemMembers (CountSpec CountItems (CountInRoom (resolveRoomAlias r st)) (Just tag)) st))
 evalPredicate (HandHasTaggedCard tag) st =
     not (null (countCardMembers (CountSpec CountCards (CountInRoom "hand") (Just tag)) st))
 evalPredicate (HasFlag f) st = hasFlag f st
@@ -1862,7 +1871,7 @@ evalPredicate (EntityHasState entity expected) st =
         Just (VVText s) -> s == expected
         _               -> False
 evalPredicate (RoomHasTag rId tag) st =
-    case lookupRoom rId st of
+    case lookupRoom (resolveRoomAlias rId st) st of
         Just room -> tag `Set.member` roomTags room
         Nothing   -> False
 evalPredicate (Location actor rId) st = case actor of

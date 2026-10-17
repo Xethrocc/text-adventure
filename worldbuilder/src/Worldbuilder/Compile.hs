@@ -1457,6 +1457,7 @@ compileAdventure rawAdv =
                 keywordWarns = checkKeywordCollisions adv
                 placeholderWarns = checkUnknownPlaceholders adv allVarDefs
                 resourceVarWarns = checkUnknownResourceVars adv gwResolved allVarDefs
+                compareVarWarns = checkUnknownCompareVars adv gwResolved allVarDefs
                 cardTagWarns = checkUnknownCardTags adv gwResolved
                 toolKeyWarns = checkUnknownVerbTools adv
                 darkRoomWarns = checkDarkRoomDeadEnds adv
@@ -1465,7 +1466,7 @@ compileAdventure rawAdv =
                                 ++ checkQuestProgress adv
                 standingChangeWarns = checkStandingChangeTriggers (advFactions adv) (advTriggers adv)
                 recipeResultWarns = checkRecipeResults adv
-                allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ resourceVarWarns ++ cardTagWarns ++ toolKeyWarns ++ verbSoftWarns ++ darkRoomWarns
+                allWarns = gameWarns ++ yamlKeyWarns ++ keywordWarns ++ placeholderWarns ++ resourceVarWarns ++ compareVarWarns ++ cardTagWarns ++ toolKeyWarns ++ verbSoftWarns ++ darkRoomWarns
                           ++ varWarns
                           ++ chapterWarns
                           ++ deviceWarns
@@ -7291,6 +7292,56 @@ checkUnknownResourceVars adv gw varDefs =
         E.PAll qs         -> concatMap resourceVarsIn qs
         E.PAny qs         -> concatMap resourceVarsIn qs
         _                 -> []
+
+-- | X3: warn when `compare_var` reads a variable that nothing provides. Only
+--   plain names (no '.', no '{') are checked: dotted names are largely written
+--   by the engine itself (`ship.*`, `party.*`, `cmd.*`, `hazard.*`, …). A plain
+--   name is known when it is declared, seeded in `initial_variables:`, written
+--   by any effect (authored or compiled sugar) or a procedure parameter.
+--   Example: `compare_var: {name: turn_count, …}` silently compares 0 forever
+--   (there is no `turn_count`; the turn counter is not a VarMap entry).
+checkUnknownCompareVars :: Adventure -> E.GameWorld -> Map.Map String E.VarDef -> [CompileIssue]
+checkUnknownCompareVars adv gw varDefs =
+    let known = Set.unions
+            [ Map.keysSet varDefs
+            , Set.fromList (map avbVarName (advVariables adv))
+            , Map.keysSet (advInitialVariables adv)
+            , Set.fromList (concatMap effWrites (allWorldEffects gw))
+            , Set.fromList (concatMap E.procParams (Map.elems (E.procDefs gw)))
+            ]
+        preds = allWorldPredicates gw ++ concatMap effPreds (allWorldEffects gw)
+        unknowns = nub
+            [ v | p <- preds, v <- compareVarsIn p
+                , '.' `notElem` v, '{' `notElem` v
+                , v `Set.notMember` known ]
+    in [ ciWarning "predicates.compare_var" "UnknownVariable"
+            ("compare_var reads variable '" ++ v ++ "', which is never declared or written — the comparison always sees 0")
+       | v <- unknowns ]
+  where
+    compareVarsIn p = case p of
+        E.CompareVar v _ _ -> [v]
+        E.PNot q           -> compareVarsIn q
+        E.PAll qs          -> concatMap compareVarsIn qs
+        E.PAny qs          -> concatMap compareVarsIn qs
+        _                  -> []
+    -- Nested effects that may hold predicates or variable writes. A missing
+    -- constructor only narrows the check, it never causes a false warning.
+    children e = case e of
+        E.Sequence es             -> es
+        E.Conditional _ t el      -> [t, el]
+        E.RandomChoice cs         -> map snd cs
+        E.RandomChoiceOn _ cs     -> map snd cs
+        E.Narrative _ f           -> [f]
+        E.ApplyCondition _ _ t el _ -> catMaybes [t, el]
+        _                         -> []
+    effPreds e = case e of
+        E.Conditional p _ _ -> p : concatMap effPreds (children e)
+        _                   -> concatMap effPreds (children e)
+    effWrites e = case e of
+        E.SetValue (E.VRVariable n) _     -> [n]
+        E.ModifyValue (E.VRVariable n) _  -> [n]
+        E.ComputeValue (E.VRVariable n) _ -> [n]
+        _                                 -> concatMap effWrites (children e)
 
 -- | K18: warn when a card tag predicate (`hand_has_tagged_card` or
 --   `count.cards.hand.<tag>`) references an empty or unknown card tag.

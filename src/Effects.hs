@@ -460,7 +460,12 @@ applyOutcomeWith depth salt outcome targetId state
     RollDice pool die streamName keep ->
         applyRollDice pool die streamName keep salt state
 
-    GameEnd reason msg -> (endGame reason state, evRaw (formatWithVars msg state), salt)
+    -- X1: the first game end of a turn wins — a later `game_end` (e.g. a
+    -- starvation drain after the victory rule) neither overrides the reason
+    -- nor prints its message.
+    GameEnd reason msg
+        | gameOver (save state) -> (state, [], salt)
+        | otherwise -> (endGame reason state, evRaw (formatWithVars msg state), salt)
 
     PlayClip clipId ->
         case Map.lookup clipId (worldClips (world state)) of
@@ -1370,6 +1375,10 @@ fireTriggerList :: Int -> [TriggerDef] -> GameState -> (GameState, [OutputEvent]
 fireTriggerList depth triggers state =
     foldl' fireOne (state, []) triggers
   where
+    -- X1: once the game has ended, no further rule fires this turn (the rule
+    -- that ended it still runs its remaining effects). Without this a
+    -- `game_end: death` drain after a victory overrode the win.
+    fireOne (st, acc) _ | gameOver (save st) = (st, acc)
     fireOne (st, acc) tr =
         case lastVeto st of
             Just _  -> (st, acc)

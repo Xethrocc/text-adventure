@@ -286,6 +286,43 @@ testGameEndVictory = do
     let (newState, _) = applyOutcome (GameEnd Victory "You win!") "" initSampleGame
     expectEqual (Just Victory) (gameOverReason (save newState))
 
+-- | X1: the first game end of a turn wins. A victory rule followed by a
+--   death drain in the same turn keeps the victory, the drain's rule does not
+--   fire (no message), and a second `game_end` in one outcome is silent; the
+--   rule that ended the game still runs its remaining effects.
+testFirstGameEndWins :: IO Bool
+testFirstGameEndWins = do
+    let winTrig = TriggerDef "win" OnTurn Nothing
+            [GameEnd Victory "You win!", SendMessage "Epilog."] False 0 1 [] []
+        drainTrig = TriggerDef "drain" OnTurn Nothing
+            [SendMessage "You feel cold.", GameEnd Death "You freeze."] False 0 1 [] []
+        st0 = initSampleGame { world = (world initSampleGame) { triggerDefs = [winTrig, drainTrig] } }
+        (st1, evs) = fireTriggers OnTurn st0
+        out = renderEvents evs
+    r1 <- expectEqual (Just Victory) (gameOverReason (save st1))
+    r2 <- expectTrue "victory text shown" ("You win!" `isInfixOf` out)
+    r3 <- expectTrue "rest of the ending rule still runs" ("Epilog." `isInfixOf` out)
+    r4 <- expectTrue "later rule does not fire" (not ("You feel cold." `isInfixOf` out))
+    r5 <- expectTrue "later game_end is silent" (not ("You freeze." `isInfixOf` out))
+    let (st2, msg2) = applyOutcome (Sequence [GameEnd Victory "Won.", GameEnd Death "Dead."]) "" initSampleGame
+    r6 <- expectEqual (Just Victory) (gameOverReason (save st2))
+    r7 <- expectTrue "second game_end in one outcome is silent" (not ("Dead." `isInfixOf` msg2))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | X4: `current` / `current_room` in room predicates resolves to the
+--   player's room (was looked up literally and always false).
+testRoomPredicateCurrentAlias :: IO Bool
+testRoomPredicateCurrentAlias = do
+    let here = currentRoom (save initSampleGame)
+        tagged = initSampleGame { world = (world initSampleGame)
+            { rooms = Map.adjust (\r -> r { roomTags = Set.insert "forest" (roomTags r) }) here
+                                 (rooms (world initSampleGame)) } }
+    r1 <- expectTrue "current_room has_tag" (evalPredicate (RoomHasTag "current_room" "forest") tagged)
+    r2 <- expectTrue "current has_tag" (evalPredicate (RoomHasTag "current" "forest") tagged)
+    r3 <- expectTrue "explicit id still works" (evalPredicate (RoomHasTag here "forest") tagged)
+    r4 <- expectTrue "absent tag stays false" (not (evalPredicate (RoomHasTag "current_room" "clearing") tagged))
+    pure (r1 && r2 && r3 && r4)
+
 testMoveNPC :: IO Bool
 testMoveNPC = do
     let (newState, _) = applyOutcome (MoveEntity "goblin" (InRoom "start")) "" initSampleGame
@@ -13039,6 +13076,8 @@ main = do
         , runTest "Conditional (HasFlag) false branch" testCheckFlagFalse
         , runTest "GameEnd Death sets game over" testGameEndDeath
         , runTest "GameEnd Victory sets reason" testGameEndVictory
+        , runTest "first game end of a turn wins, later rules stay silent (X1)" testFirstGameEndWins
+        , runTest "room predicates resolve current / current_room to the player's room (X4)" testRoomPredicateCurrentAlias
         , runTest "MoveNPC moves to target room" testMoveNPC
         -- Equipment tests
         , runTest "equip requires the item to be carried" testEquipRequiresCarried
