@@ -284,17 +284,30 @@ items:
     keys: [schwefel, schwefelpulver, pulver]
     verb_map:
       buy,intact:
-        - if: { compare_var: { name: taler, op: gte, value: 10 } }
+        # Kaufsperre: es gibt keine Stapel — ein zweites `give: schwefel` liefe ins Leere
+        # und kostete trotzdem Taler (die Taler-Rechnung geht genau auf → Softlock).
+        - if: { has_item: schwefel }
           then:
-            - add_var: { var: taler, delta: -10 }
-            - give: schwefel
-            - msg: "Du kaufst das Schwefelpulver für 10 Taler. (Verbleibend: {taler} Taler)"
+            - msg: "Du trägst schon Schwefelpulver bei dir — verbrauche das erst, bevor du neues kaufst."
           else:
-            - msg: "Dafür reichen deine Taler nicht! Schwefelpulver kostet 10 Taler."
+            - if: { compare_var: { name: taler, op: gte, value: 10 } }
+              then:
+                - add_var: { var: taler, delta: -10 }
+                - give: schwefel
+                - msg: "Du kaufst das Schwefelpulver für 10 Taler. (Verbleibend: {taler} Taler)"
+              else:
+                - msg: "Dafür reichen deine Taler nicht! Schwefelpulver kostet 10 Taler."
       sell,intact:
-        - add_var: { var: taler, delta: 5 }
-        - consume: schwefel
-        - msg: "Du verkaufst das Schwefelpulver zurück für 5 Taler."
+        # Nur eigene Ware; sie wandert zurück an Brunos Stand (statt zu verschwinden,
+        # sonst wäre ein Pflicht-Reagenz für immer vom Markt) — zum vollen Preis, denn
+        # die Taler-Rechnung geht genau auf: jeder Verlust hier wäre ein Softlock.
+        - if: { has_item: schwefel }
+          then:
+            - add_var: { var: taler, delta: 10 }
+            - place: { item: schwefel, in: marktplatz }
+            - msg: "Meister Bruno nimmt das Schwefelpulver unbenutzt zurück und erstattet dir die vollen 10 Taler."
+          else:
+            - msg: "Das gehört noch Meister Bruno — du kannst nur verkaufen, was du besitzt."
 
   - id: silberdistille
     name: Silberdistille
@@ -305,14 +318,20 @@ items:
     keys: [silberdistille, distille, apparatur]
     verb_map:
       buy,intact:
-        - if: { compare_var: { name: taler, op: gte, value: 30 } }
+        # Kaufsperre: es gibt keine Stapel — ein zweites `give: silberdistille` liefe ins Leere
+        # und kostete trotzdem Taler (die Taler-Rechnung geht genau auf → Softlock).
+        - if: { has_item: silberdistille }
           then:
-            - add_var: { var: taler, delta: -30 }
-            - give: silberdistille
-            - advance_quest: quest_geselle
-            - msg: "Du kaufst die meisterhafte Silberdistille für 30 Taler! Zwei Gehilfen der Gilde tragen sie sogleich in dein Alchemielabor."
+            - msg: "Die Silberdistille steht längst in deinem Labor — eine zweite brauchst du nicht."
           else:
-            - msg: "Dafür reichen deine Taler nicht! Die Silberdistille kostet 30 Taler."
+            - if: { compare_var: { name: taler, op: gte, value: 30 } }
+              then:
+                - add_var: { var: taler, delta: -30 }
+                - give: silberdistille
+                - advance_quest: quest_geselle
+                - msg: "Du kaufst die meisterhafte Silberdistille für 30 Taler! Zwei Gehilfen der Gilde tragen sie sogleich in dein Alchemielabor."
+              else:
+                - msg: "Dafür reichen deine Taler nicht! Die Silberdistille kostet 30 Taler."
 
   - id: mondkraut
     name: Mondkraut
@@ -323,17 +342,30 @@ items:
     keys: [mondkraut, kraut, blatt]
     verb_map:
       buy,intact:
-        - if: { compare_var: { name: taler, op: gte, value: 8 } }
+        # Kaufsperre: es gibt keine Stapel — ein zweites `give: mondkraut` liefe ins Leere
+        # und kostete trotzdem Taler (die Taler-Rechnung geht genau auf → Softlock).
+        - if: { has_item: mondkraut }
           then:
-            - add_var: { var: taler, delta: -8 }
-            - give: mondkraut
-            - msg: "Du kaufst das Mondkraut für 8 Taler. (Verbleibend: {taler} Taler)"
+            - msg: "Du trägst schon Mondkraut bei dir — verbrauche das erst, bevor du neues kaufst."
           else:
-            - msg: "Dafür reichen deine Taler nicht! Mondkraut kostet 8 Taler."
+            - if: { compare_var: { name: taler, op: gte, value: 8 } }
+              then:
+                - add_var: { var: taler, delta: -8 }
+                - give: mondkraut
+                - msg: "Du kaufst das Mondkraut für 8 Taler. (Verbleibend: {taler} Taler)"
+              else:
+                - msg: "Dafür reichen deine Taler nicht! Mondkraut kostet 8 Taler."
       sell,intact:
-        - add_var: { var: taler, delta: 4 }
-        - consume: mondkraut
-        - msg: "Du verkaufst das Mondkraut für 4 Taler."
+        # Nur eigene Ware; sie wandert zurück an Brunos Stand (statt zu verschwinden,
+        # sonst wäre ein Pflicht-Reagenz für immer vom Markt) — zum vollen Preis, denn
+        # die Taler-Rechnung geht genau auf: jeder Verlust hier wäre ein Softlock.
+        - if: { has_item: mondkraut }
+          then:
+            - add_var: { var: taler, delta: 8 }
+            - place: { item: mondkraut, in: marktplatz }
+            - msg: "Meister Bruno nimmt das Mondkraut unbenutzt zurück und erstattet dir die vollen 8 Taler."
+          else:
+            - msg: "Das gehört noch Meister Bruno — du kannst nur verkaufen, was du besitzt."
 
   - id: quellsilber
     name: Quellsilber
@@ -344,17 +376,23 @@ items:
     keys: [quellsilber, silber, quecksilber]
     verb_map:
       buy,intact:
-        - if: { compare_var: { name: gildenrang, op: lt, value: 3 } }
+        # Kaufsperre: es gibt keine Stapel — ein zweites `give: quellsilber` liefe ins Leere
+        # und kostete trotzdem Taler (die Taler-Rechnung geht genau auf → Softlock).
+        - if: { has_item: quellsilber }
           then:
-            - msg: "Meister Bruno schüttelt den Kopf: 'Quellsilber verkaufe ich nur an anerkannte Meister der Alchemie!'"
+            - msg: "Du trägst schon Quellsilber bei dir — verbrauche das erst, bevor du neues kaufst."
           else:
-            - if: { compare_var: { name: taler, op: gte, value: 12 } }
+            - if: { compare_var: { name: gildenrang, op: lt, value: 3 } }
               then:
-                - add_var: { var: taler, delta: -12 }
-                - give: quellsilber
-                - msg: "Du kaufst das alchemistische Quellsilber für 12 Taler. (Verbleibend: {taler} Taler)"
+                - msg: "Meister Bruno schüttelt den Kopf: 'Quellsilber verkaufe ich nur an anerkannte Meister der Alchemie!'"
               else:
-                - msg: "Dafür reichen deine Taler nicht! Quellsilber kostet 12 Taler."
+                - if: { compare_var: { name: taler, op: gte, value: 12 } }
+                  then:
+                    - add_var: { var: taler, delta: -12 }
+                    - give: quellsilber
+                    - msg: "Du kaufst das alchemistische Quellsilber für 12 Taler. (Verbleibend: {taler} Taler)"
+                  else:
+                    - msg: "Dafür reichen deine Taler nicht! Quellsilber kostet 12 Taler."
 
   - id: goldstaub
     name: Goldstaub
@@ -365,17 +403,23 @@ items:
     keys: [goldstaub, staub, gold]
     verb_map:
       buy,intact:
-        - if: { compare_var: { name: gildenrang, op: lt, value: 3 } }
+        # Kaufsperre: es gibt keine Stapel — ein zweites `give: goldstaub` liefe ins Leere
+        # und kostete trotzdem Taler (die Taler-Rechnung geht genau auf → Softlock).
+        - if: { has_item: goldstaub }
           then:
-            - msg: "Meister Bruno schüttelt den Kopf: 'Goldstaub für Transmutationen ist Meisteralchemisten vorbehalten!'"
+            - msg: "Du trägst schon Goldstaub bei dir — verbrauche den erst, bevor du neuen kaufst."
           else:
-            - if: { compare_var: { name: taler, op: gte, value: 15 } }
+            - if: { compare_var: { name: gildenrang, op: lt, value: 3 } }
               then:
-                - add_var: { var: taler, delta: -15 }
-                - give: goldstaub
-                - msg: "Du kaufst den reinen Goldstaub für 15 Taler. (Verbleibend: {taler} Taler)"
+                - msg: "Meister Bruno schüttelt den Kopf: 'Goldstaub für Transmutationen ist Meisteralchemisten vorbehalten!'"
               else:
-                - msg: "Dafür reichen deine Taler nicht! Goldstaub kostet 15 Taler."
+                - if: { compare_var: { name: taler, op: gte, value: 15 } }
+                  then:
+                    - add_var: { var: taler, delta: -15 }
+                    - give: goldstaub
+                    - msg: "Du kaufst den reinen Goldstaub für 15 Taler. (Verbleibend: {taler} Taler)"
+                  else:
+                    - msg: "Dafür reichen deine Taler nicht! Goldstaub kostet 15 Taler."
 
   # --- Herstellbare Tränke & Produkte ---
   - id: wundbalsam
@@ -389,11 +433,11 @@ items:
       sell,intact:
         - if: { at: player, room: marktplatz }
           then:
-            - add_var: { var: taler, delta: 10 }
-            - consume: wundbalsam
-            - msg: "Meister Bruno kauft deinen Wundbalsam für 10 Taler an."
+            # Es gibt nur eine Glasphiole: ein Verkauf hier statt an Kurt kostete dessen
+            # 15 Taler und Gildenrang 2 — nach der Distille fehlte dann Geld fürs Mondkraut.
+            - msg: "Meister Bruno winkt ab: 'Behalte deinen Balsam! Hauptmann Kurt blutet drüben im Laden — die Gilde lässt keinen Verwundeten warten.'"
           else:
-            - msg: "Verkaufe den Balsam an Hauptmann Kurt im Laden oder an Bruno auf dem Markt!"
+            - msg: "Hauptmann Kurt im Laden wartet dringend auf deinen Wundbalsam!"
 
   - id: feueressenz
     name: Flüssiges Feuer
@@ -423,9 +467,9 @@ items:
       sell,intact:
         - if: { at: player, room: marktplatz }
           then:
-            - add_var: { var: taler, delta: 15 }
-            - consume: mana_elixier
-            - msg: "Meister Bruno zahlt dir 15 Taler für das Elixier."
+            # Die einzige Kristallphiole steckt darin — ein Verkauf hier sperrte Rang 3
+            # (nur über Elena) und damit das Magnum Opus.
+            - msg: "Meister Bruno schiebt das Elixier zurück: 'Ein Geist-Elixier in Kristall? Das hat Magierin Elena bestellt — Gildenarbeit verscherbelt man nicht an den Händler. Bring es ihr in den Verkaufsraum!'"
           else:
             - msg: "Magierin Elena im Verkaufsraum zahlt dir deutlich mehr dafür!"
 
@@ -693,4 +737,89 @@ tests:
       - "Du kaufst das alchemistische Quellsilber für 12 Taler"
       - "Du kaufst den reinen Goldstaub für 15 Taler"
       - "Das Magnum Opus — der Stein der Weisen — ist vollendet"
+      - "Das Magnum Opus ist vollbracht! Du bist nun Großmeister der Alchemie"
+
+  # Regression (Audit): Doppelkäufe zogen Taler ab, ohne ein zweites Item zu liefern
+  # (`give:` stapelt nicht) — die genau aufgehende Taler-Rechnung lief dann in einen
+  # Softlock. Jetzt Kaufsperre; der Meisterweg bleibt trotz aller Doppelversuche
+  # gewinnbar. Ebenso: Bruno kauft weder den Wundbalsam (Kurts 15 Taler
+  # fehlten sonst) noch das Geist-Elixier (einzige Kristallphiole, Rang 3 nur über Elena) an.
+  - name: alchemie_doppelkauf_und_elixier_sperre
+    input:
+      - "north"
+      - "take blutdistel"
+      - "take phiole"
+      - "craft wundbalsam"
+      - "south"
+      - "south"
+      - "sell wundbalsam"
+      - "north"
+      - "use wundbalsam on stadtwache"
+      - "south"
+      - "sell mondkraut"
+      - "buy schwefel"
+      - "buy schwefel"
+      - "sell schwefel"
+      - "buy schwefel"
+      - "bilanz"
+      - "north"
+      - "north"
+      - "north"
+      - "take salz"
+      - "south"
+      - "east"
+      - "take feuertraktat"
+      - "west"
+      - "craft feueressenz"
+      - "south"
+      - "south"
+      - "sell feueressenz"
+      - "buy silberdistille"
+      - "buy silberdistille"
+      - "buy mondkraut"
+      - "buy mondkraut"
+      - "north"
+      - "north"
+      - "east"
+      - "take rezeptbuch"
+      - "take kristallphiole"
+      - "west"
+      - "craft mana_elixier"
+      - "south"
+      - "south"
+      - "sell mana_elixier"
+      - "north"
+      - "use mana_elixier on magierin"
+      - "north"
+      - "east"
+      - "take grimoire"
+      - "west"
+      - "west"
+      - "take sternenmoos"
+      - "east"
+      - "south"
+      - "south"
+      - "buy quellsilber"
+      - "buy quellsilber"
+      - "buy goldstaub"
+      - "buy goldstaub"
+      - "north"
+      - "north"
+      - "craft magnum_opus"
+      - "south"
+      - "south"
+      - "use magnum_opus on meister_bruno"
+    expect:
+      - "Meister Bruno winkt ab: 'Behalte deinen Balsam!"
+      - "Dankbar drückt er dir 15 Taler in die Hand."
+      - "Das gehört noch Meister Bruno — du kannst nur verkaufen, was du besitzt."
+      - "Du trägst schon Schwefelpulver bei dir — verbrauche das erst, bevor du neues kaufst."
+      - "Meister Bruno nimmt das Schwefelpulver unbenutzt zurück und erstattet dir die vollen 10 Taler."
+      - "Vermögen: 20 Taler"
+      - "Die Silberdistille steht längst in deinem Labor — eine zweite brauchst du nicht."
+      - "Du trägst schon Mondkraut bei dir — verbrauche das erst, bevor du neues kaufst."
+      - "Meister Bruno schiebt das Elixier zurück: 'Ein Geist-Elixier in Kristall?"
+      - "Magierin Elena trinkt das saphirblaue Geist-Elixier"
+      - "Du trägst schon Quellsilber bei dir — verbrauche das erst, bevor du neues kaufst."
+      - "Du trägst schon Goldstaub bei dir — verbrauche den erst, bevor du neuen kaufst."
       - "Das Magnum Opus ist vollbracht! Du bist nun Großmeister der Alchemie"

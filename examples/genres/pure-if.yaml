@@ -102,7 +102,7 @@ rooms:
     exits:
       down: {to: lantern_room}
       north: {to: dome_walk}
-      northeast: {to: vault}
+      northeast: {to: vault, when: {has_flag: aligned}, msg: "The hatch to the vault is sealed tight. Perhaps the telescope holds the key."}
   - id: dome_walk
     name: Dome Walk
     desc: A narrow balcony ringing the dome. You can see the whole coast.
@@ -253,3 +253,47 @@ rules:
 interactions:
   entity: []
   item: []
+
+tests:
+  # Regression: the vault hatch stays shut until the telescope is aligned.
+  - name: vault_sealed_before_align
+    input: [south, south, northwest, up, up, up, northeast, take astrolabe]
+    expect:
+      - "A domed chamber open to the sky."
+      - "The hatch to the vault is sealed tight. Perhaps the telescope holds the key."
+      - "You don't see 'astrolabe' here."
+  - name: vault_opens_after_align
+    input:
+      - "south"
+      - "south"
+      - "east"
+      - "north"
+      - "up"
+      - "search"
+      - "take note"
+      - "down"
+      - "south"
+      - "east"
+      - "talk lensmaker"
+      - "1"
+      - "1"
+      - "west"
+      - "west"
+      - "west"
+      - "west"
+      - "take oil can"
+      - "east"
+      - "east"
+      - "northwest"
+      - "up"
+      - "up"
+      - "up"
+      - "take star chart"
+      - "use oil can"
+      - "align"
+      - "northeast"
+      - "take astrolabe"
+    expect:
+      - "You set the lens, and turn the telescope to the northern stars. Gears grind far below."
+      - "A small stone vault beneath the observatory."
+      - "You take the brass astrolabe."

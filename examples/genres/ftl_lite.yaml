@@ -681,9 +681,14 @@ items:
     location: s4_beacon
     verb_map:
       use,intact:
-        - { set_var: { var: beacon_aktiv, value: 1 } }
-        - { msg: "Das Funkfeuer erstrahlt in gleißendem Blau: Die Föderationsflotte empfängt dein Signal!" }
-        - { game_end: victory, msg: "VICTORY — Das Evakuierungs-Funkfeuer ist aktiviert! Die Föderationsflotte eskortiert die Nordstern in Sicherheit!" }
+        # Erst nach durchbrochenem Rebellen-Riegel (Rebellenjaeger in s3_riegel vernichtet).
+        - if: { compare_var: { name: aufklaerer_belohnt, op: gte, value: 1 } }
+          then:
+            - { set_var: { var: beacon_aktiv, value: 1 } }
+            - { msg: "Das Funkfeuer erstrahlt in gleißendem Blau: Die Föderationsflotte empfängt dein Signal!" }
+            - { game_end: victory, msg: "VICTORY — Das Evakuierungs-Funkfeuer ist aktiviert! Die Föderationsflotte eskortiert die Nordstern in Sicherheit!" }
+          else:
+            - { msg: "STÖRSIGNAL: Der Rebellen-Riegel an der Grenze blockiert den Subraum — das Funkfeuer erreicht die Föderationsflotte nicht. Erst den Rebellenjäger an der Rebellengrenze ausschalten!" }
 
 rules:
   - id: init_run_meta
@@ -892,3 +897,9 @@ tests:
       - "Pilot Kael"
       - "Schützin Val"
       - "Die Geschützkondensatoren und Schildspulen sind wieder voll geladen"
+  - name: "funkfeuer ohne durchbrochenen rebellen-riegel kein sieg"
+    input: [board nordstern, drive to Evakuierungssektor, use evakuierungs_beacon, board nordstern, drive to Rebellengrenze]
+    expect:
+      - "Du fährst nach Evakuierungssektor"
+      - "STÖRSIGNAL: Der Rebellen-Riegel an der Grenze blockiert den Subraum"
+      - "Du fährst nach Rebellengrenze"

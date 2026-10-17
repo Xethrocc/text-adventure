@@ -425,7 +425,8 @@ rules:
         then:
           - msg: "Du kannst Seelen nur in der Gegenwart des Schwarzen Monolithen in einem der Schreine opfern!"
         else:
-          - if: { has_item: weltenherz_seele }
+          # Verzweigung nach dem genannten Ziel (cmd.target = aufgeloeste Item-ID)
+          - if: { all: [{ var: cmd.target, is: weltenherz_seele }, { has_item: weltenherz_seele }] }
             then:
               - consume: weltenherz_seele
               - add_var: { var: seelen_geopfert, delta: 1 }
@@ -433,9 +434,9 @@ rules:
               - game_end: victory
               - msg: >
                   VICTORY — Das Weltenherz vereint sich mit dem Sockel des Monolithen!
-                  Der Fluch der Tiefe ist gebrochen! Endstand: 350/350 Punkte.
+                  Der Fluch der Tiefe ist gebrochen! Endstand: {score}/350 Punkte.
             else:
-              - if: { has_item: eisen_ghul_seele }
+              - if: { all: [{ var: cmd.target, is: eisen_ghul_seele }, { has_item: eisen_ghul_seele }] }
                 then:
                   - consume: eisen_ghul_seele
                   - set_var:
@@ -447,7 +448,7 @@ rules:
                       Du bringst die Eisen-Ghul-Seele dar. Der Monolith summt tief und erhaben.
                       Ein eiserner Schutzfilm legt sich ueber deinen Koerper: Deine Abwehr steigt dauerhaft um +2!
                 else:
-                  - if: { has_item: schattenseele }
+                  - if: { all: [{ var: cmd.target, is: schattenseele }, { has_item: schattenseele }] }
                     then:
                       - consume: schattenseele
                       - set_var:
@@ -460,7 +461,11 @@ rules:
                           Aufleuchten saugt der Obsidian die Essenz auf!
                           Dunkle Staerke stroemt durch deine Adern: Dein Angriff steigt dauerhaft um +2!
                     else:
-                      - msg: "Du traegst keine gefallene Seele bei dir, die du dem Monolithen darbringen koenntest."
+                      - if: { any: [{ has_item: schattenseele }, { has_item: eisen_ghul_seele }, { has_item: weltenherz_seele }] }
+                        then:
+                          - msg: "Der Monolith verlangt eine Seele, die du bei dir traegst. Welche willst du opfern? ('opfern <seele>')"
+                        else:
+                          - msg: "Du traegst keine gefallene Seele bei dir, die du dem Monolithen darbringen koenntest."
 
   # ============================================================================
   # Seelen binden (Befehl: capture)
@@ -550,3 +555,17 @@ tests:
       - "Du triffst für 3, es trifft dich für 3."
       - "Du hebst die leuchtende Weltenherz-Seele ehrfurchtsvoll an dich!"
       - "VICTORY — Das Weltenherz vereint sich mit dem Sockel des Monolithen!"
+
+  # Regression: 'opfern <x>' opferte frueher immer zuerst das Weltenherz (Sofortsieg)
+  - name: "opfern beachtet das genannte ziel"
+    input: [east, north, attack schattenkriecher, attack schattenkriecher, capture seele, use hebel, south, west, opfern seele, down, rasten, east, north, attack eisen_ghul, attack eisen_ghul, attack eisen_ghul, capture seele, use runenschalter, south, west, down, rasten, north, attack seelenfresser, attack seelenfresser, attack seelenfresser, attack seelenfresser, capture weltenherz_seele, south, opfern ghulseele, look]
+    expect:
+      - "Du hebst die leuchtende Weltenherz-Seele ehrfurchtsvoll an dich!"
+      - "Deine Abwehr steigt dauerhaft um +2!"
+      - "Du siehst: Schwarzer Monolith."
+
+  - name: "endstand zeigt den echten punktestand"
+    input: [east, north, attack schattenkriecher, attack schattenkriecher, capture seele, use hebel, south, west, opfern seele, down, rasten, east, north, attack eisen_ghul, attack eisen_ghul, attack eisen_ghul, capture seele, use runenschalter, south, west, down, rasten, north, attack seelenfresser, attack seelenfresser, attack seelenfresser, attack seelenfresser, capture weltenherz_seele, south, opfern weltenherz]
+    expect:
+      - "Du hebst die leuchtende Weltenherz-Seele ehrfurchtsvoll an dich!"
+      - "Endstand: 275/350 Punkte."

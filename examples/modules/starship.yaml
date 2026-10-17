@@ -106,7 +106,7 @@ rooms:
     name: Asteroidengürtel
     desc: "Geröll treibt im Leerlauf. Dazwischen wartet ein dunkler Rumpf."
     exits:
-      north: {to: ks_wreck}
+      north: {to: ks_wreck, when: {state: korsar, is: dead}, msg: "Der Rote Korsar versperrt den Weg ins Wrackfeld — erst muss er fallen."}
   - id: ks_wreck
     name: Wrackfeld
     desc: "Ausgeweidete Frachter, ihre Rippen zeigen in alle Richtungen."
@@ -190,3 +190,18 @@ rules:
 interactions:
   entity: []
   item: []
+tests:
+  # Regression: the way into the wreck field opens only once the corsair is dead.
+  - name: korsar_blocks_wreck
+    input: [enter kestrel, drive to Asteroidengürtel, north, north]
+    expect:
+      - "Der Rote Korsar dreht bei."
+      - "Der Rote Korsar versperrt den Weg ins Wrackfeld — erst muss er fallen."
+      - "Der Rote Korsar versperrt den Weg ins Wrackfeld — erst muss er fallen."
+  - name: korsar_defeated_opens_wreck
+    input: [enter kestrel, north, umleiten, south, east, aufladen, west, disembark, north, west, search, east, south, enter kestrel, drive to Asteroidengürtel, north, attack korsar, attack korsar, use batterie, attack korsar, north, north]
+    expect:
+      - "Der Rote Korsar versperrt den Weg ins Wrackfeld — erst muss er fallen."
+      - "You attack the korsar and kill it!"
+      - "Ausgeweidete Frachter, ihre Rippen zeigen in alle Richtungen."
+      - "VICTORY — Der Korsar ist erledigt, die Beute geborgen: der Kestrel-Lauf ist gewonnen."

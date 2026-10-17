@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Content: schwere Audit-Funde behoben (14 Funde, 12 Spiele)
+
+Aus `~/workspace/befunde-content-audit-2026-10-17.md` §1; jeder alte Exploit ist als Inhaltstest (`tests:`) abgesichert und schlägt gegen den vorherigen Stand fehl.
+
+- **Sieg trivial:** `ftl_lite` — Evakuierungs-Funkfeuer erst nach dem Rebellenjäger (`aufklaerer_belohnt`); `monster_insel` — Fangen nur mit Safari-Ball (Pflicht, nicht verbraucht — `consume` + `give` kann das Token nicht zurückholen), jedes Monster zählt einmal, Schaden/Siege nur in der Arena, Champion erst nach Pyra; Kampf im Warteraum blockiert; `soul_collector` — `opfern <x>` verzweigt nach `cmd.target`, Endstand per `{score}` statt fest „350/350“; `modules/starship` — Wrackfeld erst nach dem Korsar.
+- **Rätsel ohne Funktion:** `cyberpunk` — Hintertür und Tresor an `back_door_open` / `vault_unlocked` gebunden; `pure-if` — Vault erst nach `align` (Flag `aligned`).
+- **Geldverlust/Softlocks im Handel:** Kaufsperre wie in oregon_trail für `alchemie_werkstatt` (5 Waren), `modules/trade` (Seil), `modules/combo` (Kanister, Zelle); Verkauf nur noch mit Besitz, verkaufte/benutzte Ware geht per `place` zurück an den Stand; Gratis-Mitnehmen am Stand (`take seal` = Sieg ohne Handel in trade) blockiert. `alchemie_werkstatt`: Bruno kauft weder Geist-Elixier noch Wundbalsam (beides sperrte Rang 2/3). `combo`: Bolz-Deal erst nach dem Gildensiegel (vorher sperrte er den Tresor dauerhaft); E2E ohne den zwecklosen `buy zelle`.
+- **Eingaben/Spielende:** `economy_hamurabi` — nur positive Ganzzahlen für `kaufe`/`verkaufe` (negative Mengen erzeugten Gold), `steuern` 0–100, Int-Überlauf bei Riesenmengen abgefangen; `deckbuilder_spire` — Gegenangriffe am Zugende, Schild aus Block-Karten mindert Schaden, Sieg beim Tod des Turmwächters, Niederlage möglich.
+- **`modules/hazards`:** Nebel-Track mit eigenem Zug-Zähler (`nebel_zug`), Übergänge je einmal (Dunst Zug 3, Nebel Zug 6) — die X3-Warnung `UnknownVariable` ist damit weg.
+- **CI:** Inhaltstests von cyberpunk, pure-if, economy_hamurabi, deckbuilder_spire, starship, trade, combo in Stufe 4b; `monster_insel.in` nimmt den Ball auf.
+- **Doku:** `docs/adventure-schema.md` (Hamurabi-Praxisbeispiel mit Mengenprüfung), `docs/genres.md` (deckbuilder_spire).
+
 ### Engine/Validator: Befunde aus dem Content-Audit (X1, X3, X4)
 
 Aus dem Content-Audit vom 2026-10-17 (`~/workspace/befunde-content-audit-2026-10-17.md` §0):

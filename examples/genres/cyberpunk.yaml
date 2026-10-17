@@ -64,7 +64,7 @@ rooms:
     desc: A service door with a card reader. Beyond it, the corp lobby.
     exits:
       south: {to: alley}
-      east: {to: corp_entrance}
+      east: {to: corp_entrance, when: {has_flag: back_door_open}, msg: "The card reader blinks red. The service door stays locked."}
   - id: corp_entrance
     name: Corp Lobby
     desc: Marble, chrome, and a reception drone. An elevator stands open; the stairwell is to the west.
@@ -95,7 +95,7 @@ rooms:
     desc: Racks of cold servers breathe in the dark. Here the corp's secrets live.
     exits:
       up: {to: rooftop}
-      east: {to: vault}
+      east: {to: vault, when: {has_flag: vault_unlocked}, msg: "The vault door is sealed shut. The server console controls the lock."}
   - id: vault
     name: Data Vault
     desc: A single pedestal holds a black datashard. Everything in this tower was built around this room.
@@ -229,3 +229,20 @@ rules:
 interactions:
   entity: []
   item: []
+
+tests:
+  # Regression: the back door only opens after the card reader is hacked.
+  - name: back_door_needs_hack
+    input: [north, north, east, hack reader, east]
+    expect:
+      - "The card reader blinks red. The service door stays locked."
+      - "The reader's light goes green. The door clicks open."
+      - "Marble, chrome, and a reception drone."
+  # Regression: the vault only opens after the server console is hacked.
+  - name: vault_needs_hack
+    input: [north, north, east, hack reader, east, up, up, east, down, east, hack console, east]
+    expect:
+      - "Racks of cold servers breathe in the dark."
+      - "The vault door is sealed shut. The server console controls the lock."
+      - "The vault door exhales and slides open."
+      - "A single pedestal holds a black datashard."

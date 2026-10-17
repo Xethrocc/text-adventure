@@ -20,6 +20,12 @@ variables:
   - name: "strength"
     type: int
     initial: 0
+  # Schutz gegen Gegenangriffe: die Engine setzt `block` bei `end turn` auf 0,
+  # bevor die Zugende-Regeln laufen — darum zählt `schild` mit (wie krypta).
+  - name: "schild"
+    type: int
+    initial: 0
+    min: 0
 
 verbs:
   - name: "status"
@@ -105,6 +111,7 @@ cards:
     description: "Erhöht den Schutz um 5 Block."
     outcomes:
       - add_var: { variable: block, delta: 5 }
+      - add_var: { variable: schild, delta: 5 }
 
   bash:
     name: "Schmetterschlag"
@@ -136,6 +143,7 @@ cards:
     description: "Gewährt 8 Block und zieht 1 Karte."
     outcomes:
       - add_var: { variable: block, delta: 8 }
+      - add_var: { variable: schild, delta: 8 }
       - draw_cards: 1
 
   battle_trance:
@@ -153,3 +161,111 @@ deck:
   defend: 4
   bash: 1
   shrug: 1
+
+rules:
+  # --- Gegenangriff: Goblin-Späher sticht am Zugende zu ---
+  - id: kobold_gegenangriff
+    on: "command end_turn"
+    when:
+      all:
+        - at: player
+          room: kobold_lager
+        - not:
+            state: kobold
+            is: dead
+    effects:
+      - if: { compare_var: { name: schild, op: gte, value: 6 } }
+        then:
+          - msg: "Der Goblin sticht mit seinem Dolch zu, doch dein Block fängt den Stich ab!"
+        else:
+          - if: { compare_var: { name: schild, op: gt, value: 0 } }
+            then:
+              - damage: 3
+              - msg: "Der Dolch des Goblins gleitet an deinem Block ab und ritzt dich! (-3 HP, verbleibend: {player.hp})"
+            else:
+              - damage: 6
+              - msg: "Der Goblin rammt dir seinen Dolch in die Seite! (-6 HP, verbleibend: {player.hp})"
+      - set_var: { var: schild, value: 0 }
+
+  # --- Gegenangriff: Turmwächter schlägt am Zugende zu ---
+  - id: sentinel_gegenangriff
+    on: "command end_turn"
+    when:
+      all:
+        - at: player
+          room: gipfel
+        - not:
+            state: sentinel
+            is: dead
+    effects:
+      - if: { compare_var: { name: schild, op: gte, value: 10 } }
+        then:
+          - msg: "Der Turmwächter lässt seine Steinfaust niedersausen, doch dein Block hält stand!"
+        else:
+          - if: { compare_var: { name: schild, op: gt, value: 0 } }
+            then:
+              - damage: 5
+              - msg: "Die Steinfaust des Turmwächters zertrümmert deinen Block teilweise! (-5 HP, verbleibend: {player.hp})"
+            else:
+              - damage: 10
+              - msg: "Die Steinfaust des Turmwächters trifft dich mit voller Wucht! (-10 HP, verbleibend: {player.hp})"
+      - set_var: { var: schild, value: 0 }
+
+  # --- Turmwächter besiegt: Sieg ---
+  - id: sentinel_tod
+    on: "state sentinel"
+    effects:
+      - msg: "Der Turmwächter zerbricht in einen Haufen lebloser Felsbrocken! Das Tor zur Freiheit schwingt auf."
+      - game_end: victory
+      - msg: "Du hast den Spire of Fate bezwungen!"
+
+tests:
+  - name: "sieg_nach_tod_des_turmwaechters"
+    input:
+      - "north"
+      - "attack kobold"
+      - "end turn"
+      - "play 1"
+      - "north"
+      - "north"
+      - "play 1"
+      - "end turn"
+      - "play 2"
+      - "play 2"
+      - "play 2"
+      - "end turn"
+      - "play 3"
+      - "play 3"
+      - "play 1"
+      - "end turn"
+      - "play 5"
+      - "play 1"
+      - "end turn"
+      - "play 5"
+      - "play 3"
+      - "play 4"
+    expect:
+      - "Der Goblin rammt dir seinen Dolch in die Seite! (-6 HP, verbleibend: 73)"
+      - "Die Steinfaust des Turmwächters zertrümmert deinen Block teilweise! (-5 HP, verbleibend: 68)"
+      - "Die Steinfaust des Turmwächters trifft dich mit voller Wucht! (-10 HP, verbleibend: 58)"
+      - "Der Turmwächter lässt seine Steinfaust niedersausen, doch dein Block hält stand!"
+      - "Die Steinfaust des Turmwächters trifft dich mit voller Wucht! (-10 HP, verbleibend: 48)"
+      - "Der Turmwächter zerbricht in einen Haufen lebloser Felsbrocken! Das Tor zur Freiheit schwingt auf."
+      - "Du hast den Spire of Fate bezwungen!"
+
+  - name: "niederlage_durch_gegenangriffe"
+    input:
+      - "north"
+      - "north"
+      - "north"
+      - "end turn"
+      - "end turn"
+      - "end turn"
+      - "end turn"
+      - "end turn"
+      - "end turn"
+      - "end turn"
+      - "end turn"
+    expect:
+      - "Die Steinfaust des Turmwächters trifft dich mit voller Wucht! (-10 HP, verbleibend: 10)"
+      - "Die Steinfaust des Turmwächters trifft dich mit voller Wucht! (-10 HP, verbleibend: 0)"

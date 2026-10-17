@@ -15,7 +15,7 @@ Pfad: `examples/genres/`
 | `detective.yaml` | 16 | Wissensmodell (`facts:` und `statements:` via `learn:`, `journal: notes`, Befehl `notizen`), Aussagen mit Sprecher und Wahrheitsgehalt, Widerspruchs-Konfrontation via `compare_var`, Predicate-Ketten über Beweise, Dialog-Optionen via `visible_when`, Custom-Verb `accuse`: richtige Anklage + Beweise = Victory, falsche Anklage = Failure-End. |
 | `horror.yaml` | 17 | Variable `sanity` mit Drain, **Scheduler** (`on: turn` + `cooldown`), dunkle Räume mit `light_flag`, **vier Enden** (Madness/Caught/Escape/Ashes). |
 | `economy_hamurabi.yaml` | 4 | Rundenbasierte Wirtschaft: `compute_var` mit `cmd.argN`, **`compare_var` Variable gegen Variable** (beide Zweige: „genug Gold" / „zu wenig"), `clamp`, `formatWithVars` mit Feldbreite (`{gold:6}`), Dashboard per Custom-Verb `status`, NPC-Dialog. Kein Ende — Läufe sind offen. |
-| `deckbuilder_spire.yaml` | 4 | Kartenspiel: `cards`-Block (Kosten `energy`, `type`, `target`), deterministisches Deck, `play <n> [auf <ziel>]` / `spiele`, `cards`/`deck`/`end turn`, Kartenbox-HUD, Kampf gegen zwei Gegner. |
+| `deckbuilder_spire.yaml` | 4 | Kartenspiel: `cards`-Block (Kosten `energy`, `type`, `target`), deterministisches Deck, `play <n> [auf <ziel>]` / `spiele`, `cards`/`deck`/`end turn`, Kartenbox-HUD, Kampf gegen zwei Gegner mit Gegenangriffen am Zugende (Schild aus Block-Karten mindert den Schaden), Sieg beim Tod des Turmwächters, Niederlage bei 0 HP. |
 | `sandbox_wilderness.yaml` | 1 + generiert | Runtime-Worldgen: `sandbox_zones` mit Biome-Gewichten und Zell-Seed, Betreten materialisiert Räume (Tags `forest`/`clearing`), `generate_room` gräbt Stollen mit dynamischem Auf-/Ab-Exit, Ernte- und Energie-Formeln (`max`/`min`). |
 
 ## Nutzung

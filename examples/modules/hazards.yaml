@@ -114,17 +114,27 @@ hazards:
     states: [klar, dunst, suppe]
     initial: klar
     transitions:
-      - when: { compare_var: { name: turn_count, op: gte, value: 3 } }
+      - when:
+          all:
+            - { compare_var: { name: nebel_zug, op: gte, value: 3 } }
+            - { hazard_level: { hazard: nebel, eq: klar } }
         to: dunst
         effects:
           - { msg: "Leichter Dunst steigt von der Wasseroberflaeche auf." }
-      - when: { compare_var: { name: turn_count, op: gte, value: 6 } }
+      - when:
+          all:
+            - { compare_var: { name: nebel_zug, op: gte, value: 6 } }
+            - { hazard_level: { hazard: nebel, eq: dunst } }
         to: suppe
         effects:
           - { msg: "Dichter Nebel verschluckt das Gelaende." }
     stages:
       suppe:
         - { msg: "Der Nebel hat maximale Dichte erreicht." }
+
+# Eigener Zugzaehler fuer den Nebel-Track (die Engine stellt keinen bereit).
+variables:
+  - { name: nebel_zug, type: int, initial: 0 }
 
 verbs:
   - { name: fluten, aliases: [flood] }
@@ -142,6 +152,11 @@ verbs:
   - { name: qualm, aliases: [smoke] }
 
 rules:
+  - id: nebel_uhr
+    on: turn
+    effects:
+      - { add_var: nebel_zug, delta: 1 }
+
   - id: cmd_fluten
     on: command fluten
     effects:
@@ -281,13 +296,19 @@ rooms:
       east: {to: hafen}
 
 tests:
+  # Laeuft nebenbei auch den Nebel-Track mit (eigener Zugzaehler nebel_zug):
+  # klar -> dunst in Zug 3, dunst -> suppe in Zug 6. Kein eigener Test, weil
+  # worldbuilder/test/Tests.hs (testHazardsCompileAndMechanics) genau 6 Tests erwartet.
   - name: "wasserpegel steigen und fallen"
     input: [fluten, rasten, rasten, rasten, rasten, senken, rasten, rasten, rasten, rasten]
     expect:
       - "Wasser stroemt ein!"
       - "Das Wasser erreicht die Dammkrone!"
+      - "Leichter Dunst steigt von der Wasseroberflaeche auf."
       - "Das Wasser hat den Hoechststand erreicht!"
       - "Das Wasser laeuft ab."
+      - "Dichter Nebel verschluckt das Gelaende."
+      - "Der Nebel hat maximale Dichte erreicht."
       - "Das Reservoir ist trocken."
 
   - name: "hazard_jump loest stages aus"

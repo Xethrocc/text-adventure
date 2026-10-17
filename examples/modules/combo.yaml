@@ -236,7 +236,11 @@ npcs:
           deal:
             text: "„Lass eine Kiste an der Katwalk stehen. Die Gilde merkt nichts. Meistens.“"
             choices:
+              # Gegenläufer (gilde −10) erst, wenn das Siegel schon offen ist: die
+              # Gilde hat sonst nur die Schwarzbox (+12, once) — 12 − 10 = 2 sperrte den
+              # Tresor (braucht ≥ 12) für immer. Ein offenes Schott schließt sie nicht mehr.
               - text: "Abgemacht."
+                visible_when: { state: tr_seal, is: unlocked }
                 next: null
                 outcomes:
                   - { standing: { faction: freibeuter, add: 10 } }
@@ -308,21 +312,29 @@ items:
     location: tr_market
     verb_map:
       buy,intact:
-        - if: { compare_var: { name: shop.haendler.kanister, op: gte, value: 1 } }
+        # Kaufsperre: es gibt keine Stapel — ein zweites `give: kanister` liefe ins
+        # Leere und kostete trotzdem 12 Credits und eine Bestandseinheit.
+        - if: { has_item: kanister }
           then:
-            - if: { compare_var: { name: credits, op: gte, value: 12 } }
-              then:
-                - { add_var: credits, delta: -12 }
-                - { add_var: shop.haendler.kanister, delta: -1 }
-                - { give: kanister }
-                - { msg: "Du zahlst 12 Credits für einen Kanister." }
-              else:
-                - { msg: "12 Credits — so viel hast du nicht mehr." }
+            - { msg: "Du trägst schon einen Kanister — brauch den erst auf." }
           else:
-            - { msg: "Onn hat keine Kanister mehr." }
+            - if: { compare_var: { name: shop.haendler.kanister, op: gte, value: 1 } }
+              then:
+                - if: { compare_var: { name: credits, op: gte, value: 12 } }
+                  then:
+                    - { add_var: credits, delta: -12 }
+                    - { add_var: shop.haendler.kanister, delta: -1 }
+                    - { give: kanister }
+                    - { msg: "Du zahlst 12 Credits für einen Kanister." }
+                  else:
+                    - { msg: "12 Credits — so viel hast du nicht mehr." }
+              else:
+                - { msg: "Onn hat keine Kanister mehr." }
       use,intact:
         - { add_var: oxygen, delta: 8 }
-        - { consume: kanister }
+        # Zurück an Onns Stand statt `consume:` — der Kauf hängt am Item, sonst wäre
+        # der zweite Kanister aus dem Bestand nie erreichbar.
+        - { place: { item: kanister, in: tr_market } }
         - { msg: "Du öffnest den Kanister. Die Luft schmeckt nach Metall, aber sie kommt." }
   - id: zelle
     name: Ersatzzelle
@@ -332,18 +344,24 @@ items:
     hidden: true
     verb_map:
       buy,intact:
-        - if: { compare_var: { name: shop.haendler.zelle, op: gte, value: 1 } }
+        # Kaufsperre: die gefundene Zelle (search im Reaktor) kostete sonst 25 Credits,
+        # ohne dass eine zweite kam.
+        - if: { has_item: zelle }
           then:
-            - if: { compare_var: { name: credits, op: gte, value: 25 } }
-              then:
-                - { add_var: credits, delta: -25 }
-                - { add_var: shop.haendler.zelle, delta: -1 }
-                - { give: zelle }
-                - { msg: "Du kaufst die Zelle für 25 Credits." }
-              else:
-                - { msg: "25 Credits — dafür reicht es nicht." }
+            - { msg: "Du hast schon eine Ersatzzelle — Onn winkt ab." }
           else:
-            - { msg: "Onn hat keine Zellen mehr." }
+            - if: { compare_var: { name: shop.haendler.zelle, op: gte, value: 1 } }
+              then:
+                - if: { compare_var: { name: credits, op: gte, value: 25 } }
+                  then:
+                    - { add_var: credits, delta: -25 }
+                    - { add_var: shop.haendler.zelle, delta: -1 }
+                    - { give: zelle }
+                    - { msg: "Du kaufst die Zelle für 25 Credits." }
+                  else:
+                    - { msg: "25 Credits — dafür reicht es nicht." }
+              else:
+                - { msg: "Onn hat keine Zellen mehr." }
       use,intact:
         - { add_var: ship.tarsis.power, delta: 4 }
         - if: { compare_var: { name: ship.tarsis.power, op: gt, value: 6 } }
@@ -375,6 +393,12 @@ rules:
       - { standing: { faction: freibeuter, add: -5 } }
       - { consume: schwarzbox }
       - { msg: "Sarn wiegt die Schwarzbox in der Hand und nickt. Dein Stand in der Gilde steigt." }
+  # 7b: Onns Ware gibt es nur gegen Credits (sonst ist der Kanister gratis).
+  - id: no_shoplifting
+    on: "before take"
+    when: { at: player, room: tr_market }
+    effects:
+      - { block: "Onn zieht den Kanister zurück. „Erst Credits (buy <ware>), dann Luft.“" }
   - id: kaperer_appears
     on: enter tr_belt
     once: true
@@ -393,3 +417,124 @@ rules:
 interactions:
   entity: []
   item: []
+
+tests:
+  # Regression (Audit): der Bolz-Deal (gilde −10) vor der Schwarzbox (+12, once)
+  # liess den Stand bei 2 — der Tresor (≥ 12) blieb für immer zu. Jetzt erscheint
+  # „Abgemacht." erst bei offenem Siegel. Dazu: Kanister-/Zellen-Kaufsperre, der
+  # verbrauchte Kanister geht an Onns Stand zurück (zweite Bestandseinheit
+  # erreichbar), Ware am Stand nur gegen Credits.
+  - name: combo_bolz_frueh_und_kaufsperren
+    input:
+      - "north"
+      - "east"
+      - "folgen vela"
+      - "talk to bolz"
+      - "1"
+      - "1"
+      - "west"
+      - "north"
+      - "talk to sarn"
+      - "1"
+      - "1"
+      - "south"
+      - "west"
+      - "search"
+      - "east"
+      - "south"
+      - "east"
+      - "buy kanister"
+      - "buy kanister"
+      - "take kanister"
+      - "buy zelle"
+      - "use kanister"
+      - "buy kanister"
+      - "use kanister"
+      - "buy kanister"
+      - "west"
+      - "enter tarsis"
+      - "north"
+      - "umleiten"
+      - "south"
+      - "east"
+      - "aufladen"
+      - "west"
+      - "drive to Trümmergürtel"
+      - "attack kaperer"
+      - "attack kaperer"
+      - "use zelle"
+      - "attack kaperer"
+      - "north"
+      - "take schwarzbox"
+      - "south"
+      - "enter tarsis"
+      - "drive to Dock 12"
+      - "disembark"
+      - "north"
+      - "north"
+      - "south"
+      - "west"
+      - "north"
+    expect:
+      - "[1] Doch nicht."
+      - "Sarn notiert deinen Namen in ihren Papieren."
+      - "Du zahlst 12 Credits für einen Kanister."
+      - "Du trägst schon einen Kanister — brauch den erst auf."
+      - "Onn zieht den Kanister zurück."
+      - "Du hast schon eine Ersatzzelle — Onn winkt ab."
+      - "Du öffnest den Kanister."
+      - "Du zahlst 12 Credits für einen Kanister."
+      - "Onn hat keine Kanister mehr."
+      - "Die Gilde schaltet dein Siegel frei."
+      - "VICTORY — Stand, Fracht und Schiff"
+  - name: combo_bolz_deal_nach_siegel
+    input:
+      - "north"
+      - "east"
+      - "folgen vela"
+      - "west"
+      - "north"
+      - "talk to sarn"
+      - "1"
+      - "1"
+      - "south"
+      - "west"
+      - "search"
+      - "east"
+      - "south"
+      - "east"
+      - "buy kanister"
+      - "use kanister"
+      - "west"
+      - "enter tarsis"
+      - "north"
+      - "umleiten"
+      - "south"
+      - "east"
+      - "aufladen"
+      - "west"
+      - "drive to Trümmergürtel"
+      - "attack kaperer"
+      - "attack kaperer"
+      - "use zelle"
+      - "attack kaperer"
+      - "north"
+      - "take schwarzbox"
+      - "south"
+      - "enter tarsis"
+      - "drive to Dock 12"
+      - "disembark"
+      - "north"
+      - "north"
+      - "south"
+      - "east"
+      - "talk to bolz"
+      - "1"
+      - "1"
+      - "west"
+      - "west"
+      - "north"
+    expect:
+      - "Die Gilde schaltet dein Siegel frei."
+      - "Bolz drückt dir ein Zeichen in die Hand."
+      - "VICTORY — Stand, Fracht und Schiff"

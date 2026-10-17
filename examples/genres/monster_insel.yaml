@@ -3,7 +3,7 @@
 # Genre: Monster sammeln / Safari-Park
 # Benchmark: C4 (Combat-Slots, Switch-Verb, Per-Monster-XP)
 # Feature-Mapping (laut /root/workspace/plan-monster-sammeln.md):
-#   - Fangen: ability mit consume: ball + random:-Wurf
+#   - Fangen: ability mit Ball-Pflicht (has_item: safariball) + random:-Wurf
 #   - Team: combat_slot:, switch_verb: (C4), party.<id>.slot, party.slot.active
 #   - Per-Monster-XP: xp_table: (C4, Validierungscodes PartyInvalidXpTable/PartyNonMonotonicXp)
 #   - Typ-Effektivitaet: §9.1-Rezept (Typ-Variable je NPC, cmd.target-Zielaufloesung,
@@ -140,8 +140,13 @@ abilities:
   - id: fangball
     name: "Safari-Ball werfen"
     effects:
-      - { consume: safariball }
-      - { set_var: { name: fang_versuch, value: 1 } }
+      # Ball ist Pflicht, wird aber nicht verbraucht: ein konsumiertes Item kann
+      # `give:` nicht zurueckholen (FIX-02), sonst waere nach einem Fang Schluss.
+      - if: { has_item: safariball }
+        then:
+          - { set_var: { name: fang_versuch, value: 1 } }
+        else:
+          - { msg: "Du hast keinen Safari-Ball mehr im Rucksack! Hole Nachschub aus der Zentrale." }
 
   - id: glutstoss
     name: "Glutstoss"
@@ -734,12 +739,11 @@ rules:
     on: command fangen
     when: { has_item: safariball }
     effects:
-      - { consume: safariball }
       - { set_var: { name: fang_versuch, value: 1 } }
 
   - id: catch_nassling
     on: turn
-    when: { all: [{ compare_var: { name: fang_versuch, op: gte, value: 1 } }, { var: cmd.target, is: nassling }] }
+    when: { all: [{ compare_var: { name: fang_versuch, op: gte, value: 1 } }, { var: cmd.target, is: nassling }, { at: player, room: strand_lagune }, { compare_var: { name: party.nassling, op: eq, value: 0 } }] }
     effects:
       - { play_clip: clip_fang }
       - { msg: "KLICK! Nassling wurde gefangen!" }
@@ -750,7 +754,7 @@ rules:
 
   - id: catch_blattfink
     on: turn
-    when: { all: [{ compare_var: { name: fang_versuch, op: gte, value: 1 } }, { var: cmd.target, is: blattfink }] }
+    when: { all: [{ compare_var: { name: fang_versuch, op: gte, value: 1 } }, { var: cmd.target, is: blattfink }, { at: player, room: dschungel_dickicht }, { compare_var: { name: party.blattfink, op: eq, value: 0 } }] }
     effects:
       - { play_clip: clip_fang }
       - { msg: "KLICK! Blattfink wurde gefangen!" }
@@ -761,7 +765,7 @@ rules:
 
   - id: catch_glutling
     on: turn
-    when: { all: [{ compare_var: { name: fang_versuch, op: gte, value: 1 } }, { var: cmd.target, is: glutling }] }
+    when: { all: [{ compare_var: { name: fang_versuch, op: gte, value: 1 } }, { var: cmd.target, is: glutling }, { at: player, room: vulkan_krater }, { compare_var: { name: party.glutling, op: eq, value: 0 } }] }
     effects:
       - { play_clip: clip_fang }
       - { msg: "KLICK! Glutling wurde gefangen!" }
@@ -772,7 +776,7 @@ rules:
 
   - id: catch_felsling
     on: turn
-    when: { all: [{ compare_var: { name: fang_versuch, op: gte, value: 1 } }, { var: cmd.target, is: felsling }] }
+    when: { all: [{ compare_var: { name: fang_versuch, op: gte, value: 1 } }, { var: cmd.target, is: felsling }, { at: player, room: hoehle_tiefe }, { compare_var: { name: party.felsling, op: eq, value: 0 } }] }
     effects:
       - { play_clip: clip_fang }
       - { msg: "KLICK! Felsling wurde gefangen!" }
@@ -794,6 +798,14 @@ rules:
             - { var: cmd.target, is: krateron }
     effects:
       - { msg: "Das Monster gehoert einem Arenatrainer! Du kannst fremde Monster nicht fangen!" }
+      - { set_var: { name: fang_versuch, value: 0 } }
+
+  # Kein passendes wildes Monster hier (oder schon im Team): Wurf verpufft
+  - id: catch_miss
+    on: turn
+    when: { compare_var: { name: fang_versuch, op: gte, value: 1 } }
+    effects:
+      - { msg: "Der Safari-Ball rollt ins Leere — hier ist kein wildes Monster dieser Art (mehr) zu fangen." }
       - { set_var: { name: fang_versuch, value: 0 } }
 
   # §9.1 Typ-Effektivitaet: Zielaufloesung ueber cmd.target
@@ -891,28 +903,34 @@ rules:
   # Schadenstransfer auf Gegner
   - id: dmg_flossler
     on: turn
-    when: { all: [{ var: cmd.target, is: flossler }, { compare_var: { name: eff_damage, op: gte, value: 1 } }] }
+    when: { all: [{ var: cmd.target, is: flossler }, { compare_var: { name: eff_damage, op: gte, value: 1 } }, { at: player, room: arena_stadion }, { at: flossler, room: arena_stadion }] }
     effects: [{ damage_npc: { npc: flossler, amount: 20 } }, { set_var: { name: eff_damage, value: 0 } }]
 
   - id: dmg_borkenkauz
     on: turn
-    when: { all: [{ var: cmd.target, is: borkenkauz }, { compare_var: { name: eff_damage, op: gte, value: 1 } }] }
+    when: { all: [{ var: cmd.target, is: borkenkauz }, { compare_var: { name: eff_damage, op: gte, value: 1 } }, { at: player, room: arena_stadion }, { at: borkenkauz, room: arena_stadion }] }
     effects: [{ damage_npc: { npc: borkenkauz, amount: 25 } }, { set_var: { name: eff_damage, value: 0 } }]
 
   - id: dmg_gargol
     on: turn
-    when: { all: [{ var: cmd.target, is: gargol }, { compare_var: { name: eff_damage, op: gte, value: 1 } }] }
+    when: { all: [{ var: cmd.target, is: gargol }, { compare_var: { name: eff_damage, op: gte, value: 1 } }, { at: player, room: arena_stadion }, { at: gargol, room: arena_stadion }] }
     effects: [{ damage_npc: { npc: gargol, amount: 30 } }, { set_var: { name: eff_damage, value: 0 } }]
 
   - id: dmg_flamara
     on: turn
-    when: { all: [{ var: cmd.target, is: flamara }, { compare_var: { name: eff_damage, op: gte, value: 1 } }] }
+    when: { all: [{ var: cmd.target, is: flamara }, { compare_var: { name: eff_damage, op: gte, value: 1 } }, { at: player, room: arena_stadion }, { at: flamara, room: arena_stadion }] }
     effects: [{ damage_npc: { npc: flamara, amount: 35 } }, { set_var: { name: eff_damage, value: 0 } }]
 
   - id: dmg_krateron
     on: turn
-    when: { all: [{ var: cmd.target, is: krateron }, { compare_var: { name: eff_damage, op: gte, value: 1 } }] }
+    when: { all: [{ var: cmd.target, is: krateron }, { compare_var: { name: eff_damage, op: gte, value: 1 } }, { at: player, room: arena_stadion }, { at: krateron, room: arena_stadion }] }
     effects: [{ damage_npc: { npc: krateron, amount: 45 } }, { set_var: { name: eff_damage, value: 0 } }]
+
+  # Move ohne gueltiges Arena-Ziel: Restschaden verfaellt
+  - id: dmg_verfallen
+    on: turn
+    when: { compare_var: { name: eff_damage, op: gte, value: 1 } }
+    effects: [{ set_var: { name: eff_damage, value: 0 } }]
 
   # Arena-Liga: Fail-Gates & Kaempfe
   - id: fail_gate_empty_party
@@ -931,6 +949,13 @@ rules:
       - { msg: "Du scheidest aus der Arena-Liga aus." }
       - { game_end: turnier_aus }
 
+  # Arena-Monster sind nur nach offizieller Herausforderung im Ring angreifbar
+  - id: wartesaal_kein_kampf
+    on: before attack
+    when: { at: player, room: arena_wartesaal }
+    effects:
+      - { block: "Der Liga-Schiedsrichter pfeift energisch: 'Gekaempft wird nur im Ring — und erst nach offizieller Herausforderung!'" }
+
   # Trainer 1: Jan
   - id: challenge_jan
     on: command herausfordern
@@ -941,6 +966,7 @@ rules:
 
   - id: defeat_jan
     on: state flossler
+    when: { at: flossler, room: arena_stadion }
     once: true
     effects:
       - { set_flag: jan_besiegt }
@@ -961,6 +987,7 @@ rules:
 
   - id: defeat_lea
     on: state borkenkauz
+    when: { at: borkenkauz, room: arena_stadion }
     once: true
     effects:
       - { set_flag: lea_besiegt }
@@ -981,6 +1008,7 @@ rules:
 
   - id: defeat_bruno
     on: state gargol
+    when: { at: gargol, room: arena_stadion }
     once: true
     effects:
       - { set_flag: bruno_besiegt }
@@ -1001,6 +1029,7 @@ rules:
 
   - id: defeat_pyra
     on: state flamara
+    when: { at: flamara, room: arena_stadion }
     once: true
     effects:
       - { set_flag: pyra_besiegt }
@@ -1021,6 +1050,7 @@ rules:
 
   - id: defeat_viktor
     on: state krateron
+    when: { all: [{ has_flag: pyra_besiegt }, { at: krateron, room: arena_stadion }] }
     once: true
     effects:
       - { set_flag: liga_gewonnen }
@@ -1047,6 +1077,7 @@ tests:
     input:
       - look
       - watch monitor
+      - take ball
       - west
       - north
       - use-ability fangball auf nassling
@@ -1104,3 +1135,31 @@ tests:
       - "Trainerin Pyra ruft Flamara in die Arena!"
       - "Champion Viktor ruft Krateron in die Arena!"
       - "VICTORY — Meister-Ranger der Monster-Insel!"
+
+  - name: "kein fang ohne ball, kein champion-sieg ohne liga"
+    input:
+      - use-ability fangball auf felsling
+      - use-ability fangball auf felsling
+      - use-ability fangball auf felsling
+      - north
+      - north
+      - east
+      - aquawelle krateron
+      - attack krateron
+      - look
+    expect:
+      - "Du hast keinen Safari-Ball mehr im Rucksack!"
+      - "Du hast keinen Safari-Ball mehr im Rucksack!"
+      - "Du hast keinen Safari-Ball mehr im Rucksack!"
+      - "Warteraum der Arena"
+      - "Das ist sehr effektiv!"
+      - "Der Liga-Schiedsrichter pfeift energisch: 'Gekaempft wird nur im Ring"
+      - "Warteraum der Arena: Hier bereiten sich"
+
+  - name: "jedes monster zaehlt nur einmal"
+    input: [take ball, fangen felsling, south, down, north, fangen felsling, fangen felsling]
+    expect:
+      - "Der Safari-Ball rollt ins Leere"
+      - "Tiefste Basaltkammer"
+      - "KLICK! Felsling wurde gefangen!"
+      - "Der Safari-Ball rollt ins Leere — hier ist kein wildes Monster dieser Art (mehr) zu fangen."

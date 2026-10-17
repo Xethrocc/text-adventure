@@ -124,18 +124,24 @@ rules:
     effects:
       - if: { compare_var: { name: "cmd.count", op: ">=", value: 2 } }
         then:
-          - if: { var: "cmd.arg2", is: "land" }
+          # Nur positive Ganzzahlen: Text ("abc", "2.5") vergleicht nie wahr.
+          - if: { compare_var: { name: "cmd.arg1", op: ">", value: 0 } }
             then:
-              - compute_var: { var: "kosten", expr: "cmd.arg1 * land_preis" }
-              - if: { compare_var: { name: "gold", op: ">=", var: "kosten" } }
+              - if: { var: "cmd.arg2", is: "land" }
                 then:
-                  - compute_var: { var: "gold", expr: "gold - kosten" }
-                  - compute_var: { var: "land", expr: "land + cmd.arg1" }
-                  - text: "Erfolgreich erworben: {cmd.arg1} Hektar Land für {kosten} Gold."
+                  - compute_var: { var: "kosten", expr: "cmd.arg1 * land_preis" }
+                  # Menge <= Gold fängt Int-Überlauf von kosten ab (Preis >= 1).
+                  - if: { all: [ { compare_var: { name: "cmd.arg1", op: "<=", var: "gold" } }, { compare_var: { name: "gold", op: ">=", var: "kosten" } } ] }
+                    then:
+                      - compute_var: { var: "gold", expr: "gold - kosten" }
+                      - compute_var: { var: "land", expr: "land + cmd.arg1" }
+                      - text: "Erfolgreich erworben: {cmd.arg1} Hektar Land für {kosten} Gold."
+                    else:
+                      - text: "Nicht genug Gold in der Schatzkammer! Du benötigst {kosten} Gold."
                 else:
-                  - text: "Nicht genug Gold in der Schatzkammer! Du benötigst {kosten} Gold."
+                  - text: "Auf dem Markt kannst du nur 'land' kaufen (kaufe <menge> land)."
             else:
-              - text: "Auf dem Markt kannst du nur 'land' kaufen (kaufe <menge> land)."
+              - text: "Ungültige Menge '{cmd.arg1}': Gib eine positive ganze Zahl an (kaufe <menge> land)."
         else:
           - text: "Verwendung: kaufe <menge> land"
 
@@ -144,18 +150,22 @@ rules:
     effects:
       - if: { compare_var: { name: "cmd.count", op: ">=", value: 2 } }
         then:
-          - if: { var: "cmd.arg2", is: "land" }
+          - if: { compare_var: { name: "cmd.arg1", op: ">", value: 0 } }
             then:
-              - if: { compare_var: { name: "land", op: ">=", var: "cmd.arg1" } }
+              - if: { var: "cmd.arg2", is: "land" }
                 then:
-                  - compute_var: { var: "erloes", expr: "cmd.arg1 * land_preis" }
-                  - compute_var: { var: "gold", expr: "gold + erloes" }
-                  - compute_var: { var: "land", expr: "land - cmd.arg1" }
-                  - text: "Erfolgreich verkauft: {cmd.arg1} Hektar Land für {erloes} Gold."
+                  - if: { compare_var: { name: "land", op: ">=", var: "cmd.arg1" } }
+                    then:
+                      - compute_var: { var: "erloes", expr: "cmd.arg1 * land_preis" }
+                      - compute_var: { var: "gold", expr: "gold + erloes" }
+                      - compute_var: { var: "land", expr: "land - cmd.arg1" }
+                      - text: "Erfolgreich verkauft: {cmd.arg1} Hektar Land für {erloes} Gold."
+                    else:
+                      - text: "So viel Land besitzt die Provinz nicht!"
                 else:
-                  - text: "So viel Land besitzt die Provinz nicht!"
+                  - text: "Auf dem Markt kannst du nur 'land' verkaufen (verkaufe <menge> land)."
             else:
-              - text: "Auf dem Markt kannst du nur 'land' verkaufen (verkaufe <menge> land)."
+              - text: "Ungültige Menge '{cmd.arg1}': Gib eine positive ganze Zahl an (verkaufe <menge> land)."
         else:
           - text: "Verwendung: verkaufe <menge> land"
 
@@ -164,8 +174,13 @@ rules:
     effects:
       - if: { compare_var: { name: "cmd.count", op: ">=", value: 1 } }
         then:
-          - compute_var: { var: "steuersatz", expr: "clamp(0, 100, cmd.arg1)" }
-          - text: "Der Steuersatz wurde auf {steuersatz}% festgesetzt."
+          # 0 ist ein gültiger Satz; Werte über 100 werden gekappt, negative/Text abgelehnt.
+          - if: { compare_var: { name: "cmd.arg1", op: ">=", value: 0 } }
+            then:
+              - compute_var: { var: "steuersatz", expr: "clamp(0, 100, cmd.arg1)" }
+              - text: "Der Steuersatz wurde auf {steuersatz}% festgesetzt."
+            else:
+              - text: "Ungültiger Steuersatz '{cmd.arg1}': Gib eine ganze Zahl von 0 bis 100 an (steuern <prozent>)."
         else:
           - text: "Aktueller Steuersatz: {steuersatz}%. Verwendung: steuern <prozent>"
 
@@ -183,3 +198,24 @@ rules:
         else:
           - compute_var: { var: "korn", expr: "land * ernte_faktor" }
           - text: "Hungersnot im Winter! Die Kornkammer war leer, doch die neue Ernte bringt {korn} Scheffel."
+
+tests:
+  - name: "ungueltige_mengen_werden_abgelehnt"
+    input:
+      - "kaufe -100 land"
+      - "kaufe abc land"
+      - "kaufe 0 land"
+      - "verkaufe -5 land"
+      - "steuern -5"
+      - "steuern abc"
+      - "status"
+    expect:
+      - "Ungültige Menge '-100': Gib eine positive ganze Zahl an (kaufe <menge> land)."
+      - "Ungültige Menge 'abc': Gib eine positive ganze Zahl an (kaufe <menge> land)."
+      - "Ungültige Menge '0': Gib eine positive ganze Zahl an (kaufe <menge> land)."
+      - "Ungültige Menge '-5': Gib eine positive ganze Zahl an (verkaufe <menge> land)."
+      - "Ungültiger Steuersatz '-5': Gib eine ganze Zahl von 0 bis 100 an (steuern <prozent>)."
+      - "Ungültiger Steuersatz 'abc': Gib eine ganze Zahl von 0 bis 100 an (steuern <prozent>)."
+      - "Schatzkammer:      1000 Gold"
+      - "Landbesitz:        1000 Hektar"
+      - "Steuersatz:       10%"

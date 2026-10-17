@@ -121,22 +121,35 @@ items:
     location: merchant_stall
     verb_map:
       buy,intact:
-        - if: {compare_var: {name: shop.merchant.rope, op: gte, value: 1}}
+        # Kaufsperre: es gibt keine Stapel — ein zweites `give: rope` liefe ins Leere
+        # und kostete trotzdem 12 Münzen und eine Bestandseinheit.
+        - if: {has_item: rope}
           then:
-            - if: {compare_var: {name: credits, op: gte, value: 12}}
-              then:
-                - {add_var: credits, delta: -12}
-                - {add_var: shop.merchant.rope, delta: -1}
-                - {give: rope}
-                - {msg: "Du kaufst das Seil für 12 Münzen."}
-              else:
-                - {msg: "Dafür reicht dein Geld nicht. (12 Münzen)"}
+            - {msg: "Du hast schon ein Seil — ein zweites brauchst du nicht."}
           else:
-            - {msg: "Der Krämer hat keine Seile mehr."}
+            - if: {compare_var: {name: shop.merchant.rope, op: gte, value: 1}}
+              then:
+                - if: {compare_var: {name: credits, op: gte, value: 12}}
+                  then:
+                    - {add_var: credits, delta: -12}
+                    - {add_var: shop.merchant.rope, delta: -1}
+                    - {give: rope}
+                    - {msg: "Du kaufst das Seil für 12 Münzen."}
+                  else:
+                    - {msg: "Dafür reicht dein Geld nicht. (12 Münzen)"}
+              else:
+                - {msg: "Der Krämer hat keine Seile mehr."}
       sell,intact:
-        - {add_var: credits, delta: 5}
-        - {consume: rope}
-        - {msg: "Du verkaufst das Seil für 5 Münzen."}
+        # Nur das eigene Seil; es geht zurück an den Stand und ins Lager (sonst
+        # verschwände das Angebot, obwohl der Bestand noch Seile zählt).
+        - if: {has_item: rope}
+          then:
+            - {add_var: credits, delta: 5}
+            - {add_var: shop.merchant.rope, delta: 1}
+            - {place: {item: rope, in: merchant_stall}}
+            - {msg: "Du verkaufst das Seil für 5 Münzen."}
+          else:
+            - {msg: "Das Seil gehört noch dem Krämer."}
   - id: lantern
     name: Laterne
     desc: Eine Sturmlaterne mit dickem Glas.
@@ -157,9 +170,13 @@ items:
           else:
             - {msg: "Der Krämer hat keine Laternen mehr."}
       sell,intact:
-        - {add_var: credits, delta: 10}
-        - {consume: lantern}
-        - {msg: "Du verkaufst die Laterne für 10 Münzen."}
+        - if: {has_item: lantern}
+          then:
+            - {add_var: credits, delta: 10}
+            - {consume: lantern}
+            - {msg: "Du verkaufst die Laterne für 10 Münzen."}
+          else:
+            - {msg: "Die Laterne gehört noch dem Krämer."}
   - id: brass_key
     name: Gildensiegel
     desc: Ein Schweres Siegel aus Messing — der Schlüssel zur Werft.
@@ -265,6 +282,13 @@ rules:
     once: true
     effects:
       - {start_quest: harbor_seal}
+  # Ware am Stand gibt es nur gegen Münzen — sonst nähme man das Siegel einfach
+  # mit und der ganze Handel (7b) wäre umgangen.
+  - id: no_shoplifting
+    on: "before take"
+    when: {at: player, room: merchant_stall}
+    effects:
+      - {block: "Der Krämer legt die Hand auf die Ware. 'Erst zahlen (buy <ware>), dann nehmen.'"}
   - id: guild_takes_notice
     on: command buy
     when: {has_item: brass_key}
@@ -288,3 +312,30 @@ rules:
 interactions:
   entity: []
   item: []
+
+tests:
+  # Regression (Audit): `give:` stapelt nicht — der zweite Seilkauf kassierte 12
+  # Münzen ohne zweites Seil; `sell` auf Ware am Stand zahlte, ohne dass man sie besaß;
+  # `take seal` am Stand umging den ganzen Handel (Gratis-Sieg).
+  - name: trade_seil_kaufsperre
+    input:
+      - "north"
+      - "east"
+      - "take seal"
+      - "buy rope"
+      - "buy rope"
+      - "sell lantern"
+      - "sell rope"
+      - "sell rope"
+      - "buy rope"
+      - "talk merchant"
+      - "3"
+    expect:
+      - "Der Krämer legt die Hand auf die Ware. 'Erst zahlen (buy <ware>), dann nehmen.'"
+      - "Du kaufst das Seil für 12 Münzen."
+      - "Du hast schon ein Seil — ein zweites brauchst du nicht."
+      - "Die Laterne gehört noch dem Krämer."
+      - "Du verkaufst das Seil für 5 Münzen."
+      - "Das Seil gehört noch dem Krämer."
+      - "Du kaufst das Seil für 12 Münzen."
+      - "(Börse: 41 Münzen)"

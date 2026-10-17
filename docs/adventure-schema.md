@@ -1657,18 +1657,24 @@ Der mathematische Ausdruck in `expr:` ist ein abstrakter Syntaxbaum (AST), der v
     effects:
       - if: { compare_var: { name: "cmd.count", op: ">=", value: 2 } }
         then:
-          - if: { var: "cmd.arg2", is: "land" }
+          # Nur positive Ganzzahlen: Text ("abc", "2.5") vergleicht nie wahr.
+          - if: { compare_var: { name: "cmd.arg1", op: ">", value: 0 } }
             then:
-              - compute_var: { var: "kosten", expr: "cmd.arg1 * land_preis" }
-              - if: { compare_var: { name: "gold", op: ">=", var: "kosten" } }
+              - if: { var: "cmd.arg2", is: "land" }
                 then:
-                  - compute_var: { var: "gold", expr: "gold - kosten" }
-                  - compute_var: { var: "land", expr: "land + cmd.arg1" }
-                  - text: "Erfolgreich erworben: {cmd.arg1} Hektar Land für {kosten} Gold."
+                  - compute_var: { var: "kosten", expr: "cmd.arg1 * land_preis" }
+                  # Menge <= Gold fängt Int-Überlauf von kosten ab (Preis >= 1).
+                  - if: { all: [ { compare_var: { name: "cmd.arg1", op: "<=", var: "gold" } }, { compare_var: { name: "gold", op: ">=", var: "kosten" } } ] }
+                    then:
+                      - compute_var: { var: "gold", expr: "gold - kosten" }
+                      - compute_var: { var: "land", expr: "land + cmd.arg1" }
+                      - text: "Erfolgreich erworben: {cmd.arg1} Hektar Land für {kosten} Gold."
+                    else:
+                      - text: "Nicht genug Gold in der Schatzkammer! Du benötigst {kosten} Gold."
                 else:
-                  - text: "Nicht genug Gold in der Schatzkammer! Du benötigst {kosten} Gold."
+                  - text: "Auf dem Markt kannst du nur 'land' kaufen (kaufe <menge> land)."
             else:
-              - text: "Auf dem Markt kannst du nur 'land' kaufen (kaufe <menge> land)."
+              - text: "Ungültige Menge '{cmd.arg1}': Gib eine positive ganze Zahl an (kaufe <menge> land)."
         else:
           - text: "Verwendung: kaufe <menge> land"
 ```
@@ -1680,7 +1686,14 @@ Erfolgreich erworben: 50 Hektar Land für 1000 Gold.
 
 > kaufe 1 land
 Nicht genug Gold in der Schatzkammer! Du benötigst 20 Gold.
+
+> kaufe -100 land
+Ungültige Menge '-100': Gib eine positive ganze Zahl an (kaufe <menge> land).
 ```
+
+`cmd.arg1` ist bei Zahlen ein Int; nicht-numerischer Text („abc“, „2.5“) lässt jeden
+`compare_var`-Vergleich falsch ausgehen — `op: ">", value: 0` lässt deshalb genau die
+positiven Ganzzahlen durch. Ohne diese Prüfung erzeugte `kaufe -100 land` Gold.
 
 #### 2. Status-Dashboard & Wertbegrenzung (`rule_status` & `rule_steuern`)
 
