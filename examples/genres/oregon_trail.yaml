@@ -57,7 +57,7 @@ player:
 
 variables:
   - { name: dollars, type: int, initial: 50, min: 0 }
-  - { name: proviant, type: int, initial: 14, min: 0 }
+  - { name: proviant, type: int, initial: 16, min: 0 }   # 14 + 2 Zuege fuer Ersatzrad-Kauf und Reparatur
 
 initial_variables:
   shop.posten.ration: 6
@@ -193,8 +193,20 @@ encounter_tables:
         - { at: player, room: etappe_4_blue_pass }
     entries:
       - { weight: 3, effects: [ { msg: "Der Treck rollt ruhig ueber die Rillen der Praerie." } ] }
+      # Radbruch (OPEN-24): steht bewusst an zweiter Stelle, damit er frueh gewuerfelt
+      # wird (sonst erst ab Zug ~27, nach dem Hungertod). Setzt den Fahrzeug-Zustand;
+      # das Rad bricht nur einmal pro Treck (Flag `rad_gebrochen`, es gibt nur ein
+      # Ersatzrad) — danach bleibt es beim Knarren.
+      - weight: 2
+        effects:
+          - if: { has_flag: rad_gebrochen }
+            then:
+              - { msg: "Das Wagenrad knarrt gefaehrlich — ein bedrohliches Achsenknarren hallt ueber die Steppe." }
+            else:
+              - { set_flag: rad_gebrochen, val: "true" }
+              - { apply_vehicle_condition: { vehicle: planwagen, condition: radbruch } }
+              - { msg: "KRACH! Speichen splittern — das linke Vorderrad ist gebrochen. Ohne Ersatzrad kommt der Treck nicht weiter." }
       - { weight: 2, effects: [ { msg: "Eine Bueffelherde kreuzt den Weg in der Ferne." } ] }
-      - { weight: 2, effects: [ { msg: "Das Wagenrad knarrt gefaehrlich — ein bedrohliches Achsenknarren hallt ueber die Steppe." } ] }
       - { weight: 1, effects: [ { msg: "Eine Klapperschlange zischt zwischen den Grasbuescheln — du springst beiseite!" }, { damage: 1 } ] }
 
 vehicles:
@@ -216,6 +228,9 @@ vehicles:
       "Blue Mountains": etappe_4_blue_pass
       "Oregon City": etappe_5_oregon_city
     start_stop: "Independence"
+    conditions:
+      radbruch:
+        - { msg: "Das linke Vorderrad wackelt gefaehrlich — der Wagen humpelt mit gebrochenem Rad." }
 
 rooms:
   - id: etappe_1_independence
@@ -299,18 +314,24 @@ items:
     location: etappe_1_independence
     verb_map:
       buy,intact:
-        - if: { compare_var: { name: shop.posten.ration, op: gte, value: 1 } }
+        # Kaufsperre: es gibt keine Stapel — ein zweites `give: ration` liefe ins Leere
+        # und kostete trotzdem 10 Dollar.
+        - if: { has_item: ration }
           then:
-            - if: { compare_var: { name: dollars, op: gte, value: 10 } }
-              then:
-                - { add_var: dollars, delta: -10 }
-                - { add_var: shop.posten.ration, delta: -1 }
-                - { give: ration }
-                - { msg: "Du kaufst ein Paket Proviantrationen fuer 10 Dollar." }
-              else:
-                - { msg: "Dafuer reicht dein Geld nicht. (10 Dollar)" }
+            - { msg: "Du hast noch eine Ration dabei — iss erst die, bevor du neue kaufst." }
           else:
-            - { msg: "Der Kraemer hat keine Rationen mehr." }
+            - if: { compare_var: { name: shop.posten.ration, op: gte, value: 1 } }
+              then:
+                - if: { compare_var: { name: dollars, op: gte, value: 10 } }
+                  then:
+                    - { add_var: dollars, delta: -10 }
+                    - { add_var: shop.posten.ration, delta: -1 }
+                    - { give: ration }
+                    - { msg: "Du kaufst ein Paket Proviantrationen fuer 10 Dollar." }
+                  else:
+                    - { msg: "Dafuer reicht dein Geld nicht. (10 Dollar)" }
+              else:
+                - { msg: "Der Kraemer hat keine Rationen mehr." }
       eat,intact:
         - { add_var: proviant, delta: 8 }
         - { consume: ration }
@@ -435,9 +456,9 @@ items:
           else:
             - { msg: "Der Schmied hat keine Ersatzraeder mehr." }
       use,intact:
-        - if: { has_flag: radbruch }
+        - if: { vehicle_has_condition: { vehicle: planwagen, condition: radbruch } }
           then:
-            - { set_flag: radbruch, val: "false" }
+            - { clear_vehicle_condition: { vehicle: planwagen, condition: radbruch } }
             - { consume: ersatzrad }
             - { msg: "Du montierst das Ersatzrad an die gebrochene Achse. Der Planwagen ist wieder fahrbereit!" }
           else:
@@ -551,7 +572,7 @@ rules:
   - id: weiterfahrt_gesperrt_radbruch
     on: before wait
     when:
-      has_flag: radbruch
+      vehicle_has_condition: { vehicle: planwagen, condition: radbruch }
     effects:
       - block: { msg: "Mit gebrochenem Rad kann der Planwagen nicht weiterfahren! Du musst das Rad erst reparieren.", turn: false }
 
@@ -567,23 +588,16 @@ rules:
     effects:
       - block: { msg: "Du bist nicht beim Planwagen! Kehre erst zum Treck zurueck.", turn: false }
 
-  # Radbruch-Meldung pro Runde
-  - id: radbruch_warnung
-    on: turn
-    when:
-      has_flag: radbruch
-    effects:
-      - { msg: "Das linke Vorderrad wackelt gefaehrlich — der Wagen humpelt mit gebrochenem Rad." }
-
-  # Repair-Befehl fuer Radbruch
+  # Repair-Befehl fuer Radbruch: das Ersatzrad ist Pflicht (die Kern-Reparatur
+  # `repair <condition>` braucht kein Material, deshalb die Veto-Regel davor)
   - id: repair_radbruch_cmd
     on: before repair
     when:
-      has_flag: radbruch
+      vehicle_has_condition: { vehicle: planwagen, condition: radbruch }
     effects:
       - if: { has_item: ersatzrad }
         then:
-          - { set_flag: radbruch, val: "false" }
+          - { clear_vehicle_condition: { vehicle: planwagen, condition: radbruch } }
           - { consume: ersatzrad }
           - block: { msg: "Du montierst das Ersatzrad an die gebrochene Achse. Der Planwagen ist wieder fahrbereit!", turn: true }
         else:
@@ -607,6 +621,8 @@ tests:
       - "search"
       - "south"
       - "sell bueffelpelz"
+      - "buy ersatzrad"
+      - "repair radbruch"
       - "buy stuetzbalken"
       - "wait"
       - "north"
@@ -622,6 +638,9 @@ tests:
       - "Du kaufst eine robuste Schaufel fuer 8 Dollar."
       - "Du fährst weiter nach Fort Laramie."
       - "Du verkaufst den dichten Bueffelpelz an den Pelzhaendler fuer 25 Dollar."
+      - "KRACH! Speichen splittern — das linke Vorderrad ist gebrochen."
+      - "Du kaufst ein stabiles Ersatzrad fuer 20 Dollar."
+      - "Du montierst das Ersatzrad an die gebrochene Achse. Der Planwagen ist wieder fahrbereit!"
       - "Du kaufst schwere Stuetzbalken fuer 12 Dollar."
       - "Du fährst weiter nach Snake River."
       - "Schwarze Wolken haengen ueber den Bergen."
@@ -660,6 +679,13 @@ tests:
       - "use wagenteer"
       - "enter planwagen"
       - "wait"
+      # Radbruch nach Fort Laramie: Pelz verkaufen, Ersatzrad kaufen, reparieren
+      - "north"
+      - "search"
+      - "south"
+      - "sell bueffelpelz"
+      - "buy ersatzrad"
+      - "repair radbruch"
       - "wait"
       - "wait"
       - "south"
@@ -692,3 +718,40 @@ tests:
       - "DER FLUSS TRITT UEBER DIE UFER!"
       - "Eiskaltes Flutwasser schwappt in den Wagen! Das schmutzige Wasser macht dich krank!"
       - "Die Ruhr schuettelt deinen Koerper mit heftigen Kraempfen (-2 HP)."
+
+  - name: "radbruch_ohne_ersatzrad_und_kaufsperre"
+    input:
+      - "buy schaufel"
+      - "buy ration"
+      - "buy ration"
+      - "eat ration"
+      - "enter planwagen"
+      - "wait"
+      - "north"
+      - "search"
+      - "south"
+      - "sell bueffelpelz"
+      - "wait"
+      - "repair radbruch"
+      - "rasten"
+      - "rasten"
+      - "rasten"
+      - "rasten"
+      - "rasten"
+      - "rasten"
+      - "rasten"
+      - "rasten"
+      - "rasten"
+      - "rasten"
+      - "rasten"
+      - "rasten"
+      - "rasten"
+      - "rasten"
+      - "rasten"
+      - "rasten"
+    expect:
+      - "Du hast noch eine Ration dabei — iss erst die, bevor du neue kaufst."
+      - "KRACH! Speichen splittern — das linke Vorderrad ist gebrochen."
+      - "Mit gebrochenem Rad kann der Planwagen nicht weiterfahren!"
+      - "Du hast kein Ersatzrad, um den Radbruch zu reparieren!"
+      - "Du verhungerst auf der Trail."

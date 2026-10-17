@@ -7,6 +7,8 @@ north
 search
 south
 sell bueffelpelz
+buy ersatzrad
+repair radbruch
 buy stuetzbalken
 wait
 north

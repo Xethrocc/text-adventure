@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Oregon Trail: Radbruch auf Fahrzeug-Zustand (OPEN-24) + Rationen-Kaufsperre
+
+- **Radbruch war toter Content:** keine Stelle setzte das Flag `radbruch`; Veto-, Warn- und Reparatur-Regeln konnten nie feuern, das Ersatzrad war nutzlos.
+- **Jetzt ein echter Fahrzeug-Zustand (`examples/genres/oregon_trail.yaml`):** `planwagen.conditions.radbruch` (tickt die Wackel-Meldung nativ, ersetzt die `radbruch_warnung`-Regel); der Begegnungseintrag (ehemals nur „Achsenknarren“) setzt `apply_vehicle_condition` einmal pro Treck (Flag `rad_gebrochen`), Veto `weiterfahrt_gesperrt_radbruch` und Reparatur (`repair radbruch` / `use ersatzrad`, beide mit Ersatzrad-Pflicht) laufen über `vehicle_has_condition` / `clear_vehicle_condition`.
+- **Reihenfolge der Begegnungen:** der Radbruch-Eintrag steht jetzt an zweiter Stelle (Gewichte unverändert) — er fällt beim 2. Wurf, kurz nach Fort Laramie, statt erst ab Zug ~27 (nach dem Hungertod).
+- **Balance:** Startproviant 14 → 16 (die zwei Pflichtzüge Ersatzrad-Kauf + Reparatur; sonst überschreibt der Hungertod im Ankunftszug den Sieg).
+- **Rationen-Kaufsperre:** ein zweites `buy ration` zog 10 Dollar ab und lieferte nichts (`give:` verdoppelt ein getragenes Item nicht) — jetzt verweigert der Krämer den Kauf, solange eine Ration getragen wird.
+- **Tests/CI:** E2E `oregon_trail` um Ersatzrad + Reparatur erweitert, neuer Nicht-Sieg-Pfad `oregon_trail-radbruch-fail` (Kaufsperre, Radbruch ohne Ersatzrad, Hungertod), Inhaltstests angepasst + `radbruch_ohne_ersatzrad_und_kaufsperre`.
+- **Doku:** `docs/adventure-schema.md` — Fahrzeug-`conditions:` erwartet eine Effektliste, nicht einen String (Beispiel korrigiert).
+
 ### Synth Stufe 5.2e: TUI-Audio (`docs/plan-synth.md`)
 
 - **TUI-Audio-Seam (`text-adventure-tui/src/TextAdventure/Tui.hs`):**

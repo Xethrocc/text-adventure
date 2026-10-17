@@ -1,10 +1,10 @@
 # Plan: Oregon Trail — „Der Treck nach Westen“
 
 **Stand:** 2026-10-17 · **Status:** ✅ umgesetzt (`d81d4a9`, 2026-10-14) — `examples/genres/oregon_trail.yaml`,
-E2E `oregon_trail` + `oregon_trail-dysentery-fail`, in `scripts/ci.sh` registriert.
-Abweichung vom Entwurf: der Radbruch (O3) läuft über den Fallback — Flag `radbruch` +
-`on: before wait`-Veto/`repair`-Regel —, weil der Fahrzeug-Zustand-Setter erst danach kam
-(`OPEN-24`, `391dfa9`). Eine Umstellung auf `apply_vehicle_condition` ist möglich, aber nicht nötig.
+E2E `oregon_trail` + `oregon_trail-dysentery-fail` + `oregon_trail-radbruch-fail`, in `scripts/ci.sh` registriert.
+Der Radbruch (O3) war bis 2026-10-17 toter Content (Flag nie gesetzt); seitdem läuft er wie
+in §7.1 vorgesehen als Fahrzeug-Zustand `radbruch` über `apply_vehicle_condition`/
+`vehicle_has_condition` (OPEN-24), einmal pro Treck, als 2. Begegnungseintrag — siehe CHANGELOG.
 **Herkunft:** `docs/spielideen.md` §1 (Reihenfolge-Platz #3, „nur Content“) ·
 Umsetzungsplan: `~/workspace/plan-spielideen-umsetzung.md`
 **Ziel-Datei:** `examples/genres/oregon_trail.yaml`

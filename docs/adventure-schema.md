@@ -1141,8 +1141,9 @@ quests:
   entry_room: meadow
   stops: [meadow, village, forest]
   fuel: { item: hay, max: 10 }
-  conditions:
-    broken_wheel: "Wheel wobbles dangerously."
+  conditions:                 # Zustand -> Effektliste, tickt pro Zug im Fahrzeug
+    broken_wheel:
+      - msg: "Wheel wobbles dangerously."
 ```
 
 Befehle: `enter/board <vehicle>`, `disembark` (nicht `exit` — das beendet

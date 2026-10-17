@@ -233,7 +233,7 @@ echo "== 5. e2e non-victory paths =="
 # `patrol-attack` and `patrol-death` are not failures either but *behaviour*
 # paths: they pin that a patrolling NPC actually closes in, warns, bites — and
 # that its damage can kill (turn-consuming commands only; `look` is free).
-for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss-fail combo-fail combat-tactical-fail ship-duel-fail combat-tactical-defend patrol-attack patrol-death combat-screen-round disambiguation-fallback vn_letter-ignorance-fail vn_letter-trust-fail clock_pendulum-timeout-fail clock_pendulum-flood-fail roguelike_dungeon-death-fail roguelike_dungeon-ironman-fail board_nim-defeat-fail board_nim-invalid-fail idle_manufaktur-early-fail krypta_der_verdammten-death-fail alchemie_werkstatt-pleite-fail chrome_and_ash-heat-fail neon_phantom-trace-fail survival_expedition-frost-fail soul_collector-death-fail zeitschleife-timeout-fail theater-abort-fail oregon_trail-dysentery-fail monster_insel-fail ftl_lite-fail; do
+for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss-fail combo-fail combat-tactical-fail ship-duel-fail combat-tactical-defend patrol-attack patrol-death combat-screen-round disambiguation-fallback vn_letter-ignorance-fail vn_letter-trust-fail clock_pendulum-timeout-fail clock_pendulum-flood-fail roguelike_dungeon-death-fail roguelike_dungeon-ironman-fail board_nim-defeat-fail board_nim-invalid-fail idle_manufaktur-early-fail krypta_der_verdammten-death-fail alchemie_werkstatt-pleite-fail chrome_and_ash-heat-fail neon_phantom-trace-fail survival_expedition-frost-fail soul_collector-death-fail zeitschleife-timeout-fail theater-abort-fail oregon_trail-dysentery-fail oregon_trail-radbruch-fail monster_insel-fail ftl_lite-fail; do
     case "$name" in
         vn_letter-ignorance-fail|vn_letter-trust-fail) src=examples/genres/vn_letter.yaml ;;
         clock_pendulum-timeout-fail|clock_pendulum-flood-fail) src=examples/genres/clock_pendulum.yaml ;;
@@ -248,7 +248,7 @@ for name in trade-fail combat-off-fail survival-fail starship-fail starship-loss
         soul_collector-death-fail) src=examples/genres/soul_collector.yaml ;;
         zeitschleife-timeout-fail) src=examples/genres/zeitschleife.yaml ;;
         theater-abort-fail) src=examples/genres/theater.yaml ;;
-        oregon_trail-dysentery-fail) src=examples/genres/oregon_trail.yaml ;;
+        oregon_trail-dysentery-fail|oregon_trail-radbruch-fail) src=examples/genres/oregon_trail.yaml ;;
         monster_insel-fail) src=examples/genres/monster_insel.yaml ;;
         ftl_lite-fail) src=examples/genres/ftl_lite.yaml ;;
         trade-fail)        src=examples/modules/trade.yaml ;;
