@@ -13,7 +13,7 @@ module Worldbuilder.Test
 import Data.List (isInfixOf, isPrefixOf)
 
 import Types as E
-import GameLoop (LoopState (..), initLoopState, applyLoopCommandEv)
+import GameLoop (LoopState (..), initLoopState, applyLoopCommandEv, enterStartRoom, renderStartEvents)
 import Messages (localizeEventsForSalted)
 import Parser (Command (..), parseCommandFor)
 import Worldbuilder.Types (AContentTest (..), Adventure (..))
@@ -50,9 +50,10 @@ findAfter needle = go
 --   live session; markers must be reached before the end).
 executeContentTest :: AContentTest -> E.GameWorld -> E.SaveState -> Maybe String
 executeContentTest ct gw sv =
-    checkMarkers (concat (go (initLoopState st0) commands)) (actExpect ct)
+    checkMarkers (concat (renderStartEvents st0 enterEvs ++ go (initLoopState st0) commands)) (actExpect ct)
   where
-    st0 = E.GameState gw sv Nothing Nothing Nothing [] Nothing [] Nothing Nothing []
+    -- Start-Enter: the session opens in the start room like a live run.
+    (st0, enterEvs) = enterStartRoom (E.GameState gw sv Nothing Nothing Nothing [] Nothing [] Nothing Nothing [])
     commands = Look : map (parseCommandFor gw) (actInput ct)
     go _ [] = []
     go ls (cmd:rest)

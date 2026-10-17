@@ -1870,6 +1870,8 @@ evalPredicate (EntityHasState entity expected) st =
     varTextMatches = case Map.lookup entity (variables (save st)) of
         Just (VVText s) -> s == expected
         _               -> False
+evalPredicate (HasExit rId dir) st =
+    Map.member dir (effectiveConnections st (resolveRoomAlias rId st))
 evalPredicate (RoomHasTag rId tag) st =
     case lookupRoom (resolveRoomAlias rId st) st of
         Just room -> tag `Set.member` roomTags room

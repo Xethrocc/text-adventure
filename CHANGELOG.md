@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Engine: Startraum wird beim Spielstart betreten; Prädikat `has_exit` (Entscheidungen 2026-10-18)
+
+- **Start-Enter (`src/GameLoop.hs`, `enterStartRoom`):** Eine frische Partie (Zug 0, auch nach `restart`) betritt ihren Startraum — der `on_enter`-Hook und die `on: enter <startraum>`-Regeln feuern einmal, wie bei jedem späteren Betreten; ein geladener Spielstand betritt nichts neu. Gilt für CLI, TUI, Neustart, `worldbuilder test` und den Fuzzer. Vorher feuerten sie erst beim Zurückkehren: in `alchemie_werkstatt` war die Startquest beim ersten Brauen inaktiv („Diese Quest ist nicht aktiv.“), in `krypta_der_verdammten` die Starthand leer, in `monster_insel` gab es die Ranger-Ausrüstung erst beim Zurückkehren. Der Neustart beschreibt den Raum jetzt nach `meta.runs`-Hochzählen und Start-Enter (Déjà-vu-Text in `zeitschleife` nach `r`).
+  - **Byte-Nachweis:** alle 106 E2E-Eingaben vorher/nachher vollständig verglichen (Temp-Pfade/Zeitstempel normalisiert): 97 byte-identisch, 9 beabsichtigt geändert (alchemie ×2, monster_insel ×2, starship ×2, zeitschleife ×2, survival_expedition — eine Leerzeile). Zork-Start identisch.
+- **`has_exit` (`src/Types/Core.hs`, `src/Game.hs`):** `{has_exit: {room: <raum>|current, dir: <richtung>}}` — statische und dynamische Ausgänge (`set_exit`, `remove_exit`, `generate_room`), Richtungen wie im Spielparser (`down`, `d`, `ne` …). JSON nur bei Benutzung (Byte-Vertrag).
+- Tests: `start room on_enter fires once at the start of a fresh run`, `has_exit sees static and dynamic exits, current alias, YAML forms`; Inhaltstest der Monster-Insel legt den (jetzt ab Start getragenen) Ball vorher ab. Doku: `docs/adventure-schema.md` (`on_enter`, `has_exit`).
+
 ### Content: mittlere Audit-Funde behoben (~35 Funde, 22 Dateien)
 
 Aus `~/workspace/befunde-content-audit-2026-10-17.md` §2; jeder Fix mit Regressionstest in `tests:` (gegen den vorherigen Stand rot, wo ordnende Positiv-Marker das ausdrücken können).

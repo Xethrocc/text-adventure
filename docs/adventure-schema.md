@@ -33,7 +33,7 @@ Das war's. Der Worldbuilder füllt den Rest mit Defaults.
 | `tags` | [String] | `[]` | `"dark"`, `"safe"`, `"vehicle"`, benutzbar in Predicates |
 | `light_flag` | String | — | Wenn gesetzt und `"true"`, wird ein `dark`-Raum erhellt |
 | `dark_msg` / `dark_message` | String | — | Eigene Meldung bei Dunkelheit (Default: `"It's pitch black. You can't see anything."`) |
-| `on_enter` | [AActionOutcome] | — | Effekte beim Betreten |
+| `on_enter` | [AActionOutcome] | — | Effekte beim Betreten — auch beim Spielstart: eine frische Partie (Zug 0, ebenso nach `restart`) betritt ihren Startraum, `on_enter` und `on: enter <startraum>`-Regeln feuern einmal. Ein geladener Spielstand betritt nichts neu. |
 | `on_look` | [AActionOutcome] | — | Effekte beim Anschauen |
 | `on_exit` | [AActionOutcome] | — | Effekte beim Verlassen |
 | `search` | [AActionOutcome] | — | Effekte bei `search` |
@@ -4264,6 +4264,12 @@ when: { actor_has_tag: {actor: player, tag: licht} }   # trägt etwas mit Tag X
 when: { room: halle, has_item_tag: licht }             # liegt hier etwas mit Tag X?
 when: { hand_has_tagged_card: klinge }                 # hält Handkarte mit Tag X (K18)
 ```
+
+**Ausgangs-Prädikat `has_exit`:** `{ has_exit: { room: <raum>, dir: <richtung> } }` ist wahr,
+wenn der Raum in dieser Richtung einen Ausgang hat — statisch, per `set_exit`/`remove_exit`
+oder durch `generate_room` gegraben. `room:` ist optional (Default `current`); `dir:` nimmt die
+Wörter des Spielparsers (`down`, `d`, `northeast`, `ne`, …). Typisch: „hier nur graben, wenn
+noch kein Schacht nach unten führt“ — `if: { not: { has_exit: { dir: down } } }`.
 
 In `{room: …, has_tag: …}` und `{room: …, has_item_tag: …}` steht `current` bzw. `current_room`
 für den Raum des Spielers (derselbe Alias wie bei `generate_room`) — nötig für generierte

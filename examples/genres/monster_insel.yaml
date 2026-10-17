@@ -1161,6 +1161,9 @@ tests:
 
   - name: "kein fang ohne ball, kein champion-sieg ohne liga"
     input:
+      # Seit Start-Enter liegt der Ball ab Spielstart im Rucksack — ablegen,
+      # damit die Ball-Pflicht geprüft wird.
+      - drop ball
       - use-ability fangball auf felsling
       - use-ability fangball auf felsling
       - use-ability fangball auf felsling

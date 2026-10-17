@@ -44,7 +44,7 @@ import qualified Data.Map.Strict as Map
 import System.Timeout (timeout)
 
 import qualified Types as E
-import GameLoop (LoopState (..), applyLoopCommandEv, consumesTurnIn, initLoopState)
+import GameLoop (LoopState (..), applyLoopCommandEv, consumesTurnIn, enterStartRoom, initLoopState)
 import Parser (parseCommandFor)
 import Worldbuilder.Compile (CompileResult (..), CompileIssue (..), compileAdventure)
 import Worldbuilder.ParseFile (parseAdventureFile)
@@ -375,7 +375,8 @@ fuzzRun micros maxSteps windowK runIdx runSeed gw sv inputs = do
         Left failed -> pure (Just (mkFinding failed 0 "look" []))
         Right sr0   -> go 1 (srLoop sr0) [] [] (take maxSteps inputs)
   where
-    st0 = E.GameState gw sv Nothing Nothing Nothing [] Nothing [] Nothing Nothing []
+    -- Start-Enter: the session opens in the start room like a live run.
+    st0 = fst (enterStartRoom (E.GameState gw sv Nothing Nothing Nothing [] Nothing [] Nothing Nothing []))
 
     go _ _ _ _ [] = pure Nothing
     go n ls accRev traceRev (inp : restInputs) = do

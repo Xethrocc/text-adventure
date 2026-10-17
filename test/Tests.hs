@@ -32,7 +32,7 @@ import Vehicles
 import Effects
 import Quests
 import Cards
-import GameLoop (LoopState (..), initLoopState, PendingDisambiguation (..),
+import GameLoop (LoopState (..), initLoopState, enterStartRoom, PendingDisambiguation (..),
                  applyLoopCommand, applyLoopCommandEv,
                  sideEvents, bumpMetaRuns, reseedRng,
                  commandEvents, commandVerbName, consumesTurn, consumesTurnIn, runGameWithFrontend,
@@ -357,6 +357,53 @@ testAbilityIgnoresCompanionAndEndsStaleFight = do
               (fmap npcHealth (Map.lookup "goblin" (npcStates (save stNamed)))
                  == fmap npcHealth (Map.lookup "goblin" (npcStates (save stBoth))))
     pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
+-- | Start-Enter: a fresh run (turn 0) fires the start room's `on_enter` hook
+--   and its `on: enter` rules once; a loaded save (turn > 0) does not.
+testEnterStartRoom :: IO Bool
+testEnterStartRoom = do
+    let here = currentRoom (save initSampleGame)
+        trig = TriggerDef "start_greeting" (OnEnter here) Nothing
+                   [SendMessage "Rule greets you."] False 0 1 [] []
+        st0 = initSampleGame { world = (world initSampleGame)
+                { triggerDefs = [trig]
+                , rooms = Map.adjust (\r -> r { roomOnEnter = Just (SendMessage "Hook greets you.") }) here
+                                     (rooms (world initSampleGame)) } }
+        (st1, evs) = enterStartRoom st0
+        out = renderEvents evs
+        loaded = st0 { save = (save st0) { turnCount = 7 } }
+        (stL, evsL) = enterStartRoom loaded
+    r1 <- expectTrue "hook fires at the start" ("Hook greets you." `isInfixOf` out)
+    r2 <- expectTrue "on: enter rule fires at the start" ("Rule greets you." `isInfixOf` out)
+    r3 <- expectTrue "rule state recorded (once/cooldown work)"
+              (Map.member "start_greeting" (triggerStates (save st1)))
+    r4 <- expectTrue "a loaded save enters nothing" (null (renderEvents evsL))
+    r5 <- expectTrue "a loaded save keeps its state" (triggerStates (save stL) == triggerStates (save loaded))
+    pure (r1 && r2 && r3 && r4 && r5)
+
+-- | `has_exit`: static exits, dynamic ones (`set_exit`/`remove_exit`), the
+--   `current` alias, and the authored YAML spellings round-trip.
+testHasExitPredicate :: IO Bool
+testHasExitPredicate = do
+    let here = currentRoom (save initSampleGame)
+        conns = maybe Map.empty roomConnections (Map.lookup here (rooms (world initSampleGame)))
+        (staticDir, _) = head (Map.toList conns)
+        missing = head [ d | d <- [minBound .. maxBound], not (Map.member d conns) ]
+        st0 = initSampleGame
+        (stOpened, _) = applyOutcome (SetExit here missing (Open here)) "" st0
+        (stRemoved, _) = applyOutcome (RemoveExit here staticDir) "" st0
+    r1 <- expectTrue "static exit is seen" (evalPredicate (HasExit here staticDir) st0)
+    r2 <- expectTrue "current alias" (evalPredicate (HasExit "current" staticDir) st0)
+    r3 <- expectTrue "absent exit is false" (not (evalPredicate (HasExit here missing) st0))
+    r4 <- expectTrue "set_exit makes it true" (evalPredicate (HasExit "current_room" missing) stOpened)
+    r5 <- expectTrue "remove_exit makes it false" (not (evalPredicate (HasExit here staticDir) stRemoved))
+    r6 <- expectEqual (Just (HasExit "current" Down))
+              (Aeson.decode (BLC.pack "{\"has_exit\": {\"dir\": \"d\"}}"))
+    r7 <- expectEqual (Just (HasExit "cave" Northeast))
+              (Aeson.decode (Aeson.encode (HasExit "cave" Northeast)))
+    r8 <- expectTrue "unknown direction is rejected"
+              (isNothing (Aeson.decode (BLC.pack "{\"has_exit\": {\"dir\": \"sideways\"}}") :: Maybe Predicate))
+    pure (and [r1, r2, r3, r4, r5, r6, r7, r8])
 
 testMoveNPC :: IO Bool
 testMoveNPC = do
@@ -13114,6 +13161,8 @@ main = do
         , runTest "first game end of a turn wins, later rules stay silent (X1)" testFirstGameEndWins
         , runTest "room predicates resolve current / current_room to the player's room (X4)" testRoomPredicateCurrentAlias
         , runTest "use-ability ignores party members and closes a stale fight (Monster-Insel)" testAbilityIgnoresCompanionAndEndsStaleFight
+        , runTest "start room on_enter fires once at the start of a fresh run" testEnterStartRoom
+        , runTest "has_exit sees static and dynamic exits, current alias, YAML forms" testHasExitPredicate
         , runTest "MoveNPC moves to target room" testMoveNPC
         -- Equipment tests
         , runTest "equip requires the item to be carried" testEquipRequiresCarried

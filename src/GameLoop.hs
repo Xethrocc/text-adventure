@@ -26,6 +26,8 @@ module GameLoop
   , reseedRng
   , initRunSeed
   , bumpMetaRuns
+  , enterStartRoom
+  , renderStartEvents
   , SessionRequest (..)
   , IoRequest
   , RequestOutcome (..)
@@ -420,6 +422,28 @@ initRunSeed fromExplicitSave mSeed st =
 --   applied to adventures that actually use meta-progression (declared
 --   meta.* variable or existing meta file) — the Default-Invariante of the
 --   other adventures stays untouched (no meta file is ever created for them).
+-- | Start-Enter (decision 2026-10-18): a fresh run (turn 0) enters its start
+--   room — the room's `on_enter` hook and the `on: enter <room>` rules fire
+--   once, exactly as on every later entry. Before, they only fired when the
+--   player came back, so start quests stayed inactive and starting hands
+--   empty. A loaded save (turn > 0) enters nothing again.
+enterStartRoom :: GameState -> (GameState, [OutputEvent])
+enterStartRoom st
+    | turnCount (save st) /= 0 = (st, [])
+    | otherwise =
+        let rId = currentRoom (save st)
+            (st1, hookEvs) = runRoomHook roomOnEnter rId st
+            (st2, trigEvs) = fireTriggers (OnEnter rId) st1
+        in (st2, hookEvs ++ trigEvs)
+
+-- | The start-room messages as output lines (empty when nothing fired), in
+--   the same localisation as every other command output.
+renderStartEvents :: GameState -> [OutputEvent] -> [String]
+renderStartEvents st evs =
+    case renderEvents (localizeEventsForSalted (turnCount (save st)) (world st) evs) of
+        txt | all (`elem` " \n") txt -> []
+            | otherwise                -> [txt]
+
 bumpMetaRuns :: GameState -> GameState
 bumpMetaRuns st
     | not isMetaAdventure = st
@@ -626,7 +650,9 @@ runGameWithFrontend fe state0 = do
     -- without meta-progression (Default-Invariante).
     let state' = bumpMetaRuns state
     persistMeta state'
-    let (newState, message) = executeCommand Look state'
+    let (entered, enterEvs) = enterStartRoom state'
+        (newState, message) = executeCommand Look entered
+    mapM_ (feEmitLine fe) (renderStartEvents entered enterEvs)
     feEmitLine fe message
     loopGame fe (initLoopState newState)
 
@@ -848,10 +874,15 @@ transitionListSaves ls = (ls, [ReqListSaves], [])
 --   meta.runs, and requests disk persistence of the meta state.
 transitionRestart :: Word64 -> LoopState -> (LoopState, [SessionRequest], [String])
 transitionRestart seed loopState =
-    let (restarted, lookMsg) = applyLoopCommand Restart loopState
-        freshCurrent = reseedRng seed . bumpMetaRuns $ lsCurrent restarted
+    let (restarted, _) = applyLoopCommand Restart loopState
+        bumped = reseedRng seed . bumpMetaRuns $ lsCurrent restarted
+        -- Start-Enter: the fresh run enters its start room like the first one
+        -- did, then the room is described (seeing what the hook changed).
+        (freshCurrent, enterEvs) = enterStartRoom bumped
+        (_, lookMsg) = executeCommand Look freshCurrent
         freshLoop = restarted { lsCurrent = freshCurrent }
-        lines' = [renderMsgFor (world (lsCurrent loopState)) "game.restart_start" [], lookMsg]
+        lines' = [renderMsgFor (world (lsCurrent loopState)) "game.restart_start" []]
+                 ++ renderStartEvents freshCurrent enterEvs ++ [lookMsg]
     in (freshLoop, [ReqPersistMeta], lines')
 
 -- | Pure formatting of end-game screen lines: blank line, resolved end art

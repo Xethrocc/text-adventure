@@ -362,6 +362,27 @@ instance FromJSON Direction
 instance ToJSONKey Direction
 instance FromJSONKey Direction
 
+-- | Authored direction words ("down", "ne", …) as in the game parser, plus the
+--   constructor spelling ("Down"). Used where YAML names a direction as a
+--   value (e.g. the `has_exit` predicate).
+directionFromName :: String -> Maybe Direction
+directionFromName w = case map toLower w of
+    "north" -> Just North;  "n" -> Just North
+    "south" -> Just South;  "s" -> Just South
+    "east"  -> Just East;   "e" -> Just East
+    "west"  -> Just West;   "w" -> Just West
+    "up"    -> Just Up;     "u" -> Just Up
+    "down"  -> Just Down;   "d" -> Just Down
+    "northeast" -> Just Northeast; "ne" -> Just Northeast
+    "northwest" -> Just Northwest; "nw" -> Just Northwest
+    "southeast" -> Just Southeast; "se" -> Just Southeast
+    "southwest" -> Just Southwest; "sw" -> Just Southwest
+    _ -> Nothing
+
+-- | Inverse of 'directionFromName' (lower-case canonical word).
+directionName :: Direction -> String
+directionName = map toLower . show
+
 
 -- | Verb for dynamic actions. Core verbs are built in; adventures may
 --   declare additional verbs (e.g. cast, hack, dock) via the world's verb
@@ -981,6 +1002,7 @@ data Predicate
     | ResourceFull String               -- ^ K4: variable is at or above declared max
     | ResourceEmpty String              -- ^ K4: variable is at or below declared min
     | VehicleHasCondition VehicleID String -- ^ OPEN-24: active condition on vehicle
+    | HasExit RoomID Direction          -- ^ room has an exit in this direction (static or dynamic); `current` = player's room
     deriving (Show, Eq, Generic)
 
 -- | Serialize to the same compact object shape that FromJSON accepts
@@ -1004,6 +1026,7 @@ instance ToJSON Predicate where
         VarIs n v          -> object [ "var" .= n, "is" .= v ]
         HasCondition c     -> object [ "has_condition" .= c ]
         VehicleHasCondition v c -> object [ "vehicle_has_condition" .= object [ "vehicle" .= v, "condition" .= c ] ]
+        HasExit r d        -> object [ "has_exit" .= object [ "room" .= r, "dir" .= directionName d ] ]
         Knows a f          -> object [ "knows" .= actorId a, "fact" .= f ]
         KnowsRecipe a r    -> object [ "knows_recipe" .= actorId a, "id" .= r ]
         HasTaggedItem a t  -> object [ "actor_has_tag" .= object ["actor" .= actorId a, "tag" .= t ] ]
@@ -1061,6 +1084,12 @@ instance FromJSON Predicate where
         <|> (HasCondition <$> o .: "has_condition")
         <|> (do vhc <- o .: "vehicle_has_condition"
                 VehicleHasCondition <$> vhc .: "vehicle" <*> vhc .: "condition")
+        <|> (do he <- o .: "has_exit"
+                r <- he .:? "room" .!= "current"
+                dirTxt <- he .: "dir"
+                case directionFromName dirTxt of
+                    Just d  -> pure (HasExit r d)
+                    Nothing -> fail ("has_exit: unknown direction '" ++ dirTxt ++ "'"))
         -- W1: knowledge — `knows: <fact>` (player) or `{knows: <actor>, fact: <fact>}`
         <|> (do k <- o .: "knows"
                 mFact  <- o .:? "fact"

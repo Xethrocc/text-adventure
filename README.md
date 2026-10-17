@@ -169,7 +169,7 @@ no own state file. Their state lives in the existing `VarMap`
 
 ```bash
 cabal build all
-cabal test all --test-show-details=direct    # 643 engine tests, 356 worldbuilder tests, 25 TUI tests, plus the img2ascii/text2ascii/video2ascii tool suites
+cabal test all --test-show-details=direct    # 645 engine tests, 356 worldbuilder tests, 25 TUI tests, plus the img2ascii/text2ascii/video2ascii tool suites
 bash scripts/ci.sh                           # build + tests + validation + 106 E2E playthroughs
 cabal run worldbuilder -- check examples/thefog.yaml   # content statistics
 cabal run worldbuilder -- map examples/thefog.yaml     # project view: rooms, edges, quests, issues
