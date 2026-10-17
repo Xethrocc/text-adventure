@@ -22,9 +22,12 @@ echo "== 1. build =="
 # Review P2-4/P2-5: warnings used to bury the real `-Wmissing-fields` findings,
 # so the build log is now checked instead of eyeballed. `-Werror=name-shadowing`
 # and `-Werror=missing-fields` (see the .cabal files) cover the specific classes.
+# Match the compiler's own marker (as in stage 2 below): a plain "warning:" also
+# matched cabal's "Warning: The package list for 'hackage.haskell.org' is N days
+# old", which failed the gate on any machine with a stale index.
 build_log="$(mktemp)"
 cabal build all 2>&1 | tee "$build_log"
-if grep -qi "warning:" "$build_log"; then
+if grep -qE 'warning: \[(-W|GHC-)' "$build_log"; then
     echo "FAIL: the build produced warnings (see above)"
     exit 1
 fi
