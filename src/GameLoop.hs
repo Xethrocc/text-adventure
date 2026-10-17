@@ -55,7 +55,7 @@ import Verbs (verbCanonicalName)
 import SaveLoad
 import Sample (initSampleGame)
 import Frontend
-import Synth.Cache (resolveSound)
+import Synth.Cache (resolveSound, resolveTrack)
 import Control.Monad (forM_)
 import Data.Char (toLower)
 import Data.List (foldl', isPrefixOf)
@@ -367,9 +367,10 @@ sideEvents before after = concat
     , [ EvGameOver | gameOver (save after) && not (gameOver (save before)) ]
     , map sfxEvent (pendingSfx after)
     , case pendingMusic after of
-        Just (MusicStart path) -> [EvMusicStart path]
-        Just MusicStop         -> [EvMusicStop]
-        Nothing                -> []
+        Just (MusicStart path)     -> [EvMusicStart path]
+        Just (MusicStartSynth tid) -> [EvMusicStartSynth tid]
+        Just MusicStop             -> [EvMusicStop]
+        Nothing                    -> []
     , case pendingAnimation after of
         Just (frames, micros) -> [EvAnim micros frames]
         Nothing               -> []
@@ -656,6 +657,11 @@ dispatchAudioAndCutscene fe loopState = do
     let curA = cur { pendingSfx = [] }
     case pendingMusic curA of
         Just (MusicStart path) -> feStartMusic fe path
+        Just (MusicStartSynth tid) -> do
+            r <- resolveTrack (world cur) tid
+            case r of
+                Right path -> feStartMusic fe path
+                Left err   -> feDiagnostics fe [err]
         Just MusicStop         -> feStopMusic fe
         Nothing                -> pure ()
     let curB = curA { pendingMusic = Nothing }

@@ -205,7 +205,7 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import Text.Read (readMaybe)
 
 import Types.Cards
-import Synth.Patch (SynthSound)
+import Synth.Patch (SynthSound, Track)
 import Types.Vehicles
 import Types.Combat
 
@@ -1184,8 +1184,8 @@ exitRoomID (Open r) = r
 exitRoomID (Locked r _) = r
 exitRoomID (Guarded r _ _) = r
 
--- | Music command queued by the pure engine for the frontend (Audio Phase 2).
-data MusicCommand = MusicStart FilePath | MusicStop
+-- | Music command queued by the pure engine for the frontend (Audio Phase 2, Synth 5.2d).
+data MusicCommand = MusicStart FilePath | MusicStartSynth String | MusicStop
     deriving (Show, Eq, Generic)
 
 -- | Synth 5.2c: one queued sound effect. Runtime-only queue element of
@@ -1225,6 +1225,7 @@ data Effect
     | PlaySfx FilePath                            -- ^ Audio Phase 1: queue a sound effect for the frontend
     | PlaySfxSynth String                         -- ^ Synth 5.2c (S6): queue a synthesised sound effect (id into 'worldSounds')
     | PlayMusic FilePath                          -- ^ Audio Phase 2: start/switch background music loop
+    | PlayMusicSynth String                       -- ^ Synth 5.2d (S6): start/switch synthesised background music (id into 'worldTracks')
     | StopMusic                                   -- ^ Audio Phase 2: stop background music
     | SetExit RoomID Direction Exit               -- ^ Rogue Phase 3: open/rewire a dynamic exit
     | RemoveExit RoomID Direction                 -- ^ Rogue Phase 3: close a dynamic exit
@@ -2689,6 +2690,7 @@ data GameWorld = GameWorld
     , worldLanguage      :: Maybe String                             -- ^ `language:` (4.3): language pack code ("de" …); Nothing = plain English default
     , worldMessages      :: Map.Map String [String]                  -- ^ `messages:` (4.3): per-adventure catalog overrides (non-empty values only); empty map omitted from world.json. OPEN-18: a value may be a pool of alternatives — encoded as an array, a single entry stays a plain string (byte contract).
     , worldSounds        :: Map.Map String SynthSound                -- ^ Synth 5.2c: sounds: patches by id (plan-synth §3.1); empty map is omitted from world.json
+    , worldTracks        :: Map.Map String Track                     -- ^ Synth 5.2d: tracks: music tracks by id (plan-synth §3.2); empty map is omitted from world.json
     , factions           :: Map.Map FactionID [FactionLevel]         -- ^ Faction standing levels (G9a); empty map is omitted from world.json
     } deriving (Show, Eq)
 
@@ -2732,11 +2734,12 @@ instance ToJSON GameWorld where
         ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair ++ sandboxPair
           ++ procPair ++ factPair ++ statementPair ++ combinePair ++ chapterPair ++ devicePair ++ containerPair ++ progPair
           ++ startRoomPair ++ langPair ++ msgPair ++ npcInteractionPair
-          ++ vehicleInteractionPair ++ exitInteractionPair ++ factionPair ++ soundPair
+          ++ vehicleInteractionPair ++ exitInteractionPair ++ factionPair ++ soundPair ++ trackPair
       where
-        -- Synth 5.2c: omitted when empty, so world.json of every adventure
-        -- without `sounds:` stays bit-identical (same contract as procDefs).
+        -- Synth 5.2c/5.2d: omitted when empty, so world.json of every adventure
+        -- without `sounds:`/`tracks:` stays bit-identical (same contract as procDefs).
         soundPair = [ "sounds" .= worldSounds gw | not (Map.null (worldSounds gw)) ]
+        trackPair = [ "tracks" .= worldTracks gw | not (Map.null (worldTracks gw)) ]
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
         clipPair = [ "clips" .= worldClips gw | not (Map.null (worldClips gw)) ]
@@ -2853,6 +2856,7 @@ instance FromJSON GameWorld where
         <*> o .:? "language" .!= Nothing
         <*> (o .:? "messages" >>= maybe (pure Map.empty) messageMapFromJSON)
         <*> o .:? "sounds" .!= Map.empty
+        <*> o .:? "tracks" .!= Map.empty
         <*> o .:? "factions" .!= Map.empty
 
 -- | Encode item-on-item outcomes as objects (P2-9, K11c).

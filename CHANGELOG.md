@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Synth Stufe 5.2d: Musik-Tracks (`docs/plan-synth.md`)
+
+- **Kern-Typen & Track-Renderer (`src/Synth/Patch.hs`, `src/Synth/Render.hs`):**
+  - Neue Typen `Track` (`trBpm`, `trSteps`, `trLoop`, `trInstruments`, `trChannels`, `trOrder`), `Channel` (`chInstrument`, `chPatterns`, `chPattern`, `mkChannel`) und `StepToken` (`StepNote Double | StepHold | StepOff`).
+  - O3 Pattern-Syntax: Notenparser `parseNote` (`A`–`G`, `#`/`b`, Oktaven `0`–`8`, gleichstufige 12-Ton-Tabelle auf `A4 = 440 Hz` + binäre Oktavskalierung ohne `libm` für volle WASM-Parität), `.` (Halten/Pause), `-` (Note-off) im Sechzehntel-Raster ($\text{Step} = 15 / \text{bpm}\,\text{s}$).
+  - Mehrfach-Patterns & `order:`: Kanäle unterstützen sowohl `pattern: "<steps>"` als auch `patterns: ["<pat0>", "<pat1>", ...]` mit optionaler 0-basierter Abspielreihenfolge `order: [Int]` auf Track-Ebene.
+  - `renderTrack :: String -> Track -> [Int16]` (22050 Hz, mono, 16 bit PCM, O4 Spitzenbegrenzung auf −3 dBFS, S7-Obergrenze ≤ 120 s) mit $O(N)$-Segmentmischer (`mixSegments`) und **Loop-Naht** (`trLoop = True` bricht die über das Track-Ende hinausragende `release`-Fahne phasen- und hüllkurvenstetig in den Beginn von Step 0 um).
+- **Welt, Effekte, Cache & Protokoll (`src/Types/Core.hs`, `src/Types/Output.hs`, `src/Effects.hs`, `src/Synth/Cache.hs`, `src/GameLoop.hs`):**
+  - `GameWorld.worldTracks :: Map String Track`, in `ToJSON GameWorld` nur bei nicht-leerer Map als `"tracks"` serialisiert (Byte-Vertrag).
+  - Neuer Effekt-Konstruktor `PlayMusicSynth String` (S6), `MusicCommand.MusicStartSynth String` und Protokoll-Event `EvMusicStartSynth String` (`{"type":"music_start","synth":"<id>"}`; Golden `test/golden/protocol/server_events.json` erweitert).
+  - `Synth.Cache.resolveTrack` / `ensureTrackRendered` rendert Tracks inhaltsadressiert in den Synth-Cache und übergibt den WAV-Pfad an die unveränderte `feStartMusic :: FilePath -> IO ()`-Seam (S4; `stop_music` stoppt Datei- wie Synth-Musik).
+- **Worldbuilder & CLI (`worldbuilder/src/Worldbuilder/`):**
+  - Top-Level-Sektion `tracks:` und Objektform `music: {synth: <id>}` (Stringform `music: <pfad>` bleibt Datei; `Export.collectAssetRefs` ignoriert Synth-Musik).
+  - Validierung: `UnknownSynthTrack`, `SynthBadNote` (inkl. 1-basierter Spalte bzw. Step-Anzahl-Abweichung), `SynthUnknownInstrument`, `SynthTooLong` (> 120 s), `SynthParamRange` (`bpm` 20–300, `steps` 1–256, `order:`-Indizes, Instrument-Parameter), `SynthTooManyLayers` (> 4 Kanäle), `SynthBadPatch` (z. B. `freq`/`dur`/`sweep` im Instrument), `SynthIdClash` (`sounds:` vs. `tracks:`) sowie Warnung `UnusedSynthTrack`.
+  - `worldbuilder synth list/render/preview` unterstützt neben `sounds:` auch `tracks:`.
+- **Fixture, E2E & Doku:**
+  - `examples/fixtures/synth.yaml` und `ci/e2e/synth.expect` um 2-Kanal-Track `nebel` (`order: [0, 1]`), `music: {synth: nebel}` und `stop_music: true` erweitert.
+  - Abschnitt „Synth-Tracks" in `docs/adventure-schema.md`, Event-Katalog in `docs/protocol-v1.md` und Festlegung/Status in `docs/plan-synth.md` dokumentiert.
+
 ### Synth Stufe 5.2c: SFX im Spiel + Autorenform (`docs/plan-synth.md`)
 
 - **Kern-Typen & Effekte (`src/Types/Core.hs`, `src/Effects.hs`):**

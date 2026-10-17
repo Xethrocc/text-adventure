@@ -47,6 +47,7 @@ import qualified Data.Text.Encoding as TE
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString as BS
 import Types as E
+import qualified Synth.Patch as SP
 import Game (emptyGameState, evalPredicate)
 import Validate (validateWorld, validateWorldWithFlags, validateGameState, ValidationError (..))
 
@@ -88,6 +89,7 @@ minWorld = E.GameWorld
     , worldLanguage = Nothing
     , worldMessages = Map.empty
     , worldSounds = Map.empty
+    , worldTracks = Map.empty
     , factions = Map.empty
     }
 
@@ -239,6 +241,7 @@ minAdventure room = Adventure
     , advLanguage = Nothing
     , advMessages = Map.empty
     , advSounds = Map.empty
+    , advTracks = Map.empty
     }
 
 -- ===== Rogue Phase 1: authored game policy =====
@@ -5036,6 +5039,9 @@ tests =
     -- Synth 5.2c: sounds: + sfx: {synth: <id>} + validation codes
     , ("synth 5.2c: sounds: single-voice & layers compile, sfx:{synth} -> PlaySfxSynth, export excludes synth", testSynthCompileAndExport52c)
     , ("synth 5.2c: validation codes (UnknownSynthSound, SynthTooLong, SynthParamRange, SynthTooManyLayers, SynthBadPatch, UnusedSynthSound)", testSynthValidationCodes52c)
+    -- Synth 5.2d: tracks: + music: {synth: <id>} + order:/patterns + validation codes
+    , ("synth 5.2d: tracks: single-pattern & order:/patterns compile, music:{synth} -> PlayMusicSynth, export excludes synth", testSynthTracksCompileAndExport52d)
+    , ("synth 5.2d: validation codes (UnknownSynthTrack, SynthBadNote, SynthUnknownInstrument, SynthTooLong, SynthParamRange, SynthTooManyLayers, SynthIdClash, UnusedSynthTrack)", testSynthTracksValidationCodes52d)
     ]
 
 -- | Synth 5.2c: `sounds:` compiles single-voice and `{layers: [...]}` patches
@@ -5149,6 +5155,252 @@ testSynthValidationCodes52c = do
     r6 <- expectTrue ("UnusedSynthSound & UnknownYamlKey in " ++ show w6)
             ("UnusedSynthSound" `elem` w6 && "UnknownYamlKey" `elem` w6)
     pure (and [r1, r2, r3, r4, r5, r6])
+
+-- | Synth 5.2d: `tracks:` compiles single-pattern (`pattern:`) and multi-pattern
+--   (`patterns:` + `order:`) tracks into `worldTracks`, `music: {synth: <id>}`
+--   compiles to `PlayMusicSynth`, `stop_music: true` compiles to `StopMusic`,
+--   and `collectAssetRefs` ignores synth music references (only file `music:` are bundled).
+testSynthTracksCompileAndExport52d :: IO Bool
+testSynthTracksCompileAndExport52d = do
+    let yaml = unlines
+            [ "name: Synth Track Test"
+            , "start_room: r"
+            , "rooms:"
+            , "  - id: r"
+            , "    name: R"
+            , "    desc: d"
+            , "    on_enter:"
+            , "      - music: {synth: nebel}"
+            , "      - music: {synth: boss}"
+            , "      - music: audio/theme.ogg"
+            , "      - stop_music: true"
+            , "tracks:"
+            , "  nebel:"
+            , "    bpm: 90"
+            , "    steps: 8"
+            , "    loop: true"
+            , "    instruments:"
+            , "      pad:  { wave: triangle, attack: 0.08, decay: 0.2, sustain: 0.6, release: 0.4, volume: 0.35 }"
+            , "      bell: { wave: sine,     attack: 0.005, decay: 0.3, sustain: 0.0, release: 0.5, volume: 0.25 }"
+            , "    channels:"
+            , "      - instrument: pad"
+            , "        pattern: \"A2 . . . E3 . . .\""
+            , "      - instrument: bell"
+            , "        pattern: \". . E5 . . . - .\""
+            , "  boss:"
+            , "    bpm: 120"
+            , "    steps: 4"
+            , "    loop: false"
+            , "    order: [0, 1, 0]"
+            , "    instruments:"
+            , "      lead: { wave: square, duty: 0.25, attack: 0.01, decay: 0.05, sustain: 0.7, release: 0.1, volume: 0.4 }"
+            , "    channels:"
+            , "      - instrument: lead"
+            , "        patterns:"
+            , "          - \"C4 . G4 .\""
+            , "          - \"F#4 . Bb3 -\""
+            ]
+    case decode1 (BLC.pack yaml) of
+        Left (_, err) -> expectTrue ("decode failed: " ++ err) False
+        Right adv -> do
+            rAssets <- expectEqual ["audio/theme.ogg"] (collectAssetRefs adv)
+            case compileAdventure adv of
+                Left errs -> expectTrue ("compile failed: " ++ issuesText errs) False
+                Right cr -> do
+                    rWarns <- expectEqual [] (crWarnings cr)
+                    let tracks = E.worldTracks (crWorld cr)
+                    rSize <- expectEqual 2 (Map.size tracks)
+                    rNebel <- case Map.lookup "nebel" tracks of
+                        Nothing -> expectTrue "nebel track present" False
+                        Just tr -> do
+                            a <- expectEqual 90 (SP.trBpm tr)
+                            b <- expectEqual 8 (SP.trSteps tr)
+                            c <- expectEqual True (SP.trLoop tr)
+                            d <- expectEqual [] (SP.trOrder tr)
+                            e <- expectEqual 2 (length (SP.trChannels tr))
+                            pure (and [a, b, c, d, e])
+                    rBoss <- case Map.lookup "boss" tracks of
+                        Nothing -> expectTrue "boss track present" False
+                        Just tr -> do
+                            a <- expectEqual 120 (SP.trBpm tr)
+                            b <- expectEqual 4 (SP.trSteps tr)
+                            c <- expectEqual False (SP.trLoop tr)
+                            d <- expectEqual [0, 1, 0] (SP.trOrder tr)
+                            e <- expectEqual [["C4 . G4 .", "F#4 . Bb3 -"]] (map SP.chPatterns (SP.trChannels tr))
+                            pure (and [a, b, c, d, e])
+                    let rEffects = AOPlayMusicSynth "nebel" `elem` allAOutcomes adv
+                                && E.Sequence [ E.PlayMusicSynth "nebel"
+                                              , E.PlayMusicSynth "boss"
+                                              , E.PlayMusic "audio/theme.ogg"
+                                              , E.StopMusic ]
+                                   `elem` allWorldEffects (crWorld cr)
+                    rEff <- expectTrue "PlayMusicSynth, PlayMusic, StopMusic in world effects" rEffects
+                    pure (and [rAssets, rWarns, rSize, rNebel, rBoss, rEff])
+
+-- | Synth 5.2d: verify track validation codes (`UnknownSynthTrack`, `SynthBadNote` with column,
+--   `SynthUnknownInstrument`, `SynthTooLong` > 120 s, `SynthParamRange`, `SynthTooManyLayers` > 4 channels,
+--   `SynthIdClash`, `UnusedSynthTrack`, and `SynthBadPatch` when freq/dur are in an instrument).
+testSynthTracksValidationCodes52d :: IO Bool
+testSynthTracksValidationCodes52d = do
+    let baseRoom effs = unlines $
+            [ "name: T"
+            , "start_room: r"
+            , "rooms:"
+            , "  - id: r"
+            , "    name: R"
+            , "    desc: d"
+            ] ++ (if null effs then [] else "    on_enter:" : map ("      - " ++) effs)
+        issuesOf yaml = case decode1 (BLC.pack yaml) of
+            Left _ -> ([], [])
+            Right adv -> case compileAdventure adv of
+                Left errs -> (errs, [])
+                Right cr  -> ([], crWarnings cr)
+        codesOf yaml = let (es, ws) = issuesOf yaml in (map ciCode es, map ciCode ws)
+    -- 1. UnknownSynthTrack (music: {synth: ghost} without tracks.ghost)
+    let (e1, _) = codesOf (baseRoom ["music: {synth: ghost}"])
+    r1 <- expectTrue ("UnknownSynthTrack in " ++ show e1) ("UnknownSynthTrack" `elem` e1)
+    -- 2. SynthBadNote (invalid note token H4 reports column, or wrong step count)
+    let badNoteYaml = baseRoom ["music: {synth: t}"] ++ unlines
+            [ "tracks:"
+            , "  t:"
+            , "    bpm: 120"
+            , "    steps: 4"
+            , "    instruments:"
+            , "      p: { wave: sine }"
+            , "    channels:"
+            , "      - instrument: p"
+            , "        pattern: \"C4 . H4 -\""
+            ]
+        (e2Issues, _) = issuesOf badNoteYaml
+    r2a <- expectTrue ("SynthBadNote in " ++ show (map ciCode e2Issues))
+            (any (\i -> ciCode i == "SynthBadNote" && "column 6" `isInfixOf` ciMessage i) e2Issues)
+    let wrongStepsYaml = baseRoom ["music: {synth: t}"] ++ unlines
+            [ "tracks:"
+            , "  t:"
+            , "    bpm: 120"
+            , "    steps: 4"
+            , "    instruments:"
+            , "      p: { wave: sine }"
+            , "    channels:"
+            , "      - instrument: p"
+            , "        pattern: \"C4 . -\""
+            ]
+        (e2b, _) = codesOf wrongStepsYaml
+    r2b <- expectTrue ("SynthBadNote on step count mismatch in " ++ show e2b) ("SynthBadNote" `elem` e2b)
+    -- 3. SynthUnknownInstrument (channel references instrument not in instruments:)
+    let unkInstYaml = baseRoom ["music: {synth: t}"] ++ unlines
+            [ "tracks:"
+            , "  t:"
+            , "    bpm: 120"
+            , "    steps: 4"
+            , "    instruments:"
+            , "      pad: { wave: sine }"
+            , "    channels:"
+            , "      - instrument: flute"
+            , "        pattern: \"C4 . . -\""
+            ]
+        (e3, _) = codesOf unkInstYaml
+    r3 <- expectTrue ("SynthUnknownInstrument in " ++ show e3) ("SynthUnknownInstrument" `elem` e3)
+    -- 4. SynthTooLong (track > 120 s: e.g. bpm 20, steps 200 => 15/20 * 200 = 150 s > 120 s)
+    let tooLongYaml = baseRoom ["music: {synth: t}"] ++ unlines
+            [ "tracks:"
+            , "  t:"
+            , "    bpm: 20"
+            , "    steps: 200"
+            , "    instruments:"
+            , "      p: { wave: sine }"
+            , "    channels:"
+            , "      - instrument: p"
+            , "        pattern: \"" ++ unwords (replicate 200 ".") ++ "\""
+            ]
+        (e4, _) = codesOf tooLongYaml
+    r4 <- expectTrue ("SynthTooLong in " ++ show e4) ("SynthTooLong" `elem` e4)
+    -- 5. SynthTooManyLayers (> 4 channels)
+    let fiveChYaml = baseRoom ["music: {synth: t}"] ++ unlines
+            [ "tracks:"
+            , "  t:"
+            , "    bpm: 120"
+            , "    steps: 2"
+            , "    instruments:"
+            , "      p: { wave: sine }"
+            , "    channels:"
+            , "      - { instrument: p, pattern: \"C4 .\" }"
+            , "      - { instrument: p, pattern: \"C4 .\" }"
+            , "      - { instrument: p, pattern: \"C4 .\" }"
+            , "      - { instrument: p, pattern: \"C4 .\" }"
+            , "      - { instrument: p, pattern: \"C4 .\" }"
+            ]
+        (e5, _) = codesOf fiveChYaml
+    r5 <- expectTrue ("SynthTooManyLayers in " ++ show e5) ("SynthTooManyLayers" `elem` e5)
+    -- 6. SynthParamRange (bpm out of 20..300 or order index out of bounds)
+    let badBpmYaml = baseRoom ["music: {synth: t}"] ++ unlines
+            [ "tracks:"
+            , "  t:"
+            , "    bpm: 500"
+            , "    steps: 2"
+            , "    instruments:"
+            , "      p: { wave: sine }"
+            , "    channels:"
+            , "      - { instrument: p, pattern: \"C4 .\" }"
+            ]
+        badOrderYaml = baseRoom ["music: {synth: t}"] ++ unlines
+            [ "tracks:"
+            , "  t:"
+            , "    bpm: 120"
+            , "    steps: 2"
+            , "    order: [0, 2]"
+            , "    instruments:"
+            , "      p: { wave: sine }"
+            , "    channels:"
+            , "      - instrument: p"
+            , "        patterns: [\"C4 .\", \"G4 .\"]"
+            ]
+        (e6a, _) = codesOf badBpmYaml
+        (e6b, _) = codesOf badOrderYaml
+    r6 <- expectTrue "SynthParamRange on bpm and order index"
+            ("SynthParamRange" `elem` e6a && "SynthParamRange" `elem` e6b)
+    -- 7. SynthBadPatch when an instrument declares freq/dur/sweep
+    let instFreqYaml = baseRoom ["music: {synth: t}"] ++ unlines
+            [ "tracks:"
+            , "  t:"
+            , "    bpm: 120"
+            , "    steps: 2"
+            , "    instruments:"
+            , "      p: { wave: sine, freq: 440 }"
+            , "    channels:"
+            , "      - { instrument: p, pattern: \"C4 .\" }"
+            ]
+        (e7, _) = codesOf instFreqYaml
+    r7 <- expectTrue ("SynthBadPatch on instrument freq in " ++ show e7) ("SynthBadPatch" `elem` e7)
+    -- 8. SynthIdClash (same id in sounds: and tracks:)
+    let clashYaml = baseRoom ["sfx: {synth: doppelt}", "music: {synth: doppelt}"] ++ unlines
+            [ "sounds:"
+            , "  doppelt: { wave: sine, freq: 440, dur: 0.1 }"
+            , "tracks:"
+            , "  doppelt:"
+            , "    bpm: 120"
+            , "    steps: 2"
+            , "    instruments:"
+            , "      p: { wave: sine }"
+            , "    channels:"
+            , "      - { instrument: p, pattern: \"C4 .\" }"
+            ]
+        (e8, _) = codesOf clashYaml
+    r8 <- expectTrue ("SynthIdClash in " ++ show e8) ("SynthIdClash" `elem` e8)
+    -- 9. UnusedSynthTrack warning
+    let unusedTrackYaml = baseRoom [] ++ unlines
+            [ "tracks:"
+            , "  stille:"
+            , "    bpm: 120"
+            , "    steps: 2"
+            , "    instruments:"
+            , "      p: { wave: sine }"
+            , "    channels:"
+            , "      - { instrument: p, pattern: \"C4 .\" }"
+            ]
+        (_, w9) = codesOf unusedTrackYaml
+    r9 <- expectTrue ("UnusedSynthTrack in " ++ show w9) ("UnusedSynthTrack" `elem` w9)
+    pure (and [r1, r2a, r2b, r3, r4, r5, r6, r7, r8, r9])
 
 
 -- ---------------------------------------------------------------------------

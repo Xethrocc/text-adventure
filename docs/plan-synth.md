@@ -1,6 +1,6 @@
 # Plan: Software-Synth für Autoren (Phase 5.2)
 
-Stand: 2026-10-17, Code-Stand `cfbf380`. **Status: Design abgenommen (5.2a, 5.2b, 5.2c erledigt), nächste Stufe 5.2d.** Ersetzt die Zeile 5.2 („Synth-Tab") in
+Stand: 2026-10-17, Code-Stand `cfbf380`. **Status: Design abgenommen (5.2a, 5.2b, 5.2c, 5.2d erledigt), nächste Stufe 5.2e.** Ersetzt die Zeile 5.2 („Synth-Tab") in
 `implementierungsplan_engine_review_2026-09.md` und beantwortet dort den offenen Punkt
 „5.2: Datenmodell und Render-Ort des Synths".
 
@@ -111,7 +111,15 @@ tracks:
 ```
 
 Notation: Notenname + Oktave (`C4`, `F#3`, `Bb2`), `.` = Pause/Halten, `-` = Note-off.
-Die Raster-Syntax ist entschieden (O3); Details wie Mehrfach-Patterns/`order:` werden zu Beginn von Stufe 5.2d festgezurrt.
+Die Raster-Syntax ist entschieden (O3).
+
+**Festlegung Mehrfach-Patterns & `order:` (5.2d):**
+- Ein Kanal deklariert entweder `pattern: "<steps>"` (Einzel-Pattern, äquivalent zu `patterns: ["<steps>"]`) **oder** `patterns: ["<pat0>", "<pat1>", ...]` (Liste von Pattern-Strings, jeweils mit exakt `steps:` Sechzehntel-Tokens; gleichzeitige Angabe von `pattern:` und `patterns:` ist ein `SynthBadPatch`-Fehler).
+- `order: [Int]` auf Track-Ebene ist optional und enthält 0-basierte Indizes in die `patterns:`-Liste jedes Kanals (z. B. `order: [0, 0, 1, 0]`).
+- Fehlt `order:` (oder ist leer), ist die effektive Reihenfolge `[0 .. k - 1]`, wobei `k` die Anzahl der Patterns des ersten Kanals ist (bei Einzel-Pattern `pattern:` also `[0]`).
+- Jeder Index `i` in der effektiven Reihenfolge muss für jeden Kanal gültig sein (`0 <= i < length patterns`), andernfalls meldet der Compiler `SynthParamRange`.
+- Die Gesamtdauer des Tracks beträgt `length effectiveOrder * steps * (15.0 / bpm)` Sekunden und darf **120 s** (S7) nicht überschreiten (`SynthTooLong`).
+- In `ToJSON Channel` wird ein einzelnes Pattern kompakt als `"pattern": "..."` serialisiert, mehrere Patterns als `"patterns": [...]`; `trOrder` wird in `ToJSON Track` nur geschrieben, wenn `not (null trOrder)`.
 
 ### 3.3 Effekte
 
@@ -131,8 +139,10 @@ data Wave  = Sine | Square | Saw | Triangle | Noise
 data Voice = Voice { vWave :: Wave, vFreq :: Double, vSweep :: Double, vDuty :: Double
                    , vDur :: Double, vEnv :: Adsr, vVolume :: Double }
 newtype SynthSound = SynthSound [Voice]          -- 1–4 Layer
+data Channel = Channel { chInstrument :: String, chPatterns :: [String] }
 data Track = Track { trBpm :: Int, trSteps :: Int, trLoop :: Bool
-                   , trInstruments :: Map String Voice, trChannels :: [Channel] }
+                   , trInstruments :: Map String Voice, trChannels :: [Channel]
+                   , trOrder :: [Int] }
 
 -- src/Types/Core.hs
 data SoundRef = SoundFile FilePath | SoundSynth String   -- runtime-only Queue-Element
@@ -223,7 +233,7 @@ Harte Fehler (stabile Codes):
 | `SynthUnknownInstrument` | Kanal nennt nicht deklariertes Instrument |
 | `SynthIdClash` | gleiche ID in `sounds:` und `tracks:` |
 
-Warnungen: `UnusedSynthSound` (deklariert, nie referenziert) — im bestehenden SWarning-Kanal.
+Warnungen: `UnusedSynthSound`, `UnusedSynthTrack` (deklariert, nie referenziert) — im bestehenden SWarning-Kanal.
 
 ### 4.4 Autorenwerkzeug
 
@@ -269,12 +279,12 @@ Jede Stufe endet mit grünem `scripts/ci.sh`, CHANGELOG-Eintrag und aktuellen RE
 - **Byte-Nachweis:** alle gelieferten Abenteuer mit `cfbf380` und mit dem neuen Stand
   kompilieren → `world.json`/`save.json` identisch; dazu kommt nur das neue Fixture.
 
-### 5.2d — Musik-Tracks *(M–L)*
+### 5.2d — Musik-Tracks *(M–L)* — **Erledigt (2026-10-17)**
 
-- Pattern-Syntax (O3), `Track`, `renderTrack`, `music: {synth: …}`, `MusicStartSynth`.
-- Loop-Naht: letzter Step klingt in den ersten aus (Release wird umgebrochen), damit der
-  Helper-Loop nicht knackt; Test auf Sample-Kontinuität an der Naht.
-- Validierung `SynthBadNote`, `SynthUnknownInstrument`, `SynthTooLong`.
+- Pattern-Syntax (O3), `Track`, `Channel` (`pattern:` + `patterns:` mit `order:`), `renderTrack`, `music: {synth: …}`, `PlayMusicSynth`, `MusicStartSynth`, `EvMusicStartSynth`.
+- Loop-Naht: letzter Step klingt in den ersten aus (Release wird bei `loop: true` über die Loop-Grenze in Step 0 umgebrochen), damit der Helper-Loop nicht knackt; Test auf Sample-Kontinuität an der Naht.
+- Validierung `UnknownSynthTrack`, `SynthBadNote` (mit Spalte), `SynthUnknownInstrument`, `SynthTooLong` (> 120 s), `SynthIdClash`, `UnusedSynthTrack`.
+- Fixture `examples/fixtures/synth.yaml` + E2E `ci/e2e/synth.*` + Protokoll-Golden `server_events.json` erweitert; Byte-Vertrag für bestehende Abenteuer nachgewiesen.
 
 ### 5.2e — TUI-Audio *(S, unabhängig)*
 

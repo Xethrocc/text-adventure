@@ -1902,6 +1902,7 @@ testProtocolServerMsgRoundTrip = do
             , EvSfx "sounds/door.wav"
             , EvSfxSynth "alarm"
             , EvMusicStart "music/ambient.ogg"
+            , EvMusicStartSynth "nebel"
             , EvMusicStop
             , EvRoomChanged "dungeon"
             , EvQuestUpdate
@@ -1933,6 +1934,7 @@ testProtocolGoldenDeterministic = do
             , EvSfx "sounds/door.wav"
             , EvSfxSynth "alarm"
             , EvMusicStart "music/ambient.ogg"
+            , EvMusicStartSynth "nebel"
             , EvMusicStop
             , EvRoomChanged "dungeon"
             , EvQuestUpdate
@@ -13681,6 +13683,10 @@ main = do
         -- Synth 5.2c: SFX im Spiel + Cache + JSON
         , runTest "synth: SoundRef + PlaySfxSynth + EvSfxSynth roundtrip & worldSounds JSON (5.2c)" testSynthCoreAndEffect52c
         , runTest "synth: Synth.Cache deterministic hit and IO dispatch (5.2c)" testSynthCacheAndDispatch52c
+        -- Synth 5.2d: Musik-Tracks (Noten, Raster, order:, Loop-Naht,Laenge, Effekte, Cache)
+        , runTest "synth: note parsing (#/b, octaves, bounds), pattern grid, order: & duration (5.2d)" testSynthNoteAndPattern52d
+        , runTest "synth: renderTrack length, hold/off, order:, peak limit & loop-seam continuity (5.2d)" testSynthRenderTrackAndLoopSeam52d
+        , runTest "synth: PlayMusicSynth + EvMusicStartSynth + worldTracks JSON & cache (5.2d)" testSynthTrackCoreAndCache52d
         ]
     when (not (and results)) exitFailure
 
@@ -14940,4 +14946,227 @@ testSynthCacheAndDispatch52c = do
     okMissing <- expectTrue "unknown synth id yields Left" (isLeft rMissing)
     _ <- try (removeDirectoryRecursive cacheDir) :: IO (Either SomeException ())
     pure (and [okFile, okHit, okExists, okKeys, okMissing])
+
+-- ---------------------------------------------------------------------------
+-- Synth 5.2d: Music Tracks (note parsing, grid, order:, loop seam, effects)
+-- ---------------------------------------------------------------------------
+
+-- | Synth 5.2d: Note parsing (A-G, #/b, octaves 0..8, libm-free table),
+--   step-grid tokenization/parsing, `order:`, and track duration calculation.
+testSynthNoteAndPattern52d :: IO Bool
+testSynthNoteAndPattern52d = do
+    -- 1. Exact octave powers of 2 around A4 = 440.0
+    rA4 <- expectEqual (Just 440.0) (SP.parseNote "A4")
+    rA3 <- expectEqual (Just 220.0) (SP.parseNote "A3")
+    rA5 <- expectEqual (Just 880.0) (SP.parseNote "A5")
+    rA0 <- expectEqual (Just 27.5)  (SP.parseNote "A0")
+    -- 2. Enharmonic pairs (# and b) map to identical frequencies
+    rEnh1 <- expectEqual (SP.parseNote "C#4") (SP.parseNote "Db4")
+    rEnh2 <- expectEqual (SP.parseNote "D#3") (SP.parseNote "Eb3")
+    rEnh3 <- expectEqual (SP.parseNote "F#3") (SP.parseNote "Gb3")
+    rEnh4 <- expectEqual (SP.parseNote "G#5") (SP.parseNote "Ab5")
+    rEnh5 <- expectEqual (SP.parseNote "A#2") (SP.parseNote "Bb2")
+    -- 3. Monotonic pitch order within an octave: C4 < C#4 < D4 < D#4 < E4 < F4 < F#4 < G4 < G#4 < A4 < Bb4 < B4 < C5
+    let chromatic = ["C4", "C#4", "D4", "Eb4", "E4", "F4", "F#4", "G4", "Ab4", "A4", "Bb4", "B4", "C5"]
+        freqs = [ f | Just f <- map SP.parseNote chromatic ]
+    rMono <- expectTrue "chromatic scale strictly ascending"
+                (length freqs == 13 && and (zipWith (<) freqs ( drop 1 freqs )))
+    -- 4. Bounds and invalid notes rejected with Nothing
+    let badNotes = ["", "A", "4", "H4", "C9", "C-1", "Cb4", "E#4", "Fb4", "B#4", "C##4", "Bb", "C4x"]
+    rBad <- expectTrue "invalid note tokens return Nothing" (all (isNothing . SP.parseNote) badNotes)
+    -- 5. Pattern grid parsing (notes, '.', '-') and column-accurate error reporting
+    let patOk = SP.parsePattern "C4 . - F#3 . Bb2 - ."
+    rGrid <- case patOk of
+        Right [SP.StepNote c4, SP.StepHold, SP.StepOff, SP.StepNote fs3, SP.StepHold, SP.StepNote bb2, SP.StepOff, SP.StepHold] ->
+            expectTrue "parsed 8 step tokens" (c4 > 260 && c4 < 263 && fs3 > 184 && fs3 < 186 && bb2 > 116 && bb2 < 117)
+        _ -> expectTrue ("expected 8 parsed steps, got: " ++ show patOk) False
+    let patBad = SP.parsePattern "C4 . H4 -"
+    rBadCol <- case patBad of
+        Left (col, tok) -> expectEqual (6, "H4") (col, tok)
+        Right _ -> expectTrue "expected Left on H4" False
+    -- 6. Track duration and effectiveOrder
+    let tr1 = SP.defaultTrack { SP.trBpm = 120, SP.trSteps = 16 } -- 16 * (15/120) = 2.0 s
+        tr2 = tr1 { SP.trOrder = [0, 1, 0] }                     -- 48 * (15/120) = 6.0 s
+    rDur1 <- expectEqual 2.0 (SP.trackDurationSeconds tr1)
+    rDur2 <- expectEqual 6.0 (SP.trackDurationSeconds tr2)
+    rOrd1 <- expectEqual [0] (SP.effectiveOrder tr1)
+    rOrd2 <- expectEqual [0, 1, 0] (SP.effectiveOrder tr2)
+    pure (and [rA4, rA3, rA5, rA0, rEnh1, rEnh2, rEnh3, rEnh4, rEnh5, rMono, rBad, rGrid, rBadCol, rDur1, rDur2, rOrd1, rOrd2])
+
+-- | Synth 5.2d: `renderTrack` length, `.` hold vs `-` note-off, `order:` multi-pattern
+--   sequencing, `-3 dBFS` peak ceiling, and loop-seam sample continuity (release wrap-around).
+testSynthRenderTrackAndLoopSeam52d :: IO Bool
+testSynthRenderTrackAndLoopSeam52d = do
+    let padInst = SP.defaultVoice
+            { SP.vWave = SP.Triangle
+            , SP.vEnv  = synthEnv 0.01 0.05 0.7 0.25
+            , SP.vVolume = 0.6
+            }
+        leadInst = SP.defaultVoice
+            { SP.vWave = SP.Square
+            , SP.vDuty = 0.25
+            , SP.vEnv  = synthEnv 0.005 0.02 0.8 0.1
+            , SP.vVolume = 0.5
+            }
+        insts = Map.fromList [("pad", padInst), ("lead", leadInst)]
+        -- 120 BPM => 1 step = 0.125 s = 2756.25 samples; 8 steps = 1.0 s = 22050 samples
+        baseTrack = SP.Track
+            { SP.trBpm = 120
+            , SP.trSteps = 8
+            , SP.trLoop = True
+            , SP.trInstruments = insts
+            , SP.trChannels = [SP.mkChannel "pad" "A3 . . . - . . ."]
+            , SP.trOrder = []
+            }
+    -- 1. Exact sample count from bpm, steps, and order:
+    let out1 = SR.renderTrack "t1" baseTrack
+    rLen1 <- expectEqual 22050 (length out1)
+    let multiTrack = baseTrack
+            { SP.trChannels = [SP.Channel "pad" ["A3 . . . - . . .", "E4 . . . - . . ."]]
+            , SP.trOrder = [0, 1, 0]
+            }
+        outMulti = SR.renderTrack "tm" multiTrack
+    rLenMulti <- expectEqual (3 * 22050) (length outMulti)
+    -- 2. Equivalence: a 2-pattern track with order [0, 1] produces the exact same samples
+    --    as a single-pattern track of twice the steps with the concatenated pattern
+    let twoPat = baseTrack
+            { SP.trLoop = False
+            , SP.trChannels = [SP.Channel "lead" ["A4 . . - . . . .", "E4 . . - . . . ."]]
+            , SP.trOrder = [0, 1]
+            }
+        onePat = baseTrack
+            { SP.trLoop = False
+            , SP.trSteps = 16
+            , SP.trChannels = [SP.mkChannel "lead" "A4 . . - . . . . E4 . . - . . . ."]
+            , SP.trOrder = []
+            }
+    rOrderEq <- expectEqual (SR.renderTrack "eq" onePat) (SR.renderTrack "eq" twoPat)
+    -- 3. Hold ('.') vs Note-off ('-'): holding across steps 0..3 keeps significant energy in step 2,
+    --    whereas cutting at step 1 ('A4 - . . . . . .') decays to zero after the 0.1 s release
+    let heldTrack = baseTrack { SP.trLoop = False, SP.trChannels = [SP.mkChannel "lead" "A4 . . . - . . ."] }
+        cutTrack  = baseTrack { SP.trLoop = False, SP.trChannels = [SP.mkChannel "lead" "A4 - . . . . . ."] }
+        heldSamples = SR.renderTrack "h" heldTrack
+        cutSamples  = SR.renderTrack "c" cutTrack
+        -- Step 3 starts at 0.375 s (~sample 8268). In heldTrack the note is still sustaining;
+        -- in cutTrack the note stopped at 0.125 s + 0.1 s release = 0.225 s (~sample 4961), so step 3 is 0.
+        step3Window xs = take 500 (drop 8500 xs)
+    rHoldAlive <- expectTrue "held note is non-zero in step 3" (any (/= 0) (step3Window heldSamples))
+    rCutSilent <- expectTrue "cut note is silent in step 3" (all (== 0) (step3Window cutSamples))
+    -- 4. Peak limiter (-3 dBFS = peakCeiling) on 4 loud channels
+    let loudInst = SP.defaultVoice { SP.vWave = SP.Square, SP.vEnv = synthEnv 0.001 0 1 0.01, SP.vVolume = 1.0 }
+        loudTrack = SP.Track
+            { SP.trBpm = 120
+            , SP.trSteps = 4
+            , SP.trLoop = False
+            , SP.trInstruments = Map.singleton "loud" loudInst
+            , SP.trChannels = replicate 4 (SP.mkChannel "loud" "A4 . . .")
+            , SP.trOrder = []
+            }
+        loudOut = SR.renderTrack "loud" loudTrack
+        peak = maximum (map (abs . (fromIntegral :: Int16 -> Int)) loudOut)
+        ceilI = round SP.peakCeiling :: Int
+    rPeak <- expectTrue ("peak " ++ show peak ++ " <= " ++ show ceilI ++ " and near ceiling")
+                (peak <= ceilI && peak >= ceilI - 1)
+    -- 5. Loop-Naht (5.2d): a note triggered on the last step rings out into step 0 when trLoop = True,
+    --    wrapping its release tail across the loop boundary with continuous phase and envelope.
+    --    Put the note on the last step (step 3 of a 4-step track at 120 BPM, step = 0.125 s, release = 0.2 s)
+    --    with silence on step 0 (`. . . A4` where step 0 has no note).
+    let seamInst = SP.defaultVoice
+            { SP.vWave = SP.Sine
+            , SP.vEnv  = synthEnv 0.01 0.02 0.8 0.2
+            , SP.vVolume = 0.5
+            }
+        seamTrackLoop = SP.Track
+            { SP.trBpm = 120
+            , SP.trSteps = 4
+            , SP.trLoop = True
+            , SP.trInstruments = Map.singleton "s" seamInst
+            , SP.trChannels = [SP.mkChannel "s" "- . . A4"]
+            , SP.trOrder = []
+            }
+        seamTrackNoLoop = seamTrackLoop { SP.trLoop = False }
+        loopSamples   = SR.renderTrack "seam" seamTrackLoop
+        noLoopSamples = SR.renderTrack "seam" seamTrackNoLoop
+        -- In noLoopSamples, step 0 (first 2000 samples) is completely silent (all 0).
+        -- In loopSamples, the release tail of the A4 on step 3 wraps into step 0!
+        headWindow = take 2000
+    rNoLoopZero <- expectTrue "non-loop track starts silent when step 0 has no note"
+                    (all (== 0) (headWindow noLoopSamples))
+    rLoopWrap   <- expectTrue "loop track wraps release tail of last step into step 0"
+                    (any (/= 0) (headWindow loopSamples))
+    -- Sample continuity at the loop seam: compare the step from `last loopSamples` to `head loopSamples`
+    -- against the natural maximum sample-to-sample delta of a 440 Hz sine wave at 22050 Hz
+    -- (2 * pi * 440 / 22050 * amplitude <= 0.126 * amplitude).
+    let lastS = fromIntegral (last loopSamples) :: Int
+        firstS = fromIntegral (head loopSamples) :: Int
+        seamStep = abs (firstS - lastS)
+        -- Adjacent interior samples right before the seam:
+        nTot = length loopSamples
+        prevStep = abs (fromIntegral (loopSamples !! (nTot - 1)) - fromIntegral (loopSamples !! (nTot - 2)) :: Int)
+    rSeamCont <- expectTrue ("loop seam step (" ++ show seamStep ++ ") is continuous like interior step (" ++ show prevStep ++ ")")
+                    (lastS /= 0 && firstS /= 0 && abs (seamStep - prevStep) < 150)
+    pure (and [rLen1, rLenMulti, rOrderEq, rHoldAlive, rCutSilent, rPeak, rNoLoopZero, rLoopWrap, rSeamCont])
+
+-- | Synth 5.2d: `PlayMusicSynth` effect, `EvMusicStartSynth` protocol event,
+--   `worldTracks` JSON omission when empty (Byte-Vertrag) & roundtrip when populated,
+--   and `Synth.Cache.resolveTrackIn` content-addressed WAV caching.
+testSynthTrackCoreAndCache52d :: IO Bool
+testSynthTrackCoreAndCache52d = do
+    -- 1. PlayMusicSynth sets pendingMusic = Just (MusicStartSynth <id>) and emits EvMusicStartSynth
+    let st0 = initSampleGame
+        (st1, _) = applyOutcome (PlayMusicSynth "nebel") "" st0
+    rPending <- expectEqual (Just (MusicStartSynth "nebel")) (pendingMusic st1)
+    rRng     <- expectEqual (rngState (save st0)) (rngState (save st1))
+    rEvs     <- expectEqual [EvMusicStartSynth "nebel"] (sideEvents st0 st1)
+    rText    <- expectEqual "" (renderEvents [EvMusicStartSynth "nebel"])
+    -- StopMusic overrides pendingMusic and emits EvMusicStop
+    let (st2, _) = applyOutcome StopMusic "" st1
+    rStop    <- expectEqual (Just MusicStop) (pendingMusic st2)
+    rStopEv  <- expectEqual [EvMusicStop] (sideEvents st1 st2)
+    -- 2. JSON roundtrips for EvMusicStartSynth, PlayMusicSynth, and Track
+    rEvRt  <- expectEqual (Just (EvMusicStartSynth "nebel")) (Aeson.decode (Aeson.encode (EvMusicStartSynth "nebel")))
+    rEffRt <- expectEqual (Just (PlayMusicSynth "nebel")) (Aeson.decode (Aeson.encode (PlayMusicSynth "nebel")))
+    let padVoice = SP.defaultVoice { SP.vWave = SP.Triangle, SP.vEnv = synthEnv 0.05 0.1 0.6 0.3, SP.vVolume = 0.4 }
+        nebelTrack = SP.Track
+            { SP.trBpm = 90
+            , SP.trSteps = 8
+            , SP.trLoop = True
+            , SP.trInstruments = Map.singleton "pad" padVoice
+            , SP.trChannels = [SP.Channel "pad" ["A2 . . . E3 . . .", "F2 . . . C3 . . ."]]
+            , SP.trOrder = [0, 1]
+            }
+    rTrackRt <- expectEqual (Just nebelTrack) (Aeson.decode (Aeson.encode nebelTrack))
+    -- Verify instrumentToJSON omits freq/sweep/dur (clean patch representation)
+    let trJsonStr = BLC.unpack (Aeson.encode nebelTrack)
+    rNoFreqDur <- expectTrue "instrument JSON omits freq and dur"
+                    (not ("\"freq\"" `isInfixOf` trJsonStr) && not ("\"dur\"" `isInfixOf` trJsonStr))
+    -- 3. GameWorld omits "tracks" when worldTracks is empty (Byte-Vertrag), roundtrips when populated
+    let gwEmptyBytes = BLC.unpack (Aeson.encode emptyGameWorld)
+    rOmit <- expectTrue "empty worldTracks omitted from world.json" (not ("\"tracks\"" `isInfixOf` gwEmptyBytes))
+    let gwWith = emptyGameWorld { worldTracks = Map.singleton "nebel" nebelTrack }
+    rWorldRt <- expectEqual (Just gwWith) (Aeson.decode (Aeson.encode gwWith))
+    -- 4. Synth.Cache.resolveTrackIn renders WAV on miss and hits cache deterministically
+    tmp <- getTemporaryDirectory
+    let cacheDir = tmp </> "ta-synth-cache-test-52d"
+    _ <- try (removeDirectoryRecursive cacheDir) :: IO (Either SomeException ())
+    r1 <- SC.resolveTrackIn cacheDir gwWith "nebel"
+    r2 <- SC.resolveTrackIn cacheDir gwWith "nebel"
+    okHit <- expectEqual r1 r2
+    okExists <- case r1 of
+        Right p -> do
+            ex <- doesFileExist p
+            bytes <- BL.readFile p
+            let expectedWav = SW.encodeWav SP.sampleRate (SR.renderTrack "nebel" nebelTrack)
+            pure (ex && bytes == expectedWav)
+        Left _ -> pure False
+    let otherTrack = nebelTrack { SP.trBpm = 120 }
+        k1 = SC.trackCacheKey "nebel" nebelTrack
+        k2 = SC.trackCacheKey "nebel" otherTrack
+        k3 = SC.trackCacheKey "other" nebelTrack
+    okKeys <- expectTrue "distinct trackCacheKey for different track or id" (k1 /= k2 && k1 /= k3)
+    rMissing <- SC.resolveTrackIn cacheDir gwWith "unknown_track"
+    okMissing <- expectTrue "unknown track id yields Left" (isLeft rMissing)
+    _ <- try (removeDirectoryRecursive cacheDir) :: IO (Either SomeException ())
+    pure (and [rPending, rRng, rEvs, rText, rStop, rStopEv, rEvRt, rEffRt, rTrackRt, rNoFreqDur, rOmit, rWorldRt, okHit, okExists, okKeys, okMissing])
+
 

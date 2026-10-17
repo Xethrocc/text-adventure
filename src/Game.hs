@@ -234,6 +234,7 @@ emptyGameWorld = GameWorld
     , worldLanguage      = Nothing
     , worldMessages      = Map.empty
     , worldSounds        = Map.empty
+    , worldTracks        = Map.empty
     , factions           = Map.empty
     }
 

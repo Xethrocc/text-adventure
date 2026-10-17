@@ -200,8 +200,8 @@ The engine produces output as an ordered stream of `OutputEvent` values. The pro
 | `"art"` | Monospace ASCII art with raw text and structured hotspots. | `payload`: `{ raw: String, hotspots: [{index, glyph, target}] }` |
 | `"anim"` | Multi-frame ASCII animation. | `delay_micros`: `Int`, `frames`: `[String]` |
 | `"sfx"` | Sound effect playback trigger (file path or synthesised `sounds:` patch ID, Synth 5.2c). | `path`: `FilePath` *(file)* **or** `synth`: `String` *(synth ID)* |
-| `"music_start"` | Background music start or change. | `path`: `FilePath` |
-| `"music_stop"` | Background music stop trigger. | *(no extra fields)* |
+| `"music_start"` | Background music start or change (file path or synthesised `tracks:` track ID, Synth 5.2d). | `path`: `FilePath` *(file)* **or** `synth`: `String` *(synth track ID)* |
+| `"music_stop"` | Background music stop trigger (stops both file and synth music). | *(no extra fields)* |
 | `"room_changed"` | Player moved to a new room (additive state event). | `room_id`: `String` |
 | `"quest_update"` | Quests status changed (additive state event). | *(no extra fields)* |
 | `"dialogue"` | Dialogue engaged with NPC (choices in snapshot). | *(no extra fields)* |

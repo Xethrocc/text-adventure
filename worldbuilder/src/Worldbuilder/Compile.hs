@@ -189,22 +189,266 @@ voiceRangeIssues path v = concat
             (name ++ " " ++ show x ++ " is outside " ++ show lo ++ " to " ++ show hi)
         | applicable, not (x >= lo && x <= hi) ]
 
--- | Synth 5.2c (S5): every @sfx: {synth: id}@ must name a declared sound
---   (`UnknownSynthSound`, hard error); a declared sound nobody references is
---   only a warning (`UnusedSynthSound`).
-checkSynthRefs :: Adventure -> ([CompileIssue], [CompileIssue])
-checkSynthRefs adv = (errs, warns)
+-- | Synth 5.2d (plan-synth §3.2, §4.3, O3, S7): validate the raw `tracks:`
+--   section and turn each entry into an 'SP.Track'.
+--   Hard errors (stable codes): 'SynthBadPatch', 'SynthParamRange',
+--   'SynthTooManyLayers' (> 4 channels), 'SynthUnknownInstrument',
+--   'SynthBadNote' (with 1-based column), 'SynthTooLong' (> 120 s, S7).
+compileTracks :: Adventure -> ([CompileIssue], [CompileIssue], Map.Map String SP.Track)
+compileTracks adv = (concatMap sel1 results, concatMap sel2 results, compiled)
   where
-    refs = [ sid | AOPlaySfxSynth sid <- allAOutcomes adv ]
-    declared = Map.keysSet (advSounds adv)
-    errs =
+    results = [ (tid, compileTrack tid v) | (tid, v) <- Map.toList (advTracks adv) ]
+    sel1 (_, (es, _, _)) = es
+    sel2 (_, (_, ws, _)) = ws
+    compiled = Map.fromList [ (tid, t) | (tid, (_, _, Just t)) <- results ]
+
+compileTrack :: String -> Aeson.Value -> ([CompileIssue], [CompileIssue], Maybe SP.Track)
+compileTrack tid val = case val of
+    Aeson.Object o ->
+        let unknownTrackKeys =
+                [ ciWarning base "UnknownYamlKey"
+                    ("'" ++ k ++ "' is not a known track key (expected: "
+                        ++ intercalate ", " synthTrackKeys ++ ")")
+                | key <- KM.keys o, let k = K.toString key, k `notElem` synthTrackKeys ]
+            (bpmErrs, bpm) = parseOptField (base ++ ".bpm") (SP.trBpm SP.defaultTrack) "bpm" o
+            (stepsErrs, steps) = parseOptField (base ++ ".steps") (SP.trSteps SP.defaultTrack) "steps" o
+            (loopErrs, loopFlag) = parseOptField (base ++ ".loop") (SP.trLoop SP.defaultTrack) "loop" o
+            bpmRangeErr =
+                [ ciError (base ++ ".bpm") "SynthParamRange"
+                    ("bpm " ++ show bpm ++ " is outside " ++ show SP.minBpm ++ " to " ++ show SP.maxBpm)
+                | null bpmErrs, bpm < SP.minBpm || bpm > SP.maxBpm ]
+            stepsRangeErr =
+                [ ciError (base ++ ".steps") "SynthParamRange"
+                    ("steps " ++ show steps ++ " is outside 1 to " ++ show SP.maxStepsPerPattern)
+                | null stepsErrs, steps < 1 || steps > SP.maxStepsPerPattern ]
+            (instErrs, instWarns, instKeySet, instMap) = case KM.lookup "instruments" o of
+                Nothing -> ([], [], Set.empty, Map.empty)
+                Just (Aeson.Object io) ->
+                    let pairs = [ (K.toString k, v) | (k, v) <- KM.toList io ]
+                        per = [ (iname, compileInstrument (base ++ ".instruments." ++ iname) iv)
+                              | (iname, iv) <- pairs ]
+                        es = concat [ e | (_, (e, _, _)) <- per ]
+                        ws = concat [ w | (_, (_, w, _)) <- per ]
+                        mp = Map.fromList [ (iname, iv) | (iname, (_, _, Just iv)) <- per ]
+                    in (es, ws, Set.fromList (map fst pairs), mp)
+                Just _ ->
+                    ([ ciError (base ++ ".instruments") "SynthBadPatch"
+                        "instruments must be a map of instrument patches" ], [], Set.empty, Map.empty)
+            (chanErrs, chanWarns, chans) = case KM.lookup "channels" o of
+                Nothing ->
+                    ([ ciError (base ++ ".channels") "SynthParamRange"
+                        "a track must declare at least one channel under 'channels:'" ], [], [])
+                Just (Aeson.Array arr) ->
+                    let cs = Foldable.toList arr
+                        cntErr =
+                            [ ciError (base ++ ".channels") "SynthTooManyLayers"
+                                ("a track has at most " ++ show SP.maxChannels ++ " channels, but '" ++ tid
+                                    ++ "' declares " ++ show (length cs))
+                            | length cs > SP.maxChannels ]
+                        empErr =
+                            [ ciError (base ++ ".channels") "SynthParamRange"
+                                "channels must contain at least one channel"
+                            | null cs ]
+                        per = zipWith (\i cv -> compileChannel (base ++ ".channels." ++ show (i :: Int)) steps instKeySet cv)
+                                      [0 ..] cs
+                        es = cntErr ++ empErr ++ concat [ e | (e, _, _) <- per ]
+                        ws = concat [ w | (_, w, _) <- per ]
+                        okChans = [ c | (_, _, Just c) <- per ]
+                    in (es, ws, okChans)
+                Just _ ->
+                    ([ ciError (base ++ ".channels") "SynthBadPatch"
+                        "channels must be a list of channel objects" ], [], [])
+            maxPats = maximum (1 : map (length . SP.chPatterns) chans)
+            (orderErrs, ordr) = case KM.lookup "order" o of
+                Nothing -> ([], [])
+                Just ov -> case Aeson.fromJSON ov :: Aeson.Result [Int] of
+                    Aeson.Error msg ->
+                        ([ ciError (base ++ ".order") "SynthBadPatch" ("unreadable order: " ++ msg) ], [])
+                    Aeson.Success os ->
+                        let empOrder =
+                                [ ciError (base ++ ".order") "SynthParamRange"
+                                    "order must not be empty when specified"
+                                | null os ]
+                            idxErrs =
+                                [ ciError (base ++ ".order") "SynthParamRange"
+                                    ("order index " ++ show idx ++ " is outside 0.." ++ show (maxPats - 1))
+                                | idx <- os, idx < 0 || idx >= maxPats ]
+                                ++
+                                [ ciError (base ++ ".order") "SynthParamRange"
+                                    ("order index " ++ show idx ++ " exceeds pattern count "
+                                        ++ show (length (SP.chPatterns ch)) ++ " of channel '"
+                                        ++ SP.chInstrument ch ++ "'")
+                                | ch <- chans
+                                , length (SP.chPatterns ch) > 1
+                                , idx <- os
+                                , idx >= length (SP.chPatterns ch) ]
+                        in (empOrder ++ idxErrs, os)
+            numSlots = if not (null ordr) then length ordr else maxPats
+            durSec = if bpm > 0 && steps >= 1
+                       then fromIntegral (steps * numSlots) * (15.0 / fromIntegral bpm)
+                       else 0
+            tooLongErr =
+                [ ciError base "SynthTooLong"
+                    ("rendered track duration " ++ show durSec ++ " s exceeds the limit of "
+                        ++ show SP.maxTrackSeconds ++ " s")
+                | bpm > 0, steps >= 1, durSec > SP.maxTrackSeconds ]
+            allErrs = bpmErrs ++ bpmRangeErr ++ stepsErrs ++ stepsRangeErr ++ loopErrs
+                   ++ instErrs ++ chanErrs ++ orderErrs ++ tooLongErr
+            allWarns = unknownTrackKeys ++ instWarns ++ chanWarns
+            tr = SP.Track
+                { SP.trBpm         = bpm
+                , SP.trSteps       = steps
+                , SP.trLoop        = loopFlag
+                , SP.trInstruments = instMap
+                , SP.trChannels    = chans
+                , SP.trOrder       = ordr
+                }
+        in (allErrs, allWarns, if null allErrs then Just tr else Nothing)
+    _ -> ([ ciError base "SynthBadPatch"
+              "a track must be an object (bpm, steps, loop, instruments, channels)" ], [], Nothing)
+  where
+    base = "tracks." ++ tid
+    parseOptField :: Aeson.FromJSON a => String -> a -> K.Key -> KM.KeyMap Aeson.Value -> ([CompileIssue], a)
+    parseOptField path def key o = case KM.lookup key o of
+        Nothing -> ([], def)
+        Just v  -> case Aeson.fromJSON v of
+            Aeson.Error msg -> ([ ciError path "SynthBadPatch" msg ], def)
+            Aeson.Success x -> ([], x)
+
+synthTrackKeys :: [String]
+synthTrackKeys = [ "bpm", "steps", "loop", "instruments", "channels", "order" ]
+
+synthInstrumentKeys :: [String]
+synthInstrumentKeys =
+    [ "wave", "sweep", "duty", "attack", "decay", "sustain", "release", "volume" ]
+
+synthForbiddenInstrumentKeys :: [String]
+synthForbiddenInstrumentKeys = [ "freq", "dur", "layers" ]
+
+synthChannelKeys :: [String]
+synthChannelKeys = [ "instrument", "pattern", "patterns" ]
+
+compileInstrument :: String -> Aeson.Value -> ([CompileIssue], [CompileIssue], Maybe SP.Voice)
+compileInstrument path val = case Aeson.fromJSON val of
+    Aeson.Error msg ->
+        ([ ciError path "SynthBadPatch" ("unreadable instrument: " ++ msg) ], [], Nothing)
+    Aeson.Success v ->
+        let forbiddenErrs = case val of
+                Aeson.Object o ->
+                    [ ciError path "SynthBadPatch"
+                        ("instrument must not declare '" ++ k ++ "' (instruments are patches without freq/dur)")
+                    | key <- KM.keys o, let k = K.toString key, k `elem` synthForbiddenInstrumentKeys ]
+                _ -> []
+            errs = forbiddenErrs ++ instrumentRangeIssues path v
+            unknownKeys = case val of
+                Aeson.Object o ->
+                    [ ciWarning path "UnknownYamlKey"
+                        ("'" ++ k ++ "' is not a known instrument key (expected: "
+                            ++ intercalate ", " synthInstrumentKeys ++ ")")
+                    | key <- KM.keys o
+                    , let k = K.toString key
+                    , k `notElem` synthInstrumentKeys
+                    , k `notElem` synthForbiddenInstrumentKeys ]
+                _ -> []
+        in (errs, unknownKeys, if null errs then Just v else Nothing)
+
+instrumentRangeIssues :: String -> SP.Voice -> [CompileIssue]
+instrumentRangeIssues path v = concat
+    [ range "duty" 0.05 0.95 (SP.vDuty v)
+    , range "volume" 0 1 (SP.vVolume v)
+    , range "sustain" 0 1 (SP.adSustain env)
+    , range "attack" 0 SP.maxSfxSeconds (SP.adAttack env)
+    , range "decay" 0 SP.maxSfxSeconds (SP.adDecay env)
+    , range "release" 0 SP.maxSfxSeconds (SP.adRelease env)
+    , [ ciError (path ++ ".sweep") "SynthParamRange" "sweep must be a finite number"
+      | isNaN (SP.vSweep v) || isInfinite (SP.vSweep v) ]
+    ]
+  where
+    env = SP.vEnv v
+    range :: String -> Double -> Double -> Double -> [CompileIssue]
+    range name lo hi x =
+        [ ciError (path ++ "." ++ name) "SynthParamRange"
+            (name ++ " " ++ show x ++ " is outside " ++ show lo ++ " to " ++ show hi)
+        | not (x >= lo && x <= hi) ]
+
+compileChannel :: String -> Int -> Set.Set String -> Aeson.Value -> ([CompileIssue], [CompileIssue], Maybe SP.Channel)
+compileChannel path expectedSteps declaredInsts val = case Aeson.fromJSON val of
+    Aeson.Error msg ->
+        ([ ciError path "SynthBadPatch" ("unreadable channel: " ++ msg) ], [], Nothing)
+    Aeson.Success ch ->
+        let unknownKeys = case val of
+                Aeson.Object o ->
+                    [ ciWarning path "UnknownYamlKey"
+                        ("'" ++ k ++ "' is not a known channel key (expected: "
+                            ++ intercalate ", " synthChannelKeys ++ ")")
+                    | key <- KM.keys o, let k = K.toString key, k `notElem` synthChannelKeys ]
+                _ -> []
+            instErr =
+                [ ciError (path ++ ".instrument") "SynthUnknownInstrument"
+                    ("channel references unknown instrument '" ++ SP.chInstrument ch
+                        ++ "' (not declared in track's instruments:)")
+                | SP.chInstrument ch `Set.notMember` declaredInsts ]
+            pats = SP.chPatterns ch
+            emptyPatsErr =
+                [ ciError (path ++ ".patterns") "SynthParamRange"
+                    "channel must declare at least one pattern"
+                | null pats ]
+            patIssues = concat $ zipWith checkOnePat [0 :: Int ..] pats
+            checkOnePat pIdx patStr =
+                let pPath = if length pats == 1
+                              then path ++ ".pattern"
+                              else path ++ ".patterns." ++ show pIdx
+                    toks = SP.tokenizePattern patStr
+                    badToks =
+                        [ ciError pPath "SynthBadNote"
+                            ("invalid note '" ++ tok ++ "' at column " ++ show col)
+                        | (col, tok) <- toks, isNothing (SP.parseStepToken tok) ]
+                    empPat =
+                        [ ciError pPath "SynthBadNote"
+                            "pattern must not be empty (expected note tokens, '.' or '-')"
+                        | null toks ]
+                    lenErr =
+                        [ ciError pPath "SynthBadNote"
+                            ("pattern has " ++ show (length toks) ++ " steps, expected " ++ show expectedSteps)
+                        | not (null toks), null badToks, expectedSteps >= 1, length toks /= expectedSteps ]
+                in empPat ++ badToks ++ lenErr
+            errs = instErr ++ emptyPatsErr ++ patIssues
+        in (errs, unknownKeys, if null errs then Just ch else Nothing)
+
+-- | Synth 5.2c/5.2d (S5, §4.3):
+--   * @sfx: {synth: id}@ must name a declared sound ('UnknownSynthSound');
+--     unused sounds warn ('UnusedSynthSound').
+--   * @music: {synth: id}@ must name a declared track ('UnknownSynthTrack');
+--     unused tracks warn ('UnusedSynthTrack').
+--   * An ID declared in both @sounds:@ and @tracks:@ is a hard error ('SynthIdClash').
+checkSynthRefs :: Adventure -> ([CompileIssue], [CompileIssue])
+checkSynthRefs adv = (soundErrs ++ trackErrs ++ clashErrs, soundWarns ++ trackWarns)
+  where
+    outs = allAOutcomes adv
+    soundRefs = [ sid | AOPlaySfxSynth sid <- outs ]
+    trackRefs = [ tid | AOPlayMusicSynth tid <- outs ]
+    declaredSounds = Map.keysSet (advSounds adv)
+    declaredTracks = Map.keysSet (advTracks adv)
+    soundErrs =
         [ ciError ("sounds." ++ sid) "UnknownSynthSound"
             ("sfx: {synth: " ++ sid ++ "} references a sound that is not declared under 'sounds:'")
-        | sid <- nub refs, sid `Set.notMember` declared ]
-    warns =
+        | sid <- nub soundRefs, sid `Set.notMember` declaredSounds ]
+    trackErrs =
+        [ ciError ("tracks." ++ tid) "UnknownSynthTrack"
+            ("music: {synth: " ++ tid ++ "} references a track that is not declared under 'tracks:'")
+        | tid <- nub trackRefs, tid `Set.notMember` declaredTracks ]
+    clashErrs =
+        [ ciError ("tracks." ++ cid) "SynthIdClash"
+            ("id '" ++ cid ++ "' is declared in both 'sounds:' and 'tracks:'")
+        | cid <- Set.toList (Set.intersection declaredSounds declaredTracks) ]
+    soundWarns =
         [ ciWarning ("sounds." ++ sid) "UnusedSynthSound"
             ("sound '" ++ sid ++ "' is declared but never played")
-        | sid <- Set.toList declared, sid `notElem` refs ]
+        | sid <- Set.toList declaredSounds, sid `notElem` soundRefs ]
+    trackWarns =
+        [ ciWarning ("tracks." ++ tid) "UnusedSynthTrack"
+            ("track '" ++ tid ++ "' is declared but never played")
+        | tid <- Set.toList declaredTracks, tid `notElem` trackRefs ]
 
 -- | 4.3 (D4): validate the `language:` / `messages:` language-pack fields.
 --   An unknown language code is a hard error ('UnknownLanguage' — the engine
@@ -1072,6 +1316,7 @@ compileAdventure rawAdv =
                 , E.worldMessages = advMessages adv
                 , E.factions = compiledFactions
                 , E.worldSounds = compiledSounds
+                , E.worldTracks = compiledTracks
                 }
         npcIds = Set.fromList (map anId (advNPCs adv))
         gwResolved = resolveWorldEffects npcIds gw
@@ -1105,6 +1350,7 @@ compileAdventure rawAdv =
         diceErrs = checkRollDice adv
         (langErrs, langWarns) = checkLanguageFields adv
         (soundErrs, soundWarns, compiledSounds) = compileSounds adv
+        (trackErrs, trackWarns, compiledTracks) = compileTracks adv
         (synthRefErrs, synthRefWarns) = checkSynthRefs adv
         (gramErrs, gramWarns) = checkGrammarFields adv
 
@@ -1132,7 +1378,7 @@ compileAdventure rawAdv =
                     ++ gameErrs
                     ++ cardErrs
                     ++ deckErrs
-                    ++ soundErrs ++ synthRefErrs
+                    ++ soundErrs ++ trackErrs ++ synthRefErrs
                     ++ szErrs
                     ++ procCompileErrs
                     ++ procCallErrs
@@ -1226,7 +1472,7 @@ compileAdventure rawAdv =
                           ++ gainXpWarns
                           ++ deadContentWarns
                           ++ langWarns
-                          ++ soundWarns ++ synthRefWarns
+                          ++ soundWarns ++ trackWarns ++ synthRefWarns
                           ++ gramWarns
                           ++ standingChangeWarns
                           ++ recipeResultWarns
@@ -5400,6 +5646,7 @@ compileAActionOutcome ao = case ao of
     AOPlaySfx path -> E.PlaySfx path
     AOPlaySfxSynth sid -> E.PlaySfxSynth sid
     AOPlayMusic path -> E.PlayMusic path
+    AOPlayMusicSynth tid -> E.PlayMusicSynth tid
     AOStopMusic -> E.StopMusic
     AODrawCards n -> E.DrawCards n
     AODiscardHand -> E.DiscardHand

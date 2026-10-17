@@ -1,9 +1,11 @@
-# Synth 5.2c: sounds: (Patch-Daten im Adventure) + sfx: {synth: <id>}.
+# Synth 5.2c + 5.2d: sounds: + tracks: (Patch- und Track-Daten im Adventure),
+# sfx: {synth: <id>} + music: {synth: <id>}.
 # - alarm: einzelnes Stimmen-Objekt (square, fallender Sweep)
 # - tuer:  {layers: [...]} (Rauschen + tiefer Sinus)
-# - sfx: {synth: id} queued ein SoundSynth; die Engine rendert es am IO-Rand in
-#   eine gecachte WAV-Datei (Text bleibt unberuehrt).
-# - tests: prueft, dass die Effekte das Spiel nicht stoeren (Text-Ausgabe).
+# - nebel: 2-Kanal-Track (pad + bell, 90 BPM, 16 Steps, Loop mit order: [0, 1])
+# - sfx/music: {synth: id} rendert am IO-Rand in eine gecachte WAV-Datei
+#   (Text und RNG bleiben unberuehrt).
+# - tests: prueft, dass SFX- und Musik-Effekte das Spiel nicht stoeren.
 name: Synth Fixture
 start_room: halle
 
@@ -19,6 +21,11 @@ rooms:
   - id: kammer
     name: Kammer
     desc: Eine kleine Kammer hinter der schweren Tuer.
+    on_enter:
+      - music: {synth: nebel}
+      - msg: "Ein sanfter Nebelklang setzt ein."
+    on_exit:
+      - stop_music: true
     exits:
       west: halle
 
@@ -50,12 +57,33 @@ sounds:
       - { wave: noise, dur: 0.15, release: 0.1, volume: 0.5 }
       - { wave: sine, freq: 110, sweep: -200, dur: 0.3 }
 
+tracks:
+  nebel:
+    bpm: 90
+    steps: 16
+    loop: true
+    order: [0, 1]
+    instruments:
+      pad:  { wave: triangle, attack: 0.08, decay: 0.2, sustain: 0.6, release: 0.4, volume: 0.35 }
+      bell: { wave: sine,     attack: 0.005, decay: 0.3, sustain: 0.0, release: 0.5, volume: 0.25 }
+    channels:
+      - instrument: pad
+        patterns:
+          - "A2 . . . . . . . E3 . . . . . . ."
+          - "F2 . . . . . . . C3 . . . . . . ."
+      - instrument: bell
+        patterns:
+          - ". . E5 . . . - . . . C5 . . . - ."
+          - ". . A4 . . . - . . . G4 . . . - ."
+
 tests:
-  - name: "synth-effekte laufen mit, ohne den Text zu veraendern"
+  - name: "synth-sfx und synth-musik laufen mit, ohne den Text zu veraendern"
     input:
       - use knopf
       - east
       - west
     expect:
       - "Der Alarm schrillt durch die Halle."
+      - "Ein sanfter Nebelklang setzt ein."
       - "Eine kleine Kammer hinter der schweren Tuer."
+      - "Eine hallende Halle."

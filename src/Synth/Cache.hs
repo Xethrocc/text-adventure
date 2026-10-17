@@ -13,9 +13,14 @@ module Synth.Cache
   ( resolveSound
   , resolveSoundIn
   , ensureRendered
+  , resolveTrack
+  , resolveTrackIn
+  , ensureTrackRendered
   , synthCacheDir
   , cacheKey
   , cacheFileName
+  , trackCacheKey
+  , trackCacheFileName
   ) where
 
 import Control.Exception (SomeException, try)
@@ -34,7 +39,7 @@ import System.Info (os)
 import System.IO (hClose, openTempFile)
 
 import Synth.Patch
-import Synth.Render (renderSound, rendererVersion)
+import Synth.Render (renderSound, renderTrack, rendererVersion)
 import Synth.Wav (encodeWav)
 import Types.Core (GameWorld (..), SoundRef (..))
 
@@ -77,6 +82,39 @@ ensureRendered dir sid sound = do
             renameFile tmp path
             pure path
 
+-- | Synth 5.2d: resolve a synth music track id in 'worldTracks' to a cached
+--   WAV file path for the unchanged 'feStartMusic' seam (S4).
+resolveTrack :: GameWorld -> String -> IO (Either String FilePath)
+resolveTrack gw tid = do
+    dir <- synthCacheDir
+    resolveTrackIn dir gw tid
+
+-- | 'resolveTrack' with an explicit cache directory (tests, tools).
+resolveTrackIn :: FilePath -> GameWorld -> String -> IO (Either String FilePath)
+resolveTrackIn dir gw tid =
+    case Map.lookup tid (worldTracks gw) of
+        Nothing -> pure (Left ("synth track '" ++ tid ++ "' is not defined in tracks:"))
+        Just tr -> do
+            r <- try (ensureTrackRendered dir tid tr) :: IO (Either SomeException FilePath)
+            pure $ case r of
+                Right p -> Right p
+                Left e  -> Left ("synth track '" ++ tid ++ "': cannot write cache file: " ++ show e)
+
+-- | Render @track@ to @dir/<key>.wav@ unless that file already exists (cache hit).
+ensureTrackRendered :: FilePath -> String -> Track -> IO FilePath
+ensureTrackRendered dir tid tr = do
+    let path = dir </> trackCacheFileName tid tr
+    hit <- doesFileExist path
+    if hit
+        then pure path
+        else do
+            createDirectoryIfMissing True dir
+            (tmp, h) <- openTempFile dir "render.tmp"
+            BL.hPut h (encodeWav sampleRate (renderTrack tid tr))
+            hClose h
+            renameFile tmp path
+            pure path
+
 -- | O1: where rendered sounds live.
 synthCacheDir :: IO FilePath
 synthCacheDir = do
@@ -101,13 +139,23 @@ synthCacheDir = do
 cacheFileName :: String -> SynthSound -> FilePath
 cacheFileName sid sound = cacheKey sid sound <.> "wav"
 
+-- | File name (without directory) of a track's cache entry.
+trackCacheFileName :: String -> Track -> FilePath
+trackCacheFileName tid tr = trackCacheKey tid tr <.> "wav"
+
 -- | Content address: 128 bits (two FNV-1a 64 passes with different offset
 --   bases) over renderer version, sound id (it seeds the noise) and the
 --   derived 'Show' of the patch — a canonical, order-stable rendering.
 cacheKey :: String -> SynthSound -> String
-cacheKey sid sound = hex64 (fnv 0xcbf29ce484222325 payload) ++ hex64 (fnv 0x84222325cbf29ce4 payload)
+cacheKey sid sound = hashPayload ("v" ++ show rendererVersion ++ "|" ++ sid ++ "|" ++ show sound)
+
+-- | Content address for a music track (renderer version + track id + 'Show' of 'Track').
+trackCacheKey :: String -> Track -> String
+trackCacheKey tid tr = hashPayload ("v" ++ show rendererVersion ++ "|track|" ++ tid ++ "|" ++ show tr)
+
+hashPayload :: String -> String
+hashPayload payload = hex64 (fnv 0xcbf29ce484222325 payload) ++ hex64 (fnv 0x84222325cbf29ce4 payload)
   where
-    payload = "v" ++ show rendererVersion ++ "|" ++ sid ++ "|" ++ show sound
     fnv :: Word64 -> String -> Word64
     fnv = foldl (\a c -> (a `xor` fromIntegral (ord c)) * 0x100000001b3)
     hex64 w = let h = showHex w "" in replicate (16 - length h) '0' ++ h

@@ -10,6 +10,7 @@
 --   (native vs. WASM).
 module Synth.Render
   ( renderSound
+  , renderTrack
   , renderVoice
   , soundIdSeed
   , rendererVersion
@@ -18,6 +19,9 @@ module Synth.Render
 import Data.Bits (shiftL, shiftR, xor)
 import Data.Char (ord)
 import Data.Int (Int16)
+import Data.List (foldl', sortOn)
+import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe)
 import Data.Word (Word32)
 
 import Synth.Patch
@@ -32,20 +36,172 @@ rendererVersion = 1
 --   longest layer and its peak is limited to 'peakCeiling' (O4, −3 dBFS) by
 --   scaling the whole buffer down — quieter sounds keep their level.
 renderSound :: String -> SynthSound -> [Int16]
-renderSound sid (SynthSound vs) = map quantise mixed
+renderSound sid (SynthSound vs) = limitAndQuantise mixed0
   where
     seed0 = soundIdSeed sid
     layers = zipWith (\i v -> renderVoice (seed0 + fromIntegral (i :: Int) * 0x9E3779B1) v)
                      [0 ..] (take maxLayers vs)
     mixed0 = foldr mixLong [] layers
-    peak = foldr (\x m -> max (abs x) m) 0 mixed0
+
+-- | Render a music track to PCM samples (plan-synth.md §3.2/§5.2d).
+--   22050 Hz, mono, 16-bit, peak-limited to 'peakCeiling' (O4, −3 dBFS).
+--   Total length comes from @bpm@, @steps@ (sixteenth notes) and @order@
+--   (clamped to 'maxTrackSeconds' = 120 s, S7).
+--   Loop seam (5.2d): when 'trLoop' is 'True', any release tail extending
+--   beyond the end of the track is wrapped around into the start of the
+--   buffer, keeping oscillator phase and ADSR envelope continuous across
+--   the loop boundary.
+renderTrack :: String -> Track -> [Int16]
+renderTrack tid tr
+  | null (trChannels tr) || trBpm tr <= 0 || trSteps tr <= 0 || totalSamples <= 0 = []
+  | otherwise = limitAndQuantise mixed0
+  where
+    sr = fromIntegral sampleRate :: Double
+    bpm = max 1.0 (fromIntegral (trBpm tr) :: Double)
+    stepSec = 15.0 / bpm
+    stepsPerPat = max 1 (trSteps tr)
+    ordr = effectiveOrder tr
+    totalSteps = stepsPerPat * length ordr
+    rawSec = fromIntegral totalSteps * stepSec
+    trackSec = clampD 0 maxTrackSeconds rawSec
+    totalSamples = round (trackSec * sr) :: Int
+    seed0 = soundIdSeed tid
+    chStreams =
+      zipWith (renderChannel totalSamples stepSec stepsPerPat ordr (trLoop tr) (trInstruments tr) seed0)
+              [0 :: Int ..]
+              (take maxChannels (trChannels tr))
+    mixed0 = take totalSamples (foldr mixLong (replicate totalSamples 0) chStreams)
+
+limitAndQuantise :: [Double] -> [Int16]
+limitAndQuantise mixed0 = map quantise mixed
+  where
+    peak = foldl' (\m x -> max (abs x) m) 0 mixed0
     scale = if peak > peakCeiling then peakCeiling / peak else 1
     mixed = if scale < 1 then map (* scale) mixed0 else mixed0
     quantise x = fromIntegral (max (-32768) (min 32767 (round x :: Int))) :: Int16
 
+renderChannel
+  :: Int
+  -> Double
+  -> Int
+  -> [Int]
+  -> Bool
+  -> Map.Map String Voice
+  -> Word32
+  -> Int
+  -> Channel
+  -> [Double]
+renderChannel totalSamples stepSec stepsPerPat ordr isLoop insts seed0 chIdx ch =
+    mixSegments totalSamples (sortOn fst segments)
+  where
+    sr = fromIntegral sampleRate :: Double
+    inst = fromMaybe defaultVoice (Map.lookup (chInstrument ch) insts)
+    pats = chPatterns ch
+    patAt idx
+      | null pats = ""
+      | otherwise = pats !! (max 0 idx `mod` length pats)
+    parsePatSteps p =
+      let toks = [ fromMaybe StepHold (parseStepToken tok) | (_, tok) <- tokenizePattern p ]
+      in take stepsPerPat (toks ++ repeat StepHold)
+    allSteps = concatMap (parsePatSteps . patAt) ordr
+    notes = zip [0 :: Int ..] (extractNotes allSteps)
+    segments = concatMap toSegs notes
+    toSegs (nIdx, (sStart, sEnd, freq)) =
+      let iStart   = round (fromIntegral sStart * stepSec * sr) :: Int
+          iGateEnd = min totalSamples (round (fromIntegral sEnd * stepSec * sr) :: Int)
+          gateLen  = iGateEnd - iStart
+          maxRel   = if isLoop then totalSamples else max 1 (totalSamples - iGateEnd)
+          rawSeed  = seed0 + fromIntegral chIdx * 0x9E3779B1 + fromIntegral nIdx * 0x85EBCA6B
+          nSeed    = if rawSeed == 0 then 0x6D2B79F5 else rawSeed
+          samples  = renderTrackNote nSeed inst freq gateLen maxRel
+          roomLeft = totalSamples - iStart
+          (pre, post) = splitAt roomLeft samples
+          wrap = take totalSamples post
+      in if iStart >= totalSamples || gateLen <= 0
+           then []
+           else (iStart, pre) : [ (0, wrap) | isLoop && not (null wrap) ]
+
+-- | Turn a step token list into @(startStep, endStep, freqHz)@ gate intervals.
+extractNotes :: [StepToken] -> [(Int, Int, Double)]
+extractNotes = go 0 Nothing
+  where
+    go _ Nothing [] = []
+    go s (Just (s0, f)) [] = [(s0, s, f)]
+    go s active (tok : rest) = case tok of
+      StepNote f ->
+        let prev = maybe [] (\(s0, f0) -> [(s0, s, f0)]) active
+        in prev ++ go (s + 1) (Just (s, f)) rest
+      StepHold ->
+        go (s + 1) active rest
+      StepOff ->
+        let prev = maybe [] (\(s0, f0) -> [(s0, s, f0)]) active
+        in prev ++ go (s + 1) Nothing rest
+
+-- | Render a single note of a track channel: @gateSamples@ of attack/decay/sustain
+--   followed by @relSamples@ of linear release down to 0.
+renderTrackNote :: Word32 -> Voice -> Double -> Int -> Int -> [Double]
+renderTrackNote seed inst freq gateSamples maxRelSamples
+  | gateSamples <= 0 = []
+  | otherwise =
+      zipWith (\k o -> o * vol * envAt k) [0 .. totalLen - 1] (take totalLen osc)
+  where
+    sr = fromIntegral sampleRate :: Double
+    vol = 32767 * clampD 0 1 (vVolume inst)
+    env = vEnv inst
+    atk = max (1 / sr) (adAttack env)
+    dcy = max 0 (adDecay env)
+    sus = clampD 0 1 (adSustain env)
+    minRelSamples = min 32 (max 1 maxRelSamples)
+    rawRelSamples = round (max 0 (adRelease env) * sr) :: Int
+    relSamples = max minRelSamples (min maxRelSamples rawRelSamples)
+    totalLen = gateSamples + relSamples
+    level t
+      | t < atk = t / atk
+      | dcy > 0 && t < atk + dcy = 1 - (1 - sus) * (t - atk) / dcy
+      | otherwise = sus
+    gateLevel = level (fromIntegral gateSamples / sr)
+    envAt k
+      | k < gateSamples = level (fromIntegral k / sr)
+      | relSamples <= 1 = 0
+      | otherwise =
+          let rIdx = k - gateSamples
+          in gateLevel * fromIntegral (relSamples - 1 - rIdx) / fromIntegral relSamples
+    f0 = freq
+    sw = vSweep inst
+    tStop = if sw < 0 && f0 > 0 then f0 / negate sw else 1 / 0
+    phaseAt t = let t' = min t tStop in f0 * t' + 0.5 * sw * t' * t'
+    duty = clampD 0.05 0.95 (vDuty inst)
+    osc = case vWave inst of
+      Noise    -> noiseStream seed
+      Sine     -> [sineCyc (phaseAt (fromIntegral i / sr)) | i <- [0 :: Int ..]]
+      Square   -> [if frac (phaseAt (fromIntegral i / sr)) < duty then 1 else -1 | i <- [0 :: Int ..]]
+      Saw      -> [2 * frac (phaseAt (fromIntegral i / sr)) - 1 | i <- [0 :: Int ..]]
+      Triangle -> [triCyc (phaseAt (fromIntegral i / sr)) | i <- [0 :: Int ..]]
+
+-- | Mix a start-sorted list of @(startSample, samples)@ segments into a stream
+--   of @totalSamples@ samples in O(totalSamples) time.
+mixSegments :: Int -> [(Int, [Double])] -> [Double]
+mixSegments totalSamples segs0 = go 0 [] (filter (not . null . snd) segs0)
+  where
+    go pos active upcoming
+      | pos >= totalSamples = []
+      | otherwise =
+          let (nowSegs, laterSegs) = span (\(s, _) -> s <= pos) upcoming
+              active' = map snd nowSegs ++ active
+          in case active' of
+               [] -> case laterSegs of
+                 [] -> replicate (totalSamples - pos) 0
+                 ((nextPos, _) : _) ->
+                   let gap = min totalSamples nextPos - pos
+                   in replicate gap 0 ++ go (pos + gap) [] laterSegs
+               _ ->
+                 let sampleSum = foldl' (\acc xs -> acc + head xs) 0 active'
+                     activeNext = [ rest | (_ : rest) <- active', not (null rest) ]
+                 in sampleSum `seq` (sampleSum : go (pos + 1) activeNext laterSegs)
+
 -- | Sum of two sample streams, zero-padding the shorter one.
 mixLong :: [Double] -> [Double] -> [Double]
-mixLong (x : xs) (y : ys) = (x + y) : mixLong xs ys
+mixLong (x : xs) (y : ys) = let z = x + y in z `seq` (z : mixLong xs ys)
 mixLong xs [] = xs
 mixLong [] ys = ys
 

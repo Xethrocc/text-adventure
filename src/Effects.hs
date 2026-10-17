@@ -482,6 +482,10 @@ applyOutcomeWith depth salt outcome targetId state
     PlayMusic path ->
         (state { pendingMusic = Just (MusicStart path) }, [], salt)
 
+    -- Synth 5.2d (S6): queue a synth music track id; resolved at the IO edge.
+    PlayMusicSynth tid ->
+        (state { pendingMusic = Just (MusicStartSynth tid) }, [], salt)
+
     StopMusic ->
         (state { pendingMusic = Just MusicStop }, [], salt)
 

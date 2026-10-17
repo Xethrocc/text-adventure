@@ -66,6 +66,10 @@
             "type": "music_start"
         },
         {
+            "synth": "nebel",
+            "type": "music_start"
+        },
+        {
             "type": "music_stop"
         },
         {

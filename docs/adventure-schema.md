@@ -616,7 +616,8 @@ items:
 | `{ sfx: "pfad/datei.wav" }` | PlaySfx — Sound-Effekt einmalig asynchron abspielen (Audio Phase 1) |
 | `{ sfx: { synth: id } }` | PlaySfxSynth — Synthetischen Sound-Effekt aus `sounds:` einmalig abspielen (Synth 5.2c, s. Abschnitt „Synth-Sounds") |
 | `{ music: "pfad/datei.xm" }` | PlayMusic — Hintergrundmusik-Loop starten/wechseln (Audio Phase 2; `.xm`, `.mid`, `.wav/.ogg/.mp3`) |
-| `{ stop_music: true }` | StopMusic — Hintergrundmusik stoppen (Audio Phase 2) |
+| `{ music: { synth: id } }` | PlayMusicSynth — Synthetischen Musik-Track aus `tracks:` als Hintergrundmusik starten/wechseln (Synth 5.2d, s. Abschnitt „Synth-Tracks") |
+| `{ stop_music: true }` | StopMusic — Hintergrundmusik stoppen, sowohl Datei- als auch Synth-Tracks (Audio Phase 2 / Synth 5.2d) |
 | `{ block: "reason" }`, `{ block: true }`, or `{ block: { msg: "…", turn: true } }` | Block — Veto a command before execution (Phase 2.2). Stops command action. Default: `turn: false` (no turn consumed). Opt-in `turn: true` advances turn and ticks conditions. |
 | `{ apply_vehicle_condition: { vehicle: id, condition: name } }` | ApplyVehicleCondition (OPEN-24) — aktiviert eine Fahrzeug-Bedingung in `vsActiveConditions` (Set-Semantik, idempotent; Nachricht `vehicle.condition_set`). `vehicle:` nimmt eine Fahrzeug-ID oder das Token `"current"` (löst zum aktuellen Fahrzeug auf). **Achtung:** `set_state` wirkt **nicht** auf Fahrzeuge. |
 | `{ clear_vehicle_condition: { vehicle: id, condition: name } }` | ClearVehicleCondition (OPEN-24) — entfernt eine Fahrzeug-Bedingung aus `vsActiveConditions` (Nachricht `vehicle.condition_cleared`). `vehicle:` nimmt eine Fahrzeug-ID oder `"current"`. |
@@ -4680,6 +4681,7 @@ Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity =
 | `UnreachableTrigger` (Fall `learn_recipe`) | Eine Regel hört auf `on: learn_recipe <id>`, aber kein `learn_recipe:`-Effekt lehrt dieses Rezept je. | `learn_recipe: <id>` an einer erreichbaren Stelle ergänzen, die `id:` korrigieren oder die Regel entfernen. |
 | `UnreachableTrigger` (Fall `learn`) | Eine Regel hört auf `on: learn <fact>`, aber kein `learn:`-Effekt und keine `combine:`-Ableitung lernt diesen Fakt je. | `learn: <fact>` an einer erreichbaren Stelle ergänzen, die ID korrigieren oder die Regel entfernen. |
 | `UnusedSynthSound` | Ein in `sounds:` deklarierter Synth-Patch wird in keinem Effekt via `sfx: {synth: <id>}` referenziert. | Effekt `sfx: {synth: <id>}` ergänzen oder den ungenutzten Eintrag aus `sounds:` entfernen. |
+| `UnusedSynthTrack` | Ein in `tracks:` deklarierter Synth-Track wird in keinem Effekt via `music: {synth: <id>}` referenziert. | Effekt `music: {synth: <id>}` ergänzen oder den ungenutzten Eintrag aus `tracks:` entfernen. |
 
 ## Synth-Sounds (`sounds:` und `sfx: {synth: <id>}`, Phase 5.2c)
 
@@ -4719,6 +4721,60 @@ sounds:
   - `SynthBadPatch`: Unlesbares Stimmen-Objekt oder unbekannte Wellenform.
   - `UnusedSynthSound` *(Warnung)*: Deklarierter Sound wird nirgends referenziert.
 - **CLI-Werkzeuge am Worldbuilder:**
-  - `worldbuilder synth list <adventure.yaml>` — listet alle deklarierten Synth-Sounds mit Dauer und Layer-Anzahl auf.
-  - `worldbuilder synth render <adventure.yaml> <id> [-o datei.wav]` — rendert einen Patch direkt in eine WAV-Datei.
-  - `worldbuilder synth preview <adventure.yaml> <id>` — rendert den Patch in den Engine-Synth-Cache und gibt den WAV-Pfad aus.
+  - `worldbuilder synth list <adventure.yaml>` — listet alle deklarierten Synth-Sounds und Synth-Tracks mit Dauer und Layer-/Kanal-Anzahl auf.
+  - `worldbuilder synth render <adventure.yaml> <id> [-o datei.wav]` — rendert einen Patch oder Track direkt in eine WAV-Datei.
+  - `worldbuilder synth preview <adventure.yaml> <id>` — rendert den Patch oder Track in den Engine-Synth-Cache und gibt den WAV-Pfad aus.
+
+## Synth-Tracks (`tracks:` und `music: {synth: <id>}`, Phase 5.2d)
+
+Ergänzend zu `sounds:` können Autoren mehrstimmige Musik-Loops und Themen direkt unter `tracks:` im Adventure definieren. Wie SFX-Patches werden Tracks deterministisch durch den reinen Kern-Renderer (`renderTrack`, 22050 Hz, mono, 16 bit PCM, Spitzenpegel auf −3 dBFS begrenzt) am IO-Rand in eine gecachte WAV-Datei gerendert und an `feStartMusic` übergeben.
+
+```yaml
+tracks:
+  nebel:
+    bpm: 90                     # Tempo in Viertelnoten pro Minute (20–300, Default 120)
+    steps: 16                   # Sechzehntel-Schritte pro Pattern (1–256, Default 16)
+    loop: true                  # Loop-Naht aktivieren (Default true)
+    order: [0, 0, 1, 0]         # optional: 0-basierte Reihenfolge der Pattern-Blöcke
+    instruments:                # Instrumente = Patches OHNE freq/dur/sweep
+      lead: { wave: triangle, attack: 0.01, decay: 0.05, sustain: 0.7, release: 0.15, volume: 0.5 }
+      bass: { wave: square, duty: 0.25, release: 0.05, volume: 0.4 }
+    channels:                   # 1 bis max. 4 Kanäle
+      - instrument: lead
+        patterns:
+          - "A4 . C5 . E5 . . . G4 . . . E4 . . ."
+          - "F4 . A4 . C5 . . . E4 . . . C4 . . ."
+      - instrument: bass
+        patterns:
+          - "A2 . . . A2 . . . F2 . . . G2 . . ."
+          - "F2 . . . F2 . . . D2 . . . E2 . . ."
+```
+
+- **Instrumente (`instruments:`):** Jedes Instrument ist ein Stimmen-Patch (`wave`, `duty`, `attack`, `decay`, `sustain`, `release`, `volume`) **ohne** `freq`, `dur` oder `sweep` — Tonhöhe und Notendauer kommen aus dem Pattern-Raster.
+- **Pattern-Syntax (O3 String-Raster):**
+  - Jeder durch Leerzeichen getrennte Token entspricht einem **Sechzehntel-Schritt** ($\text{Step-Dauer} = \frac{15}{\text{bpm}}\,\text{s}$).
+  - **Notenname + Oktave (`0`–`8`):** `C4`, `F#3`, `Bb2` (Konzertstimmung `A4 = 440 Hz`, gleichstufige 12-Ton-Stimmung; Vorzeichen `#` für Kreuz auf `C, D, F, G, A` und `b` für Be auf `D, E, G, A, B`; für `wave: noise` wird die Tonhöhe ignoriert und die Note dient als Trigger).
+  - **`.` (Halten / Pause):** Läuft gerade eine Note auf dem Kanal, klingt sie im Sustain weiter; ist der Kanal stumm, bleibt er stumm.
+  - **`-` (Note-off):** Beendet eine laufende Note am Beginn dieses Steps und leitet ihre `release`-Phase ein.
+  - Eine neue Note während einer bereits klingenden Note beendet die vorherige am Step-Rand (inkl. Release-Fahne) und triggert die neue Note.
+- **Einzel-Pattern vs. Mehrfach-Patterns (`order:`):**
+  - Für einfache Tracks mit nur einem Pattern pro Kanal genügt `pattern: "<steps>"` auf jedem Kanal (ohne `order:`).
+  - Für längere Arrangements kann ein Kanal `patterns: ["<pat0>", "<pat1>", ...]` deklarieren; `order: [0, 0, 1, 0]` legt dann auf Track-Ebene die 0-basierte Abspielreihenfolge der Pattern-Blöcke fest (alle Kanäle müssen mindestens `max(order) + 1` Patterns besitzen; fehlt `order:`, werden bei `patterns:` alle Blöcke `[0 .. k-1]` der Reihe nach gespielt).
+- **Loop-Naht (`loop: true`):**
+  - Klingt am Ende des letzten Steps noch eine Note (oder deren `release`-Phase), wird die ausklingende Release-Fahne bei `loop: true` **um die Loop-Grenze herum in den Beginn von Step 0 umgebrochen** (mit durchlaufender Oszillator-Phase und ADSR-Release-Kurve). Dadurch entsteht beim nahtlosen Wiederholen im Audio-Helper kein Abschneiden und kein Knacken an der Loop-Naht.
+- **Effekte & Byte-Vertrag:**
+  - `music: { synth: nebel }` startet den Track (`PlayMusicSynth "nebel"`, Protokoll-Event `{"type":"music_start","synth":"nebel"}`).
+  - `music: "pfad/datei.ogg"` startet weiterhin eine Musikdatei (`PlayMusic`).
+  - `stop_music: true` stoppt sowohl Datei- als auch Synth-Musik (`StopMusic`).
+  - Ist `tracks:` leer bzw. weggelassen, wird in `world.json` kein `"tracks"`-Feld serialisiert (Byte-Vertrag).
+- **Validierung (harte Fehler & Warnung):**
+  - `UnknownSynthTrack`: `music: {synth: x}` verweist auf eine nicht unter `tracks:` deklarierte ID.
+  - `SynthBadNote`: Ungültiges Noten-Token im Pattern (mit 1-basierter Spaltenangabe) oder Anzahl der Tokens im Pattern weicht von `steps:` ab.
+  - `SynthUnknownInstrument`: Ein Kanal referenziert ein Instrument, das nicht unter `instruments:` des Tracks deklariert ist.
+  - `SynthTooLong`: Gesamtdauer des Tracks ($\text{Gesamt-Steps} \times \frac{15}{\text{bpm}}$) überschreitet das Limit von **120 Sekunden** (S7).
+  - `SynthParamRange`: `bpm` außerhalb `20–300`, `steps` außerhalb `1–256`, `order:`-Index außerhalb der Kanal-Patterns oder Instrument-Parameter außerhalb des gültigen Bereichs.
+  - `SynthTooManyLayers`: Mehr als 4 Kanäle in `channels:`.
+  - `SynthBadPatch`: Instrument deklariert `freq`, `dur`, `sweep` oder `layers`, oder Track-/Kanal-Struktur ist unlesbar.
+  - `SynthIdClash`: Dieselbe ID ist gleichzeitig unter `sounds:` und `tracks:` deklariert.
+  - `UnusedSynthTrack` *(Warnung)*: Deklarierter Track wird nirgends per `music: {synth: <id>}` referenziert.
+

@@ -41,8 +41,8 @@ import qualified Data.ByteString.Lazy.Char8 as BLC
 import Control.Exception (try, SomeException)
 import qualified Data.Map.Strict as Map
 import qualified Synth.Patch as SP
-import Synth.Cache (ensureRendered, synthCacheDir)
-import Synth.Render (renderSound)
+import Synth.Cache (ensureRendered, ensureTrackRendered, synthCacheDir)
+import Synth.Render (renderSound, renderTrack)
 import Synth.Wav (encodeWav)
 
 -- | Entry point for the worldbuilder CLI
@@ -68,10 +68,10 @@ runCLI = do
         ("synth" : sub : path : rest) -> synthCmd sub path rest
         _                          -> putStrLn usage
 
--- | Synth 5.2c: author tooling for `sounds:` (plan-synth §4.4). The adventure
---   must compile; the sounds come from the compiled world, i.e. exactly what
---   the engine will play. @preview@ renders into the engine's own cache and
---   prints the path — no second playback path.
+-- | Synth 5.2c/5.2d: author tooling for `sounds:` and `tracks:` (plan-synth §4.4).
+--   The adventure must compile; the entries come from the compiled world, i.e.
+--   exactly what the engine will play. @preview@ renders into the engine's own
+--   cache and prints the path — no second playback path.
 synthCmd :: String -> FilePath -> [String] -> IO ()
 synthCmd sub path rest = do
     advResult <- parseAdventureFile path
@@ -84,35 +84,54 @@ synthCmd sub path rest = do
                 putStrLn "Compilation errors:"
                 printCompileIssues path errs
                 exitFailure
-            Right cr -> synthWith (E.worldSounds (crWorld cr))
+            Right cr -> synthWith (E.worldSounds (crWorld cr)) (E.worldTracks (crWorld cr))
   where
-    synthWith sounds = case (sub, rest) of
+    synthWith sounds tracks = case (sub, rest) of
         ("list", _) ->
-            if Map.null sounds
+            if Map.null sounds && Map.null tracks
             then putStrLn "(no sounds declared)"
-            else mapM_ (putStrLn . describe) (Map.toList sounds)
-        ("render", sid : opts) -> withSound sounds sid $ \s -> do
-            let out = maybe (sid ++ ".wav") id (lookupFlag "-o" opts)
-            BL.writeFile out (encodeWav SP.sampleRate (renderSound sid s))
-            putStrLn out
-        ("preview", sid : _) -> withSound sounds sid $ \s -> do
-            dir <- synthCacheDir
-            p <- ensureRendered dir sid s
-            putStrLn p
+            else do
+                mapM_ (putStrLn . describeSound) (Map.toList sounds)
+                mapM_ (putStrLn . describeTrack) (Map.toList tracks)
+        ("render", sid : opts) -> withEntry sounds tracks sid
+            (\s -> do
+                let out = maybe (sid ++ ".wav") id (lookupFlag "-o" opts)
+                BL.writeFile out (encodeWav SP.sampleRate (renderSound sid s))
+                putStrLn out)
+            (\t -> do
+                let out = maybe (sid ++ ".wav") id (lookupFlag "-o" opts)
+                BL.writeFile out (encodeWav SP.sampleRate (renderTrack sid t))
+                putStrLn out)
+        ("preview", sid : _) -> withEntry sounds tracks sid
+            (\s -> do
+                dir <- synthCacheDir
+                p <- ensureRendered dir sid s
+                putStrLn p)
+            (\t -> do
+                dir <- synthCacheDir
+                p <- ensureTrackRendered dir sid t
+                putStrLn p)
         _ -> do
             putStrLn "usage: worldbuilder synth list <adventure.yaml>"
             putStrLn "       worldbuilder synth render <adventure.yaml> <id> [-o file.wav]"
             putStrLn "       worldbuilder synth preview <adventure.yaml> <id>"
             exitFailure
-    withSound sounds sid k = case Map.lookup sid sounds of
-        Just s  -> k s
-        Nothing -> do
-            putStrLn ("UnknownSynthSound: no sound '" ++ sid ++ "' under sounds: (known: "
-                      ++ unwords (Map.keys sounds) ++ ")")
-            exitFailure
-    describe (sid, SP.SynthSound vs) =
+    withEntry sounds tracks sid kSound kTrack = case Map.lookup sid sounds of
+        Just s  -> kSound s
+        Nothing -> case Map.lookup sid tracks of
+            Just t  -> kTrack t
+            Nothing -> do
+                putStrLn ("UnknownSynthSound: no sound or track '" ++ sid ++ "' under sounds:/tracks: (known: "
+                          ++ unwords (Map.keys sounds ++ Map.keys tracks) ++ ")")
+                exitFailure
+    describeSound (sid, SP.SynthSound vs) =
         sid ++ "  " ++ show (maximum (0 : map SP.vDur vs)) ++ " s  "
             ++ show (length vs) ++ (if length vs == 1 then " layer" else " layers")
+    describeTrack (tid, t) =
+        let chs = length (SP.trChannels t)
+        in tid ++ "  " ++ show (SP.trackDurationSeconds t) ++ " s  "
+               ++ show (SP.trBpm t) ++ " bpm  "
+               ++ show chs ++ (if chs == 1 then " channel" else " channels")
 
 -- | B1: run the authored `tests:` content tests of an adventure. An
 --   optional name argument (without leading '-') filters the test names.

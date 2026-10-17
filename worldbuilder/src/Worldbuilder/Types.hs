@@ -75,6 +75,7 @@ data Adventure = Adventure
     , advLanguage         :: Maybe String                -- ^ 4.3: language pack code ("de" …); Nothing = plain English default
     , advMessages         :: Map.Map String [String]   -- ^ 4.3: per-adventure message-catalog overrides (non-empty values). OPEN-18: a value may be one template or a pool of alternatives (string or list in YAML)
     , advSounds           :: Map.Map String Value        -- ^ Synth 5.2c: raw `sounds:` patches by id (voice object or {layers: [...]}); validated + compiled in Compile
+    , advTracks           :: Map.Map String Value        -- ^ Synth 5.2d: raw `tracks:` music tracks by id; validated + compiled in Compile
     , advRawValue         :: Maybe Value                 -- ^ raw parsed JSON/YAML value for schema validation
     } deriving (Show, Eq, Generic)
 
@@ -171,6 +172,7 @@ instance FromJSON Adventure where
             --   alternatives (list) — the engine-side codec knows both shapes.
             <*> (oDesug .:? "messages" >>= maybe (pure Map.empty) E.messageMapFromJSON)
             <*> oDesug .:? "sounds" .!= Map.empty
+            <*> oDesug .:? "tracks" .!= Map.empty
             <*> pure (Just v)
     parseJSON _ = fail "Expected Adventure to be an object"
 
@@ -2491,6 +2493,7 @@ data AActionOutcome
     | AOPlaySfx String                 -- ^ sfx: <file> — queues a sound effect (Audio Phase 1)
     | AOPlaySfxSynth String            -- ^ sfx: {synth: <id>} — queues a synthesised sound effect (Synth 5.2c)
     | AOPlayMusic String              -- ^ music: <file> — start/switch background music (Audio Phase 2)
+    | AOPlayMusicSynth String         -- ^ music: {synth: <id>} — start/switch synthesised background music (Synth 5.2d)
     | AOStopMusic                     -- ^ stop_music — stop background music (Audio Phase 2)
     | AOComputeVar String E.Expr       -- ^ compute_var: { var: name, expr: "..." }
     -- Schritt 2 / Phase 2D: Card game outcomes
@@ -2797,7 +2800,9 @@ instance FromJSON AActionOutcome where
         <|> (o .: "sfx" >>= \sv -> case sv of
                 Object so -> AOPlaySfxSynth <$> so .: "synth"
                 _         -> AOPlaySfx <$> parseJSON sv)
-        <|> (AOPlayMusic <$> o .: "music")
+        <|> (o .: "music" >>= \mv -> case mv of
+                Object mo -> AOPlayMusicSynth <$> mo .: "synth"
+                _         -> AOPlayMusic <$> parseJSON mv)
         <|> (do b <- o .: "stop_music"
                 if b then pure AOStopMusic else fail "stop_music must be true")
         <|> (do cv <- o .: "compute_var"
@@ -3042,7 +3047,7 @@ knownKeys EntAdventure = Set.fromList
     , "abilities", "end_art", "title_art", "clips", "game", "cards", "deck"
     , "handLimit", "hand_limit", "sandbox_zones", "procedures", "tests", "include"
     , "facts", "statements", "combine", "combine_verb", "journal", "chapters", "devices", "pursuit", "wander", "containers"
-    , "progression", "assets", "language", "messages", "sounds"
+    , "progression", "assets", "language", "messages", "sounds", "tracks"
     ]
 knownKeys EntRoom = Set.fromList
     [ "id", "name", "desc", "description", "exits", "tags", "light_flag"
