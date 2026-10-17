@@ -23,6 +23,7 @@ import qualified Synth.Patch as SP
 import qualified Synth.Render as SR
 import qualified Synth.Wav as SW
 import qualified Synth.Cache as SC
+import qualified Audio
 import System.Timeout (timeout)
 import Control.Exception (bracket, evaluate, try, SomeException)
 import Game
@@ -2788,6 +2789,20 @@ testAudioEffectsQueueState = do
     let (st3, _) = applyOutcome StopMusic "" st2
     r4 <- expectEqual (Just MusicStop) (pendingMusic st3)
     pure (r1 && r2 && r3 && r4)
+
+-- | Audio helper naming: Windows wrappers (`.exe`, `.bat`, `.cmd`) keep the
+--   helper's argument set — `mpv.bat` must be treated as `mpv`.
+testAudioHelperBaseName :: IO Bool
+testAudioHelperBaseName = do
+    let nameOf p = do
+            cfg <- Audio.discoverAudio (Just p)
+            pure $ case cfg of
+                Audio.AudioOn ah -> Audio.ahName ah
+                _                -> "<off>"
+    names <- mapM nameOf
+        [ "/usr/bin/mpv", "C:\\tools\\mpv.exe", "C:\\tools\\MPV.BAT"
+        , "D:\\bin\\ffplay.cmd", "/opt/audio-helper" ]
+    expectEqual ["mpv", "mpv", "mpv", "ffplay", "audio-helper"] names
 
 -- ===== Completion Tests =====
 
@@ -13364,6 +13379,7 @@ main = do
         , runTest "play_clip queues a cutscene (H4)" testPlayClipQueuesCutscene
         , runTest "loop plays the cutscene once (H4)" testLoopPlaysCutscene
         , runTest "audio effects queue sfx and music (Audio Phase 1/2)" testAudioEffectsQueueState
+        , runTest "audio helper base name strips .exe/.bat/.cmd (Windows wrappers)" testAudioHelperBaseName
         , runTest "sibling save.json auto-discovery" testSiblingSavePath
         , runTest "end_art resolves per reason (G)" testEndArtFor
         , runTest "title_art resolves against state (G)" testTitleArtResolves

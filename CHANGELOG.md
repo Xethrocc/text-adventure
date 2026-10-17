@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### FIX: Audio-Helper-Name ignoriert Windows-Wrapper (`.bat`/`.cmd`)
+
+- `Audio.baseName` strich nur `.exe` ab: ein Helper `mpv.bat`/`mpv.cmd` (z. B. per `--audio-helper`) hieß `"mpv.bat"` und fiel in `sfxArgs`/`musicLoopArgs` auf die Default-Argumente zurück — ohne `--no-video --really-quiet` und ohne `--loop=inf` (Musik lief nicht in Schleife). Jetzt werden `.exe`, `.bat` und `.cmd` entfernt.
+- Gefunden über die Windows-CI: der 5.2e-TUI-Audio-Test (`.bat`-Fake-Player aus `f607402`) sah im Log nur die nackten Pfade.
+- Neuer Engine-Test `audio helper base name strips .exe/.bat/.cmd (Windows wrappers)` (640 Engine-Tests).
+
 ### Oregon Trail: Radbruch auf Fahrzeug-Zustand (OPEN-24) + Rationen-Kaufsperre
 
 - **Radbruch war toter Content:** keine Stelle setzte das Flag `radbruch`; Veto-, Warn- und Reparatur-Regeln konnten nie feuern, das Ersatzrad war nutzlos.

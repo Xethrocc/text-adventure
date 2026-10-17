@@ -116,14 +116,17 @@ firstHelper (name:rest) = do
         Just p  -> pure (Just (AudioHelper p (baseName p)))
         Nothing -> firstHelper rest
 
--- | Extract the normalized base name from a path (stripping directory and .exe extension).
+-- | Extract the normalized base name from a path (stripping directory and the
+--   Windows executable extensions @.exe@, @.bat@ and @.cmd@). Without the
+--   wrapper extensions a @mpv.bat@ / @mpv.cmd@ helper would be named
+--   @"mpv.bat"@ and lose its argument set in 'sfxArgs' / 'musicLoopArgs'.
 baseName :: FilePath -> String
 baseName p =
     let raw = reverse . takeWhile (\c -> c /= '/' && c /= '\\') . reverse $ p
         lower = map toLower raw
-    in if ".exe" `isSuffixOf` lower
-       then take (length lower - 4) lower
-       else lower
+    in case [ e | e <- [".exe", ".bat", ".cmd"], e `isSuffixOf` lower ] of
+         (e:_) -> take (length lower - length e) lower
+         []    -> lower
 
 -- | Play a sound effect file asynchronously (fire and forget).
 --
