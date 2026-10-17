@@ -18,6 +18,10 @@ import GameLoop (LoopState (..), applyLoopCommand, initLoopState)
 import Parser (parseCommandWith)
 import Sample (initSampleGame)
 import World (loadGame)
+import qualified Data.ByteString.Lazy as BL
+import Synth.Patch (SynthSound (..), Voice (..), Wave (..), defaultVoice, sampleRate)
+import Synth.Render (renderSound)
+import Synth.Wav (encodeWav)
 import System.Exit (exitSuccess)
 import System.IO (BufferMode (LineBuffering), hSetBuffering, hSetEncoding, stdout, stderr, utf8)
 
@@ -62,6 +66,15 @@ main = do
             putStrLn ("    turns after the run: " ++ show (turnCount (save st6)))
             putStrLn ("    visited rooms: " ++ show (Set.size (visitedRooms (save st6))))
             putStrLn "[2] OK"
+
+    -- Synth (plan-synth 5.2b): the pure renderer + WAV encoder under WASI.
+    -- The checksum must equal the native value (sine is a polynomial, no libm).
+    let snd' = SynthSound [ defaultVoice { vWave = Square, vFreq = 880, vSweep = -400, vDur = 0.35 }
+                          , defaultVoice { vWave = Noise, vDur = 0.15 } ]
+        pcm = renderSound "spike" snd'
+        wav = encodeWav sampleRate pcm
+    putStrLn ("[synth] samples=" ++ show (length pcm) ++ " wavBytes=" ++ show (BL.length wav)
+              ++ " checksum=" ++ show (sum (zipWith (\i s' -> i * fromIntegral s') [1 :: Int ..] pcm)))
 
     putStrLn "=== SPIKE LAEUFT: applyLoopCommand unter wasm32-wasi ausgefuehrt ==="
     exitSuccess

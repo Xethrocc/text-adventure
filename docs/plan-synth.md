@@ -1,6 +1,6 @@
 # Plan: Software-Synth für Autoren (Phase 5.2)
 
-Stand: 2026-10-13, Code-Stand `cfbf380`. **Status: Design abgenommen (5.2a erledigt), nächste Stufe 5.2b.** Ersetzt die Zeile 5.2 („Synth-Tab") in
+Stand: 2026-10-13, Code-Stand `cfbf380`. **Status: Design abgenommen (5.2a, 5.2b erledigt), nächste Stufe 5.2c.** Ersetzt die Zeile 5.2 („Synth-Tab") in
 `implementierungsplan_engine_review_2026-09.md` und beantwortet dort den offenen Punkt
 „5.2: Datenmodell und Render-Ort des Synths".
 
@@ -247,7 +247,7 @@ Jede Stufe endet mit grünem `scripts/ci.sh`, CHANGELOG-Eintrag und aktuellen RE
 - Dieses Dokument abnehmen, offene Punkte O1–O4 entscheiden (→ Abschnitt 6, alle Vorschläge angenommen).
 - Abnahme: Entscheidungen in Abschnitt 2 als „entschieden" markiert.
 
-### 5.2b — Renderer im Kern *(M)*
+### 5.2b — Renderer im Kern *(M)* — **Erledigt (2026-10-16)**
 
 - `Synth.Patch`, `Synth.Render`, `Synth.Wav`; keine Anbindung an Spiel oder Worldbuilder.
 - Tests:

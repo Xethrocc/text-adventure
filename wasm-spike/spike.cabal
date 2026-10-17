@@ -12,7 +12,8 @@ build-type:          Simple
 library
   exposed-modules:   Types, Types.Output, Types.Core, Types.Cards, Types.Vehicles, Types.Combat, Types.Protocol,
                      Verbs, Game, GameLoop, Parser, Combat, Quests, Vehicles, Effects,
-                     Cards, Completion, Ansi, Sample, Frontend, SaveLoad, World, Messages
+                     Cards, Completion, Ansi, Sample, Frontend, SaveLoad, World, Messages, Messages.LangDe, Pursuit,
+                     Synth.Patch, Synth.Render, Synth.Wav
   hs-source-dirs:    ../src
   build-depends:     base,
                      containers,
@@ -31,6 +32,6 @@ library
 executable spike-main
   main-is:           Spike.hs
   hs-source-dirs:    .
-  build-depends:     base, wasm-spike, containers
+  build-depends:     base, wasm-spike, containers, bytestring
   default-language:  Haskell2010
   ghc-options:       -Wall

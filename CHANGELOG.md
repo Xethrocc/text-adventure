@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Synth Stufe 5.2b: purer Renderer im Kern (`docs/plan-synth.md`)
+
+- **Neue reine Module** `src/Synth/Patch.hs` (Typen `Wave`, `Adsr`, `Voice`, `SynthSound`, Defaults, Limits), `src/Synth/Render.hs` (`renderSound :: String -> SynthSound -> [Int16]`, 22050 Hz mono 16 bit; die Sound-ID ist zusaetzlicher Parameter, weil sie den Noise-Seed liefert) und `src/Synth/Wav.hs` (`encodeWav`, 44-Byte-RIFF-Header). Keine IO-Imports (WASM-Regel A1).
+- Laenge = `round (dur * 22050)`, SFX hart auf 10 s begrenzt (S7); linearer Sweep (stoppt bei 0 Hz), Square-Duty, ADSR beginnt und endet exakt bei 0; Noise = xorshift32 mit Seed aus dem Sound-ID-Hash (je Layer verschieden, nie aus `rngState`); Sinus als Polynom statt libm (plattformunabhaengig, WASM-gleich); O4: Spitze auf -3 dBFS begrenzt (nur herunterskaliert).
+- **Tests:** 8 neue Synth-Tests (Golden-SHA-256 je Wellenform + Layer-Patch, Laenge, Peak-Limit, ADSR-Raender, Noise-Determinismus, WAV-Header + `ffprobe`, Laufzeit < 200 ms). Die SHA-256-Implementierung liegt testintern (keine neue Abhaengigkeit); Test-Suite haengt zusaetzlich von `process` ab.
+- **WASM-Spike** baut `Synth.*` mit und rendert unter WASI.
+- Keine Spiel-/Worldbuilder-Anbindung, `world.json` unveraendert (kommt in 5.2c).
+
 ### Content-Benchmark: „Sprung ins Ungewisse" (FTL-Lite / Weltraum-Homage)
 
 Vollständige Implementierung des Content-Benchmarks `examples/genres/ftl_lite.yaml` laut `/root/workspace/plan-ftl-lite.md`:

@@ -12,7 +12,16 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Maybe (isJust, isNothing, fromMaybe)
 import Data.Either (isLeft)
-import Data.Word (Word64)
+import Data.Word (Word64, Word32, Word8)
+import qualified Data.Bits as B
+import Data.Int (Int16)
+import Data.Char (intToDigit)
+import System.CPUTime (getCPUTime)
+import System.Process (readProcessWithExitCode)
+import qualified Data.ByteString.Lazy as BL
+import qualified Synth.Patch as SP
+import qualified Synth.Render as SR
+import qualified Synth.Wav as SW
 import System.Timeout (timeout)
 import Control.Exception (bracket, evaluate, try, SomeException)
 import Game
@@ -51,11 +60,11 @@ import SaveLoad (computeWorldChecksum, formatSaveEntry, currentSaveVersion)
 import qualified SaveLoad as SaveLoad
 import System.Directory (createDirectoryIfMissing, createDirectory, doesDirectoryExist,
                          doesFileExist, getTemporaryDirectory, listDirectory,
-                         removeDirectoryRecursive, removeFile, withCurrentDirectory)
+                         removeDirectoryRecursive, removeFile, withCurrentDirectory, findExecutable)
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import Data.IORef (newIORef, readIORef, writeIORef, modifyIORef')
 import System.Console.Haskeline (Completion (..))
-import System.Exit (exitFailure)
+import System.Exit (exitFailure, ExitCode (..))
 import Types
 import World (loadGame, loadGameWorld, loadSaveState, siblingSavePath)
 import System.FilePath ((</>))
@@ -13657,6 +13666,15 @@ main = do
         , runTest "fuel: ticks_when pauses and resumes the counter (OPEN-17)" testItemFuelTicksWhen
         , runTest "fuel: set_fuel/add_fuel clamp and fire on_empty (OPEN-17)" testItemFuelSetAdd
         , runTest "fuel: missing counter falls back to fuel.start (OPEN-17)" testItemFuelFallbackRead
+        -- Synth 5.2b: purer Renderer im Kern
+        , runTest "synth: SHA-256 implementation matches known vectors (5.2b)" testSynthSha256
+        , runTest "synth: golden SHA-256 per waveform + layer patch (5.2b)" testSynthGolden
+        , runTest "synth: length = round (dur * 22050), SFX capped at 10 s (5.2b)" testSynthLength
+        , runTest "synth: peak limited to -3 dBFS, nothing outside Int16 (O4)" testSynthPeakLimit
+        , runTest "synth: envelope starts and ends at 0 for every wave (5.2b)" testSynthEnvelopeEdges
+        , runTest "synth: noise reproducible per id, independent across ids (5.2b)" testSynthNoiseDeterminism
+        , runTest "synth: WAV header sizes correct, ffprobe-readable if installed (5.2b)" testSynthWav
+        , runTest "synth: 10 s SFX renders in under 200 ms (5.2b)" testSynthRuntime
         ]
     when (not (and results)) exitFailure
 
@@ -14615,3 +14633,235 @@ testContainerHasPredicate = do
     pure (r1 && r2 && r3 && r4 && r5 && r6)
 
 
+
+-- ---------------------------------------------------------------------------
+-- Synth 5.2b (plan-synth.md): pure renderer in the core
+-- ---------------------------------------------------------------------------
+
+-- | SHA-256 (hex) — test-only, so the golden hashes need no extra dependency.
+sha256Hex :: [Word8] -> String
+sha256Hex msg = concatMap word32Hex (foldl compress h0 (blocks padded))
+  where
+    len = length msg
+    padLen = (55 - len) `mod` 64
+    padded = msg ++ [0x80] ++ replicate padLen 0
+             ++ [fromIntegral ((fromIntegral len * 8 :: Word64) `B.shiftR` (8 * k)) | k <- [7, 6 .. 0]]
+    blocks [] = []
+    blocks xs = let (b, r) = splitAt 64 xs in b : blocks r
+    toWords [] = []
+    toWords (a : b : c : d : r) =
+        (B.shiftL (fromIntegral a) 24 B..|. B.shiftL (fromIntegral b) 16
+          B..|. B.shiftL (fromIntegral c) 8 B..|. fromIntegral d :: Word32) : toWords r
+    toWords _ = []
+    word32Hex w = [intToDigit (fromIntegral ((w `B.shiftR` s) B..&. 15)) | s <- [28, 24 .. 0]]
+    h0 :: [Word32]
+    h0 = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]
+    kk :: [Word32]
+    kk = [ 0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5
+         , 0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174
+         , 0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da
+         , 0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967
+         , 0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85
+         , 0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070
+         , 0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3
+         , 0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2 ]
+    rotr :: Int -> Word32 -> Word32
+    rotr = flip B.rotateR
+    sched :: [Word32] -> [Word32]
+    sched w16 = go w16 (length w16)
+      where
+        go ws 64 = ws
+        go ws n =
+            let w15 = ws !! (n - 15); w2 = ws !! (n - 2)
+                s0 = rotr 7 w15 `B.xor` rotr 18 w15 `B.xor` B.shiftR w15 3
+                s1 = rotr 17 w2 `B.xor` rotr 19 w2 `B.xor` B.shiftR w2 10
+            in go (ws ++ [ws !! (n - 16) + s0 + ws !! (n - 7) + s1]) (n + 1)
+    compress :: [Word32] -> [Word8] -> [Word32]
+    compress hs blk = zipWith (+) hs (foldl rnd hs (zip kk (sched (toWords blk))))
+    rnd [a, b, c, d, e, f, g, h] (k, w) =
+        let s1 = rotr 6 e `B.xor` rotr 11 e `B.xor` rotr 25 e
+            ch = (e B..&. f) `B.xor` (B.complement e B..&. g)
+            t1 = h + s1 + ch + k + w
+            s0 = rotr 2 a `B.xor` rotr 13 a `B.xor` rotr 22 a
+            mj = (a B..&. b) `B.xor` (a B..&. c) `B.xor` (b B..&. c)
+            t2 = s0 + mj
+        in [t1 + t2, a, b, c, d + t1, e, f, g]
+    rnd st _ = st
+
+-- | Little-endian bytes of the samples (= the WAV data chunk).
+samplesBytes :: [Int16] -> [Word8]
+samplesBytes = concatMap (\s -> let w = fromIntegral s :: Word32
+                                 in [fromIntegral (w B..&. 255), fromIntegral ((w `B.shiftR` 8) B..&. 255)])
+
+synthEnv :: Double -> Double -> Double -> Double -> SP.Adsr
+synthEnv a d s r = SP.Adsr { SP.adAttack = a, SP.adDecay = d, SP.adSustain = s, SP.adRelease = r }
+
+synthVoice :: SP.Wave -> Double -> Double -> Double -> SP.Voice
+synthVoice w f sw d = SP.defaultVoice { SP.vWave = w, SP.vFreq = f, SP.vSweep = sw, SP.vDur = d }
+
+-- | The golden patches (id, sound). Changing the renderer changes these hashes
+--   on purpose: bump the renderer version (cache key, 5.2c) with them.
+synthGoldenPatches :: [(String, SP.SynthSound, String)]
+synthGoldenPatches =
+    [ ("sine", SP.SynthSound [synthVoice SP.Sine 440 0 0.2],
+        "8e41a4a6a5f5dddc15185a648f92f5ee796892aa68d81b5e414c5caee12c04b7")
+    , ("square", SP.SynthSound [(synthVoice SP.Square 880 (-400) 0.35)
+                                  { SP.vDuty = 0.3, SP.vEnv = synthEnv 0.005 0.05 0.7 0.2 }],
+        "dc0ad4fbc82fd77f6744d087c9d75cf11f04aa89b22981e8a4dbeed80b3c9e11")
+    , ("saw", SP.SynthSound [synthVoice SP.Saw 220 300 0.25],
+        "d4db71b78d63013d97bcd8f29760903292ce42f7e7b85eb23d9361db0c4fa85a")
+    , ("triangle", SP.SynthSound [synthVoice SP.Triangle 330 0 0.3],
+        "45d3582cf7dc155c6ba64a1c94e6378fcf5ba55253f979d45476a33e7789cafa")
+    , ("noise", SP.SynthSound [(synthVoice SP.Noise 0 0 0.15)
+                                 { SP.vEnv = synthEnv 0.005 0 1 0.1, SP.vVolume = 0.5 }],
+        "88926d5853d7b3d4069260d52292e2f4284317cf5f077bf3dfaa8191ddcb8fb8")
+    , ("tuer", SP.SynthSound [ (synthVoice SP.Noise 0 0 0.15) { SP.vEnv = synthEnv 0.005 0 1 0.1, SP.vVolume = 0.5 }
+                              , synthVoice SP.Sine 110 (-200) 0.3 ],
+        "21ce9362a869a105a8f216cc7583b0c4bdcbd55a2514175e65222d2d541a0d94")
+    ]
+
+testSynthSha256 :: IO Bool
+testSynthSha256 = do
+    r1 <- expectEqual "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" (sha256Hex [])
+    r2 <- expectEqual "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" (sha256Hex (map (fromIntegral . fromEnum) "abc"))
+    r3 <- expectEqual "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+            (sha256Hex (map (fromIntegral . fromEnum) "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"))
+    pure (r1 && r2 && r3)
+
+testSynthGolden :: IO Bool
+testSynthGolden = do
+    rs <- mapM check synthGoldenPatches
+    pure (and rs)
+  where
+    check (sid, snd', expected) = do
+        let h = sha256Hex (samplesBytes (SR.renderSound sid snd'))
+        putStrLn ("    golden " ++ sid ++ " = " ++ h)
+        expectEqual expected h
+
+testSynthLength :: IO Bool
+testSynthLength = do
+    let lenOf d = length (SR.renderSound "x" (SP.SynthSound [synthVoice SP.Sine 440 0 d]))
+        durs = [0.01, 0.2, 0.35, 1.0, 0.123456]
+    rs <- mapM (\d -> expectEqual (round (d * 22050) :: Int) (lenOf d)) durs
+    layered <- expectEqual (round (0.3 * 22050 :: Double))
+        (length (SR.renderSound "t" (SP.SynthSound [synthVoice SP.Noise 0 0 0.15, synthVoice SP.Sine 110 0 0.3])))
+    capped <- expectEqual 220500 (lenOf 60)
+    empty <- expectEqual 0 (length (SR.renderSound "e" (SP.SynthSound [])))
+    pure (and rs && layered && capped && empty)
+
+testSynthPeakLimit :: IO Bool
+testSynthPeakLimit = do
+    let loud w = (synthVoice w 200 0 0.5) { SP.vVolume = 1, SP.vEnv = synthEnv 0.001 0 1 0.01 }
+        out = SR.renderSound "loud" (SP.SynthSound (map loud [SP.Square, SP.Saw, SP.Square, SP.Noise]))
+        peak = maximum (map (abs . (fromIntegral :: Int16 -> Int)) out)
+        ceilI = round SP.peakCeiling :: Int
+    r1 <- expectTrue ("peak " ++ show peak ++ " must be <= " ++ show ceilI) (peak <= ceilI)
+    r2 <- expectTrue "limited signal is actually near the ceiling" (peak >= ceilI - 1)
+    -- a quiet sound keeps its level (limiter only scales down)
+    let quiet = SR.renderSound "q" (SP.SynthSound [(synthVoice SP.Square 440 0 0.2) { SP.vVolume = 0.1 }])
+        qpeak = maximum (map (abs . (fromIntegral :: Int16 -> Int)) quiet)
+    r3 <- expectTrue "quiet sound is not boosted" (qpeak > 3000 && qpeak < 3400)
+    -- out-of-range parameters are clamped, never wrap around
+    let wild = SR.renderSound "w" (SP.SynthSound [(synthVoice SP.Saw 1e9 1e9 0.1) { SP.vVolume = 50 }])
+    r4 <- expectTrue "wild parameters stay within the ceiling"
+            (all (\s -> abs (fromIntegral s :: Int) <= ceilI) wild)
+    pure (r1 && r2 && r3 && r4)
+
+testSynthEnvelopeEdges :: IO Bool
+testSynthEnvelopeEdges = do
+    let waves = [minBound .. maxBound] :: [SP.Wave]
+        mk w env = SP.SynthSound [(synthVoice w 440 0 0.2) { SP.vEnv = env }]
+        envs = [ SP.defaultAdsr, synthEnv 0 0 1 0, synthEnv 0.5 0.5 0.3 0.5, synthEnv 0.01 0.02 0.5 5 ]
+        edges snd' = let o = SR.renderSound "edge" snd' in (head o, last o)
+    rs <- mapM (\(w, env) -> expectEqual (0 :: Int16, 0 :: Int16) (let (a, b) = edges (mk w env) in (a, b)))
+               [ (w, env) | w <- waves, env <- envs ]
+    layered <- expectEqual (0 :: Int16, 0 :: Int16)
+        (let o = SR.renderSound "tuer" (let SP.SynthSound vs = mkLayers in SP.SynthSound vs) in (head o, last o))
+    -- no click: the first and last steps stay small (continuous ramp)
+    let o = SR.renderSound "ramp" (mk SP.Square SP.defaultAdsr)
+    ramp <- expectTrue "first samples ramp up smoothly"
+              (and [abs (fromIntegral (o !! 1) :: Int) < 500, abs (fromIntegral (last (init o)) :: Int) < 3000])
+    pure (and rs && layered && ramp)
+  where
+    mkLayers = case [s | (_, s, _) <- synthGoldenPatches, isLayerPatch s] of
+        (s : _) -> s
+        [] -> SP.SynthSound []
+    isLayerPatch (SP.SynthSound vs) = length vs > 1
+
+testSynthNoiseDeterminism :: IO Bool
+testSynthNoiseDeterminism = do
+    let nz = SP.SynthSound [synthVoice SP.Noise 0 0 0.1]
+        a1 = SR.renderSound "alarm" nz
+        a2 = SR.renderSound "alarm" nz
+        b = SR.renderSound "klick" nz
+    r1 <- expectTrue "same id renders identically" (a1 == a2)
+    r2 <- expectTrue "different ids give different noise" (a1 /= b)
+    r3 <- expectTrue "noise is not silent" (any (/= 0) a1)
+    -- the two layers of one sound must not carry the same noise
+    let two = SR.renderSound "l" (SP.SynthSound [synthVoice SP.Noise 0 0 0.1, synthVoice SP.Noise 0 0 0.1])
+        one = SR.renderSound "l" nz
+    r4 <- expectTrue "layers use independent noise streams" (two /= one && two /= zipWith (+) one one)
+    pure (r1 && r2 && r3 && r4)
+
+testSynthWav :: IO Bool
+testSynthWav = do
+    let samples = SR.renderSound "wav" (SP.SynthSound [synthVoice SP.Triangle 330 0 0.3])
+        wav = SW.encodeWav SP.sampleRate samples
+        bytes = BL.unpack wav
+        le n o = sum [fromIntegral (bytes !! (o + k)) * 256 ^ k | k <- [0 .. n - 1]] :: Integer
+        dataLen = fromIntegral (2 * length samples) :: Integer
+        str o = map (toEnum . fromIntegral) (take 4 (drop o bytes)) :: String
+    rs <- sequence
+        [ expectEqual 44 (fromIntegral (BL.length wav) - 2 * length samples)
+        , expectEqual "RIFF" (str 0)
+        , expectEqual (36 + dataLen) (le 4 4)
+        , expectEqual "WAVE" (str 8)
+        , expectEqual "fmt " (str 12)
+        , expectEqual 16 (le 4 16)
+        , expectEqual 1 (le 2 20)
+        , expectEqual 1 (le 2 22)
+        , expectEqual 22050 (le 4 24)
+        , expectEqual 44100 (le 4 28)
+        , expectEqual 2 (le 2 32)
+        , expectEqual 16 (le 2 34)
+        , expectEqual "data" (str 36)
+        , expectEqual dataLen (le 4 40)
+        , expectEqual (36 + dataLen + 8) (fromIntegral (BL.length wav))
+        ]
+    dir <- getTemporaryDirectory
+    let path = dir </> "synth-test-5.2b.wav"
+    BL.writeFile path wav
+    mffprobe <- findExecutable "ffprobe"
+    probe <- case mffprobe of
+        Nothing -> putStrLn "    ffprobe not installed — skipping the ffprobe check" >> pure True
+        Just exe -> do
+            (code, out, err) <- readProcessWithExitCode exe
+                ["-v", "error", "-show_entries", "stream=codec_name,sample_rate,channels,duration",
+                 "-of", "default=nw=1", path] ""
+            putStrLn ("    ffprobe: " ++ unwords (lines out))
+            expectTrue ("ffprobe failed: " ++ err)
+                (code == ExitSuccess && "codec_name=pcm_s16le" `isInfixOf` out
+                  && "sample_rate=22050" `isInfixOf` out && "channels=1" `isInfixOf` out
+                  && "duration=0.3" `isInfixOf` out)
+    removeFile path
+    pure (and rs && probe)
+
+testSynthRuntime :: IO Bool
+testSynthRuntime = do
+    let sum' = foldl (\acc s -> acc + fromIntegral s) (0 :: Int)
+        timed label snd' = do
+            t0 <- getCPUTime
+            n <- evaluate (sum' (SR.renderSound "bench" snd'))
+            t1 <- getCPUTime
+            w <- evaluate (BL.length (SW.encodeWav SP.sampleRate (SR.renderSound "bench" snd')))
+            t2 <- getCPUTime
+            let ms a b = fromIntegral (b - a) / 1e9 :: Double
+            putStrLn ("    " ++ label ++ ": render " ++ show (ms t0 t1) ++ " ms, render+WAV "
+                      ++ show (ms t1 t2) ++ " ms (checksum " ++ show n ++ ", " ++ show w ++ " bytes)")
+            pure (ms t0 t1)
+        v w = (synthVoice w 440 (-20) 10) { SP.vEnv = synthEnv 0.01 0.1 0.7 0.5 }
+    one <- timed "10 s, 1 layer (sine)" (SP.SynthSound [v SP.Sine])
+    four <- timed "10 s, 4 layers (sine/square/saw/noise)" (SP.SynthSound (map v [SP.Sine, SP.Square, SP.Saw, SP.Noise]))
+    r1 <- expectTrue ("1 layer took " ++ show one ++ " ms") (one < 200)
+    r2 <- expectTrue ("4 layers took " ++ show four ++ " ms") (four < 200)
+    pure (r1 && r2)
