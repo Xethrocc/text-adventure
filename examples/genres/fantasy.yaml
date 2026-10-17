@@ -104,7 +104,7 @@ rooms:
     desc: An ember-lit hall. A figure in black robes stands over a brazier, and a stair climbs north.
     exits:
       west: {to: cave_depths}
-      north: {to: tower_base}
+      north: {to: tower_base, when: {any: [{has_flag: warden_fled}, {state: warden, is: dead}]}, msg: "The warden steps into your path and bars the stair."}
   - id: tower_base
     name: Tower Base
     desc: The foot of a broken tower. A stair spirals up into the dark.
@@ -163,6 +163,7 @@ items:
         - {give: ember_crown}
         - {msg: "You lift the Ember Crown. The tower shudders once, and is still."}
         - {set_flag: crown_taken, val: "true"}
+        - {complete_quest: cleanse_emberhold}
         - {game_end: victory, msg: "VICTORY — The Ember Crown rests on your brow. The Emberhold is cleansed."}
 
 npcs:
@@ -193,6 +194,7 @@ npcs:
             - {msg: "You fling a bolt of ember-light. The warden's robes catch and he flees up the stair!"}
             - {set_flag: warden_fled, val: "true"}
             - {move_npc: warden, to: tower_base}
+            - {advance_quest: cleanse_emberhold}
           else:
             - {msg: "Your magic gutters out. You have not the mana — nor the hermit's salve to focus it."}
 
@@ -214,6 +216,11 @@ rules:
     once: true
     effects:
       - {start_quest: cleanse_emberhold}
+  - id: leave_village
+    on: enter north_road
+    once: true
+    effects:
+      - {advance_quest: cleanse_emberhold}
 
 interactions:
   entity: []
@@ -226,3 +233,54 @@ interactions:
         - {consume: "{item2}"}
         - {msg: "You grind the moonwort in the stone mortar into a bright paste."}
         - {advance_quest: cleanse_emberhold}
+
+tests:
+  # Regression: the warden bars the stair north until he has fled (or died).
+  - name: warden_bars_stair
+    input: [north, north, north, north, north, north, east, north, down, east, north, look]
+    expect:
+      - "Also here: warden."
+      - "The warden steps into your path and bars the stair."
+      - "An ember-lit hall."
+  # Regression: the quest advances through every stage and completes with the
+  # crown (reward text before the victory line).
+  - name: quest_stages_to_crown
+    input:
+      - "north"
+      - "north"
+      - "quests"
+      - "west"
+      - "take rusty sword"
+      - "equip rusty sword"
+      - "east"
+      - "north"
+      - "quests"
+      - "north"
+      - "take moonwort herb"
+      - "east"
+      - "use herb on mortar"
+      - "quests"
+      - "west"
+      - "north"
+      - "attack scavenger"
+      - "attack scavenger"
+      - "north"
+      - "east"
+      - "north"
+      - "down"
+      - "east"
+      - "cast warden"
+      - "quests"
+      - "north"
+      - "up"
+      - "up"
+      - "take Ember Crown"
+    expect:
+      - "- Cleanse the Emberhold: Prepare in the village."
+      - "- Cleanse the Emberhold: Grind the moonwort into a salve."
+      - "You grind the moonwort in the stone mortar into a bright paste."
+      - "- Cleanse the Emberhold: Face the warden in the ritual chamber."
+      - "he flees up the stair!"
+      - "- Cleanse the Emberhold: Take the Ember Crown."
+      - "The Ember Crown is yours; the Emberhold is cleansed."
+      - "VICTORY — The Ember Crown rests on your brow."

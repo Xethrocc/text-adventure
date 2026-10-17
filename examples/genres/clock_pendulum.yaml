@@ -12,6 +12,7 @@
 
 name: Das Pendel des Kerkermeisters
 start_room: kerkerzelle
+language: de
 
 title_art: |
   =======================================================
@@ -150,12 +151,24 @@ rooms:
 items:
   - id: fesseln
     name: lederne Fesseln
+    gender: f
+    article:
+      nom: die
+      gen: der
+      dat: den
+      acc: die
     keys: [fessel, fesseln, riemen, leder]
     desc: "Zaehe Lederriemen, die an den Eisenringen des Richtblocks befestigt waren."
     location: kerkerzelle
 
   - id: oel_krug
     name: Krug mit fettigem Oel
+    gender: m
+    article:
+      nom: der
+      gen: des
+      dat: dem
+      acc: den
     keys: [krug, oel, speiseoel, fett]
     desc: "Ein kleiner Tonkrug mit altem, ranzigem Speiseoel. Der Geruch zieht die hungrigen Kerker-Ratten an."
     location: kerkerzelle
@@ -170,15 +183,28 @@ items:
 
   - id: kupferschluessel
     name: verrosteter Kupferschluessel
+    gender: m
+    article:
+      nom: der
+      gen: des
+      dat: dem
+      acc: den
     keys: [schluessel, kupferschluessel]
     desc: "Ein schwerer, gruenspaniger Schluessel mit einem sechskantigen Bart."
     location: abgrund
 
   - id: flutventil
     name: eisernes Flutventil
+    gender: n
+    article:
+      nom: das
+      gen: des
+      dat: dem
+      acc: das
     keys: [ventil, rad, hebel, flutventil]
     desc: "Ein grosses gusseisernes Rad an den Schleusenrohren der Zisterne."
     location: zisterne
+    portable: false
     verb_map:
       use,intact:
         - if: { compare_var: { name: ventil_gedreht, op: eq, value: 0 } }
@@ -191,9 +217,16 @@ items:
 
   - id: geheimschloss
     name: sechseckiges Messingschloss
+    gender: n
+    article:
+      nom: das
+      gen: des
+      dat: dem
+      acc: das
     keys: [schloss, messingschloss, mechanik]
     desc: "Ein kunstvoll im Mauerwerk der Zisterne verborgenes Schloss."
     location: zisterne
+    portable: false
     verb_map:
       use,intact:
         - if: { has_item: kupferschluessel }
@@ -232,18 +265,26 @@ rules:
             - msg: "Die Frist der Inquisition ist endgueltig abgelaufen!"
 
   # --- Primärer Countdown: Das Pendel senkt sich pro Runde um 1 Stufe ---
+  # Der finale Schlag faellt genau einmal (Timer 1 -> 0); die Meldungen sind
+  # an die Richtzelle gebunden — wer geflohen ist, sieht das Pendel nicht.
   - id: pendel_tick
     on: turn
+    when: { compare_var: { name: pendel_timer, op: gt, value: 0 } }
     effects:
       - add_var: { var: pendel_timer, delta: -1 }
-      - msg: "Das schwere Eisenpendel zischt durch die Luft und senkt sich unerbittlich um eine Raste tiefer!"
+      - if: { at: player, room: kerkerzelle }
+        then:
+          - msg: "Das schwere Eisenpendel zischt durch die Luft und senkt sich unerbittlich um eine Raste tiefer!"
       - if: { compare_var: { name: pendel_timer, op: lte, value: 0 } }
         then:
-          - msg: "ZISCH! Die rasiermesserscharfe Pendelklinge saust durch das Holz des Richtblocks!"
           - if: { compare_var: { name: fesseln_geloest, op: eq, value: 1 } }
             then:
-              - msg: "Da du nicht mehr gefesselt bist, rollst du dich im letzten Wimpernschlag zur Seite!"
+              - if: { at: player, room: kerkerzelle }
+                then:
+                  - msg: "ZISCH! Die rasiermesserscharfe Pendelklinge saust durch das Holz des Richtblocks!"
+                  - msg: "Da du nicht mehr gefesselt bist, rollst du dich im letzten Wimpernschlag zur Seite!"
             else:
+              - msg: "ZISCH! Die rasiermesserscharfe Pendelklinge saust durch das Holz des Richtblocks!"
               - game_end: zerteilt
 
   # --- Intervall 1: Jeder Zug (every: 1) - Wasserlaeuten und Tropfen ---
@@ -298,6 +339,8 @@ rules:
     on: turn
     when:
       all:
+        - at: player
+          room: kerkerzelle
         - compare_var: { name: pendel_timer, op: "<=", value: 2 }
         - compare_var: { name: pendel_timer, op: ">", value: 0 }
     effects:
@@ -321,3 +364,20 @@ tests:
       - "Deine Haende sind frei!"
       - "Das schwere Eisenpendel zischt durch die Luft"
       - "Ein modriger Steingang"
+  # Regression: Ventil und Schloss sind fest in der Zisterne verbaut.
+  - name: "ventil und schloss bleiben in der zisterne"
+    input: [use oel, north, west, take schluessel, east, east, take ventil, take schloss, inventory]
+    expect:
+      - "Deine Haende sind frei!"
+      - "Du nimmst den verrosteter Kupferschluessel."
+      - "Du kannst das eisernes Flutventil nicht mitnehmen."
+      - "Du kannst das sechseckiges Messingschloss nicht mitnehmen."
+      - "Inventar: verrosteter Kupferschluessel"
+  # Regression: der finale Pendelschlag faellt genau einmal, danach nur noch Stille.
+  - name: "pendelschlag einmalig"
+    input: [warten, warten, warten, warten, warten, warten, warten, warten, warten, use oel, warten, warten, warten]
+    expect:
+      - "Deine Haende sind frei!"
+      - "ZISCH! Die rasiermesserscharfe Pendelklinge saust durch das Holz des Richtblocks!"
+      - "Da du nicht mehr gefesselt bist, rollst du dich im letzten Wimpernschlag zur Seite!"
+      - "Du verharrst regungslos und lauschst dem Ticken der Zeit im Kerker."

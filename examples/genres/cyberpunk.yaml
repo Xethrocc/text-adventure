@@ -212,6 +212,28 @@ rules:
     once: true
     effects:
       - {start_quest: blackwood_job}
+      - {set_flag: job_started, val: "true"}
+  # Quest stages follow the flags, not the order of play: the tower can be
+  # reached before the market (back alley), and an advance_quest on a quest
+  # that is not active yet would print "quest not active".
+  - id: mark_tower_entered
+    on: enter corp_entrance
+    once: true
+    effects:
+      - {set_flag: tower_entered, val: "true"}
+  - id: job_recon_done
+    on: turn
+    once: true
+    when: {all: [{has_flag: job_started}, {has_flag: tower_entered}]}
+    effects:
+      - {advance_quest: blackwood_job}
+      - {set_flag: job_infiltrating, val: "true"}
+  - id: job_infiltrate_done
+    on: turn
+    once: true
+    when: {all: [{has_flag: job_infiltrating}, {has_flag: vault_unlocked}]}
+    effects:
+      - {advance_quest: blackwood_job}
   - id: heat_escalation
     on: turn
     once: true
@@ -224,6 +246,8 @@ rules:
     when: {has_flag: shard_taken}
     effects:
       - {msg: "You drop from the fence gap into the crowd and are gone."}
+      - if: {has_flag: job_started}
+        then: [{complete_quest: blackwood_job}]
       - {game_end: victory, msg: "VICTORY — You make your exit with the datashard."}
 
 interactions:
@@ -246,3 +270,13 @@ tests:
       - "The vault door is sealed shut. The server console controls the lock."
       - "The vault door exhales and slides open."
       - "A single pedestal holds a black datashard."
+  # Regression: the quest started at the market but never moved past stage 0
+  # (QuestNeverProgressed); now tower entry, vault hack and exfil drive it.
+  - name: blackwood_job_progresses
+    input: [east, north, journal, east, north, up, journal, up, up, hack office terminal, east, down, hack server console, journal, east, take black datashard, west, up, west, down, down, west, south, south, west]
+    expect:
+      - "- The Blackwood Job: Find a way into the tower."
+      - "- The Blackwood Job: Get past the corp security."
+      - "- The Blackwood Job: Steal the datashard and get clear."
+      - "The datashard is yours. The city opens its doors."
+      - "VICTORY — You make your exit with the datashard."

@@ -900,31 +900,54 @@ rules:
       - { set_var: { name: target_type, value: 0 } }
       - { set_var: { name: mult, value: 1 } }
 
-  # Schadenstransfer auf Gegner
+  # Schadenstransfer auf Gegner: genau der angezeigte Effektivschaden
+  # (eff_damage = base_damage * mult, also 40 oder 80; damage_npc kennt nur
+  # feste Betraege). Frueher zog jede Regel die vollen Max-HP ab -- jeder
+  # Treffer war toedlich, die Typ-Tabelle rein kosmetisch.
   - id: dmg_flossler
     on: turn
     when: { all: [{ var: cmd.target, is: flossler }, { compare_var: { name: eff_damage, op: gte, value: 1 } }, { at: player, room: arena_stadion }, { at: flossler, room: arena_stadion }] }
-    effects: [{ damage_npc: { npc: flossler, amount: 20 } }, { set_var: { name: eff_damage, value: 0 } }]
+    effects:
+      - if: { compare_var: { name: eff_damage, op: gte, value: 80 } }
+        then: [{ damage_npc: { npc: flossler, amount: 80 } }]
+        else: [{ damage_npc: { npc: flossler, amount: 40 } }]
+      - { set_var: { name: eff_damage, value: 0 } }
 
   - id: dmg_borkenkauz
     on: turn
     when: { all: [{ var: cmd.target, is: borkenkauz }, { compare_var: { name: eff_damage, op: gte, value: 1 } }, { at: player, room: arena_stadion }, { at: borkenkauz, room: arena_stadion }] }
-    effects: [{ damage_npc: { npc: borkenkauz, amount: 25 } }, { set_var: { name: eff_damage, value: 0 } }]
+    effects:
+      - if: { compare_var: { name: eff_damage, op: gte, value: 80 } }
+        then: [{ damage_npc: { npc: borkenkauz, amount: 80 } }]
+        else: [{ damage_npc: { npc: borkenkauz, amount: 40 } }]
+      - { set_var: { name: eff_damage, value: 0 } }
 
   - id: dmg_gargol
     on: turn
     when: { all: [{ var: cmd.target, is: gargol }, { compare_var: { name: eff_damage, op: gte, value: 1 } }, { at: player, room: arena_stadion }, { at: gargol, room: arena_stadion }] }
-    effects: [{ damage_npc: { npc: gargol, amount: 30 } }, { set_var: { name: eff_damage, value: 0 } }]
+    effects:
+      - if: { compare_var: { name: eff_damage, op: gte, value: 80 } }
+        then: [{ damage_npc: { npc: gargol, amount: 80 } }]
+        else: [{ damage_npc: { npc: gargol, amount: 40 } }]
+      - { set_var: { name: eff_damage, value: 0 } }
 
   - id: dmg_flamara
     on: turn
     when: { all: [{ var: cmd.target, is: flamara }, { compare_var: { name: eff_damage, op: gte, value: 1 } }, { at: player, room: arena_stadion }, { at: flamara, room: arena_stadion }] }
-    effects: [{ damage_npc: { npc: flamara, amount: 35 } }, { set_var: { name: eff_damage, value: 0 } }]
+    effects:
+      - if: { compare_var: { name: eff_damage, op: gte, value: 80 } }
+        then: [{ damage_npc: { npc: flamara, amount: 80 } }]
+        else: [{ damage_npc: { npc: flamara, amount: 40 } }]
+      - { set_var: { name: eff_damage, value: 0 } }
 
   - id: dmg_krateron
     on: turn
     when: { all: [{ var: cmd.target, is: krateron }, { compare_var: { name: eff_damage, op: gte, value: 1 } }, { at: player, room: arena_stadion }, { at: krateron, room: arena_stadion }] }
-    effects: [{ damage_npc: { npc: krateron, amount: 45 } }, { set_var: { name: eff_damage, value: 0 } }]
+    effects:
+      - if: { compare_var: { name: eff_damage, op: gte, value: 80 } }
+        then: [{ damage_npc: { npc: krateron, amount: 80 } }]
+        else: [{ damage_npc: { npc: krateron, amount: 40 } }]
+      - { set_var: { name: eff_damage, value: 0 } }
 
   # Move ohne gueltiges Arena-Ziel: Restschaden verfaellt
   - id: dmg_verfallen
@@ -1163,3 +1186,14 @@ tests:
       - "Tiefste Basaltkammer"
       - "KLICK! Felsling wurde gefangen!"
       - "Der Safari-Ball rollt ins Leere — hier ist kein wildes Monster dieser Art (mehr) zu fangen."
+
+  # Regression: die dmg_*-Regeln zogen frueher immer die vollen Max-HP ab --
+  # "1x Multiplikator, 40 Schaden" fällte trotzdem Krateron (45 KP) sofort.
+  - name: "schaden folgt dem multiplikator"
+    input: [take ball, west, north, use-ability fangball auf nassling, south, east, east, north, use-ability fangball auf blattfink, south, west, south, south, use-ability fangball auf glutling, switch glutling, north, north, north, north, herausfordern jan, attack flossler, herausfordern lea, glutstoss borkenkauz, herausfordern bruno, switch nassling, aquawelle gargol, herausfordern pyra, aquawelle flamara, herausfordern viktor, glutstoss krateron, look, glutstoss krateron]
+    expect:
+      - "Champion Viktor ruft Krateron in die Arena!"
+      - "Treffer erzielt! (1x Multiplikator, 40 Schaden.)"
+      - "Hier liegen Leichen: Borkenkauz, Flamara, Flossler, Gargol."
+      - "Treffer erzielt! (1x Multiplikator, 40 Schaden.)"
+      - "Der maechtige Krateron stuerzt auf die Knie!"

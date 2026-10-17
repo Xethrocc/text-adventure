@@ -521,7 +521,9 @@ interactions:
     # 4. Magnum Opus: Gelernt aus dem Grimoire (Meisterprüfung)
     - id: magnum_opus_rezept
       requires_learning: true
-      ingredients: [sternenmoos, quellsilber, goldstaub]
+      # Die Silberdistille ist das Werkzeug (nicht verbraucht) -- ohne sie lief
+      # das Opus frueher auch ohne den 30-Taler-Kauf der Gesellenpruefung.
+      ingredients: [sternenmoos, quellsilber, goldstaub, silberdistille]
       result: magnum_opus
       effects:
         - msg: "In der Silberdistille verbinden sich Sternenmoos, Quellsilber und Goldstaub zu einer leuchtend goldenen Quintessenz. Das Magnum Opus — der Stein der Weisen — ist vollendet!"
@@ -823,3 +825,13 @@ tests:
       - "Du trägst schon Quellsilber bei dir — verbrauche das erst, bevor du neues kaufst."
       - "Du trägst schon Goldstaub bei dir — verbrauche den erst, bevor du neuen kaufst."
       - "Das Magnum Opus ist vollbracht! Du bist nun Großmeister der Alchemie"
+
+  # Regression: das Magnum-Opus-Rezept brauchte die Silberdistille nicht -- der
+  # 30-Taler-Kauf der Gesellenpruefung war ueberfluessig.
+  - name: magnum_opus_braucht_distille
+    input: [recipes, north, take blutdistel, take phiole, craft wundbalsam, south, use wundbalsam on stadtwache, south, buy schwefel, north, north, north, take salz, south, east, take feuertraktat, west, craft feueressenz, south, south, sell feueressenz, buy mondkraut, north, north, east, take rezeptbuch, take kristallphiole, west, craft mana_elixier, south, use mana_elixier on magierin, north, east, take grimoire, west, west, take sternenmoos, east, south, south, buy quellsilber, buy goldstaub, north, north, craft magnum_opus, south, south, buy silberdistille, north, north, craft magnum_opus, south, south, use magnum_opus on meister_bruno]
+    expect:
+      - "Dazu musst du 'Silberdistille' bei dir haben."
+      - "Du kaufst die meisterhafte Silberdistille für 30 Taler!"
+      - "Das Magnum Opus — der Stein der Weisen — ist vollendet!"
+      - "Das Magnum Opus ist vollbracht! Du bist nun Großmeister der Alchemie."

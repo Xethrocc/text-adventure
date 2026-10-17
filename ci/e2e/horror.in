@@ -10,7 +10,6 @@ north
 east
 north
 take rusted iron key
-use rusted iron key
 south
 west
 south
@@ -25,4 +24,5 @@ down
 south
 west
 south
+use rusted iron key
 quit

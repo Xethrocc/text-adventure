@@ -207,11 +207,9 @@ cards:
 handLimit: 5
 deck:
   bash: 1
-  strike: 3
-  defend: 1
+  strike: 5
+  defend: 3
   eiserne_welle: 1
-  strike: 2
-  defend: 2
 
 rooms:
   # Ebene 0: Vorhof & Meta-Hub
@@ -562,26 +560,25 @@ tests:
     input:
       - "down"
       - "play 1"
-      - "play 3"
+      - "play 4"
       - "go west"
       - "opfern"
       - "go east"
       - "play 4"
-      - "play 3"
+      - "play 4"
       - "end turn"
-      - "play 2"
+      - "play 1"
       - "take schluessel"
       - "go north"
       - "rasten"
       - "use schluessel"
       - "go north"
       - "play 1"
-      - "play 4"
-      - "end turn"
-      - "play 5"
-      - "play 2"
+      - "play 1"
+      - "play 3"
       - "end turn"
       - "play 2"
+      - "play 3"
     expect:
       - "Mächtige Säulen aus gebleichten Menschenknochen"
       - "Schildschlag-Synergie"
@@ -594,3 +591,12 @@ tests:
       - "Ein monumentaler Saal aus schwarzem Marmor"
       - "Lich Malakor bricht mit einem schrillen Schrei in sich zusammen"
       - "Du hast Lich Malakor bezwungen und die Krypta der Verdammten erlöst!"
+  # Regression: das Startdeck hat 10 Karten (Schmetterschlag 1, Hieb 5,
+  # Schildparade 3, Eiserne Welle 1) — nach dem Ziehen von 5 liegen 5 im Stapel.
+  - name: startdeck_vollstaendig
+    input:
+      - "down"
+      - "hand"
+    expect:
+      - "[Deck: 5] ─── HP 35/35 | Block: 0 | Energie: 3/3 ─── [Ablage: 0]"
+      - "1. Schmett (2)"

@@ -26,6 +26,13 @@ variables:
     type: int
     initial: 1
     min: 1
+  # Auf welcher Schacht-Ebene steht der Spieler (1 = Oberfläche)? Die Sohle des
+  # Schachts ist erreicht, wenn schacht_ebene == depth — nur dort darf gegraben
+  # werden (sonst überschreibt ein zweiter Stollen den Ausgang nach unten).
+  - name: "schacht_ebene"
+    type: int
+    initial: 1
+    min: 1
   - name: "beeren_timer"
     type: int
     initial: 0
@@ -119,40 +126,40 @@ rules:
   - id: "rule_rasten"
     on: "command rasten"
     effects:
+      # Tag/Nacht wechselt bei jeder Rast, das Wetter erst am Morgen — so
+      # erscheinen sowohl die Nacht- als auch die Regen-Varianten.
       - if: { var: "time_of_day", is: "nacht" }
         then:
           - set_var: { var: "time_of_day", value: "tag" }
-          - set_var: { var: "weather", value: "sonne" }
           - compute_var: { var: energy, expr: "min(100, energy + 25)" }
-          - msg: "Du ruhst dich aus. Die Nacht weicht dem Morgen — die Sonne geht auf! (+25 Energie, Tag bricht an)"
+          - if: { var: "weather", is: "regen" }
+            then:
+              - set_var: { var: "weather", value: "sonne" }
+              - msg: "Du ruhst dich aus. Die Nacht weicht dem Morgen — die Sonne geht auf! (+25 Energie, Tag bricht an)"
+            else:
+              - set_var: { var: "weather", value: "regen" }
+              - msg: "Du ruhst dich aus. Die Nacht weicht einem grauen Morgen — dunkle Wolken ziehen auf und Regen setzt ein. (+25 Energie, Tag bricht an)"
         else:
           - set_var: { var: "time_of_day", value: "nacht" }
-          - set_var: { var: "weather", value: "regen" }
-          - msg: "Du schlägst ein Lager auf und rastest. Dunkle Wolken ziehen auf — die Nacht bricht herein und Regen setzt ein."
+          - msg: "Du schlägst ein Lager auf und rastest. Die Nacht bricht herein."
 
-  # Beeren sammeln auf Lichtungen (mit Respawn-Zähler)
+  # Beeren sammeln auf Lichtungen (mit Respawn-Zähler). Eine Regel mit
+  # if/else: zwei Regeln würden nacheinander gegen den schon gesetzten Timer
+  # feuern und direkt nach der Ernte die Abgeerntet-Meldung zeigen (R-01).
   - id: "rule_foraging"
     on: "command sammeln"
     when:
-      all:
-        - room: "current_room"
-          has_tag: "clearing"
-        - compare_var: { name: "beeren_timer", op: "<=", value: 0 }
+      room: "current_room"
+      has_tag: "clearing"
     effects:
-      - add_var: { variable: berries, delta: 5 }
-      - add_var: { variable: beeren_timer, delta: 3 }
-      - compute_var: { var: energy, expr: "min(100, energy + 15)" }
-      - msg: "Du pflückst eine Handvoll süßer Waldbeeren und isst einige davon. (+5 Beeren, +15 Energie, Strauch abgeerntet)"
-
-  - id: "rule_foraging_cooldown"
-    on: "command sammeln"
-    when:
-      all:
-        - room: "current_room"
-          has_tag: "clearing"
-        - compare_var: { name: "beeren_timer", op: ">", value: 0 }
-    effects:
-      - msg: "Die Beerensträucher wurden vor kurzem abgeerntet und müssen erst nachwachsen ({beeren_timer} Runden verbleibend)."
+      - if: { compare_var: { name: "beeren_timer", op: "<=", value: 0 } }
+        then:
+          - add_var: { variable: berries, delta: 5 }
+          - add_var: { variable: beeren_timer, delta: 3 }
+          - compute_var: { var: energy, expr: "min(100, energy + 15)" }
+          - msg: "Du pflückst eine Handvoll süßer Waldbeeren und isst einige davon. (+5 Beeren, +15 Energie, Strauch abgeerntet)"
+        else:
+          - msg: "Die Beerensträucher wurden vor kurzem abgeerntet und müssen erst nachwachsen ({beeren_timer} Runden verbleibend)."
 
   # Beeren-Respawn-Timer tickt jede Runde herunter
   - id: "rule_beeren_respawn"
@@ -178,17 +185,41 @@ rules:
         - has_item: "spitzhacke"
         - compare_var: { name: "energy", op: "gte", value: 15 }
     effects:
-      - generate_room:
-          id: "stollen_{depth}"
-          name: "Unterirdischer Stollen (Tiefe {depth})"
-          description: "Ein von Hand getriebener Stollen tief im Erdreich. Schimmernde Erzknollen glitzern im Gestein bei Tiefe {depth}."
-          connect_from: "current_room"
-          direction: "down"
-          return_direction: "up"
-      - add_var: { variable: depth, delta: 1 }
-      - add_var: { variable: ore, delta: 3 }
-      - compute_var: { var: energy, expr: "max(0, energy - 15)" }
-      - msg: "Du schlägst mit der Spitzhacke in das Erdreich und legst einen neuen Stollen nach unten frei! (+3 Erz, -15 Energie, Weg nach unten geöffnet)"
+      # Eine Regel mit if/else (R-01): nur an der Sohle des Schachts graben.
+      - if: { compare: { lhs: schacht_ebene, op: "=", rhs: depth } }
+        then:
+          - generate_room:
+              id: "stollen_{depth}"
+              name: "Unterirdischer Stollen (Tiefe {depth})"
+              description: "Ein von Hand getriebener Stollen tief im Erdreich. Schimmernde Erzknollen glitzern im Gestein bei Tiefe {depth}."
+              connect_from: "current_room"
+              direction: "down"
+              return_direction: "up"
+          - add_var: { variable: depth, delta: 1 }
+          - add_var: { variable: ore, delta: 3 }
+          - compute_var: { var: energy, expr: "max(0, energy - 15)" }
+          - msg: "Du schlägst mit der Spitzhacke in das Erdreich und legst einen neuen Stollen nach unten frei! (+3 Erz, -15 Energie, Weg nach unten geöffnet)"
+        else:
+          - msg: "Hier gräbst du nicht — du hast bereits einen Schacht angelegt. Weiter in die Tiefe geht es nur an seiner Sohle (Stollen-Tiefe {depth})."
+
+  # Schacht-Ebene mitzählen: jeder erfolgreiche Schritt nach unten/oben
+  - id: "rule_schacht_ab"
+    on: "command go"
+    when:
+      all:
+        - { var: "cmd.arg1", is: "Down" }
+        - { var: "cmd.succeeded", is: "true" }
+    effects:
+      - add_var: { variable: schacht_ebene, delta: 1 }
+
+  - id: "rule_schacht_auf"
+    on: "command go"
+    when:
+      all:
+        - { var: "cmd.arg1", is: "Up" }
+        - { var: "cmd.succeeded", is: "true" }
+    effects:
+      - add_var: { variable: schacht_ebene, delta: -1 }
 
   - id: "rule_mining_no_pick"
     on: "command graben"
@@ -277,3 +308,39 @@ sandbox_zones:
               text: |
                 /\/\/\/\  [Nacht: {x}, {y}]
                 | DUNK |
+
+tests:
+  # Regression: ein zweites "graben" im selben Raum überschreibt den ersten
+  # Stollen nicht mehr; weitergegraben wird nur an der Sohle des Schachts.
+  - name: "graben nur an der schachtsohle"
+    input: [take spitzhacke, north, graben, graben, down, graben, up, graben, down, down, status]
+    expect:
+      - "Du schlägst mit der Spitzhacke in das Erdreich und legst einen neuen Stollen nach unten frei!"
+      - "Hier gräbst du nicht — du hast bereits einen Schacht angelegt. Weiter in die Tiefe geht es nur an seiner Sohle (Stollen-Tiefe 2)."
+      - "Schimmernde Erzknollen glitzern im Gestein bei Tiefe 1."
+      - "Du schlägst mit der Spitzhacke in das Erdreich und legst einen neuen Stollen nach unten frei!"
+      - "Hier gräbst du nicht — du hast bereits einen Schacht angelegt. Weiter in die Tiefe geht es nur an seiner Sohle (Stollen-Tiefe 3)."
+      - "Schimmernde Erzknollen glitzern im Gestein bei Tiefe 1."
+      - "Schimmernde Erzknollen glitzern im Gestein bei Tiefe 2."
+      - "Holz: 0 | Erz: 6 | Beeren: 0"
+  # Regression: Rasten wechselt Tag/Nacht, das Wetter am Morgen — Nacht- und
+  # Regen-Varianten werden beide sichtbar.
+  - name: "nacht und regen sichtbar"
+    input: [north, rasten, look, rasten, look, rasten, look, rasten, look]
+    expect:
+      - "Du schlägst ein Lager auf und rastest. Die Nacht bricht herein."
+      - "[Nacht: 0, 0]"
+      - "Die finstere Nacht hüllt den uralten Forst in tiefe Schatten bei Koordinate [0, 0]."
+      - "dunkle Wolken ziehen auf und Regen setzt ein."
+      - "[Regen: 0, 0]"
+      - "Schwere Regentropfen prasseln durch das Nadelholzdach"
+      - "Die Nacht weicht dem Morgen — die Sonne geht auf!"
+      - "[Tag: 0, 0]"
+  # Regression: hacken im Wald und sammeln auf der Lichtung (eine Meldung je Ernte, R-01).
+  - name: "hacken und sammeln"
+    input: [take axt, north, hacken, east, sammeln, sammeln, status]
+    expect:
+      - "Mit kräftigen Schlägen fällst du eine alte Kiefer. (+2 Holz, -10 Energie)"
+      - "Du pflückst eine Handvoll süßer Waldbeeren und isst einige davon."
+      - "Die Beerensträucher wurden vor kurzem abgeerntet und müssen erst nachwachsen (2 Runden verbleibend)."
+      - "Holz: 2 | Erz: 0 | Beeren: 5"

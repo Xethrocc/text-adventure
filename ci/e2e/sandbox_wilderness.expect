@@ -1,6 +1,10 @@
 [Tag: 0, 0]
-Du schlägst ein Lager auf und rastest. Dunkle Wolken ziehen auf — die Nacht bricht herein und Regen setzt ein.
+Du schlägst ein Lager auf und rastest. Die Nacht bricht herein.
+[Nacht: 0, 0]
+Die finstere Nacht hüllt den uralten Forst in tiefe Schatten bei Koordinate [0, 0].
+Die Nacht weicht einem grauen Morgen — dunkle Wolken ziehen auf und Regen setzt ein.
 [Regen: 0, 0]
 Du schlägst mit der Spitzhacke in das Erdreich und legst einen neuen Stollen nach unten frei!
+Hier gräbst du nicht — du hast bereits einen Schacht angelegt.
 You move Down.
 Energie: 85/100 | Stollen-Tiefe: 2

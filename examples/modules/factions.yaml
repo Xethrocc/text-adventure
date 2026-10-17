@@ -3,9 +3,11 @@ start_room: pier
 
 # Module 7a — Fraktionen/Reputation: Standing lebt als VarMap-Eintrag
 # `faction.<id>`. Zwei Fraktionen (Wache, Schmuggler). Der Auftrag für die
-# Wache hebt deren Standing und senkt das der Schmuggler; das Tor zur
+# Wache hebt deren Standing und senkt das der Schmuggler (-10); das Tor zur
 # Schmugglerhöhle öffnet erst ab Standing >= 20 (Rule mit standing-Predicate
-# + set_state auf dem locked_by-Exit). Dialog-Optionen via visible_when.
+# + set_state auf dem locked_by-Exit). Die Kiste bringt +30, damit auch wer
+# zuerst der Wache hilft (-10 + 30 = 20) die Höhle erreicht. Manifest und
+# Kiste werden bei der Übergabe verbraucht. Dialog-Optionen via visible_when.
 
 factions:
   - id: watch
@@ -144,6 +146,7 @@ npcs:
                   - {standing: {faction: watch, add: 20}}
                   - {standing: {faction: smugglers, add: -10}}
                   - {set_flag: manifest_delivered, val: "true"}
+                  - {consume: cargo_manifest}
                   - {msg: "Der Hafenmeister notiert das Manifest. Die Wache schätzt dich."}
           rival:
             text: "Sie sind schneller als wir. Aber wer uns die Gilde von innen öffnet, wird es nie bereuen."
@@ -173,9 +176,10 @@ npcs:
               - text: "Geschäft ist Geschäft."
                 next: null
                 outcomes:
-                  - {standing: {faction: smugglers, add: 20}}
+                  - {standing: {faction: smugglers, add: 30}}
                   - {standing: {faction: watch, add: -10}}
                   - {set_flag: crate_delivered, val: "true"}
+                  - {consume: contraband_crate}
                   - {msg: "Der Händler verschwindet mit der Kiste. Die Gilde vertraut dir."}
           hunted:
             text: "Mag sein. Aber wer uns dient, steht nie allein."
@@ -213,6 +217,7 @@ rules:
       - {start_quest: smuggle_favor}
   - id: open_smuggle_gate
     on: turn
+    once: true
     when: {standing: {faction: smugglers, at_least: 20}}
     effects:
       - {set_state: smuggle_gate, to: unlocked}
@@ -221,3 +226,44 @@ rules:
 interactions:
   entity: []
   item: []
+tests:
+  # Regression: wer zuerst der Wache hilft (Gilde -10), erreicht mit der
+  # Kiste (+30) trotzdem die Schwelle 20; beide Beweise werden verbraucht.
+  - name: wache_zuerst_dann_gilde
+    input:
+      - "north"
+      - "search"
+      - "south"
+      - "south"
+      - "east"
+      - "north"
+      - "talk captain"
+      - "1"
+      - "1"
+      - "inventory"
+      - "south"
+      - "west"
+      - "north"
+      - "east"
+      - "search"
+      - "west"
+      - "north"
+      - "west"
+      - "talk gangster"
+      - "1"
+      - "1"
+      - "inventory"
+      - "east"
+      - "south"
+      - "south"
+      - "west"
+      - "north"
+      - "north"
+      - "north"
+    expect:
+      - "Der Hafenmeister notiert das Manifest. Die Wache schätzt dich."
+      - "You're not carrying anything."
+      - "Der Händler verschwindet mit der Kiste. Die Gilde vertraut dir."
+      - "Die eiserne Tür zur Schmugglerhöhle schwingt auf."
+      - "You're not carrying anything."
+      - "VICTORY — Die Schmuggler-Gilde öffnet dir ihre Höhle."

@@ -14,6 +14,7 @@ north
 attack eisen_ghul
 attack eisen_ghul
 attack eisen_ghul
+attack eisen_ghul
 capture seele
 use runenschalter
 south
@@ -22,6 +23,10 @@ opfern seele
 down
 rasten
 north
+attack seelenfresser
+attack seelenfresser
+attack seelenfresser
+attack seelenfresser
 attack seelenfresser
 attack seelenfresser
 attack seelenfresser

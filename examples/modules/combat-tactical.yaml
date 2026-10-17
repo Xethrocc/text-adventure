@@ -69,7 +69,13 @@ rules:
         # 7f-3/F1: `defend` wirkt ueber `combat.action` — der Text-Vergleich
         # `{ var: X, is: Y }` ist die Leseseite dafuer. Wer verteidigt, bekommt
         # keinen Konter; die Regel unten liefert stattdessen eine Meldung.
-        - not: { var: combat.action, is: defend }
+        # `combat.action` bleibt ueber Nicht-Kampfzuege stehen — erst
+        # `cmd.verb` bindet die Deckung an DIESEN Zug (sonst machte ein
+        # einziges `defend` dauerhaft immun).
+        - not:
+            all:
+              - { var: combat.action, is: defend }
+              - { var: cmd.verb, is: defend }
     effects:
       - damage: 2
       - msg: "Der Arena-Champion kontert und trifft dich für 2 Schaden!"
@@ -86,6 +92,8 @@ rules:
         - at: player
           room: ct_arena
         - var: combat.action
+          is: defend
+        - var: cmd.verb
           is: defend
     effects:
       - msg: "Du fängst den Hieb auf der Deckung ab — kein Schaden."
@@ -196,3 +204,15 @@ items:
 interactions:
   entity: []
   item: []
+
+tests:
+  # Regression: `defend` gilt nur für die laufende Runde. combat.action bleibt
+  # nach einem Nicht-Kampfzug auf "defend" stehen; der Konter muss trotzdem
+  # wieder greifen.
+  - name: defend_nur_diese_runde
+    input: [north, north, north, attack gladiator, defend, search]
+    expect:
+      - "Round 2: You brace yourself against the Arena-Champion."
+      - "Du fängst den Hieb auf der Deckung ab — kein Schaden."
+      - "You find nothing of interest."
+      - "Der Arena-Champion kontert und trifft dich für 2 Schaden!"

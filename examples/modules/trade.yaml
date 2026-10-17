@@ -193,6 +193,7 @@ items:
                     - {add_var: credits, delta: -40}
                     - {add_var: shop.merchant.brass_key, delta: -1}
                     - {give: brass_key}
+                    - {advance_quest: harbor_seal}
                     - {msg: "Gildensiegel zum Mitgliedspreis: 40 Münzen."}
                   else:
                     - {msg: "Auch mit Rabatt reicht dein Geld nicht. (40 Münzen)"}
@@ -202,6 +203,10 @@ items:
                     - {add_var: credits, delta: -60}
                     - {add_var: shop.merchant.brass_key, delta: -1}
                     - {give: brass_key}
+                    # Ohne Beitritt steht die Quest noch auf `earn`: die 60 Münzen
+                    # sind beisammen (earn -> seal) und das Siegel gekauft (-> gate).
+                    - {advance_quest: harbor_seal}
+                    - {advance_quest: harbor_seal}
                     - {msg: "Du kaufst das Gildensiegel für 60 Münzen."}
                   else:
                     - {msg: "Dafür reicht dein Geld nicht. (60 Münzen)"}
@@ -263,6 +268,7 @@ npcs:
                   - {standing: {faction: mercantile, add: 15}}
                   - {set_flag: guild_member, val: "true"}
                   - {set_flag: guild_discount, val: "true"}
+                  - {advance_quest: harbor_seal}
                   - {msg: "Du unterschreibst. Von nun an giltst du als Mitglied der Gilde."}
 
 quests:
@@ -300,6 +306,7 @@ rules:
     when: {has_item: brass_key}
     effects:
       - {msg: "Du zeigst das Gildensiegel. Die Wachen lassen dich durch."}
+      - {complete_quest: harbor_seal}
       - {game_end: victory, msg: "VICTORY — Die Werft liegt vor dir. Der Handel hat sich gelohnt."}
   - id: bar_werft
     on: enter gate
@@ -339,3 +346,27 @@ tests:
       - "Das Seil gehört noch dem Krämer."
       - "Du kaufst das Seil für 12 Münzen."
       - "(Börse: 41 Münzen)"
+
+  # Regression (Audit): die Quest `harbor_seal` blieb auf Stufe 1 stehen.
+  # Beitritt -> seal, Siegelkauf -> gate, Werfttor -> abgeschlossen (reward).
+  - name: trade_quest_hafenbretttor
+    input:
+      - "north"
+      - "east"
+      - "talk merchant"
+      - "2"
+      - "1"
+      - "journal"
+      - "buy seal"
+      - "journal"
+      - "west"
+      - "south"
+      - "east"
+      - "north"
+      - "north"
+    expect:
+      - "- Das Hafenbretttor: Kaufe das Gildensiegel."
+      - "Gildensiegel zum Mitgliedspreis: 40 Münzen."
+      - "- Das Hafenbretttor: Zeige das Siegel am Werfttor."
+      - "Der Hafendurchbruch ist offen."
+      - "VICTORY — Die Werft liegt vor dir."

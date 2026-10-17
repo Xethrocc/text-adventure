@@ -16,8 +16,10 @@ hazards:
     footprint:
       by: elevation
       from: reservoir
+      # Schwelle 1, nicht 0: bei Pegel 0 (trockenes Reservoir) ist kein Raum
+      # in der Zone — sonst laufen on_zone/telegraph schon ohne Wasser.
       rooms:
-        reservoir: 0
+        reservoir: 1
         damm: 4
     items:
       flow:
@@ -102,13 +104,17 @@ hazards:
         - { msg: "Das Feuer breitet sich ueber den Damm aus!" }
       "2":
         - { msg: "Die Flammen erreichen den Hafen!" }
+    # Der spread-Ursprung (from:) ist immer in der Zone — auch bei Pegel 0.
+    # Deshalb sind on_zone und das every-Ereignis auf ein brennendes Feuer gegated.
     on_zone:
-      - { msg: "Hitze und dichter Rauch erbaermen sich nicht." }
+      - if: { hazard_level: { hazard: feuer, gte: 1 } }
+        then:
+          - { msg: "Hitze und dichter Rauch erbaermen sich nicht." }
     every:
       period: 2
       stream: funken
       choices:
-        - [1, [{ msg: "Funken stieben durch die Nacht." }]]
+        - [1, [{ if: { hazard_level: { hazard: feuer, gte: 1 } }, then: [{ msg: "Funken stieben durch die Nacht." }] }]]
 
   nebel:
     states: [klar, dunst, suppe]
@@ -215,6 +221,8 @@ rules:
     on: command loeschen
     effects:
       - { flood: { hazard: feuer, set: 0 } }
+      # flood set: setzt nur den Pegel; ohne neues Ziel stiege das Feuer zurueck auf 2.
+      - { hazard_target: { hazard: feuer, to: 0 } }
       - { msg: "Wasser loescht den Brand schlagartig!" }
 
   - id: cmd_erdrutsch
@@ -311,11 +319,17 @@ tests:
       - "Der Nebel hat maximale Dichte erreicht."
       - "Das Reservoir ist trocken."
 
+  # Regression (Reservoir-Schwelle 1 statt 0): am trockenen Reservoir keine
+  # Zonenmeldung — nach dem Dammbruch greift on_zone dort wie vorgesehen.
+  # (Die Abwesenheit bei Pegel 0 ist mit geordneten Positiv-Markern nicht
+  # pruefbar; hier belegt der Test, dass die Zone mit Wasser weiterhin wirkt.)
   - name: "hazard_jump loest stages aus"
-    input: [sprung, rasten]
+    input: [north, north, sprung, rasten]
     expect:
+      - "Das tiefe Becken des Speichers."
       - "Ein Dammbruch!"
       - "Das Wasser hat den Hoechststand erreicht!"
+      - "Das Wasser reisst an deinen Fuessen!"
 
   - name: "einsturz phasenliste"
     input: [beben, rasten, rasten]
@@ -334,12 +348,17 @@ tests:
       - "Orkanboeen fegen ueber das Gelaende!"
 
   - name: "spread feuer und wirktypen"
-    input: [feuer_an, rasten, rasten, loeschen, rasten, erdrutsch, east, raeumen, east, look, qualm]
+    # Regression: loeschen setzt auch das Ziel auf 0 — das Feuer bleibt aus und
+    # steigt erst nach erneutem feuer_an wieder (Stufe 1 feuert dann erneut).
+    input: [feuer_an, rasten, rasten, loeschen, rasten, rasten, feuer_an, loeschen, erdrutsch, east, raeumen, east, look, qualm]
     expect:
       - "Du entzuendest ein Signalfeuer am Reservoir!"
       - "Das Feuer breitet sich ueber den Damm aus!"
       - "Die Flammen erreichen den Hafen!"
       - "Funken stieben durch die Nacht."
+      - "Wasser loescht den Brand schlagartig!"
+      - "Du entzuendest ein Signalfeuer am Reservoir!"
+      - "Das Feuer breitet sich ueber den Damm aus!"
       - "Wasser loescht den Brand schlagartig!"
       - "Eine Geroelllawine verschuettet den Tunneleingang!"
       - "You can't go that way."

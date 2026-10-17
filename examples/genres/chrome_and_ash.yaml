@@ -289,14 +289,18 @@ items:
   # --- Hack-Tools & Cyberware ---
   - id: cred_chip
     name: Cred-Chip
-    desc: Ein verschluesselter Chip mit 50 Schattenc особое-Credits.
+    desc: Ein verschluesselter Chip mit 50 Schatten-Credits.
     gender: m
     article: { nom: der, acc: den, dat: dem }
     keys: [chip, credchip, creds, geld]
     location: fixer_den
     on_take:
-      - msg: "Du nimmst den Cred-Chip von Jax' Schreibtisch an dich. (+50 Punkte)"
-      - add_var: { var: score, delta: 50 }
+      # Punkte nur beim ersten Aufheben (ablegen + aufheben war eine Punkte-Farm)
+      - if: { not: { has_flag: cred_chip_gefunden } }
+        then:
+          - set_flag: cred_chip_gefunden
+          - msg: "Du nimmst den Cred-Chip von Jax' Schreibtisch an dich. (+50 Punkte)"
+          - add_var: { var: score, delta: 50 }
 
   - id: cyberdeck
     name: Militaer-Cyberdeck
@@ -458,8 +462,11 @@ npcs:
             choices:
               - text: "Hier ist dein Cred-Chip. Wir haben einen Deal."
                 next: deal_made
-                visible_when: { has_item: cred_chip }
+                # einmalig: der Chip wechselt den Besitzer (frueher beliebig
+                # wiederholbar -- Punkte-/Standing-Farm)
+                visible_when: { all: [{ has_item: cred_chip }, { not: { has_flag: gang_ally } }] }
                 outcomes:
+                  - consume: cred_chip
                   - {set_flag: gang_ally, val: "true"}
                   - add_var: { var: syndicate.standing, delta: 20 }
                   - add_var: { var: score, delta: 30 }
@@ -608,3 +615,14 @@ tests:
       - "Du reisst den Datenkern aus dem Sockel!"
       - "WARNUNG: Netz-Sicherheit schlaegt an!"
       - "SIEG — Du hast den Blackwood-Datenkern erfolgreich extrahiert! Endstand: 350/350 Punkte."
+
+  # Regression: der Jax-Deal war beliebig wiederholbar, der Chip blieb im
+  # Inventar, und ablegen + aufheben gab jedes Mal +50 (Punkte-/Standing-Farm).
+  - name: jax_deal_einmalig
+    input: [east, north, west, take chip, drop chip, take chip, talk to jax, "1", "1", talk to jax, "2", score, inventory]
+    expect:
+      - "Du nimmst den Cred-Chip von Jax' Schreibtisch an dich. (+50 Punkte)"
+      - "Willkommen im Syndikat, Runner."
+      - "[1] Was erwartet mich im Tower?"
+      - "Punktestand: 80/350"
+      - "Du trägst nichts bei dir."

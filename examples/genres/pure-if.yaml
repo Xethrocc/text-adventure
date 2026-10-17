@@ -131,12 +131,23 @@ items:
     desc: A dented oil can, still half full.
     keys: [oil, can, oilcan]
     location: boathouse
+    verb_map:
+      use,intact:
+        - if: {all: [{at: player, room: lantern_room}, {not: {has_flag: lantern_lit}}]}
+          then:
+            - {set_flag: lantern_lit, val: "true"}
+            - {msg: "You pour the oil. The great lantern catches and floods the room with warm light."}
+          else:
+            - if: {has_flag: lantern_lit}
+              then: [{msg: "The great lantern already burns brightly."}]
+              else: [{msg: "There is nothing here to pour the oil into."}]
   - id: lens
     name: ground lens
     desc: A heavy ground lens, flawless.
     keys: [lens]
     location: workshop
     hidden: true
+    searchable: false
     discover: "The lensmaker sets the ground lens on the bench before you."
   - id: star_chart
     name: star chart
@@ -178,6 +189,7 @@ npcs:
                   - {set_flag: lens_bought, val: "true"}
                   - {give: lens}
                   - {msg: "He sets the ground lens in your hands."}
+                  - {advance_quest: observatory_secret}
   - id: keeper
     name: keeper
     desc: An old lighthouse keeper, wrapped in a grey coat.
@@ -226,14 +238,20 @@ rules:
     when: {has_flag: lens_bought}
     effects:
       - {msg: "The lensmaker nods: take the lens from the bench."}
-  - id: light_lantern
-    on: use oil_can
-    when: {not: {has_flag: lantern_lit}}
+  - id: gathered
+    on: turn
+    once: true
+    when: {all: [{has_flag: lens_bought}, {has_item: "star_chart"}, {any: [{has_item: "oil_can"}, {has_flag: lantern_lit}]}]}
     effects:
-      - {set_flag: lantern_lit, val: "true"}
-      - {msg: "You pour the oil. The great lantern catches and floods the room with warm light."}
+      - {advance_quest: observatory_secret}
+  - id: align_again
+    on: command align
+    when: {has_flag: aligned}
+    effects:
+      - {msg: "The telescope already points at the northern stars."}
   - id: align_telescope
     on: command align
+    once: true
     when: {all: [{has_flag: lantern_lit}, {has_item: "lens"}, {has_item: "star_chart"}]}
     effects:
       - {set_flag: aligned, val: "true"}
@@ -244,6 +262,11 @@ rules:
     when: {not: {has_flag: aligned}}
     effects:
       - {msg: "Nothing happens. You lack the right glass — or the light to read by."}
+  - id: claim_astrolabe
+    on: take astrolabe
+    once: true
+    effects:
+      - {complete_quest: observatory_secret}
   - id: open_vault
     on: enter observatory
     when: {has_flag: aligned}
@@ -289,7 +312,9 @@ tests:
       - "up"
       - "up"
       - "take star chart"
+      - "down"
       - "use oil can"
+      - "up"
       - "align"
       - "northeast"
       - "take astrolabe"
@@ -297,3 +322,70 @@ tests:
       - "You set the lens, and turn the telescope to the northern stars. Gears grind far below."
       - "A small stone vault beneath the observatory."
       - "You take the brass astrolabe."
+  # Regression: `search` in the workshop does not hand out the lens — only the
+  # trade with the lensmaker does.
+  - name: lens_not_found_by_search
+    input: [south, south, east, east, search, take ground lens]
+    expect:
+      - "Dust and glass."
+      - "You find nothing of interest."
+      - "You don't see 'ground lens' here."
+  # Regression: the oil only lights the lantern in the lantern room, without a
+  # default failure line in front of it.
+  - name: lantern_only_in_lantern_room
+    input: [south, south, west, west, take oil can, use oil can, east, east, northwest, up, up, use oil can, use oil can]
+    expect:
+      - "You take the oil can."
+      - "There is nothing here to pour the oil into."
+      - "You pour the oil. The great lantern catches and floods the room with warm light."
+      - "The great lantern already burns brightly."
+  # Regression: the quest moves through every stage, `align` works once, and
+  # taking the astrolabe completes the quest.
+  - name: quest_stages_and_single_align
+    input:
+      - "south"
+      - "south"
+      - "east"
+      - "quests"
+      - "north"
+      - "up"
+      - "search"
+      - "take note"
+      - "down"
+      - "south"
+      - "east"
+      - "talk lensmaker"
+      - "1"
+      - "1"
+      - "quests"
+      - "west"
+      - "west"
+      - "west"
+      - "west"
+      - "take oil can"
+      - "east"
+      - "east"
+      - "northwest"
+      - "up"
+      - "up"
+      - "use oil can"
+      - "up"
+      - "align"
+      - "take star chart"
+      - "quests"
+      - "align"
+      - "quests"
+      - "align"
+      - "northeast"
+      - "take astrolabe"
+      - "quests"
+    expect:
+      - "- The Silent Observatory: Explore the village and lighthouse."
+      - "- The Silent Observatory: Gather oil, lens and the star chart."
+      - "Nothing happens. You lack the right glass — or the light to read by."
+      - "- The Silent Observatory: Align the telescope with the northern stars."
+      - "You set the lens, and turn the telescope to the northern stars. Gears grind far below."
+      - "- The Silent Observatory: Descend into the vault."
+      - "The telescope already points at the northern stars."
+      - "The astrolabe hums and the light of the observatory returns."
+      - "- The Silent Observatory (completed)"

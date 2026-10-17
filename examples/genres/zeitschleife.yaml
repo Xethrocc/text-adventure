@@ -144,11 +144,22 @@ rooms:
       default: "Das zentrale Wohn- und Kontrollmodul der Forschungsstation Helios-7. Bildschirme flackern mit hektischen Warnmeldungen ueber ansteigende Sonneneruptionen. Nach Osten fuehrt ein Schott ins Forschungslabor, nach Norden liegt die versiegelte Aussenschleuse. Im Westen befindet sich die Luke zum Wartungsschacht."
       variants:
         - when:
+            all:
+              - compare:
+                  lhs: meta.runs
+                  op: ">="
+                  rhs: 2
+              - compare:
+                  lhs: meta.abkuerzung
+                  op: ">="
+                  rhs: 1
+          text: "Das vertraute Kontrollmodul der Forschungsstation Helios-7. Ein unheimliches Deja-vu liegt in der Luft — du hast dieses Erwachen schon einmal erlebt! Nach Osten fuehrt das Schott ins Forschungslabor, nach Norden die Aussenschleuse. Im Westen fuehrt die entsicherte Luke des Wartungsschachts direkt zur Generatorkammer."
+        - when:
             compare:
               lhs: meta.runs
               op: ">="
               rhs: 2
-          text: "Das vertraute Kontrollmodul der Forschungsstation Helios-7. Ein unheimliches Deja-vu liegt in der Luft — du hast dieses Erwachen schon einmal erlebt! Nach Osten fuehrt das Schott ins Forschungslabor, nach Norden die Aussenschleuse. Im Westen fuehrt die entsicherte Luke des Wartungsschachts direkt zur Generatorkammer."
+          text: "Das vertraute Kontrollmodul der Forschungsstation Helios-7. Ein unheimliches Deja-vu liegt in der Luft — du hast dieses Erwachen schon einmal erlebt! Nach Osten fuehrt das Schott ins Forschungslabor, nach Norden die Aussenschleuse. Im Westen befindet sich die verriegelte Luke zum Wartungsschacht."
     exits:
       east: labor
       north: luftschleuse
@@ -204,8 +215,8 @@ items:
     keys: [tafel, notiztafel, notiz, hinweis]
     desc: "Auf der Notiztafel leuchtet eine gelbe Nachricht: 'Achtung: Neuer Zugangscode fuer Aussenschleuse zu den Tunneln: 7319.'"
     location: labor
-    on_take:
-      - msg: "Die Tafel ist fest an der Wand montiert."
+    portable: false
+    take_failure: "Die Tafel ist fest an der Wand montiert."
     verb_map:
       examine,intact:
         - learn: fakt_schleusencode
@@ -238,6 +249,7 @@ items:
     keys: [spektrometer, teleskop, instrument, scanner]
     desc: "Ein maechtiges optisch-subatomares Messgeraet zur Analyse solarer Frequenzen."
     location: observatorium
+    portable: false
     verb_map:
       examine,intact:
         - learn: fakt_sonnensignatur
@@ -257,6 +269,7 @@ items:
     keys: [tastenfeld, konsole, ziffernblock, feld, tastatur]
     desc: "Ein beleuchtetes Ziffernfeld neben dem Schleusentor."
     location: luftschleuse
+    portable: false
     verb_map:
       use,intact:
         - if:
@@ -279,6 +292,7 @@ items:
     keys: [schleusentor, tor, pforte, tuer]
     desc: "Ein tonnenschweres Schleusentor aus Titanlegierung. Es schuetzt die Station vor der toedlichen Atmosphaere."
     location: luftschleuse
+    portable: false
     verb_map:
       examine,intact:
         - if:
@@ -300,6 +314,7 @@ items:
     keys: [hebel, nothebel, schalter]
     desc: "Ein massiver Hebel zur mechanischen Notoeffnung des Wartungsschachts zurueck ins Kontrollmodul."
     location: generatorkammer
+    portable: false
     verb_map:
       use,intact:
         - if:
@@ -353,6 +368,7 @@ items:
     keys: [kraftfeld, feld, schutzfeld, barriere, schacht]
     desc: "Eine undurchdringliche Energiebarriere vor dem Durchgang nach Osten zum Kernschacht."
     location: generatorkammer
+    portable: false
     verb_map:
       use,intact:
         - if:
@@ -406,10 +422,7 @@ rules:
       room: luftschleuse
     effects:
       - if:
-          any:
-            - var: cmd.arg1
-              is: "7319"
-            - knows: fakt_schleusencode
+          compare_var: { name: cmd.arg1, op: eq, value: 7319 }
         then:
           - set_state: { entity: schleusentor, to: open }
           - set_exit: { from: luftschleuse, dir: north, to: tunnel_west }
@@ -595,3 +608,35 @@ tests:
       - "Du gibst den Code 7319 ein."
       - "Du nimmst den Quanten-Phasenpick."
       - "ohne die korrekten Inversionsparameter und Autorisierungsdaten bleibt das Kraftfeld stabil"
+  # Regression: fest montierte Objekte bleiben, wo sie sind; die Schleuse
+  # akzeptiert nur den Code 7319 — auch wenn man ihn kennt.
+  - name: "montierte objekte bleiben, nur 7319 oeffnet"
+    input:
+      - east
+      - take tafel
+      - examine tafel
+      - south
+      - take spektrometer
+      - north
+      - west
+      - north
+      - take tastenfeld
+      - take schleusentor
+      - eingeben 0000
+      - north
+      - eingeben 7319
+      - north
+      - north
+      - take hebel
+      - take kraftfeld
+    expect:
+      - "Die Tafel ist fest an der Wand montiert."
+      - "Notiztafel gelesen: Der Zugangscode fuer die Schleuse lautet 7319."
+      - "Du kannst das Hauptspektrometer nicht mitnehmen."
+      - "Du kannst das elektronisches Tastenfeld nicht mitnehmen."
+      - "Du kannst das gepanzertes Schleusentor nicht mitnehmen."
+      - "Falscher Code! Die rote Warnleuchte blinkt abweisend."
+      - "Dort kannst du nicht hindurch."
+      - "Du gibst den Code 7319 ein."
+      - "Du kannst den gelber Nothebel nicht mitnehmen."
+      - "Du kannst das violettes Kraftfeld nicht mitnehmen."

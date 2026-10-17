@@ -1,22 +1,21 @@
 down
 play 1
-play 3
+play 4
 go west
 opfern
 go east
 play 4
-play 3
+play 4
 end turn
-play 2
+play 1
 take schluessel
 go north
 rasten
 use schluessel
 go north
 play 1
-play 4
-end turn
-play 5
-play 2
+play 1
+play 3
 end turn
 play 2
+play 3

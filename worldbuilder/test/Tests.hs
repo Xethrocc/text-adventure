@@ -11689,13 +11689,16 @@ testHazardsStaticValidationStufe2 = do
 
 -- | OPEN-23: Byte-Vertrag-Waechter — mindestens 5 bestehende Abenteuer kompilieren
 --   zu einem mit den gepinnten Baselines byte-identischen world.json (SHA256).
+--   Baselines thefog.yaml / roguelike_dungeon.yaml neu gesetzt 2026-10-18
+--   (Content-Audit, beabsichtigte Inhaltsänderung; Compiler unverändert:
+--   die HEAD-Fassungen ergaben vorher exakt die alten Hashes).
 testHazardsByteContractWatcher :: IO Bool
 testHazardsByteContractWatcher = do
     let baselines =
             [ ("demo.yaml", "3aa9fed02d6d9b8f16bb7c4c3b18169e891f504a1feb880dfc87db21eedbb784")
-            , ("thefog.yaml", "8f58bb4fead8660dbaeadce039150cae08e8338a46e02d8d63d1660c3861d1f6")
+            , ("thefog.yaml", "c99da39f1f3cecee64ed4501459f54911cc3ffffe175adddf7dc47838f053197")
             , ("zork1.yaml", "089d318d206c779e5de12272d917b95d1d29a60b1a921aaed11b7676650be761")
-            , ("roguelike_dungeon.yaml", "946cd88374d3dcf3def610186c7f3cf99167771aa5970db06e1e2caa4ac21495")
+            , ("roguelike_dungeon.yaml", "51672fc210783e3a47d654e0c6ada0ec38f5c5fe4ade51f86add99e5781e4576")
             , ("wissen.yaml", "da115a31517847aefb134a25c3b9a669e0f4ee383534cfeb79adea423add36eb")
             , ("survival.yaml", "3dda736f26e4d8f6feaf85bda37090e975a5e9090f9c0960a41263311ac947d9")
             ]
@@ -12579,13 +12582,16 @@ testK18CardTagValidation = do
 
 -- | K18: Byte-Vertrag-Waechter — mindestens 5 bestehende Abenteuer (inkl.
 --   deckbuilder_spire.yaml) kompilieren zu einem byte-identischen world.json.
+--   Baselines thefog.yaml / roguelike_dungeon.yaml neu gesetzt 2026-10-18
+--   (Content-Audit, beabsichtigte Inhaltsänderung; Compiler unverändert:
+--   die HEAD-Fassungen ergaben vorher exakt die alten Hashes).
 testK18ByteContractWatcher :: IO Bool
 testK18ByteContractWatcher = do
     let baselines =
             [ ("demo.yaml", "3aa9fed02d6d9b8f16bb7c4c3b18169e891f504a1feb880dfc87db21eedbb784")
-            , ("thefog.yaml", "8f58bb4fead8660dbaeadce039150cae08e8338a46e02d8d63d1660c3861d1f6")
+            , ("thefog.yaml", "c99da39f1f3cecee64ed4501459f54911cc3ffffe175adddf7dc47838f053197")
             , ("zork1.yaml", "089d318d206c779e5de12272d917b95d1d29a60b1a921aaed11b7676650be761")
-            , ("roguelike_dungeon.yaml", "946cd88374d3dcf3def610186c7f3cf99167771aa5970db06e1e2caa4ac21495")
+            , ("roguelike_dungeon.yaml", "51672fc210783e3a47d654e0c6ada0ec38f5c5fe4ade51f86add99e5781e4576")
             , ("wissen.yaml", "da115a31517847aefb134a25c3b9a669e0f4ee383534cfeb79adea423add36eb")
             , ("survival.yaml", "3dda736f26e4d8f6feaf85bda37090e975a5e9090f9c0960a41263311ac947d9")
             ]

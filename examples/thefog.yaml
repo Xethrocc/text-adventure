@@ -43,7 +43,7 @@
     {
       "id": "loc_1",
       "name": "Garden",
-      "desc": "Your are in your garden, some flowers and an apple Tree are here. At the Northern site is a Way to a street, to the South is your House",
+      "desc": "You are in your garden, some flowers and an apple Tree are here. At the Northern site is a Way to a street, to the South is your House",
       "exits": {
         "south": {
           "to": "loc_0"
@@ -827,16 +827,24 @@
       "verb_map": {
         "activate,alive": [
           {
-            "if": { "has_item": "crystal" },
+            "if": { "has_flag": "water_shrine_active" },
             "then": [
-              { "set_flag": "water_shrine_active", "val": "true" },
-              { "compute_var": { "var": "shrines_active", "expr": "shrines_active + 1" } },
-              { "compute_var": { "var": "fog_unrest", "expr": "shrines_active * 25" } },
-              { "msg": "The crystal resonates! The water shrine glows with power! [Shrines awakened: {shrines_active}/4 | Fog unrest: {fog_unrest}%]" },
-              { "advance_quest": "activate_water" }
+              { "msg": "The water shrine already glows with power. The crystal stays silent." }
             ],
             "else": [
-              { "msg": "The water shrine is dormant. You need the crystal to awaken it." }
+              {
+                "if": { "has_item": "crystal" },
+                "then": [
+                  { "set_flag": "water_shrine_active", "val": "true" },
+                  { "compute_var": { "var": "shrines_active", "expr": "shrines_active + 1" } },
+                  { "compute_var": { "var": "fog_unrest", "expr": "shrines_active * 25" } },
+                  { "msg": "The crystal resonates! The water shrine glows with power! [Shrines awakened: {shrines_active}/4 | Fog unrest: {fog_unrest}%]" },
+                  { "complete_quest": "activate_water" }
+                ],
+                "else": [
+                  { "msg": "The water shrine is dormant. You need the crystal to awaken it." }
+                ]
+              }
             ]
           }
         ]
@@ -856,16 +864,24 @@
       "verb_map": {
         "activate,alive": [
           {
-            "if": { "has_item": "crystal" },
+            "if": { "has_flag": "fire_shrine_active" },
             "then": [
-              { "set_flag": "fire_shrine_active", "val": "true" },
-              { "compute_var": { "var": "shrines_active", "expr": "shrines_active + 1" } },
-              { "compute_var": { "var": "fog_unrest", "expr": "shrines_active * 25" } },
-              { "msg": "The crystal resonates! The fire shrine glows with power! [Shrines awakened: {shrines_active}/4 | Fog unrest: {fog_unrest}%]" },
-              { "advance_quest": "activate_fire" }
+              { "msg": "The fire shrine already glows with power. The crystal stays silent." }
             ],
             "else": [
-              { "msg": "The fire shrine is dormant. You need the crystal to awaken it." }
+              {
+                "if": { "has_item": "crystal" },
+                "then": [
+                  { "set_flag": "fire_shrine_active", "val": "true" },
+                  { "compute_var": { "var": "shrines_active", "expr": "shrines_active + 1" } },
+                  { "compute_var": { "var": "fog_unrest", "expr": "shrines_active * 25" } },
+                  { "msg": "The crystal resonates! The fire shrine glows with power! [Shrines awakened: {shrines_active}/4 | Fog unrest: {fog_unrest}%]" },
+                  { "complete_quest": "activate_fire" }
+                ],
+                "else": [
+                  { "msg": "The fire shrine is dormant. You need the crystal to awaken it." }
+                ]
+              }
             ]
           }
         ]
@@ -885,16 +901,24 @@
       "verb_map": {
         "activate,alive": [
           {
-            "if": { "has_item": "crystal" },
+            "if": { "has_flag": "air_shrine_active" },
             "then": [
-              { "set_flag": "air_shrine_active", "val": "true" },
-              { "compute_var": { "var": "shrines_active", "expr": "shrines_active + 1" } },
-              { "compute_var": { "var": "fog_unrest", "expr": "shrines_active * 25" } },
-              { "msg": "The crystal resonates! The air shrine glows with power! [Shrines awakened: {shrines_active}/4 | Fog unrest: {fog_unrest}%]" },
-              { "advance_quest": "activate_air" }
+              { "msg": "The air shrine already glows with power. The crystal stays silent." }
             ],
             "else": [
-              { "msg": "The air shrine is dormant. You need the crystal to awaken it." }
+              {
+                "if": { "has_item": "crystal" },
+                "then": [
+                  { "set_flag": "air_shrine_active", "val": "true" },
+                  { "compute_var": { "var": "shrines_active", "expr": "shrines_active + 1" } },
+                  { "compute_var": { "var": "fog_unrest", "expr": "shrines_active * 25" } },
+                  { "msg": "The crystal resonates! The air shrine glows with power! [Shrines awakened: {shrines_active}/4 | Fog unrest: {fog_unrest}%]" },
+                  { "complete_quest": "activate_air" }
+                ],
+                "else": [
+                  { "msg": "The air shrine is dormant. You need the crystal to awaken it." }
+                ]
+              }
             ]
           }
         ]
@@ -915,16 +939,24 @@
       "verb_map": {
         "activate,alive": [
           {
-            "if": { "has_item": "crystal" },
+            "if": { "has_flag": "earth_shrine_active" },
             "then": [
-              { "set_flag": "earth_shrine_active", "val": "true" },
-              { "compute_var": { "var": "shrines_active", "expr": "shrines_active + 1" } },
-              { "compute_var": { "var": "fog_unrest", "expr": "shrines_active * 25" } },
-              { "msg": "The crystal resonates! The earth shrine glows with power! [Shrines awakened: {shrines_active}/4 | Fog unrest: {fog_unrest}%]" },
-              { "advance_quest": "activate_earth" }
+              { "msg": "The earth shrine already glows with power. The crystal stays silent." }
             ],
             "else": [
-              { "msg": "The earth shrine is dormant. You need the crystal to awaken it." }
+              {
+                "if": { "has_item": "crystal" },
+                "then": [
+                  { "set_flag": "earth_shrine_active", "val": "true" },
+                  { "compute_var": { "var": "shrines_active", "expr": "shrines_active + 1" } },
+                  { "compute_var": { "var": "fog_unrest", "expr": "shrines_active * 25" } },
+                  { "msg": "The crystal resonates! The earth shrine glows with power! [Shrines awakened: {shrines_active}/4 | Fog unrest: {fog_unrest}%]" },
+                  { "complete_quest": "activate_earth" }
+                ],
+                "else": [
+                  { "msg": "The earth shrine is dormant. You need the crystal to awaken it." }
+                ]
+              }
             ]
           }
         ]
@@ -1103,6 +1135,7 @@
                 2,
                 [
                   { "move_npc": "princess", "to": "loc_0" },
+                  { "set_state": "princess", "to": "rescued" },
                   { "msg": "You guide the princess to safety!" },
                   { "complete_quest": "rescue_princess" }
                 ]
@@ -1112,6 +1145,9 @@
         ],
         "use,dead": [
           { "msg": "The princess is already dead. You failed to save her." }
+        ],
+        "use,rescued": [
+          { "msg": "The princess is safe and dry here at home. She needs no more rescuing." }
         ]
       }
     }
@@ -1246,25 +1282,28 @@
       "id": "start_activate_water",
       "on": "enter loc_38",
       "once": true,
-      "effects": [{ "start_quest": "activate_water" }]
+      "effects": [
+        { "start_quest": "activate_water" },
+        { "if": { "has_item": "crystal" }, "then": [{ "advance_quest": "activate_water" }], "else": [] }
+      ]
     },
     {
       "id": "start_activate_fire",
       "on": "enter loc_45",
       "once": true,
-      "effects": [{ "start_quest": "activate_fire" }]
+      "effects": [{ "start_quest": "activate_fire" }, { "advance_quest": "activate_fire" }]
     },
     {
       "id": "start_activate_air",
       "on": "enter loc_52",
       "once": true,
-      "effects": [{ "start_quest": "activate_air" }]
+      "effects": [{ "start_quest": "activate_air" }, { "advance_quest": "activate_air" }]
     },
     {
       "id": "start_activate_earth",
       "on": "enter loc_28",
       "once": true,
-      "effects": [{ "start_quest": "activate_earth" }]
+      "effects": [{ "start_quest": "activate_earth" }, { "advance_quest": "activate_earth" }]
     },
     {
       "id": "start_defeat_wolf",
@@ -1331,5 +1370,10 @@
   "interactions": {
     "entity": [],
     "item": []
-  }
+  },
+  "tests": [
+    {"name": "shrine_activates_once", "input": ["south", "look", "status", "search chest", "take shield", "equip shield", "north", "north", "north", "north", "attack wolf", "attack wolf", "attack wolf", "attack wolf", "attack wolf", "attack wolf", "north", "north", "north", "east", "north", "north", "west", "south", "southeast", "use earth shrine", "use earth shrine", "status", "quests"], "expect": ["The crystal resonates! The earth shrine glows with power! [Shrines awakened: 1/4 | Fog unrest: 25%]", "The Earth Shrine rumbles with power!", "The earth shrine already glows with power. The crystal stays silent.", "Shrines awakened: 1/4", "- Earth Shrine (completed)"]},
+    {"name": "rescued_princess_stays_safe", "input": ["south", "search chest", "take shield", "north", "north", "north", "east", "east", "south", "quests", "use princess", "use princess", "use princess", "quests", "north", "west", "west", "south", "south", "look", "use princess", "use princess", "use princess", "use princess", "use princess"], "expect": ["You guide the princess to safety!", "The princess is safe! She thanks you warmly.", "- Rescue the Princess (completed)", "You are at Home", "The princess is safe and dry here at home. She needs no more rescuing."]},
+    {"name": "garden_text", "input": ["north"], "expect": ["You are in your garden, some flowers"]}
+  ]
 }

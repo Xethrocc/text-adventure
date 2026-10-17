@@ -114,8 +114,13 @@ rooms:
     exits:
       north: gewoelbe_1
     search:
-      - give: heiltrank
-      - msg: "In einer Nische hinter den Kisten findest du einen versiegelten Heiltrank!"
+      - if: { not: { has_flag: heiltrank_gefunden } }
+        then:
+          - set_flag: heiltrank_gefunden
+          - give: heiltrank
+          - msg: "In einer Nische hinter den Kisten findest du einen versiegelten Heiltrank!"
+        else:
+          - msg: "Die Nische hinter den Kisten ist leer. Hier gibt es nichts mehr zu finden."
 
   - id: gewoelbe_1
     name: Feuchtes Steingewoelbe
@@ -292,3 +297,11 @@ tests:
       - "Knappe Alwin zieht sein Schwert"
       - "In einer Nische hinter den Kisten"
       - "Roter Heiltrank"
+  # Regression: die Nische gibt den Trank nur einmal her.
+  - name: "heiltrank nur einmal"
+    input: [search, search, use trank, search, inventory]
+    expect:
+      - "In einer Nische hinter den Kisten findest du einen versiegelten Heiltrank!"
+      - "Die Nische hinter den Kisten ist leer. Hier gibt es nichts mehr zu finden."
+      - "Du trinkst den Heiltrank in einem Zug."
+      - "Die Nische hinter den Kisten ist leer. Hier gibt es nichts mehr zu finden."

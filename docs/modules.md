@@ -39,9 +39,11 @@ factions:
 
 Fixture: `examples/modules/factions.yaml` — Zwei Fraktionen (Wache, Gilde).
 Der Auftrag für die Wache senkt das Standing der Gilde; das Gleiche gilt
-umgekehrt. Der Gilde-Gefallen hebt `faction.smugglers` auf 20, worauf eine
-Rule (`on: turn` + `when: standing … at_least: 20`) per `set_state` das
-`locked_by`-Tor zur Höhle öffnet; der Höhleneintrag ist das Victory-Ende.
+umgekehrt. Der Gilde-Gefallen hebt `faction.smugglers` um 30 — auch nach dem
+Wache-Auftrag (−10) reicht das für die Schwelle 20, beide Reihenfolgen sind
+gewinnbar; Manifest und Kiste werden bei der Übergabe verbraucht. Eine Rule
+(`on: turn` + `when: standing … at_least: 20`, `once: true`) öffnet per
+`set_state` das `locked_by`-Tor zur Höhle; der Höhleneintrag ist das Victory-Ende.
 
 ---
 
@@ -199,8 +201,8 @@ stealth:
 - **Dunkle Räume / light_flag:** `isDark` existierte schon im Kern. Die
   Fixture nutzt es: Im dunklen Wachposten hört die Wache erst ab `hears_at`,
   mit Laterne (Item mit `tags: [lightsource]` oder `light_flag` gesetzt)
-  greift eine eigene Regel mit niedrigerer Schwelle — Wahrnehmung als Daten,
-  nicht als neues Predicate.
+  greift eine eigene Regel ohne Lärmschwelle — Licht verrät sofort, auch auf
+  dem Schleichweg. Wahrnehmung als Daten, nicht als neues Predicate.
 - **Validierung:** `UnknownObserverNPC` (Observer-NPC existiert nicht),
   `StealthVariableClash` (Autor deklariert die noise-Variable separat).
 - **Engine-Tests:** „noise observer hears at threshold then cooldown" —
@@ -287,7 +289,9 @@ Begleiter (7g) und Schiffe (7h) erweitern sie, ohne die Signatur zu ändern.
     dem Text-Prädikat `{ var: combat.action, is: defend }` (siehe
     `adventure-schema.md`, Abschnitt zu Text-Variablen). Genau so macht
     `combat-tactical.yaml` `defend` wirksam: die Konterregel ist per
-    `not: { var: combat.action, is: defend }` gegated.
+    `not: { all: [ {var: combat.action, is: defend}, {var: cmd.verb, is: defend} ] }`
+    gegated. `combat.action` bleibt nach dem Zug stehen — erst die Kopplung an
+    `cmd.verb` sorgt dafür, dass `defend` nur für die laufende Runde schützt.
   - **Ein Kampf beginnt mit `attack`** — `defend`/`flee` greifen nur, solange
     `combat.engaged` gesetzt ist.
 - **Validierung:** `UnknownCombatProfile` (unbekannter Profilname),
@@ -295,7 +299,7 @@ Begleiter (7g) und Schiffe (7h) erweitern sie, ohne die Signatur zu ändern.
 
 Fixtures:
 - `examples/modules/combat-off.yaml` („Der Verhandlungsweg" — Wächterin, Umhang-Quest, Sieg ohne einen Schlag).
-- `examples/modules/combat-narrative.yaml` („Der Duellplatz" — ein Wurf entscheidet, Tor öffnet sich).
+- `examples/modules/combat-narrative.yaml` („Der Duellplatz" — ein Wurf entscheidet, Tor öffnet sich; `difficulty: 3` — ohne das Übungsschwert aus der Puppe, `attack+2`, geht das Duell verloren).
 - `examples/modules/combat-classic.yaml` („Der Kerkerkopf" — expliziter Classic-Block, 6 Treffer, Tod per `killNPC` öffnet den Schatzraum via `locked_by`).
 - `examples/modules/combat-tactical.yaml` („Die Gladiatoren-Arena" — Taktikprofil, Fähigkeiten, Gegnerreaktion; E2E Happy Path `combat-tactical` und Flucht-Pfad `combat-tactical-fail`).
 

@@ -182,7 +182,7 @@ rooms:
       south: {to: landing}
   - id: kitchen
     name: Kitchen
-    desc: Cold stoves. The maid scrubs a pot she has clearly already scrubbed. A cellar door stands open.
+    desc: Cold stoves. A cellar door stands open.
     exits:
       west: {to: garden}
       down: {to: cellar}
@@ -390,6 +390,7 @@ npcs:
               - {has_item: bloody_glove}
           then:
             - {msg: "You lay it out: the erased payments, the false alibi, the letter signed 'R', the glove no gardener could wear. The doctor's hands, at last, are not steady."}
+            - {complete_quest: wren_case}
             - {game_end: victory, msg: "VICTORY — Dr. R. Ashgrove confesses. The case is closed, and the glass alibi is broken."}
           else:
             - {msg: "You accuse the doctor. He smiles thinly. 'A theory, sir, is not a case.' You need the payments, the alibi, the letter and the glove."}
@@ -411,7 +412,73 @@ rules:
     once: true
     effects:
       - {start_quest: wren_case}
+  - id: scene_examined
+    on: enter study
+    once: true
+    effects:
+      - {set_flag: scene_examined, val: "true"}
+      - {advance_quest: wren_case}
+  - id: evidence_complete
+    on: turn
+    once: true
+    when:
+      all:
+        - {has_flag: scene_examined}
+        - {has_item: ledger}
+        - {has_item: alibi_note}
+        - {has_item: torn_letter}
+        - {has_item: bloody_glove}
+    effects:
+      - {advance_quest: wren_case}
 
 interactions:
   entity: []
   item: []
+
+tests:
+  # Regression: the case quest advances at the scene, once all four pieces of
+  # evidence are in hand, and completes with the right accusation.
+  - name: wren_case_quest_stages
+    input:
+      - "north"
+      - "north"
+      - "north"
+      - "quests"
+      - "east"
+      - "north"
+      - "north"
+      - "quests"
+      - "south"
+      - "south"
+      - "take household ledger"
+      - "west"
+      - "up"
+      - "north"
+      - "search"
+      - "take torn letter"
+      - "south"
+      - "down"
+      - "south"
+      - "east"
+      - "take hurried note"
+      - "west"
+      - "west"
+      - "east"
+      - "down"
+      - "take gardener's glove"
+      - "quests"
+      - "up"
+      - "west"
+      - "north"
+      - "north"
+      - "east"
+      - "north"
+      - "north"
+      - "accuse doctor"
+    expect:
+      - "- The Wren Case: Examine the scene and the household."
+      - "- The Wren Case: Collect the payments, alibi, letter and glove."
+      - "Cold stoves. A cellar door stands open."
+      - "- The Wren Case: Accuse the right person with the evidence in hand."
+      - "The case is closed."
+      - "VICTORY — Dr. R. Ashgrove confesses."

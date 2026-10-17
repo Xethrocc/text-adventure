@@ -159,7 +159,7 @@ echo "== 4b. author content tests (B1) =="
 # Content tests as data: the `tests:` section of an adventure runs through
 # `worldbuilder test` (ordered markers). Extend the list as adventures grow
 # their own tests.
-for name in procedures wissen kapitel krypta quest_rpg pursuit wander multiraum include_demo mengen massen behaelter stroeme phasen sprache npc-interaktion npc-massen npc-ausruestung npc-tod quest-kette karte wuerfel ketten npc-zustaende zuneigung zyklen rezeptwissen score synth roguelike_dungeon board_nim idle_manufaktur krypta_der_verdammten alchemie_werkstatt chrome_and_ash neon_phantom survival_expedition soul_collector zeitschleife theater oregon_trail hazards monster_insel ftl_lite cyberpunk pure-if economy_hamurabi deckbuilder_spire starship trade combo; do
+for name in procedures wissen kapitel krypta quest_rpg pursuit wander multiraum include_demo mengen massen behaelter stroeme phasen sprache npc-interaktion npc-massen npc-ausruestung npc-tod quest-kette karte wuerfel ketten npc-zustaende zuneigung zyklen rezeptwissen score synth roguelike_dungeon board_nim idle_manufaktur krypta_der_verdammten alchemie_werkstatt chrome_and_ash neon_phantom survival_expedition soul_collector zeitschleife theater oregon_trail hazards monster_insel ftl_lite cyberpunk pure-if economy_hamurabi deckbuilder_spire starship trade combo clock_pendulum detective fantasy horror sandbox_wilderness space-opera vn_letter combat-narrative combat-tactical factions stealth thefog; do
     case "$name" in
         procedures) src="examples/fixtures/procedures.yaml" ;;
         wander) src="examples/fixtures/wander.yaml" ;;
@@ -205,8 +205,9 @@ for name in procedures wissen kapitel krypta quest_rpg pursuit wander multiraum 
         hazards) src="examples/modules/hazards.yaml" ;;
         monster_insel) src="examples/genres/monster_insel.yaml" ;;
         ftl_lite) src="examples/genres/ftl_lite.yaml" ;;
-        cyberpunk|pure-if|economy_hamurabi|deckbuilder_spire) src="examples/genres/$name.yaml" ;;
-        starship|trade|combo) src="examples/modules/$name.yaml" ;;
+        cyberpunk|pure-if|economy_hamurabi|deckbuilder_spire|clock_pendulum|detective|fantasy|horror|sandbox_wilderness|space-opera|vn_letter) src="examples/genres/$name.yaml" ;;
+        starship|trade|combo|combat-narrative|combat-tactical|factions|stealth) src="examples/modules/$name.yaml" ;;
+        thefog) src="examples/thefog.yaml" ;;
     esac
     "${WORLDBUILDER[@]}" test "$src" || exit 1
 done

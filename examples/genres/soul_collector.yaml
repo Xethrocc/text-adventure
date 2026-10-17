@@ -309,36 +309,27 @@ items:
     gender: f
     article: { nom: die, acc: die, dat: der }
     keys: [schattenseele, seele, essenz]
-    location: ebene1_gruft
+    location: nowhere   # erscheint erst mit dem Tod des Gegners (rule seele_*)
     portable: true
     desc: Eine blaeulich flackernde Seelenessenz, geborgen aus den Resten des Schattenkriechers.
-    verb_map:
-      capture,intact:
-        - msg: "Du streckst deine Hand aus und bindest die Schattenseele an dein Geistergefaess!"
 
   - id: eisen_ghul_seele
     name: Eisen-Ghul-Seele
     gender: f
     article: { nom: die, acc: die, dat: der }
     keys: [eisen_ghul_seele, ghulseele, seele, essenz]
-    location: ebene2_folterkammer
+    location: nowhere   # erscheint erst mit dem Tod des Gegners (rule seele_*)
     portable: true
     desc: Eine dichte, stahlgrau pulsierende Seele, getraenkt mit der Zaehigkeit des Eisen-Ghuls.
-    verb_map:
-      capture,intact:
-        - msg: "Du fokussierst deinen Willen und schliesst die Eisen-Ghul-Seele sicher ein!"
 
   - id: weltenherz_seele
     name: Weltenherz-Seele
     gender: f
     article: { nom: die, acc: die, dat: der }
     keys: [weltenherz_seele, weltenherz, seele, essenz, herz]
-    location: ebene3_thron
+    location: nowhere   # erscheint erst mit dem Tod des Gegners (rule seele_*)
     portable: true
     desc: Eine gewaltige, sonnenhelle Essenz von unermesslicher Macht. Das Herz des gefallenen Abyss.
-    verb_map:
-      capture,intact:
-        - msg: "Du hebst die leuchtende Weltenherz-Seele ehrfurchtsvoll an dich!"
 
 npcs:
   # ============================================================================
@@ -387,6 +378,33 @@ npcs:
     defense: 3
 
 rules:
+  # ============================================================================
+  # Seelen erscheinen erst, wenn ihr Traeger gefallen ist
+  # ============================================================================
+  - id: seele_schattenkriecher
+    "on": "state schattenkriecher"
+    when: { state: schattenkriecher, is: dead }
+    once: true
+    effects:
+      - place: { item: schattenseele, in: ebene1_gruft }
+      - msg: "Aus den Resten des Schattenkriechers loest sich eine blaeulich flackernde Schattenseele."
+
+  - id: seele_eisen_ghul
+    "on": "state eisen_ghul"
+    when: { state: eisen_ghul, is: dead }
+    once: true
+    effects:
+      - place: { item: eisen_ghul_seele, in: ebene2_folterkammer }
+      - msg: "Die Ruestung des Eisen-Ghuls birst, und eine stahlgraue Eisen-Ghul-Seele steigt daraus empor."
+
+  - id: seele_seelenfresser
+    "on": "state seelenfresser"
+    when: { state: seelenfresser, is: dead }
+    once: true
+    effects:
+      - place: { item: weltenherz_seele, in: ebene3_thron }
+      - msg: "Der Seelenfresser zerfaellt zu Asche. Zurueck bleibt die sonnenhelle Weltenherz-Seele."
+
   # ============================================================================
   # Rasten (Heilung im Schrein)
   # ============================================================================
@@ -524,6 +542,7 @@ tests:
       - attack eisen_ghul
       - attack eisen_ghul
       - attack eisen_ghul
+      - attack eisen_ghul
       - capture seele
       - use runenschalter
       - south
@@ -532,6 +551,10 @@ tests:
       - down
       - rasten
       - north
+      - attack seelenfresser
+      - attack seelenfresser
+      - attack seelenfresser
+      - attack seelenfresser
       - attack seelenfresser
       - attack seelenfresser
       - attack seelenfresser
@@ -558,14 +581,24 @@ tests:
 
   # Regression: 'opfern <x>' opferte frueher immer zuerst das Weltenherz (Sofortsieg)
   - name: "opfern beachtet das genannte ziel"
-    input: [east, north, attack schattenkriecher, attack schattenkriecher, capture seele, use hebel, south, west, opfern seele, down, rasten, east, north, attack eisen_ghul, attack eisen_ghul, attack eisen_ghul, capture seele, use runenschalter, south, west, down, rasten, north, attack seelenfresser, attack seelenfresser, attack seelenfresser, attack seelenfresser, capture weltenherz_seele, south, opfern ghulseele, look]
+    input: [east, north, attack schattenkriecher, attack schattenkriecher, capture seele, use hebel, south, west, opfern seele, down, rasten, east, north, attack eisen_ghul, attack eisen_ghul, attack eisen_ghul, attack eisen_ghul, capture seele, use runenschalter, south, west, down, rasten, north, attack seelenfresser, attack seelenfresser, attack seelenfresser, attack seelenfresser, south, rasten, north, attack seelenfresser, attack seelenfresser, attack seelenfresser, attack seelenfresser, capture weltenherz_seele, south, opfern ghulseele, look]
     expect:
       - "Du hebst die leuchtende Weltenherz-Seele ehrfurchtsvoll an dich!"
       - "Deine Abwehr steigt dauerhaft um +2!"
       - "Du siehst: Schwarzer Monolith."
 
   - name: "endstand zeigt den echten punktestand"
-    input: [east, north, attack schattenkriecher, attack schattenkriecher, capture seele, use hebel, south, west, opfern seele, down, rasten, east, north, attack eisen_ghul, attack eisen_ghul, attack eisen_ghul, capture seele, use runenschalter, south, west, down, rasten, north, attack seelenfresser, attack seelenfresser, attack seelenfresser, attack seelenfresser, capture weltenherz_seele, south, opfern weltenherz]
+    input: [east, north, attack schattenkriecher, attack schattenkriecher, capture seele, use hebel, south, west, opfern seele, down, rasten, east, north, attack eisen_ghul, attack eisen_ghul, attack eisen_ghul, attack eisen_ghul, capture seele, use runenschalter, south, west, down, rasten, north, attack seelenfresser, attack seelenfresser, attack seelenfresser, attack seelenfresser, south, rasten, north, attack seelenfresser, attack seelenfresser, attack seelenfresser, attack seelenfresser, capture weltenherz_seele, south, opfern weltenherz]
     expect:
       - "Du hebst die leuchtende Weltenherz-Seele ehrfurchtsvoll an dich!"
       - "Endstand: 275/350 Punkte."
+
+  # Regression: die Seelen lagen frueher ab Spielstart in den Raeumen -- der
+  # Sieg ging ohne einen einzigen Kampf. Jetzt erscheinen sie erst mit dem Tod.
+  - name: "keine seele ohne sieg ueber ihren traeger"
+    input: [east, north, capture seele, take schattenseele, attack schattenkriecher, attack schattenkriecher, capture seele]
+    expect:
+      - "Hier schwebt keine ungebundene Seele, die du einfangen koenntest."
+      - "Du siehst 'schattenseele' hier nicht."
+      - "Aus den Resten des Schattenkriechers loest sich eine blaeulich flackernde Schattenseele."
+      - "Du streckst deine Hand aus und bindest die Schattenseele an dein Geistergefaess!"

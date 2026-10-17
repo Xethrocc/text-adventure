@@ -193,6 +193,48 @@ rules:
     once: true
     effects:
       - {start_quest: cold_orbit}
+      - {set_flag: cold_orbit_started, val: "true"}
+  # Quest stages follow milestone flags: the station can be skipped (the
+  # shuttle is in the hangar) and advance_quest on an inactive quest would
+  # print "quest not active". A skipped stage is passed by any later milestone.
+  - id: took_o2
+    on: take o2_canister
+    effects:
+      - {set_flag: o2_taken, val: "true"}
+  - id: took_fuel
+    on: take fuel_rod
+    effects:
+      - {set_flag: fuel_taken, val: "true"}
+  - id: undocked_derelict
+    on: enter derelict_airlock
+    once: true
+    effects:
+      - {set_flag: shuttle_undocked, val: "true"}
+  - id: undocked_moon
+    on: enter moon_surface
+    once: true
+    effects:
+      - {set_flag: shuttle_undocked, val: "true"}
+  - id: cold_orbit_prep_done
+    on: turn
+    once: true
+    when: {all: [{has_flag: cold_orbit_started}, {any: [{all: [{has_flag: o2_taken}, {has_flag: fuel_taken}]}, {has_flag: shuttle_undocked}]}]}
+    effects:
+      - {advance_quest: cold_orbit}
+      - {set_flag: cold_orbit_prepped, val: "true"}
+  - id: cold_orbit_board_done
+    on: turn
+    once: true
+    when: {all: [{has_flag: cold_orbit_prepped}, {has_flag: shuttle_undocked}]}
+    effects:
+      - {advance_quest: cold_orbit}
+      - {set_flag: cold_orbit_aboard, val: "true"}
+  - id: cold_orbit_salvage_done
+    on: turn
+    once: true
+    when: {all: [{has_flag: cold_orbit_aboard}, {has_flag: recorder_aboard}, {has_flag: artefact_taken}]}
+    effects:
+      - {advance_quest: cold_orbit}
   - id: oxygen_drain
     on: turn
     effects:
@@ -222,8 +264,23 @@ rules:
     when: {all: [{has_flag: recorder_aboard}, {has_flag: artefact_taken}]}
     effects:
       - {msg: "You step onto the ring with both prizes aboard. The station lights come up to meet you."}
+      - if: {has_flag: cold_orbit_started}
+        then: [{complete_quest: cold_orbit}]
       - {game_end: victory, msg: "VICTORY — Cold Orbit complete: the recorder and the artefact are recovered."}
 
 interactions:
   entity: []
   item: []
+
+tests:
+  # Regression: the quest started at the hub but never moved past stage 0
+  # (QuestNeverProgressed); now supplies, undocking, salvage and return drive it.
+  - name: cold_orbit_progresses
+    input: [north, journal, west, take canister, east, down, take rod, journal, up, south, east, enter shuttle, drive to derelict, journal, north, north, take flight recorder, south, south, enter shuttle, drive to moon, north, take xeno artefact, journal, south, enter shuttle, drive to hangar, west]
+    expect:
+      - "- Cold Orbit: Take oxygen and fuel from the station."
+      - "- Cold Orbit: Board the shuttle and undock."
+      - "- Cold Orbit: Salvage the derelict and the moon cave."
+      - "- Cold Orbit: Return to the station with both."
+      - "You dock with both prizes aboard. The crew will eat well tonight."
+      - "VICTORY — Cold Orbit complete: the recorder and the artefact are recovered."

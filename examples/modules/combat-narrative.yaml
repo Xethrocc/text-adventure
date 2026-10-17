@@ -5,10 +5,13 @@ start_room: cn_alley
 # Keine HP-Attrition: ein vergleichender Wurf (Spieler-Angriff vs.
 # Verteidigung + Schwierigkeit) entscheidet über on_win / on_lose-Effects.
 # `attack` ist ein einzelner, abschließender Ausgang — kein Schlagabtausch.
+# Mit difficulty 3 braucht es Angriff 11 (Verteidigung 8 + 3): mit bloßen
+# Händen (Angriff 10) verlierst du; das Übungsschwert der Trainingspuppe
+# (ausrüsten: attack+2) gewinnt.
 
 combat:
   profile: narrative
-  difficulty: 0
+  difficulty: 3
   on_win:
     - { set_state: duel_gate, to: unlocked }
     - { msg: "Dein Hieb findet die Lücke in seiner Deckung — der Duellant tritt zurück und öffnet das Tor." }
@@ -135,6 +138,8 @@ items:
     keys: [übungsschwert, schwert, sword]
     location: cn_dummy
     hidden: true
+    slot: weapon
+    effects: [attack+2]
   - id: whetstone
     name: Wetzstein
     desc: "Ein rauer Stein, um Klingen zu schärfen."
@@ -151,3 +156,15 @@ items:
 interactions:
   entity: []
   item: []
+
+tests:
+  # Regression: ohne Vorbereitung (Angriff 10 < 8 + 3) ist das Duell verloren;
+  # mit ausgerüstetem Übungsschwert (attack+2) gewonnen.
+  - name: duell_ohne_und_mit_schwert
+    input: [north, attack duelist, north, south, south, west, search, equip schwert, east, north, north, attack duelist, north, north]
+    expect:
+      - "Er pariert deinen Angriff mühelos und du bekommst die flache Klinge zu spüren."
+      - "The door is locked."
+      - "You equip the Übungsschwert."
+      - "Dein Hieb findet die Lücke in seiner Deckung — der Duellant tritt zurück und öffnet das Tor."
+      - "VICTORY — Du hast das Turnier gewonnen: in einem einzigen, sauberen Gefecht."

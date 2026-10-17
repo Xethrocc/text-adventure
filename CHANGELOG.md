@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Content: mittlere Audit-Funde behoben (~35 Funde, 22 Dateien)
+
+Aus `~/workspace/befunde-content-audit-2026-10-17.md` §2; jeder Fix mit Regressionstest in `tests:` (gegen den vorherigen Stand rot, wo ordnende Positiv-Marker das ausdrücken können).
+
+- **Erzählspiele:** `thefog` — Schreine nur einmal aktivierbar, Schrein-Quests schließen bei der Aktivierung ab, gerettete Prinzessin bleibt gerettet (`rescued`), Tippfehler; `pure-if` — Linse nicht per `search`, `align` einmalig + Quest bis zum Abschluss, Laterne nur im Leuchtturm; `fantasy` — Wächter sperrt die Treppe (bis Flucht oder Tod), Quest-Stufen bis zur Krone; `horror` — Schlüssel nur an der Haustür (dort direkt Flucht), Quest `ash_grove`; `detective` — Quest `wren_case`, nicht existierende Magd gestrichen.
+- **Rätsel/Roguelikes:** `vn_letter` — wertändernde Dialogoptionen einmalig (Sieg nicht mehr farmbar, alle 6 Enden erreichbar); `zeitschleife` — Luken-Text an `meta.abkuerzung`, montierte Objekte `portable: false`, nur Code 7319 öffnet; `clock_pendulum` — Schloss/Ventil fest, Pendelschlag einmal und nur in der Zelle, `language: de`; `roguelike_dungeon` — Heiltrank-Fund einmalig; `krypta_der_verdammten` — doppelte Deck-Schlüssel aufgelöst (10 statt effektiv 6 Karten, Siegfolge neu); `sandbox_wilderness` — Graben nur an der Schachtsohle, Nacht- und Regentexte entkoppelt, Ernte-Doppelmeldung.
+- **Kampf/Simulation:** `soul_collector` — Seelen erst nach dem Tod ihres Trägers (E2E tötet Ghul und Boss jetzt tatsächlich); `monster_insel` — Schaden folgt dem Typ-Multiplikator; `chrome_and_ash` — Jax-Deal und Chip-Bonus einmalig, Textfehler; `cyberpunk` — Quest `blackwood_job`; `space-opera` — Quest `cold_orbit`; `alchemie_werkstatt` — Magnum Opus braucht die Silberdistille.
+- **Modul-Fixtures:** `factions` — beide Reihenfolgen gewinnbar (Gilde +30), Übergaben verbrauchen die Items; `stealth` — Laterne verrät auch auf dem Schleichweg; `combat-narrative` — ohne Übungsschwert verlierbar (`difficulty: 3`, Schwert `attack+2`); `combat-tactical` — `defend` schützt nur die laufende Runde (`cmd.verb`); `hazards` — `loeschen` löscht dauerhaft, keine Gefahrenmeldungen bei Pegel 0; `trade` — Quest `harbor_seal` bis zum Abschluss.
+- **Byte-Wächter:** Baselines für `thefog.yaml` und `roguelike_dungeon.yaml` neu gesetzt (beabsichtigte Inhaltsänderung; die HEAD-Fassungen ergaben vorher exakt die alten Hashes). `survival.yaml` bleibt gepinnt und unverändert.
+- **CI:** zwölf weitere Inhaltstest-Dateien in Stufe 4b. **Doku:** `docs/modules.md` 7a/7e/7f.
+
 ### FIX: `use-ability` kämpfte gegen eigene Begleiter, Kampf blieb hängen (Monster-Insel)
 
 - **Ziel (`src/Parser.hs`, `executeTacticalAction`):** Gegner sind nur noch lebende NPCs im Raum, die **nicht** zur Party gehören (`hostileNPCsHere`); ein genanntes Ziel (`use-ability <id> auf <ziel>`, `cmd.target`) hat Vorrang vor „erster NPC im Raum“. Vorher stand ein gefangenes Monster weiter im Raum, und jeder weitere `use-ability` kämpfte gegen den eigenen Begleiter.

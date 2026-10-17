@@ -306,7 +306,9 @@ npcs:
             choices:
               - text: "Erzähl mir, was am Tag von Alex' Verschwinden passiert ist."
                 next: alex_story
+                visible_when: {not: {has_flag: maria_erzaehlt}}
                 outcomes:
+                  - set_flag: maria_erzaehlt
                   - learn: maria_zeuge
                   - add_var: {var: gewissheit, delta: 1}
                   - add_var: {var: neugier, delta: 1}
@@ -314,8 +316,12 @@ npcs:
                   - add_var: {var: score, delta: 15}
               - text: "Ich vertraue dir, Maria. Weißt du, wohin er wollte?"
                 next: alex_destination
-                visible_when: {standing: {faction: vertrauen, at_least: 10}}
+                visible_when:
+                  all:
+                    - standing: {faction: vertrauen, at_least: 10}
+                    - not: {has_flag: maria_vertraut}
                 outcomes:
+                  - set_flag: maria_vertraut
                   - standing: {faction: vertrauen, add: 5}
                   - add_var: {var: mut, delta: 1}
                   - add_var: {var: gewissheit, delta: 1}
@@ -359,7 +365,9 @@ npcs:
             choices:
               - text: "Haben Sie in letzter Zeit etwas Verdächtiges bemerkt, Frau Greta?"
                 next: greta_seen
+                visible_when: {not: {has_flag: greta_gesehen}}
                 outcomes:
+                  - set_flag: greta_gesehen
                   - learn: greta_warnung
                   - add_var: {var: gewissheit, delta: 1}
                   - add_var: {var: mut, delta: 1}
@@ -367,7 +375,9 @@ npcs:
                   - add_var: {var: score, delta: 15}
               - text: "Glauben Sie den bösen Gerüchten über Alex?"
                 next: greta_rumors
+                visible_when: {not: {has_flag: greta_geruechte}}
                 outcomes:
+                  - set_flag: greta_geruechte
                   - standing: {faction: vertrauen, add: -5}
                   - add_var: {var: neugier, delta: 1}
               - text: "Einen schönen Tag noch, Frau Greta."
@@ -410,7 +420,9 @@ npcs:
             choices:
               - text: "Ich weiß, dass du Alex bedroht hast. Rede!"
                 next: jonas_confront
+                visible_when: {not: {has_flag: jonas_gestellt}}
                 outcomes:
+                  - set_flag: jonas_gestellt
                   - learn: jonas_drohung
                   - add_var: {var: mut, delta: 2}
                   - add_var: {var: neugier, delta: -1}
@@ -419,7 +431,9 @@ npcs:
                   - add_var: {var: score, delta: 15}
               - text: "Ich habe Gold. Was weißt du über Alex?"
                 next: jonas_bribe
+                visible_when: {not: {has_flag: jonas_bestochen}}
                 outcomes:
+                  - set_flag: jonas_bestochen
                   - add_var: {var: gewissheit, delta: 1}
                   - add_var: {var: neugier, delta: 1}
                   - add_var: {var: mut, delta: -1}
@@ -557,3 +571,77 @@ rules:
     effects:
       - add_var: {var: tag, delta: 1}
       - msg: "Die Dämmerung bricht herein. Ein neuer Tag bricht an."
+
+tests:
+  # Regression: Dialogoptionen mit Wertaenderung sind einmalig — Marias
+  # Vertrauensfrage laesst sich nicht farmen, der Sieg braucht Greta und Jonas.
+  - name: "vertrauensfrage einmalig, kein sieg nur mit maria"
+    input:
+      - "take brief"
+      - ""
+      - ""
+      - ""
+      - "south"
+      - "talk to maria"
+      - "2"
+      - "1"
+      - "talk to maria"
+      - "2"
+      - "talk to maria"
+      - "2"
+      - "north"
+      - "east"
+      - "talk to stuhl"
+    expect:
+      - "Weil du es bist: Er murmelte etwas vom alten Hafenbahnhof im Norden."
+      - "[2] Nur einen Kaffee, danke."
+      - "[2] Nur einen Kaffee, danke."
+      - "[1] Ich lasse die Vergangenheit ruhen und stelle keine weiteren Fragen mehr."
+      - "[2] Ich brauche noch einen Moment zum Nachdenken."
+  - name: "ende geheimnis: maria und bestechung"
+    input:
+      - "take brief"
+      - ""
+      - ""
+      - ""
+      - "south"
+      - "talk to maria"
+      - "1"
+      - "1"
+      - "1"
+      - "east"
+      - "talk to jonas"
+      - "2"
+      - "1"
+      - "talk to jonas"
+      - "3"
+      - "west"
+      - "north"
+      - "east"
+      - "talk to stuhl"
+      - "1"
+    expect:
+      - "Gold spricht eine deutliche Sprache."
+      - "[1] Ich weiß, dass du Alex bedroht hast. Rede!"
+      - "[2] Schon gut, ich gehe wieder."
+      - "Du verbrennst die Notizen in der Kaminfeuerung."
+  - name: "ende blinder sturm: jonas konfrontieren"
+    input:
+      - "take brief"
+      - ""
+      - ""
+      - ""
+      - "south"
+      - "east"
+      - "talk to jonas"
+      - "1"
+      - "2"
+      - "west"
+      - "north"
+      - "east"
+      - "talk to stuhl"
+      - "3"
+    expect:
+      - "Immer langsam!"
+      - "[3] Ich stürme zur Stadtwache und mache einen Riesenaufruhr!"
+      - "Ohne Beweise lacht man dich aus und sperrt dich ein."

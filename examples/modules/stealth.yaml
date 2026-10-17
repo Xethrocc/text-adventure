@@ -29,9 +29,12 @@ rules:
     effects:
       - { add_var: noise, delta: -4 }
       - { msg: "Du gehst in die Hocke und schleichst leise weiter." }
+  # Licht verrät dich unabhängig vom Lärm: die Regel feuert beim Betreten,
+  # also VOR dem +2 des Raumwechsels — eine noise-Schwelle hier griffe nach
+  # Schleichen (noise 0) nie.
   - id: seen_with_lantern
     on: enter guard_post
-    when: { all: [ { has_item: lantern }, { compare_var: { name: noise, op: gte, value: 2 } } ] }
+    when: { has_item: lantern }
     effects:
       - { set_flag: caught, val: "true" }
       - { msg: "Die Laterne verrät dich — die Wache starrt direkt in dein Gesicht!" }
@@ -159,3 +162,19 @@ quests:
 interactions:
   entity: []
   item: []
+
+tests:
+  # Regression: wer die Laterne trägt, wird im dunklen Posten gesehen —
+  # auch auf dem Schleichweg (noise 0 beim Betreten).
+  - name: laterne_auf_schleichweg
+    input: [sneak, north, search, sneak, north, sneak, north, sneak, north]
+    expect:
+      - "Zwischen leeren Kisten: eine Öllaterne."
+      - "Die Laterne verrät dich — die Wache starrt direkt in dein Gesicht!"
+      - "Die Wache hat dich erwischt. Die Nachtschicht endet für dich."
+  # Gegenprobe: Laterne vor dem Posten abgelegt -> Schleichweg bleibt Sieg.
+  - name: laterne_abgelegt
+    input: [sneak, north, search, sneak, north, sneak, north, drop laterne, sneak, north, sneak, north, north]
+    expect:
+      - "Zwischen leeren Kisten: eine Öllaterne."
+      - "VICTORY — Leise wie ein Schatten hast du den Tresorraum geplündert."
