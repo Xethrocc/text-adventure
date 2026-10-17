@@ -199,7 +199,7 @@ The engine produces output as an ordered stream of `OutputEvent` values. The pro
 | `"text"` | Prose text with optional styling spans (ANSI-free). | `styled`: `{ text: String, spans: [{start, length, style}] }` |
 | `"art"` | Monospace ASCII art with raw text and structured hotspots. | `payload`: `{ raw: String, hotspots: [{index, glyph, target}] }` |
 | `"anim"` | Multi-frame ASCII animation. | `delay_micros`: `Int`, `frames`: `[String]` |
-| `"sfx"` | Sound effect playback trigger. | `path`: `FilePath` |
+| `"sfx"` | Sound effect playback trigger (file path or synthesised `sounds:` patch ID, Synth 5.2c). | `path`: `FilePath` *(file)* **or** `synth`: `String` *(synth ID)* |
 | `"music_start"` | Background music start or change. | `path`: `FilePath` |
 | `"music_stop"` | Background music stop trigger. | *(no extra fields)* |
 | `"room_changed"` | Player moved to a new room (additive state event). | `room_id`: `String` |

@@ -106,7 +106,7 @@ run_e2e() {
     [ "$failed" -eq 0 ] || exit 1
 }
 
-for name in thefog pure-if fantasy cyberpunk space-opera detective horror economy_hamurabi deckbuilder_spire sandbox_wilderness vn_letter clock_pendulum roguelike_dungeon board_nim idle_manufaktur krypta_der_verdammten alchemie_werkstatt chrome_and_ash neon_phantom survival_expedition soul_collector zeitschleife theater oregon_trail factions trade encounters survival stealth patrol wander multiraum combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state combat-screen dark-feelable bomb waechter traglast disambiguation procedures gespraeche npc-besitz npc-interaktion npc-massen npc-ausruestung npc-tod quest-kette karte stroeme phasen sprache wuerfel fantasy-de ketten npc-zustaende zuneigung zyklen rezeptwissen score monster_insel ftl_lite; do
+for name in thefog pure-if fantasy cyberpunk space-opera detective horror economy_hamurabi deckbuilder_spire sandbox_wilderness vn_letter clock_pendulum roguelike_dungeon board_nim idle_manufaktur krypta_der_verdammten alchemie_werkstatt chrome_and_ash neon_phantom survival_expedition soul_collector zeitschleife theater oregon_trail factions trade encounters survival stealth patrol wander multiraum combat-off combat-narrative combat-classic combat-tactical party starship combo ship-duel banner-art hotspot ascii-state combat-screen dark-feelable bomb waechter traglast disambiguation procedures gespraeche npc-besitz npc-interaktion npc-massen npc-ausruestung npc-tod quest-kette karte stroeme phasen sprache wuerfel fantasy-de ketten npc-zustaende zuneigung zyklen rezeptwissen score monster_insel ftl_lite synth; do
     case "$name" in
         thefog)             src=examples/thefog.yaml ;;
         vn_letter)          src=examples/genres/vn_letter.yaml ;;
@@ -146,6 +146,7 @@ for name in thefog pure-if fantasy cyberpunk space-opera detective horror econom
         zyklen)             src="examples/fixtures/zyklen.yaml" ;;
         rezeptwissen)        src="examples/fixtures/rezeptwissen.yaml" ;;
         score)              src="examples/fixtures/score.yaml" ;;
+        synth)              src="examples/fixtures/synth.yaml" ;;
         *)                  src="examples/genres/$name.yaml" ;;
     esac
     run_e2e "$name" "$src"
@@ -155,7 +156,7 @@ echo "== 4b. author content tests (B1) =="
 # Content tests as data: the `tests:` section of an adventure runs through
 # `worldbuilder test` (ordered markers). Extend the list as adventures grow
 # their own tests.
-for name in procedures wissen kapitel krypta quest_rpg pursuit wander multiraum include_demo mengen massen behaelter stroeme phasen sprache npc-interaktion npc-massen npc-ausruestung npc-tod quest-kette karte wuerfel ketten npc-zustaende zuneigung zyklen rezeptwissen score roguelike_dungeon board_nim idle_manufaktur krypta_der_verdammten alchemie_werkstatt chrome_and_ash neon_phantom survival_expedition soul_collector zeitschleife theater oregon_trail hazards monster_insel ftl_lite; do
+for name in procedures wissen kapitel krypta quest_rpg pursuit wander multiraum include_demo mengen massen behaelter stroeme phasen sprache npc-interaktion npc-massen npc-ausruestung npc-tod quest-kette karte wuerfel ketten npc-zustaende zuneigung zyklen rezeptwissen score synth roguelike_dungeon board_nim idle_manufaktur krypta_der_verdammten alchemie_werkstatt chrome_and_ash neon_phantom survival_expedition soul_collector zeitschleife theater oregon_trail hazards monster_insel ftl_lite; do
     case "$name" in
         procedures) src="examples/fixtures/procedures.yaml" ;;
         wander) src="examples/fixtures/wander.yaml" ;;
@@ -185,6 +186,7 @@ for name in procedures wissen kapitel krypta quest_rpg pursuit wander multiraum 
         zyklen)          src="examples/fixtures/zyklen.yaml" ;;
         rezeptwissen)    src="examples/fixtures/rezeptwissen.yaml" ;;
         score)           src="examples/fixtures/score.yaml" ;;
+        synth)           src="examples/fixtures/synth.yaml" ;;
         roguelike_dungeon) src="examples/genres/roguelike_dungeon.yaml" ;;
         board_nim)       src="examples/genres/board_nim.yaml" ;;
         idle_manufaktur) src="examples/genres/idle_manufaktur.yaml" ;;

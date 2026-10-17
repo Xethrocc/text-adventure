@@ -465,6 +465,7 @@ initSampleGame = GameState
         , startRoom          = Nothing
         , worldLanguage = Nothing
         , worldMessages = Map.empty
+        , worldSounds = Map.empty
         , factions = Map.empty
         }
     , save = SaveState

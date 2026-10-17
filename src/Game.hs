@@ -233,6 +233,7 @@ emptyGameWorld = GameWorld
         , startRoom          = Nothing
     , worldLanguage      = Nothing
     , worldMessages      = Map.empty
+    , worldSounds        = Map.empty
     , factions           = Map.empty
     }
 

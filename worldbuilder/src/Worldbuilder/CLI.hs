@@ -40,6 +40,10 @@ import qualified Data.Text.Encoding.Error as TEE
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import Control.Exception (try, SomeException)
 import qualified Data.Map.Strict as Map
+import qualified Synth.Patch as SP
+import Synth.Cache (ensureRendered, synthCacheDir)
+import Synth.Render (renderSound)
+import Synth.Wav (encodeWav)
 
 -- | Entry point for the worldbuilder CLI
 runCLI :: IO ()
@@ -61,7 +65,54 @@ runCLI = do
         ("map" : path : rest)      -> mapView path rest
         ("test" : path : rest)     -> testCmd path rest
         ("fuzz" : path : rest)     -> fuzzCmd path rest
+        ("synth" : sub : path : rest) -> synthCmd sub path rest
         _                          -> putStrLn usage
+
+-- | Synth 5.2c: author tooling for `sounds:` (plan-synth §4.4). The adventure
+--   must compile; the sounds come from the compiled world, i.e. exactly what
+--   the engine will play. @preview@ renders into the engine's own cache and
+--   prints the path — no second playback path.
+synthCmd :: String -> FilePath -> [String] -> IO ()
+synthCmd sub path rest = do
+    advResult <- parseAdventureFile path
+    case advResult of
+        Left err -> do
+            putStrLn $ "Failed to parse adventure file: " ++ err
+            exitFailure
+        Right adv -> case compileAdventure adv of
+            Left errs -> do
+                putStrLn "Compilation errors:"
+                printCompileIssues path errs
+                exitFailure
+            Right cr -> synthWith (E.worldSounds (crWorld cr))
+  where
+    synthWith sounds = case (sub, rest) of
+        ("list", _) ->
+            if Map.null sounds
+            then putStrLn "(no sounds declared)"
+            else mapM_ (putStrLn . describe) (Map.toList sounds)
+        ("render", sid : opts) -> withSound sounds sid $ \s -> do
+            let out = maybe (sid ++ ".wav") id (lookupFlag "-o" opts)
+            BL.writeFile out (encodeWav SP.sampleRate (renderSound sid s))
+            putStrLn out
+        ("preview", sid : _) -> withSound sounds sid $ \s -> do
+            dir <- synthCacheDir
+            p <- ensureRendered dir sid s
+            putStrLn p
+        _ -> do
+            putStrLn "usage: worldbuilder synth list <adventure.yaml>"
+            putStrLn "       worldbuilder synth render <adventure.yaml> <id> [-o file.wav]"
+            putStrLn "       worldbuilder synth preview <adventure.yaml> <id>"
+            exitFailure
+    withSound sounds sid k = case Map.lookup sid sounds of
+        Just s  -> k s
+        Nothing -> do
+            putStrLn ("UnknownSynthSound: no sound '" ++ sid ++ "' under sounds: (known: "
+                      ++ unwords (Map.keys sounds) ++ ")")
+            exitFailure
+    describe (sid, SP.SynthSound vs) =
+        sid ++ "  " ++ show (maximum (0 : map SP.vDur vs)) ++ " s  "
+            ++ show (length vs) ++ (if length vs == 1 then " layer" else " layers")
 
 -- | B1: run the authored `tests:` content tests of an adventure. An
 --   optional name argument (without leading '-') filters the test names.
@@ -127,6 +178,13 @@ usage = unlines
     , "                                              steps, frozen loops). Findings print their exact"
     , "                                              command sequence; --replay feeds one command per"
     , "                                              line from a file instead of generated runs."
+    , ""
+    , "  worldbuilder synth list <adventure.yaml>       Synth 5.2c: list the sounds: ids (duration, layers)"
+    , "  worldbuilder synth render <adventure.yaml> <id> [-o file.wav]"
+    , "                                              Render one sound to a WAV file (default <id>.wav)"
+    , "  worldbuilder synth preview <adventure.yaml> <id>"
+    , "                                              Render into the engine's synth cache and print the"
+    , "                                              WAV path (play it with any audio player)"
     , ""
     , "  worldbuilder export <adventure.json> -o <dir> [--with-engine] [--zip] [--force]"
     , "                                              Bundle a finished game: world.json + save.json"

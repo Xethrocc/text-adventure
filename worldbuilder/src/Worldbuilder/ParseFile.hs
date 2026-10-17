@@ -194,6 +194,7 @@ duplicateSections adv =
     , ("initial_flags", Map.keys (advInitialFlags adv))
     , ("initial_variables", Map.keys (advInitialVariables adv))
     , ("end_art", Map.keys (advEndArt adv))
+    , ("sounds", Map.keys (advSounds adv))
     ]
 
 -- | Hard error for duplicate ids across merged sources, naming every file
@@ -247,6 +248,7 @@ mergeSources ((_, main) : incls) = foldl mergeOne main { advInclude = [] } incls
         , advDevices         = advDevices acc ++ advDevices inc
         , advTests           = advTests acc ++ advTests inc
         , advAssets          = advAssets acc ++ advAssets inc
+        , advSounds          = Map.union (advSounds acc) (advSounds inc)
         , advInitialVariables = Map.union (advInitialVariables acc) (advInitialVariables inc)
         , advInitialFlags     = Map.union (advInitialFlags acc) (advInitialFlags inc)
         , advEndArt           = Map.union (advEndArt acc) (advEndArt inc)

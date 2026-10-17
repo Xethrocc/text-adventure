@@ -72,6 +72,7 @@ module Types.Core
     , Predicate (..)
       -- * Audio / Music
     , MusicCommand (..)
+    , SoundRef (..)
       -- * Effects
     , Effect (..)
     , noopEffect
@@ -204,6 +205,7 @@ import qualified Data.Aeson.KeyMap as KeyMap
 import Text.Read (readMaybe)
 
 import Types.Cards
+import Synth.Patch (SynthSound)
 import Types.Vehicles
 import Types.Combat
 
@@ -1186,6 +1188,13 @@ exitRoomID (Guarded r _ _) = r
 data MusicCommand = MusicStart FilePath | MusicStop
     deriving (Show, Eq, Generic)
 
+-- | Synth 5.2c: one queued sound effect. Runtime-only queue element of
+--   'pendingSfx' (never serialised — 'GameState' has no JSON instance, so
+--   save.json and the byte contract stay untouched). A 'SoundSynth' id names an
+--   entry of 'worldSounds' and is resolved to a cached WAV at the IO edge.
+data SoundRef = SoundFile FilePath | SoundSynth String
+    deriving (Show, Eq)
+
 instance ToJSON MusicCommand
 instance FromJSON MusicCommand
 
@@ -1214,6 +1223,7 @@ data Effect
     | Narrative [String] Effect                   -- ^ Lines to show, then follow-up (stored as pendingNarrative)
     | PlayClip ClipID                             -- ^ Phase H/H4: queue a cutscene clip (pendingCutscene)
     | PlaySfx FilePath                            -- ^ Audio Phase 1: queue a sound effect for the frontend
+    | PlaySfxSynth String                         -- ^ Synth 5.2c (S6): queue a synthesised sound effect (id into 'worldSounds')
     | PlayMusic FilePath                          -- ^ Audio Phase 2: start/switch background music loop
     | StopMusic                                   -- ^ Audio Phase 2: stop background music
     | SetExit RoomID Direction Exit               -- ^ Rogue Phase 3: open/rewire a dynamic exit
@@ -2678,6 +2688,7 @@ data GameWorld = GameWorld
     , startRoom          :: Maybe RoomID                             -- ^ Start room compiled from YAML `start_room:`; Nothing = arbitrary fallback
     , worldLanguage      :: Maybe String                             -- ^ `language:` (4.3): language pack code ("de" …); Nothing = plain English default
     , worldMessages      :: Map.Map String [String]                  -- ^ `messages:` (4.3): per-adventure catalog overrides (non-empty values only); empty map omitted from world.json. OPEN-18: a value may be a pool of alternatives — encoded as an array, a single entry stays a plain string (byte contract).
+    , worldSounds        :: Map.Map String SynthSound                -- ^ Synth 5.2c: sounds: patches by id (plan-synth §3.1); empty map is omitted from world.json
     , factions           :: Map.Map FactionID [FactionLevel]         -- ^ Faction standing levels (G9a); empty map is omitted from world.json
     } deriving (Show, Eq)
 
@@ -2721,8 +2732,11 @@ instance ToJSON GameWorld where
         ] ++ endArtPair ++ titleArtPair ++ clipPair ++ policyPair ++ cardPair ++ sandboxPair
           ++ procPair ++ factPair ++ statementPair ++ combinePair ++ chapterPair ++ devicePair ++ containerPair ++ progPair
           ++ startRoomPair ++ langPair ++ msgPair ++ npcInteractionPair
-          ++ vehicleInteractionPair ++ exitInteractionPair ++ factionPair
+          ++ vehicleInteractionPair ++ exitInteractionPair ++ factionPair ++ soundPair
       where
+        -- Synth 5.2c: omitted when empty, so world.json of every adventure
+        -- without `sounds:` stays bit-identical (same contract as procDefs).
+        soundPair = [ "sounds" .= worldSounds gw | not (Map.null (worldSounds gw)) ]
         endArtPair = [ "endArt" .= endArt | not (Map.null endArt) ]
         titleArtPair = [ "titleArt" .= titleArt | not (isEmptyAscii titleArt) ]
         clipPair = [ "clips" .= worldClips gw | not (Map.null (worldClips gw)) ]
@@ -2838,6 +2852,7 @@ instance FromJSON GameWorld where
         <*> o .:? "startRoom" .!= Nothing
         <*> o .:? "language" .!= Nothing
         <*> (o .:? "messages" >>= maybe (pure Map.empty) messageMapFromJSON)
+        <*> o .:? "sounds" .!= Map.empty
         <*> o .:? "factions" .!= Map.empty
 
 -- | Encode item-on-item outcomes as objects (P2-9, K11c).
@@ -3087,7 +3102,7 @@ data GameState = GameState
     , pendingNarrative :: Maybe ([String], Effect)  -- ^ Narrative lines + follow-up (Phase 4.4)
     , pendingAnimation :: Maybe ([String], Int)    -- ^ Frames + rate in µs (Phase D/H1, runtime only)
     , pendingCutscene :: Maybe ([String], Int)      -- ^ Cutscene frames + rate in µs, played once (Phase H/H4, runtime only)
-    , pendingSfx :: [FilePath]  -- ^ SFX files queued for playback (Audio Phase 1, runtime only)
+    , pendingSfx :: [SoundRef]  -- ^ SFX queued for playback (files or synth ids, 5.2c) (Audio Phase 1, runtime only)
     , pendingMusic :: Maybe MusicCommand           -- ^ Music command for the frontend (Audio Phase 2, runtime only)
     , diagnostics :: [String]                      -- ^ Engine-level findings for the author (P2-23)
     , lastVeto :: Maybe Bool                       -- ^ Phase 2.2: Nothing = not vetoed, Just consumesTurn = vetoed

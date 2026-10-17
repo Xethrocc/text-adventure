@@ -58,6 +58,10 @@
             "type": "sfx"
         },
         {
+            "synth": "alarm",
+            "type": "sfx"
+        },
+        {
             "path": "music/ambient.ogg",
             "type": "music_start"
         },

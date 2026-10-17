@@ -55,6 +55,8 @@ import Verbs (verbCanonicalName)
 import SaveLoad
 import Sample (initSampleGame)
 import Frontend
+import Synth.Cache (resolveSound)
+import Control.Monad (forM_)
 import Data.Char (toLower)
 import Data.List (foldl', isPrefixOf)
 import Data.Maybe (isJust, fromMaybe)
@@ -338,6 +340,12 @@ autoDescribe before after
     | currentRoom (save before) == currentRoom (save after)  = []
     | otherwise                                              = snd (roomViewEvents False after)
 
+-- | Queue element -> protocol event. A file stays @EvSfx path@ (byte-equal to
+--   before); a synth id becomes @EvSfxSynth id@ (5.2c).
+sfxEvent :: SoundRef -> OutputEvent
+sfxEvent (SoundFile p)  = EvSfx p
+sfxEvent (SoundSynth s) = EvSfxSynth s
+
 -- | Phase 1.2: additive side events derived from the state transition —
 --   they contribute no text ('evTextOf' = ""), so the CLI/TUI rendering is
 --   byte-identical; graphical frontends and the protocol (1.4) consume them.
@@ -357,7 +365,7 @@ sideEvents before after = concat
       | lookupVarOf before combatEngagedKey /= lookupVarOf after combatEngagedKey ]
       -- the new value as Bool (non-zero = engaged)
     , [ EvGameOver | gameOver (save after) && not (gameOver (save before)) ]
-    , map EvSfx (pendingSfx after)
+    , map sfxEvent (pendingSfx after)
     , case pendingMusic after of
         Just (MusicStart path) -> [EvMusicStart path]
         Just MusicStop         -> [EvMusicStop]
@@ -637,7 +645,14 @@ gameLoop = loopGame (haskelineFrontend id) . initLoopState
 dispatchAudioAndCutscene :: Frontend -> LoopState -> IO LoopState
 dispatchAudioAndCutscene fe loopState = do
     let cur = lsCurrent loopState
-    mapM_ (fePlaySfx fe) (pendingSfx cur)
+    -- Synth 5.2c (S3/S4): a synth id is rendered/cached into a WAV file and
+    -- handed to the unchanged FilePath seam; failures go to the diagnostics
+    -- channel, never into the game.
+    forM_ (pendingSfx cur) $ \ref -> do
+        r <- resolveSound (world cur) ref
+        case r of
+            Right path -> fePlaySfx fe path
+            Left err   -> feDiagnostics fe [err]
     let curA = cur { pendingSfx = [] }
     case pendingMusic curA of
         Just (MusicStart path) -> feStartMusic fe path

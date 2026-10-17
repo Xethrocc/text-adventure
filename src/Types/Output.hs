@@ -305,6 +305,7 @@ data OutputEvent
     | EvArt ArtPayload                -- ^ art block (raw + structured hotspots)
     | EvAnim Int [String]             -- ^ animation: frame delay in µs + frames
     | EvSfx FilePath                  -- ^ play one sound effect
+    | EvSfxSynth String               -- ^ play one synthesised sound effect (id of a sounds: entry, 5.2c)
     | EvMusicStart FilePath           -- ^ start/switch looping music
     | EvMusicStop                     -- ^ stop the current music
     | EvRoomChanged String            -- ^ currentRoom changed (new room id)
@@ -322,6 +323,7 @@ instance ToJSON OutputEvent where
         EvArt a           -> object [ "type" .= ("art" :: String), "payload" .= a ]
         EvAnim d frames   -> object [ "type" .= ("anim" :: String), "delay_micros" .= d, "frames" .= frames ]
         EvSfx path        -> object [ "type" .= ("sfx" :: String), "path" .= path ]
+        EvSfxSynth sid    -> object [ "type" .= ("sfx" :: String), "synth" .= sid ]
         EvMusicStart path -> object [ "type" .= ("music_start" :: String), "path" .= path ]
         EvMusicStop       -> object [ "type" .= ("music_stop" :: String) ]
         EvRoomChanged rId -> object [ "type" .= ("room_changed" :: String), "room_id" .= rId ]
@@ -339,7 +341,7 @@ instance FromJSON OutputEvent where
             "text"         -> EvText <$> (o .: "styled" <|> (styledText <$> o .: "text"))
             "art"          -> EvArt <$> o .: "payload"
             "anim"         -> EvAnim <$> (o .: "delay_micros" <|> o .: "delayMicros") <*> o .: "frames"
-            "sfx"          -> EvSfx <$> o .: "path"
+            "sfx"          -> (EvSfx <$> o .: "path") <|> (EvSfxSynth <$> o .: "synth")
             "music_start"  -> EvMusicStart <$> o .: "path"
             "music_stop"   -> pure EvMusicStop
             "room_changed" -> EvRoomChanged <$> (o .: "room_id" <|> o .: "roomId")
@@ -375,6 +377,7 @@ evTextOf ev = case ev of
     EvArt a           -> apRaw a
     EvAnim _ _        -> ""
     EvSfx _           -> ""
+    EvSfxSynth _      -> ""
     EvMusicStart _    -> ""
     EvMusicStop       -> ""
     EvRoomChanged _   -> ""

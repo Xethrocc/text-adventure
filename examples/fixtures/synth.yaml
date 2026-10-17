@@ -1,0 +1,61 @@
+# Synth 5.2c: sounds: (Patch-Daten im Adventure) + sfx: {synth: <id>}.
+# - alarm: einzelnes Stimmen-Objekt (square, fallender Sweep)
+# - tuer:  {layers: [...]} (Rauschen + tiefer Sinus)
+# - sfx: {synth: id} queued ein SoundSynth; die Engine rendert es am IO-Rand in
+#   eine gecachte WAV-Datei (Text bleibt unberuehrt).
+# - tests: prueft, dass die Effekte das Spiel nicht stoeren (Text-Ausgabe).
+name: Synth Fixture
+start_room: halle
+
+rooms:
+  - id: halle
+    name: Halle
+    desc: Eine hallende Halle. Ein Alarmknopf glaenzt an der Wand.
+    on_enter:
+      - sfx: {synth: tuer}
+    exits:
+      east: kammer
+
+  - id: kammer
+    name: Kammer
+    desc: Eine kleine Kammer hinter der schweren Tuer.
+    exits:
+      west: halle
+
+items:
+  - id: knopf
+    name: Alarmknopf
+    desc: Ein roter Knopf mit der Aufschrift ALARM.
+    keys: [knopf, alarmknopf]
+    location: halle
+    verb_map:
+      use,intact:
+        - sfx: {synth: alarm}
+        - msg: "Der Alarm schrillt durch die Halle."
+
+sounds:
+  alarm:
+    wave: square
+    freq: 880
+    sweep: -400
+    duty: 0.5
+    dur: 0.35
+    attack: 0.005
+    decay: 0.05
+    sustain: 0.7
+    release: 0.2
+    volume: 0.8
+  tuer:
+    layers:
+      - { wave: noise, dur: 0.15, release: 0.1, volume: 0.5 }
+      - { wave: sine, freq: 110, sweep: -200, dur: 0.3 }
+
+tests:
+  - name: "synth-effekte laufen mit, ohne den Text zu veraendern"
+    input:
+      - use knopf
+      - east
+      - west
+    expect:
+      - "Der Alarm schrillt durch die Halle."
+      - "Eine kleine Kammer hinter der schweren Tuer."

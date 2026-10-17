@@ -12,6 +12,7 @@ module Synth.Render
   ( renderSound
   , renderVoice
   , soundIdSeed
+  , rendererVersion
   ) where
 
 import Data.Bits (shiftL, shiftR, xor)
@@ -20,6 +21,11 @@ import Data.Int (Int16)
 import Data.Word (Word32)
 
 import Synth.Patch
+
+-- | Renderer version: part of the Synth.Cache key (O1) — bump it whenever the
+--   rendered samples change, so stale cache files are never played again.
+rendererVersion :: Int
+rendererVersion = 1
 
 -- | Render a sound to PCM samples. The sound id seeds the noise generator.
 --   Layers (at most 'maxLayers') are mixed; the result is as long as the

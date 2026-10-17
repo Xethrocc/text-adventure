@@ -472,7 +472,12 @@ applyOutcomeWith depth salt outcome targetId state
             _ -> (state, [], salt)
 
     PlaySfx path ->
-        (state { pendingSfx = pendingSfx state ++ [path] }, [], salt)
+        (state { pendingSfx = pendingSfx state ++ [SoundFile path] }, [], salt)
+
+    -- Synth 5.2c (S6): the id is validated by the worldbuilder; the core only
+    -- queues it, rendering happens at the IO edge (Synth.Cache).
+    PlaySfxSynth sid ->
+        (state { pendingSfx = pendingSfx state ++ [SoundSynth sid] }, [], salt)
 
     PlayMusic path ->
         (state { pendingMusic = Just (MusicStart path) }, [], salt)

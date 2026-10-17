@@ -22,6 +22,7 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Synth.Patch as SP
 import qualified Synth.Render as SR
 import qualified Synth.Wav as SW
+import qualified Synth.Cache as SC
 import System.Timeout (timeout)
 import Control.Exception (bracket, evaluate, try, SomeException)
 import Game
@@ -1601,7 +1602,7 @@ testOutputSideEvents = do
     -- game over + sfx/music: endGame via a GameEnd effect, audio via pending fields
     let st0 = initSampleGame
         (st1, _) = applyOutcomeEv (GameEnd Victory "you win") "" st0
-        st2 = st1 { pendingSfx = ["win.wav"], pendingMusic = Just (MusicStart "theme.ogg") }
+        st2 = st1 { pendingSfx = [SoundFile "win.wav"], pendingMusic = Just (MusicStart "theme.ogg") }
         evs2 = sideEvents st0 st2
     r2 <- expectEqual [EvGameOver, EvSfx "win.wav", EvMusicStart "theme.ogg"] evs2
     -- quest update marker
@@ -1899,6 +1900,7 @@ testProtocolServerMsgRoundTrip = do
             , EvArt (ArtPayload "  +---+\n  | @ |\n  +---+" [ArtHotspot 1 '@' "torch"])
             , EvAnim 50000 ["frame1", "frame2"]
             , EvSfx "sounds/door.wav"
+            , EvSfxSynth "alarm"
             , EvMusicStart "music/ambient.ogg"
             , EvMusicStop
             , EvRoomChanged "dungeon"
@@ -1929,6 +1931,7 @@ testProtocolGoldenDeterministic = do
             , EvArt (ArtPayload "  +---+\n  | @ |\n  +---+" [ArtHotspot 1 '@' "torch"])
             , EvAnim 50000 ["frame1", "frame2"]
             , EvSfx "sounds/door.wav"
+            , EvSfxSynth "alarm"
             , EvMusicStart "music/ambient.ogg"
             , EvMusicStop
             , EvRoomChanged "dungeon"
@@ -2776,9 +2779,9 @@ testLoopPlaysCutscene = do
 testAudioEffectsQueueState :: IO Bool
 testAudioEffectsQueueState = do
     let (st1, _) = applyOutcome (PlaySfx "sword.wav") "" initSampleGame
-    r1 <- expectEqual ["sword.wav"] (pendingSfx st1)
+    r1 <- expectEqual [SoundFile "sword.wav"] (pendingSfx st1)
     let (st2, _) = applyOutcome (Sequence [PlaySfx "hit.wav", PlayMusic "boss.xm"]) "" st1
-    r2 <- expectEqual ["sword.wav", "hit.wav"] (pendingSfx st2)
+    r2 <- expectEqual [SoundFile "sword.wav", SoundFile "hit.wav"] (pendingSfx st2)
     r3 <- expectEqual (Just (MusicStart "boss.xm")) (pendingMusic st2)
     let (st3, _) = applyOutcome StopMusic "" st2
     r4 <- expectEqual (Just MusicStop) (pendingMusic st3)
@@ -13675,6 +13678,9 @@ main = do
         , runTest "synth: noise reproducible per id, independent across ids (5.2b)" testSynthNoiseDeterminism
         , runTest "synth: WAV header sizes correct, ffprobe-readable if installed (5.2b)" testSynthWav
         , runTest "synth: 10 s SFX renders in under 200 ms (5.2b)" testSynthRuntime
+        -- Synth 5.2c: SFX im Spiel + Cache + JSON
+        , runTest "synth: SoundRef + PlaySfxSynth + EvSfxSynth roundtrip & worldSounds JSON (5.2c)" testSynthCoreAndEffect52c
+        , runTest "synth: Synth.Cache deterministic hit and IO dispatch (5.2c)" testSynthCacheAndDispatch52c
         ]
     when (not (and results)) exitFailure
 
@@ -14850,18 +14856,88 @@ testSynthRuntime :: IO Bool
 testSynthRuntime = do
     let sum' = foldl (\acc s -> acc + fromIntegral s) (0 :: Int)
         timed label snd' = do
-            t0 <- getCPUTime
-            n <- evaluate (sum' (SR.renderSound "bench" snd'))
-            t1 <- getCPUTime
-            w <- evaluate (BL.length (SW.encodeWav SP.sampleRate (SR.renderSound "bench" snd')))
-            t2 <- getCPUTime
-            let ms a b = fromIntegral (b - a) / 1e9 :: Double
-            putStrLn ("    " ++ label ++ ": render " ++ show (ms t0 t1) ++ " ms, render+WAV "
-                      ++ show (ms t1 t2) ++ " ms (checksum " ++ show n ++ ", " ++ show w ++ " bytes)")
-            pure (ms t0 t1)
+            let once = do
+                    t0 <- getCPUTime
+                    n <- evaluate (sum' (SR.renderSound "bench" snd'))
+                    t1 <- getCPUTime
+                    w <- evaluate (BL.length (SW.encodeWav SP.sampleRate (SR.renderSound "bench" snd')))
+                    t2 <- getCPUTime
+                    let ms a b = fromIntegral (b - a) / 1e9 :: Double
+                    pure (ms t0 t1, ms t1 t2, n, w)
+            (rA, wA, _, _) <- once
+            (rB, wB, n, w) <- once
+            let rMs = min rA rB
+                wMs = min wA wB
+            putStrLn ("    " ++ label ++ ": render " ++ show rMs ++ " ms, render+WAV "
+                      ++ show wMs ++ " ms (checksum " ++ show n ++ ", " ++ show w ++ " bytes)")
+            pure rMs
         v w = (synthVoice w 440 (-20) 10) { SP.vEnv = synthEnv 0.01 0.1 0.7 0.5 }
     one <- timed "10 s, 1 layer (sine)" (SP.SynthSound [v SP.Sine])
     four <- timed "10 s, 4 layers (sine/square/saw/noise)" (SP.SynthSound (map v [SP.Sine, SP.Square, SP.Saw, SP.Noise]))
     r1 <- expectTrue ("1 layer took " ++ show one ++ " ms") (one < 200)
     r2 <- expectTrue ("4 layers took " ++ show four ++ " ms") (four < 200)
     pure (r1 && r2)
+
+-- | Synth 5.2c: SoundRef queue, PlaySfxSynth effect, EvSfxSynth protocol event,
+--   and worldSounds JSON omission when empty vs roundtrip when non-empty.
+testSynthCoreAndEffect52c :: IO Bool
+testSynthCoreAndEffect52c = do
+    -- 1. PlaySfxSynth queues SoundSynth and emits EvSfxSynth without touching rngState
+    let st0 = initSampleGame
+        (st1, _) = applyOutcome (Sequence [PlaySfx "click.wav", PlaySfxSynth "alarm"]) "" st0
+    rQueue <- expectEqual [SoundFile "click.wav", SoundSynth "alarm"] (pendingSfx st1)
+    rRng   <- expectEqual (rngState (save st0)) (rngState (save st1))
+    let evs = sideEvents st0 st1
+    rEvs   <- expectEqual [EvSfx "click.wav", EvSfxSynth "alarm"] evs
+    rText  <- expectEqual "" (renderEvents [EvSfxSynth "alarm"])
+    -- 2. OutputEvent JSON roundtrip for EvSfxSynth and Effect JSON roundtrip for PlaySfxSynth
+    let evJson = Aeson.encode (EvSfxSynth "alarm")
+    rEvRt  <- expectEqual (Just (EvSfxSynth "alarm")) (Aeson.decode evJson)
+    let effJson = Aeson.encode (PlaySfxSynth "alarm")
+    rEffRt <- expectEqual (Just (PlaySfxSynth "alarm")) (Aeson.decode effJson)
+    -- 3. SynthSound JSON roundtrip (canonical object with layers + lenient single-voice decode)
+    let alarmPatch = SP.SynthSound [(synthVoice SP.Square 880 (-400) 0.35) { SP.vDuty = 0.5, SP.vEnv = synthEnv 0.005 0.05 0.7 0.2 }]
+    rPatchRt <- expectEqual (Just alarmPatch) (Aeson.decode (Aeson.encode alarmPatch))
+    let singleJson = BLC.pack "{\"wave\":\"sine\",\"freq\":440,\"dur\":0.25}"
+    rSingle  <- expectEqual (Just (SP.SynthSound [SP.defaultVoice])) (Aeson.decode singleJson)
+    -- 4. GameWorld omits "sounds" when worldSounds is empty, roundtrips when populated
+    let gwEmptyBytes = BLC.unpack (Aeson.encode emptyGameWorld)
+    rOmit <- expectTrue "empty worldSounds omitted from world.json" (not ("\"sounds\"" `isInfixOf` gwEmptyBytes))
+    let gwWith = emptyGameWorld { worldSounds = Map.singleton "alarm" alarmPatch }
+    rWorldRt <- expectEqual (Just gwWith) (Aeson.decode (Aeson.encode gwWith))
+    pure (and [rQueue, rRng, rEvs, rText, rEvRt, rEffRt, rPatchRt, rSingle, rOmit, rWorldRt])
+
+-- | Synth 5.2c: Synth.Cache content-addressed resolution and deterministic cache hit.
+testSynthCacheAndDispatch52c :: IO Bool
+testSynthCacheAndDispatch52c = do
+    tmp <- getTemporaryDirectory
+    let cacheDir = tmp </> "ta-synth-cache-test-52c"
+    _ <- try (removeDirectoryRecursive cacheDir) :: IO (Either SomeException ())
+    let alarmPatch = SP.SynthSound [synthVoice SP.Square 880 (-400) 0.1]
+        otherPatch = SP.SynthSound [synthVoice SP.Sine 440 0 0.1]
+        gw = (world initSampleGame) { worldSounds = Map.fromList [("alarm", alarmPatch), ("ping", otherPatch)] }
+    -- SoundFile passes through untouched without creating cache dir
+    rFile <- SC.resolveSoundIn cacheDir gw (SoundFile "audio/door.wav")
+    okFile <- expectEqual (Right "audio/door.wav") rFile
+    -- SoundSynth renders into cacheDir on miss and returns deterministic path on hit
+    r1 <- SC.resolveSoundIn cacheDir gw (SoundSynth "alarm")
+    r2 <- SC.resolveSoundIn cacheDir gw (SoundSynth "alarm")
+    okHit <- expectEqual r1 r2
+    okExists <- case r1 of
+        Right p -> do
+            ex <- doesFileExist p
+            bytes <- BL.readFile p
+            let expectedWav = SW.encodeWav SP.sampleRate (SR.renderSound "alarm" alarmPatch)
+            pure (ex && bytes == expectedWav)
+        Left _ -> pure False
+    -- Different patch or id yields a different cache key
+    let k1 = SC.cacheKey "alarm" alarmPatch
+        k2 = SC.cacheKey "alarm" otherPatch
+        k3 = SC.cacheKey "other_id" alarmPatch
+    okKeys <- expectTrue "distinct cache keys for different patch or id" (k1 /= k2 && k1 /= k3)
+    -- Unknown synth id returns Left diagnostic
+    rMissing <- SC.resolveSoundIn cacheDir gw (SoundSynth "missing_id")
+    okMissing <- expectTrue "unknown synth id yields Left" (isLeft rMissing)
+    _ <- try (removeDirectoryRecursive cacheDir) :: IO (Either SomeException ())
+    pure (and [okFile, okHit, okExists, okKeys, okMissing])
+

@@ -87,6 +87,7 @@ minWorld = E.GameWorld
     , startRoom = Nothing
     , worldLanguage = Nothing
     , worldMessages = Map.empty
+    , worldSounds = Map.empty
     , factions = Map.empty
     }
 
@@ -237,6 +238,7 @@ minAdventure room = Adventure
     , advAssets = []
     , advLanguage = Nothing
     , advMessages = Map.empty
+    , advSounds = Map.empty
     }
 
 -- ===== Rogue Phase 1: authored game policy =====
@@ -5031,7 +5033,123 @@ tests =
     , ("K18: cards tags compile, omit when empty, and evaluate synergy/count", testK18CardTagsCompileAndSynergy)
     , ("K18: unknown or empty card tag in conditions emits UnknownCardTag warning", testK18CardTagValidation)
     , ("K18: byte contract watcher for existing adventures incl. deckbuilder_spire", testK18ByteContractWatcher)
+    -- Synth 5.2c: sounds: + sfx: {synth: <id>} + validation codes
+    , ("synth 5.2c: sounds: single-voice & layers compile, sfx:{synth} -> PlaySfxSynth, export excludes synth", testSynthCompileAndExport52c)
+    , ("synth 5.2c: validation codes (UnknownSynthSound, SynthTooLong, SynthParamRange, SynthTooManyLayers, SynthBadPatch, UnusedSynthSound)", testSynthValidationCodes52c)
     ]
+
+-- | Synth 5.2c: `sounds:` compiles single-voice and `{layers: [...]}` patches
+--   into `worldSounds`, `sfx: {synth: <id>}` compiles to `PlaySfxSynth`,
+--   `collectAssetRefs` ignores synth references (only file `sfx:` are bundled),
+--   and `examples/fixtures/synth.yaml` compiles cleanly with 0 warnings/errors.
+testSynthCompileAndExport52c :: IO Bool
+testSynthCompileAndExport52c = do
+    let yaml = unlines
+            [ "name: Synth Test"
+            , "start_room: r"
+            , "rooms:"
+            , "  - id: r"
+            , "    name: R"
+            , "    desc: d"
+            , "    on_enter:"
+            , "      - sfx: {synth: alarm}"
+            , "      - sfx: {synth: tuer}"
+            , "      - sfx: audio/file.wav"
+            , "sounds:"
+            , "  alarm:"
+            , "    wave: square"
+            , "    freq: 880"
+            , "    sweep: -400"
+            , "    duty: 0.5"
+            , "    dur: 0.35"
+            , "  tuer:"
+            , "    layers:"
+            , "      - { wave: noise, dur: 0.15, release: 0.1, volume: 0.5 }"
+            , "      - { wave: sine, freq: 110, sweep: -200, dur: 0.3 }"
+            ]
+    rCompile <- case decode1 (BLC.pack yaml) of
+        Left (_, err) -> expectTrue ("decode failed: " ++ err) False
+        Right adv -> do
+            rAssets <- expectEqual ["audio/file.wav"] (collectAssetRefs adv)
+            case compileAdventure adv of
+                Left errs -> expectTrue ("compile failed: " ++ issuesText errs) False
+                Right cr -> do
+                    rWarns <- expectEqual [] (crWarnings cr)
+                    rSize  <- expectEqual 2 (Map.size (E.worldSounds (crWorld cr)))
+                    let rEffects = AOPlaySfxSynth "alarm" `elem` allAOutcomes adv
+                                && E.Sequence [E.PlaySfxSynth "alarm", E.PlaySfxSynth "tuer", E.PlaySfx "audio/file.wav"]
+                                   `elem` allWorldEffects (crWorld cr)
+                    rEff <- expectTrue "PlaySfxSynth and PlaySfx present in world effects" rEffects
+                    pure (rAssets && rWarns && rSize && rEff)
+    -- Also verify examples/fixtures/synth.yaml compiles and passes its content test
+    mbFix <- findExample "synth.yaml"
+    rFix <- case mbFix of
+        Nothing -> expectTrue "synth.yaml found" False
+        Just p -> do
+            res <- parseAdventureFile p
+            case res of
+                Left e -> expectTrue ("parse synth.yaml: " ++ e) False
+                Right adv -> case compileAdventure adv of
+                    Left errs -> expectTrue ("compile synth.yaml: " ++ issuesText errs) False
+                    Right cr -> do
+                        rW <- expectEqual [] (crWarnings cr)
+                        let tResults = [ executeContentTest ct (crWorld cr) (crSave cr) | ct <- advTests adv ]
+                        rT <- expectTrue "synth.yaml content tests pass" (not (null tResults) && all (== Nothing) tResults)
+                        pure (rW && rT)
+    pure (rCompile && rFix)
+
+-- | Synth 5.2c: verify every validation code (`UnknownSynthSound`, `SynthTooLong`,
+--   `SynthParamRange`, `SynthTooManyLayers`, `SynthBadPatch`, `UnusedSynthSound`,
+--   and `UnknownYamlKey` on unknown voice keys).
+testSynthValidationCodes52c :: IO Bool
+testSynthValidationCodes52c = do
+    let baseRoom effs = unlines $
+            [ "name: T"
+            , "start_room: r"
+            , "rooms:"
+            , "  - id: r"
+            , "    name: R"
+            , "    desc: d"
+            ] ++ (if null effs then [] else "    on_enter:" : map ("      - " ++) effs)
+        codesOf yaml = case decode1 (BLC.pack yaml) of
+            Left _ -> ([], [])
+            Right adv -> case compileAdventure adv of
+                Left errs -> (map ciCode errs, [])
+                Right cr  -> ([], map ciCode (crWarnings cr))
+    -- 1. UnknownSynthSound (sfx: {synth: ghost} without sounds.ghost)
+    let (e1, _) = codesOf (baseRoom ["sfx: {synth: ghost}"])
+    r1 <- expectTrue ("UnknownSynthSound in " ++ show e1) ("UnknownSynthSound" `elem` e1)
+    -- 2. SynthTooLong (dur > 10 s)
+    let (e2, _) = codesOf (baseRoom ["sfx: {synth: s}"] ++ "sounds:\n  s: { wave: sine, freq: 440, dur: 12.5 }\n")
+    r2 <- expectTrue ("SynthTooLong in " ++ show e2) ("SynthTooLong" `elem` e2)
+    -- 3. SynthParamRange (freq out of 20..8000, duty out of 0.05..0.95, volume out of 0..1)
+    let (e3a, _) = codesOf (baseRoom ["sfx: {synth: s}"] ++ "sounds:\n  s: { wave: sine, freq: 9000, dur: 0.2 }\n")
+        (e3b, _) = codesOf (baseRoom ["sfx: {synth: s}"] ++ "sounds:\n  s: { wave: square, duty: 0.99, dur: 0.2 }\n")
+        (e3c, _) = codesOf (baseRoom ["sfx: {synth: s}"] ++ "sounds:\n  s: { wave: sine, volume: 1.5, dur: 0.2 }\n")
+    r3 <- expectTrue "SynthParamRange for freq/duty/volume"
+            ("SynthParamRange" `elem` e3a && "SynthParamRange" `elem` e3b && "SynthParamRange" `elem` e3c)
+    -- 4. SynthTooManyLayers (> 4 layers)
+    let fiveLayers = unlines
+            [ "sounds:"
+            , "  s:"
+            , "    layers:"
+            , "      - { wave: sine, dur: 0.1 }"
+            , "      - { wave: square, dur: 0.1 }"
+            , "      - { wave: saw, dur: 0.1 }"
+            , "      - { wave: triangle, dur: 0.1 }"
+            , "      - { wave: noise, dur: 0.1 }"
+            ]
+        (e4, _) = codesOf (baseRoom ["sfx: {synth: s}"] ++ fiveLayers)
+    r4 <- expectTrue ("SynthTooManyLayers in " ++ show e4) ("SynthTooManyLayers" `elem` e4)
+    -- 5. SynthBadPatch (unknown wave name or non-object)
+    let (e5, _) = codesOf (baseRoom ["sfx: {synth: s}"] ++ "sounds:\n  s: { wave:theremin, dur: 0.2 }\n")
+    r5 <- expectTrue ("SynthBadPatch in " ++ show e5) ("SynthBadPatch" `elem` e5)
+    -- 6. UnusedSynthSound warning + UnknownYamlKey warning on voice typo
+    let (_, w6) = codesOf (baseRoom [] ++ "sounds:\n  unused_s: { wave: sine, dur: 0.2, typo_key: 1 }\n")
+    r6 <- expectTrue ("UnusedSynthSound & UnknownYamlKey in " ++ show w6)
+            ("UnusedSynthSound" `elem` w6 && "UnknownYamlKey" `elem` w6)
+    pure (and [r1, r2, r3, r4, r5, r6])
+
 
 -- ---------------------------------------------------------------------------
 -- Phase 4.3: language packs (D4)

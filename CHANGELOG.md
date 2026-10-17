@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Synth Stufe 5.2c: SFX im Spiel + Autorenform (`docs/plan-synth.md`)
+
+- **Kern-Typen & Effekte (`src/Types/Core.hs`, `src/Effects.hs`):**
+  - `SoundRef = SoundFile FilePath | SoundSynth String` als runtime-only Queue-Element; `pendingSfx :: [SoundRef]` (`save.json` bleibt unberührt).
+  - Neuer Effekt-Konstruktor `PlaySfxSynth String` (S6; `PlaySfx FilePath` bleibt unangetastet).
+  - `GameWorld.worldSounds :: Map String SynthSound`, in `ToJSON GameWorld` nur bei nicht-leerer Map als `"sounds"` serialisiert (Byte-Vertrag: alle bestehenden Abenteuer kompilieren byte-identisch).
+  - JSON-Instanzen in `src/Synth/Patch.hs` für `Wave`, `Voice` und `SynthSound` (kanonisches Schreiben als `{"layers": [...]}`, tolerantes Lesen von Einzelstimme oder `{layers: [...]}`).
+- **Render-Cache & Dispatch (`src/Synth/Cache.hs`, `src/GameLoop.hs`):**
+  - Neues Modul `Synth.Cache` (O1: `$XDG_CACHE_HOME/text-adventure/synth/`, Windows `%LOCALAPPDATA%\text-adventure\synth\`, Fallback System-Temp): inhaltsadressierter WAV-Cache über `rendererVersion` + Sound-ID + Patch, atomares Schreiben per Temp-Datei + Rename.
+  - `dispatchAudioAndCutscene` löst `SoundSynth` über `resolveSound` in einen gecachten WAV-Pfad auf und übergibt ihn an die unveränderte `fePlaySfx :: FilePath -> IO ()`-Seam (S4); Fehler gehen an `feDiagnostics`.
+- **Protokoll (`src/Types/Output.hs`, `docs/protocol-v1.md`, `test/golden/protocol/server_events.json`):**
+  - `EvSfxSynth String` serialisiert als `{"type":"sfx","synth":"<id>"}` (`EvSfx FilePath` bleibt `{"type":"sfx","path":"..."}`); Golden-Protokoll um `{"synth":"alarm","type":"sfx"}` erweitert.
+- **Worldbuilder & CLI (`worldbuilder/src/Worldbuilder/`):**
+  - Top-Level-Sektion `sounds:` (Einzelstimme oder `{layers: [...]}`) und Objektform `sfx: {synth: <id>}` (S5; Stringform `sfx: <pfad>` bleibt Datei).
+  - Validierung (S5/S7): `UnknownSynthSound`, `SynthTooLong` (`dur > 10 s`), `SynthParamRange` (`freq` 20–8000, `duty` 0.05–0.95, `volume`/`sustain` 0–1, ADSR 0–10 s), `SynthTooManyLayers` (> 4), `SynthBadPatch` sowie Warnung `UnusedSynthSound` (und `UnknownYamlKey` bei unbekannten Voice-Keys).
+  - `Export.collectAssetRefs` ignoriert Synth-Referenzen (nur Datei-Pfade landen im Bundle).
+  - Neue Subcommands `worldbuilder synth list <datei>`, `worldbuilder synth render <datei> <id> [-o out.wav]` und `worldbuilder synth preview <datei> <id>`.
+- **Fixture, E2E & Doku:**
+  - Neues Fixture `examples/fixtures/synth.yaml` mit `sounds:` (`alarm`, `tuer`), `sfx: {synth: ...}` und `tests:`-Sektion sowie E2E `ci/e2e/synth.in`/`.expect` (in `scripts/ci.sh` Stufe 4 und 4b registriert).
+  - Abschnitt „Synth-Sounds" und Effekt-Tabelleneintrag in `docs/adventure-schema.md`.
+
 ### Synth Stufe 5.2b: purer Renderer im Kern (`docs/plan-synth.md`)
 
 - **Neue reine Module** `src/Synth/Patch.hs` (Typen `Wave`, `Adsr`, `Voice`, `SynthSound`, Defaults, Limits), `src/Synth/Render.hs` (`renderSound :: String -> SynthSound -> [Int16]`, 22050 Hz mono 16 bit; die Sound-ID ist zusaetzlicher Parameter, weil sie den Noise-Seed liefert) und `src/Synth/Wav.hs` (`encodeWav`, 44-Byte-RIFF-Header). Keine IO-Imports (WASM-Regel A1).

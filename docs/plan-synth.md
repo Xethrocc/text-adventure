@@ -1,6 +1,6 @@
 # Plan: Software-Synth für Autoren (Phase 5.2)
 
-Stand: 2026-10-13, Code-Stand `cfbf380`. **Status: Design abgenommen (5.2a, 5.2b erledigt), nächste Stufe 5.2c.** Ersetzt die Zeile 5.2 („Synth-Tab") in
+Stand: 2026-10-17, Code-Stand `cfbf380`. **Status: Design abgenommen (5.2a, 5.2b, 5.2c erledigt), nächste Stufe 5.2d.** Ersetzt die Zeile 5.2 („Synth-Tab") in
 `implementierungsplan_engine_review_2026-09.md` und beantwortet dort den offenen Punkt
 „5.2: Datenmodell und Render-Ort des Synths".
 
@@ -258,7 +258,7 @@ Jede Stufe endet mit grünem `scripts/ci.sh`, CHANGELOG-Eintrag und aktuellen RE
   - Laufzeit: 10-s-SFX rendert in < 200 ms (Grenze für den Dispatch).
 - WASM-Spike baut `Synth.Render` mit (Nachweis, dass der Kern WASM-tauglich bleibt).
 
-### 5.2c — SFX im Spiel + Autorenform *(M)*
+### 5.2c — SFX im Spiel + Autorenform *(M)* — **Erledigt (2026-10-17)**
 
 - `SoundRef`, neue Effekte, `worldSounds`, `Synth.Cache`, Dispatch, Protokoll-Events.
 - Worldbuilder: `sounds:`, Objektform `sfx: {synth: …}`, Validierungscodes, `synth list/render/preview`.

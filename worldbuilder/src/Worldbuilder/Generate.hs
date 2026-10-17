@@ -1404,6 +1404,7 @@ emitAdventure t plan seed =
             , advAssets            = []
             , advLanguage          = Nothing
             , advMessages          = Map.empty
+            , advSounds            = Map.empty
             }
     in (adv, dpWarnings plan ++ popWarns)
 

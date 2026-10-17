@@ -614,6 +614,7 @@ items:
 | `{ roll_dice: {pool: N, die: M, stream?: name, keep?: K} }` | RollDice (K1) — Würfelpool werfen und Aggregate in die VarMap schreiben (`dice.*`, s.u.) |
 | `{ raise: name }` | RaiseEvent — feuert alle Regeln `on: custom <name>` (P1-20) |
 | `{ sfx: "pfad/datei.wav" }` | PlaySfx — Sound-Effekt einmalig asynchron abspielen (Audio Phase 1) |
+| `{ sfx: { synth: id } }` | PlaySfxSynth — Synthetischen Sound-Effekt aus `sounds:` einmalig abspielen (Synth 5.2c, s. Abschnitt „Synth-Sounds") |
 | `{ music: "pfad/datei.xm" }` | PlayMusic — Hintergrundmusik-Loop starten/wechseln (Audio Phase 2; `.xm`, `.mid`, `.wav/.ogg/.mp3`) |
 | `{ stop_music: true }` | StopMusic — Hintergrundmusik stoppen (Audio Phase 2) |
 | `{ block: "reason" }`, `{ block: true }`, or `{ block: { msg: "…", turn: true } }` | Block — Veto a command before execution (Phase 2.2). Stops command action. Default: `turn: false` (no turn consumed). Opt-in `turn: true` advances turn and ticks conditions. |
@@ -4678,5 +4679,46 @@ Der Worldbuilder unterscheidet strikt zwischen **harten Fehlern** (`ciSeverity =
 | `UnknownRecipeResult` | Ein Rezept deklariert ein `result:`, dessen Item-ID im Abenteuer nicht existiert. | Item in `items:` deklarieren oder Tippfehler im `result:`-Feld beheben. |
 | `UnreachableTrigger` (Fall `learn_recipe`) | Eine Regel hört auf `on: learn_recipe <id>`, aber kein `learn_recipe:`-Effekt lehrt dieses Rezept je. | `learn_recipe: <id>` an einer erreichbaren Stelle ergänzen, die `id:` korrigieren oder die Regel entfernen. |
 | `UnreachableTrigger` (Fall `learn`) | Eine Regel hört auf `on: learn <fact>`, aber kein `learn:`-Effekt und keine `combine:`-Ableitung lernt diesen Fakt je. | `learn: <fact>` an einer erreichbaren Stelle ergänzen, die ID korrigieren oder die Regel entfernen. |
+| `UnusedSynthSound` | Ein in `sounds:` deklarierter Synth-Patch wird in keinem Effekt via `sfx: {synth: <id>}` referenziert. | Effekt `sfx: {synth: <id>}` ergänzen oder den ungenutzten Eintrag aus `sounds:` entfernen. |
 
+## Synth-Sounds (`sounds:` und `sfx: {synth: <id>}`, Phase 5.2c)
 
+Autoren können kurze Soundeffekte direkt als **Daten im Adventure** (`sounds:`) beschreiben, statt externe WAV/OGG-Dateien zu verwalten. Die Engine rendert die Patches deterministisch (22050 Hz, mono, 16 bit PCM, Spitzenpegel auf −3 dBFS begrenzt) am IO-Rand in einen inhaltsadressierten WAV-Cache (`$XDG_CACHE_HOME/text-adventure/synth/`, unter Windows `%LOCALAPPDATA%\text-adventure\synth\`) und übergibt den Pfad an die bestehende Audio-Pipeline.
+
+```yaml
+sounds:
+  alarm:
+    wave: square            # sine | square | saw | triangle | noise
+    freq: 880               # Hz, Startfrequenz (20–8000, Default 440)
+    sweep: -400             # Hz/s, linearer Pitch-Sweep (optional, Default 0)
+    duty: 0.5               # nur square: Pulsbreite 0.05–0.95 (optional, Default 0.5)
+    dur: 0.35               # Sekunden, 0.01–10 (Default 0.25)
+    attack: 0.005           # ADSR in Sekunden (optional, Default 0.005 / 0 / 1.0 / 0.05)
+    decay: 0.05
+    sustain: 0.7            # Pegel 0–1
+    release: 0.2
+    volume: 0.8             # 0–1 (optional, Default 0.8)
+  tuer:
+    layers:                 # bis zu 4 Stimmen gemischt
+      - { wave: noise, dur: 0.15, release: 0.1, volume: 0.5 }
+      - { wave: sine,  freq: 110, sweep: -200, dur: 0.3 }
+```
+
+- **Patch-Formen:** Ein Eintrag unter `sounds:` ist entweder ein einzelnes Stimmen-Objekt (`wave:`, `freq:`, `dur:`, …) oder ein `{ layers: [...] }`-Objekt mit 1 bis maximal 4 Stimmen, die samplegenau gemischt werden.
+- **Noise-Determinismus:** Die Wellenform `noise` nutzt einen festen `xorshift32`-Generator mit Seed aus dem Sound-ID-Hash (und Layer-Index) — niemals aus `rngState`. Das Abspielen eines SFX verschiebt die Zufallsströme des Spiels nicht.
+- **Auslösen im Effekt:**
+  - `sfx: "audio/klick.wav"` (Stringform) spielt weiterhin eine Audiodatei ab (`PlaySfx`).
+  - `sfx: { synth: alarm }` (Objektform) spielt den unter `sounds.alarm` definierten Patch ab (`PlaySfxSynth`).
+  - Im Export-Bundle (`worldbuilder export`) erzeugen Synth-Referenzen keine Asset-Dateieinträge, da die Patch-Daten direkt in `world.json` (`sounds`) eingebettet sind.
+  - Wenn `sounds:` leer bzw. weggelassen ist, wird in `world.json` kein `"sounds"`-Feld geschrieben (Byte-Vertrag).
+- **Validierung (harte Fehler & Warnung):**
+  - `UnknownSynthSound`: `sfx: {synth: x}` verweist auf eine nicht unter `sounds:` deklarierte ID.
+  - `SynthTooLong`: `dur` überschreitet das Limit von 10 Sekunden (S7).
+  - `SynthParamRange`: Parameter außerhalb des gültigen Bereichs (`freq` 20–8000 Hz, `dur` 0.01–10 s, `duty` 0.05–0.95, `volume`/`sustain` 0–1, `attack`/`decay`/`release` 0–10 s) oder leere `layers:`-Liste.
+  - `SynthTooManyLayers`: Mehr als 4 Layer in `layers:`.
+  - `SynthBadPatch`: Unlesbares Stimmen-Objekt oder unbekannte Wellenform.
+  - `UnusedSynthSound` *(Warnung)*: Deklarierter Sound wird nirgends referenziert.
+- **CLI-Werkzeuge am Worldbuilder:**
+  - `worldbuilder synth list <adventure.yaml>` — listet alle deklarierten Synth-Sounds mit Dauer und Layer-Anzahl auf.
+  - `worldbuilder synth render <adventure.yaml> <id> [-o datei.wav]` — rendert einen Patch direkt in eine WAV-Datei.
+  - `worldbuilder synth preview <adventure.yaml> <id>` — rendert den Patch in den Engine-Synth-Cache und gibt den WAV-Pfad aus.

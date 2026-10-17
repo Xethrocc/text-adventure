@@ -70,6 +70,7 @@ import qualified Data.Aeson.Key as K
 import qualified Data.Foldable as Foldable
 import qualified Data.Text as T
 import qualified Verbs
+import qualified Synth.Patch as SP
 
 -- | Result of compilation
 data CompileResult = CompileResult
@@ -97,6 +98,113 @@ ciError path code msg = CompileIssue path SError code msg
 -- | Build a warning diagnostic
 ciWarning :: String -> String -> String -> CompileIssue
 ciWarning path code msg = CompileIssue path SWarning code msg
+
+-- | Synth 5.2c (plan-synth §3.1, §4.3, S7): validate the raw `sounds:` patches
+--   and turn them into 'SP.SynthSound's. A patch is a single voice object or
+--   @{layers: [...]}@ (max 'SP.maxLayers'). Hard errors (stable codes):
+--   'SynthBadPatch' (not an object / unreadable voice), 'SynthParamRange'
+--   (freq 20–8000, duty 0.05–0.95, volume/sustain 0–1, dur 0.01–10, ADSR times
+--   0–10 s), 'SynthTooLong' (dur > 10 s, S7), 'SynthTooManyLayers' (> 4).
+--   Unknown voice keys only warn ('UnknownYamlKey', like every other section).
+--   Returns (errors, warnings, compiled sounds).
+compileSounds :: Adventure -> ([CompileIssue], [CompileIssue], Map.Map String SP.SynthSound)
+compileSounds adv = (concatMap sel1 results, concatMap sel2 results, compiled)
+  where
+    results = [ (sid, compileSound sid v) | (sid, v) <- Map.toList (advSounds adv) ]
+    sel1 (_, (es, _, _)) = es
+    sel2 (_, (_, ws, _)) = ws
+    compiled = Map.fromList [ (sid, s) | (sid, (_, _, Just s)) <- results ]
+
+compileSound :: String -> Aeson.Value -> ([CompileIssue], [CompileIssue], Maybe SP.SynthSound)
+compileSound sid val = case val of
+    Aeson.Object o -> case KM.lookup "layers" o of
+        Just (Aeson.Array arr) ->
+            let vs = Foldable.toList arr
+                countErr =
+                    [ ciError (base ++ ".layers") "SynthTooManyLayers"
+                        ("a sound has at most " ++ show SP.maxLayers ++ " layers, but '" ++ sid
+                            ++ "' declares " ++ show (length vs))
+                    | length vs > SP.maxLayers ]
+                emptyErr =
+                    [ ciError (base ++ ".layers") "SynthParamRange"
+                        "layers must contain at least one voice"
+                    | null vs ]
+                per = zipWith (\i v -> compileVoice (base ++ ".layers." ++ show (i :: Int)) v) [0 ..] vs
+                errs = countErr ++ emptyErr ++ concat [ e | (e, _, _) <- per ]
+                warns = concat [ w | (_, w, _) <- per ]
+                voices = [ v | (_, _, Just v) <- per ]
+            in (errs, warns, if null errs && length voices == length vs
+                                then Just (SP.SynthSound voices) else Nothing)
+        Just _ ->
+            ([ ciError (base ++ ".layers") "SynthBadPatch" "layers must be a list of voice objects" ], [], Nothing)
+        Nothing ->
+            let (e, w, mv) = compileVoice base val
+            in (e, w, if null e then SP.SynthSound . (: []) <$> mv else Nothing)
+    _ -> ([ ciError base "SynthBadPatch"
+              "a sound is a voice object (wave, freq, dur, ...) or {layers: [...]}" ], [], Nothing)
+  where
+    base = "sounds." ++ sid
+
+compileVoice :: String -> Aeson.Value -> ([CompileIssue], [CompileIssue], Maybe SP.Voice)
+compileVoice path val = case Aeson.fromJSON val of
+    Aeson.Error msg ->
+        ([ ciError path "SynthBadPatch" ("unreadable voice: " ++ msg) ], [], Nothing)
+    Aeson.Success v ->
+        let errs = voiceRangeIssues path v
+            unknownKeys = case val of
+                Aeson.Object o ->
+                    [ ciWarning path "UnknownYamlKey"
+                        ("'" ++ k ++ "' is not a known voice key (expected: "
+                            ++ intercalate ", " synthVoiceKeys ++ ")")
+                    | key <- KM.keys o, let k = K.toString key, k `notElem` synthVoiceKeys ]
+                _ -> []
+        in (errs, unknownKeys, if null errs then Just v else Nothing)
+
+synthVoiceKeys :: [String]
+synthVoiceKeys =
+    [ "wave", "freq", "sweep", "duty", "dur", "attack", "decay", "sustain", "release", "volume" ]
+
+voiceRangeIssues :: String -> SP.Voice -> [CompileIssue]
+voiceRangeIssues path v = concat
+    [ [ ciError (path ++ ".dur") "SynthTooLong"
+          ("dur " ++ show dur ++ " s exceeds the limit of " ++ show SP.maxSfxSeconds ++ " s")
+      | dur > SP.maxSfxSeconds ]
+    , range "dur" 0.01 SP.maxSfxSeconds dur (not (dur > SP.maxSfxSeconds))
+    , range "freq" 20 8000 (SP.vFreq v) True
+    , range "duty" 0.05 0.95 (SP.vDuty v) True
+    , range "volume" 0 1 (SP.vVolume v) True
+    , range "sustain" 0 1 (SP.adSustain env) True
+    , range "attack" 0 SP.maxSfxSeconds (SP.adAttack env) True
+    , range "decay" 0 SP.maxSfxSeconds (SP.adDecay env) True
+    , range "release" 0 SP.maxSfxSeconds (SP.adRelease env) True
+    , [ ciError (path ++ ".sweep") "SynthParamRange" "sweep must be a finite number"
+      | isNaN (SP.vSweep v) || isInfinite (SP.vSweep v) ]
+    ]
+  where
+    env = SP.vEnv v
+    dur = SP.vDur v
+    range :: String -> Double -> Double -> Double -> Bool -> [CompileIssue]
+    range name lo hi x applicable =
+        [ ciError (path ++ "." ++ name) "SynthParamRange"
+            (name ++ " " ++ show x ++ " is outside " ++ show lo ++ " to " ++ show hi)
+        | applicable, not (x >= lo && x <= hi) ]
+
+-- | Synth 5.2c (S5): every @sfx: {synth: id}@ must name a declared sound
+--   (`UnknownSynthSound`, hard error); a declared sound nobody references is
+--   only a warning (`UnusedSynthSound`).
+checkSynthRefs :: Adventure -> ([CompileIssue], [CompileIssue])
+checkSynthRefs adv = (errs, warns)
+  where
+    refs = [ sid | AOPlaySfxSynth sid <- allAOutcomes adv ]
+    declared = Map.keysSet (advSounds adv)
+    errs =
+        [ ciError ("sounds." ++ sid) "UnknownSynthSound"
+            ("sfx: {synth: " ++ sid ++ "} references a sound that is not declared under 'sounds:'")
+        | sid <- nub refs, sid `Set.notMember` declared ]
+    warns =
+        [ ciWarning ("sounds." ++ sid) "UnusedSynthSound"
+            ("sound '" ++ sid ++ "' is declared but never played")
+        | sid <- Set.toList declared, sid `notElem` refs ]
 
 -- | 4.3 (D4): validate the `language:` / `messages:` language-pack fields.
 --   An unknown language code is a hard error ('UnknownLanguage' — the engine
@@ -963,6 +1071,7 @@ compileAdventure rawAdv =
                 , E.worldLanguage = advLanguage adv
                 , E.worldMessages = advMessages adv
                 , E.factions = compiledFactions
+                , E.worldSounds = compiledSounds
                 }
         npcIds = Set.fromList (map anId (advNPCs adv))
         gwResolved = resolveWorldEffects npcIds gw
@@ -995,6 +1104,8 @@ compileAdventure rawAdv =
         reservedVarErrs = checkReservedVarWrites adv
         diceErrs = checkRollDice adv
         (langErrs, langWarns) = checkLanguageFields adv
+        (soundErrs, soundWarns, compiledSounds) = compileSounds adv
+        (synthRefErrs, synthRefWarns) = checkSynthRefs adv
         (gramErrs, gramWarns) = checkGrammarFields adv
 
 
@@ -1021,6 +1132,7 @@ compileAdventure rawAdv =
                     ++ gameErrs
                     ++ cardErrs
                     ++ deckErrs
+                    ++ soundErrs ++ synthRefErrs
                     ++ szErrs
                     ++ procCompileErrs
                     ++ procCallErrs
@@ -1114,6 +1226,7 @@ compileAdventure rawAdv =
                           ++ gainXpWarns
                           ++ deadContentWarns
                           ++ langWarns
+                          ++ soundWarns ++ synthRefWarns
                           ++ gramWarns
                           ++ standingChangeWarns
                           ++ recipeResultWarns
@@ -5285,6 +5398,7 @@ compileAActionOutcome ao = case ao of
     AORaiseEvent name -> E.RaiseEvent name
     AOPlayClip clipId -> E.PlayClip clipId
     AOPlaySfx path -> E.PlaySfx path
+    AOPlaySfxSynth sid -> E.PlaySfxSynth sid
     AOPlayMusic path -> E.PlayMusic path
     AOStopMusic -> E.StopMusic
     AODrawCards n -> E.DrawCards n
