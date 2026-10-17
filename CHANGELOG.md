@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### FIX: `use-ability` kämpfte gegen eigene Begleiter, Kampf blieb hängen (Monster-Insel)
+
+- **Ziel (`src/Parser.hs`, `executeTacticalAction`):** Gegner sind nur noch lebende NPCs im Raum, die **nicht** zur Party gehören (`hostileNPCsHere`); ein genanntes Ziel (`use-ability <id> auf <ziel>`, `cmd.target`) hat Vorrang vor „erster NPC im Raum“. Vorher stand ein gefangenes Monster weiter im Raum, und jeder weitere `use-ability` kämpfte gegen den eigenen Begleiter.
+- **Weltfall nur ohne jeden Gegner:** Eine Fähigkeit ist genau dann eine Weltaktion, wenn weder ein feindlicher NPC noch ein feindliches Schiff anwesend ist (vorher zählten Schiffe nur im laufenden Kampf). In `ftl_lite` „bekämpfte“ `use-ability laser` dadurch bisher Pilot Kael (Crew) und startete so den Kampf — jetzt richtet sich die erste Salve gegen das Piratenschiff („Runde 1: Du benutzt Zwillingslaser!“); die E2E-Wege bleiben unverändert grün.
+- **Veralteter Kampf:** Steht kein Gegner mehr im Raum (getötet, verlassen, ins Team gewechselt) und gibt es kein Schiffsziel, wird ein noch gesetztes `combat.engaged`/`combat.round`/`combat.started` zurückgesetzt und die Fähigkeit läuft als Weltaktion. Vorher blieb der Kampf nach einer Fähigkeit im Profil `classic` dauerhaft „offen“ (K16b.1 setzt die Rundenbuchführung, `classic` hat sie nie beendet) — Fähigkeiten in leeren Räumen meldeten „niemand hier“.
+- **`classic`-Kill (`src/Combat.hs`):** beendet eine laufende Fähigkeiten-Runde sofort (nur wenn eine läuft; ein normaler `classic`-Angriff bleibt unverändert).
+- Test: `use-ability ignores party members and closes a stale fight (Monster-Insel)` (Begleiter kein Ziel, veralteter Kampf geschlossen, genanntes Ziel hat Vorrang).
+
 ### Content: schwere Audit-Funde behoben (14 Funde, 12 Spiele)
 
 Aus `~/workspace/befunde-content-audit-2026-10-17.md` §1; jeder alte Exploit ist als Inhaltstest (`tests:`) abgesichert und schlägt gegen den vorherigen Stand fehl.

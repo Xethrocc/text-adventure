@@ -31,7 +31,7 @@ import Vehicles (getVehicleState)
 import Game (effectiveAttack, effectiveDefense, getVariable,
             resolveAsciiArt,
             npcAttackWith, npcDefenseWith,
-            combatRound, combatRoundKey, combatEngagedKey, combatActionKey,
+            combatRound, combatRoundKey, combatEngagedKey, combatActionKey, isCombatEngaged,
             combatInitiativePlayerKey, combatInitiativeKey, combatAbilityKey,
             isCombatStarted, setCombatStarted,
             hasCondition)
@@ -497,7 +497,7 @@ resolveClassicNPC actors nid disp act st =
 resolveClassicNPCRetaliation :: [CombatActor] -> NPCID -> String -> Int -> Int -> [Effect] -> NPCDef -> NPCState -> GameState -> ([Effect], [[OutputEvent]])
 resolveClassicNPCRetaliation actors nid disp playerDmg hp playerEffects npc ns st =
     if hp <= 0
-    then ( playerEffects ++ [SetValue (VRActorProp (ActorNPC nid) PState) (EVString "dead")]
+    then ( playerEffects ++ [SetValue (VRActorProp (ActorNPC nid) PState) (EVString "dead")] ++ endRound
          , [evMsg "combat.classic_kill" [("target", disp)]])
     else
         let allies = companionHits nid (npcLocation ns) (npcDefenseWith nid npc st) actors st
@@ -514,7 +514,7 @@ resolveClassicNPCRetaliation actors nid disp playerDmg hp playerEffects npc ns s
             effects = playerEffects ++ allyEffects ++ shipEffects
             msgsBeforeHit = allyMsgs ++ shipMsgs
         in if hp - allyTotal - shipTotal <= 0
-           then ( effects ++ [SetValue (VRActorProp (ActorNPC nid) PState) (EVString "dead")]
+           then ( effects ++ [SetValue (VRActorProp (ActorNPC nid) PState) (EVString "dead")] ++ endRound
                 , evMsg "combat.classic_kill" [("target", disp)] : msgsBeforeHit )
            else
                let npcDmg = max 0 (npcAttackWith nid npc st - effectiveDefense st)
@@ -532,6 +532,11 @@ resolveClassicNPCRetaliation actors nid disp playerDmg hp playerEffects npc ns s
                   else ( withRetaliation
                        , evMsg "combat.classic_exchange"
                            [("dmg", show playerDmg), ("npc_dmg", show npcDmg)] : allMsgs )
+  where
+    -- A classic ability round sets the tactical round state (K16b.1); a kill
+    -- ends that fight. Only when a round is running: a plain classic attack
+    -- never sets it, and its effect list stays as it was.
+    endRound = if isCombatEngaged st then tacticalResetEffects else []
 
 -- | Classic Ship combat.
 resolveClassicShip :: [CombatActor] -> VehicleID -> String -> CombatAction -> GameState -> ([Effect], [[OutputEvent]])

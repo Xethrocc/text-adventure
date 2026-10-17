@@ -323,6 +323,41 @@ testRoomPredicateCurrentAlias = do
     r4 <- expectTrue "absent tag stays false" (not (evalPredicate (RoomHasTag "current_room" "clearing") tagged))
     pure (r1 && r2 && r3 && r4)
 
+-- | Kampfbug Monster-Insel: a party member in the room is never the target of
+--   `use-ability`, and a fight whose opponent is gone (here: joined the party)
+--   is closed instead of continuing against the companion.
+testAbilityIgnoresCompanionAndEndsStaleFight :: IO Bool
+testAbilityIgnoresCompanionAndEndsStaleFight = do
+    let here = currentRoom (save initSampleGame)
+        ability = PlayerAbility "pfiff" "Pfiff" "" 0 0 [SendMessage "Fiiep!"]
+        -- only the (companion) goblin stands here; the old man is elsewhere
+        (stMoved, _) = applyOutcome (MoveEntity "goblin" (InRoom here)) "" initSampleGame
+        stHere = stMoved { save = (save stMoved) { npcStates =
+                    Map.adjust (\ns -> ns { npcLocation = InRoom "elsewhere" }) "oldman"
+                               (npcStates (save stMoved)) } }
+        withAbility = stHere { world = (world stHere) { abilities = Map.insert "pfiff" ability (abilities (world stHere)) } }
+        -- the goblin joined the party while a (classic ability) round was running
+        stale = setVariable combatRoundKey (VVInt 3) . setCombatEngaged True
+              . setVariable "party.goblin" (VVInt 1) $ withAbility
+        (stAfter, evs) = executeCommandEv (InteractWith (VCustom "use-ability") "pfiff" "goblin") stale
+        out = renderEvents evs
+    r1 <- expectTrue "ability runs as a world action" ("Fiiep!" `isInfixOf` out)
+    r2 <- expectTrue "no round against the companion" (not ("Round" `isInfixOf` out || "Runde" `isInfixOf` out))
+    r3 <- expectTrue "stale fight is closed" (not (isCombatEngaged stAfter))
+    r4 <- expectEqual 0 (combatRound stAfter)
+    r5 <- expectTrue "companion took no damage"
+              (fmap npcHealth (Map.lookup "goblin" (npcStates (save stAfter)))
+                 == fmap npcHealth (Map.lookup "goblin" (npcStates (save stale))))
+    -- the named target wins over "first NPC in the room" (goblin sorts first)
+    let (stBoth, _) = applyOutcome (MoveEntity "goblin" (InRoom here)) "" withAbilityBoth
+        withAbilityBoth = initSampleGame { world = (world initSampleGame) { abilities = Map.insert "pfiff" ability (abilities (world initSampleGame)) } }
+        (stNamed, evsNamed) = executeCommandEv (InteractWith (VCustom "use-ability") "pfiff" "old man") stBoth
+    r6 <- expectTrue "named target is used" ("old man" `isInfixOf` renderEvents evsNamed)
+    r7 <- expectTrue "goblin untouched when another target is named"
+              (fmap npcHealth (Map.lookup "goblin" (npcStates (save stNamed)))
+                 == fmap npcHealth (Map.lookup "goblin" (npcStates (save stBoth))))
+    pure (r1 && r2 && r3 && r4 && r5 && r6 && r7)
+
 testMoveNPC :: IO Bool
 testMoveNPC = do
     let (newState, _) = applyOutcome (MoveEntity "goblin" (InRoom "start")) "" initSampleGame
@@ -13078,6 +13113,7 @@ main = do
         , runTest "GameEnd Victory sets reason" testGameEndVictory
         , runTest "first game end of a turn wins, later rules stay silent (X1)" testFirstGameEndWins
         , runTest "room predicates resolve current / current_room to the player's room (X4)" testRoomPredicateCurrentAlias
+        , runTest "use-ability ignores party members and closes a stale fight (Monster-Insel)" testAbilityIgnoresCompanionAndEndsStaleFight
         , runTest "MoveNPC moves to target room" testMoveNPC
         -- Equipment tests
         , runTest "equip requires the item to be carried" testEquipRequiresCarried

@@ -3186,30 +3186,34 @@ tacticalVerbAction _        = Nothing
 --   directly without requiring an NPC or tactical profile.
 executeTacticalAction :: CombatAction -> GameState -> (GameState, [OutputEvent])
 executeTacticalAction (CAAbility abId) state
-    | not (isCombatEngaged state)
-    , null [ npc | npc <- getNPCsInRoom (currentRoom (save state)) state
-                 , let ns = Map.lookup (npcId npc) (npcStates (save state))
-                 , maybe True (\s -> npcStatus s /= "dead") ns ]
-      -- K16a: Weltfall NUR wenn kein lebender NPC im Raum steht. Ein Kampf
-      -- beginnt nicht erst mit `attack` — `use-ability` gegen einen Anwesenden
-      -- ist eine Kampf-Action, auch wenn `combat.engaged` noch nicht gesetzt ist.
-      -- Die Bedingung war vorher `not (isCombatEngaged state)` allein, was
-      -- `use-ability` im laufenden Kampf in den Weltfall schickte.
+    | null (hostileNPCsHere state)
+    , null (shipTargetsHere state)
+      -- K16a: Weltfall NUR wenn kein Gegner anwesend ist. Ein Kampf beginnt
+      -- nicht erst mit `attack` — `use-ability` gegen einen Anwesenden ist eine
+      -- Kampf-Action, auch wenn `combat.engaged` noch nicht gesetzt ist; das
+      -- gilt für feindliche Schiffe an der Haltestelle genauso wie für NPCs.
+      -- Begleiter der Party sind keine Gegner (vorher „bekämpfte“ eine
+      -- Fähigkeit den ersten NPC im Raum — oft den eigenen Begleiter).
+      -- Steht kein Gegner mehr da (getötet, verlassen, ins Team gewechselt),
+      -- ist ein noch gesetztes `combat.engaged` veraltet — der Kampf ist vorbei.
     =
-        let dummyTc = case combatProfile (world state) of
+        let st0 = if isCombatEngaged state then endStaleCombat state else state
+            dummyTc = case combatProfile (world st0) of
                 CombatTactical tc -> tc
                 _                 -> TacticalCombat PlayerFirst False 0 ""
             dummyTarget = TargetNPC "" ""
-            (effects, msgs) = tacticalAbilityIn dummyTc dummyTarget abId False state
-            (st', effectMsg) = applyOutcomes effects "" state
+            (effects, msgs) = tacticalAbilityIn dummyTc dummyTarget abId False st0
+            (st', effectMsg) = applyOutcomes effects "" st0
             body = combineMsgsEv (msgs ++ [effectMsg])
         in if null (renderEvents body) then (st', []) else (st', body)
 executeTacticalAction action state =
-    let roomNPCs = getNPCsInRoom (currentRoom (save state)) state
-        livingNPCs = [ npc | npc <- roomNPCs
-                     , let ns = Map.lookup (npcId npc) (npcStates (save state))
-                     , maybe True (\s -> npcStatus s /= "dead") ns ]
-    in case livingNPCs of
+    let hostiles = hostileNPCsHere state
+        -- `use-ability <id> auf <ziel>`: das genannte Ziel zuerst, sofern es
+        -- ein Gegner im Raum ist; sonst wie bisher der erste Gegner.
+        named = case (getVariable "cmd.target_kind" state, getVariable "cmd.target" state) of
+            (Just (VVText "npc"), Just (VVText t)) -> find ((== t) . npcId) hostiles
+            _                                      -> Nothing
+    in case maybe hostiles (: []) named of
         (npc : _) ->
             let nId = npcId npc
                 profile = combatProfile (world state)
@@ -3222,16 +3226,7 @@ executeTacticalAction action state =
                 body' = combineMsgsEv [combatArtMsgEv nId st', body]
             in if null (renderEvents body') then (st', []) else (st', body')
         [] ->
-            let outsideStop = case currentVehicle (save state) of
-                    Just pvId -> vsCurrentStop (getVehicleState pvId state)
-                    Nothing   -> currentRoom (save state)
-                targetShips = [ v | v <- Map.elems (vehicleDefs (world state))
-                              , Just (vehicleId v) /= currentVehicle (save state)
-                              , vsCurrentStop (getVehicleState (vehicleId v) state) == outsideStop
-                              , isJust (targetShipSystems (TargetShip (vehicleId v) "") state)
-                              , maybe True (> 0) (targetShipSystems (TargetShip (vehicleId v) "") state >>= ssHull)
-                              ]
-            in case targetShips of
+            case shipTargetsHere state of
                 (veh : _) ->
                     let vId = vehicleId veh
                         profile = combatProfile (world state)
@@ -3243,6 +3238,36 @@ executeTacticalAction action state =
                         body = combineMsgsEv (effectMsg : msgs)
                     in if null (renderEvents body) then (st', []) else (st', body)
                 [] -> (state, evMsg "attack.none_here" [])
+
+-- | Living NPCs in the player's room that are not in the player's party — the
+--   possible opponents of a tactical action. A captured/recruited companion is
+--   never a target (Monster-Insel: after `fangball` the caught monster stood in
+--   the room and every further `use-ability` fought it).
+hostileNPCsHere :: GameState -> [NPCDef]
+hostileNPCsHere state =
+    [ npc | npc <- getNPCsInRoom (currentRoom (save state)) state
+          , let ns = Map.lookup (npcId npc) (npcStates (save state))
+          , maybe True (\s -> npcStatus s /= "dead") ns
+          , not (isInParty (npcId npc) state) ]
+
+-- | Enemy ships at the player's stop (or room) that can still be fought.
+shipTargetsHere :: GameState -> [VehicleDef]
+shipTargetsHere state =
+    let outsideStop = case currentVehicle (save state) of
+            Just pvId -> vsCurrentStop (getVehicleState pvId state)
+            Nothing   -> currentRoom (save state)
+    in [ v | v <- Map.elems (vehicleDefs (world state))
+           , Just (vehicleId v) /= currentVehicle (save state)
+           , vsCurrentStop (getVehicleState (vehicleId v) state) == outsideStop
+           , isJust (targetShipSystems (TargetShip (vehicleId v) "") state)
+           , maybe True (> 0) (targetShipSystems (TargetShip (vehicleId v) "") state >>= ssHull)
+           ]
+
+-- | A fight whose opponent is gone: clear the round bookkeeping so the next
+--   fight starts fresh (OnCombatStart can fire again).
+endStaleCombat :: GameState -> GameState
+endStaleCombat = setCombatStarted False . setCombatEngaged False
+               . setVariable combatRoundKey (VVInt 0)
 
 -- | Compatibility form (Phase 1.2; used by the tests, the aux paths of the
 --   game loop and the TUI hand-over): the same command, its event stream
