@@ -1,6 +1,6 @@
 # Plan: Software-Synth für Autoren (Phase 5.2)
 
-Stand: 2026-10-17, Code-Stand `cfbf380`. **Status: Design abgenommen (5.2a, 5.2b, 5.2c, 5.2d, 5.2e erledigt), nächste Stufe 5.2f.** Ersetzt die Zeile 5.2 („Synth-Tab") in
+Stand: 2026-10-17, Code-Stand `8895aed` (Planbasis `cfbf380`). **Status: Design abgenommen (5.2a `cfbf380`-Basis, 5.2b `456a743`, 5.2c `f6f53a2`, 5.2d `b3cf83a`, 5.2e `8895aed` erledigt), nächste Stufe 5.2f (hängt an Phase 3).** Ersetzt die Zeile 5.2 („Synth-Tab") in
 `implementierungsplan_engine_review_2026-09.md` und beantwortet dort den offenen Punkt
 „5.2: Datenmodell und Render-Ort des Synths".
 
