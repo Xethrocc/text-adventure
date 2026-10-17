@@ -19,7 +19,15 @@
 --   D11); the ambient loop ticks entirely inside the UI.
 module TextAdventure.Tui
   ( runTui
+  , runTuiWithAudio
+  , CliOptions (..)
+  , parseArgs
+  , resolveTuiAudio
   , TuiName (..)
+  , TuiEvent (..)
+  , TuiShared (..)
+  , newTuiShared
+  , tuiFrontend
   , PanelState (..)
   , PanelStep (..)
   , roomAmbient
@@ -43,15 +51,21 @@ import qualified Data.Text.Zipper as TZ
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, putMVar, takeMVar,
                                 tryPutMVar, tryTakeMVar, withMVar)
+import Control.Exception (finally)
 import Control.Monad (forever, guard, unless, void, when)
 import Control.Monad.IO.Class (liftIO)
 import Data.Char (isLower, isSpace)
 import Data.IORef (IORef, modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intercalate, nub)
 import Data.Maybe (fromMaybe)
+import Data.Word (Word64)
+import System.Environment (getArgs)
+import Text.Read (readMaybe)
 import qualified Brick.Types as BT
 
 import Ansi (stripAnsi)
+import Audio (AudioConfig, MusicHandle, discoverAudio, newMusicHandle, noAudio,
+              playSfx, startMusic, stopMusic)
 import TextAdventure.Tui.Color (attrOfSgr, colorAttrName, parseSgrLine)
 import TextAdventure.Tui.Hud (HudView (..), MapCell (..), MapGrid (..), buildHud,
                               buildHudWithFloor, statsLines)
@@ -169,7 +183,10 @@ nextLine shared = do
     xs <- readIORef (shPending shared)
     case xs of
         []       -> nextLine shared
-        (x:rest) -> writeIORef (shPending shared) rest >> pure x
+        (x:rest) -> do
+            writeIORef (shPending shared) rest
+            unless (null rest) (void (tryPutMVar (shSignal shared) ()))
+            pure x
 
 -- | Art panel plumbing: read (non-destructively) and replace.
 readArtPanel :: TuiShared -> IO PanelState
@@ -181,9 +198,10 @@ setArtPanel shared chan p = do
     putMVar (shArt shared) p
     writeBChan chan EvArt
 
--- | The engine 'Frontend' implemented on top of the shared state.
-tuiFrontend :: TuiShared -> BChan TuiEvent -> Frontend
-tuiFrontend shared chan = Frontend
+-- | The engine 'Frontend' implemented on top of the shared state, wired to
+--   'Audio.playSfx', 'Audio.startMusic', and 'Audio.stopMusic' (Synth 5.2e).
+tuiFrontend :: AudioConfig -> MusicHandle -> TuiShared -> BChan TuiEvent -> Frontend
+tuiFrontend audioCfg musicH shared chan = Frontend
     { feEmitLine    = \l -> appendShared shared l >> notify
     , feEmitRaw     = \s -> when (not (null s)) (appendShared shared s >> notify)
     , feReadInput   = \st _prompt -> do
@@ -210,9 +228,9 @@ tuiFrontend shared chan = Frontend
             Just (af, am, nm) -> setArtPanel shared chan (PanelAmbient af am 0 nm)
             Nothing           -> setArtPanel shared chan PanelNone
     , feDiagnostics = \ms -> mapM_ (\m -> appendShared shared ("[Diagnose] " ++ m)) ms
-    , fePlaySfx = \_ -> pure ()
-    , feStartMusic = \_ -> pure ()
-    , feStopMusic = pure ()
+    , fePlaySfx     = playSfx audioCfg
+    , feStartMusic  = startMusic audioCfg musicH
+    , feStopMusic   = stopMusic musicH
     }
   where
     notify = writeBChan chan EvLines
@@ -502,10 +520,44 @@ drawTui st =
                           = "Tab: vervollständigen   ↑/↓: Verlauf   F2: Ebene   Ctrl-Q: beenden"
              | otherwise  = "Tab: vervollständigen   ↑/↓: Verlauf   PgUp/PgDn: scrollen   Ctrl-Q: beenden"
 
--- | Run the TUI: fork the engine loop against a shared state, then hand the
---   terminal to Brick. Returns when the user leaves the UI (Ctrl-Q/Esc).
-runTui :: [String] -> GameState -> IO ()
-runTui initialLines st0 = do
+-- | Parsed command-line options for the TUI executable (same flag semantics
+--   and defaults as @text-adventure-cli@, Synth 5.2e).
+data CliOptions = CliOptions
+    { coWorld        :: Maybe FilePath
+    , coSave         :: Maybe FilePath
+    , coSeed         :: Maybe Word64
+    , coAllowInvalid :: Bool
+    , coSavesDir     :: Maybe FilePath
+    , coNoAudio      :: Bool
+    , coAudioHelper  :: Maybe FilePath
+    } deriving (Eq, Show)
+
+-- | Minimal flag parser for the TUI executable.
+parseArgs :: [String] -> Maybe CliOptions
+parseArgs args = go args (CliOptions Nothing Nothing Nothing False Nothing False Nothing)
+  where
+    go [] opts = Just opts
+    go ("--help" : _) _ = Nothing
+    go ("--world" : p : rest) opts = go rest opts { coWorld = Just p }
+    go ("--save" : p : rest) opts = go rest opts { coSave = Just p }
+    go ("--seed" : p : rest) opts = case readMaybe p of
+        Just n  -> go rest opts { coSeed = Just n }
+        Nothing -> Nothing
+    go ("--allow-invalid" : rest) opts = go rest opts { coAllowInvalid = True }
+    go ("--saves-dir" : p : rest) opts = go rest opts { coSavesDir = Just p }
+    go ("--no-audio" : rest) opts = go rest opts { coNoAudio = True }
+    go ("--audio-helper" : p : rest) opts = go rest opts { coAudioHelper = Just p }
+    go (_ : rest) opts = go rest opts
+
+-- | Resolve the runtime 'AudioConfig' from @--no-audio@ and @--audio-helper@
+--   with the same priority chain as @text-adventure-cli@ (Synth 5.2e).
+resolveTuiAudio :: Bool -> Maybe FilePath -> IO AudioConfig
+resolveTuiAudio noAud mHelper =
+    if noAud then pure noAudio else discoverAudio mHelper
+
+-- | Allocate a fresh 'TuiShared' state for a game session.
+newTuiShared :: [String] -> GameState -> IO TuiShared
+newTuiShared initialLines st0 = do
     lock    <- newMVar ()
     linesR  <- newIORef initialLines
     signal  <- newEmptyMVar
@@ -514,15 +566,23 @@ runTui initialLines st0 = do
     histR   <- newIORef []
     idxR    <- newIORef 0
     artR    <- newMVar PanelNone
-    let shared = TuiShared
-            { shLines = linesR, shLock = lock, shSignal = signal
-            , shPending = pending, shState = stateR
-            , shHistory = histR, shHistIdx = idxR, shArt = artR
-            }
-    chan <- newBChan 64
+    pure TuiShared
+        { shLines = linesR, shLock = lock, shSignal = signal
+        , shPending = pending, shState = stateR
+        , shHistory = histR, shHistIdx = idxR, shArt = artR
+        }
+
+-- | Run the TUI with an explicit 'AudioConfig': fork the engine loop against a
+--   shared state, then hand the terminal to Brick. Returns when the user
+--   leaves the UI (Ctrl-Q/Esc), stopping any active background music on exit.
+runTuiWithAudio :: AudioConfig -> [String] -> GameState -> IO ()
+runTuiWithAudio audioCfg initialLines st0 = do
+    shared <- newTuiShared initialLines st0
+    musicH <- newMusicHandle
+    chan   <- newBChan 64
     void . forkIO $ panelTicker shared chan
     void . forkIO $ do
-        runGameWithFrontend (tuiFrontend shared chan) st0
+        runGameWithFrontend (tuiFrontend audioCfg musicH shared chan) st0
         writeBChan chan EvEnded
     let buildVty = mkVty V.defaultConfig
     initialVty <- buildVty
@@ -536,3 +596,16 @@ runTui initialLines st0 = do
                         , tsFloor = Nothing
                         }
     void (customMain initialVty buildVty (Just chan) (tuiApp shared chan) st0')
+        `finally` stopMusic musicH
+
+-- | Run the TUI: resolves audio configuration from command-line flags
+--   (@--no-audio@, @--audio-helper@) and 'discoverAudio', then delegates to
+--   'runTuiWithAudio'.
+runTui :: [String] -> GameState -> IO ()
+runTui initialLines st0 = do
+    args <- getArgs
+    let (noAud, mHelper) = case parseArgs args of
+            Just opts -> (coNoAudio opts, coAudioHelper opts)
+            Nothing   -> (False, Nothing)
+    audioCfg <- resolveTuiAudio noAud mHelper
+    runTuiWithAudio audioCfg initialLines st0

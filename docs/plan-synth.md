@@ -1,6 +1,6 @@
 # Plan: Software-Synth für Autoren (Phase 5.2)
 
-Stand: 2026-10-17, Code-Stand `cfbf380`. **Status: Design abgenommen (5.2a, 5.2b, 5.2c, 5.2d erledigt), nächste Stufe 5.2e.** Ersetzt die Zeile 5.2 („Synth-Tab") in
+Stand: 2026-10-17, Code-Stand `cfbf380`. **Status: Design abgenommen (5.2a, 5.2b, 5.2c, 5.2d, 5.2e erledigt), nächste Stufe 5.2f.** Ersetzt die Zeile 5.2 („Synth-Tab") in
 `implementierungsplan_engine_review_2026-09.md` und beantwortet dort den offenen Punkt
 „5.2: Datenmodell und Render-Ort des Synths".
 
@@ -286,7 +286,7 @@ Jede Stufe endet mit grünem `scripts/ci.sh`, CHANGELOG-Eintrag und aktuellen RE
 - Validierung `UnknownSynthTrack`, `SynthBadNote` (mit Spalte), `SynthUnknownInstrument`, `SynthTooLong` (> 120 s), `SynthIdClash`, `UnusedSynthTrack`.
 - Fixture `examples/fixtures/synth.yaml` + E2E `ci/e2e/synth.*` + Protokoll-Golden `server_events.json` erweitert; Byte-Vertrag für bestehende Abenteuer nachgewiesen.
 
-### 5.2e — TUI-Audio *(S, unabhängig)*
+### 5.2e — TUI-Audio *(S, unabhängig)* — **Erledigt (2026-10-17)**
 
 - `Tui.hs:213` mit `Audio.playSfx`/`startMusic`/`stopMusic` verkabeln, inkl. `--no-audio`/
   `--audio-helper` wie in der CLI. Ohne diese Stufe hört man Synth (und Dateien) nur in der CLI.

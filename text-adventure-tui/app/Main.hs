@@ -6,7 +6,7 @@
 --   this executable remains the standalone entry for the brick UI alone.
 module Main where
 
-import TextAdventure.Tui (runTui)
+import TextAdventure.Tui (CliOptions (..), parseArgs, resolveTuiAudio, runTuiWithAudio)
 import Game (resolveAsciiArt)
 import GameLoop (initRunSeed)
 import Sample (initSampleGame)
@@ -16,12 +16,10 @@ import World (loadGame, siblingSavePath)
 import System.Environment (getArgs, setEnv)
 import System.Exit (exitFailure)
 import System.IO (hSetEncoding, stdout, stderr, stdin, utf8)
-import Data.Word (Word64)
-import Text.Read (readMaybe)
 
 usage :: String
 usage = unlines
-    [ "Usage: text-adventure-tui [--world FILE] [--save FILE] [--seed N] [--allow-invalid] [--saves-dir DIR] [--help]"
+    [ "Usage: text-adventure-tui [--world FILE] [--save FILE] [--seed N] [--allow-invalid] [--saves-dir DIR] [--no-audio] [--audio-helper P] [--help]"
     , ""
     , "  --world FILE      Load a GameWorld from a JSON file (produced by the worldbuilder)."
     , "  --save FILE       Load an initial SaveState from a JSON file."
@@ -30,34 +28,12 @@ usage = unlines
     , "  --allow-invalid   Start even if the world has validation issues."
     , "  --saves-dir DIR   Redirect in-game saves (saves/<slot>.json) to DIR. Wins over"
     , "                    the TA_SAVES_DIR environment variable (Rogue Phase 0)."
-    , "  --no-audio        Disable SFX playback (Audio Phase 1, accepted for consistency)."
+    , "  --no-audio        Disable SFX playback entirely (Audio Phase 1)."
+    , "  --audio-helper P  Use executable at P to play sound effects."
     , "  --help            Show this message."
     , ""
     , "Without --world the bundled sample adventure is used."
     ]
-
-data CliOptions = CliOptions
-    { coWorld        :: Maybe FilePath
-    , coSave         :: Maybe FilePath
-    , coSeed         :: Maybe Word64
-    , coAllowInvalid :: Bool
-    , coSavesDir     :: Maybe FilePath
-    }
-
-parseArgs :: [String] -> Maybe CliOptions
-parseArgs args = go args (CliOptions Nothing Nothing Nothing False Nothing)
-  where
-    go [] opts = Just opts
-    go ("--help" : _) _ = Nothing
-    go ("--world" : p : rest) opts = go rest opts { coWorld = Just p }
-    go ("--save" : p : rest) opts = go rest opts { coSave = Just p }
-    go ("--seed" : p : rest) opts = case readMaybe p of
-        Just n  -> go rest opts { coSeed = Just n }
-        Nothing -> Nothing
-    go ("--allow-invalid" : rest) opts = go rest opts { coAllowInvalid = True }
-    go ("--saves-dir" : p : rest) opts = go rest opts { coSavesDir = Just p }
-    go ("--no-audio" : rest) opts = go rest opts
-    go (_ : rest) opts = go rest opts
 
 -- | Title banner: the authored `title_art` when present, otherwise the world
 --   name — the same rule as the Haskeline CLI's `titleBanner`.
@@ -84,7 +60,7 @@ main = do
             -- keeps its stored seed, every other start draws a fresh one.
             let prep st = initRunSeed (coSave opts /= Nothing) (coSeed opts) st
             case coWorld opts of
-                Nothing -> prep initSampleGame >>= start
+                Nothing -> prep initSampleGame >>= start opts
                 Just worldPath -> do
                     savePath <- case coSave opts of
                         Just s  -> pure (Just s)
@@ -103,18 +79,21 @@ main = do
                                 putStrLn "World validation reported issues:"
                                 mapM_ (\err -> putStrLn ("  - " ++ show err)) valErrors
                                 if coAllowInvalid opts
-                                then putStrLn "(starting with --allow-invalid)" >> start state
+                                then putStrLn "(starting with --allow-invalid)" >> start opts state
                                 else do
                                     putStrLn "Use --allow-invalid to start with these issues."
                                     exitFailure
-                            else start state
+                            else start opts state
   where
     -- `lines` splits the (possibly multi-line) title art into individual
     -- rows so the UI can render/protect each row on its own.
-    start state = runTui
-        (concatMap lines
-            [ titleFor state
-            , "Type 'help' for available commands."
-            , "----------------------------"
-            ])
-        state
+    start opts state = do
+        audioCfg <- resolveTuiAudio (coNoAudio opts) (coAudioHelper opts)
+        runTuiWithAudio
+            audioCfg
+            (concatMap lines
+                [ titleFor state
+                , "Type 'help' for available commands."
+                , "----------------------------"
+                ])
+            state

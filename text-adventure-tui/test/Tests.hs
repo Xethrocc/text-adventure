@@ -2,7 +2,9 @@
 module Main (main) where
 
 import TextAdventure.Tui
-    ( PanelState (..), PanelStep (..), advancePanel, panelFrame, roomAmbient )
+    ( CliOptions (..), PanelState (..), PanelStep (..), TuiShared (..)
+    , advancePanel, newTuiShared, panelFrame, parseArgs, resolveTuiAudio
+    , roomAmbient, tuiFrontend )
 
 import TextAdventure.Tui.Hud
     ( HudView (..), MapCell (..), MapGrid (..), Bar (..), buildHud, buildHudWithFloor
@@ -12,15 +14,30 @@ import TextAdventure.Tui.Color
     ( SgrColor (..), SgrState (..), applySgrSeq, attrOfSgr, colorAttrName
     , emptySgr, parseSgrLine, rgbToColor240 )
 
+import Audio (AudioConfig (..), AudioHelper (..), newMusicHandle, stopMusic)
+import Brick.BChan (newBChan)
+import Frontend (Frontend (..))
+import GameLoop (runGameWithFrontend)
 import Sample (initSampleGame)
 import Game (emptyGameWorld, emptyGameState)
+import qualified Synth.Patch as SP
 import Types
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.List (isInfixOf)
+import Data.IORef (writeIORef)
+import Data.List (isInfixOf, isSuffixOf)
+import System.Directory
+    ( createDirectoryIfMissing, doesFileExist, getPermissions
+    , getTemporaryDirectory, removeDirectoryRecursive, setOwnerExecutable
+    , setPermissions )
+import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (exitFailure)
+import System.FilePath ((</>))
 import qualified Graphics.Vty as V
-import Control.Concurrent.MVar (newEmptyMVar)
+import Control.Concurrent (threadDelay)
+import Control.Concurrent.MVar (newEmptyMVar, tryPutMVar)
+import Control.Exception (SomeException, bracket, try)
+import Control.Monad (void)
 import Data.Maybe (isNothing)
 
 runTest :: String -> IO Bool -> IO Bool
@@ -290,6 +307,10 @@ main = do
         , runTest "hud: deck combat panel lines (Phase 2C)" testHudDeckCombatLines
         , runTest "hud: sandbox minimap renders dynamic cells and stamps (Phase 3D)" testHudMapSandbox
         , runTest "hud: score status line and exclusion from bars/table (K17)" testHudScoreStatusLine
+        , runTest "audio: CLI flag parser (--no-audio, --audio-helper, defaults) (5.2e)" testTuiCliParseArgs
+        , runTest "audio: resolveTuiAudio honours --audio-helper, env var, and --no-audio (5.2e)" testTuiAudioDiscoveryAndFlags
+        , runTest "audio: tuiFrontend seam dispatches SFX/music + Synth cache to helper (5.2e)" testTuiFrontendAudioSeamFakePlayer
+        , runTest "audio: --no-audio mutes all TUI SFX and music playback (5.2e)" testTuiFrontendNoAudioMutesPlayback
         ]
     if and results then pure () else exitFailure
 
@@ -479,3 +500,257 @@ testHudMapSandbox = do
             r5 <- expectTrue "sandbox_wildnis_1_0_0 cell present with stamp W"
                     (any (\c -> mcRoom c == "sandbox_wildnis_1_0_0" && not (mcHere c) && mcStamp c == 'W') cells)
             pure (r1 && r2 && r3 && r4 && r5)
+
+-- ---------------------------------------------------------------------------
+-- Synth 5.2e: TUI Audio Seam & CLI Flags (--no-audio / --audio-helper)
+-- ---------------------------------------------------------------------------
+
+-- | Synth 5.2e: CLI flag parser in TUI matches text-adventure-cli semantics.
+testTuiCliParseArgs :: IO Bool
+testTuiCliParseArgs = do
+    let defOpts = CliOptions Nothing Nothing Nothing False Nothing False Nothing
+    r1 <- expectEqual "default options" (Just defOpts) (parseArgs [])
+    r2 <- expectEqual "--no-audio sets coNoAudio"
+            (Just defOpts { coNoAudio = True })
+            (parseArgs ["--no-audio"])
+    r3 <- expectEqual "--audio-helper sets coAudioHelper"
+            (Just defOpts { coAudioHelper = Just "/usr/local/bin/mpv" })
+            (parseArgs ["--audio-helper", "/usr/local/bin/mpv"])
+    r4 <- expectEqual "all flags combined"
+            (Just CliOptions
+                { coWorld        = Just "w.json"
+                , coSave         = Just "s.json"
+                , coSeed         = Just 99
+                , coAllowInvalid = True
+                , coSavesDir     = Just "/tmp/saves"
+                , coNoAudio      = True
+                , coAudioHelper  = Just "/opt/ffplay"
+                })
+            (parseArgs [ "--world", "w.json"
+                       , "--save", "s.json"
+                       , "--seed", "99"
+                       , "--allow-invalid"
+                       , "--saves-dir", "/tmp/saves"
+                       , "--no-audio"
+                       , "--audio-helper", "/opt/ffplay"
+                       ])
+    r5 <- expectEqual "--help returns Nothing" Nothing (parseArgs ["--help"])
+    r6 <- expectEqual "invalid --seed returns Nothing" Nothing (parseArgs ["--seed", "abc"])
+    pure (and [r1, r2, r3, r4, r5, r6])
+
+-- | Helper to save and restore an environment variable around an IO action.
+withSavedEnv :: String -> IO a -> IO a
+withSavedEnv varName =
+    bracket (lookupEnv varName)
+            (\old -> case old of
+                Just v  -> setEnv varName v
+                Nothing -> unsetEnv varName)
+            . const
+
+-- | Synth 5.2e: resolveTuiAudio priority chain (--no-audio > --audio-helper > env var).
+testTuiAudioDiscoveryAndFlags :: IO Bool
+testTuiAudioDiscoveryAndFlags = withSavedEnv "TEXT_ADVENTURE_AUDIO_HELPER" $ do
+    unsetEnv "TEXT_ADVENTURE_AUDIO_HELPER"
+    c1 <- resolveTuiAudio False (Just "/custom/bin/mpv.exe")
+    r1 <- case c1 of
+        AudioOn (AudioHelper p n) ->
+            expectEqual "CLI --audio-helper path & base name" ("/custom/bin/mpv.exe", "mpv") (p, n)
+        AudioOff -> expectTrue "expected AudioOn for explicit helper" False
+    c2 <- resolveTuiAudio True (Just "/custom/bin/mpv.exe")
+    r2 <- case c2 of
+        AudioOff  -> pure True
+        AudioOn _ -> expectTrue "--no-audio must override --audio-helper" False
+    setEnv "TEXT_ADVENTURE_AUDIO_HELPER" "/env/ffplay.exe"
+    c3 <- resolveTuiAudio False Nothing
+    r3 <- case c3 of
+        AudioOn (AudioHelper p n) ->
+            expectEqual "TEXT_ADVENTURE_AUDIO_HELPER discovered" ("/env/ffplay.exe", "ffplay") (p, n)
+        AudioOff -> expectTrue "expected AudioOn from env var" False
+    c4 <- resolveTuiAudio False (Just "/cli/openmpt123")
+    r4 <- case c4 of
+        AudioOn (AudioHelper p n) ->
+            expectEqual "CLI --audio-helper beats env var" ("/cli/openmpt123", "openmpt123") (p, n)
+        AudioOff -> expectTrue "expected AudioOn from CLI flag" False
+    c5 <- resolveTuiAudio True Nothing
+    r5 <- case c5 of
+        AudioOff  -> pure True
+        AudioOn _ -> expectTrue "--no-audio beats env var" False
+    pure (and [r1, r2, r3, r4, r5])
+
+-- | Build a test GameState where entering 'hallway' fires file SFX, synth SFX,
+--   and synth music, and returning to 'start' fires StopMusic.
+tuiAudioTestGame :: GameState
+tuiAudioTestGame =
+    let alarmPatch = SP.SynthSound [SP.defaultVoice { SP.vDur = 0.05 }]
+        nebelTrack = SP.defaultTrack { SP.trBpm = 240, SP.trSteps = 4 }
+        w0 = world initSampleGame
+        hall0 = rooms w0 Map.! "hallway"
+        start0 = rooms w0 Map.! "start"
+        hall' = hall0
+            { roomOnEnter = Just (Sequence
+                [ PlaySfx "sfx/step.wav"
+                , PlaySfxSynth "alarm"
+                , PlayMusicSynth "nebel"
+                ])
+            }
+        start' = start0
+            { roomOnEnter = Just StopMusic }
+        w' = w0
+            { rooms = Map.insert "hallway" hall' (Map.insert "start" start' (rooms w0))
+            , worldSounds = Map.singleton "alarm" alarmPatch
+            , worldTracks = Map.singleton "nebel" nebelTrack
+            }
+    in initSampleGame { world = w' }
+
+-- | Poll a log file until a predicate holds on its lines (up to ~1.5 s).
+waitForLogLines :: FilePath -> ([String] -> Bool) -> IO [String]
+waitForLogLines logFile predicate = go (60 :: Int)
+  where
+    go 0 = readLogLines
+    go n = do
+        ls <- readLogLines
+        if predicate ls
+            then pure ls
+            else threadDelay 25000 >> go (n - 1)
+    readLogLines = do
+        ex <- doesFileExist logFile
+        if not ex
+            then pure []
+            else do
+                res <- try (readFile logFile) :: IO (Either SomeException String)
+                case res of
+                    Right content -> do
+                        let ls = lines content
+                        _ <- evaluateLen (length content)
+                        pure ls
+                    Left _ -> pure []
+    evaluateLen :: Int -> IO Int
+    evaluateLen x = x `seq` pure x
+
+-- | Create a fake `mpv` script in `tmpDir` that logs its arguments to `logFile`
+--   and briefly stays alive on `--loop=inf` so `MusicHandle` deduplication and
+--   `stopMusic` termination work against a real OS process.
+createFakeMpv :: FilePath -> FilePath -> IO FilePath
+createFakeMpv tmpDir logFile = do
+    let fakeMpv = tmpDir </> "mpv"
+        script = unlines
+            [ "#!/usr/bin/env sh"
+            , "printf '%s\\n' \"$*\" >> \"" ++ logFile ++ "\""
+            , "case \"$*\" in"
+            , "  *--loop=inf*) exec sleep 5 ;;"
+            , "esac"
+            ]
+    writeFile fakeMpv script
+    perms <- getPermissions fakeMpv
+    setPermissions fakeMpv (setOwnerExecutable True perms)
+    pure fakeMpv
+
+-- | Synth 5.2e: TUI Frontend seam is wired to Audio.playSfx / startMusic / stopMusic
+--   and dispatches both file paths and 5.2c/5.2d cached Synth WAV paths.
+testTuiFrontendAudioSeamFakePlayer :: IO Bool
+testTuiFrontendAudioSeamFakePlayer =
+    withSavedEnv "TA_SAVES_DIR" $ withSavedEnv "XDG_CACHE_HOME" $ do
+        sysTmp <- getTemporaryDirectory
+        let tmpDir   = sysTmp </> "ta-tui-audio-test-52e"
+            savesDir = tmpDir </> "saves"
+            cacheDir = tmpDir </> "cache"
+            logFile  = tmpDir </> "player.log"
+        _ <- try (removeDirectoryRecursive tmpDir) :: IO (Either SomeException ())
+        createDirectoryIfMissing True savesDir
+        createDirectoryIfMissing True cacheDir
+        setEnv "TA_SAVES_DIR" savesDir
+        setEnv "XDG_CACHE_HOME" cacheDir
+        fakeMpv  <- createFakeMpv tmpDir logFile
+        audioCfg <- resolveTuiAudio False (Just fakeMpv)
+        musicH   <- newMusicHandle
+        shared   <- newTuiShared [] tuiAudioTestGame
+        chan     <- newBChan 64
+        let fe = tuiFrontend audioCfg musicH shared chan
+        -- 1. Direct seam calls on tuiFrontend (deduplication + feStopMusic reset)
+        fePlaySfx fe "sfx/direct.wav"
+        feStartMusic fe "music/loop.ogg"
+        feStartMusic fe "music/loop.ogg"  -- duplicate while playing: must be a no-op
+        loggedBeforeStop <- waitForLogLines logFile (any ("music/loop.ogg" `isInfixOf`))
+        let countLoop ls = length (filter (== "--no-video --really-quiet --loop=inf music/loop.ogg") ls)
+        rDirectMusicDedup <- expectEqual "feStartMusic deduplicated identical track while playing" 1 (countLoop loggedBeforeStop)
+        feStopMusic fe
+        feStartMusic fe "music/loop.ogg"  -- after feStopMusic: must spawn again
+        _ <- waitForLogLines logFile (\ls -> countLoop ls >= 2)
+        feStopMusic fe
+        -- 2. Full game-loop run through tuiFrontend:
+        --    "go north" -> enters hallway -> PlaySfx "sfx/step.wav", PlaySfxSynth "alarm", PlayMusicSynth "nebel"
+        --    "quit" + "q" -> exits loop and end-screen prompt
+        writeIORef (shPending shared) ["go north", "quit", "q"]
+        void (tryPutMVar (shSignal shared) ())
+        runGameWithFrontend fe tuiAudioTestGame
+        -- Wait for all 6 helper invocations to be flushed (direct sfx, 2x direct music,
+        -- step.wav sfx, synth alarm wav sfx, synth nebel wav music), then stop music via seam
+        logged <- waitForLogLines logFile (\ls -> length ls >= 6)
+        feStopMusic fe
+        rDirectSfx <- expectTrue "fePlaySfx invoked mpv with --no-video --really-quiet sfx/direct.wav"
+                        (any (== "--no-video --really-quiet sfx/direct.wav") logged)
+        rDirectMusicRestart <- expectEqual "feStopMusic cleared MusicHandle so restart spawned 2nd time" 2 (countLoop logged)
+        rStepSfx <- expectTrue "loop PlaySfx dispatched sfx/step.wav through tuiFrontend"
+                        (any (== "--no-video --really-quiet sfx/step.wav") logged)
+        let synthSfxPaths =
+                [ drop (length prefix) l
+                | l <- logged
+                , let prefix = "--no-video --really-quiet "
+                , prefix `isInfixOf` l
+                , not ("--loop=inf" `isInfixOf` l)
+                , ".wav" `isSuffixOf` l
+                , not ("sfx/" `isInfixOf` l)
+                ]
+            synthMusicPaths =
+                [ drop (length prefix) l
+                | l <- logged
+                , let prefix = "--no-video --really-quiet --loop=inf "
+                , prefix `isInfixOf` l
+                , ".wav" `isSuffixOf` l
+                ]
+        rSynthSfx <- case synthSfxPaths of
+            (wavPath : _) -> do
+                ex <- doesFileExist wavPath
+                expectTrue ("PlaySfxSynth resolved to existing cached WAV: " ++ wavPath) ex
+            [] -> expectTrue ("expected cached synth SFX WAV in log, got: " ++ show logged) False
+        rSynthMusic <- case synthMusicPaths of
+            (wavPath : _) -> do
+                ex <- doesFileExist wavPath
+                expectTrue ("PlayMusicSynth resolved to existing cached WAV: " ++ wavPath) ex
+            [] -> expectTrue ("expected cached synth Music WAV in log, got: " ++ show logged) False
+        _ <- try (removeDirectoryRecursive tmpDir) :: IO (Either SomeException ())
+        pure (and [rDirectSfx, rDirectMusicDedup, rDirectMusicRestart, rStepSfx, rSynthSfx, rSynthMusic])
+
+-- | Synth 5.2e: --no-audio suppresses all SFX and music playback in the TUI.
+testTuiFrontendNoAudioMutesPlayback :: IO Bool
+testTuiFrontendNoAudioMutesPlayback =
+    withSavedEnv "TA_SAVES_DIR" $ withSavedEnv "XDG_CACHE_HOME" $ do
+        sysTmp <- getTemporaryDirectory
+        let tmpDir   = sysTmp </> "ta-tui-noaudio-test-52e"
+            savesDir = tmpDir </> "saves"
+            cacheDir = tmpDir </> "cache"
+            logFile  = tmpDir </> "player.log"
+        _ <- try (removeDirectoryRecursive tmpDir) :: IO (Either SomeException ())
+        createDirectoryIfMissing True savesDir
+        createDirectoryIfMissing True cacheDir
+        setEnv "TA_SAVES_DIR" savesDir
+        setEnv "XDG_CACHE_HOME" cacheDir
+        fakeMpv  <- createFakeMpv tmpDir logFile
+        -- --no-audio = True even when --audio-helper is provided
+        audioCfg <- resolveTuiAudio True (Just fakeMpv)
+        musicH   <- newMusicHandle
+        shared   <- newTuiShared [] tuiAudioTestGame
+        chan     <- newBChan 64
+        let fe = tuiFrontend audioCfg musicH shared chan
+        fePlaySfx fe "sfx/direct.wav"
+        feStartMusic fe "music/loop.ogg"
+        feStopMusic fe
+        writeIORef (shPending shared) ["go north", "go south", "quit", "q"]
+        void (tryPutMVar (shSignal shared) ())
+        runGameWithFrontend fe tuiAudioTestGame
+        stopMusic musicH
+        threadDelay 100000
+        logExists <- doesFileExist logFile
+        rMuted <- expectTrue "--no-audio never spawns the audio helper" (not logExists)
+        _ <- try (removeDirectoryRecursive tmpDir) :: IO (Either SomeException ())
+        pure rMuted

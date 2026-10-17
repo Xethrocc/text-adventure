@@ -54,7 +54,10 @@ test-suite text-adventure-tui-tests
   build-depends:       base >=4.12 && <5,
                        text-adventure,
                        text-adventure-tui,
+                       brick >=2.0 && <3,
                        containers >=0.6 && <0.8,
+                       directory >=1.3 && <2,
+                       filepath >=1.4 && <2,
                        vty >=6.6 && <7
   default-language:    Haskell2010
-  ghc-options:         -Wall -Werror=missing-fields
+  ghc-options:         -Wall -Werror=missing-fields -threaded

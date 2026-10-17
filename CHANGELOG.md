@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Synth Stufe 5.2e: TUI-Audio (`docs/plan-synth.md`)
+
+- **TUI-Audio-Seam (`text-adventure-tui/src/TextAdventure/Tui.hs`):**
+  - `tuiFrontend` ist an `Audio.playSfx`, `Audio.startMusic` und `Audio.stopMusic` gebunden (`fePlaySfx = playSfx audioCfg`, `feStartMusic = startMusic audioCfg musicH`, `feStopMusic = stopMusic musicH`) statt der bisherigen No-ops.
+  - Die TUI-Seam erhält wie die CLI ausschließlich `FilePath`-Werte (Synth-Sounds und Synth-Tracks werden über den 5.2c/5.2d-Cache in `GameLoop.dispatchAudioAndCutscene` zu WAV-Dateipfaden aufgelöst; kein Synth-Wissen im TUI-Paket).
+  - `runTuiWithAudio` beendet beim Verlassen des TUI (`finally (stopMusic musicH)`) laufende Hintergrundmusik sauber; `runTui` löst Audio-Flags und Helper-Discovery automatisch auf.
+- **Kommandozeilen-Flags (`text-adventure-tui/src/TextAdventure/Tui.hs`, `text-adventure-tui/app/Main.hs`):**
+  - `CliOptions` und `parseArgs` im TUI-Paket unterstützen `--no-audio` (`coNoAudio :: Bool`, Default `False`) und `--audio-helper P` (`coAudioHelper :: Maybe FilePath`, Default `Nothing`) mit identischer Semantik und Prioritätskette (`--no-audio` → `--audio-helper` → `TEXT_ADVENTURE_AUDIO_HELPER` → Bundled `bin/` → `PATH`-Suche `mpv`/`ffplay`/`openmpt123`/… → `AudioOff`) wie `text-adventure-cli`.
+- **Tests (`text-adventure-tui/test/Tests.hs`, `text-adventure-tui/text-adventure-tui.cabal`):**
+  - 4 neue TUI-Tests (25 insgesamt): CLI-Flag-Parser (`--no-audio`, `--audio-helper`, Defaults), `resolveTuiAudio`-Prioritätskette inkl. Env-Variable, `tuiFrontend`-Seam + `runGameWithFrontend`-Dispatch mit gefaktem `mpv`-Player (Datei-SFX, Datei-Musik-Deduplizierung, `feStopMusic`-Reset sowie gecachte WAV-Pfade aus `PlaySfxSynth`/`PlayMusicSynth`) und Stummschaltung durch `--no-audio`.
+
 ### Synth Stufe 5.2d: Musik-Tracks (`docs/plan-synth.md`)
 
 - **Kern-Typen & Track-Renderer (`src/Synth/Patch.hs`, `src/Synth/Render.hs`):**
