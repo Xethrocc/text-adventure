@@ -25,7 +25,8 @@ import Types
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.IORef (writeIORef)
-import Data.List (isInfixOf, isSuffixOf)
+import Data.List (intercalate, isInfixOf, isSuffixOf)
+import qualified System.Info as Info
 import System.Directory
     ( createDirectoryIfMissing, doesFileExist, getPermissions
     , getTemporaryDirectory, removeDirectoryRecursive, setOwnerExecutable
@@ -620,7 +621,7 @@ waitForLogLines logFile predicate = go (60 :: Int)
                 res <- try (readFile logFile) :: IO (Either SomeException String)
                 case res of
                     Right content -> do
-                        let ls = lines content
+                        let ls = map (filter (\c -> c /= '\r' && c /= '"')) (lines content)
                         _ <- evaluateLen (length content)
                         pure ls
                     Left _ -> pure []
@@ -632,18 +633,36 @@ waitForLogLines logFile predicate = go (60 :: Int)
 --   `stopMusic` termination work against a real OS process.
 createFakeMpv :: FilePath -> FilePath -> IO FilePath
 createFakeMpv tmpDir logFile = do
-    let fakeMpv = tmpDir </> "mpv"
-        script = unlines
-            [ "#!/usr/bin/env sh"
-            , "printf '%s\\n' \"$*\" >> \"" ++ logFile ++ "\""
-            , "case \"$*\" in"
-            , "  *--loop=inf*) exec sleep 5 ;;"
-            , "esac"
-            ]
-    writeFile fakeMpv script
-    perms <- getPermissions fakeMpv
-    setPermissions fakeMpv (setOwnerExecutable True perms)
-    pure fakeMpv
+    if Info.os == "mingw32"
+        then do
+            -- Windows cannot execute a shebang script; CreateProcess spawns
+            -- cmd.exe implicitly for .bat files, so a batch shim is the fake
+            -- player here. CRLF line endings, args echoed via (echo %*) to
+            -- avoid the trailing space of `echo ... >> ...`; the loop case
+            -- stays alive briefly via ping so MusicHandle deduplication and
+            -- stopMusic termination have a real OS process to work against.
+            let fakeMpv = tmpDir </> "mpv.bat"
+                script = intercalate "\r\n"
+                    [ "@echo off"
+                    , "(echo %*)>>\"" ++ logFile ++ "\""
+                    , "echo %*|find \"--loop=inf\">nul && (ping -n 6 127.0.0.1 >nul)"
+                    , "exit /b 0"
+                    ] ++ "\r\n"
+            writeFile fakeMpv script
+            pure fakeMpv
+        else do
+            let fakeMpv = tmpDir </> "mpv"
+                script = unlines
+                    [ "#!/usr/bin/env sh"
+                    , "printf '%s\\n' \"$*\" >> \"" ++ logFile ++ "\""
+                    , "case \"$*\" in"
+                    , "  *--loop=inf*) exec sleep 5 ;;"
+                    , "esac"
+                    ]
+            writeFile fakeMpv script
+            perms <- getPermissions fakeMpv
+            setPermissions fakeMpv (setOwnerExecutable True perms)
+            pure fakeMpv
 
 -- | Synth 5.2e: TUI Frontend seam is wired to Audio.playSfx / startMusic / stopMusic
 --   and dispatches both file paths and 5.2c/5.2d cached Synth WAV paths.
