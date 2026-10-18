@@ -619,7 +619,8 @@ waitForLogLines logDir predicate = go (400 :: Int)
 -- | One line per helper invocation. Every invocation writes its own file:
 --   concurrent `>>` appends to one shared log lost lines on Windows (the file
 --   was locked by the parallel SFX/music processes), which made the 5.2e
---   seam test flaky on windows-latest.
+--   seam test flaky on windows-latest. A call whose file is not written yet
+--   simply reads as no line (the caller keeps polling).
 readLogLines :: FilePath -> IO [String]
 readLogLines logDir = do
     ex <- doesDirectoryExist logDir
@@ -627,8 +628,15 @@ readLogLines logDir = do
         then pure []
         else do
             names <- listDirectory logDir
-            fmap concat $ mapM readOne [ logDir </> n | n <- names, ".txt" `isSuffixOf` n ]
+            fmap concat $ mapM (entry . (logDir </>)) names
   where
+    -- Unix: one `*.txt` file per call; Windows: one slot directory per call
+    -- holding `call.txt` (see 'createFakeMpv').
+    entry path
+        | ".txt" `isSuffixOf` path = readOne path
+        | otherwise = do
+            isDir <- doesDirectoryExist path
+            if isDir then readOne (path </> "call.txt") else pure []
     readOne f = do
         res <- try (readFile f) :: IO (Either SomeException String)
         case res of
@@ -658,8 +666,15 @@ createFakeMpv tmpDir logDir = do
             let fakeMpv = tmpDir </> "mpv.bat"
                 script = intercalate "\r\n"
                     [ "@echo off"
-                    , "set \"f=%RANDOM%%RANDOM%%RANDOM%\""
-                    , "(echo %*)>\"" ++ logDir ++ "\\%f%.txt\""
+                    -- Claim a slot with an atomic mkdir (1, 2, …): %RANDOM% is
+                    -- seeded from the clock per process, so helpers started in
+                    -- the same second picked the same name and overwrote it.
+                    , "set n=0"
+                    , ":claim"
+                    , "set /a n+=1"
+                    , "if %n% gtr 999 exit /b 1"
+                    , "mkdir \"" ++ logDir ++ "\\%n%\" 2>nul || goto claim"
+                    , "(echo %*)>\"" ++ logDir ++ "\\%n%\\call.txt\""
                     , "echo %*|find \"--loop=inf\">nul && (ping -n 6 127.0.0.1 >nul)"
                     , "exit /b 0"
                     ] ++ "\r\n"
