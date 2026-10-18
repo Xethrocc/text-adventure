@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Content: Design-Entscheidungen umgesetzt (FTL-Lite, Hamurabi, Tunnel, kleinere)
+
+Entscheidungen vom 2026-10-18 (`~/workspace/befunde-content-audit-2026-10-17.md` §7):
+
+- **`ftl_lite` — Kern ausgebaut:** Händler Zax verkauft Raketen und Hüllenreparatur gegen Schrott (mit Ablehnung ohne Abbuchung); Sektoren werden in Reihenfolge freigeschaltet (Pirat → Nebelbank → Rebellengrenze → Evakuierung), das Funkfeuer verlangt das vernichtete Flaggschiff; Flaggschiff 10/28 statt 8/14, `defend` halbiert nur noch; Bypässe geschlossen (Feuer von Bord, Einstieg im Gefecht, unbegrenztes `aufladen`, Fähigkeit ohne Ziel); `meta.raketen_unlocked` (+2 Startraketen) und `meta.sektoren_rekord` verdrahtet, `rebellen_flotte` mit Vorhut ab dem 7. Sprung, Sarek wirkt; tote Variablen gestrichen. Balance per Simulation über alle Strategien gerechnet und gegen die Engine gespielt; E2E als neuer 2-Run-Pfad.
+- **`economy_hamurabi` — klassisches Ende:** 10 Jahre, Bevölkerung folgt dem Korn (20 Scheffel/Kopf, Restkorn verrechnet), Absetzung bei > 45 % Verhungerten, Ernte und Preise per `roll_dice`, Steuern mit Zu-/Abwanderung, Kornhandel, Schlussbewertung RUHMREICH/SOLIDE/KLÄGLICH, `end_art`; E2E jetzt ein 10-Jahres-Sieg.
+- **Tunnel als bewusste Alternative:** `cyberpunk` — der Tunnel löst `corp_alert` aus, die Lobby-Drohne feuert (`patrol: guardian`), der Fixer-Deal (`gang_ally`) maskiert den Kartenleser; `chrome_and_ash` — der Tunnel kostet +2 Heat und setzt `alarm_stufe`, die Drohne feuert. Der Hack bleibt der leise Weg; beide Wege gewinnbar. `chrome_and_ash`: Quest-Schritte laufen nur nach dem Auftrag (sonst „Diese Quest ist nicht aktiv.“ beim Hintertür-Weg).
+- **Kleinere:** `monster_insel` Grundschaden 20 (Krateron braucht zwei 2x-Treffer); `combo` Ersatzzelle sichtbar bei Onn (25 Credits), Reaktor-Suche gibt keine Zelle mehr; `survival.yaml` Startvorrat 10 (Biwak Pflicht), Trockenfleisch einmal essbar (Byte-Baseline bewusst neu gesetzt, Compiler-Nachweis: HEAD-Fassung ergab den alten Hash); `sandbox_wilderness` gräbt per `has_exit` pro Raum (Zähler-Workaround entfernt); `krypta_der_verdammten` zählte `meta.runs` doppelt (Engine + eigenes `on_enter`, seit Start-Enter) — bereinigt; `alchemie_werkstatt` Startquest ab Zug 0 als Test.
+
+### FIX: Neustart betrat den Startraum nicht erneut; Dialog-`outcome:` wurde still ignoriert
+
+- **Neustart (`src/GameLoop.hs`):** `restart` begann vom Zustand *nach* dem Start-Enter — `once`-Startregeln und Startmeldungen fehlten im neuen Lauf (alchemie: „Ein neuer Arbeitstag…“ nach `restart` weg). Der Ausgangsstand ist jetzt der Zustand davor. Test erweitert.
+- **Dialogoptionen (`worldbuilder/src/Worldbuilder/Types.hs`):** `outcome:` (Singular) und `effects:` werden neben `outcomes:` gelesen. Vorher wurde `outcome:` ohne Warnung ignoriert — so stand es im Beispiel in `docs/adventure-schema.md` (dort zusätzlich `dialogEnd` statt `dialog_end`, korrigiert), und `examples/fixtures/gespraeche.yaml` hatte deshalb wirkungslose `dialog_end`/`say_node`-Effekte (E2E unverändert, die Optionen wählt er nicht). Worldbuilder-Test.
+- **Doku:** `docs/adventure-schema.md` (Hamurabi-Praxisbeispiele aus der aktuellen Datei samt echter Ausgabe), `docs/genres.md` (Hamurabi), `docs/modules.md` 7b/7d.
+
 ### Engine: Startraum wird beim Spielstart betreten; Prädikat `has_exit` (Entscheidungen 2026-10-18)
 
 - **Start-Enter (`src/GameLoop.hs`, `enterStartRoom`):** Eine frische Partie (Zug 0, auch nach `restart`) betritt ihren Startraum — der `on_enter`-Hook und die `on: enter <startraum>`-Regeln feuern einmal, wie bei jedem späteren Betreten; ein geladener Spielstand betritt nichts neu. Gilt für CLI, TUI, Neustart, `worldbuilder test` und den Fuzzer. Vorher feuerten sie erst beim Zurückkehren: in `alchemie_werkstatt` war die Startquest beim ersten Brauen inaktiv („Diese Quest ist nicht aktiv.“), in `krypta_der_verdammten` die Starthand leer, in `monster_insel` gab es die Ranger-Ausrüstung erst beim Zurückkehren. Der Neustart beschreibt den Raum jetzt nach `meta.runs`-Hochzählen und Start-Enter (Déjà-vu-Text in `zeitschleife` nach `r`).

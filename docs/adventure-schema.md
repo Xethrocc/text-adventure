@@ -966,14 +966,14 @@ dialogue:
           - text: "Wer bist du?"
             next: who
           - text: "Tschüss."
-            outcome:
-              - dialogEnd
+            outcomes:
+              - dialog_end
       who:
         text: "Ich bin der Wächter."
         choices:
           - text: "Leb wohl."
-            outcome:
-              - dialogEnd
+            outcomes:
+              - dialog_end
 ```
 
 - `nodes.<id>.text` — Text des Knotens.
@@ -1651,6 +1651,11 @@ Der mathematische Ausdruck in `expr:` ist ein abstrakter Syntaxbaum (AST), der v
 
 #### 1. Parametrisierter Handel mit Validierung und Formeln (`rule_kaufe`)
 
+Die Menge kommt aus `cmd.arg1`, geprüft wird in drei Stufen: nur positive Ganzzahlen
+(`cmd.arg1` ist bei Zahlen ein Int; Text wie „abc“ oder „2.5“ lässt jeden `compare_var`
+falsch ausgehen), dann Menge ≤ Gold **bevor** `kosten` berechnet wird (eine Riesenmenge
+würde `compute_var` sonst überlaufen lassen), dann Gold ≥ Kosten.
+
 ```yaml
   - id: "rule_kaufe"
     on: "command kaufe"
@@ -1662,21 +1667,43 @@ Der mathematische Ausdruck in `expr:` ist ein abstrakter Syntaxbaum (AST), der v
             then:
               - if: { var: "cmd.arg2", is: "land" }
                 then:
-                  - compute_var: { var: "kosten", expr: "cmd.arg1 * land_preis" }
                   # Menge <= Gold fängt Int-Überlauf von kosten ab (Preis >= 1).
-                  - if: { all: [ { compare_var: { name: "cmd.arg1", op: "<=", var: "gold" } }, { compare_var: { name: "gold", op: ">=", var: "kosten" } } ] }
+                  # Erst danach rechnen, sonst zeigt die Meldung einen übergelaufenen Betrag.
+                  - if: { compare_var: { name: "cmd.arg1", op: "<=", var: "gold" } }
                     then:
-                      - compute_var: { var: "gold", expr: "gold - kosten" }
-                      - compute_var: { var: "land", expr: "land + cmd.arg1" }
-                      - text: "Erfolgreich erworben: {cmd.arg1} Hektar Land für {kosten} Gold."
+                      - compute_var: { var: "kosten", expr: "cmd.arg1 * land_preis" }
+                      - if: { compare_var: { name: "gold", op: ">=", var: "kosten" } }
+                        then:
+                          - compute_var: { var: "gold", expr: "gold - kosten" }
+                          - compute_var: { var: "land", expr: "land + cmd.arg1" }
+                          - text: "Erfolgreich erworben: {cmd.arg1} Hektar Land für {kosten} Gold."
+                        else:
+                          - text: "Nicht genug Gold in der Schatzkammer! Du benötigst {kosten} Gold."
                     else:
-                      - text: "Nicht genug Gold in der Schatzkammer! Du benötigst {kosten} Gold."
+                      - text: "Nicht genug Gold in der Schatzkammer! Du benötigst mindestens {cmd.arg1} Gold."
                 else:
-                  - text: "Auf dem Markt kannst du nur 'land' kaufen (kaufe <menge> land)."
+                  - if: { var: "cmd.arg2", is: "korn" }
+                    then:
+                      # Gleicher Überlauf-Schutz wie beim Land (Kornpreis >= 1).
+                      # Erst danach rechnen, sonst zeigt die Meldung einen übergelaufenen Betrag.
+                      - if: { compare_var: { name: "cmd.arg1", op: "<=", var: "gold" } }
+                        then:
+                          - compute_var: { var: "kosten", expr: "cmd.arg1 * korn_preis" }
+                          - if: { compare_var: { name: "gold", op: ">=", var: "kosten" } }
+                            then:
+                              - compute_var: { var: "gold", expr: "gold - kosten" }
+                              - compute_var: { var: "korn", expr: "korn + cmd.arg1" }
+                              - text: "Erfolgreich erworben: {cmd.arg1} Scheffel Korn für {kosten} Gold."
+                            else:
+                              - text: "Nicht genug Gold in der Schatzkammer! Du benötigst {kosten} Gold."
+                        else:
+                          - text: "Nicht genug Gold in der Schatzkammer! Du benötigst mindestens {cmd.arg1} Gold."
+                    else:
+                      - text: "Auf dem Markt kannst du nur 'land' oder 'korn' kaufen (kaufe <menge> land|korn)."
             else:
               - text: "Ungültige Menge '{cmd.arg1}': Gib eine positive ganze Zahl an (kaufe <menge> land)."
         else:
-          - text: "Verwendung: kaufe <menge> land"
+          - text: "Verwendung: kaufe <menge> land|korn"
 ```
 
 **Gerenderter Output im Spiel:**
@@ -1684,16 +1711,12 @@ Der mathematische Ausdruck in `expr:` ist ein abstrakter Syntaxbaum (AST), der v
 > kaufe 50 land
 Erfolgreich erworben: 50 Hektar Land für 1000 Gold.
 
-> kaufe 1 land
-Nicht genug Gold in der Schatzkammer! Du benötigst 20 Gold.
+> kaufe 5000 land
+Nicht genug Gold in der Schatzkammer! Du benötigst mindestens 5000 Gold.
 
 > kaufe -100 land
 Ungültige Menge '-100': Gib eine positive ganze Zahl an (kaufe <menge> land).
 ```
-
-`cmd.arg1` ist bei Zahlen ein Int; nicht-numerischer Text („abc“, „2.5“) lässt jeden
-`compare_var`-Vergleich falsch ausgehen — `op: ">", value: 0` lässt deshalb genau die
-positiven Ganzzahlen durch. Ohne diese Prüfung erzeugte `kaufe -100 land` Gold.
 
 #### 2. Status-Dashboard & Wertbegrenzung (`rule_status` & `rule_steuern`)
 
@@ -1701,30 +1724,37 @@ positiven Ganzzahlen durch. Ohne diese Prüfung erzeugte `kaufe -100 land` Gold.
   - id: "rule_status"
     on: "command status"
     effects:
-      - text: "╔════════════════════════ PROVINZ KÖNIGSBERG ════════════════════════╗\n║ Jahr: {jahr:3}                 Bürger: {bevoelkerung:6} Seelen                      ║\n║────────────────────────────────────────────────────────────────────║\n║ Schatzkammer:    {gold:6} Gold                                     ║\n║ Kornkammer:      {korn:6} Scheffel                                 ║\n║ Landbesitz:      {land:6} Hektar  (Marktpreis: {land_preis} Gold/ha)         ║\n║ Steuersatz:      {steuersatz:3}%     (Kornpreis:  {korn_preis} Gold/Scheffel)    ║\n╚═════════════════════════════════════════════════════════════════════╝"
+      - text: "╔══════════════════════════ PROVINZ KÖNIGSBERG ══════════════════════════╗\n║ Jahr:            {jahr:6} von 10      Bürger:       {bevoelkerung:6} Seelen        ║\n║────────────────────────────────────────────────────────────────────────║\n║ Schatzkammer:    {gold:6} Gold        Landpreis:    {land_preis:6} Gold/ha       ║\n║ Kornkammer:      {korn:6} Scheffel    Kornpreis:    {korn_preis:6} Gold/Scheffel ║\n║ Landbesitz:      {land:6} Hektar      Letzte Ernte: {ernte_faktor:6} Scheffel/ha   ║\n║ Steuersatz:      {steuersatz:3}%               Verhungert:   {verhungert_gesamt:6} gesamt        ║\n╚════════════════════════════════════════════════════════════════════════╝"
 
   - id: "rule_steuern"
     on: "command steuern"
     effects:
       - if: { compare_var: { name: "cmd.count", op: ">=", value: 1 } }
         then:
-          - compute_var: { var: "steuersatz", expr: "clamp(0, 100, cmd.arg1)" }
-          - text: "Der Steuersatz wurde auf {steuersatz}% festgesetzt."
+          # 0 ist ein gültiger Satz; Werte über 100 werden gekappt, negative/Text abgelehnt.
+          - if: { compare_var: { name: "cmd.arg1", op: ">=", value: 0 } }
+            then:
+              - compute_var: { var: "steuersatz", expr: "clamp(0, 100, cmd.arg1)" }
+              - text: "Der Steuersatz wurde auf {steuersatz}% festgesetzt."
+            else:
+              - text: "Ungültiger Steuersatz '{cmd.arg1}': Gib eine ganze Zahl von 0 bis 100 an (steuern <prozent>)."
         else:
           - text: "Aktueller Steuersatz: {steuersatz}%. Verwendung: steuern <prozent>"
+
+  # Ein Jahr in einer Regel (R-01): jeder Schritt sieht die Werte des vorigen.
 ```
 
 **Gerenderter Output im Spiel:**
 ```text
 > status
-╔════════════════════════ PROVINZ KÖNIGSBERG ════════════════════════╗
-║ Jahr:   1                 Bürger:    100 Seelen                      ║
-║────────────────────────────────────────────────────────────────────║
-║ Schatzkammer:      1000 Gold                                     ║
-║ Kornkammer:        2800 Scheffel                                 ║
-║ Landbesitz:        1000 Hektar  (Marktpreis: 20 Gold/ha)         ║
-║ Steuersatz:          10%     (Kornpreis:  2 Gold/Scheffel)    ║
-╚═════════════════════════════════════════════════════════════════════╝
+╔══════════════════════════ PROVINZ KÖNIGSBERG ══════════════════════════╗
+║ Jahr:                 1 von 10      Bürger:          100 Seelen        ║
+║────────────────────────────────────────────────────────────────────────║
+║ Schatzkammer:      1000 Gold        Landpreis:        20 Gold/ha       ║
+║ Kornkammer:        2800 Scheffel    Kornpreis:         2 Gold/Scheffel ║
+║ Landbesitz:        1000 Hektar      Letzte Ernte:      3 Scheffel/ha   ║
+║ Steuersatz:       10%               Verhungert:        0 gesamt        ║
+╚════════════════════════════════════════════════════════════════════════╝
 
 > steuern 120
 Der Steuersatz wurde auf 100% festgesetzt.

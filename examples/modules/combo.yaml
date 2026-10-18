@@ -164,8 +164,7 @@ rooms:
       east: {to: tr_hall}
       north: {to: tr_vault, locked_by: tr_seal}
     search:
-      - { give: zelle }
-      - { msg: "Hinter einem losen Blech liegt eine Ersatzzelle." }
+      - { msg: "Hinter einem losen Blech nur Staub. Ersatzzellen führt Onn auf der Handelszeile." }
   - id: tr_catwalk
     name: Ausserkatwalk
     desc: "Ein Gittersteg an der Ringwand. Durch das Visier siehst du Sterne und Trümmer."
@@ -340,12 +339,11 @@ items:
     name: Ersatzzelle
     desc: "Ein schwerer Zellblock für Schiffsreaktoren."
     keys: [zelle, batterie, ersatzzelle]
-    location: tr_reactor
-    hidden: true
+    location: tr_market
     verb_map:
       buy,intact:
-        # Kaufsperre: die gefundene Zelle (search im Reaktor) kostete sonst 25 Credits,
-        # ohne dass eine zweite kam.
+        # Kaufsperre: es gibt nur die eine Zelle an Onns Stand — ein zweiter Kauf
+        # liefe ins Leere.
         - if: { has_item: zelle }
           then:
             - { msg: "Du hast schon eine Ersatzzelle — Onn winkt ab." }
@@ -398,7 +396,7 @@ rules:
     on: "before take"
     when: { at: player, room: tr_market }
     effects:
-      - { block: "Onn zieht den Kanister zurück. „Erst Credits (buy <ware>), dann Luft.“" }
+      - { block: "Onn zieht die Ware zurück. „Erst Credits (buy <ware>), dann Ware.“" }
   - id: kaperer_appears
     on: enter tr_belt
     once: true
@@ -421,7 +419,8 @@ interactions:
 tests:
   # Regression (Audit): der Bolz-Deal (gilde −10) vor der Schwarzbox (+12, once)
   # liess den Stand bei 2 — der Tresor (≥ 12) blieb für immer zu. Jetzt erscheint
-  # „Abgemacht." erst bei offenem Siegel. Dazu: Kanister-/Zellen-Kaufsperre, der
+  # „Abgemacht." erst bei offenem Siegel. Dazu: Kanister-/Zellen-Kaufsperre (die
+  # Zelle liegt an Onns Stand, die Reaktor-Suche findet keine mehr), der
   # verbrauchte Kanister geht an Onns Stand zurück (zweite Bestandseinheit
   # erreichbar), Ware am Stand nur gegen Credits.
   - name: combo_bolz_frueh_und_kaufsperren
@@ -446,6 +445,8 @@ tests:
       - "buy kanister"
       - "buy kanister"
       - "take kanister"
+      - "take zelle"
+      - "buy zelle"
       - "buy zelle"
       - "use kanister"
       - "buy kanister"
@@ -478,9 +479,12 @@ tests:
     expect:
       - "[1] Doch nicht."
       - "Sarn notiert deinen Namen in ihren Papieren."
+      - "Hinter einem losen Blech nur Staub."
       - "Du zahlst 12 Credits für einen Kanister."
       - "Du trägst schon einen Kanister — brauch den erst auf."
-      - "Onn zieht den Kanister zurück."
+      - "Onn zieht die Ware zurück."
+      - "Onn zieht die Ware zurück."
+      - "Du kaufst die Zelle für 25 Credits."
       - "Du hast schon eine Ersatzzelle — Onn winkt ab."
       - "Du öffnest den Kanister."
       - "Du zahlst 12 Credits für einen Kanister."
@@ -505,6 +509,7 @@ tests:
       - "east"
       - "buy kanister"
       - "use kanister"
+      - "buy zelle"
       - "west"
       - "enter tarsis"
       - "north"

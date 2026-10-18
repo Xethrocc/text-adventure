@@ -161,7 +161,9 @@ environment:
   Tod bei 0; „trigger cooldown gates turns" (7c) gilt auch hier.
 
 Fixture: `examples/modules/survival.yaml` — Der Eispass. Hunger-Drain
-(essen → `fed` stoppt ihn), Tag-Zähler, Sturm ab Tag 4, Raumtext am Kamm
+(Startvorrat 10 — der Weg zur Hütte ist länger, das Trockenfleisch aus dem
+Biwak ist Pflicht; essen verbraucht die Büchse und setzt `fed`, das den Drain
+stoppt), Tag-Zähler, Sturm ab Tag 4, Raumtext am Kamm
 wechselt per CondText mit dem Wetter, Schutzhütte = Victory.
 
 ---
@@ -610,7 +612,7 @@ Verknüpfungen sind Autoren-Regeln über bestehende Konzepte (Flags, `standing`,
 | 7g Party | `folgen vela` holt die Schrauberin in die Gruppe; sie folgt und schlägt im Kampf mit |
 | 7h Raumschiff | Tarsis VII mit `umleiten`/`aufladen` an den Stationen; Kampf gegen den Kaperer über Schilde und Hülle |
 
-Die Verkettung: Kanister kaufen (7b) → Atemluft sichern (7d) → Vela anwerben
+Die Verkettung: Kanister und Ersatzzelle kaufen (7b) → Atemluft sichern (7d) → Vela anwerben
 (7g) → Gildenauftrag annehmen (7a) → Stationen bedienen und zum Gürtel fliegen
 (7h) → Kaperer besiegen (7h + 7g) → Schwarzbox bergen → beim Gildenbüro abgeben
 (7a) → das Siegel öffnet den Tresorraum → Sieg. E2E:

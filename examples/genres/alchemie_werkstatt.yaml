@@ -835,3 +835,14 @@ tests:
       - "Du kaufst die meisterhafte Silberdistille für 30 Taler!"
       - "Das Magnum Opus — der Stein der Weisen — ist vollendet!"
       - "Das Magnum Opus ist vollbracht! Du bist nun Großmeister der Alchemie."
+
+  # Regression: der Start-`on_enter` (enter laden) feuerte frueher nicht — die
+  # Lehrlingsquest blieb inaktiv. Jetzt ab Zug 0 aktiv, Startgeld genau einmal 15.
+  - name: startquest_ab_spielstart
+    input: [quests, bilanz, north, south, quests, bilanz]
+    expect:
+      - "Ein neuer Arbeitstag in deiner Alchemisten-Werkstatt beginnt. In deiner Geldbörse klimpern 15 Taler."
+      - "- Lehrlingsauftrag: Nimm Blutdistel und Phiole im Labor und braue den Wundbalsam."
+      - "Vermögen: 15 Taler"
+      - "- Lehrlingsauftrag: Nimm Blutdistel und Phiole im Labor und braue den Wundbalsam."
+      - "Vermögen: 15 Taler"

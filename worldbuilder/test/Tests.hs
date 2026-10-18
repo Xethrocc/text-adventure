@@ -4971,6 +4971,7 @@ tests =
     , ("variable cycles: static validation for reset_on, on_overflow and refill (K7/K4)", testVarCyclesValidation)
     , ("resource predicates: YAML parsing and UnknownVariable warning (K4)", testResourcePredicatesYamlAndValidation)
     , ("compare_var on an undeclared, never-written variable warns (X3)", testUnknownCompareVar)
+    , ("dialogue choices accept outcomes / outcome / effects", testDialogueChoiceOutcomeAliases)
     -- K11a: Crafting verbraucht seine Zutaten
     , ("crafting: compile of valid recipe with consume {item1}/{item2} (K11a)", testCraftingCompileValidForm)
     , ("crafting: unbound dynamic ref {item9} produces hard compile error (K11a)", testCraftingUnboundRefRejected)
@@ -9385,6 +9386,17 @@ testVarCyclesValidation = do
 
     pure (and [r1, r2, r3, r4])
 
+-- | Dialogue choices accept `outcomes:`, `outcome:` (old doc spelling) and
+--   `effects:` — before, `outcome:` was silently ignored.
+testDialogueChoiceOutcomeAliases :: IO Bool
+testDialogueChoiceOutcomeAliases = do
+    let parse key = decode1 (BLC.pack ("text: Hi\n" ++ key ++ ":\n  - msg: Tschuess\n"))
+        count key = either (const (-1)) (\c -> length (adcOutcomes (c :: ADialogueChoice))) (parse key)
+    r1 <- expectEqual 1 (count "outcomes")
+    r2 <- expectEqual 1 (count "outcome")
+    r3 <- expectEqual 1 (count "effects")
+    pure (r1 && r2 && r3)
+
 -- | X3: `compare_var` on a plain variable that nothing declares or writes
 --   warns (UnknownVariable); declared, written, dotted (engine) and
 --   nested-`if:` reads behave as documented.
@@ -11689,7 +11701,7 @@ testHazardsStaticValidationStufe2 = do
 
 -- | OPEN-23: Byte-Vertrag-Waechter — mindestens 5 bestehende Abenteuer kompilieren
 --   zu einem mit den gepinnten Baselines byte-identischen world.json (SHA256).
---   Baselines thefog.yaml / roguelike_dungeon.yaml neu gesetzt 2026-10-18
+--   Baselines thefog.yaml / roguelike_dungeon.yaml / survival.yaml neu gesetzt 2026-10-18
 --   (Content-Audit, beabsichtigte Inhaltsänderung; Compiler unverändert:
 --   die HEAD-Fassungen ergaben vorher exakt die alten Hashes).
 testHazardsByteContractWatcher :: IO Bool
@@ -11700,7 +11712,7 @@ testHazardsByteContractWatcher = do
             , ("zork1.yaml", "089d318d206c779e5de12272d917b95d1d29a60b1a921aaed11b7676650be761")
             , ("roguelike_dungeon.yaml", "51672fc210783e3a47d654e0c6ada0ec38f5c5fe4ade51f86add99e5781e4576")
             , ("wissen.yaml", "da115a31517847aefb134a25c3b9a669e0f4ee383534cfeb79adea423add36eb")
-            , ("survival.yaml", "3dda736f26e4d8f6feaf85bda37090e975a5e9090f9c0960a41263311ac947d9")
+            , ("survival.yaml", "895c32f8086463fc426464a572bcabde0c710715affd94a205a1385aae293a13")
             ]
     results <- forM baselines $ \(fname, expSha) -> do
         mbPath <- findExample fname
@@ -12582,7 +12594,7 @@ testK18CardTagValidation = do
 
 -- | K18: Byte-Vertrag-Waechter — mindestens 5 bestehende Abenteuer (inkl.
 --   deckbuilder_spire.yaml) kompilieren zu einem byte-identischen world.json.
---   Baselines thefog.yaml / roguelike_dungeon.yaml neu gesetzt 2026-10-18
+--   Baselines thefog.yaml / roguelike_dungeon.yaml / survival.yaml neu gesetzt 2026-10-18
 --   (Content-Audit, beabsichtigte Inhaltsänderung; Compiler unverändert:
 --   die HEAD-Fassungen ergaben vorher exakt die alten Hashes).
 testK18ByteContractWatcher :: IO Bool
@@ -12593,7 +12605,7 @@ testK18ByteContractWatcher = do
             , ("zork1.yaml", "089d318d206c779e5de12272d917b95d1d29a60b1a921aaed11b7676650be761")
             , ("roguelike_dungeon.yaml", "51672fc210783e3a47d654e0c6ada0ec38f5c5fe4ade51f86add99e5781e4576")
             , ("wissen.yaml", "da115a31517847aefb134a25c3b9a669e0f4ee383534cfeb79adea423add36eb")
-            , ("survival.yaml", "3dda736f26e4d8f6feaf85bda37090e975a5e9090f9c0960a41263311ac947d9")
+            , ("survival.yaml", "895c32f8086463fc426464a572bcabde0c710715affd94a205a1385aae293a13")
             ]
     results <- forM baselines $ \(fname, expSha) -> do
         mbPath <- findExample fname

@@ -129,13 +129,16 @@ items:
     location: gla_4
     hidden: true
     verb_map:
+      # `fed` stoppt den Hunger-Drain endgültig; die Büchse ist danach leer.
       eat,intact:
         - { set_flag: fed, val: "true" }
-        - { add_var: hunger, delta: 15 }
+        - { consume: dried_meat }
         - { msg: "Du beißt ab — salzig, zäh, wunderbar. Dein Magen meldet sich nicht mehr." }
 
 variables:
-  - { name: hunger, type: int, initial: 20, min: 0 }
+  # 10 Züge Vorrat: der Direktweg zur Hütte (12 Züge) verhungert — ohne den
+  # Biwak-Fund (gla_4: search, eat) kommt niemand durch.
+  - { name: hunger, type: int, initial: 10, min: 0 }
   - { name: day, type: int, initial: 0, min: 0 }
 
 quests:
@@ -148,3 +151,17 @@ quests:
 interactions:
   entity: []
   item: []
+tests:
+  # Regression: mit Hunger 20 kam der Direktweg (12 Züge) ohne Essen durch, und
+  # die Büchse Trockenfleisch war beliebig oft essbar.
+  - name: direktweg_verhungert
+    input: [north, north, north, north, north, north, north, north, north, north, north, north]
+    expect:
+      - "Deine Kräfte verlassen dich — du verhungerst im Eis."
+  - name: biwak_fund_rettet_und_buechse_nur_einmal
+    input: [north, north, north, north, search, eat meat, eat meat, north, north, north, north, north, north, north, north]
+    expect:
+      - "Im Rucksack klappert eine Büchse Trockenfleisch."
+      - "Dein Magen meldet sich nicht mehr."
+      - "You don't see 'meat' here."
+      - "VICTORY — Die Hütte ist erreicht."

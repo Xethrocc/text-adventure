@@ -1,6 +1,17 @@
 name: "Provinz Königsberg (Wirtschaft)"
 start_room: "thronsaal"
 
+end_art:
+  victory: |
+    *** AMTSZEIT VOLLENDET ***
+  death: |
+    *** ABGESETZT ***
+
+# Klassisches HAMURABI: zehn Jahre Amtszeit. Jedes 'weiter' beendet ein Jahr:
+# Steuern, Kornverbrauch (20 Scheffel pro Kopf), Hunger oder Zuwanderung,
+# Ernte und neue Marktpreise. Verhungern in einem Jahr mehr als 45 % der
+# Bürger, wirst du abgesetzt; nach Jahr 10 folgt die Schlussbewertung.
+
 verbs:
   - name: "status"
     aliases: ["bilanz", "finanzen", "reich"]
@@ -63,11 +74,50 @@ variables:
   - name: "verbrauch"
     type: int
     initial: 0
+  # Jahresabrechnung (rule_weiter)
+  - name: "bev_alt"
+    type: int
+    initial: 0
+  - name: "gedeckt"
+    type: int
+    initial: 0
+  - name: "verhungert"
+    type: int
+    initial: 0
+  - name: "hunger_quote"
+    type: int
+    initial: 0
+  - name: "wanderung"
+    type: int
+    initial: 0
+  - name: "bebaut"
+    type: int
+    initial: 0
+  - name: "ernte"
+    type: int
+    initial: 0
+  - name: "abgesetzt"
+    type: int
+    initial: 0
+  # Schlussbewertung
+  - name: "verhungert_gesamt"
+    type: int
+    initial: 0
+    min: 0
+  - name: "quote_summe"
+    type: int
+    initial: 0
+  - name: "quote_schnitt"
+    type: int
+    initial: 0
+  - name: "land_pro_kopf"
+    type: int
+    initial: 0
 
 rooms:
   - id: "thronsaal"
     name: "Großer Thronsaal"
-    desc: "Du blickst von deinem geschnitzten Eichenthron über die Ratskammer. Kanzler Heinrich wartet auf deine Befehle. Mit 'status' prüfst du die Schatzkammer, mit 'kaufe <menge> land' erweiterst du dein Reich."
+    desc: "Du blickst von deinem geschnitzten Eichenthron über die Ratskammer. Kanzler Heinrich wartet auf deine Befehle. Deine Amtszeit währt zehn Jahre; mit 'weiter' beendest du ein Jahr. Mit 'status' prüfst du die Schatzkammer, mit 'kaufe <menge> land' oder 'kaufe <menge> korn' handelst du."
     exits:
       north: {to: "balkon"}
       east: {to: "kornkammer"}
@@ -75,7 +125,7 @@ rooms:
 
   - id: "balkon"
     name: "Palastbalkon"
-    desc: "Ein herrlicher Ausblick über weite Felder und rauchende Schornsteine. Deine Ländereien umfassen derzeit {land} Hektar fruchtbaren Bodens."
+    desc: "Ein herrlicher Ausblick über weite Felder und rauchende Schornsteine. Deine Ländereien umfassen derzeit {land} Hektar fruchtbaren Bodens; jeder Bürger kann 10 Hektar bestellen."
     exits:
       south: {to: "thronsaal"}
 
@@ -101,14 +151,14 @@ npcs:
         entry: "start"
         nodes:
           start:
-            text: "Mein Fürst! Die Kasse zählt {gold} Gold und die Kornkammer {korn} Scheffel. Was befehlt Ihr?"
+            text: "Mein Fürst! Wir schreiben Jahr {jahr} von 10. Die Kasse zählt {gold} Gold und die Kornkammer {korn} Scheffel. Was befehlt Ihr?"
             choices:
               - text: "Wie steht es um das Reich?"
                 next: "lage"
               - text: "Ich entscheide selbst."
                 next: null
           lage:
-            text: "Unsere {bevoelkerung} Bürger benötigen jedes Jahr 20 Scheffel Korn pro Seele. Bei {steuersatz}% Steuern nehmen wir jährlich Gold ein."
+            text: "Unsere {bevoelkerung} Bürger benötigen jedes Jahr 20 Scheffel Korn pro Seele. Wer hungert, stirbt — verhungert in einem Jahr fast die Hälfte, jagt Euch das Volk vom Thron. Steuern über 30% vertreiben Bürger, darunter ziehen neue zu."
             choices:
               - text: "Danke, Heinrich."
                 next: null
@@ -117,7 +167,7 @@ rules:
   - id: "rule_status"
     on: "command status"
     effects:
-      - text: "╔════════════════════════ PROVINZ KÖNIGSBERG ════════════════════════╗\n║ Jahr: {jahr:3}                 Bürger: {bevoelkerung:6} Seelen                      ║\n║────────────────────────────────────────────────────────────────────║\n║ Schatzkammer:    {gold:6} Gold                                     ║\n║ Kornkammer:      {korn:6} Scheffel                                 ║\n║ Landbesitz:      {land:6} Hektar  (Marktpreis: {land_preis} Gold/ha)         ║\n║ Steuersatz:      {steuersatz:3}%     (Kornpreis:  {korn_preis} Gold/Scheffel)    ║\n╚═════════════════════════════════════════════════════════════════════╝"
+      - text: "╔══════════════════════════ PROVINZ KÖNIGSBERG ══════════════════════════╗\n║ Jahr:            {jahr:6} von 10      Bürger:       {bevoelkerung:6} Seelen        ║\n║────────────────────────────────────────────────────────────────────────║\n║ Schatzkammer:    {gold:6} Gold        Landpreis:    {land_preis:6} Gold/ha       ║\n║ Kornkammer:      {korn:6} Scheffel    Kornpreis:    {korn_preis:6} Gold/Scheffel ║\n║ Landbesitz:      {land:6} Hektar      Letzte Ernte: {ernte_faktor:6} Scheffel/ha   ║\n║ Steuersatz:      {steuersatz:3}%               Verhungert:   {verhungert_gesamt:6} gesamt        ║\n╚════════════════════════════════════════════════════════════════════════╝"
 
   - id: "rule_kaufe"
     on: "command kaufe"
@@ -129,21 +179,43 @@ rules:
             then:
               - if: { var: "cmd.arg2", is: "land" }
                 then:
-                  - compute_var: { var: "kosten", expr: "cmd.arg1 * land_preis" }
                   # Menge <= Gold fängt Int-Überlauf von kosten ab (Preis >= 1).
-                  - if: { all: [ { compare_var: { name: "cmd.arg1", op: "<=", var: "gold" } }, { compare_var: { name: "gold", op: ">=", var: "kosten" } } ] }
+                  # Erst danach rechnen, sonst zeigt die Meldung einen übergelaufenen Betrag.
+                  - if: { compare_var: { name: "cmd.arg1", op: "<=", var: "gold" } }
                     then:
-                      - compute_var: { var: "gold", expr: "gold - kosten" }
-                      - compute_var: { var: "land", expr: "land + cmd.arg1" }
-                      - text: "Erfolgreich erworben: {cmd.arg1} Hektar Land für {kosten} Gold."
+                      - compute_var: { var: "kosten", expr: "cmd.arg1 * land_preis" }
+                      - if: { compare_var: { name: "gold", op: ">=", var: "kosten" } }
+                        then:
+                          - compute_var: { var: "gold", expr: "gold - kosten" }
+                          - compute_var: { var: "land", expr: "land + cmd.arg1" }
+                          - text: "Erfolgreich erworben: {cmd.arg1} Hektar Land für {kosten} Gold."
+                        else:
+                          - text: "Nicht genug Gold in der Schatzkammer! Du benötigst {kosten} Gold."
                     else:
-                      - text: "Nicht genug Gold in der Schatzkammer! Du benötigst {kosten} Gold."
+                      - text: "Nicht genug Gold in der Schatzkammer! Du benötigst mindestens {cmd.arg1} Gold."
                 else:
-                  - text: "Auf dem Markt kannst du nur 'land' kaufen (kaufe <menge> land)."
+                  - if: { var: "cmd.arg2", is: "korn" }
+                    then:
+                      # Gleicher Überlauf-Schutz wie beim Land (Kornpreis >= 1).
+                      # Erst danach rechnen, sonst zeigt die Meldung einen übergelaufenen Betrag.
+                      - if: { compare_var: { name: "cmd.arg1", op: "<=", var: "gold" } }
+                        then:
+                          - compute_var: { var: "kosten", expr: "cmd.arg1 * korn_preis" }
+                          - if: { compare_var: { name: "gold", op: ">=", var: "kosten" } }
+                            then:
+                              - compute_var: { var: "gold", expr: "gold - kosten" }
+                              - compute_var: { var: "korn", expr: "korn + cmd.arg1" }
+                              - text: "Erfolgreich erworben: {cmd.arg1} Scheffel Korn für {kosten} Gold."
+                            else:
+                              - text: "Nicht genug Gold in der Schatzkammer! Du benötigst {kosten} Gold."
+                        else:
+                          - text: "Nicht genug Gold in der Schatzkammer! Du benötigst mindestens {cmd.arg1} Gold."
+                    else:
+                      - text: "Auf dem Markt kannst du nur 'land' oder 'korn' kaufen (kaufe <menge> land|korn)."
             else:
               - text: "Ungültige Menge '{cmd.arg1}': Gib eine positive ganze Zahl an (kaufe <menge> land)."
         else:
-          - text: "Verwendung: kaufe <menge> land"
+          - text: "Verwendung: kaufe <menge> land|korn"
 
   - id: "rule_verkaufe"
     on: "command verkaufe"
@@ -163,11 +235,22 @@ rules:
                     else:
                       - text: "So viel Land besitzt die Provinz nicht!"
                 else:
-                  - text: "Auf dem Markt kannst du nur 'land' verkaufen (verkaufe <menge> land)."
+                  - if: { var: "cmd.arg2", is: "korn" }
+                    then:
+                      - if: { compare_var: { name: "korn", op: ">=", var: "cmd.arg1" } }
+                        then:
+                          - compute_var: { var: "erloes", expr: "cmd.arg1 * korn_preis" }
+                          - compute_var: { var: "gold", expr: "gold + erloes" }
+                          - compute_var: { var: "korn", expr: "korn - cmd.arg1" }
+                          - text: "Erfolgreich verkauft: {cmd.arg1} Scheffel Korn für {erloes} Gold."
+                        else:
+                          - text: "So viel Korn lagert nicht in der Kornkammer!"
+                    else:
+                      - text: "Auf dem Markt kannst du nur 'land' oder 'korn' verkaufen (verkaufe <menge> land|korn)."
             else:
               - text: "Ungültige Menge '{cmd.arg1}': Gib eine positive ganze Zahl an (verkaufe <menge> land)."
         else:
-          - text: "Verwendung: verkaufe <menge> land"
+          - text: "Verwendung: verkaufe <menge> land|korn"
 
   - id: "rule_steuern"
     on: "command steuern"
@@ -184,20 +267,88 @@ rules:
         else:
           - text: "Aktueller Steuersatz: {steuersatz}%. Verwendung: steuern <prozent>"
 
+  # Ein Jahr in einer Regel (R-01): jeder Schritt sieht die Werte des vorigen.
   - id: "rule_weiter"
     on: "command weiter"
     effects:
+      # 1. Steuern
       - compute_var: { var: "einnahmen", expr: "bevoelkerung * steuersatz / 5" }
-      - compute_var: { var: "verbrauch", expr: "bevoelkerung * 20" }
       - compute_var: { var: "gold", expr: "gold + einnahmen" }
-      - compute_var: { var: "jahr", expr: "jahr + 1" }
+      - text: "Jahresabrechnung für Jahr {jahr} von 10:\nSteuereinnahmen: +{einnahmen} Gold."
+      # 2. Kornverbrauch: 20 Scheffel pro Kopf
+      - compute_var: { var: "bev_alt", expr: "bevoelkerung" }
+      - compute_var: { var: "verbrauch", expr: "bevoelkerung * 20" }
       - if: { compare_var: { name: "korn", op: ">=", var: "verbrauch" } }
         then:
-          - compute_var: { var: "korn", expr: "korn - verbrauch + (land * ernte_faktor)" }
-          - text: "Ein neues Jahr bricht an (Jahr {jahr})!\nSteuereinnahmen: +{einnahmen} Gold.\nVerbrauch der Bürger: -{verbrauch} Scheffel Korn.\nNeue Ernte eingefahren! Vorrat: {korn} Scheffel."
+          - compute_var: { var: "korn", expr: "korn - verbrauch" }
+          - compute_var: { var: "verhungert", expr: "0" }
+          - compute_var: { var: "hunger_quote", expr: "0" }
+          - text: "Verbrauch der Bürger: -{verbrauch} Scheffel Korn. Alle wurden satt."
+          # 3. Wanderung: bis 30% Steuern ziehen Leute zu (höchstens so viele,
+          #    wie der Restvorrat ein Jahr ernährt), darüber wandern sie ab.
+          - if: { compare_var: { name: "steuersatz", op: "<=", value: 30 } }
+            then:
+              - compute_var: { var: "wanderung", expr: "min(korn / 20, bevoelkerung * (30 - steuersatz) / 100)" }
+              - compute_var: { var: "bevoelkerung", expr: "bevoelkerung + wanderung" }
+              - text: "{if wanderung > 0|Zuwanderung: +{wanderung} Bürger.|Niemand zieht zu.}"
+            else:
+              - compute_var: { var: "wanderung", expr: "bevoelkerung * (steuersatz - 30) / 200" }
+              - compute_var: { var: "bevoelkerung", expr: "bevoelkerung - wanderung" }
+              - text: "Die hohen Steuern vertreiben {wanderung} Bürger aus der Provinz."
         else:
-          - compute_var: { var: "korn", expr: "land * ernte_faktor" }
-          - text: "Hungersnot im Winter! Die Kornkammer war leer, doch die neue Ernte bringt {korn} Scheffel."
+          # Hunger: wer nicht gedeckt ist, verhungert; Restkorn (< 20) bleibt liegen.
+          - compute_var: { var: "gedeckt", expr: "korn / 20" }
+          - compute_var: { var: "verhungert", expr: "bevoelkerung - gedeckt" }
+          - compute_var: { var: "korn", expr: "korn - gedeckt * 20" }
+          - compute_var: { var: "bevoelkerung", expr: "gedeckt" }
+          - compute_var: { var: "hunger_quote", expr: "verhungert * 100 / bev_alt" }
+          - compute_var: { var: "verhungert_gesamt", expr: "verhungert_gesamt + verhungert" }
+          - text: "Hungersnot! Das Korn reichte nur für {gedeckt} von {bev_alt} Bürgern: {verhungert} sind verhungert ({hunger_quote}%). Restkorn: {korn} Scheffel."
+      - compute_var: { var: "quote_summe", expr: "quote_summe + hunger_quote" }
+      - if: { compare_var: { name: "hunger_quote", op: ">", value: 45 } }
+        then:
+          - compute_var: { var: "abgesetzt", expr: "1" }
+      - if: { compare_var: { name: "abgesetzt", op: ">=", value: 1 } }
+        then:
+          - text: "Das hungernde Volk stürmt den Palast. {verhungert} Tote in einem Jahr sind zu viele."
+          - game_end: death
+            msg: "ABGESETZT — Wegen der Hungersnot in Jahr {jahr} jagt dich das Volk vom Thron."
+        else:
+          # 4. Ernte: jeder Bürger bestellt bis zu 10 Hektar, Ertrag 1–5 Scheffel/ha.
+          - roll_dice: { pool: 1, die: 5, stream: ernte }
+          - compute_var: { var: "ernte_faktor", expr: "dice.sum" }
+          - compute_var: { var: "bebaut", expr: "min(land, bevoelkerung * 10)" }
+          - compute_var: { var: "ernte", expr: "bebaut * ernte_faktor" }
+          - compute_var: { var: "korn", expr: "korn + ernte" }
+          - text: "Ernte: {bebaut} Hektar bestellt, {ernte_faktor} Scheffel/ha = +{ernte} Scheffel. Vorrat: {korn} Scheffel."
+          # 5. Neue Marktpreise: Land 17–26 Gold/ha, Korn 1–3 Gold/Scheffel.
+          - roll_dice: { pool: 1, die: 10, stream: preise }
+          - compute_var: { var: "land_preis", expr: "16 + dice.sum" }
+          - roll_dice: { pool: 1, die: 3, stream: preise }
+          - compute_var: { var: "korn_preis", expr: "dice.sum" }
+          # 6. Jahreswechsel oder Schlussbewertung nach Jahr 10
+          - if: { compare_var: { name: "jahr", op: ">=", value: 10 } }
+            then:
+              - compute_var: { var: "land_pro_kopf", expr: "land / bevoelkerung" }
+              - compute_var: { var: "quote_schnitt", expr: "quote_summe / 10" }
+              - text: "Deine zehnjährige Amtszeit ist vorüber.\nBürger: {bevoelkerung}, Land: {land} Hektar ({land_pro_kopf} ha pro Kopf), Gold: {gold}, Korn: {korn}.\nVerhungert insgesamt: {verhungert_gesamt} (im Schnitt {quote_schnitt}% pro Jahr)."
+              # Ruhmreich nur, wenn die Provinz nicht geschrumpft ist (sonst wäre
+              # Vertreiben per Steuern der billigste Weg zu viel Land pro Kopf).
+              - if: { all: [ { compare_var: { name: "quote_schnitt", op: "<=", value: 3 } }, { compare_var: { name: "land_pro_kopf", op: ">=", value: 10 } }, { compare_var: { name: "bevoelkerung", op: ">=", value: 100 } } ] }
+                then:
+                  - game_end: victory
+                    msg: "RUHMREICH — Die Chronik preist dich als weisen Herrscher von Königsberg."
+                else:
+                  - if: { all: [ { compare_var: { name: "quote_schnitt", op: "<=", value: 10 } }, { compare_var: { name: "land_pro_kopf", op: ">=", value: 7 } } ] }
+                    then:
+                      - game_end: victory
+                        msg: "SOLIDE — Man erinnert sich an dich als ordentlichen Verwalter."
+                    else:
+                      - game_end: victory
+                        msg: "KLÄGLICH — Das Volk ist froh, dich los zu sein."
+            else:
+              - compute_var: { var: "jahr", expr: "jahr + 1" }
+              - text: "Ein neues Jahr bricht an (Jahr {jahr} von 10)! Land kostet nun {land_preis} Gold/ha, Korn {korn_preis} Gold/Scheffel."
 
 tests:
   - name: "ungueltige_mengen_werden_abgelehnt"
@@ -219,3 +370,69 @@ tests:
       - "Schatzkammer:      1000 Gold"
       - "Landbesitz:        1000 Hektar"
       - "Steuersatz:       10%"
+
+  - name: "kornhandel_zum_kornpreis"
+    input:
+      - "kaufe 100 korn"
+      - "verkaufe 50 korn"
+      - "kaufe 600 korn"
+      - "verkaufe 5000 korn"
+      - "kaufe 5 gold"
+      - "kaufe 0 korn"
+      - "verkaufe -3 korn"
+      - "kaufe 9223372036854775807 korn"
+      - "status"
+    expect:
+      - "Erfolgreich erworben: 100 Scheffel Korn für 200 Gold."
+      - "Erfolgreich verkauft: 50 Scheffel Korn für 100 Gold."
+      - "Nicht genug Gold in der Schatzkammer! Du benötigst 1200 Gold."
+      - "So viel Korn lagert nicht in der Kornkammer!"
+      - "Auf dem Markt kannst du nur 'land' oder 'korn' kaufen (kaufe <menge> land|korn)."
+      - "Ungültige Menge '0': Gib eine positive ganze Zahl an (kaufe <menge> land)."
+      - "Ungültige Menge '-3': Gib eine positive ganze Zahl an (verkaufe <menge> land)."
+      - "Nicht genug Gold in der Schatzkammer! Du benötigst mindestens 9223372036854775807 Gold."
+      - "Schatzkammer:       900 Gold"
+      - "Kornkammer:        2850 Scheffel"
+
+  # Genau 45 % verhungert: noch keine Absetzung; Restkorn (< 20) bleibt liegen.
+  - name: "hungersnot_45_prozent_mit_restkorn"
+    input: ["verkaufe 1690 korn", "weiter", "status"]
+    expect:
+      - "Hungersnot! Das Korn reichte nur für 55 von 100 Bürgern: 45 sind verhungert (45%). Restkorn: 10 Scheffel."
+      - "Ernte: 550 Hektar bestellt, 3 Scheffel/ha = +1650 Scheffel. Vorrat: 1660 Scheffel."
+      - "Ein neues Jahr bricht an (Jahr 2 von 10)!"
+      - "Bürger:           55 Seelen"
+      - "Verhungert:       45 gesamt"
+
+  - name: "hungersnot_fuehrt_zur_absetzung"
+    input: ["verkaufe 1800 korn", "weiter", "status"]
+    expect:
+      - "Hungersnot! Das Korn reichte nur für 50 von 100 Bürgern: 50 sind verhungert (50%). Restkorn: 0 Scheffel."
+      - "Das hungernde Volk stürmt den Palast. 50 Tote in einem Jahr sind zu viele."
+      - "ABGESETZT — Wegen der Hungersnot in Jahr 1 jagt dich das Volk vom Thron."
+
+  - name: "hohe_steuern_vertreiben_buerger"
+    input: ["steuern 100", "weiter", "steuern 0", "weiter"]
+    expect:
+      - "Steuereinnahmen: +2000 Gold."
+      - "Die hohen Steuern vertreiben 35 Bürger aus der Provinz."
+      - "Steuereinnahmen: +0 Gold."
+      - "Zuwanderung: +19 Bürger."
+
+  # Schlussbewertung nach Jahr 10 (Rang SOLIDE: niemand verhungert, aber geschrumpft).
+  - name: "jahr_10_bewertung_solide"
+    input: ["steuern 50", "weiter", "weiter", "weiter", "weiter", "weiter", "weiter", "weiter", "weiter", "weiter", "weiter"]
+    expect:
+      - "Ein neues Jahr bricht an (Jahr 10 von 10)!"
+      - "Deine zehnjährige Amtszeit ist vorüber."
+      - "Bürger: 37, Land: 1000 Hektar (27 ha pro Kopf), Gold: 7590, Korn: 5660."
+      - "Verhungert insgesamt: 0 (im Schnitt 0% pro Jahr)."
+      - "SOLIDE — Man erinnert sich an dich als ordentlichen Verwalter."
+
+  - name: "jahr_10_bewertung_klaeglich"
+    input: ["steuern 20", "kaufe 300 korn", "weiter", "kaufe 300 korn", "weiter", "kaufe 300 korn", "weiter", "kaufe 300 korn", "weiter", "kaufe 300 korn", "weiter", "kaufe 300 korn", "weiter", "kaufe 300 korn", "weiter", "kaufe 300 korn", "weiter", "kaufe 300 korn", "weiter", "kaufe 300 korn", "weiter"]
+    expect:
+      - "Deine zehnjährige Amtszeit ist vorüber."
+      - "Bürger: 181, Land: 1000 Hektar (5 ha pro Kopf), Gold: 1536, Korn: 8300."
+      - "Verhungert insgesamt: 29 (im Schnitt 2% pro Jahr)."
+      - "KLÄGLICH — Das Volk ist froh, dich los zu sein."

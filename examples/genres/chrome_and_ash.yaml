@@ -163,7 +163,8 @@ rooms:
     desc: >
       Die Gleise liegen verlassen und rostzerfressen im flackernden Notlicht.
       Kein Zug faehrt mehr auf dieser Ebene. Ein dunkler Wartungsschacht
-      klafft im Norden wie ein Schlund in die Fundamente des Megatowers.
+      klafft im Norden wie ein Schlund in die Fundamente des Megatowers --
+      ein Weg ohne Schloss, aber Runner raunen, er sei verdrahtet.
       Nach Westen geht es hinauf zum Nachtmarkt.
     exits:
       west: { to: market }
@@ -175,6 +176,8 @@ rooms:
       Dicke Hochspannungskabel und optische Glasfaserleitungen ziehen sich wie
       Adern ueber die feuchte Betondecke. Am Ende des Tunnels fuehrt eine
       vertikale Steigleiter hinauf zur Service-Schleuse der Konzern-Lobby.
+      Ueber der Luke blinzelt ein Bewegungsmelder: kein Schloss, aber auch
+      kein Weg hinauf, ohne gesehen zu werden.
       Nach Sueden fuehrt der Tunnel zurueck zum Gleis.
     exits:
       south: { to: subway }
@@ -207,12 +210,20 @@ rooms:
 
   - id: corp_entrance
     name: Konzern-Lobby
-    desc: >
-      Polierter Marmor, glanzvolles Chrom und kuehle Eleganz. Leise Synthesizer-
-      Klaenge beruhigen scheinbar die Nerven, waehrend eine bewaffnete
-      Sicherheitsdrohne lautlos ueber dem Empfangsthresen kreist. Im Westen
-      liegt die Service-Tuer, eine Bodenluke fuehrt hinab in den Tunnel, und im
-      Osten steht ein Express-Fahrstuhl bereit.
+    description:
+      default: >
+        Polierter Marmor, glanzvolles Chrom und kuehle Eleganz. Leise Synthesizer-
+        Klaenge beruhigen scheinbar die Nerven, waehrend eine bewaffnete
+        Sicherheitsdrohne lautlos ueber dem Empfangsthresen kreist. Im Westen
+        liegt die Service-Tuer, eine Bodenluke fuehrt hinab in den Tunnel, und im
+        Osten steht ein Express-Fahrstuhl bereit.
+      variants:
+        - when: { compare_var: { name: alarm_stufe, op: gte, value: 1 } }
+          text: >
+            Polierter Marmor, glanzvolles Chrom -- und rotes Zielerfassungslicht.
+            Die Sicherheitsdrohne hat ihre Waffe ausgefahren und tastet die Halle
+            nach dir ab. Im Westen liegt die Service-Tuer, eine Bodenluke fuehrt
+            hinab in den Tunnel, und im Osten steht ein Express-Fahrstuhl bereit.
     exits:
       west: { to: back_door }
       down: { to: tunnel }
@@ -383,7 +394,10 @@ items:
             - learn: blackwood_protokoll
             - add_var: { var: heat, delta: 2 }
             - add_var: { var: score, delta: 40 }
-            - advance_quest: blackwood_job
+            # Den Nachtmarkt kann man auslassen (Hintertuer) — dann laeuft die
+            # Quest noch nicht, und advance_quest meldete „nicht aktiv“.
+            - if: { has_flag: job_gestartet }
+              then: [ { advance_quest: blackwood_job } ]
             - msg: "Du ueberwindest die Passwort-Sperre des Terminals. Bauplaene und das Forschungsprotokoll 'Projekt Asche' fliessen in dein Deck! (+2 Heat, +40 Punkte)"
           else:
             - msg: "Das Terminal ist bereits leergesaugt. Keine weiteren Daten vorhanden."
@@ -406,7 +420,8 @@ items:
                 - {set_state: vault_lock, to: unlocked}
                 - add_var: { var: heat, delta: 1 }
                 - add_var: { var: score, delta: 50 }
-                - advance_quest: blackwood_job
+                - if: { has_flag: job_gestartet }
+                  then: [ { advance_quest: blackwood_job } ]
                 - msg: "Dein gecrafteter ICE-Breaker zerfetzt die Blackwood-Firewall wie Butter! Die massive Tresortuer zischt und schwingt auf! (+1 Heat, +50 Punkte)"
               else:
                 - add_var: { var: heat, delta: 3 }
@@ -436,7 +451,7 @@ npcs:
               - text: "Ich bin schon wieder weg."
                 next: null
           tower_info:
-            text: "Die Wachdrohnen wurden verdoppelt. Hinten an der Hintergasse flackert der Leser -- eine Schwachstelle fuer einen faehigen Hacker."
+            text: "Die Wachdrohnen wurden verdoppelt. Hinten an der Hintergasse flackert der Leser -- eine Schwachstelle fuer einen faehigen Hacker. Der alte Versorgungstunnel unter der U-Bahn ist offen, aber verdrahtet: Wer da hochklettert, hat sofort die Lobby-Drohne am Hals."
             choices:
               - text: "Danke fuer den Tipp, Chen."
                 next: null
@@ -503,13 +518,27 @@ quests:
     desc: Infiltriere den Megatower der Blackwood Corporation und bringe den geheimen Datenkern nach draussen.
     stages:
       - id: recon
-        desc: Verschaffe dir Zugang zum Tower und ueberwinde die Service-Tuer.
+        desc: "Dring in den Tower ein -- leise ueber den Kartenleser der Service-Tuer oder riskant durch den verdrahteten Versorgungstunnel -- und zapfe im Buerostock das Terminal an."
       - id: infiltrate
-        desc: Verschaffe dir die Zugangsdaten im Buerostock und oeffne den Datensafe.
+        desc: Knacke im Serverraum die Firewall und oeffne den Datensafe.
       - id: exfil
         desc: Extrahiere den Datenkern und entkomme ueber den Fluchthof.
     reward:
       - msg: "Der Coup des Jahrhunderts ist geglueckt! Dein Name wird in den Clubs der Unterstadt gefeiert."
+
+# Die Lobby-Drohne kaempft nur bei ausgeloestem Tunnel-Alarm (alarm_stufe >= 1);
+# wer leise durch die Service-Tuer kommt, bleibt unbehelligt. "attack drohne"
+# schaltet sie endgueltig aus.
+patrol:
+  hostiles:
+    - npc: drone
+      path: [corp_entrance]
+      guardian: true
+      attack:
+        - if: { compare_var: { name: alarm_stufe, op: gte, value: 1 } }
+          then:
+            - msg: "Die Sicherheitsdrohne erfasst dich und feuert! Querschlaeger sprengen Splitter aus dem Marmor."
+            - damage: 12
 
 interactions:
   entity: []
@@ -532,7 +561,24 @@ rules:
     once: true
     effects:
       - start_quest: blackwood_job
+      - {set_flag: job_gestartet, val: "true"}
       - msg: "Auftrag erfasst: 'Der Blackwood-Coup' wurde gestartet!"
+
+  # Bewusste Alternative zur Service-Tuer: der Tunnel braucht keinen Hack,
+  # loest aber den Bewegungsmelder an der Schleuse aus -- Heat +2 (wie der
+  # Hack, nur ohne dessen Punkte) und alarm_stufe 1: die Lobby-Drohne
+  # (patrol-Waechter unten) eroeffnet das Feuer, solange du in der Lobby bist.
+  - id: tunnel_alarm
+    on: before go
+    when:
+      all:
+        - { at: player, room: tunnel }
+        - { var: cmd.target, is: corp_entrance }
+        - { compare_var: { name: alarm_stufe, op: eq, value: 0 } }
+    effects:
+      - set_var: { var: alarm_stufe, value: 1 }
+      - add_var: { var: heat, delta: 2 }
+      - msg: "Der Bewegungsmelder an der Schleuse schlaegt an, als du durch die Luke kletterst! Oben faehrt eine Drohne ihre Waffe aus. (+2 Heat, Alarmstufe 1)"
 
   # Heat-Eskalation Stufe 1: Warnung bei Heat >= 7
   - id: heat_warnung
@@ -557,7 +603,8 @@ rules:
     on: enter escape_yard
     when: { has_flag: shard_taken }
     effects:
-      - complete_quest: blackwood_job
+      - if: { has_flag: job_gestartet }
+        then: [ { complete_quest: blackwood_job } ]
       - add_var: { var: score, delta: 50 }
       - msg: "Du schluepfst durch das Zaunloch in die brodelnde Masse der Slums. Die Sirenen verhallen in der Ferne."
       - game_end: victory
@@ -626,3 +673,29 @@ tests:
       - "[1] Was erwartet mich im Tower?"
       - "Punktestand: 80/350"
       - "Du trägst nichts bei dir."
+
+  # Design ("bewusste Alternative"): der Versorgungstunnel braucht keinen
+  # Hack, kostet aber Heat und loest alarm_stufe 1 aus -- die Lobby-Drohne feuert.
+  - name: tunnel_loest_alarm_aus
+    input: [east, north, east, north, up, stats]
+    expect:
+      - "Der Bewegungsmelder an der Schleuse schlaegt an, als du durch die Luke kletterst! Oben faehrt eine Drohne ihre Waffe aus. (+2 Heat, Alarmstufe 1)"
+      - "Die Sicherheitsdrohne erfasst dich und feuert!"
+      - "Die Sicherheitsdrohne hat ihre Waffe ausgefahren und tastet die Halle"
+      - "Gesundheit:  88 / 100"
+  # ...waehrend die gehackte Service-Tuer leise bleibt: Drohne passiv, kein Schaden.
+  - name: service_tuer_bleibt_leise
+    input: [north, north, hack kartenleser, east, stats]
+    expect:
+      - "Du hackst den Kartenleser."
+      - "waehrend eine bewaffnete Sicherheitsdrohne lautlos ueber dem Empfangsthresen kreist."
+      - "Gesundheit:  100 / 100"
+  # Der Tunnel-Weg bleibt gewinnbar (Heat 9 < 10, zwei Drohnentreffer).
+  - name: tunnel_weg_gewinnbar
+    input: [east, north, west, take chip, talk to jax, "1", "1", east, take cyberdeck, south, take bypass, craft icebreaker, north, east, north, up, east, up, hack terminal, east, down, hack konsole, east, take datenkern, west, up, west, west, west, stats, west, south, south, west]
+    expect:
+      - "Der Bewegungsmelder an der Schleuse schlaegt an"
+      - "Dein gecrafteter ICE-Breaker zerfetzt die Blackwood-Firewall wie Butter!"
+      - "WARNUNG: Netz-Sicherheit schlaegt an!"
+      - "Gesundheit:  76 / 100"
+      - "SIEG — Du hast den Blackwood-Datenkern erfolgreich extrahiert!"

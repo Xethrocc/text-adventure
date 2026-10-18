@@ -1,32 +1,71 @@
 board nordstern
-folgen kael
-east
-folgen val
-aufladen
-west
-look at 1
+drive to Rebellengrenze
+drive to Nebelbank
 drive to Asteroidenfeld
-use-ability laser
+attack piratenschiff
 defend
 attack piratenschiff
-attack piratenschiff
 board nordstern
+drive to Evakuierungssektor
 drive to Nebelbank
 north
 search
 use schild_bauplan
 south
 board nordstern
-south
-use notfall_kippschalter
-r
-board nordstern
-folgen kael
 drive to Rebellengrenze
-use-ability rakete
+attack rebellenjaeger
 attack rebellenjaeger
 attack rebellenjaeger
 board nordstern
 drive to Evakuierungssektor
+use evakuierungs_beacon
+attack flaggschiff
+attack flaggschiff
+r
+board nordstern
+folgen kael
+south
+folgen sarek
+north
+east
+folgen val
+aufladen
+west
+look at 1
+drive to Asteroidenfeld
+use-ability rakete
+board nordstern
+drive to Nebelbank
+board nordstern
+drive to Handelsstation
+east
+talk zax
+1
+2
+1
+1
+3
+west
+board nordstern
+drive to Rebellengrenze
+use-ability rakete
+attack rebellenjaeger
+use-ability rakete
+board nordstern
+east
+aufladen
+west
+drive to Evakuierungssektor
+board nordstern
+east
+aufladen
+west
+disembark
+attack flaggschiff
+use-ability rakete
+attack flaggschiff
+use-ability rakete
+attack flaggschiff
 use evakuierungs_beacon
 q

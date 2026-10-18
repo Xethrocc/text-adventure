@@ -1,7 +1,17 @@
 status
-kaufe 50 land
-kaufe 1 land
-verkaufe 1000 land
-steuern 120
+kaufe 1000 land
+steuern 30
+weiter
+weiter
+weiter
+kaufe 200 korn
+weiter
+weiter
+kaufe 100 land
+weiter
+weiter
+verkaufe 2000 korn
+weiter
+weiter
 status
 weiter

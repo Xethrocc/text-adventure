@@ -218,11 +218,12 @@ rooms:
     desc: "Ein verlassener, nebliger Friedhof am Hang des Berges. Vor dir ragt der uralte Schrein der Ahnen auf. Eine finstere Steintreppe führt hinab ('down' oder 'absteigen') in die Tiefen der Krypta."
     exits:
       down: knochenkammer
+    # Starthand beim Betreten des Startraums (Zug 0, auch nach Restart).
+    # `meta.runs` zaehlt die Engine selbst je frischem Run — kein add_var hier.
     on_enter:
       - if: { compare_var: { name: initial_draw, op: eq, value: 0 } }
         then:
           - set_var: { var: initial_draw, value: 1 }
-          - add_var: { var: meta.runs, delta: 1 }
           - draw_cards: 5
 
   # Ebene 1: Knochenkammer (Erster Kampf)
@@ -600,3 +601,14 @@ tests:
     expect:
       - "[Deck: 5] ─── HP 35/35 | Block: 0 | Energie: 3/3 ─── [Ablage: 0]"
       - "1. Schmett (2)"
+  # Regression: der Start-`on_enter` (vorhof) feuerte frueher nicht — leere
+  # Starthand. Jetzt liegt die Hand ab Zug 0; der Kampf-Draw in der
+  # Knochenkammer zieht bei voller Hand nicht doppelt (Stapel bleibt 5).
+  - name: starthand_ab_zug_0
+    input: [hand, down, hand]
+    expect:
+      - "[Deck: 5] ─── HP 35/35 | Block: 0 | Energie: 3/3 ─── [Ablage: 0]"
+      - "(Keine Gegner im Raum)"
+      - "1. Schmett (2)"
+      - "[Deck: 5] ─── HP 35/35 | Block: 0 | Energie: 3/3 ─── [Ablage: 0]"
+      - "GEGNER: Skelettkrieger (HP: 16/16)"

@@ -654,7 +654,9 @@ runGameWithFrontend fe state0 = do
         (newState, message) = executeCommand Look entered
     mapM_ (feEmitLine fe) (renderStartEvents entered enterEvs)
     feEmitLine fe message
-    loopGame fe (initLoopState newState)
+    -- `restart` starts over from the state *before* the start room was
+    -- entered, so the fresh run enters it again (once-rules, start quests).
+    loopGame fe ((initLoopState newState) { lsInitial = state' })
 
 -- | Print engine diagnostics that appeared while handling one command to
 --   the frontend's diagnostics channel (P2-23). They describe a content error

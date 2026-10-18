@@ -379,7 +379,15 @@ testEnterStartRoom = do
               (Map.member "start_greeting" (triggerStates (save st1)))
     r4 <- expectTrue "a loaded save enters nothing" (null (renderEvents evsL))
     r5 <- expectTrue "a loaded save keeps its state" (triggerStates (save stL) == triggerStates (save loaded))
-    pure (r1 && r2 && r3 && r4 && r5)
+    -- restart starts over from the state before the start room was entered
+    -- (as runGameWithFrontend sets it up), so a `once` start rule fires again
+    let onceTrig = trig { trOnce = True }
+        stOnce = st0 { world = (world st0) { triggerDefs = [onceTrig] } }
+        (enteredOnce, _) = enterStartRoom stOnce
+        ls = (initLoopState enteredOnce) { lsInitial = stOnce }
+        (_, _, restartLines) = transitionRestart 1 ls
+    r6 <- expectTrue "restart enters the start room again" (any ("Rule greets you." `isInfixOf`) restartLines)
+    pure (r1 && r2 && r3 && r4 && r5 && r6)
 
 -- | `has_exit`: static exits, dynamic ones (`set_exit`/`remove_exit`), the
 --   `current` alias, and the authored YAML spellings round-trip.

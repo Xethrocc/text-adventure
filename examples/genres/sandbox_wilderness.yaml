@@ -26,13 +26,6 @@ variables:
     type: int
     initial: 1
     min: 1
-  # Auf welcher Schacht-Ebene steht der Spieler (1 = Oberfläche)? Die Sohle des
-  # Schachts ist erreicht, wenn schacht_ebene == depth — nur dort darf gegraben
-  # werden (sonst überschreibt ein zweiter Stollen den Ausgang nach unten).
-  - name: "schacht_ebene"
-    type: int
-    initial: 1
-    min: 1
   - name: "beeren_timer"
     type: int
     initial: 0
@@ -185,8 +178,9 @@ rules:
         - has_item: "spitzhacke"
         - compare_var: { name: "energy", op: "gte", value: 15 }
     effects:
-      # Eine Regel mit if/else (R-01): nur an der Sohle des Schachts graben.
-      - if: { compare: { lhs: schacht_ebene, op: "=", rhs: depth } }
+      # Eine Regel mit if/else (R-01): nur graben, wo noch kein Schacht nach
+      # unten führt (sonst überschriebe ein zweiter Stollen den Ausgang).
+      - if: { not: { has_exit: { dir: down } } }
         then:
           - generate_room:
               id: "stollen_{depth}"
@@ -200,26 +194,7 @@ rules:
           - compute_var: { var: energy, expr: "max(0, energy - 15)" }
           - msg: "Du schlägst mit der Spitzhacke in das Erdreich und legst einen neuen Stollen nach unten frei! (+3 Erz, -15 Energie, Weg nach unten geöffnet)"
         else:
-          - msg: "Hier gräbst du nicht — du hast bereits einen Schacht angelegt. Weiter in die Tiefe geht es nur an seiner Sohle (Stollen-Tiefe {depth})."
-
-  # Schacht-Ebene mitzählen: jeder erfolgreiche Schritt nach unten/oben
-  - id: "rule_schacht_ab"
-    on: "command go"
-    when:
-      all:
-        - { var: "cmd.arg1", is: "Down" }
-        - { var: "cmd.succeeded", is: "true" }
-    effects:
-      - add_var: { variable: schacht_ebene, delta: 1 }
-
-  - id: "rule_schacht_auf"
-    on: "command go"
-    when:
-      all:
-        - { var: "cmd.arg1", is: "Up" }
-        - { var: "cmd.succeeded", is: "true" }
-    effects:
-      - add_var: { variable: schacht_ebene, delta: -1 }
+          - msg: "Hier gräbst du nicht — von hier führt schon ein Schacht nach unten. Steig hinab und grab dort weiter."
 
   - id: "rule_mining_no_pick"
     on: "command graben"
@@ -311,18 +286,20 @@ sandbox_zones:
 
 tests:
   # Regression: ein zweites "graben" im selben Raum überschreibt den ersten
-  # Stollen nicht mehr; weitergegraben wird nur an der Sohle des Schachts.
+  # Stollen nicht (has_exit down); in einem tieferen Stollen ohne Ausgang nach
+  # unten geht es weiter.
   - name: "graben nur an der schachtsohle"
-    input: [take spitzhacke, north, graben, graben, down, graben, up, graben, down, down, status]
+    input: [take spitzhacke, north, graben, graben, down, graben, up, graben, down, down, graben, status]
     expect:
       - "Du schlägst mit der Spitzhacke in das Erdreich und legst einen neuen Stollen nach unten frei!"
-      - "Hier gräbst du nicht — du hast bereits einen Schacht angelegt. Weiter in die Tiefe geht es nur an seiner Sohle (Stollen-Tiefe 2)."
+      - "Hier gräbst du nicht — von hier führt schon ein Schacht nach unten. Steig hinab und grab dort weiter."
       - "Schimmernde Erzknollen glitzern im Gestein bei Tiefe 1."
       - "Du schlägst mit der Spitzhacke in das Erdreich und legst einen neuen Stollen nach unten frei!"
-      - "Hier gräbst du nicht — du hast bereits einen Schacht angelegt. Weiter in die Tiefe geht es nur an seiner Sohle (Stollen-Tiefe 3)."
+      - "Hier gräbst du nicht — von hier führt schon ein Schacht nach unten. Steig hinab und grab dort weiter."
       - "Schimmernde Erzknollen glitzern im Gestein bei Tiefe 1."
       - "Schimmernde Erzknollen glitzern im Gestein bei Tiefe 2."
-      - "Holz: 0 | Erz: 6 | Beeren: 0"
+      - "Du schlägst mit der Spitzhacke in das Erdreich und legst einen neuen Stollen nach unten frei!"
+      - "Holz: 0 | Erz: 9 | Beeren: 0"
   # Regression: Rasten wechselt Tag/Nacht, das Wetter am Morgen — Nacht- und
   # Regen-Varianten werden beide sichtbar.
   - name: "nacht und regen sichtbar"

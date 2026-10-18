@@ -9,10 +9,21 @@
 #   - Schiffsduelle (7h2): TargetShip mit combat: profile: tactical (attack, defend, flee, use-ability)
 #   - Waffen/Faehigkeiten (7f3): abilities mit cost_var, cost, cooldown (laser, rakete, reparatur)
 #   - Crew (7g): Party-Begleiter (Pilot Kael, Schuetzin Val, Ingenieur Sarek) mit order_verb: folgen
-#   - Sektorenkette: 4 Sektoren (Raumdock, Asteroidenfeld, Nebelbank/Handel, Rebellengrenze, Evakuierung)
-#   - Zufallsereignisse: encounter_tables mit kosmischen Phaenomenen und Patrouillen
-#   - Rebellen-Verfolgung: steigende Gefahr-Variable rebellen_flotte
-#   - Permadeath: game_end: death + permadeath: true + meta.*-Freischaltungen ueber mehrere Runs
+#   - Sektorenkette: 4 Sektoren (Raumdock, Asteroidenfeld, Nebelbank/Handel, Rebellengrenze, Evakuierung),
+#     nacheinander freigeschaltet (before drive + block): Nebelbank/Handelsstation erst nach dem Piraten,
+#     Rebellengrenze erst nach der Nebelbank (sektor_aktuell >= 2), Evakuierung erst nach dem Rebellenjaeger
+#   - Handel (7b): Haendler Zax verkauft Raketen und Huellenreparatur gegen schrott (Dialog-outcomes)
+#   - Finale: Flaggschiff (10 Schilde/28 Huelle) bewacht das Funkfeuer (Sieg erst danach). Ein frisches
+#     Schiff (6 Schilde/14 Huelle, 2 Raketen, ohne Val) verliert bei jeder Taktik; gewinnbar mit Val +
+#     >=2 Raketen bei 14 Huelle (5 Runden) oder mit vollen 10 Schilden + >=2 Raketen (6 Runden, knapp).
+#     defend halbiert das Gegenfeuer nur noch.
+#   - Zufallsereignisse: encounter_tables mit kosmischen Phaenomenen
+#   - Rebellen-Verfolgung: rebellen_flotte steigt pro Sprung; ab 7 Spruengen feuert die Vorhut bei jeder Ankunft
+#   - Schildspulen (aufladen) nur einmal pro Sprung (+2 Extra-Schilde mit Sarek in der Party);
+#     Faehigkeiten nur gegen ein lebendes Feindschiff vor Ort; von Bord aus kein Feuer, im Gefecht kein Einstieg
+#   - Permadeath: game_end: death + permadeath: true + meta.*-Freischaltungen ueber mehrere Runs:
+#     meta.start_shields (10 Startschilde), meta.ingenieur_unlocked (Sarek an Bord),
+#     meta.raketen_unlocked (+2 Startraketen), meta.sektoren_rekord + meta.runs (Logbuch beim Start)
 #   - ASCII/TUI-Showcase: title_art, end_art, frames:-Sprunganimation, ambient:-Bruecke, watch:-Konsolen
 
 name: Sprung ins Ungewisse
@@ -133,7 +144,7 @@ verbs:
   - { name: umleiten, aliases: [reroute, energie] }
   - { name: aufladen, aliases: [charge, lade] }
   - { name: reparieren, aliases: [repair, flicken] }
-  - { name: sprung, aliases: [springe, jump, warp, hypersprung] }
+  - { name: sprung, aliases: [springe, jump, warp, hypersprung, navigation] }
   - { name: defend, aliases: [verteidigen, ausweichen, deckung] }
   - { name: flee, aliases: [fliehen, flucht, entkommen] }
   - { name: use-ability, aliases: [ability, faehigkeit, feuer] }
@@ -145,6 +156,8 @@ variables:
   - { name: meta.ingenieur_unlocked, type: int, initial: 0 }
   - { name: meta.sektoren_rekord, type: int, initial: 0 }
   - { name: raketen_munition, type: int, initial: 2, min: 0, max: 10 }
+  # Schildspulen: eine Ladung pro Sprung (der Sprung setzt sie wieder auf 1)
+  - { name: kondensatoren, type: int, initial: 1, min: 0, max: 1 }
   - { name: rebellen_flotte, type: int, initial: 0, min: 0, max: 10 }
   - { name: schrott, type: int, initial: 10, min: 0, max: 999 }
   - { name: sektor_aktuell, type: int, initial: 1, min: 1, max: 4 }
@@ -153,7 +166,6 @@ variables:
   - { name: flaggschiff_belohnt, type: int, initial: 0, min: 0, max: 1 }
   - { name: beacon_aktiv, type: int, initial: 0, min: 0, max: 1 }
   - { name: generator_ueberlastet, type: int, initial: 0, min: 0, max: 1 }
-  - { name: hyperantrieb_bereit, type: int, initial: 1, min: 0, max: 1 }
 
 abilities:
   - id: laser
@@ -198,18 +210,31 @@ abilities:
     cooldown: 2
     effects:
       - msg: "ZISCH! Eine Artemis-Rakete durchschlägt die feindlichen Schilde und explodiert!"
+      # Crew-Vorteil: Schuetzin Val in der Party lenkt jede Rakete nach (-3 Huelle extra).
       - if: { at: player, room: s1_asteroid }
         then:
           - add_var: { var: ship.piratenschiff.hull, delta: -5 }
           - msg: "Kritischer Einschlag auf dem Korsarenschiff (-5 Hülle)!"
+          - if: { compare_var: { name: party.val, op: gte, value: 1 } }
+            then:
+              - add_var: { var: ship.piratenschiff.hull, delta: -3 }
+              - msg: "Schützin Val lenkt die Rakete per Zielokular in den Antrieb des Korsaren (-3 Hülle extra)!"
       - if: { at: player, room: s3_riegel }
         then:
           - add_var: { var: ship.rebellenjaeger.hull, delta: -5 }
           - msg: "Schwerer Hüllenschaden am Rebellenjäger (-5 Hülle)!"
+          - if: { compare_var: { name: party.val, op: gte, value: 1 } }
+            then:
+              - add_var: { var: ship.rebellenjaeger.hull, delta: -3 }
+              - msg: "Schützin Val lenkt die Rakete per Zielokular in die Gondel des Jägers (-3 Hülle extra)!"
       - if: { at: player, room: s4_beacon }
         then:
-          - add_var: { var: ship.flaggschiff.hull, delta: -5 }
-          - msg: "Volltreffer in den Hauptreaktor des Flaggschiffs (-5 Hülle)!"
+          - add_var: { var: ship.flaggschiff.hull, delta: -7 }
+          - msg: "Volltreffer in den Hauptreaktor des Flaggschiffs (-7 Hülle)!"
+          - if: { compare_var: { name: party.val, op: gte, value: 1 } }
+            then:
+              - add_var: { var: ship.flaggschiff.hull, delta: -3 }
+              - msg: "Schützin Val lenkt die Rakete per Zielokular durch einen Panzerspalt (-3 Hülle extra)!"
 
   - id: reparatur
     name: "Notfallreparatur"
@@ -217,9 +242,9 @@ abilities:
     cost: 2
     cooldown: 3
     effects:
+      # Nur im Gefecht nutzbar (Regel reparatur_nur_im_gefecht) — sonst waere
+      # die Huelle zwischen den Kaempfen gratis voll und Zax' Werft sinnlos.
       - add_var: { var: ship.nordstern.hull, delta: 4 }
-      - if: { compare_var: { name: ship.nordstern.hull, op: gt, value: 14 } }
-        then: [ { set_var: { var: ship.nordstern.hull, value: 14 } } ]
       - msg: "Reparaturdrohnen strömen aus und versiegeln Hüllenbrüche (+4 Hülle)!"
 
 encounter_tables:
@@ -349,17 +374,24 @@ vehicles:
           - if: { compare_var: { name: ship.nordstern.power, op: gt, value: 6 } }
             then: [ { set_var: ship.nordstern.power, value: 6 } ]
           - { msg: "Der Fusionsreaktor heult auf — Energie strömt in die Primärkreise (+3 Energie)!" }
+      # Eine Ladung pro Sprung (kondensatoren); die Systemgrenzen (max) clampen seit P1-8 selbst.
       - room: ns_weapons
         verb: aufladen
         effects:
-          - { add_var: ship.nordstern.weapons, delta: 2 }
-          - if: { compare_var: { name: ship.nordstern.weapons, op: gt, value: 6 } }
-            then: [ { set_var: ship.nordstern.weapons, value: 6 } ]
-          - { add_var: ship.nordstern.shields, delta: 2 }
-          - if: { compare_var: { name: ship.nordstern.shields, op: gt, value: 10 } }
-            then: [ { set_var: ship.nordstern.shields, value: 10 } ]
-          - { play_clip: clip_shield_boost }
-          - { msg: "Die Geschützkondensatoren und Schildspulen sind wieder voll geladen (+2 Waffen/+2 Schilde)!" }
+          - if: { compare_var: { name: kondensatoren, op: gte, value: 1 } }
+            then:
+              - { set_var: { var: kondensatoren, value: 0 } }
+              - { add_var: ship.nordstern.weapons, delta: 2 }
+              - { add_var: ship.nordstern.shields, delta: 2 }
+              - { play_clip: clip_shield_boost }
+              - { msg: "Die Geschützkondensatoren und Schildspulen sind wieder voll geladen (+2 Waffen/+2 Schilde)!" }
+              - if: { compare_var: { name: party.sarek, op: gte, value: 1 } }
+                then:
+                  - { add_var: ship.nordstern.shields, delta: 2 }
+                  - { msg: "Ingenieur Sarek überbrückt die Spulen per Hand: +2 Schilde extra!" }
+              - { msg: "[SCHILDE: {ship.nordstern.shields}/10 — die Spulen sind bis zum nächsten Sprung leer.]" }
+            else:
+              - { msg: "Die Schildspulen sind leer — erst die Sprungenergie des nächsten Sprungs lädt sie wieder auf. (Schilde: {ship.nordstern.shields}/10)" }
 
   - id: piratenschiff
     name: Korsarenschiff
@@ -400,10 +432,12 @@ vehicles:
     stops:
       "Evakuierungssektor": s4_beacon
     start_stop: "Evakuierungssektor"
+    # Balance (siehe flaggschiff_counter): 10 Schilde + 28 Huelle gegen 6 je Angriff,
+    # Raketen 7 (+3 mit Val); Gegenfeuer -4 Schilde bzw. -6 Huelle, mit defend halbiert.
     systems:
       power:   { initial: 8, max: 8 }
-      shields: { initial: 8, max: 8 }
-      hull:    { initial: 14, max: 14 }
+      shields: { initial: 10, max: 10 }
+      hull:    { initial: 28, max: 28 }
       weapons: { initial: 6, max: 8 }
 
 rooms:
@@ -566,9 +600,39 @@ npcs:
       alive:
         entry: angebot
         nodes:
+          # Handel gegen schrott (7b-Muster): Preis/Bestand pruefen, Erfolg aendert Schrott + Ware,
+          # Ablehnung nur den Text. Raketen/Huelle sind Variablen — kein give:, keine Kaufsperre noetig.
           angebot:
-            text: "„Willkommen auf dem Freihafen! Brauchst du Raketen oder Reparaturen für deinen Kahn?“"
+            text: "„Willkommen auf dem Freihafen! Raketen oder Reparaturen für deinen Kahn? Bezahlt wird in Schrott.“ [Schrott: {schrott} | Raketen: {raketen_munition}/10 | Hülle: {ship.nordstern.hull}/14]"
             choices:
+              - text: "Raketen-Nachschub: 2 Artemis-Raketen (10 Schrott)"
+                next: angebot
+                outcomes:
+                  - if: { compare_var: { name: raketen_munition, op: gt, value: 8 } }
+                    then:
+                      - { msg: "Zax: „Dein Magazin ist randvoll, Commander.“ (Nichts berechnet.)" }
+                    else:
+                      - if: { compare_var: { name: schrott, op: gte, value: 10 } }
+                        then:
+                          - { add_var: { var: schrott, delta: -10 } }
+                          - { add_var: { var: raketen_munition, delta: 2 } }
+                          - { msg: "HANDEL: Zax lädt zwei Artemis-Raketen in dein Magazin (-10 Schrott). Bestand: {raketen_munition} Raketen, {schrott} Schrott." }
+                        else:
+                          - { msg: "Zax: „Zehn Schrott, keinen Krümel weniger.“ (Du hast nur {schrott} Schrott — nichts wurde berechnet.)" }
+              - text: "Hüllenreparatur: +6 Hülle (10 Schrott)"
+                next: angebot
+                outcomes:
+                  - if: { compare_var: { name: ship.nordstern.hull, op: gte, value: 14 } }
+                    then:
+                      - { msg: "Zax: „Deine Hülle ist tadellos — da gibt es nichts zu schweißen.“ (Nichts berechnet.)" }
+                    else:
+                      - if: { compare_var: { name: schrott, op: gte, value: 10 } }
+                        then:
+                          - { add_var: { var: schrott, delta: -10 } }
+                          - { add_var: { var: ship.nordstern.hull, delta: 6 } }
+                          - { msg: "HANDEL: Zax' Werftdrohnen schweißen neue Panzerplatten auf (-10 Schrott). Hülle: {ship.nordstern.hull}/14, {schrott} Schrott übrig." }
+                        else:
+                          - { msg: "Zax: „Zehn Schrott, keinen Krümel weniger.“ (Du hast nur {schrott} Schrott — nichts wurde berechnet.)" }
               - { text: "Ich sehe mich nur um.", next: null }
 
 items:
@@ -605,7 +669,7 @@ items:
   - id: navigationskonsole
     name: Navigationskonsole
     gender: f
-    desc: "Holografische Sternenkarte. Zeigt die Sektorenkette und den Abstand zur Rebellenflotte."
+    desc: "Holografische Sternenkarte. Zeigt die Sektorenkette und den Abstand zur Rebellenflotte. Mit 'sprung' rufst du den Navigationsstatus ab."
     keys: [navigationskonsole, sternenkarte, karte]
     location: ns_bridge
     ascii:
@@ -681,14 +745,14 @@ items:
     location: s4_beacon
     verb_map:
       use,intact:
-        # Erst nach durchbrochenem Rebellen-Riegel (Rebellenjaeger in s3_riegel vernichtet).
-        - if: { compare_var: { name: aufklaerer_belohnt, op: gte, value: 1 } }
+        # Erst nach vernichtetem Flaggschiff — der Sektor selbst ist erst nach dem Rebellenjaeger erreichbar.
+        - if: { compare_var: { name: flaggschiff_belohnt, op: gte, value: 1 } }
           then:
             - { set_var: { var: beacon_aktiv, value: 1 } }
             - { msg: "Das Funkfeuer erstrahlt in gleißendem Blau: Die Föderationsflotte empfängt dein Signal!" }
             - { game_end: victory, msg: "VICTORY — Das Evakuierungs-Funkfeuer ist aktiviert! Die Föderationsflotte eskortiert die Nordstern in Sicherheit!" }
           else:
-            - { msg: "STÖRSIGNAL: Der Rebellen-Riegel an der Grenze blockiert den Subraum — das Funkfeuer erreicht die Föderationsflotte nicht. Erst den Rebellenjäger an der Rebellengrenze ausschalten!" }
+            - { msg: "STÖRSIGNAL: Das Rebellen-Flaggschiff stört den Subraum — das Funkfeuer erreicht die Föderationsflotte nicht. Erst das Flaggschiff ausschalten!" }
 
 rules:
   - id: init_run_meta
@@ -704,6 +768,11 @@ rules:
         then:
           - set_var: { var: ship.nordstern.shields, value: 10 }
           - msg: "[META-VORTEIL: Verstärkte Schildgeneratoren aktiv (10 Schilde)!]"
+      - if: { compare_var: { name: meta.raketen_unlocked, op: gte, value: 1 } }
+        then:
+          - add_var: { var: raketen_munition, delta: 2 }
+          - msg: "[META-VORTEIL: Artemis-Fertigungsdaten geladen — +2 Startraketen ({raketen_munition} an Bord)!]"
+      - msg: "[LOGBUCH: Run {meta.runs} | weitester Sektor aller Runs: {meta.sektoren_rekord}/4]"
       - msg: "[MELDUNG: Sprungfrachter Nordstern abflugbereit. Auftrag: Evakuierungssektor 4 erreichen!]"
 
   - id: sarek_recruited_meta
@@ -715,26 +784,149 @@ rules:
       - set_var: { var: meta.ingenieur_unlocked, value: 1 }
       - msg: "[META-FORTSCHRITT: Ingenieur Sarek ist nun dauerhaft rekrutiert!]"
 
+  # 'sprung' zeigt nur den Navigationsstatus; gesprungen wird mit 'drive to <Ziel>'.
   - id: sprung_befehl
     on: "command sprung"
     when:
       at: player
       room: ns_bridge
     effects:
+      - msg: "[NAVIGATION: Sektor {sektor_aktuell}/4 erreicht | Rebellenflotte {rebellen_flotte}/10 | Rekord aller Runs: Sektor {meta.sektoren_rekord}/4] Kurs setzen mit 'drive to <Ziel>'."
+
+  # Sektorenkette: Sprungziele werden nacheinander freigeschaltet (before drive + block, R-05:
+  # die Meldung steht im block selbst). cmd.target ist das kleingeschriebene Haltestellen-Label.
+  - id: nav_sperre_sektor2
+    on: before drive
+    when:
+      all:
+        - any:
+            - { var: cmd.target, is: "nebelbank" }
+            - { var: cmd.target, is: "handelsstation" }
+        - compare_var: { name: pirat_belohnt, op: eq, value: 0 }
+    effects:
+      - block: "NAV-SPERRE: Das Korsarenschiff im Asteroidenfeld blockiert den Sprungkorridor in Sektor 2. Erst den Piraten ausschalten!"
+
+  - id: nav_sperre_sektor3
+    on: before drive
+    when:
+      all:
+        - { var: cmd.target, is: "rebellengrenze" }
+        - compare_var: { name: sektor_aktuell, op: lt, value: 2 }
+    effects:
+      - block: "NAV-SPERRE: Keine Sprungkoordinaten für die Rebellengrenze — die führen nur durch die Nebelbank (Sektor 2)."
+
+  - id: nav_sperre_sektor4
+    on: before drive
+    when:
+      all:
+        - { var: cmd.target, is: "evakuierungssektor" }
+        - compare_var: { name: aufklaerer_belohnt, op: eq, value: 0 }
+    effects:
+      - block: "NAV-SPERRE: Der Rebellen-Riegel blockiert den Sprung in den Evakuierungssektor. Erst den Rebellenjäger an der Rebellengrenze ausschalten!"
+
+  # Gefechte werden draussen im Sektor gefuehrt: von Bord aus kein Feuer (sonst liefe kein
+  # Gegenfeuer, die *_counter-Regeln pruefen den Sektorraum) und mitten im Gefecht kein
+  # Einstieg (sonst Schilde nachladen ohne Gegenfeuer).
+  - id: kein_feuer_von_bord
+    on: before attack
+    when:
+      any:
+        - { at: player, room: ns_bridge }
+        - { at: player, room: ns_engine }
+        - { at: player, room: ns_weapons }
+        - { at: player, room: ns_cargo }
+    effects:
+      - block: "Von hier drinnen hast du keine Gefechtsführung — Gefechte führst du draußen im Sektor (steig mit 'disembark' aus)."
+
+  # Faehigkeiten nur gegen ein lebendes Feindschiff im selben Sektor: sonst verpufften Raketen
+  # ohne Ziel, und die Notfallreparatur waere zwischen den Kaempfen gratis (Zax' Werft sinnlos).
+  # Deckt auch das Feuern von Bord ab (die Innenraeume sind kein Sektorraum).
+  - id: faehigkeit_nur_mit_ziel
+    on: before use-ability
+    when:
+      not:
+        any:
+          - all:
+              - { at: player, room: s1_asteroid }
+              - compare_var: { name: ship.piratenschiff.hull, op: gt, value: 0 }
+          - all:
+              - { at: player, room: s3_riegel }
+              - compare_var: { name: ship.rebellenjaeger.hull, op: gt, value: 0 }
+          - all:
+              - { at: player, room: s4_beacon }
+              - compare_var: { name: ship.flaggschiff.hull, op: gt, value: 0 }
+    effects:
+      - block: "Kein feindliches Schiff in Reichweite — Waffen und Reparaturdrohnen bleiben gesichert. (Gefechte führst du draußen im Sektor.)"
+
+  - id: kein_einstieg_im_gefecht
+    on: before board
+    when:
+      compare_var: { name: combat.engaged, op: gte, value: 1 }
+    effects:
+      - block: "Mitten im Gefecht! Für einen Rückzug ins Schiff musst du erst kämpfen oder fliehen ('flee')."
+
+  # Jeder Sprung: Animation, Spulen wieder geladen, Rebellenflotte +1, Sektor-/Rekordstand
+  # (on: command sieht den Endzustand = Zielhalt; Raum-on_enter feuert bei drive-Ankunft nicht).
+  # Ab 7 Spruengen (der direkte Weg mit Zax-Abstecher braucht 5) feuert die Vorhut bei jeder Ankunft.
+  - id: sprung_ausgefuehrt
+    on: command drive
+    when:
+      var: cmd.succeeded
+      is: "true"
+    effects:
       - play_clip: clip_hyperjump
+      - set_var: { var: kondensatoren, value: 1 }
       - add_var: { var: rebellen_flotte, delta: 1 }
-      - msg: "Das Sprungtriebwerk entlädt sich mit einem Ruck! Die Nordstern gleitet durch den Hyperraum."
-      - msg: "[STATUS: Rebellenflotte rückt nach! Gefahr-Stufe: {rebellen_flotte}/10]"
+      - msg: "[SPRUNG: Schildspulen geladen | Rebellenflotte rückt nach — Gefahr-Stufe {rebellen_flotte}/10]"
+      - if: { at: player, room: s1_asteroid }
+        then:
+          - if: { compare_var: { name: sektor_aktuell, op: lt, value: 1 } }
+            then: [ { set_var: { var: sektor_aktuell, value: 1 } } ]
+          - if: { compare_var: { name: meta.sektoren_rekord, op: lt, value: 1 } }
+            then:
+              - { set_var: { var: meta.sektoren_rekord, value: 1 } }
+              - { msg: "[LOGBUCH: Neuer Rekord — Asteroidenfeld (Sektor 1) erstmals erreicht!]" }
+      - if: { at: player, room: s2_nebel }
+        then:
+          - if: { compare_var: { name: sektor_aktuell, op: lt, value: 2 } }
+            then: [ { set_var: { var: sektor_aktuell, value: 2 } } ]
+          - if: { compare_var: { name: meta.sektoren_rekord, op: lt, value: 2 } }
+            then:
+              - { set_var: { var: meta.sektoren_rekord, value: 2 } }
+              - { msg: "[LOGBUCH: Neuer Rekord — Nebelbank (Sektor 2) erstmals erreicht!]" }
+      - if: { at: player, room: s3_riegel }
+        then:
+          - if: { compare_var: { name: sektor_aktuell, op: lt, value: 3 } }
+            then: [ { set_var: { var: sektor_aktuell, value: 3 } } ]
+          - if: { compare_var: { name: meta.sektoren_rekord, op: lt, value: 3 } }
+            then:
+              - { set_var: { var: meta.sektoren_rekord, value: 3 } }
+              - { msg: "[LOGBUCH: Neuer Rekord — Rebellengrenze (Sektor 3) erstmals erreicht!]" }
+      - if: { at: player, room: s4_beacon }
+        then:
+          - if: { compare_var: { name: sektor_aktuell, op: lt, value: 4 } }
+            then: [ { set_var: { var: sektor_aktuell, value: 4 } } ]
+          - if: { compare_var: { name: meta.sektoren_rekord, op: lt, value: 4 } }
+            then:
+              - { set_var: { var: meta.sektoren_rekord, value: 4 } }
+              - { msg: "[LOGBUCH: Neuer Rekord — Evakuierungssektor (Sektor 4) erstmals erreicht!]" }
+      - if: { compare_var: { name: rebellen_flotte, op: gte, value: 7 } }
+        then:
+          - if: { compare_var: { name: ship.nordstern.shields, op: gt, value: 0 } }
+            then:
+              - add_var: { var: ship.nordstern.shields, delta: -3 }
+              - msg: "VORHUT DER REBELLEN: Abfangjäger springen mit dir in den Sektor und feuern (-3 Schilde)!"
+            else:
+              - add_var: { var: ship.nordstern.hull, delta: -3 }
+              - msg: "VORHUT DER REBELLEN: Abfangjäger springen mit dir in den Sektor und treffen die Hülle (-3 Hülle)!"
 
   - id: rebellen_warnung
     on: turn
     when:
-      all:
-        - compare_var: { name: rebellen_flotte, op: gte, value: 6 }
-        - compare_var: { name: rebellen_flotte, op: lt, value: 8 }
+      compare_var: { name: rebellen_flotte, op: gte, value: 6 }
     once: true
     effects:
-      - msg: "WARNUNG: Subraum-Echos der Rebellenflotte empfangen! Die Verfolger schließen auf!"
+      - msg: "WARNUNG: Subraum-Echos der Rebellenflotte empfangen! Ab dem nächsten Sprung hat ihre Vorhut dich eingeholt!"
 
   - id: pirat_counter
     on: turn
@@ -768,7 +960,14 @@ rules:
         - var: combat.action
           is: defend
     effects:
-      - msg: "Ausweichmanöver geglückt! Pilot Kael legt die Nordstern auf die Seite — die Piraten-Salven gehen ins Leere!"
+      # defend halbiert das Gegenfeuer (abgerundet), hebt es aber nicht auf.
+      - if: { compare_var: { name: ship.nordstern.shields, op: gt, value: 0 } }
+        then:
+          - add_var: { var: ship.nordstern.shields, delta: -1 }
+          - msg: "Ausweichmanöver geglückt! Die Nordstern legt sich auf die Seite — nur ein Streifschuss trifft die Schilde (-1 Schilde)!"
+        else:
+          - add_var: { var: ship.nordstern.hull, delta: -1 }
+          - msg: "Ausweichmanöver geglückt! Die Nordstern legt sich auf die Seite — nur ein Streifschuss trifft die Hülle (-1 Hülle)!"
 
   - id: pirat_besiegt
     on: turn
@@ -778,6 +977,9 @@ rules:
         - compare_var: { name: pirat_belohnt, op: eq, value: 0 }
     effects:
       - set_var: { var: pirat_belohnt, value: 1 }
+      # Kill per Faehigkeit beendet das Gefecht nicht von selbst (nur der attack-Pfad tut das).
+      - set_var: { var: combat.engaged, value: 0 }
+      - set_var: { var: combat.round, value: 0 }
       - add_var: { var: schrott, delta: 15 }
       - set_var: { var: ship.piratenschiff.hull, value: 0 }
       - msg: "FEIND VERNICHTET: Das Korsarenschiff detoniert in einem lautlosen Feuerball! Du birgst 15 Einheiten Schrott aus den Trümmern."
@@ -814,7 +1016,13 @@ rules:
         - var: combat.action
           is: defend
     effects:
-      - msg: "Gegenfeuer & Täuschkörper! Pilot Kael stößt Flares aus — die Rebellengeschosse detonieren wirkungslos!"
+      - if: { compare_var: { name: ship.nordstern.shields, op: gt, value: 0 } }
+        then:
+          - add_var: { var: ship.nordstern.shields, delta: -1 }
+          - msg: "Gegenfeuer & Täuschkörper! Flares lenken die meisten Plasmabolzen ab (-1 Schilde)!"
+        else:
+          - add_var: { var: ship.nordstern.hull, delta: -2 }
+          - msg: "Gegenfeuer & Täuschkörper! Flares lenken die Hälfte der Plasmabolzen ab (-2 Hülle)!"
 
   - id: rebellen_besiegt
     on: turn
@@ -824,9 +1032,16 @@ rules:
         - compare_var: { name: aufklaerer_belohnt, op: eq, value: 0 }
     effects:
       - set_var: { var: aufklaerer_belohnt, value: 1 }
+      # Kill per Faehigkeit beendet das Gefecht nicht von selbst (nur der attack-Pfad tut das).
+      - set_var: { var: combat.engaged, value: 0 }
+      - set_var: { var: combat.round, value: 0 }
       - add_var: { var: schrott, delta: 20 }
       - set_var: { var: ship.rebellenjaeger.hull, value: 0 }
-      - msg: "FEIND VERNICHTET: Der Rebellenjäger zerbricht! Der Weg in den Evakuierungssektor ist frei!"
+      - msg: "FEIND VERNICHTET: Der Rebellenjäger zerbricht! Der Weg in den Evakuierungssektor ist frei! Du birgst 20 Einheiten Schrott."
+      - if: { compare_var: { name: meta.raketen_unlocked, op: eq, value: 0 } }
+        then:
+          - set_var: { var: meta.raketen_unlocked, value: 1 }
+          - msg: "META-FORTSCHRITT GESICHERT: Aus dem Wrack geborgene Artemis-Fertigungsdaten — künftige Runs starten mit +2 Raketen!"
 
   - id: flaggschiff_counter
     on: turn
@@ -842,12 +1057,10 @@ rules:
       - if: { compare_var: { name: ship.nordstern.shields, op: gt, value: 0 } }
         then:
           - add_var: { var: ship.nordstern.shields, delta: -4 }
-          - if: { compare_var: { name: ship.nordstern.shields, op: lt, value: 0 } }
-            then: [ { set_var: { var: ship.nordstern.shields, value: 0 } } ]
           - msg: "Die Hauptbatterie des Rebellen-Flaggschiffs hämmert auf die Nordstern ein (-4 Schilde)!"
         else:
-          - add_var: { var: ship.nordstern.hull, delta: -5 }
-          - msg: "KRITISCH: Das Flaggschiff schlägt direkt in die Hülle der Nordstern ein (-5 Hülle)!"
+          - add_var: { var: ship.nordstern.hull, delta: -6 }
+          - msg: "KRITISCH: Das Flaggschiff schlägt direkt in die Hülle der Nordstern ein (-6 Hülle)!"
 
   - id: flaggschiff_counter_defended
     on: turn
@@ -860,7 +1073,13 @@ rules:
         - var: combat.action
           is: defend
     effects:
-      - msg: "Notmanöver! Vollschub auf die Steuerdüsen — die verheerende Salve des Flaggschiffs streift nur die Panzerung!"
+      - if: { compare_var: { name: ship.nordstern.shields, op: gt, value: 0 } }
+        then:
+          - add_var: { var: ship.nordstern.shields, delta: -2 }
+          - msg: "Notmanöver! Vollschub auf die Steuerdüsen — die Salve des Flaggschiffs trifft nur halb (-2 Schilde)!"
+        else:
+          - add_var: { var: ship.nordstern.hull, delta: -3 }
+          - msg: "Notmanöver! Vollschub auf die Steuerdüsen — die Salve des Flaggschiffs trifft nur halb (-3 Hülle)!"
 
   - id: flaggschiff_besiegt
     on: turn
@@ -870,9 +1089,10 @@ rules:
         - compare_var: { name: flaggschiff_belohnt, op: eq, value: 0 }
     effects:
       - set_var: { var: flaggschiff_belohnt, value: 1 }
-      - msg: "KOLOSSALE EXPLOSION: Das Rebellen-Flaggschiff bricht in zwei Hälften! Die Schockwelle fegt durch den Sektor!"
-      - game_end: victory
-      - msg: "VICTORY — Das Rebellen-Flaggschiff ist vernichtet! Die Flotte der Föderation ist gerettet!"
+      - set_var: { var: combat.engaged, value: 0 }
+      - set_var: { var: combat.round, value: 0 }
+      - set_var: { var: ship.flaggschiff.hull, value: 0 }
+      - msg: "KOLOSSALE EXPLOSION: Das Rebellen-Flaggschiff bricht in zwei Hälften! Der Subraum ist frei — jetzt das Evakuierungs-Funkfeuer aktivieren!"
 
   - id: hull_failure
     on: turn
@@ -891,15 +1111,66 @@ rules:
       - { game_end: death, msg: "Du brichst auf der Brücke zusammen — deine Reise endet hier." }
 
 tests:
-  - name: "crew anwerben und schiffssysteme pruefen"
-    input: [board nordstern, folgen kael, east, folgen val, aufladen, west]
+  - name: "crew anwerben und schiffssysteme pruefen (spulen einmal pro sprung)"
+    input: [board nordstern, folgen kael, east, folgen val, aufladen, aufladen, west]
     expect:
       - "Pilot Kael"
       - "Schützin Val"
       - "Die Geschützkondensatoren und Schildspulen sind wieder voll geladen"
-  - name: "funkfeuer ohne durchbrochenen rebellen-riegel kein sieg"
-    input: [board nordstern, drive to Evakuierungssektor, use evakuierungs_beacon, board nordstern, drive to Rebellengrenze]
+      - "[SCHILDE: 8/10 — die Spulen sind bis zum nächsten Sprung leer.]"
+      - "Die Schildspulen sind leer — erst die Sprungenergie des nächsten Sprungs lädt sie wieder auf. (Schilde: 8/10)"
+  - name: "sektorsperre: sprungziele nur in reihenfolge, gefecht nur draussen"
+    input: [board nordstern, drive to Evakuierungssektor, drive to Rebellengrenze, drive to Nebelbank,
+            drive to Asteroidenfeld, board nordstern, attack piratenschiff, use-ability rakete, disembark,
+            use-ability rakete, attack piratenschiff, attack piratenschiff, board nordstern,
+            drive to Rebellengrenze, drive to Handelsstation, board nordstern, drive to Nebelbank,
+            board nordstern, drive to Rebellengrenze]
     expect:
-      - "Du fährst nach Evakuierungssektor"
-      - "STÖRSIGNAL: Der Rebellen-Riegel an der Grenze blockiert den Subraum"
+      - "NAV-SPERRE: Der Rebellen-Riegel blockiert den Sprung in den Evakuierungssektor."
+      - "NAV-SPERRE: Keine Sprungkoordinaten für die Rebellengrenze — die führen nur durch die Nebelbank (Sektor 2)."
+      - "NAV-SPERRE: Das Korsarenschiff im Asteroidenfeld blockiert den Sprungkorridor in Sektor 2."
+      - "Du fährst nach Asteroidenfeld"
+      - "Von hier drinnen hast du keine Gefechtsführung"
+      - "Kein feindliches Schiff in Reichweite — Waffen und Reparaturdrohnen bleiben gesichert."
+      - "Kritischer Einschlag auf dem Korsarenschiff (-5 Hülle)!"
+      - "FEIND VERNICHTET: Das Korsarenschiff detoniert"
+      - "NAV-SPERRE: Keine Sprungkoordinaten für die Rebellengrenze"
+      - "Du fährst nach Handelsstation"
+      - "Du fährst nach Nebelbank"
       - "Du fährst nach Rebellengrenze"
+  - name: "zax: reparatur und raketen gegen schrott, ablehnung ohne verlust"
+    input: [board nordstern, drive to Asteroidenfeld, attack piratenschiff, defend, defend, defend, defend,
+            attack piratenschiff, board nordstern, drive to Handelsstation, east, talk zax, "2", "2", "1", "1", "3"]
+    expect:
+      - "Ausweichmanöver geglückt! Die Nordstern legt sich auf die Seite — nur ein Streifschuss trifft die Hülle (-1 Hülle)!"
+      - "[Schrott: 25 | Raketen: 2/10 | Hülle: 13/14]"
+      - "HANDEL: Zax' Werftdrohnen schweißen neue Panzerplatten auf (-10 Schrott). Hülle: 14/14, 15 Schrott übrig."
+      - "Zax: „Deine Hülle ist tadellos — da gibt es nichts zu schweißen.“ (Nichts berechnet.)"
+      - "[Schrott: 15 | Raketen: 2/10 | Hülle: 14/14]"
+      - "HANDEL: Zax lädt zwei Artemis-Raketen in dein Magazin (-10 Schrott). Bestand: 4 Raketen, 5 Schrott."
+      - "Zax: „Zehn Schrott, keinen Krümel weniger.“ (Du hast nur 5 Schrott — nichts wurde berechnet.)"
+      - "[Schrott: 5 | Raketen: 4/10 | Hülle: 14/14]"
+  - name: "flaggschiff ohne vorbereitung: schiffsverlust, funkfeuer gestoert"
+    input: [board nordstern, drive to Asteroidenfeld, attack piratenschiff, attack piratenschiff,
+            board nordstern, drive to Nebelbank, board nordstern, drive to Rebellengrenze,
+            attack rebellenjaeger, attack rebellenjaeger, attack rebellenjaeger, board nordstern,
+            drive to Evakuierungssektor, use evakuierungs_beacon, attack flaggschiff, attack flaggschiff]
+    expect:
+      - "FEIND VERNICHTET: Das Korsarenschiff detoniert"
+      - "FEIND VERNICHTET: Der Rebellenjäger zerbricht!"
+      - "Du fährst nach Evakuierungssektor"
+      - "STÖRSIGNAL: Das Rebellen-Flaggschiff stört den Subraum"
+      - "Rebellen-Flaggschiff: shields absorb 6."
+      - "KRITISCH: Das Flaggschiff schlägt direkt in die Hülle der Nordstern ein (-6 Hülle)!"
+      - "ALARM: Hüllenbruch auf allen Decks!"
+      - "Die Hülle der Nordstern bricht auf — du verglühst mit dem Schiff."
+  - name: "rebellenflotte: warnung ab 6, vorhut ab 7 spruengen"
+    input: [board nordstern, drive to Asteroidenfeld, board nordstern, drive to Raumdock, board nordstern,
+            drive to Asteroidenfeld, board nordstern, drive to Raumdock, board nordstern, drive to Asteroidenfeld,
+            board nordstern, drive to Raumdock, board nordstern, drive to Asteroidenfeld]
+    expect:
+      - "Gefahr-Stufe 5/10"
+      - "Gefahr-Stufe 6/10"
+      - "WARNUNG: Subraum-Echos der Rebellenflotte empfangen!"
+      - "Gefahr-Stufe 7/10"
+      - "VORHUT DER REBELLEN: Abfangjäger springen mit dir in den Sektor und feuern (-3 Schilde)!"

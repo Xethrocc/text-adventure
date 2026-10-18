@@ -43,13 +43,13 @@ rooms:
       east: {to: market}
   - id: subway
     name: Subway Platform
-    desc: The train never comes. A service tunnel gapes black to the north.
+    desc: The train never comes. A service tunnel gapes black to the north, an unguarded way under the tower; runners say it is wired.
     exits:
       west: {to: market}
       north: {to: tunnel}
   - id: tunnel
     name: Service Tunnel
-    desc: Cables run the ceiling like veins. A hatch leads up into the tower's spine.
+    desc: Cables run the ceiling like veins. A hatch leads up into the tower's lobby, a motion sensor winking above its rim. No lock, but no way to climb through unseen.
     exits:
       south: {to: subway}
       up: {to: corp_entrance}
@@ -67,7 +67,11 @@ rooms:
       east: {to: corp_entrance, when: {has_flag: back_door_open}, msg: "The card reader blinks red. The service door stays locked."}
   - id: corp_entrance
     name: Corp Lobby
-    desc: Marble, chrome, and a reception drone. An elevator stands open; the stairwell is to the west.
+    description:
+      default: Marble, chrome, and a reception drone. It idles above the desk, weapon mount folded. An elevator stands open; the stairwell is to the west.
+      variants:
+        - when: {has_flag: corp_alert}
+          text: Marble, chrome, and a security drone sweeping the hall with a red targeting laser. An elevator stands open; the stairwell is to the west.
     exits:
       down: {to: tunnel}
       west: {to: back_door}
@@ -133,8 +137,13 @@ items:
     verb_map:
       hack,intact:
         - {set_flag: back_door_open, val: "true"}
-        - {msg: "The reader's light goes green. The door clicks open."}
-        - {add_var: heat, delta: 2}
+        # gang_ally: the fixer patched the reader to accept her chip's signature
+        - if: {has_flag: gang_ally}
+          then:
+            - {msg: "The reader's light goes green. The door clicks open. The fixer's patch masks the intrusion: no trace."}
+          else:
+            - {msg: "The reader's light goes green. The door clicks open."}
+            - {add_var: heat, delta: 2}
   - id: office_terminal
     name: office terminal
     desc: A terminal on the far desk, still logged in.
@@ -179,7 +188,7 @@ npcs:
               - {text: "What's in the tower?", next: what}
               - {text: "Later.", next: null}
           what:
-            text: "A datashard with every name that matters. Walk out with it and you're made."
+            text: "A datashard with every name that matters. Walk out with it and you're made. The back door is quiet if you can crack its reader; the subway tunnel is open, but wired to the lobby drone."
             choices:
               - {text: "Noted.", next: null}
           deal:
@@ -200,7 +209,7 @@ quests:
     name: The Blackwood Job
     desc: Break into the Blackwood tower and walk out with the datashard.
     stages:
-      - {id: recon, desc: Find a way into the tower.}
+      - {id: recon, desc: "Find a way into the tower. Crack the back door quietly, or risk the wired service tunnel."}
       - {id: infiltrate, desc: Get past the corp security.}
       - {id: exfil, desc: Steal the datashard and get clear.}
     reward:
@@ -216,6 +225,15 @@ rules:
   # Quest stages follow the flags, not the order of play: the tower can be
   # reached before the market (back alley), and an advance_quest on a quest
   # that is not active yet would print "quest not active".
+  # The tunnel is the deliberate alternative: no hack needed, but climbing
+  # through the hatch trips the motion sensor and puts the tower on alert —
+  # the lobby drone (patrol guardian below) opens fire while corp_alert holds.
+  - id: tunnel_breach
+    on: before go
+    when: {all: [{at: player, room: tunnel}, {var: cmd.target, is: corp_entrance}, {not: {has_flag: corp_alert}}]}
+    effects:
+      - {set_flag: corp_alert, val: "true"}
+      - {msg: "The hatch's motion sensor flashes red as you climb through. Somewhere above, a drone spins up its weapon mount."}
   - id: mark_tower_entered
     on: enter corp_entrance
     once: true
@@ -250,6 +268,19 @@ rules:
         then: [{complete_quest: blackwood_job}]
       - {game_end: victory, msg: "VICTORY — You make your exit with the datashard."}
 
+# The lobby drone only fights once the tower is on alert (tunnel breach, or
+# heat >= 8). Killing it ("attack drone") silences it for good.
+patrol:
+  hostiles:
+    - npc: guard
+      path: [corp_entrance]
+      guardian: true
+      attack:
+        - if: {has_flag: corp_alert}
+          then:
+            - {msg: "The security drone locks on and fires. Hot rounds rake the marble around you."}
+            - {damage: 12}
+
 interactions:
   entity: []
   item: []
@@ -280,3 +311,25 @@ tests:
       - "- The Blackwood Job: Steal the datashard and get clear."
       - "The datashard is yours. The city opens its doors."
       - "VICTORY — You make your exit with the datashard."
+  # Design ("deliberate alternative"): the service tunnel needs no hack but
+  # trips the hatch sensor -> corp_alert -> the lobby drone opens fire.
+  - name: tunnel_trips_alarm
+    input: [east, north, east, north, up, stats]
+    expect:
+      - "The hatch's motion sensor flashes red as you climb through."
+      - "The security drone locks on and fires."
+      - "a security drone sweeping the hall with a red targeting laser."
+      - "Health:  88 / 100"
+  # ...while the hacked back door stays quiet: drone idle, no damage.
+  - name: back_door_stays_quiet
+    input: [north, north, east, hack reader, east, stats]
+    expect:
+      - "The reader's light goes green. The door clicks open."
+      - "a reception drone. It idles above the desk, weapon mount folded."
+      - "Health:  100 / 100"
+  # gang_ally: the fixer's patched reader opens without heat.
+  - name: fixer_patch_masks_reader
+    input: [east, north, west, take cred-chip, talk fixer, "1", "1", east, south, west, north, north, hack reader]
+    expect:
+      - "The back door reader is patched to accept my chip's signature."
+      - "The fixer's patch masks the intrusion: no trace."

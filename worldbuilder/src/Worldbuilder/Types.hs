@@ -925,7 +925,18 @@ instance FromJSON ADialogueChoice where
         <$> o .:  "text"
         <*> o .:? "next"
         <*> o .:? "visible_when"
-        <*> o .:? "outcomes" .!= []) v
+        -- `outcome:` (singular, as an old doc example spelled it) and
+        -- `effects:` are accepted too — before, they were silently ignored.
+        -- Explicit case chain, not `.:? <|>` (FIX-12: that alternative never
+        -- fires on a missing key).
+        <*> (do mOutcomes <- o .:? "outcomes"
+                case mOutcomes of
+                    Just os -> pure os
+                    Nothing -> do
+                        mOutcome <- o .:? "outcome"
+                        case mOutcome of
+                            Just os -> pure os
+                            Nothing -> o .:? "effects" .!= [])) v
 
 -- ---------------------------------------------------------------------------
 -- Quests
