@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Tests: TUI-Audio-Test auf Windows stabilisiert
+
+- Der 5.2e-Seam-Test (`text-adventure-tui/test/Tests.hs`) schlug auf `windows-latest` sporadisch fehl (Läufe `8e11be1`, `151e96f`): alle Fake-Player-Prozesse hängten per `>>` an **eine** Logdatei an, und parallele SFX-/Musik-Prozesse verloren unter Windows Zeilen (Datei gesperrt) — mal fehlte `sfx/direct.wav`, mal die Synth-Musik. Jetzt schreibt jeder Aufruf eine eigene Datei (Windows: `%RANDOM%`-Name, Unix: `mktemp` + atomares Umbenennen), der Test liest das Verzeichnis; das Warten erlaubt bis zu 10 s statt 1,5 s (endet sofort, sobald alles da ist).
+
 ### Content: Design-Entscheidungen umgesetzt (FTL-Lite, Hamurabi, Tunnel, kleinere)
 
 Entscheidungen vom 2026-10-18 (`~/workspace/befunde-content-audit-2026-10-17.md` §7):

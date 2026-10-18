@@ -28,8 +28,8 @@ import Data.IORef (writeIORef)
 import Data.List (intercalate, isInfixOf, isSuffixOf)
 import qualified System.Info as Info
 import System.Directory
-    ( createDirectoryIfMissing, doesFileExist, getPermissions
-    , getTemporaryDirectory, removeDirectoryRecursive, setOwnerExecutable
+    ( createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getPermissions
+    , getTemporaryDirectory, listDirectory, removeDirectoryRecursive, setOwnerExecutable
     , setPermissions )
 import System.Environment (lookupEnv, setEnv, unsetEnv)
 import System.Exit (exitFailure)
@@ -603,36 +603,50 @@ tuiAudioTestGame =
             }
     in initSampleGame { world = w' }
 
--- | Poll a log file until a predicate holds on its lines (up to ~1.5 s).
+-- | Poll the fake player's log directory until a predicate holds on the logged
+--   invocations (up to ~10 s — process start-up on the Windows runner is slow;
+--   the wait only runs out when something is really missing).
 waitForLogLines :: FilePath -> ([String] -> Bool) -> IO [String]
-waitForLogLines logFile predicate = go (60 :: Int)
+waitForLogLines logDir predicate = go (400 :: Int)
   where
-    go 0 = readLogLines
+    go 0 = readLogLines logDir
     go n = do
-        ls <- readLogLines
+        ls <- readLogLines logDir
         if predicate ls
             then pure ls
             else threadDelay 25000 >> go (n - 1)
-    readLogLines = do
-        ex <- doesFileExist logFile
-        if not ex
-            then pure []
-            else do
-                res <- try (readFile logFile) :: IO (Either SomeException String)
-                case res of
-                    Right content -> do
-                        let ls = map (filter (\c -> c /= '\r' && c /= '"')) (lines content)
-                        _ <- evaluateLen (length content)
-                        pure ls
-                    Left _ -> pure []
+
+-- | One line per helper invocation. Every invocation writes its own file:
+--   concurrent `>>` appends to one shared log lost lines on Windows (the file
+--   was locked by the parallel SFX/music processes), which made the 5.2e
+--   seam test flaky on windows-latest.
+readLogLines :: FilePath -> IO [String]
+readLogLines logDir = do
+    ex <- doesDirectoryExist logDir
+    if not ex
+        then pure []
+        else do
+            names <- listDirectory logDir
+            fmap concat $ mapM readOne [ logDir </> n | n <- names, ".txt" `isSuffixOf` n ]
+  where
+    readOne f = do
+        res <- try (readFile f) :: IO (Either SomeException String)
+        case res of
+            Right content -> do
+                let ls = filter (not . null) (map (filter (\c -> c /= '\r' && c /= '"')) (lines content))
+                _ <- evaluateLen (length content)
+                pure ls
+            Left _ -> pure []
     evaluateLen :: Int -> IO Int
     evaluateLen x = x `seq` pure x
 
--- | Create a fake `mpv` script in `tmpDir` that logs its arguments to `logFile`
---   and briefly stays alive on `--loop=inf` so `MusicHandle` deduplication and
---   `stopMusic` termination work against a real OS process.
+-- | Create a fake `mpv` script in `tmpDir` that logs its arguments — one new
+--   file per invocation in `logDir` — and briefly stays alive on `--loop=inf`
+--   so `MusicHandle` deduplication and `stopMusic` termination work against a
+--   real OS process.
 createFakeMpv :: FilePath -> FilePath -> IO FilePath
-createFakeMpv tmpDir logFile = do
+createFakeMpv tmpDir logDir = do
+    createDirectoryIfMissing True logDir
     if Info.os == "mingw32"
         then do
             -- Windows cannot execute a shebang script; CreateProcess spawns
@@ -644,7 +658,8 @@ createFakeMpv tmpDir logFile = do
             let fakeMpv = tmpDir </> "mpv.bat"
                 script = intercalate "\r\n"
                     [ "@echo off"
-                    , "(echo %*)>>\"" ++ logFile ++ "\""
+                    , "set \"f=%RANDOM%%RANDOM%%RANDOM%\""
+                    , "(echo %*)>\"" ++ logDir ++ "\\%f%.txt\""
                     , "echo %*|find \"--loop=inf\">nul && (ping -n 6 127.0.0.1 >nul)"
                     , "exit /b 0"
                     ] ++ "\r\n"
@@ -654,7 +669,7 @@ createFakeMpv tmpDir logFile = do
             let fakeMpv = tmpDir </> "mpv"
                 script = unlines
                     [ "#!/usr/bin/env sh"
-                    , "printf '%s\\n' \"$*\" >> \"" ++ logFile ++ "\""
+                    , "f=$(mktemp \"" ++ logDir ++ "/XXXXXXXX\") && printf '%s\\n' \"$*\" > \"$f\" && mv \"$f\" \"$f.txt\""
                     , "case \"$*\" in"
                     , "  *--loop=inf*) exec sleep 5 ;;"
                     , "esac"
@@ -673,7 +688,7 @@ testTuiFrontendAudioSeamFakePlayer =
         let tmpDir   = sysTmp </> "ta-tui-audio-test-52e"
             savesDir = tmpDir </> "saves"
             cacheDir = tmpDir </> "cache"
-            logFile  = tmpDir </> "player.log"
+            logFile  = tmpDir </> "player-log"
         _ <- try (removeDirectoryRecursive tmpDir) :: IO (Either SomeException ())
         createDirectoryIfMissing True savesDir
         createDirectoryIfMissing True cacheDir
@@ -748,7 +763,7 @@ testTuiFrontendNoAudioMutesPlayback =
         let tmpDir   = sysTmp </> "ta-tui-noaudio-test-52e"
             savesDir = tmpDir </> "saves"
             cacheDir = tmpDir </> "cache"
-            logFile  = tmpDir </> "player.log"
+            logFile  = tmpDir </> "player-log"
         _ <- try (removeDirectoryRecursive tmpDir) :: IO (Either SomeException ())
         createDirectoryIfMissing True savesDir
         createDirectoryIfMissing True cacheDir
@@ -769,7 +784,7 @@ testTuiFrontendNoAudioMutesPlayback =
         runGameWithFrontend fe tuiAudioTestGame
         stopMusic musicH
         threadDelay 100000
-        logExists <- doesFileExist logFile
-        rMuted <- expectTrue "--no-audio never spawns the audio helper" (not logExists)
+        invocations <- readLogLines logFile
+        rMuted <- expectTrue "--no-audio never spawns the audio helper" (null invocations)
         _ <- try (removeDirectoryRecursive tmpDir) :: IO (Either SomeException ())
         pure rMuted
