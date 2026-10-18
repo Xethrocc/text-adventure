@@ -2,9 +2,29 @@
 
 ## Unreleased
 
+## [0.13.0.0] — 2026-10-18
+
+Engine `0.13.0.0`, Worldbuilder `0.7.0.0`. Das Release des Content-Audits: alle gelieferten
+Spiele und Modul-Fixtures geprüft und ihre Funde behoben, dazu Engine-Verhaltensänderungen,
+die aus dem Audit kamen. Details in den Einträgen unten.
+
+### Changed (Verhalten)
+- **Das erste Spielende eines Zuges gilt (X1):** nach einem `game_end` feuert in diesem Zug keine weitere Regel; ein Drain kann einen Sieg nicht mehr überschreiben.
+- **Der Startraum wird beim Spielstart betreten:** `on_enter` und `on: enter <startraum>` feuern bei Zug 0 (auch nach `restart`), nicht erst beim Zurückkehren.
+- **`use-ability` zielt nur auf Gegner:** Party-Begleiter sind nie Ziel, ein genanntes Ziel hat Vorrang, feindliche Schiffe vor Ort machen die Fähigkeit zur Kampfaktion; ein Kampf ohne Gegner wird beendet.
+
+### Added
+- Prädikat `has_exit` (statische und dynamische Ausgänge); `current`/`current_room` in Raum-Prädikaten (X4).
+- Worldbuilder-Warnung `UnknownVariable` für `compare_var` auf nie geschriebene Variablen (X3); Dialogoptionen lesen `outcome:`/`effects:` neben `outcomes:`.
+- Neue Spielmechaniken aus Design-Entscheidungen: FTL-Lite-Wirtschaft und Sektorfolge, Hamurabi mit 10-Jahres-Ende, Tunnel-Alternativen in Cyberpunk und Chrome & Ash.
+
+### Fixed
+- Rund 50 Content-Funde (14 schwere, ~35 mittlere) in den gelieferten Spielen und Fixtures (Soft-Locks, triviale Siege, wirkungslose Rätsel, Doppelkäufe, tote Quests), jeweils mit Regressionstest; die Inhaltstests von 19 weiteren Spielen laufen jetzt in der CI.
+- Neustart betritt den Startraum wieder; Windows-CI: TUI-Audio-Test stabil.
+
 ### Tests: TUI-Audio-Test auf Windows stabilisiert
 
-- Der 5.2e-Seam-Test (`text-adventure-tui/test/Tests.hs`) schlug auf `windows-latest` sporadisch fehl (Läufe `8e11be1`, `151e96f`): alle Fake-Player-Prozesse hängten per `>>` an **eine** Logdatei an, und parallele SFX-/Musik-Prozesse verloren unter Windows Zeilen (Datei gesperrt) — mal fehlte `sfx/direct.wav`, mal die Synth-Musik. Jetzt schreibt jeder Aufruf eine eigene Datei (Windows: `%RANDOM%`-Name, Unix: `mktemp` + atomares Umbenennen), der Test liest das Verzeichnis; das Warten erlaubt bis zu 10 s statt 1,5 s (endet sofort, sobald alles da ist).
+- Der 5.2e-Seam-Test (`text-adventure-tui/test/Tests.hs`) schlug auf `windows-latest` sporadisch fehl (Läufe `8e11be1`, `151e96f`): alle Fake-Player-Prozesse hängten per `>>` an **eine** Logdatei an, und parallele SFX-/Musik-Prozesse verloren unter Windows Zeilen (Datei gesperrt) — mal fehlte `sfx/direct.wav`, mal die Synth-Musik. Jetzt schreibt jeder Aufruf eine eigene Datei (Windows: per atomarem `mkdir` belegter Zähler-Slot — ein erster Versuch mit `%RANDOM%` scheiterte, weil cmd.exe den Zufall pro Prozess aus der Uhrzeit in Sekunden startet und gleichzeitig gestartete Helper denselben Namen zogen; Unix: `mktemp` + atomares Umbenennen), der Test liest das Verzeichnis; das Warten erlaubt bis zu 10 s statt 1,5 s (endet sofort, sobald alles da ist).
 
 ### Content: Design-Entscheidungen umgesetzt (FTL-Lite, Hamurabi, Tunnel, kleinere)
 
